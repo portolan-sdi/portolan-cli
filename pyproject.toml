@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "A CLI tool for managing cloud-native geospatial data"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "click>=8.3.1",
+]
 license = "Apache-2.0"
 authors = [
     { name = "Nissim Lebovits", email = "nlebovits@pm.me" }
@@ -37,10 +39,21 @@ cerulio = "cerulio_cli:cli"
 "Source" = "https://github.com/cerulio/cerulio-cli"
 
 [project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.14.11",
+    "pre-commit>=4.3.0",
+    "mypy>=1.0.0",
+    "vulture>=2.14",
+    "xenon>=0.9.3",
+]
 
-dev = []
-
-docs = []
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.1",
+    "mkdocstrings[python]>=1.0.0",
+]
 
 benchmark = []
 

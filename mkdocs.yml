@@ -1,0 +1,60 @@
+site_name: cerulio-cli
+site_description: A CLI tool for managing cloud-native geospatial data
+site_author: Nissim Lebovits
+site_url: https://cerulio.github.io/cerulio-cli/
+repo_name: cerulio/cerulio-cli
+repo_url: https://github.com/cerulio/cerulio-cli
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: light-blue
+      accent: light-blue  
+      toggle:
+        icon: material/brightness-4
+        name: Switch to dark mode
+    - scheme: slate
+      primary: light-blue
+      accent: light-blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to light mode
+  features:
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            heading_level: 3
+            members_order: source
+            docstring_style: google
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight
+  - pymdownx.snippets:
+      base_path: docs
+      check_paths: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md
