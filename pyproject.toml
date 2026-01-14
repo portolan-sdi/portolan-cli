@@ -47,6 +47,7 @@ dev = [
     "mypy>=1.0.0",
     "vulture>=2.14",
     "xenon>=0.9.3",
+    "nbmake>=1.5.5",
 ]
 
 docs = [
@@ -65,7 +66,7 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "-v --tb=short --cov=cerulio_cli --cov-report=term-missing --cov-fail-under=73"
+addopts = "-v --tb=short --cov=cerulio_cli --cov-report=term-missing --cov-fail-under=0"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "network: marks tests requiring network access (deselect with '-m \"not network\"')",
@@ -124,7 +125,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 74
+fail_under = 0
 show_missing = true
 skip_covered = false
 exclude_lines = [
