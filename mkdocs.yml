@@ -56,5 +56,6 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Roadmap: roadmap.md
   - Contributing: contributing.md
   - Changelog: changelog.md
