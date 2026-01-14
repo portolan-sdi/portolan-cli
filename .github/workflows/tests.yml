@@ -27,7 +27,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Check code complexity (informational)
-        run: uv run xenon --max-absolute=E --max-modules=D --max-average=C geoparquet_io tests
+        run: uv run xenon --max-absolute=E --max-modules=D --max-average=C cerulio_cli tests
         continue-on-error: true
 
       - name: Check for dead code (informational)
@@ -60,7 +60,7 @@ jobs:
 
       - name: Run tests with pytest
         run: |
-          uv run pytest -v --tb=short --cov=geoparquet_io --cov-report=term-missing --cov-report=xml
+          uv run pytest -v --tb=short --cov=cerulio_cli --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
