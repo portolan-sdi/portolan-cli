@@ -40,7 +40,7 @@ cerulio = "cerulio_cli:cli"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
+    "pytest>=9.0.2",
     "pytest-cov>=4.0.0",
     "ruff>=0.14.11",
     "pre-commit>=4.3.0",
