@@ -85,6 +85,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Test example notebooks
-        run: |
-          uv run pytest --nbmake examples/*.ipynb -v --nbmake-timeout=120 --no-cov
+    # TODO: add back in when there are notebooks to test
+    #   - name: Test example notebooks
+    #     run: |
+    #       uv run pytest --nbmake examples/*.ipynb -v --nbmake-timeout=120 --no-cov
