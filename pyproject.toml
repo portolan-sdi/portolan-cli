@@ -1,0 +1,135 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cerulio-cli"
+version = "0.1.0"
+description = "A CLI tool for managing cloud-native geospatial data"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.3.1",
+]
+license = "Apache-2.0"
+authors = [
+    { name = "Nissim Lebovits", email = "nlebovits@pm.me" }
+]
+keywords = ["cloud-native", "geospatial", "gis", "io"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+
+[project.scripts]
+cerulio = "cerulio_cli:cli"
+
+[project.urls]
+"Homepage" = "https://github.com/cerulio/cerulio-cli"
+"Bug Tracker" = "https://github.com/cerulio/cerulio-cli/issues"
+"Documentation" = "https://github.com/cerulio/cerulio-cli#readme"
+"Source" = "https://github.com/cerulio/cerulio-cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.14.11",
+    "pre-commit>=4.3.0",
+    "mypy>=1.0.0",
+    "vulture>=2.14",
+    "xenon>=0.9.3",
+    "nbmake>=1.5.5",
+]
+
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.1",
+    "mkdocstrings[python]>=1.0.0",
+]
+
+benchmark = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["cerulio_cli"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short --cov=cerulio_cli --cov-report=term-missing --cov-fail-under=0"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "network: marks tests requiring network access (deselect with '-m \"not network\"')",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # unused imports in __init__.py
+
+[tool.ruff.lint.isort]
+known-first-party = ["cerulio_cli"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+strict_equality = true
+
+[tool.vulture]
+min_confidence = 80
+paths = ["cerulio_cli", "tests"]
+sort_by_size = true
+verbose = false
+
+[tool.coverage.run]
+source = ["cerulio_cli"]
+branch = false
+omit = [
+    "cerulio_cli/__init__.py",
+]
+
+[tool.coverage.report]
+fail_under = 0
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
