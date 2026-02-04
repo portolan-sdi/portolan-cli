@@ -185,8 +185,62 @@ Releases are automated via commitizen on push to main. See `.github/workflows/re
 
 - **ALL** code must have type annotations (`mypy --strict`)
 - **ALL** new features require tests FIRST (TDD)
-- **ALL** non-obvious decisions require an ADR in `context/adr/`
+- **ALL** non-obvious decisions require an ADR in `context/shared/adr/`
 - **NO** new dependencies without discussion (document in ADR)
+
+## Documentation Bias
+
+**Bias toward documenting everything.** AI agents work best with rich context.
+
+### What to Document
+
+| What | Where | When |
+|------|-------|------|
+| Architectural decisions | `context/shared/adr/` | Any non-obvious design choice |
+| Known bugs/issues | `context/shared/known-issues/` | When a bug is identified but not yet fixed |
+| Non-obvious code | Inline comments | Code that would confuse a future reader |
+| API contracts | Docstrings | All public functions/classes |
+| Gotchas/quirks | CLAUDE.md or inline | Anything that surprised you |
+
+### Why This Matters
+
+- **AI agents start fresh each session** — They don't remember past conversations
+- **Context files are their memory** — ADRs, known-issues, and CLAUDE.md persist knowledge
+- **Documentation compounds** — Each documented decision helps all future sessions
+- **Undocumented knowledge is lost** — If it's not written down, it doesn't exist for agents
+
+### ADR Guidelines
+
+Create an ADR (`context/shared/adr/NNNN-title.md`) when:
+
+- Choosing between multiple valid approaches
+- Adopting a new dependency
+- Establishing a pattern that others should follow
+- Making a trade-off that isn't obvious
+
+Use the template at `context/shared/adr/0000-template.md`.
+
+### Two Documentation Audiences
+
+| Audience | Location | Optimized For |
+|----------|----------|---------------|
+| **Humans** | `docs/` (mkdocs) | Readability, navigation, tutorials, visual presentation |
+| **AI agents** | Docstrings, CLAUDE.md, ADRs, inline comments | Context windows, searchability, co-location with code |
+
+**Human docs (`docs/`):**
+- Rendered website via mkdocs
+- Prose-heavy with examples and screenshots
+- Organized by user journey (getting started → advanced topics)
+- Can be verbose — humans skim and navigate
+
+**AI docs (in-repo):**
+- Docstrings: Complete API contracts (args, returns, raises, examples)
+- CLAUDE.md: Development patterns, commands, gotchas
+- ADRs: Decision rationale with alternatives considered
+- Inline comments: Non-obvious code behavior
+- Dense and structured (tables, bullet lists) — agents parse linearly
+
+**Key difference:** Human docs explain *how to use* the tool. AI docs explain *how to modify* the codebase.
 
 ## Standardized Terminal Output
 

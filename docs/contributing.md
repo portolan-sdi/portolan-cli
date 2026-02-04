@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to portolan-cli!
 
-> **For AI agents and detailed development guidelines:** See [`CLAUDE.md`](../CLAUDE.md) in the project root. This document is for human contributors and covers workflow, not implementation details.
+> **For AI agents and detailed development guidelines:** See `CLAUDE.md` in the project root. This document is for human contributors and covers workflow, not implementation details.
 
 ## Development Setup
 
