@@ -1,3 +1,10 @@
+## v0.1.2 (2026-02-04)
+
+### Fix
+
+- **ci**: handle commitizen exit code 16 (NO_PATTERN_MAP)
+- **ci**: use commit SHA for GitHub release target
+
 ## v0.1.1 (2026-02-04)
 
 ### Fix
