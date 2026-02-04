@@ -50,8 +50,9 @@ jobs:
           # Check if there are any commits that would trigger a version bump
           # Exit code 21 = NO_COMMITS_TO_BUMP (commits exist but none are feat/fix/breaking)
           # Exit code 3 = NO_COMMITS_FOUND (no commits at all since last tag)
+          # --yes flag auto-confirms "is this the first tag?" prompt in CI
           set +e
-          output=$(uv run cz bump --dry-run 2>&1)
+          output=$(uv run cz bump --dry-run --yes 2>&1)
           exit_code=$?
           set -e
 
