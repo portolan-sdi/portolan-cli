@@ -91,11 +91,15 @@ jobs:
       - name: Create GitHub Release
         if: steps.check.outputs.release_needed == 'true'
         run: |
-          # Get the latest tag
+          # Get the latest tag and its commit SHA
           TAG=$(git describe --tags --abbrev=0)
+          TAG_SHA=$(git rev-list -n 1 "$TAG")
           # Create a GitHub release from the tag
+          # Use --target to specify the tagged commit SHA, which works even if
+          # the tag push hasn't fully propagated to GitHub yet
           gh release create "$TAG" \
             --title "$TAG" \
+            --target "$TAG_SHA" \
             --notes "See [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details." \
             dist/*
         env:
