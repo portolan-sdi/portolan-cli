@@ -1,0 +1,87 @@
+# Automated release workflow using commitizen
+# See context/shared/documentation/ci.md for the full CI strategy
+#
+# This workflow:
+# 1. Analyzes commits since last release
+# 2. Bumps version based on conventional commits
+# 3. Generates changelog entry
+# 4. Creates git tag
+# 5. Publishes to PyPI
+#
+# Triggered on push to main (after PR merge)
+name: Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    # Only run if the commit message doesn't start with "bump:" (avoid infinite loop)
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    permissions:
+      contents: write  # Required for creating tags and pushing
+      id-token: write  # Required for trusted PyPI publishing
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # Full history for commitizen
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Configure git
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+      - name: Check if release needed
+        id: check
+        run: |
+          # Check if there are any commits that would trigger a version bump
+          if uv run cz bump --dry-run 2>&1 | grep -q "No commits found"; then
+            echo "release_needed=false" >> $GITHUB_OUTPUT
+            echo "No conventional commits found since last release"
+          else
+            echo "release_needed=true" >> $GITHUB_OUTPUT
+            echo "Conventional commits found, release needed"
+          fi
+        continue-on-error: true
+
+      - name: Bump version and update changelog
+        if: steps.check.outputs.release_needed == 'true'
+        run: |
+          uv run cz bump --changelog --yes
+          git push --follow-tags
+
+      - name: Build package
+        if: steps.check.outputs.release_needed == 'true'
+        run: uv build
+
+      - name: Publish to PyPI
+        if: steps.check.outputs.release_needed == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          print-hash: true
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.release_needed == 'true'
+        run: |
+          # Get the latest tag
+          TAG=$(git describe --tags --abbrev=0)
+          # Create a GitHub release from the tag
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "See [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details." \
+            dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,169 @@
+# Tier 3 CI - Scheduled nightly checks
+# See context/shared/documentation/ci.md for the full CI strategy
+#
+# Philosophy: These are the "expensive" checks that would slow down PRs.
+# They still fail the build - we track trends but don't accept regressions.
+name: Nightly
+on:
+  schedule:
+    - cron: '0 4 * * *'  # 4 AM UTC daily
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  mutation:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run mutation testing
+        run: |
+          uv run mutmut run \
+            --paths-to-mutate=portolan_cli/ \
+            --tests-dir=tests/ \
+            --no-progress
+
+      - name: Check mutation score
+        run: |
+          # Get mutation results as JSON and check score
+          uv run mutmut results --json > mutation-results.json
+
+          # Calculate survival rate (lower is better)
+          SURVIVED=$(jq '.survived // 0' mutation-results.json)
+          KILLED=$(jq '.killed // 0' mutation-results.json)
+          TOTAL=$((SURVIVED + KILLED))
+
+          if [ "$TOTAL" -eq 0 ]; then
+            echo "No mutations generated - check if source code is testable"
+            exit 0
+          fi
+
+          # Calculate kill rate (higher is better)
+          KILL_RATE=$(echo "scale=2; $KILLED * 100 / $TOTAL" | bc)
+          echo "Mutation kill rate: $KILL_RATE% ($KILLED killed, $SURVIVED survived)"
+
+          # Fail if kill rate drops below 60%
+          # This threshold should increase as the codebase matures
+          MIN_KILL_RATE=60
+          if [ $(echo "$KILL_RATE < $MIN_KILL_RATE" | bc) -eq 1 ]; then
+            echo "::error::Mutation kill rate ($KILL_RATE%) is below threshold ($MIN_KILL_RATE%)"
+            echo "Tests are not catching enough bugs. Review survived mutants."
+            exit 1
+          fi
+
+      - name: Generate mutation report
+        if: always()
+        run: uv run mutmut html || true
+
+      - name: Upload mutation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: html/
+          retention-days: 30
+        if: always()
+
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # Full history to compare with previous runs
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run benchmarks
+        run: |
+          # Run benchmarks and save results
+          uv run pytest tests/ \
+            -m benchmark \
+            --benchmark-json=benchmark-results.json \
+            --benchmark-autosave \
+            -v
+
+      - name: Check for performance regression
+        run: |
+          # If baseline exists, compare and fail on >20% regression
+          if [ -f .benchmarks/baseline.json ]; then
+            uv run pytest-benchmark compare \
+              benchmark-results.json \
+              .benchmarks/baseline.json \
+              --fail-on=20
+          else
+            echo "No baseline found. This run will establish the baseline."
+            mkdir -p .benchmarks
+            cp benchmark-results.json .benchmarks/baseline.json
+          fi
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark-results.json
+          retention-days: 90
+        if: always()
+
+  network-live:
+    name: Live Network Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run network tests against live services
+        run: |
+          uv run pytest tests/ \
+            -m network \
+            --timeout=120 \
+            -v
+
+  dependency-check:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Full security audit
+        run: |
+          echo "=== Dependency security audit ==="
+          uv run pip-audit --strict
+
+      - name: Check for outdated dependencies
+        run: |
+          echo "=== Outdated dependencies ==="
+          uv pip list --outdated
+          # Note: This is informational, not a failure condition

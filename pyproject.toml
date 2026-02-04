@@ -3,21 +3,18 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "cerulio-cli"
+name = "portolan-cli"
 version = "0.1.0"
 description = "A CLI tool for managing cloud-native geospatial data"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-    "click>=8.3.1",
-]
 license = "Apache-2.0"
 authors = [
-    { name = "Nissim Lebovits", email = "nlebovits@pm.me" }
+    { name = "Nissim Lebovits", email = "nlebovits@pm.me" },
 ]
 keywords = ["cloud-native", "geospatial", "gis", "io"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
@@ -28,49 +25,91 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: GIS",
 ]
+dependencies = [
+    "click>=8.3.1",
+]
 
 [project.scripts]
-cerulio = "cerulio_cli:cli"
+portolan = "portolan_cli:cli"
 
 [project.urls]
-"Homepage" = "https://github.com/cerulio/cerulio-cli"
-"Bug Tracker" = "https://github.com/cerulio/cerulio-cli/issues"
-"Documentation" = "https://github.com/cerulio/cerulio-cli#readme"
-"Source" = "https://github.com/cerulio/cerulio-cli"
+"Homepage" = "https://github.com/portolan-sdi/portolan-cli"
+"Bug Tracker" = "https://github.com/portolan-sdi/portolan-cli/issues"
+"Documentation" = "https://github.com/portolan-sdi/portolan-cli#readme"
+"Source" = "https://github.com/portolan-sdi/portolan-cli"
 
 [project.optional-dependencies]
 dev = [
+    "bandit>=1.9.3",
+    "codespell>=2.4.1",
+    "commitizen>=4.13.4",
+    "hypothesis>=6.151.5",
+    "mutmut>=3.4.0",
+    "mypy>=1.19.1",
+    "pip-audit>=2.10.0",
+    "pre-commit>=4.5.1",
     "pytest>=9.0.2",
+    "pytest-benchmark>=5.0.0",
     "pytest-cov>=4.0.0",
+    "pytest-timeout>=2.3.1",
+    "radon>=6.0.1",
     "ruff>=0.14.11",
-    "pre-commit>=4.3.0",
-    "mypy>=1.0.0",
     "vulture>=2.14",
     "xenon>=0.9.3",
-    "nbmake>=1.5.5",
 ]
-
 docs = [
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.7.1",
     "mkdocstrings[python]>=1.0.0",
 ]
 
-benchmark = []
-
 [tool.hatch.build.targets.wheel]
-packages = ["cerulio_cli"]
+packages = ["portolan_cli"]
+
+# ---------- commitizen ----------
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.1.0"
+version_files = ["pyproject.toml:^version"]
+tag_format = "v$version"
+update_changelog_on_bump = true
+
+# ---------- testing ----------
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "-v --tb=short --cov=cerulio_cli --cov-report=term-missing --cov-fail-under=0"
+addopts = "-v --tb=short --cov=portolan_cli --cov-report=term-missing --cov-fail-under=0"
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "network: marks tests requiring network access (deselect with '-m \"not network\"')",
+    "unit: Fast, isolated, no I/O (< 100ms each)",
+    "integration: Multi-component, may touch filesystem",
+    "network: Requires network access (mocked locally, real in CI nightly)",
+    "snapshot: Compares output against golden files",
+    "benchmark: Performance measurement, tracked over time",
+    "slow: Takes > 5 seconds",
 ]
+
+[tool.coverage.run]
+source = ["portolan_cli"]
+branch = true
+omit = [
+    "portolan_cli/__init__.py",
+]
+
+[tool.coverage.report]
+fail_under = 0
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+# ---------- linting & formatting ----------
 
 [tool.ruff]
 line-length = 100
@@ -93,10 +132,17 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]  # unused imports in __init__.py
+"__init__.py" = ["F401"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["cerulio_cli"]
+known-first-party = ["portolan_cli"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+# ---------- type checking ----------
 
 [tool.mypy]
 python_version = "3.10"
@@ -111,25 +157,16 @@ warn_unused_ignores = true
 warn_no_return = true
 strict_equality = true
 
+# ---------- security ----------
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
+
+# ---------- dead code ----------
+
 [tool.vulture]
 min_confidence = 80
-paths = ["cerulio_cli", "tests"]
+paths = ["portolan_cli", "tests"]
 sort_by_size = true
 verbose = false
-
-[tool.coverage.run]
-source = ["cerulio_cli"]
-branch = false
-omit = [
-    "cerulio_cli/__init__.py",
-]
-
-[tool.coverage.report]
-fail_under = 0
-show_missing = true
-skip_covered = false
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "if __name__ == .__main__.:",
-]
