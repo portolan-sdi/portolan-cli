@@ -48,14 +48,28 @@ jobs:
         id: check
         run: |
           # Check if there are any commits that would trigger a version bump
-          if uv run cz bump --dry-run 2>&1 | grep -q "No commits found"; then
-            echo "release_needed=false" >> $GITHUB_OUTPUT
-            echo "No conventional commits found since last release"
-          else
+          # Exit code 21 = NO_COMMITS_TO_BUMP (commits exist but none are feat/fix/breaking)
+          # Exit code 3 = NO_COMMITS_FOUND (no commits at all since last tag)
+          set +e
+          output=$(uv run cz bump --dry-run 2>&1)
+          exit_code=$?
+          set -e
+
+          echo "$output"
+
+          if [ $exit_code -eq 0 ]; then
             echo "release_needed=true" >> $GITHUB_OUTPUT
-            echo "Conventional commits found, release needed"
+            echo "✓ Release-worthy commits found"
+          elif [ $exit_code -eq 21 ]; then
+            echo "release_needed=false" >> $GITHUB_OUTPUT
+            echo "✓ No release needed (commits are docs/refactor/test/chore only)"
+          elif [ $exit_code -eq 3 ]; then
+            echo "release_needed=false" >> $GITHUB_OUTPUT
+            echo "✓ No commits found since last release"
+          else
+            echo "✗ Unexpected error from commitizen (exit code: $exit_code)"
+            exit $exit_code
           fi
-        continue-on-error: true
 
       - name: Bump version and update changelog
         if: steps.check.outputs.release_needed == 'true'
