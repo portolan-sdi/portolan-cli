@@ -23,21 +23,22 @@ AI agents write most of the code. Human review doesn't scale to match AI output 
 
 ## Tier 1: Pre-commit
 
-Configured in `.pre-commit-config.yml`. Runs locally before every commit.
+Configured in `.pre-commit-config.yaml`. Runs locally before every commit.
 
-**Checks:**
+Install with: `uv run pre-commit install`
+
+**Checks (all blocking):**
 
 - `ruff` — Linting with auto-fix
 - `ruff format` — Code formatting
 - `vulture` — Dead code detection
 - `xenon` — Complexity monitoring
+- `mypy` — Type checking (strict)
+- `pytest -m unit` — Fast unit tests only
+- `commitizen` — Commit message validation (commit-msg stage)
 - Standard hooks: trailing whitespace, YAML validation, large file detection
 
-**Not included in pre-commit** (too slow):
-
-- Type checking (mypy)
-- Tests
-- Security scanning
+**Philosophy:** All hooks block. No `--no-verify`. Fix issues before committing.
 
 ---
 
@@ -158,7 +159,7 @@ markers = [
 
 | Gate | Tests |
 |------|-------|
-| Pre-commit | None (too slow) |
+| Pre-commit | unit only (fast, < 30s total) |
 | CI (PR) | unit, integration, snapshot (no network, slow, benchmark) |
 | Nightly | All markers including network and benchmark |
 

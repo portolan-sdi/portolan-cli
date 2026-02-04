@@ -10,8 +10,37 @@ AI agents will write most of the code. Human review does not scale to match AI o
 |----------|----------|
 | Contributing guide | `docs/contributing.md` |
 | CI/CD documentation | `context/shared/documentation/ci.md` |
+| Distill MCP tools | `context/shared/documentation/distill-mcp.md` |
 | ADRs | `context/adr/` |
 | Plans & research | `context/shared/` |
+
+**Target Python version:** 3.10+ (matches geoparquet-io dependency)
+
+## Common Commands
+
+```bash
+# Environment setup
+uv sync --all-extras                    # Install all dependencies
+uv run pre-commit install               # Install git hooks
+
+# Development
+uv run pytest                           # Run tests
+uv run pytest -m unit                   # Run only unit tests
+uv run pytest --cov-report=html         # Coverage report
+uv run ruff check .                     # Lint
+uv run ruff format .                    # Format
+uv run mypy portolan_cli                # Type check
+uv run vulture portolan_cli tests       # Dead code
+uv run xenon --max-absolute=C portolan_cli  # Complexity
+
+# Commits (use commitizen for conventional commits)
+uv run cz commit                        # Interactive commit
+uv run cz bump --dry-run                # Preview version bump
+
+# Docs
+uv run mkdocs serve                     # Local docs server
+uv run mkdocs build                     # Build docs
+```
 
 ## Project Structure
 
@@ -60,7 +89,7 @@ Always research before implementing:
 
 ### Defending Against Tautological Tests
 
-Three layers of defense (see `docs/ci.md` for details):
+Three layers of defense (see `context/shared/documentation/ci.md` for details):
 
 1. **Mutation testing** — Nightly `mutmut` runs verify tests catch real bugs
 2. **Property-based testing** — Use `hypothesis` for invariant verification
@@ -68,12 +97,12 @@ Three layers of defense (see `docs/ci.md` for details):
 
 ### Test Fixtures
 
-Store small, representative data files in `tests/fixtures/`. Each subdirectory gets a README.md explaining what each file is and why it exists. Fixtures should be:
+Store small, representative data files in `tests/fixtures/`. Fixtures should be:
 
 - **Small** — a few rows/pixels, enough to test behavior
 - **Committed to git** — they're small enough, and reproducibility matters
-- **Paired with invalid variants** — every valid fixture should have a corresponding invalid one for testing error handling
-- **Documented** — without docs, future contributors won't know what `test_3857.parquet` is for
+- **Paired with invalid variants** — every valid fixture should have a corresponding invalid one
+- **Documented** — each subdirectory gets a README.md
 
 ## CI Pipeline
 
@@ -81,63 +110,80 @@ Store small, representative data files in `tests/fixtures/`. Each subdirectory g
 
 | Tier | When | What |
 |------|------|------|
-| Tier 1 | Pre-commit | ruff, vulture, xenon |
-| Tier 2 | Every PR | lint, mypy, security, tests, docs build |
+| Tier 1 | Pre-commit | ruff, vulture, xenon, mypy, fast tests |
+| Tier 2 | Every PR | lint, mypy, security, full tests, docs build |
 | Tier 3 | Nightly | mutation testing, benchmarks, live network tests |
 
 **All checks are strict** — no `continue-on-error`. Fix issues or they block.
 
+### Pre-commit Hooks
+
+Pre-commit blocks on ALL checks. Install with `uv run pre-commit install`.
+
+Hooks run: ruff, vulture, xenon, mypy, unit tests, commitizen (commit-msg).
+
+If a hook fails, fix the issue before committing. No `--no-verify`.
+
 ## Code Quality
 
-### Tools
-
 - **ruff** — Linting and formatting
-- **mypy** — Type checking (strict)
+- **mypy** — Type checking (`strict = true`)
 - **vulture** — Dead code detection
-- **xenon** — Complexity monitoring
+- **xenon** — Complexity monitoring (max C function, B module, A average)
 - **bandit** — Security scanning
 - **pip-audit** — Dependency vulnerabilities
 
-### Complexity Thresholds
-
-- No function exceeds complexity level C
-- No module average exceeds B
-- Codebase average must be A
-
 ## Git Workflow
+
+### Branch Naming
+
+```
+feature/description    # New features
+fix/description        # Bug fixes
+docs/description       # Documentation
+refactor/description   # Code restructuring
+```
 
 ### Conventional Commits
 
-Use commitizen format:
+Use `uv run cz commit` for interactive commit creation:
 
 ```
-feat(scope): add new feature
-fix(scope): fix bug
+feat(scope): add new feature      # Minor version bump
+fix(scope): fix bug               # Patch version bump
 docs(scope): update documentation
 refactor(scope): restructure code
 test(scope): add tests
+BREAKING CHANGE: ...              # Major version bump
 ```
+
+### Merge Policy
+
+**Squash-merge** all PRs to main. This ensures:
+- Clean history (one commit per PR)
+- PR title becomes the commit message (enforce conventional format)
+- Commitizen can analyze commits cleanly for versioning
 
 ### Release Automation
 
-Releases are automated via commitizen on push to main (see `.github/workflows/release.yml`):
+Releases are automated via commitizen on push to main. See `.github/workflows/release.yml`.
 
-1. Analyze commits since last release
-2. Bump version based on commit types
-3. Generate changelog entry
-4. Create git tag
-5. Publish to PyPI
+1. Commits analyzed for conventional commit types
+2. Version bumped (major/minor/patch based on commits)
+3. CHANGELOG.md updated
+4. Git tag created
+5. Published to PyPI
 
 ## Development Rules
 
-- **ALL** code must have type annotations
+- **ALL** code must have type annotations (`mypy --strict`)
 - **ALL** new features require tests FIRST (TDD)
 - **ALL** non-obvious decisions require an ADR in `context/adr/`
 - **NO** new dependencies without discussion (document in ADR)
 
 ## Standardized Terminal Output
 
-Define this once in `portolan_cli/output.py` and use it everywhere. No raw `print()` or `click.echo()` calls scattered through the codebase.
+Use `portolan_cli/output.py` for all user-facing messages:
 
 ```python
 from portolan_cli.output import success, info, warn, error, detail
@@ -151,60 +197,8 @@ detail("Processing chunk 3/10...")         # Dimmed text
 
 ## Tool Usage
 
-- **context7** — For up-to-date library documentation
-- **distill** — To keep token usage down
-- **worktrunk** — For worktree management
-
-## Distill MCP Tool Guidelines
-
-Use Distill MCP tools for token-efficient operations:
-
-### Rule 1: Smart File Reading
-
-When reading source files for **exploration or understanding**:
-
-```
-mcp__distill__smart_file_read filePath="path/to/file.py"
-```
-
-**When to use native Read instead:**
-- Before editing a file (Edit requires Read first)
-- Configuration files: `.json`, `.yaml`, `.toml`, `.md`, `.env`
-
-### Rule 2: Compress Verbose Output
-
-After Bash commands that produce verbose output (>500 characters):
-
-```
-mcp__distill__auto_optimize content="<paste verbose output>"
-```
-
-### Rule 3: Code Execute SDK for Complex Operations
-
-For multi-step operations, use `code_execute` instead of multiple tool calls (**98% token savings**):
-
-```
-mcp__distill__code_execute code="<typescript code>"
-```
-
-**SDK API (`ctx`):**
-
-| Category | Methods |
-|----------|---------|
-| Compress | `auto(content, hint?)`, `logs(logs)`, `diff(diff)`, `semantic(content, ratio?)` |
-| Code | `parse(content, lang)`, `extract(content, lang, {type, name})`, `skeleton(content, lang)` |
-| Files | `read(path)`, `exists(path)`, `glob(pattern)` |
-| Git | `diff(ref?)`, `log(limit?)`, `status()`, `branch()`, `blame(file, line?)` |
-| Search | `grep(pattern, glob?)`, `symbols(query, glob?)`, `files(pattern)`, `references(symbol, glob?)` |
-| Analyze | `dependencies(file)`, `callGraph(fn, file, depth?)`, `exports(file)`, `structure(dir?, depth?)` |
-| Utils | `countTokens(text)`, `detectType(content)`, `detectLanguage(path)` |
-
-### Quick Reference
-
-| Action | Tool |
-|--------|------|
-| Read code for exploration | `mcp__distill__smart_file_read filePath="file.py"` |
-| Get a function/class | `smart_file_read` with `target={"type":"function","name":"myFunc"}` |
-| Compress build errors | `mcp__distill__auto_optimize content="..."` |
-| Multi-step operations | `mcp__distill__code_execute code="return ctx.files.glob('src/**/*.py')"` |
-| Before editing | Use native `Read` tool |
+| Tool | Purpose | Documentation |
+|------|---------|---------------|
+| context7 | Up-to-date library docs | — |
+| distill | Token-efficient operations | `context/shared/documentation/distill-mcp.md` |
+| worktrunk | Worktree management | — |

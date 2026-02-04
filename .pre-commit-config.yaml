@@ -1,0 +1,59 @@
+# Pre-commit hooks - Tier 1 CI
+# See context/shared/documentation/ci.md for the full CI strategy
+#
+# All hooks BLOCK on failure. No warnings, no skips.
+# Install: uv run pre-commit install
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: mixed-line-ending
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.1
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/jendrikseipp/vulture
+    rev: v2.14
+    hooks:
+      - id: vulture
+
+  - repo: https://github.com/rubik/xenon
+    rev: v0.9.3
+    hooks:
+      - id: xenon
+        args: ['--max-absolute=C', '--max-modules=B', '--max-average=A']
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        args: [portolan_cli]
+        pass_filenames: false
+
+      - id: fast-tests
+        name: fast tests
+        entry: uv run pytest
+        language: system
+        types: [python]
+        args: [tests/, -m, unit, --timeout=30, -q]
+        pass_filenames: false
+
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.1.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
