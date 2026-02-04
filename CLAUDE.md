@@ -11,7 +11,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | Contributing guide | `docs/contributing.md` |
 | CI/CD documentation | `context/shared/documentation/ci.md` |
 | Distill MCP tools | `context/shared/documentation/distill-mcp.md` |
-| ADRs | `context/adr/` |
+| ADRs | `context/shared/adr/` |
 | Plans & research | `context/shared/` |
 
 **Target Python version:** 3.10+ (matches geoparquet-io dependency)
@@ -49,11 +49,18 @@ portolan-cli/
 ├── portolan_cli/          # Source code
 ├── tests/                 # Test suite
 │   ├── fixtures/          # Test data files
-│   └── specs/             # Human-written test specifications
+│   ├── specs/             # Human-written test specifications
+│   ├── unit/              # Fast, isolated unit tests
+│   ├── integration/       # Multi-component tests
+│   ├── network/           # Tests requiring network (mocked locally)
+│   ├── benchmark/         # Performance measurements
+│   └── snapshot/          # Snapshot tests
 ├── docs/                  # Documentation (mkdocs)
 ├── context/               # AI development context
-│   ├── adr/               # Architectural decisions
 │   └── shared/            # Plans, research, reports
+│       ├── adr/           # Architectural decisions
+│       ├── documentation/ # CI, tooling docs
+│       └── known-issues/  # Tracked issues
 └── .github/workflows/     # CI/CD pipelines
 ```
 
@@ -65,7 +72,7 @@ Always research before implementing:
 2. **Search for patterns** — Check if similar functionality exists
 3. **Check utilities** — Review `portolan_cli/` first
 4. **Review existing tests** — Look at tests for the area you're modifying
-5. **Check ADRs** — Read `context/adr/` to understand past decisions
+5. **Check ADRs** — Read `context/shared/adr/` to understand past decisions
 
 ## Test-Driven Development (MANDATORY)
 
@@ -120,7 +127,7 @@ Store small, representative data files in `tests/fixtures/`. Fixtures should be:
 
 Pre-commit blocks on ALL checks. Install with `uv run pre-commit install`.
 
-Hooks run: ruff, vulture, xenon, mypy, unit tests, commitizen (commit-msg).
+Hooks run: trailing-whitespace, end-of-file-fixer, check-yaml, check-toml, check-merge-conflict, mixed-line-ending, check-added-large-files, ruff (fix + format), vulture, xenon, mypy, fast unit tests, commitizen (commit-msg).
 
 If a hook fails, fix the issue before committing. No `--no-verify`.
 
