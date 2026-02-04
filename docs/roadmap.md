@@ -1,15 +1,15 @@
-# Cerulio Roadmap
+# portolan Roadmap
 
 ## Shipping Now (Q1 2026)
 
-**Cerulio Spec**
+**portolan Spec**
 Best practices for sharing cloud-native geospatial data, e.g., formats, thumbnails, default styling, metadata, and what makes a dataset actually useful when someone finds it.
 
-**Cerulio CLI**
+**portolan CLI**
 Convert data to cloud-native formats (GeoParquet, COG) and upload to any cloud bucket. Includes a validator that checks spec compliance and recommends improvements.
 
 **QGIS Plugin**
-Browse Cerulio nodes, pull data into local GIS, edit STAC metadata, check best practices.
+Browse portolan nodes, pull data into local GIS, edit STAC metadata, check best practices.
 
 ## How We're Building
 
@@ -20,11 +20,11 @@ Browse Cerulio nodes, pull data into local GIS, edit STAC metadata, check best p
 
 ## On the Horizon
 
-- **Cerulio Uploader** — API + drag-and-drop web interface for converting diverse files to cloud-native formats
-- **Browser/Map UI** — Web interfaces for exploring Cerulio nodes
-- **Cerulio Node** — A complete, valid CN-SDI with all tooling to make it useful
+- **portolan Uploader** — API + drag-and-drop web interface for converting diverse files to cloud-native formats
+- **Browser/Map UI** — Web interfaces for exploring portolan nodes
+- **portolan Node** — A complete, valid CN-SDI with all tooling to make it useful
 - **Global Data Bootstrapper** — Subset global datasets (buildings, roads, land cover) to bootstrap local maps
 
 ---
 
-*Cerulio is an open source project under [Radiant Earth](https://radiant.earth).*
+*portolan is an open source project under [Radiant Earth](https://radiant.earth).*

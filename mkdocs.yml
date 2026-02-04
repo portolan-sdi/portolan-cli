@@ -1,9 +1,9 @@
-site_name: cerulio-cli
+site_name: portolan-cli
 site_description: A CLI tool for managing cloud-native geospatial data
 site_author: Nissim Lebovits
-site_url: https://cerulio.github.io/cerulio-cli/
-repo_name: cerulio/cerulio-cli
-repo_url: https://github.com/cerulio/cerulio-cli
+site_url: https://portolan.github.io/portolan-cli/
+repo_name: portolan/portolan-cli
+repo_url: https://github.com/portolan/portolan-cli
 edit_uri: edit/main/docs/
 
 theme:

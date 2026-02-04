@@ -1,10 +1,10 @@
-# Contributing to cerulio-cli
+# Contributing to portolan-cli
 
-Thank you for your interest in contributing to cerulio-cli! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to portolan-cli! This document provides guidelines and instructions for contributing.
 
 ## Development Setup
 
-TODO: port this over from gpio, make sure everything is accurate for cerulio-cli
+TODO: port this over from gpio, make sure everything is accurate for portolan-cli
 
 
 ## Making Changes
@@ -172,7 +172,7 @@ def sample_geoparquet():
 
 (For maintainers only)
 
-1. Update version in `pyproject.toml` and `cerulio-cli/cli/main.py`
+1. Update version in `pyproject.toml` and `portolan-cli/cli/main.py`
 2. Update `CHANGELOG.md` with release notes
 3. Create and push a git tag: `git tag v0.x.0 && git push origin v0.x.0`
 4. GitHub Actions will automatically build and publish to PyPI

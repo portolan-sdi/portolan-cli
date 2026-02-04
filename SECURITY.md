@@ -11,7 +11,7 @@ We release patches for security vulnerabilities for the following versions:
 
 ## Reporting a Vulnerability
 
-We take the security of cerulio-cli seriously. If you believe you have found a security vulnerability, please report it to us as described below.
+We take the security of portolan-cli seriously. If you believe you have found a security vulnerability, please report it to us as described below.
 
 ### Please do NOT:
 
@@ -21,7 +21,7 @@ We take the security of cerulio-cli seriously. If you believe you have found a s
 ### Please DO:
 
 1. **Report via GitHub Security Advisories** (preferred):
-   - Go to the [Security tab](https://github.com/cerulio/cerulio-cli/security/advisories)
+   - Go to the [Security tab](https://github.com/portolan/portolan-cli/security/advisories)
    - Click "Report a vulnerability"
    - Fill in the details
 
@@ -48,11 +48,11 @@ We take the security of cerulio-cli seriously. If you believe you have found a s
 
 ## Security Best Practices for Users
 
-When using cerulio-cli:
+When using portolan-cli:
 
 1. **Keep Dependencies Updated**
    - Regularly update to the latest version
-   - Run `uv sync` or `pip install --upgrade cerulio-cli`
+   - Run `uv sync` or `pip install --upgrade portolan-cli`
    - Monitor security advisories
 
 2. **Input Validation**
@@ -113,4 +113,4 @@ If you have questions about security that are not vulnerabilities, please:
 - Use GitHub Discussions
 - Contact maintainers via email
 
-Thank you for helping keep cerulio-cli and its users safe!
+Thank you for helping keep portolan-cli and its users safe!
