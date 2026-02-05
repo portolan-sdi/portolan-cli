@@ -8,7 +8,11 @@ hide:
 
 **Cloud-native geospatial data catalogs, simplified**
 
-A CLI for publishing and managing **cloud-native geospatial data catalogs**. Portolan orchestrates format conversion (GeoParquet, COG), versioning, and sync to object storage—no running servers, just static files.
+Portolan enables organizations to share geospatial data in a low-cost, accessible, sovereign, and reliable way. Built on [cloud-native geospatial](https://cloudnativegeo.org) formats, a Portolan catalog is as interactive as any geospatial portal—but faster, more scalable, and much cheaper to run.
+
+**Cost examples:** A small government's vector data costs a few dollars a month. Even full imagery and point clouds typically stay under $50/month.
+
+This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich STAC metadata, and syncs to any object storage—no servers required.
 
 [Get Started](#installation){ .md-button .md-button--primary }
 [View on GitHub](https://github.com/portolan-sdi/portolan-cli){ .md-button }
