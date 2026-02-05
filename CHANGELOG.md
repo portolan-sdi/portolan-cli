@@ -1,3 +1,9 @@
+## v0.2.0 (2026-02-05)
+
+### Feat
+
+- **cli**: add `portolan init` command (#20)
+
 ## v0.1.3 (2026-02-05)
 
 ### Fix
