@@ -176,7 +176,7 @@ portolan user add analyst
 portolan access grant analyst acme/*
 ```
 
-**See also:** [ADR-0006 (Remote Ownership Model)](context/shared/adr/0006-remote-ownership-model.md) — explains why multi-user collaboration is complex under the current ownership model.
+**See also:** [ADR-0006 (Remote Ownership Model)](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0006-remote-ownership-model.md) — explains why multi-user collaboration is complex under the current ownership model.
 
 ---
 
