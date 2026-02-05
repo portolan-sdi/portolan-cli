@@ -256,6 +256,18 @@ error("No geometry column (required)")     # ✗ Red X
 detail("Processing chunk 3/10...")         # Dimmed text
 ```
 
+## Design Principles
+
+When building Portolan, follow these principles:
+
+- **Don't duplicate.** Portolan orchestrates; geoparquet-io, rio-cogeo, and other libraries do the actual work. Never reimplement functionality that exists in a dependency.
+- **YAGNI.** Minimal dependencies, minimal architecture. Don't build plugin discovery until someone writes a plugin. Don't add commands until someone needs them. Code is cheap to write; complexity is expensive to maintain.
+- **Interactive by default, automatable always.** Every interactive prompt has a `--auto` fallback with smart defaults.
+- **versions.json is the source of truth.** It drives sync, validation, and version history. See ADR-0005.
+- **Plugin interface defined early, plugin system built later.** Internal format handlers follow a consistent interface so external plugins can register when needed. See ADR-0003.
+- **Spec versioning from the start.** Catalogs declare which spec version they target; validators respect this.
+- **CLI wraps the API.** All logic lives in the Python library. The CLI is a thin layer of Click decorators. See ADR-0007.
+
 ## Tool Usage
 
 | Tool | Purpose | Documentation |
