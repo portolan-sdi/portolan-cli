@@ -12,6 +12,11 @@ Portolan is a CLI for publishing and managing **cloud-native geospatial data cat
 
 Portolan doesn't do the heavy lifting—it orchestrates libraries like `geoparquet-io` and `rio-cogeo`.
 
+**Key dependencies (check these repos for API docs):**
+- [geoparquet-io](https://github.com/geoparquet/geoparquet-io) — Vector format conversion
+- [gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles) — PMTiles generation from GeoParquet
+- [rio-cogeo](https://github.com/cogeotiff/rio-cogeo) — Raster conversion to COG
+
 ## Guiding Principle
 
 AI agents will write most of the code. Human review does not scale to match AI output volume. Therefore: every quality gate must be automated, every convention must be enforceable, and tests must be verified to actually test something.
@@ -20,7 +25,9 @@ AI agents will write most of the code. Human review does not scale to match AI o
 
 | Resource | Location |
 |----------|----------|
+| **Roadmap** | `ROADMAP.md` |
 | Contributing guide | `docs/contributing.md` |
+| Architecture | `context/architecture.md` |
 | CI/CD documentation | `context/shared/documentation/ci.md` |
 | Distill MCP tools | `context/shared/documentation/distill-mcp.md` |
 | ADRs | `context/shared/adr/` |

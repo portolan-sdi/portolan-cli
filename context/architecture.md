@@ -10,8 +10,9 @@ Portolan CLI is one component in a broader ecosystem. Each component has a clear
 
 | Component | Responsibility | Status |
 |---|---|---|
-| **geoparquet-io** | Vector format conversion, inspection, partitioning, sorting | Existing |
-| **rio-cogeo** | Raster conversion to Cloud-Optimized GeoTIFF | Existing |
+| **[geoparquet-io](https://github.com/geoparquet/geoparquet-io)** | Vector format conversion, inspection, partitioning, sorting | Existing |
+| **[gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles)** | PMTiles generation from GeoParquet | Existing |
+| **[rio-cogeo](https://github.com/cogeotiff/rio-cogeo)** | Raster conversion to Cloud-Optimized GeoTIFF | Existing |
 | **portolan-cli** | Catalog orchestration, metadata, versioning, validation, sync | This project |
 | **QGIS plugin** | Browse and pull data from Portolan catalogs into local GIS | Later |
 | **Browser/Map UI** | Web-based catalog browsing and visualization | Later |
@@ -28,8 +29,9 @@ Portolan CLI does not implement format conversion itself. It calls geoparquet-io
 - **click** — CLI framework
 - **pystac** — STAC catalog generation
 - **obstore** — Cloud storage abstraction (S3, GCS, Azure, local)
-- **geoparquet-io** — Vector format conversion and inspection
-- **rio-cogeo** — Raster conversion to COG
+- **[geoparquet-io](https://github.com/geoparquet/geoparquet-io)** — Vector format conversion and inspection
+- **[gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles)** — PMTiles generation from GeoParquet
+- **[rio-cogeo](https://github.com/cogeotiff/rio-cogeo)** — Raster conversion to COG
 
 ### Plugins (separate packages, entry point registration)
 
