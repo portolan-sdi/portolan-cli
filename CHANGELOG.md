@@ -1,3 +1,9 @@
+## v0.1.3 (2026-02-05)
+
+### Fix
+
+- **docs**: use absolute GitHub URL for ADR link in roadmap
+
 ## v0.1.2 (2026-02-04)
 
 ### Fix
