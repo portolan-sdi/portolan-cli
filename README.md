@@ -1,6 +1,23 @@
-# Portolan CLI
+<div align="center">
+  <img src="docs/assets/images/logo.svg" alt="Portolan Logo" width="200"/>
+  <h1>Portolan CLI</h1>
+  <p><strong>Cloud-native geospatial data catalogs, simplified</strong></p>
+</div>
+
+---
 
 A CLI for publishing and managing **cloud-native geospatial data catalogs**. Portolan orchestrates format conversion (GeoParquet, COG), versioning, and sync to object storage—no running servers, just static files.
+
+## Why Portolan?
+
+| Benefit | How |
+|---------|-----|
+| **Scalable** | Cloud object storage that scales to petabytes |
+| **Open** | 100% open source, open formats (GeoParquet, COG, STAC, Iceberg) |
+| **AI-Ready** | STAC metadata enables semantic search and LLM integration |
+| **Cheap** | Pay only for storage + egress — no servers to run |
+| **Sovereign** | Host anywhere (AWS, GCS, Azure, MinIO, Cloudflare R2) |
+| **Breaks the GIS silo** | Query with DuckDB, Snowflake, BigQuery, Databricks, Pandas — not just GIS tools |
 
 ## What It Does
 

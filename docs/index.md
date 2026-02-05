@@ -15,6 +15,50 @@ A CLI for publishing and managing **cloud-native geospatial data catalogs**. Por
 
 ---
 
+## Why Portolan?
+
+<div class="grid cards" markdown>
+
+- :material-arrow-expand-all:{ .lg .middle } **Scalable**
+
+    ---
+
+    Cloud object storage that scales to petabytes
+
+- :material-open-source-initiative:{ .lg .middle } **Open**
+
+    ---
+
+    100% open source, open formats (GeoParquet, COG, STAC, Iceberg)
+
+- :material-robot:{ .lg .middle } **AI-Ready**
+
+    ---
+
+    STAC metadata enables semantic search and LLM integration
+
+- :material-currency-usd-off:{ .lg .middle } **Cheap**
+
+    ---
+
+    Pay only for storage + egress — no servers to run
+
+- :material-flag:{ .lg .middle } **Sovereign**
+
+    ---
+
+    Host anywhere (AWS, GCS, Azure, MinIO, Cloudflare R2)
+
+- :material-table-large:{ .lg .middle } **Breaks the GIS silo**
+
+    ---
+
+    Query with DuckDB, Snowflake, BigQuery, Databricks, Pandas — not just GIS tools
+
+</div>
+
+---
+
 ## What It Does
 
 <div class="grid cards" markdown>

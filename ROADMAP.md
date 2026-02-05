@@ -143,13 +143,96 @@ Subset global datasets to bootstrap local catalogs.
 
 ---
 
+## TBD: Access Control & Visibility
+
+Multi-tenant access control for teams sharing a Portolan catalog. Timing and scope to be determined.
+
+### Potential Capabilities
+
+| Capability | Description |
+|------------|-------------|
+| Visibility metadata | Mark datasets as `public` or `private` with optional tenant assignment |
+| User management | Create/list/remove users with credentials |
+| Access policies | Grant/revoke user access to specific dataset paths |
+| Policy enforcement | Integration with storage IAM (MinIO, S3, GCS) |
+
+### Open Questions
+
+- **Where does auth live?** Portolan is "static files only" — user management likely requires a sidecar service or delegation to storage provider IAM
+- **MinIO vs generic?** MinIO has rich policy APIs; S3/GCS use IAM. Do we abstract or specialize?
+- **Scope boundary:** Portolan may just *tag* visibility; enforcement happens at the storage layer
+
+### Example Workflow (Conceptual)
+
+```bash
+# Add a public dataset
+portolan dataset add satellite.parquet --visibility public
+
+# Add a private dataset for a tenant
+portolan dataset add confidential.parquet --visibility private --tenant acme
+
+# User management (if Portolan handles it)
+portolan user add analyst
+portolan access grant analyst acme/*
+```
+
+**See also:** [ADR-0006 (Remote Ownership Model)](context/shared/adr/0006-remote-ownership-model.md) — explains why multi-user collaboration is complex under the current ownership model.
+
+---
+
+## TBD: Data Consumption & SQL Engines
+
+Documentation and tooling for consuming Portolan catalogs from analytics engines. Timing to be determined.
+
+### Potential Capabilities
+
+| Capability | Description |
+|------------|-------------|
+| Consumption guides | How to query Portolan catalogs from popular engines |
+| Connection snippets | Copy-paste connection strings for each engine |
+| `portolan connect` | Generate connection config for a specific engine |
+
+### Target Engines
+
+| Engine | Protocol | Notes |
+|--------|----------|-------|
+| **DuckDB** | S3/HTTP | Native GeoParquet support |
+| **Snowflake** | External tables | Via stage or external access |
+| **BigQuery** | BigLake / external tables | GCS-native |
+| **Databricks** | Unity Catalog / S3 | Delta Lake interop via Iceberg |
+| **Trino/Presto** | Hive connector | S3-backed |
+| **Oracle** | External tables | Via object storage |
+| **Pandas/GeoPandas** | obstore / fsspec | Direct Python access |
+
+### Example: DuckDB
+
+```sql
+-- Configure S3 access
+SET s3_endpoint = 'storage.example.com';
+SET s3_access_key_id = 'analyst';
+SET s3_secret_access_key = '...';
+SET s3_use_ssl = true;
+
+-- Query a Portolan dataset directly
+SELECT * FROM 's3://catalog/public/census/census.parquet';
+
+-- Or with spatial filtering
+SELECT * FROM 's3://catalog/public/census/census.parquet'
+WHERE ST_Within(geometry, ST_GeomFromText('POLYGON((...))'));
+```
+
+### Why This Matters
+
+Portolan's value is "publish once, consume anywhere." Without consumption docs, users publish data but don't know how to use it. This closes the loop.
+
+---
+
 ## Out of Scope for v1.0
 
 | Item | Reason |
 |------|--------|
 | 3D Tiles | Niche; can be community-contributed later |
 | Browser/Map UI | May be unnecessary with agentic workflows; revisit post-v1 |
-| Multi-user collaboration | Different problem; Portolan owns the bucket |
 
 ---
 
@@ -161,6 +244,8 @@ Subset global datasets to bootstrap local catalogs.
 | **Parallel** | Iceberg Plugin (Javier) | Alongside Phase 1 |
 | **Phase 2** | QGIS Plugin | After Phase 1 |
 | **Phase 3** | Global Bootstrapper | After Phase 1 |
+| **TBD** | Access Control & Visibility | To be scoped |
+| **TBD** | Data Consumption & SQL Engines | To be scoped |
 
 ---
 

@@ -105,6 +105,8 @@ Portolan owns the bucket contents. Users configure access; Portolan manages ever
 - `portolan check --remote` — detect drift (files added, deleted, or modified outside Portolan)
 - `portolan repair` — re-sync remote from local truth
 
+**Future:** Multi-tenant access control and visibility are planned but not yet scoped. See [Roadmap: Access Control & Visibility](../ROADMAP.md#tbd-access-control--visibility).
+
 ## Versioning
 
 `versions.json` is the single source of truth for version history, sync state, and integrity checksums. See **ADR-0005** for the full design.
@@ -147,6 +149,17 @@ portolan init
 portolan dataset add census.parquet --title "Census 2022" --auto
 portolan sync
 ```
+
+## Data Consumption
+
+Portolan publishes catalogs; consuming them is up to the user's toolchain. GeoParquet and COG are designed for direct access from analytics engines.
+
+**Supported patterns:**
+- **SQL engines** — DuckDB, Snowflake, BigQuery, Databricks, Trino query GeoParquet directly via S3/GCS
+- **Python** — Pandas, GeoPandas, or any library with fsspec/obstore support
+- **GIS tools** — QGIS, ArcGIS load COG and GeoParquet natively
+
+**Future:** Consumption guides and connection generators are planned. See [Roadmap: Data Consumption & SQL Engines](../ROADMAP.md#tbd-data-consumption--sql-engines).
 
 ## AI Integration
 
