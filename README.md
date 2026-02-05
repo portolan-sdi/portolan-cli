@@ -1,7 +1,5 @@
 <div align="center">
-  <img src="docs/assets/images/logo.svg" alt="Portolan Logo" width="200"/>
-  <h1>Portolan CLI</h1>
-  <p><strong>Cloud-native geospatial data catalogs, simplified</strong></p>
+  <img src="docs/assets/images/cover.png" alt="Portolan" width="600"/>
 </div>
 
 ---
