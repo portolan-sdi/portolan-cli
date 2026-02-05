@@ -1,0 +1,192 @@
+/* Portolan Brand Colors */
+:root {
+  /* Brand palette */
+  --portolan-bg: #eaedf9;
+  --portolan-dark-text: #202a4f;
+  --portolan-slogan: #343e63;
+  --portolan-primary: #4163cc;
+  --portolan-gradient-start: #395eca;
+  --portolan-gradient-end: #848bd8;
+
+  /* Material theme overrides - Light mode */
+  --md-primary-fg-color: #4163cc;
+  --md-primary-fg-color--light: #5c7ee0;
+  --md-primary-fg-color--dark: #2e4dad;
+  --md-accent-fg-color: #395eca;
+  --md-accent-fg-color--transparent: rgba(57, 94, 202, 0.1);
+
+  /* Header background */
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: rgba(255, 255, 255, 0.7);
+
+  /* Typography */
+  --md-text-color: #202a4f;
+}
+
+/* Dark mode */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #5c7ee0;
+  --md-primary-fg-color--light: #7a95f0;
+  --md-primary-fg-color--dark: #4163cc;
+  --md-accent-fg-color: #848bd8;
+  --md-accent-fg-color--transparent: rgba(132, 139, 216, 0.1);
+
+  /* Darker header for slate */
+  --md-primary-bg-color: #1e1e2e;
+  --md-primary-bg-color--light: rgba(30, 30, 46, 0.7);
+}
+
+/* Header styling */
+.md-header {
+  background: linear-gradient(135deg, var(--portolan-gradient-start), var(--portolan-gradient-end));
+}
+
+.md-header[data-md-state="shadow"] {
+  box-shadow: 0 0 0.4rem rgba(0, 0, 0, 0.1);
+}
+
+/* Header text/icons are white on gradient */
+.md-header__title,
+.md-header__button,
+.md-header-nav__button {
+  color: white;
+}
+
+/* Logo styling */
+.md-header__button.md-logo {
+  padding: 0;
+  margin: 0.2rem;
+}
+
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 1.2rem;
+  width: auto;
+}
+
+/* Tabs styling (navigation tabs) */
+.md-tabs {
+  background: linear-gradient(135deg, var(--portolan-gradient-start), var(--portolan-gradient-end));
+}
+
+.md-tabs__link {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.md-tabs__link:hover,
+.md-tabs__link--active {
+  color: white;
+}
+
+/* Search bar on header */
+.md-search__form {
+  background-color: rgba(255, 255, 255, 0.15);
+}
+
+.md-search__form:hover {
+  background-color: rgba(255, 255, 255, 0.25);
+}
+
+.md-search__input::placeholder {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.md-search__input {
+  color: white;
+}
+
+/* H1 gradient text effect */
+.md-typeset h1 {
+  background: linear-gradient(90deg, var(--portolan-gradient-start), var(--portolan-gradient-end));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 600;
+}
+
+/* Hero section styling for landing page */
+.md-typeset h1 + p > strong:first-child {
+  font-size: 1.2rem;
+  color: var(--portolan-slogan);
+}
+
+/* Button styling */
+.md-typeset .md-button {
+  border-radius: 0.4rem;
+  font-weight: 500;
+  padding: 0.6rem 1.2rem;
+  margin: 0.25rem;
+}
+
+.md-typeset .md-button--primary {
+  background: linear-gradient(135deg, var(--portolan-gradient-start), var(--portolan-gradient-end));
+  border: none;
+  color: white;
+}
+
+.md-typeset .md-button--primary:hover {
+  background: linear-gradient(135deg, var(--portolan-gradient-end), var(--portolan-gradient-start));
+  box-shadow: 0 4px 12px rgba(57, 94, 202, 0.3);
+}
+
+.md-typeset .md-button:not(.md-button--primary) {
+  border: 2px solid var(--portolan-primary);
+  color: var(--portolan-primary);
+}
+
+.md-typeset .md-button:not(.md-button--primary):hover {
+  background: var(--portolan-primary);
+  color: white;
+}
+
+/* Card grid styling */
+.md-typeset .grid.cards > ul > li,
+.md-typeset .grid.cards > ol > li,
+.md-typeset .grid > .card {
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.4rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.md-typeset .grid.cards > ul > li:hover,
+.md-typeset .grid.cards > ol > li:hover,
+.md-typeset .grid > .card:hover {
+  border-color: var(--portolan-primary);
+  box-shadow: 0 4px 12px rgba(57, 94, 202, 0.15);
+}
+
+/* Icon styling in cards */
+.md-typeset .grid.cards .lg {
+  font-size: 2rem;
+  color: var(--portolan-primary);
+}
+
+/* Code block styling */
+.md-typeset code {
+  border-radius: 0.2em;
+}
+
+/* Admonition accent colors */
+.md-typeset .admonition.tip,
+.md-typeset details.tip {
+  border-color: var(--portolan-primary);
+}
+
+.md-typeset .tip > .admonition-title,
+.md-typeset .tip > summary {
+  background-color: var(--md-accent-fg-color--transparent);
+}
+
+/* Footer styling */
+.md-footer {
+  background: var(--portolan-dark-text);
+}
+
+/* Links */
+.md-typeset a {
+  color: var(--portolan-primary);
+}
+
+.md-typeset a:hover {
+  color: var(--portolan-gradient-end);
+}

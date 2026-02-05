@@ -1,44 +1,74 @@
+---
+hide:
+  - navigation
+  - toc
+---
+
 # Portolan CLI
+
+**Cloud-native geospatial data catalogs, simplified**
 
 A CLI for publishing and managing **cloud-native geospatial data catalogs**. Portolan orchestrates format conversion (GeoParquet, COG), versioning, and sync to object storage—no running servers, just static files.
 
+[Get Started](#installation){ .md-button .md-button--primary }
+[View on GitHub](https://github.com/portolan-sdi/portolan-cli){ .md-button }
+
+---
+
 ## What It Does
 
-- **Convert** vector/raster data to cloud-native formats (GeoParquet, COG)
-- **Generate** STAC catalogs with rich metadata, thumbnails, and MapLibre styles
-- **Version** datasets with checksums and history tracking
-- **Sync** to S3, GCS, Azure, or any S3-compatible storage
+<div class="grid cards" markdown>
+
+- :material-file-replace-outline:{ .lg .middle } **Convert**
+
+    ---
+
+    Transform vector and raster data to cloud-native formats (GeoParquet, COG)
+
+- :material-map-outline:{ .lg .middle } **Catalog**
+
+    ---
+
+    Generate STAC catalogs with rich metadata, thumbnails, and MapLibre styles
+
+- :material-history:{ .lg .middle } **Version**
+
+    ---
+
+    Track datasets with checksums and full history
+
+- :material-cloud-sync-outline:{ .lg .middle } **Sync**
+
+    ---
+
+    Push to S3, GCS, Azure, or any S3-compatible storage
+
+</div>
 
 ## Installation
 
-### Recommended: pipx (for global use)
+### Recommended: pipx
 
-We recommend installing Portolan CLI with [pipx](https://pipx.pypa.io/), which installs the tool in an isolated environment while making the `portolan` command globally available:
+Install with [pipx](https://pipx.pypa.io/) for an isolated global install:
 
 ```bash
 pipx install portolan-cli
 ```
 
 !!! tip "Installing pipx"
-    If you don't have pipx installed:
     ```bash
     python3 -m pip install --user pipx
     python3 -m pipx ensurepath
     ```
-
-    After installation, restart your terminal or run the path command shown by pipx.
+    Restart your terminal after installation.
 
 ### Alternative: pip
-
-You can also install with pip, though this may conflict with other packages:
 
 ```bash
 pip install portolan-cli
 ```
 
 ### For Development
-
-If you're contributing to Portolan CLI, use [uv](https://github.com/astral-sh/uv) for local development:
 
 ```bash
 git clone https://github.com/portolan-sdi/portolan-cli.git
@@ -47,40 +77,50 @@ uv sync --all-extras
 uv run portolan --help
 ```
 
-See the [Contributing Guide](contributing.md) for full development setup.
+See the [Contributing Guide](contributing.md) for full setup.
 
 ## Quick Start
 
-Initialize a new catalog:
-
 ```bash
+# Initialize a catalog
 portolan init
-```
 
-Add a dataset:
-
-```bash
+# Add a dataset
 portolan dataset add census.parquet --title "Census 2022" --auto
-```
 
-Configure a remote:
-
-```bash
+# Configure remote storage
 portolan remote add prod s3://my-bucket/catalog
-```
 
-Sync to remote:
-
-```bash
+# Sync to remote
 portolan sync
 ```
 
 ## Next Steps
 
-- Read the [Roadmap](roadmap.md) to see planned features
-- Check out the [Contributing Guide](contributing.md) to get involved
-- View the [Changelog](changelog.md) for release history
+<div class="grid cards" markdown>
 
-## License
+- :material-road-variant:{ .lg .middle } **[Roadmap](roadmap.md)**
 
-Apache 2.0 — see [LICENSE](https://github.com/portolan-sdi/portolan-cli/blob/main/LICENSE)
+    ---
+
+    See planned features and the development timeline
+
+- :material-account-group:{ .lg .middle } **[Contributing](contributing.md)**
+
+    ---
+
+    Learn how to get involved in development
+
+- :material-text-box-outline:{ .lg .middle } **[Changelog](changelog.md)**
+
+    ---
+
+    View the release history
+
+</div>
+
+---
+
+<small>
+**License**: Apache 2.0 — [View on GitHub](https://github.com/portolan-sdi/portolan-cli/blob/main/LICENSE)
+</small>

@@ -8,24 +8,38 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  logo: assets/images/icon-white.svg
+  favicon: assets/images/logo.png
   palette:
     - scheme: default
-      primary: light-blue
-      accent: light-blue  
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to dark mode
     - scheme: slate
-      primary: light-blue
-      accent: light-blue
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to light mode
   features:
     - navigation.top
+    - navigation.tabs
+    - navigation.sections
     - search.suggest
     - search.highlight
     - content.code.copy
+    - content.code.annotate
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/portolan/portolan-cli
+      name: Portolan CLI on GitHub
 
 plugins:
   - search
@@ -43,6 +57,8 @@ plugins:
 
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
@@ -50,6 +66,9 @@ markdown_extensions:
   - pymdownx.snippets:
       base_path: docs
       check_paths: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - tables
   - toc:
       permalink: true
@@ -59,3 +78,6 @@ nav:
   - Roadmap: roadmap.md
   - Contributing: contributing.md
   - Changelog: changelog.md
+
+not_in_nav: |
+  /BRANDING.md

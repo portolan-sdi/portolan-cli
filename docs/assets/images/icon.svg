@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="portolan-gradient" gradientTransform="rotate(25)" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#395ECA"/>
+      <stop offset="100%" stop-color="#848BD8"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#portolan-gradient)">
+    <path d="M2.83 18.247l26.34-9.124L2.83 0zM29.17 32V13.753L2.83 22.877z"/>
+  </g>
+</svg>
