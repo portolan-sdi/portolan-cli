@@ -46,6 +46,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0005](context/shared/adr/0005-versions-json-source-of-truth.md) | versions.json as single source of truth |
 | [0006](context/shared/adr/0006-remote-ownership-model.md) | Portolan owns bucket contents (no external edits) |
 | [0007](context/shared/adr/0007-cli-wraps-api.md) | CLI wraps Python API (all logic in library layer) |
+| [0008](context/shared/adr/0008-pipx-for-installation.md) | pipx for global installation, uv for development |
 
 ## Common Commands
 

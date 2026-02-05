@@ -20,15 +20,40 @@ portolan sync
 
 ## Installation
 
+### Recommended: pipx (for global use)
+
+```bash
+pipx install portolan-cli
+```
+
+This installs `portolan` in an isolated environment while making the command globally available.
+
+If you don't have pipx installed:
+```bash
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+```
+
+### Alternative: pip
+
 ```bash
 pip install portolan-cli
 ```
 
-Or with uv:
+**Note:** This installs into your global or user site-packages and may conflict with other packages.
+
+### For Development
+
+Use [uv](https://github.com/astral-sh/uv) for local development:
 
 ```bash
-uv add portolan-cli
+git clone https://github.com/portolan-sdi/portolan-cli.git
+cd portolan-cli
+uv sync --all-extras
+uv run portolan --help
 ```
+
+See [Contributing Guide](docs/contributing.md) for full development setup.
 
 ## Documentation
 
