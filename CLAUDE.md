@@ -1,5 +1,17 @@
 # Portolan CLI - Development Guide
 
+## What is Portolan?
+
+Portolan is a CLI for publishing and managing **cloud-native geospatial data catalogs**. It orchestrates format conversion (GeoParquet, COG), versioning, and sync to object storage (S3, GCS, Azure)—no running servers, just static files.
+
+**Key concepts:**
+- **STAC** (SpatioTemporal Asset Catalog) — The catalog metadata format
+- **GeoParquet** — Cloud-optimized vector data (columnar, spatial indexing)
+- **COG** (Cloud-Optimized GeoTIFF) — Cloud-optimized raster data (HTTP range requests)
+- **versions.json** — Single source of truth for version history, sync state, and checksums
+
+Portolan doesn't do the heavy lifting—it orchestrates libraries like `geoparquet-io` and `rio-cogeo`.
+
 ## Guiding Principle
 
 AI agents will write most of the code. Human review does not scale to match AI output volume. Therefore: every quality gate must be automated, every convention must be enforceable, and tests must be verified to actually test something.
@@ -15,6 +27,18 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | Plans & research | `context/shared/` |
 
 **Target Python version:** 3.10+ (matches geoparquet-io dependency)
+
+### ADR Index
+
+| ADR | Decision |
+|-----|----------|
+| [0001](context/shared/adr/0001-agentic-first-development.md) | Agentic-first: automate all quality gates, TDD mandatory |
+| [0002](context/shared/adr/0002-click-for-cli.md) | Click for CLI framework |
+| [0003](context/shared/adr/0003-plugin-architecture.md) | Plugin architecture for formats (GeoParquet/COG core, others optional) |
+| [0004](context/shared/adr/0004-iceberg-as-plugin.md) | Iceberg as plugin, STAC remains catalog layer |
+| [0005](context/shared/adr/0005-versions-json-source-of-truth.md) | versions.json as single source of truth |
+| [0006](context/shared/adr/0006-remote-ownership-model.md) | Portolan owns bucket contents (no external edits) |
+| [0007](context/shared/adr/0007-cli-wraps-api.md) | CLI wraps Python API (all logic in library layer) |
 
 ## Common Commands
 
@@ -125,11 +149,7 @@ Store small, representative data files in `tests/fixtures/`. Fixtures should be:
 
 ### Pre-commit Hooks
 
-Pre-commit blocks on ALL checks. Install with `uv run pre-commit install`.
-
-Hooks run: trailing-whitespace, end-of-file-fixer, check-yaml, check-toml, check-merge-conflict, mixed-line-ending, check-added-large-files, ruff (fix + format), vulture, xenon, mypy, fast unit tests, commitizen (commit-msg).
-
-If a hook fails, fix the issue before committing. No `--no-verify`.
+Install: `uv run pre-commit install`. All hooks block—no `--no-verify`. See `.pre-commit-config.yaml` for full list.
 
 ## Code Quality
 
@@ -202,13 +222,6 @@ Releases are automated via commitizen on push to main. See `.github/workflows/re
 | API contracts | Docstrings | All public functions/classes |
 | Gotchas/quirks | CLAUDE.md or inline | Anything that surprised you |
 
-### Why This Matters
-
-- **AI agents start fresh each session** — They don't remember past conversations
-- **Context files are their memory** — ADRs, known-issues, and CLAUDE.md persist knowledge
-- **Documentation compounds** — Each documented decision helps all future sessions
-- **Undocumented knowledge is lost** — If it's not written down, it doesn't exist for agents
-
 ### ADR Guidelines
 
 Create an ADR (`context/shared/adr/NNNN-title.md`) when:
@@ -222,25 +235,10 @@ Use the template at `context/shared/adr/0000-template.md`.
 
 ### Two Documentation Audiences
 
-| Audience | Location | Optimized For |
-|----------|----------|---------------|
-| **Humans** | `docs/` (mkdocs) | Readability, navigation, tutorials, visual presentation |
-| **AI agents** | Docstrings, CLAUDE.md, ADRs, inline comments | Context windows, searchability, co-location with code |
-
-**Human docs (`docs/`):**
-- Rendered website via mkdocs
-- Prose-heavy with examples and screenshots
-- Organized by user journey (getting started → advanced topics)
-- Can be verbose — humans skim and navigate
-
-**AI docs (in-repo):**
-- Docstrings: Complete API contracts (args, returns, raises, examples)
-- CLAUDE.md: Development patterns, commands, gotchas
-- ADRs: Decision rationale with alternatives considered
-- Inline comments: Non-obvious code behavior
-- Dense and structured (tables, bullet lists) — agents parse linearly
-
-**Key difference:** Human docs explain *how to use* the tool. AI docs explain *how to modify* the codebase.
+| Audience | Location | Purpose |
+|----------|----------|---------|
+| **Humans** | `docs/` (mkdocs) | *How to use* — tutorials, visual guides |
+| **AI agents** | Docstrings, CLAUDE.md, ADRs | *How to modify* — dense, structured, co-located with code |
 
 ## Standardized Terminal Output
 
@@ -258,15 +256,14 @@ detail("Processing chunk 3/10...")         # Dimmed text
 
 ## Design Principles
 
-When building Portolan, follow these principles:
-
-- **Don't duplicate.** Portolan orchestrates; geoparquet-io, rio-cogeo, and other libraries do the actual work. Never reimplement functionality that exists in a dependency.
-- **YAGNI.** Minimal dependencies, minimal architecture. Don't build plugin discovery until someone writes a plugin. Don't add commands until someone needs them. Code is cheap to write; complexity is expensive to maintain.
-- **Interactive by default, automatable always.** Every interactive prompt has a `--auto` fallback with smart defaults.
-- **versions.json is the source of truth.** It drives sync, validation, and version history. See ADR-0005.
-- **Plugin interface defined early, plugin system built later.** Internal format handlers follow a consistent interface so external plugins can register when needed. See ADR-0003.
-- **Spec versioning from the start.** Catalogs declare which spec version they target; validators respect this.
-- **CLI wraps the API.** All logic lives in the Python library. The CLI is a thin layer of Click decorators. See ADR-0007.
+| Principle | Meaning | ADR |
+|-----------|---------|-----|
+| **Don't duplicate** | Orchestrate libraries (geoparquet-io, rio-cogeo), never reimplement | — |
+| **YAGNI** | No speculative features; complexity is expensive | — |
+| **Interactive + automatable** | Every prompt has `--auto` fallback | — |
+| **versions.json is truth** | Drives sync, validation, history | [ADR-0005](context/shared/adr/0005-versions-json-source-of-truth.md) |
+| **Plugin interface early** | Handlers follow consistent interface for future plugins | [ADR-0003](context/shared/adr/0003-plugin-architecture.md) |
+| **CLI wraps API** | All logic in library; CLI is thin Click layer | [ADR-0007](context/shared/adr/0007-cli-wraps-api.md) |
 
 ## Tool Usage
 
