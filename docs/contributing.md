@@ -164,7 +164,7 @@ We use AI assistants (Claude Code, etc.) extensively for development. If you do 
 |------|---------|---------|
 | [Context7](https://context7.io) | Up-to-date library docs via MCP | MCP server config |
 | [Gitingest](https://github.com/cyclotruc/gitingest) | Source code exploration | `pipx install gitingest` |
-| [Distill](context/shared/documentation/distill-mcp.md) | Token compression for large outputs | MCP server config |
+| Distill | Token compression for large outputs | MCP server config |
 
 These are **entirely optional**—the project works fine without them. We document our AI workflows in `CLAUDE.md` and `.github/CONTEXT_GUIDE.md` for those who want to use similar approaches.
 
