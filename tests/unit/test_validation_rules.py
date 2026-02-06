@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from portolan_cli.validation.results import Severity, ValidationResult
-from portolan_cli.validation.rules import ValidationRule
+from portolan_cli.validation.rules import CatalogExistsRule, ValidationRule
 
 
 class TestValidationRule:
@@ -133,3 +133,55 @@ class TestValidationRule:
         """ValidationRule.check() must be implemented by subclasses."""
         with pytest.raises(TypeError, match="abstract"):
             ValidationRule()  # type: ignore[abstract]
+
+
+class TestCatalogExistsRule:
+    """Tests for CatalogExistsRule."""
+
+    @pytest.mark.unit
+    def test_passes_when_portolan_dir_exists(self, tmp_path: Path) -> None:
+        """Rule passes when .portolan directory exists."""
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+
+        rule = CatalogExistsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+        assert "exists" in result.message.lower()
+
+    @pytest.mark.unit
+    def test_fails_when_portolan_dir_missing(self, tmp_path: Path) -> None:
+        """Rule fails when .portolan directory is missing."""
+        rule = CatalogExistsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert ".portolan" in result.message
+
+    @pytest.mark.unit
+    def test_has_error_severity(self) -> None:
+        """Missing catalog is an ERROR (blocking)."""
+        rule = CatalogExistsRule()
+        assert rule.severity == Severity.ERROR
+
+    @pytest.mark.unit
+    def test_provides_fix_hint_on_failure(self, tmp_path: Path) -> None:
+        """Failure includes hint to run 'portolan init'."""
+        rule = CatalogExistsRule()
+        result = rule.check(tmp_path)
+
+        assert result.fix_hint is not None
+        assert "init" in result.fix_hint.lower()
+
+    @pytest.mark.unit
+    def test_fails_when_portolan_is_file_not_dir(self, tmp_path: Path) -> None:
+        """Rule fails when .portolan exists but is a file, not directory."""
+        portolan_file = tmp_path / ".portolan"
+        portolan_file.write_text("not a directory")
+
+        rule = CatalogExistsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "directory" in result.message.lower()

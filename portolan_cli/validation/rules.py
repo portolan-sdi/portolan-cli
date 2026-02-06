@@ -60,3 +60,33 @@ class ValidationRule(ABC):
             message=message,
             fix_hint=fix_hint,
         )
+
+
+class CatalogExistsRule(ValidationRule):
+    """Check that .portolan directory exists.
+
+    This is the most fundamental check - without the catalog directory,
+    no other validation can proceed.
+    """
+
+    name = "catalog_exists"
+    severity = Severity.ERROR
+    description = "Verify .portolan directory exists"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Check for .portolan directory."""
+        portolan_dir = catalog_path / ".portolan"
+
+        if not portolan_dir.exists():
+            return self._fail(
+                f"Catalog not found: {portolan_dir} does not exist",
+                fix_hint="Run 'portolan init' to create a catalog",
+            )
+
+        if not portolan_dir.is_dir():
+            return self._fail(
+                f"Invalid catalog: {portolan_dir} exists but is not a directory",
+                fix_hint="Remove the file and run 'portolan init'",
+            )
+
+        return self._pass(f"Catalog directory exists: {portolan_dir}")
