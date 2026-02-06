@@ -59,9 +59,9 @@ jobs:
           KILL_RATE=$(echo "scale=2; $KILLED * 100 / $TESTABLE" | bc)
           echo "Mutation kill rate: $KILL_RATE% ($KILLED killed, $SURVIVED survived)"
 
-          # Fail if kill rate drops below 60%
-          # This threshold should increase as the codebase matures
-          MIN_KILL_RATE=60
+          # Fail if kill rate drops below 80%
+          # Industry standard for CI gating; allows ~15-20% equivalent mutants
+          MIN_KILL_RATE=80
           if [ $(echo "$KILL_RATE < $MIN_KILL_RATE" | bc) -eq 1 ]; then
             echo "::error::Mutation kill rate ($KILL_RATE%) is below threshold ($MIN_KILL_RATE%)"
             echo "Tests are not catching enough bugs. Review survived mutants."
