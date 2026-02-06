@@ -156,6 +156,20 @@ The version is determined by commitizen based on conventional commits since the 
 | `BREAKING CHANGE:` | Major (x.0.0) |
 | `docs:`, `refactor:`, `test:`, `chore:` | No release |
 
+## AI-Assisted Development (Optional)
+
+We use AI assistants (Claude Code, etc.) extensively for development. If you do too, here are tools we find helpful:
+
+| Tool | Purpose | Install |
+|------|---------|---------|
+| [Context7](https://context7.io) | Up-to-date library docs via MCP | MCP server config |
+| [Gitingest](https://github.com/cyclotruc/gitingest) | Source code exploration | `pipx install gitingest` |
+| [Distill](context/shared/documentation/distill-mcp.md) | Token compression for large outputs | MCP server config |
+
+These are **entirely optional**—the project works fine without them. We document our AI workflows in `CLAUDE.md` and `.github/CONTEXT_GUIDE.md` for those who want to use similar approaches.
+
+> **Note**: This space evolves rapidly. Use whatever tools work for you.
+
 ## Questions?
 
 - **Bug reports / feature requests:** Open an issue

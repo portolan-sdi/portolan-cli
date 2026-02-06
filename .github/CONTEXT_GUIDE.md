@@ -2,11 +2,13 @@
 
 This guide helps Claude quickly get context on the core Portolan dependencies.
 
-## ⚠️ Critical: geoparquet-io and rio-cogeo
+> **Note**: The tools referenced here (Context7, Gitingest, Distill) are optional but recommended. See the "Fallback Options" section if they're not available.
 
-These are **foundation libraries** that handle core data transformations. Claude MUST proactively check their source code implementation, not just API docs. Subtle bugs here can silently corrupt geospatial data.
+## ⚠️ Important: geoparquet-io and rio-cogeo
 
-**Rule**: When working with these libraries, always pair Context7 (API docs) with Gitingest (source code exploration).
+These are **foundation libraries** that handle core data transformations. Subtle bugs here can silently corrupt geospatial data, so checking source code implementation (not just API docs) is valuable when debugging or working with edge cases.
+
+**Recommended**: When working with these libraries, pair Context7 (API docs) with Gitingest (source code exploration) when available.
 
 ## Quick Links
 
@@ -112,6 +114,25 @@ gitingest https://github.com/cogeotiff/rio-cogeo
 
 # Step 3: Search for error handling + compress
 mcp__distill__auto_optimize(gitingest_output, hint="code")
+```
+
+## Fallback Options
+
+If the recommended tools aren't available:
+
+| Tool Missing | Alternative |
+|--------------|-------------|
+| **Context7** | Use official documentation websites directly |
+| **Gitingest** | Browse GitHub web UI, use `gh api`, or clone repos locally |
+| **Distill** | Work with smaller code sections; ask for specific files rather than entire repos |
+
+**Without gitingest**, you can still explore source code:
+```bash
+# Clone locally
+git clone --depth 1 https://github.com/geoparquet/geoparquet-io /tmp/geoparquet-io
+
+# Or fetch a specific file via gh
+gh api repos/geoparquet/geoparquet-io/contents/src/geoparquet_io/core.py --jq '.content' | base64 -d
 ```
 
 ## Files Referenced
