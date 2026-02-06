@@ -92,3 +92,19 @@ class TestCatalogInit:
 
         assert isinstance(result, Catalog)
         assert result.root == tmp_path
+
+    @pytest.mark.unit
+    def test_catalog_portolan_path_property(self, tmp_path: Path) -> None:
+        """Catalog.portolan_path returns path to .portolan directory."""
+        catalog = Catalog.init(tmp_path)
+
+        assert catalog.portolan_path == tmp_path / ".portolan"
+        assert catalog.portolan_path.exists()
+
+    @pytest.mark.unit
+    def test_catalog_catalog_file_property(self, tmp_path: Path) -> None:
+        """Catalog.catalog_file returns path to catalog.json."""
+        catalog = Catalog.init(tmp_path)
+
+        assert catalog.catalog_file == tmp_path / ".portolan" / "catalog.json"
+        assert catalog.catalog_file.exists()

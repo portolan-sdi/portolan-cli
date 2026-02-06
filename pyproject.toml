@@ -152,6 +152,10 @@ docstring-code-format = true
 python_version = "3.10"
 strict = true  # Enables all strict flags at once
 
+[[tool.mypy.overrides]]
+module = ["pyarrow.*", "rasterio.*"]
+ignore_missing_imports = true
+
 # ---------- security ----------
 
 [tool.bandit]
@@ -162,7 +166,8 @@ skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
 
 [tool.vulture]
 min_confidence = 80
-paths = ["portolan_cli", "tests"]
+paths = ["portolan_cli", "tests", "vulture_whitelist.py"]
+exclude = ["portolan_cli/validation/rules.py"]  # Abstract methods have unused params
 sort_by_size = true
 verbose = false
 

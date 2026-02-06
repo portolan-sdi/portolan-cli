@@ -107,7 +107,7 @@ Phase 1 is broken into incremental releases. Each builds on the previous—later
 |---------|-------|--------------|
 | **v0.2** | Catalog init | `portolan init` — create `.portolan/` structure ✓ |
 | **v0.3** | Format conversion | Wrap [geoparquet-io](https://github.com/geoparquet/geoparquet-io) + [rio-cogeo](https://github.com/cogeotiff/rio-cogeo), format detection ✓ |
-| **v0.4** | Metadata + validation | Extract metadata (extent, schema, CRS), define validation rules, `portolan check` for local catalogs |
+| **v0.4** | Metadata + validation | Extract metadata (extent, schema, CRS), validation rules, `portolan check` for local catalogs ✓ |
 | **v0.5** | Dataset CRUD | `dataset add` (orchestrates conversion + validation), `dataset list`, `dataset info`, `dataset remove` |
 | **v0.6** | Remote sync | `remote add`, `sync` (single-user), drift detection, `--dry-run` and `--verbose` flags |
 | **v0.7** | Multi-user | ADR decision ([#33](https://github.com/portolan-sdi/portolan-cli/issues/33)), locking strategy, conflict handling ([#16](https://github.com/portolan-sdi/portolan-cli/issues/16), [#18](https://github.com/portolan-sdi/portolan-cli/issues/18)) |
