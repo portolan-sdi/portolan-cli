@@ -15,10 +15,12 @@ from portolan_cli.validation.results import (
     ValidationResult,
 )
 from portolan_cli.validation.rules import ValidationRule
+from portolan_cli.validation.runner import check
 
 __all__ = [
     "Severity",
     "ValidationReport",
     "ValidationResult",
     "ValidationRule",
+    "check",
 ]
