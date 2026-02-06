@@ -1,0 +1,24 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.4,
+          37.78
+        ]
+      },
+      "properties": {
+        "name_en": "San Francisco",
+        "name_zh": "旧金山",
+        "name_ja": "サンフランシスコ",
+        "name_ar": "سان فرانسيسكو",
+        "name_ru": "Сан-Франциско",
+        "emoji": "🌉",
+        "description": "A city with many names — très cosmopolite!"
+      }
+    }
+  ]
+}

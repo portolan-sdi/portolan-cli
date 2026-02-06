@@ -1,0 +1,39 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              170.0,
+              50.0
+            ],
+            [
+              -170.0,
+              50.0
+            ],
+            [
+              -170.0,
+              60.0
+            ],
+            [
+              170.0,
+              60.0
+            ],
+            [
+              170.0,
+              50.0
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "name": "Antimeridian crossing polygon",
+        "note": "Crosses the date line (+-180 longitude)"
+      }
+    }
+  ]
+}

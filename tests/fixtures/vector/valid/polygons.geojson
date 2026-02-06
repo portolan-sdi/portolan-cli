@@ -1,0 +1,190 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -122.43,
+              37.75
+            ],
+            [
+              -122.41,
+              37.75
+            ],
+            [
+              -122.41,
+              37.769999999999996
+            ],
+            [
+              -122.43,
+              37.769999999999996
+            ],
+            [
+              -122.43,
+              37.75
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "id": 1,
+        "name": "Mission",
+        "population": 10000,
+        "median_income": 50000,
+        "area_sq_km": 1.23
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -122.447,
+              37.75
+            ],
+            [
+              -122.423,
+              37.75
+            ],
+            [
+              -122.423,
+              37.774
+            ],
+            [
+              -122.447,
+              37.774
+            ],
+            [
+              -122.447,
+              37.75
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "id": 2,
+        "name": "Castro",
+        "population": 15000,
+        "median_income": 60000,
+        "area_sq_km": 1.77
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -122.414,
+              37.766
+            ],
+            [
+              -122.38600000000001,
+              37.766
+            ],
+            [
+              -122.38600000000001,
+              37.794000000000004
+            ],
+            [
+              -122.414,
+              37.794000000000004
+            ],
+            [
+              -122.414,
+              37.766
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "id": 3,
+        "name": "SOMA",
+        "population": 20000,
+        "median_income": 70000,
+        "area_sq_km": 2.41
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -122.456,
+              37.784
+            ],
+            [
+              -122.42399999999999,
+              37.784
+            ],
+            [
+              -122.42399999999999,
+              37.815999999999995
+            ],
+            [
+              -122.456,
+              37.815999999999995
+            ],
+            [
+              -122.456,
+              37.784
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "id": 4,
+        "name": "Marina",
+        "population": 25000,
+        "median_income": 80000,
+        "area_sq_km": 3.15
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -122.433,
+              37.772
+            ],
+            [
+              -122.397,
+              37.772
+            ],
+            [
+              -122.397,
+              37.808
+            ],
+            [
+              -122.433,
+              37.808
+            ],
+            [
+              -122.433,
+              37.772
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "id": 5,
+        "name": "Nob Hill",
+        "population": 30000,
+        "median_income": 90000,
+        "area_sq_km": 3.99
+      }
+    }
+  ]
+}
