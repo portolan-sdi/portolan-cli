@@ -27,28 +27,36 @@ jobs:
 
       - name: Run mutation testing
         run: |
-          uv run mutmut run \
-            --paths-to-mutate=portolan_cli/ \
-            --tests-dir=tests/ \
-            --no-progress
+          # mutmut 3.x auto-detects paths and tests directory
+          uv run mutmut run
 
       - name: Check mutation score
         run: |
-          # Get mutation results as JSON and check score
-          uv run mutmut results --json > mutation-results.json
+          # Get all results (mutmut 3.x outputs text, not JSON/XML)
+          uv run mutmut results --all true > mutation-results.txt
 
-          # Calculate survival rate (lower is better)
-          SURVIVED=$(jq '.survived // 0' mutation-results.json)
-          KILLED=$(jq '.killed // 0' mutation-results.json)
-          TOTAL=$((SURVIVED + KILLED))
+          # Count mutants by status from text output
+          # Format: "function_name: status" where status is killed/survived/no tests
+          KILLED=$(grep -c ': killed$' mutation-results.txt || echo 0)
+          SURVIVED=$(grep -c ': survived$' mutation-results.txt || echo 0)
+          NO_TESTS=$(grep -c ': no tests$' mutation-results.txt || echo 0)
 
-          if [ "$TOTAL" -eq 0 ]; then
-            echo "No mutations generated - check if source code is testable"
+          # Total testable mutants (exclude "no tests" from calculation)
+          TESTABLE=$((KILLED + SURVIVED))
+
+          echo "Mutation results:"
+          echo "  Killed: $KILLED"
+          echo "  Survived: $SURVIVED"
+          echo "  No tests: $NO_TESTS"
+          echo "  Total testable: $TESTABLE"
+
+          if [ "$TESTABLE" -eq 0 ]; then
+            echo "No testable mutations generated - check if source code has test coverage"
             exit 0
           fi
 
           # Calculate kill rate (higher is better)
-          KILL_RATE=$(echo "scale=2; $KILLED * 100 / $TOTAL" | bc)
+          KILL_RATE=$(echo "scale=2; $KILLED * 100 / $TESTABLE" | bc)
           echo "Mutation kill rate: $KILL_RATE% ($KILLED killed, $SURVIVED survived)"
 
           # Fail if kill rate drops below 60%
@@ -68,7 +76,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: mutation-report
-          path: html/
+          path: |
+            html/
+            mutation-results.txt
           retention-days: 30
         if: always()
 
