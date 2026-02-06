@@ -27,10 +27,8 @@ jobs:
 
       - name: Run mutation testing
         run: |
-          uv run mutmut run \
-            --paths-to-mutate=portolan_cli/ \
-            --tests-dir=tests/ \
-            --no-progress
+          # Configuration is in pyproject.toml [tool.mutmut]
+          uv run mutmut run
 
       - name: Check mutation score
         run: |

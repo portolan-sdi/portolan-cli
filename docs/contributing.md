@@ -133,15 +133,28 @@ uv run pytest --cov=portolan_cli --cov-report=html
 
 ## Release Process
 
-Releases are **fully automated** via commitizen. When PRs are merged to `main`:
+Portolan uses a **tag-based release workflow**:
 
-1. Commits are analyzed for conventional commit types
-2. Version is bumped automatically (major/minor/patch)
-3. Changelog is generated
-4. Package is published to PyPI
-5. GitHub Release is created
+1. **Accumulate changes** — Merge PRs to `main` as normal using conventional commits
+2. **Prepare a release** — When ready to release, create a PR that bumps the version:
+   ```bash
+   uv run cz bump --changelog
+   git push
+   ```
+3. **Merge the bump PR** — The release workflow detects the bump commit and:
+   - Creates a git tag (e.g., `v0.3.0`)
+   - Builds the package
+   - Publishes to PyPI
+   - Creates a GitHub Release
 
-No manual intervention needed. Just merge PRs with proper commit messages.
+The version is determined by commitizen based on conventional commits since the last release:
+
+| Commit type | Version bump |
+|-------------|--------------|
+| `feat:` | Minor (0.x.0) |
+| `fix:` | Patch (0.0.x) |
+| `BREAKING CHANGE:` | Major (x.0.0) |
+| `docs:`, `refactor:`, `test:`, `chore:` | No release |
 
 ## Questions?
 
