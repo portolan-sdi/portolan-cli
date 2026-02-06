@@ -201,13 +201,20 @@ BREAKING CHANGE: ...              # Major version bump
 
 ### Release Automation
 
-Releases are automated via commitizen on push to main. See `.github/workflows/release.yml`.
+Portolan uses a **tag-based release workflow**. See `.github/workflows/release.yml`.
 
-1. Commits analyzed for conventional commit types
-2. Version bumped (major/minor/patch based on commits)
-3. CHANGELOG.md updated
-4. Git tag created
-5. Published to PyPI
+**To release:**
+1. Create a PR that runs `uv run cz bump --changelog`
+2. Merge the bump PR
+3. Release workflow detects the bump commit and creates tag + publishes
+
+**What happens automatically:**
+1. Version extracted from `pyproject.toml`
+2. Git tag created (e.g., `v0.3.0`)
+3. Package built and published to PyPI
+4. GitHub Release created
+
+See `docs/contributing.md` for the full release process.
 
 ## Development Rules
 

@@ -1,14 +1,15 @@
-# Automated release workflow using commitizen
+# Tag-based release workflow using commitizen
 # See context/shared/documentation/ci.md for the full CI strategy
 #
 # This workflow:
-# 1. Analyzes commits since last release
-# 2. Bumps version based on conventional commits
-# 3. Generates changelog entry
-# 4. Creates git tag
-# 5. Publishes to PyPI
+# 1. Detects if the merged commit is a version bump (from `cz bump` in PR)
+# 2. If yes: extracts version, creates git tag, builds, publishes to PyPI
+# 3. If no: exits successfully (normal PR merge)
 #
-# Triggered on push to main (after PR merge)
+# Developer workflow:
+# 1. Accumulate changes via normal PR merges
+# 2. When ready to release, create a PR running: uv run cz bump --changelog
+# 3. Merge bump PR → this workflow creates tag and publishes
 name: Release
 on:
   push:
@@ -19,16 +20,15 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    # Only run if the commit message doesn't start with "bump:" (avoid infinite loop)
-    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    # Only run if the commit message starts with "bump:" (from cz bump)
+    if: startsWith(github.event.head_commit.message, 'bump:')
     permissions:
-      contents: write  # Required for creating tags and pushing
+      contents: write  # Required for creating tags and releases
       id-token: write  # Required for trusted PyPI publishing
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0  # Full history for commitizen
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0  # Full history for tag creation
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -39,70 +39,49 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Configure git
+      - name: Extract version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION (tag: v$VERSION)"
+
+      - name: Check if tag already exists
+        id: tag_check
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists, skipping release"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG does not exist, proceeding with release"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create git tag
+        if: steps.tag_check.outputs.exists == 'false'
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-
-      - name: Check if release needed
-        id: check
-        run: |
-          # Check if there are any commits that would trigger a version bump
-          # Commitizen exit codes:
-          #   0  = Success, release needed
-          #   3  = NO_COMMITS_FOUND (no commits at all since last tag)
-          #   16 = NO_PATTERN_MAP (no tag for changelog, but bump would succeed)
-          #   21 = NO_COMMITS_TO_BUMP (commits exist but none are feat/fix/breaking)
-          # --yes flag auto-confirms "is this the first tag?" prompt in CI
-          set +e
-          output=$(uv run cz bump --dry-run --yes 2>&1)
-          exit_code=$?
-          set -e
-
-          echo "$output"
-
-          if [ $exit_code -eq 0 ] || [ $exit_code -eq 16 ]; then
-            echo "release_needed=true" >> $GITHUB_OUTPUT
-            echo "✓ Release-worthy commits found (exit code: $exit_code)"
-          elif [ $exit_code -eq 21 ]; then
-            echo "release_needed=false" >> $GITHUB_OUTPUT
-            echo "✓ No release needed (commits are docs/refactor/test/chore only)"
-          elif [ $exit_code -eq 3 ]; then
-            echo "release_needed=false" >> $GITHUB_OUTPUT
-            echo "✓ No commits found since last release"
-          else
-            echo "✗ Unexpected error from commitizen (exit code: $exit_code)"
-            exit $exit_code
-          fi
-
-      - name: Bump version and update changelog
-        if: steps.check.outputs.release_needed == 'true'
-        run: |
-          uv run cz bump --changelog --yes
-          git push --follow-tags
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
 
       - name: Build package
-        if: steps.check.outputs.release_needed == 'true'
+        if: steps.tag_check.outputs.exists == 'false'
         run: uv build
 
       - name: Publish to PyPI
-        if: steps.check.outputs.release_needed == 'true'
+        if: steps.tag_check.outputs.exists == 'false'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           print-hash: true
 
       - name: Create GitHub Release
-        if: steps.check.outputs.release_needed == 'true'
+        if: steps.tag_check.outputs.exists == 'false'
         run: |
-          # Get the latest tag and its commit SHA
-          TAG=$(git describe --tags --abbrev=0)
-          TAG_SHA=$(git rev-list -n 1 "$TAG")
-          # Create a GitHub release from the tag
-          # Use --target to specify the tagged commit SHA, which works even if
-          # the tag push hasn't fully propagated to GitHub yet
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --target "$TAG_SHA" \
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
             --notes "See [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details." \
             dist/*
         env:

@@ -164,3 +164,9 @@ min_confidence = 80
 paths = ["portolan_cli", "tests"]
 sort_by_size = true
 verbose = false
+
+# ---------- mutation testing ----------
+
+[tool.mutmut]
+paths_to_mutate = ["portolan_cli/"]
+pytest_add_cli_args_test_selection = ["tests/"]
