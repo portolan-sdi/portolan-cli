@@ -99,6 +99,39 @@ The [Portolan Spec](https://github.com/portolan-sdi/portolan-spec) develops in l
 - Remote structure and versioning
 - PMTiles and COPC conventions
 
+### Release Milestones (Phase 1)
+
+Phase 1 is broken into incremental releases. Each builds on the previous—later milestones depend on earlier ones being complete.
+
+| Version | Focus | Capabilities |
+|---------|-------|--------------|
+| **v0.2** | Catalog init | `portolan init` — create `.portolan/` structure ✓ |
+| **v0.3** | Format conversion | Wrap [geoparquet-io](https://github.com/geoparquet/geoparquet-io) + [rio-cogeo](https://github.com/cogeotiff/rio-cogeo), format detection |
+| **v0.4** | Metadata + validation | Extract metadata (extent, schema, CRS), define validation rules, `portolan check` for local catalogs |
+| **v0.5** | Dataset CRUD | `dataset add` (orchestrates conversion + validation), `dataset list`, `dataset info`, `dataset remove` |
+| **v0.6** | Remote sync | `remote add`, `sync` (single-user), drift detection, `--dry-run` and `--verbose` flags |
+| **v0.7** | Multi-user | ADR decision ([#33](https://github.com/portolan-sdi/portolan-cli/issues/33)), locking strategy, conflict handling ([#16](https://github.com/portolan-sdi/portolan-cli/issues/16), [#18](https://github.com/portolan-sdi/portolan-cli/issues/18)) |
+| **v0.8** | Maintenance | `prune` with safety mechanisms ([#15](https://github.com/portolan-sdi/portolan-cli/issues/15)), `repair`, soft-delete |
+
+**Why this order?**
+
+```
+init → conversion → validation → add → sync → multi-user → maintenance
+       ↑                ↑          ↑
+       │                │          └── Can't add without validation
+       │                └── Can't validate without metadata extraction
+       └── Can't extract metadata without conversion
+```
+
+`dataset add` is deceptively complex—it orchestrates format detection, conversion, metadata extraction, validation, `versions.json` updates, and STAC generation. The earlier milestones build the foundation it requires.
+
+**Related issues by milestone:**
+
+- **v0.4**: [#14 (Schema evolution)](https://github.com/portolan-sdi/portolan-cli/issues/14) — defines what "breaking change" means for validation
+- **v0.6**: [#16 (Conflict handling)](https://github.com/portolan-sdi/portolan-cli/issues/16) — drift detection behavior
+- **v0.7**: [#33 (Multi-user ADR)](https://github.com/portolan-sdi/portolan-cli/issues/33), [#18 (Concurrent access)](https://github.com/portolan-sdi/portolan-cli/issues/18) — locking and safety
+- **v0.8**: [#15 (Prune safety)](https://github.com/portolan-sdi/portolan-cli/issues/15) — `--dry-run`, confirmation, soft-delete
+
 ---
 
 ## Parallel: Iceberg Plugin

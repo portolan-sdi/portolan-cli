@@ -5,7 +5,7 @@
 Portolan is a CLI for publishing and managing **cloud-native geospatial data catalogs**. It orchestrates format conversion (GeoParquet, COG), versioning, and sync to object storage (S3, GCS, Azure)—no running servers, just static files.
 
 **Key concepts:**
-- **STAC** (SpatioTemporal Asset Catalog) — The catalog metadata format
+- **STAC** (SpatioTemporal Asset Catalog) — The catalog metadata spec
 - **GeoParquet** — Cloud-optimized vector data (columnar, spatial indexing)
 - **COG** (Cloud-Optimized GeoTIFF) — Cloud-optimized raster data (HTTP range requests)
 - **versions.json** — Single source of truth for version history, sync state, and checksums
@@ -34,6 +34,8 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | Plans & research | `context/shared/` |
 
 **Target Python version:** 3.10+ (matches geoparquet-io dependency)
+
+**CLI entry point:** `portolan` → `portolan_cli:cli` (defined in pyproject.toml)
 
 ### ADR Index
 
@@ -287,3 +289,11 @@ detail("Processing chunk 3/10...")         # Dimmed text
 | context7 | Up-to-date library docs | — |
 | distill | Token-efficient operations | `context/shared/documentation/distill-mcp.md` |
 | worktrunk | Worktree management | — |
+
+## Known Issues
+
+See `context/shared/known-issues/` for tracked issues. Key ones:
+
+| Issue | Impact |
+|-------|--------|
+| [PyArrow v22+ ABI](context/shared/known-issues/pyarrow-abseil-abi.md) | Import failures on Ubuntu 22.04; pinned to `<22.0.0` |
