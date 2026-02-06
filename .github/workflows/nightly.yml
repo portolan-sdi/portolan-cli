@@ -34,13 +34,14 @@ jobs:
 
       - name: Check mutation score
         run: |
-          # Get mutation results as JSON and check score
-          uv run mutmut results --json > mutation-results.json
+          # Generate JUnit XML report (mutmut's supported output format)
+          uv run mutmut junitxml > mutation-results.xml
 
-          # Calculate survival rate (lower is better)
-          SURVIVED=$(jq '.survived // 0' mutation-results.json)
-          KILLED=$(jq '.killed // 0' mutation-results.json)
-          TOTAL=$((SURVIVED + KILLED))
+          # Parse JUnit XML to count killed (failures) vs survived (passed) mutants
+          # In JUnit XML: failures = killed mutants, passes = survived mutants
+          TOTAL=$(grep -c '<testcase' mutation-results.xml || echo 0)
+          KILLED=$(grep -c '<failure' mutation-results.xml || echo 0)
+          SURVIVED=$((TOTAL - KILLED))
 
           if [ "$TOTAL" -eq 0 ]; then
             echo "No mutations generated - check if source code is testable"
@@ -68,7 +69,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: mutation-report
-          path: html/
+          path: |
+            html/
+            mutation-results.xml
           retention-days: 30
         if: always()
 
