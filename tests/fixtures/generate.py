@@ -295,6 +295,7 @@ def generate_large_properties_geojson() -> dict[str, Any]:
 def generate_invalid_fixtures() -> None:
     """Generate invalid fixtures for error handling tests."""
     invalid_dir = FIXTURES_DIR / "vector" / "invalid"
+    invalid_dir.mkdir(parents=True, exist_ok=True)
 
     # no_geometry.json - Valid JSON but no geometry
     no_geom = {
@@ -339,6 +340,7 @@ def generate_invalid_fixtures() -> None:
 def generate_edge_cases() -> None:
     """Generate edge case fixtures."""
     edge_dir = FIXTURES_DIR / "edge"
+    edge_dir.mkdir(parents=True, exist_ok=True)
 
     # unicode_properties.geojson - Non-ASCII in properties
     unicode_feat = {
@@ -377,26 +379,42 @@ def generate_edge_cases() -> None:
     (edge_dir / "special_filename spaces.geojson").write_text(json.dumps(special_feat, indent=2))
 
     # antimeridian.geojson - Crosses date line
+    # Per RFC 7946 §3.1.9, geometries crossing the antimeridian SHOULD be split
+    # into a MultiPolygon with separate parts on each side of the date line.
+    # This represents a narrow strip crossing the antimeridian (10° on each side).
     antimeridian_feat = {
         "type": "FeatureCollection",
         "features": [
             {
                 "type": "Feature",
                 "geometry": {
-                    "type": "Polygon",
+                    "type": "MultiPolygon",
                     "coordinates": [
+                        # Eastern polygon (170° to 180°)
                         [
-                            [170.0, 50.0],
-                            [-170.0, 50.0],
-                            [-170.0, 60.0],
-                            [170.0, 60.0],
-                            [170.0, 50.0],
-                        ]
+                            [
+                                [170.0, 50.0],
+                                [180.0, 50.0],
+                                [180.0, 60.0],
+                                [170.0, 60.0],
+                                [170.0, 50.0],
+                            ]
+                        ],
+                        # Western polygon (-180° to -170°)
+                        [
+                            [
+                                [-180.0, 50.0],
+                                [-170.0, 50.0],
+                                [-170.0, 60.0],
+                                [-180.0, 60.0],
+                                [-180.0, 50.0],
+                            ]
+                        ],
                     ],
                 },
                 "properties": {
                     "name": "Antimeridian crossing polygon",
-                    "note": "Crosses the date line (+-180 longitude)",
+                    "note": "Crosses the date line (+-180 longitude), split per RFC 7946 §3.1.9",
                 },
             }
         ],
@@ -407,6 +425,7 @@ def generate_edge_cases() -> None:
 def generate_vector_fixtures() -> None:
     """Generate all vector (GeoJSON) fixtures."""
     valid_dir = FIXTURES_DIR / "vector" / "valid"
+    valid_dir.mkdir(parents=True, exist_ok=True)
 
     fixtures = {
         "points.geojson": generate_points_geojson(),
@@ -444,6 +463,8 @@ def generate_raster_fixtures() -> None:
 
     valid_dir = FIXTURES_DIR / "raster" / "valid"
     invalid_dir = FIXTURES_DIR / "raster" / "invalid"
+    valid_dir.mkdir(parents=True, exist_ok=True)
+    invalid_dir.mkdir(parents=True, exist_ok=True)
 
     # Common parameters
     width, height = 64, 64
@@ -469,20 +490,22 @@ def generate_raster_fixtures() -> None:
 
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
         tmp_path = tmp.name
-    with rasterio.open(
-        tmp_path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=3,
-        dtype="uint8",
-        crs=crs,
-        transform=transform,
-    ) as dst:
-        dst.write(rgb_data)
-    cog_translate(tmp_path, str(valid_dir / "rgb.tif"), profile, quiet=True)
-    Path(tmp_path).unlink()
+    try:
+        with rasterio.open(
+            tmp_path,
+            "w",
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=3,
+            dtype="uint8",
+            crs=crs,
+            transform=transform,
+        ) as dst:
+            dst.write(rgb_data)
+        cog_translate(tmp_path, str(valid_dir / "rgb.tif"), profile, quiet=True)
+    finally:
+        Path(tmp_path).unlink()
     print(f"Generated {valid_dir / 'rgb.tif'}")
 
     # --- Singleband COG (1-band uint8) ---
@@ -494,20 +517,22 @@ def generate_raster_fixtures() -> None:
 
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
         tmp_path = tmp.name
-    with rasterio.open(
-        tmp_path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=1,
-        dtype="uint8",
-        crs=crs,
-        transform=transform,
-    ) as dst:
-        dst.write(single_data)
-    cog_translate(tmp_path, str(valid_dir / "singleband.tif"), profile, quiet=True)
-    Path(tmp_path).unlink()
+    try:
+        with rasterio.open(
+            tmp_path,
+            "w",
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=1,
+            dtype="uint8",
+            crs=crs,
+            transform=transform,
+        ) as dst:
+            dst.write(single_data)
+        cog_translate(tmp_path, str(valid_dir / "singleband.tif"), profile, quiet=True)
+    finally:
+        Path(tmp_path).unlink()
     print(f"Generated {valid_dir / 'singleband.tif'}")
 
     # --- Float32 COG (elevation-like) ---
@@ -519,20 +544,22 @@ def generate_raster_fixtures() -> None:
 
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
         tmp_path = tmp.name
-    with rasterio.open(
-        tmp_path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=1,
-        dtype="float32",
-        crs=crs,
-        transform=transform,
-    ) as dst:
-        dst.write(float_data)
-    cog_translate(tmp_path, str(valid_dir / "float32.tif"), profile, quiet=True)
-    Path(tmp_path).unlink()
+    try:
+        with rasterio.open(
+            tmp_path,
+            "w",
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=1,
+            dtype="float32",
+            crs=crs,
+            transform=transform,
+        ) as dst:
+            dst.write(float_data)
+        cog_translate(tmp_path, str(valid_dir / "float32.tif"), profile, quiet=True)
+    finally:
+        Path(tmp_path).unlink()
     print(f"Generated {valid_dir / 'float32.tif'}")
 
     # --- NoData COG ---
@@ -548,21 +575,23 @@ def generate_raster_fixtures() -> None:
 
     with tempfile.NamedTemporaryFile(suffix=".tif", delete=False) as tmp:
         tmp_path = tmp.name
-    with rasterio.open(
-        tmp_path,
-        "w",
-        driver="GTiff",
-        height=height,
-        width=width,
-        count=1,
-        dtype="uint8",
-        crs=crs,
-        transform=transform,
-        nodata=nodata_value,
-    ) as dst:
-        dst.write(nodata_data)
-    cog_translate(tmp_path, str(valid_dir / "nodata.tif"), profile, quiet=True)
-    Path(tmp_path).unlink()
+    try:
+        with rasterio.open(
+            tmp_path,
+            "w",
+            driver="GTiff",
+            height=height,
+            width=width,
+            count=1,
+            dtype="uint8",
+            crs=crs,
+            transform=transform,
+            nodata=nodata_value,
+        ) as dst:
+            dst.write(nodata_data)
+        cog_translate(tmp_path, str(valid_dir / "nodata.tif"), profile, quiet=True)
+    finally:
+        Path(tmp_path).unlink()
     print(f"Generated {valid_dir / 'nodata.tif'}")
 
     # --- Invalid: not_georeferenced.tif ---

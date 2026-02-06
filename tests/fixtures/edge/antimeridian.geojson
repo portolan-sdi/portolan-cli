@@ -4,35 +4,61 @@
     {
       "type": "Feature",
       "geometry": {
-        "type": "Polygon",
+        "type": "MultiPolygon",
         "coordinates": [
           [
             [
-              170.0,
-              50.0
-            ],
+              [
+                170.0,
+                50.0
+              ],
+              [
+                180.0,
+                50.0
+              ],
+              [
+                180.0,
+                60.0
+              ],
+              [
+                170.0,
+                60.0
+              ],
+              [
+                170.0,
+                50.0
+              ]
+            ]
+          ],
+          [
             [
-              -170.0,
-              50.0
-            ],
-            [
-              -170.0,
-              60.0
-            ],
-            [
-              170.0,
-              60.0
-            ],
-            [
-              170.0,
-              50.0
+              [
+                -180.0,
+                50.0
+              ],
+              [
+                -170.0,
+                50.0
+              ],
+              [
+                -170.0,
+                60.0
+              ],
+              [
+                -180.0,
+                60.0
+              ],
+              [
+                -180.0,
+                50.0
+              ]
             ]
           ]
         ]
       },
       "properties": {
         "name": "Antimeridian crossing polygon",
-        "note": "Crosses the date line (+-180 longitude)"
+        "note": "Crosses the date line (+-180 longitude), split per RFC 7946 \u00a73.1.9"
       }
     }
   ]

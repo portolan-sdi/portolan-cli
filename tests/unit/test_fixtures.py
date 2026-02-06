@@ -56,7 +56,7 @@ class TestVectorFixturesValid:
     @pytest.mark.unit
     def test_points_geojson_is_valid_geojson(self, valid_points_geojson: Path) -> None:
         """points.geojson should be valid GeoJSON with expected structure."""
-        data = json.loads(valid_points_geojson.read_text())
+        data = json.loads(valid_points_geojson.read_text(encoding="utf-8"))
 
         assert data["type"] == "FeatureCollection"
         assert len(data["features"]) == 10
@@ -65,7 +65,7 @@ class TestVectorFixturesValid:
     @pytest.mark.unit
     def test_polygons_geojson_is_valid_geojson(self, valid_polygons_geojson: Path) -> None:
         """polygons.geojson should be valid GeoJSON with expected structure."""
-        data = json.loads(valid_polygons_geojson.read_text())
+        data = json.loads(valid_polygons_geojson.read_text(encoding="utf-8"))
 
         assert data["type"] == "FeatureCollection"
         assert len(data["features"]) == 5
@@ -74,7 +74,7 @@ class TestVectorFixturesValid:
     @pytest.mark.unit
     def test_lines_geojson_is_valid_geojson(self, valid_lines_geojson: Path) -> None:
         """lines.geojson should be valid GeoJSON with expected structure."""
-        data = json.loads(valid_lines_geojson.read_text())
+        data = json.loads(valid_lines_geojson.read_text(encoding="utf-8"))
 
         assert data["type"] == "FeatureCollection"
         assert len(data["features"]) == 5
@@ -83,7 +83,7 @@ class TestVectorFixturesValid:
     @pytest.mark.unit
     def test_multigeom_has_mixed_types(self, valid_multigeom_geojson: Path) -> None:
         """multigeom.geojson should contain multiple geometry types."""
-        data = json.loads(valid_multigeom_geojson.read_text())
+        data = json.loads(valid_multigeom_geojson.read_text(encoding="utf-8"))
 
         geom_types = {f["geometry"]["type"] for f in data["features"]}
         # Should have at least Point, LineString, Polygon
@@ -92,7 +92,7 @@ class TestVectorFixturesValid:
     @pytest.mark.unit
     def test_large_properties_has_many_columns(self, valid_large_properties_geojson: Path) -> None:
         """large_properties.geojson should have 20+ property columns."""
-        data = json.loads(valid_large_properties_geojson.read_text())
+        data = json.loads(valid_large_properties_geojson.read_text(encoding="utf-8"))
 
         first_feature = data["features"][0]
         assert len(first_feature["properties"]) >= 20
@@ -117,26 +117,26 @@ class TestVectorFixturesInvalid:
     def test_malformed_geojson_fails_to_parse(self, invalid_malformed_geojson: Path) -> None:
         """malformed.geojson should fail JSON parsing."""
         with pytest.raises(json.JSONDecodeError):
-            json.loads(invalid_malformed_geojson.read_text())
+            json.loads(invalid_malformed_geojson.read_text(encoding="utf-8"))
 
     @pytest.mark.unit
     def test_empty_geojson_has_no_features(self, invalid_empty_geojson: Path) -> None:
         """empty.geojson should parse but have zero features."""
-        data = json.loads(invalid_empty_geojson.read_text())
+        data = json.loads(invalid_empty_geojson.read_text(encoding="utf-8"))
         assert data["type"] == "FeatureCollection"
         assert len(data["features"]) == 0
 
     @pytest.mark.unit
     def test_no_geometry_json_missing_geometry(self, invalid_no_geometry_json: Path) -> None:
         """no_geometry.json should have features without geometry field."""
-        data = json.loads(invalid_no_geometry_json.read_text())
+        data = json.loads(invalid_no_geometry_json.read_text(encoding="utf-8"))
         first_feature = data["features"][0]
         assert "geometry" not in first_feature
 
     @pytest.mark.unit
     def test_null_geometries_has_null_values(self, invalid_null_geometries_geojson: Path) -> None:
         """null_geometries.geojson should have at least one null geometry."""
-        data = json.loads(invalid_null_geometries_geojson.read_text())
+        data = json.loads(invalid_null_geometries_geojson.read_text(encoding="utf-8"))
         null_geoms = [f for f in data["features"] if f["geometry"] is None]
         assert len(null_geoms) >= 1
 
@@ -244,7 +244,7 @@ class TestRasterFixturesInvalid:
         from rasterio.errors import RasterioIOError
 
         # Opening might work, but reading should fail
-        with pytest.raises((RasterioIOError, Exception)):
+        with pytest.raises(RasterioIOError):
             with rasterio.open(invalid_truncated_tif) as src:
                 src.read()  # This should fail on truncated file
 
@@ -255,7 +255,7 @@ class TestEdgeCaseFixtures:
     @pytest.mark.unit
     def test_unicode_geojson_has_non_ascii(self, edge_unicode_geojson: Path) -> None:
         """unicode_properties.geojson should contain non-ASCII characters."""
-        data = json.loads(edge_unicode_geojson.read_text())
+        data = json.loads(edge_unicode_geojson.read_text(encoding="utf-8"))
         props = data["features"][0]["properties"]
 
         # Should have Chinese, Japanese, Arabic, etc.
@@ -270,17 +270,26 @@ class TestEdgeCaseFixtures:
         assert edge_special_filename_geojson.exists()
         assert " " in edge_special_filename_geojson.name
         # Should be valid JSON
-        data = json.loads(edge_special_filename_geojson.read_text())
+        data = json.loads(edge_special_filename_geojson.read_text(encoding="utf-8"))
         assert data["type"] == "FeatureCollection"
 
     @pytest.mark.unit
     def test_antimeridian_crosses_dateline(self, edge_antimeridian_geojson: Path) -> None:
-        """antimeridian.geojson should have coordinates crossing +-180."""
-        data = json.loads(edge_antimeridian_geojson.read_text())
-        coords = data["features"][0]["geometry"]["coordinates"][0]
+        """antimeridian.geojson should be a MultiPolygon split at +-180 per RFC 7946."""
+        data = json.loads(edge_antimeridian_geojson.read_text(encoding="utf-8"))
+        geom = data["features"][0]["geometry"]
 
-        lons = [c[0] for c in coords]
-        # Should have both positive (east) and negative (west) longitudes > 100
-        has_east = any(lon > 100 for lon in lons)
-        has_west = any(lon < -100 for lon in lons)
-        assert has_east and has_west, "Should cross the antimeridian"
+        # Per RFC 7946 §3.1.9, antimeridian crossings should use MultiPolygon
+        assert geom["type"] == "MultiPolygon", "Should be MultiPolygon per RFC 7946"
+        assert len(geom["coordinates"]) == 2, "Should have 2 parts (east and west)"
+
+        # Collect all longitudes from both polygons
+        all_lons: list[float] = []
+        for polygon in geom["coordinates"]:
+            for ring in polygon:
+                all_lons.extend(c[0] for c in ring)
+
+        # Should have eastern (positive, near 180) and western (negative, near -180) parts
+        has_east = any(lon >= 170 for lon in all_lons)
+        has_west = any(lon <= -170 for lon in all_lons)
+        assert has_east and has_west, "Should have parts on both sides of antimeridian"
