@@ -14,7 +14,7 @@
 - Documented when to use Gitingest vs Context7
 - Explained tool ordering (Context7 first, then Gitingest, then Distill)
 
-### 3. Reference Guide (.github/CONTEXT_GUIDE.md)
+### 3. Reference Guide (context/shared/documentation/context-guide.md)
 - Quick links to all three dependencies
 - Workflow examples by question type
 - Copy-paste gitingest URLs
@@ -48,9 +48,9 @@ Could validate that dependency context is up-to-date:
 ```bash
 #!/bin/bash
 # .git/hooks/pre-commit
-# Check if .github/CONTEXT_GUIDE.md exists and is recent
-if [ -f .github/CONTEXT_GUIDE.md ]; then
-  age=$(($(date +%s) - $(stat -f%m .github/CONTEXT_GUIDE.md)))
+# Check if context/shared/documentation/context-guide.md exists and is recent
+if [ -f context/shared/documentation/context-guide.md ]; then
+  age=$(($(date +%s) - $(stat -f%m context/shared/documentation/context-guide.md)))
   if [ $age -gt 2592000 ]; then  # 30 days
     echo "⚠️  CONTEXT_GUIDE.md is stale—consider updating dependency links"
   fi
@@ -82,7 +82,7 @@ jobs:
 |------|--------|
 | `CLAUDE.md` (project) | Added "Tool Usage" and "Dependency Research Workflow" |
 | `CLAUDE.md` (global) | Added Gitingest guidelines + tool ordering |
-| `.github/CONTEXT_GUIDE.md` | NEW: Quick reference for Context7 + Gitingest + Distill |
+| `context/shared/documentation/context-guide.md` | NEW: Quick reference for Context7 + Gitingest + Distill |
 | `context/shared/documentation/gitingest-setup.md` | NEW: This file |
 
 ## Next Steps

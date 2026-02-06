@@ -166,7 +166,7 @@ We use AI assistants (Claude Code, etc.) extensively for development. If you do 
 | [Gitingest](https://github.com/cyclotruc/gitingest) | Source code exploration | `pipx install gitingest` |
 | Distill | Token compression for large outputs | MCP server config |
 
-These are **entirely optional**—the project works fine without them. We document our AI workflows in `CLAUDE.md` and `.github/CONTEXT_GUIDE.md` for those who want to use similar approaches.
+These are **entirely optional**—the project works fine without them. We document our AI workflows in `CLAUDE.md` and `context/shared/documentation/context-guide.md` for those who want to use similar approaches.
 
 > **Note**: This space evolves rapidly. Use whatever tools work for you.
 

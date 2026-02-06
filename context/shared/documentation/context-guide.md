@@ -139,4 +139,4 @@ gh api repos/geoparquet/geoparquet-io/contents/src/geoparquet_io/core.py --jq '.
 
 - Project CLAUDE.md: Tool usage and dependency workflow
 - Global CLAUDE.md: Context7 and Gitingest guidelines
-- This file: Practical examples and quick reference
+- This file: Practical examples and quick reference (`context/shared/documentation/context-guide.md`)
