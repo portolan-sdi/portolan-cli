@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 from portolan_cli.validation.results import ValidationReport, ValidationResult
@@ -13,23 +14,24 @@ from portolan_cli.validation.rules import (
 )
 
 # Default rules for v0.4 (catalog structure only)
-DEFAULT_RULES: list[ValidationRule] = [
+# Immutable tuple to prevent accidental mutation
+DEFAULT_RULES: tuple[ValidationRule, ...] = (
     CatalogExistsRule(),
     CatalogJsonValidRule(),
     StacFieldsRule(),
-]
+)
 
 
 def check(
     catalog_path: Path,
     *,
-    rules: list[ValidationRule] | None = None,
+    rules: Sequence[ValidationRule] | None = None,
 ) -> ValidationReport:
     """Run validation rules against a catalog.
 
     Args:
         catalog_path: Path to the directory containing .portolan.
-        rules: Optional list of rules to run. Defaults to DEFAULT_RULES.
+        rules: Optional sequence of rules to run. Defaults to DEFAULT_RULES.
 
     Returns:
         ValidationReport with results from all rules.

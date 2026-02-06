@@ -50,7 +50,7 @@ class ValidationResult:
             "severity": self.severity.value,
             "message": self.message,
         }
-        if self.fix_hint:
+        if self.fix_hint is not None:
             d["fix_hint"] = self.fix_hint
         return d
 

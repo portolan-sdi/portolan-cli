@@ -52,7 +52,7 @@ class GeoParquetMetadata:
         if self.geometry_type:
             props["geoparquet:geometry_type"] = self.geometry_type
 
-        if self.feature_count:
+        if self.feature_count is not None:
             props["geoparquet:feature_count"] = self.feature_count
 
         return props
@@ -72,7 +72,10 @@ def extract_geoparquet_metadata(path: Path) -> GeoParquetMetadata:
 
     Raises:
         FileNotFoundError: If file doesn't exist.
-        ValueError: If file is not valid GeoParquet.
+
+    Note:
+        For Parquet files without GeoParquet metadata, returns metadata with
+        None/empty fields for geo-specific properties (bbox, crs, geometry_type).
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")

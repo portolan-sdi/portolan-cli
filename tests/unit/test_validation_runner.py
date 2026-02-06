@@ -84,6 +84,6 @@ class TestCheck:
         # No .portolan dir = first rule fails
         report = check(tmp_path)
 
-        # Should still have run other rules (they'll fail gracefully)
-        # At minimum, we get results from multiple rules
-        assert len(report.results) >= 1  # At least catalog_exists
+        # Should have run all 3 default rules even though the first one failed
+        # This verifies the runner doesn't short-circuit on failure
+        assert len(report.results) == 3
