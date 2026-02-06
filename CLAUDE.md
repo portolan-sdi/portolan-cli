@@ -286,9 +286,52 @@ detail("Processing chunk 3/10...")         # Dimmed text
 
 | Tool | Purpose | Documentation |
 |------|---------|---------------|
-| context7 | Up-to-date library docs | — |
+| context7 | Up-to-date library docs (official API) | — |
+| gitingest | Source code exploration (implementation details) | `https://github.com/coderamp-labs/gitingest` |
 | distill | Token-efficient operations | `context/shared/documentation/distill-mcp.md` |
 | worktrunk | Worktree management | — |
+
+### Dependency Research Workflow
+
+**geoparquet-io** and **rio-cogeo** are core foundation libraries. When working with these, Claude should be proactive about checking actual implementation—not just API docs—when the tools are available.
+
+For core dependencies (**geoparquet-io**, **rio-cogeo**, **gpio-pmtiles**), use this workflow:
+
+1. **Official API** → Use Context7 first (up-to-date, authoritative)
+   ```
+   resolve-library-id("geoparquet-io") → query-docs(libraryId, "your question")
+   ```
+
+2. **Implementation details** → Use Gitingest to explore source (if available)
+   - For geoparquet-io and rio-cogeo: check source when investigating edge cases or debugging
+   - These are core libraries—understanding their actual behavior (not just API surface) helps catch subtle issues
+   ```
+   gitingest https://github.com/geoparquet/geoparquet-io
+   gitingest https://github.com/cogeotiff/rio-cogeo
+   # Copy output, paste into Claude for code-level analysis
+   ```
+
+3. **Large outputs** → Use Distill to compress (if available)
+   ```
+   mcp__distill__auto_optimize(gitingest_output, hint="code")
+   # Reduces tokens by 50-70%
+   ```
+
+**Example**: "How does geoparquet-io handle missing geometry?"
+- Step 1: Context7 → official API docs
+- Step 2: Gitingest → search source for geometry validation (recommended for edge cases)
+- Step 3: Distill → compress the source exploration for token efficiency
+
+**When tools aren't available**: If gitingest isn't installed or MCP tools aren't configured:
+- Use GitHub's web interface to browse source files directly
+- Use `gh api` to fetch specific files from repos
+- Clone the repo locally and use standard file reading
+- WebFetch can retrieve raw GitHub file contents
+
+**Claude's Responsibility**: When working with geoparquet-io or rio-cogeo:
+- Don't assume API behavior without checking source (when tools permit)
+- Search for edge cases, error handling, and validation logic
+- Ask implementation-level questions ("How does it actually...?" not just "What's the API?")
 
 ## Known Issues
 
