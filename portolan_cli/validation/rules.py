@@ -134,3 +134,59 @@ class CatalogJsonValidRule(ValidationRule):
             )
 
         return self._pass(f"catalog.json is valid JSON: {catalog_file}")
+
+
+class StacFieldsRule(ValidationRule):
+    """Check that catalog.json has required STAC Catalog fields.
+
+    Required fields per STAC spec:
+    - type: Must be "Catalog"
+    - stac_version: STAC version string
+    - id: Unique identifier
+    - description: Human-readable description
+    - links: Array of Link objects
+    """
+
+    name = "stac_fields"
+    severity = Severity.ERROR
+    description = "Verify catalog.json has required STAC Catalog fields"
+
+    REQUIRED_FIELDS = ("type", "stac_version", "id", "description", "links")
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Check for required STAC fields."""
+        catalog_file = catalog_path / ".portolan" / "catalog.json"
+
+        # Try to load catalog.json
+        try:
+            content = catalog_file.read_text()
+            catalog = json.loads(content)
+        except (OSError, json.JSONDecodeError) as e:
+            return self._fail(
+                f"Cannot validate STAC fields: {e}",
+                fix_hint="Fix catalog.json first (see catalog_json_valid rule)",
+            )
+
+        # Check type field specifically
+        if "type" not in catalog:
+            missing = [f for f in self.REQUIRED_FIELDS if f not in catalog]
+            return self._fail(
+                f"Missing required STAC fields: {', '.join(missing)}",
+                fix_hint="Run 'portolan check --fix' to add default values",
+            )
+
+        if catalog.get("type") != "Catalog":
+            return self._fail(
+                f"Invalid type: expected 'Catalog', got '{catalog.get('type')}'",
+                fix_hint="Change 'type' to 'Catalog' in catalog.json",
+            )
+
+        # Check other required fields
+        missing = [f for f in self.REQUIRED_FIELDS if f not in catalog]
+        if missing:
+            return self._fail(
+                f"Missing required STAC fields: {', '.join(missing)}",
+                fix_hint="Run 'portolan check --fix' to add default values",
+            )
+
+        return self._pass("All required STAC fields present")

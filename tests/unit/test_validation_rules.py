@@ -10,6 +10,7 @@ from portolan_cli.validation.results import Severity, ValidationResult
 from portolan_cli.validation.rules import (
     CatalogExistsRule,
     CatalogJsonValidRule,
+    StacFieldsRule,
     ValidationRule,
 )
 
@@ -272,3 +273,210 @@ class TestCatalogJsonValidRule:
 
         assert result.passed is False
         # Should not raise an exception
+
+
+class TestStacFieldsRule:
+    """Tests for StacFieldsRule."""
+
+    @pytest.fixture
+    def catalog_dir(self, tmp_path: Path) -> Path:
+        """Create a .portolan directory for testing."""
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        return portolan_dir
+
+    def _write_catalog(self, catalog_dir: Path, data: dict) -> None:
+        """Helper to write catalog.json."""
+        import json
+
+        catalog_file = catalog_dir / "catalog.json"
+        catalog_file.write_text(json.dumps(data))
+
+    @pytest.mark.unit
+    def test_passes_with_all_required_fields(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule passes when all required STAC fields are present."""
+        self._write_catalog(
+            catalog_dir,
+            {
+                "type": "Catalog",
+                "stac_version": "1.0.0",
+                "id": "my-catalog",
+                "description": "Test catalog",
+                "links": [],
+            },
+        )
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_when_type_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule fails when 'type' field is missing."""
+        self._write_catalog(
+            catalog_dir,
+            {
+                "stac_version": "1.0.0",
+                "id": "my-catalog",
+                "description": "Test catalog",
+                "links": [],
+            },
+        )
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "type" in result.message
+
+    @pytest.mark.unit
+    def test_fails_when_type_wrong(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule fails when 'type' is not 'Catalog'."""
+        self._write_catalog(
+            catalog_dir,
+            {
+                "type": "Collection",  # Wrong type
+                "stac_version": "1.0.0",
+                "id": "my-catalog",
+                "description": "Test catalog",
+                "links": [],
+            },
+        )
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "Catalog" in result.message
+
+    @pytest.mark.unit
+    def test_fails_when_stac_version_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule fails when 'stac_version' field is missing."""
+        self._write_catalog(
+            catalog_dir,
+            {
+                "type": "Catalog",
+                "id": "my-catalog",
+                "description": "Test catalog",
+                "links": [],
+            },
+        )
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "stac_version" in result.message
+
+    @pytest.mark.unit
+    def test_fails_when_id_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule fails when 'id' field is missing."""
+        self._write_catalog(
+            catalog_dir,
+            {
+                "type": "Catalog",
+                "stac_version": "1.0.0",
+                "description": "Test catalog",
+                "links": [],
+            },
+        )
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "id" in result.message
+
+    @pytest.mark.unit
+    def test_fails_when_description_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule fails when 'description' field is missing."""
+        self._write_catalog(
+            catalog_dir,
+            {
+                "type": "Catalog",
+                "stac_version": "1.0.0",
+                "id": "my-catalog",
+                "links": [],
+            },
+        )
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "description" in result.message
+
+    @pytest.mark.unit
+    def test_fails_when_links_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule fails when 'links' field is missing."""
+        self._write_catalog(
+            catalog_dir,
+            {
+                "type": "Catalog",
+                "stac_version": "1.0.0",
+                "id": "my-catalog",
+                "description": "Test catalog",
+            },
+        )
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "links" in result.message
+
+    @pytest.mark.unit
+    def test_has_error_severity(self) -> None:
+        """Missing required fields is an ERROR."""
+        rule = StacFieldsRule()
+        assert rule.severity == Severity.ERROR
+
+    @pytest.mark.unit
+    def test_provides_fix_hint(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Failure includes hint for --fix."""
+        self._write_catalog(catalog_dir, {"type": "Catalog"})
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        assert result.fix_hint is not None
+        assert "--fix" in result.fix_hint
+
+    @pytest.mark.unit
+    def test_reports_all_missing_fields(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Failure message lists all missing fields, not just first."""
+        self._write_catalog(catalog_dir, {"type": "Catalog"})
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        # Should mention multiple missing fields
+        assert "stac_version" in result.message
+        assert "id" in result.message
+
+    @pytest.mark.unit
+    def test_fails_gracefully_when_catalog_json_missing(
+        self, tmp_path: Path, catalog_dir: Path
+    ) -> None:
+        """Rule fails cleanly when catalog.json doesn't exist."""
+        # catalog_dir exists but catalog.json doesn't
+        _ = catalog_dir
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+
+    @pytest.mark.unit
+    def test_fails_gracefully_when_catalog_json_invalid(
+        self, tmp_path: Path, catalog_dir: Path
+    ) -> None:
+        """Rule fails cleanly when catalog.json is not valid JSON."""
+        catalog_file = catalog_dir / "catalog.json"
+        catalog_file.write_text("not json")
+
+        rule = StacFieldsRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
