@@ -23,7 +23,7 @@ This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich
 | Benefit | How |
 |---------|-----|
 | **Scalable** | Cloud object storage that scales to petabytes |
-| **Open** | 100% open source, open formats (GeoParquet, COG, STAC) |
+| **Open** | 100% open source, open formats (GeoParquet, COG) |
 | **AI-Ready** | STAC metadata enables semantic search and LLM integration |
 | **Cheap** | Pay only for storage + egress — no servers to run |
 | **Sovereign** | Host anywhere (AWS, GCS, Azure, MinIO, Cloudflare R2) |

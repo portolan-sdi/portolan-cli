@@ -31,7 +31,7 @@ This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich
 
     ---
 
-    100% open source, open formats (GeoParquet, COG, STAC)
+    100% open source, open formats (GeoParquet, COG)
 
 - :material-robot:{ .lg .middle } **AI-Ready**
 

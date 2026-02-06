@@ -292,8 +292,8 @@ detail("Processing chunk 3/10...")         # Dimmed text
 
 ## Known Issues
 
-| Issue | Impact | Details |
-|-------|--------|---------|
-| PyArrow v22+ ABI incompatibility | Import failures on Ubuntu 22.04 | See `context/shared/known-issues/pyarrow-abseil-abi.md` |
+See `context/shared/known-issues/` for tracked issues. Key ones:
 
-**Workaround:** PyArrow is pinned to `<22.0.0` in pyproject.toml.
+| Issue | Impact |
+|-------|--------|
+| [PyArrow v22+ ABI](context/shared/known-issues/pyarrow-abseil-abi.md) | Import failures on Ubuntu 22.04; pinned to `<22.0.0` |
