@@ -286,9 +286,46 @@ detail("Processing chunk 3/10...")         # Dimmed text
 
 | Tool | Purpose | Documentation |
 |------|---------|---------------|
-| context7 | Up-to-date library docs | — |
+| context7 | Up-to-date library docs (official API) | — |
+| gitingest | Source code exploration (implementation details) | `https://github.com/coderamp-labs/gitingest` |
 | distill | Token-efficient operations | `context/shared/documentation/distill-mcp.md` |
 | worktrunk | Worktree management | — |
+
+### Dependency Research Workflow
+
+**CRITICAL FOR CLAUDE**: **geoparquet-io** and **rio-cogeo** are core foundation libraries. When working with these, Claude MUST be proactive about checking actual implementation—not just API docs.
+
+For core dependencies (**geoparquet-io**, **rio-cogeo**, **gpio-pmtiles**), use this workflow:
+
+1. **Official API** → Use Context7 first (up-to-date, authoritative)
+   ```
+   resolve-library-id("geoparquet-io") → query-docs(libraryId, "your question")
+   ```
+
+2. **Implementation details** → Use Gitingest to explore source
+   - **For geoparquet-io and rio-cogeo: ALWAYS check source**
+   - These are core libraries—understanding their actual behavior (not just API surface) is critical
+   ```
+   gitingest https://github.com/geoparquet/geoparquet-io
+   gitingest https://github.com/cogeotiff/rio-cogeo
+   # Copy output, paste into Claude for code-level analysis
+   ```
+
+3. **Large outputs** → Use Distill to compress
+   ```
+   mcp__distill__auto_optimize(gitingest_output, hint="code")
+   # Reduces tokens by 50-70%
+   ```
+
+**Example**: "How does geoparquet-io handle missing geometry?"
+- Step 1: Context7 → official API docs
+- Step 2: Gitingest → search source for geometry validation **REQUIRED**
+- Step 3: Distill → compress the source exploration for token efficiency
+
+**Claude's Responsibility**: When working with geoparquet-io or rio-cogeo:
+- Don't assume API behavior without checking source
+- Actively search Gitingest output for edge cases, error handling, validation
+- Ask implementation-level questions ("How does it actually...?" not just "What's the API?")
 
 ## Known Issues
 
