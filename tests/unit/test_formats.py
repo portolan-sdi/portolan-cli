@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -113,6 +114,10 @@ class TestDetectFormat:
             detect_format(tmp_path)
 
     @pytest.mark.unit
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="chmod doesn't restrict read access on Windows",
+    )
     def test_detect_json_with_read_error(self, tmp_path: Path) -> None:
         """JSON files that can't be read return UNKNOWN."""
         json_file = tmp_path / "test.json"
