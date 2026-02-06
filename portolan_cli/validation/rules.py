@@ -8,6 +8,7 @@ Per ADR-0011, v0.4 rules only check catalog structure, not dataset contents.
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -90,3 +91,46 @@ class CatalogExistsRule(ValidationRule):
             )
 
         return self._pass(f"Catalog directory exists: {portolan_dir}")
+
+
+class CatalogJsonValidRule(ValidationRule):
+    """Check that catalog.json exists and is valid JSON.
+
+    This rule does NOT check STAC schema compliance - only that the
+    file exists and can be parsed as JSON.
+    """
+
+    name = "catalog_json_valid"
+    severity = Severity.ERROR
+    description = "Verify catalog.json exists and is valid JSON"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Check for valid catalog.json."""
+        catalog_file = catalog_path / ".portolan" / "catalog.json"
+
+        if not catalog_file.exists():
+            return self._fail(
+                f"Missing catalog.json: {catalog_file} does not exist",
+                fix_hint="Run 'portolan init' to create a catalog, or restore from backup",
+            )
+
+        try:
+            content = catalog_file.read_text()
+            if not content.strip():
+                return self._fail(
+                    f"Empty catalog.json: {catalog_file} has no content",
+                    fix_hint="Run 'portolan check --fix' to regenerate catalog.json",
+                )
+            json.loads(content)
+        except json.JSONDecodeError as e:
+            return self._fail(
+                f"Invalid JSON in catalog.json: {e}",
+                fix_hint="Fix the JSON syntax error or restore from backup",
+            )
+        except OSError as e:
+            return self._fail(
+                f"Cannot read catalog.json: {e}",
+                fix_hint="Check file permissions",
+            )
+
+        return self._pass(f"catalog.json is valid JSON: {catalog_file}")

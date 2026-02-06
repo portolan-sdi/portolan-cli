@@ -7,7 +7,11 @@ from pathlib import Path
 import pytest
 
 from portolan_cli.validation.results import Severity, ValidationResult
-from portolan_cli.validation.rules import CatalogExistsRule, ValidationRule
+from portolan_cli.validation.rules import (
+    CatalogExistsRule,
+    CatalogJsonValidRule,
+    ValidationRule,
+)
 
 
 class TestValidationRule:
@@ -185,3 +189,86 @@ class TestCatalogExistsRule:
 
         assert result.passed is False
         assert "directory" in result.message.lower()
+
+
+class TestCatalogJsonValidRule:
+    """Tests for CatalogJsonValidRule."""
+
+    @pytest.fixture
+    def catalog_dir(self, tmp_path: Path) -> Path:
+        """Create a .portolan directory for testing."""
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        return portolan_dir
+
+    @pytest.mark.unit
+    def test_passes_when_catalog_json_valid(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule passes when catalog.json exists and is valid JSON."""
+        catalog_file = catalog_dir / "catalog.json"
+        catalog_file.write_text('{"type": "Catalog"}')
+
+        rule = CatalogJsonValidRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_when_catalog_json_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule fails when catalog.json is missing."""
+        # catalog_dir exists but catalog.json doesn't
+        _ = catalog_dir  # Ensure fixture runs
+
+        rule = CatalogJsonValidRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "catalog.json" in result.message
+
+    @pytest.mark.unit
+    def test_fails_when_catalog_json_invalid(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule fails when catalog.json is not valid JSON."""
+        catalog_file = catalog_dir / "catalog.json"
+        catalog_file.write_text("not valid json {{{")
+
+        rule = CatalogJsonValidRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "invalid" in result.message.lower() or "parse" in result.message.lower()
+
+    @pytest.mark.unit
+    def test_fails_when_catalog_json_empty(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Rule fails when catalog.json is empty."""
+        catalog_file = catalog_dir / "catalog.json"
+        catalog_file.write_text("")
+
+        rule = CatalogJsonValidRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+
+    @pytest.mark.unit
+    def test_has_error_severity(self) -> None:
+        """Invalid catalog.json is an ERROR (blocking)."""
+        rule = CatalogJsonValidRule()
+        assert rule.severity == Severity.ERROR
+
+    @pytest.mark.unit
+    def test_provides_fix_hint_on_failure(self, tmp_path: Path, catalog_dir: Path) -> None:
+        """Failure includes hint for remediation."""
+        # catalog_dir exists but catalog.json doesn't
+        _ = catalog_dir
+
+        rule = CatalogJsonValidRule()
+        result = rule.check(tmp_path)
+
+        assert result.fix_hint is not None
+
+    @pytest.mark.unit
+    def test_fails_gracefully_when_portolan_dir_missing(self, tmp_path: Path) -> None:
+        """Rule fails cleanly when .portolan doesn't exist."""
+        rule = CatalogJsonValidRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        # Should not raise an exception
