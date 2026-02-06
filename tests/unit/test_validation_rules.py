@@ -480,3 +480,33 @@ class TestStacFieldsRule:
         result = rule.check(tmp_path)
 
         assert result.passed is False
+
+
+class TestCatalogJsonValidRuleOSError:
+    """Tests for OSError handling in CatalogJsonValidRule."""
+
+    @pytest.mark.unit
+    def test_fails_when_catalog_json_unreadable(self, tmp_path: Path) -> None:
+        """Rule fails cleanly when catalog.json cannot be read (OSError)."""
+        import os
+        import sys
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        catalog_file = portolan_dir / "catalog.json"
+        catalog_file.write_text('{"type": "Catalog"}')
+
+        # Make file unreadable (Unix only)
+        if sys.platform != "win32":
+            os.chmod(catalog_file, 0o000)
+            try:
+                rule = CatalogJsonValidRule()
+                result = rule.check(tmp_path)
+
+                assert result.passed is False
+                assert "read" in result.message.lower() or "permission" in result.message.lower()
+            finally:
+                # Restore permissions for cleanup
+                os.chmod(catalog_file, 0o644)
+        else:
+            pytest.skip("OSError test requires Unix file permissions")
