@@ -27,27 +27,36 @@ jobs:
 
       - name: Run mutation testing
         run: |
-          # Configuration is in pyproject.toml [tool.mutmut]
+          # mutmut 3.x auto-detects paths (config in pyproject.toml [tool.mutmut])
           uv run mutmut run
 
       - name: Check mutation score
         run: |
-          # Generate JUnit XML report (mutmut's supported output format)
-          uv run mutmut junitxml > mutation-results.xml
+          # Get all results (mutmut 3.x outputs text, not JSON/XML)
+          uv run mutmut results --all true > mutation-results.txt
 
-          # Parse JUnit XML to count killed (failures) vs survived (passed) mutants
-          # In JUnit XML: failures = killed mutants, passes = survived mutants
-          TOTAL=$(grep -c '<testcase' mutation-results.xml || echo 0)
-          KILLED=$(grep -c '<failure' mutation-results.xml || echo 0)
-          SURVIVED=$((TOTAL - KILLED))
+          # Count mutants by status from text output
+          # Format: "function_name: status" where status is killed/survived/no tests
+          KILLED=$(grep -c ': killed$' mutation-results.txt || echo 0)
+          SURVIVED=$(grep -c ': survived$' mutation-results.txt || echo 0)
+          NO_TESTS=$(grep -c ': no tests$' mutation-results.txt || echo 0)
 
-          if [ "$TOTAL" -eq 0 ]; then
-            echo "No mutations generated - check if source code is testable"
+          # Total testable mutants (exclude "no tests" from calculation)
+          TESTABLE=$((KILLED + SURVIVED))
+
+          echo "Mutation results:"
+          echo "  Killed: $KILLED"
+          echo "  Survived: $SURVIVED"
+          echo "  No tests: $NO_TESTS"
+          echo "  Total testable: $TESTABLE"
+
+          if [ "$TESTABLE" -eq 0 ]; then
+            echo "No testable mutations generated - check if source code has test coverage"
             exit 0
           fi
 
           # Calculate kill rate (higher is better)
-          KILL_RATE=$(echo "scale=2; $KILLED * 100 / $TOTAL" | bc)
+          KILL_RATE=$(echo "scale=2; $KILLED * 100 / $TESTABLE" | bc)
           echo "Mutation kill rate: $KILL_RATE% ($KILLED killed, $SURVIVED survived)"
 
           # Fail if kill rate drops below 60%
@@ -69,7 +78,7 @@ jobs:
           name: mutation-report
           path: |
             html/
-            mutation-results.xml
+            mutation-results.txt
           retention-days: 30
         if: always()
 
