@@ -7,6 +7,7 @@ to geoparquet-io—these tests verify that delegation will work.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -120,6 +121,10 @@ class TestGpioErrorHandling:
     """Tests for geoparquet-io error handling with invalid inputs."""
 
     @pytest.mark.integration
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
+    )
     def test_malformed_geojson_raises(
         self, invalid_malformed_geojson: Path, tmp_path: Path
     ) -> None:

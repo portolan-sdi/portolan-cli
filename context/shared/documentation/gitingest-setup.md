@@ -9,7 +9,7 @@
 - Documented Context7 + Gitingest + Distill combination
 - Provided step-by-step examples for geoparquet-io, rio-cogeo, gpio-pmtiles
 
-### 2. Global Level (/home/nissim/.claude/CLAUDE.md)
+### 2. Global Level (~/.claude/CLAUDE.md)
 - Added Gitingest overview
 - Documented when to use Gitingest vs Context7
 - Explained tool ordering (Context7 first, then Gitingest, then Distill)
@@ -81,7 +81,7 @@ jobs:
 | File | Change |
 |------|--------|
 | `CLAUDE.md` (project) | Added "Tool Usage" and "Dependency Research Workflow" |
-| `CLAUDE.md` (global) | Added Gitingest guidelines + tool ordering |
+| `~/.claude/CLAUDE.md` (global) | Added Gitingest guidelines + tool ordering |
 | `context/shared/documentation/context-guide.md` | NEW: Quick reference for Context7 + Gitingest + Distill |
 | `context/shared/documentation/gitingest-setup.md` | NEW: This file |
 

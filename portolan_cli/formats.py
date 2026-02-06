@@ -7,7 +7,6 @@ validation and conversion are delegated to these upstream libraries.
 
 from __future__ import annotations
 
-import json
 from enum import Enum
 from pathlib import Path
 
@@ -82,28 +81,42 @@ def detect_format(path: Path) -> FormatType:
 def _detect_json_type(path: Path) -> FormatType:
     """Check if a .json file is GeoJSON.
 
+    Uses prefix reading (first 8KB) to avoid OOM on large files.
+    Searches for GeoJSON type tokens without full JSON parsing.
+
     Args:
         path: Path to JSON file.
 
     Returns:
         VECTOR if GeoJSON, UNKNOWN otherwise.
     """
+    # GeoJSON type tokens to search for in file prefix
+    geojson_tokens = (
+        '"type":"FeatureCollection"',
+        '"type": "FeatureCollection"',
+        '"type":"Feature"',
+        '"type": "Feature"',
+        '"type":"Point"',
+        '"type": "Point"',
+        '"type":"MultiPoint"',
+        '"type": "MultiPoint"',
+        '"type":"LineString"',
+        '"type": "LineString"',
+        '"type":"MultiLineString"',
+        '"type": "MultiLineString"',
+        '"type":"Polygon"',
+        '"type": "Polygon"',
+        '"type":"MultiPolygon"',
+        '"type": "MultiPolygon"',
+        '"type":"GeometryCollection"',
+        '"type": "GeometryCollection"',
+    )
     try:
-        with open(path) as f:
-            # Read just enough to check the type field
-            data = json.load(f)
-            if isinstance(data, dict) and data.get("type") in (
-                "FeatureCollection",
-                "Feature",
-                "Point",
-                "MultiPoint",
-                "LineString",
-                "MultiLineString",
-                "Polygon",
-                "MultiPolygon",
-                "GeometryCollection",
-            ):
+        # Read only first 8KB to avoid OOM on large files
+        with open(path, encoding="utf-8") as f:
+            prefix = f.read(8192)
+            if any(token in prefix for token in geojson_tokens):
                 return FormatType.VECTOR
-    except (json.JSONDecodeError, OSError):
+    except OSError:
         pass
     return FormatType.UNKNOWN

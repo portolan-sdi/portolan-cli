@@ -111,3 +111,17 @@ class TestDetectFormat:
         """Directories raise IsADirectoryError."""
         with pytest.raises(IsADirectoryError):
             detect_format(tmp_path)
+
+    @pytest.mark.unit
+    def test_detect_json_with_read_error(self, tmp_path: Path) -> None:
+        """JSON files that can't be read return UNKNOWN."""
+        json_file = tmp_path / "test.json"
+        json_file.write_text('{"type": "FeatureCollection"}')
+        # Remove read permissions to trigger OSError
+        json_file.chmod(0o000)
+        try:
+            # Should return UNKNOWN rather than raising
+            assert detect_format(json_file) == FormatType.UNKNOWN
+        finally:
+            # Restore permissions for cleanup
+            json_file.chmod(0o644)
