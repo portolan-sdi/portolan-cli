@@ -1,0 +1,185 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.5,
+          37.7
+        ]
+      },
+      "properties": {
+        "id": 1,
+        "name": "Ferry Building",
+        "category": "landmark",
+        "rating": 3.5,
+        "open": true,
+        "visitors": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.4625,
+          37.7
+        ]
+      },
+      "properties": {
+        "id": 2,
+        "name": "Coit Tower",
+        "category": "park",
+        "rating": 4.0,
+        "open": false,
+        "visitors": 2000
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.425,
+          37.7
+        ]
+      },
+      "properties": {
+        "id": 3,
+        "name": "Golden Gate Park",
+        "category": "neighborhood",
+        "rating": 4.5,
+        "open": true,
+        "visitors": 3000
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.38749999999999,
+          37.7
+        ]
+      },
+      "properties": {
+        "id": 4,
+        "name": "Fisherman's Wharf",
+        "category": "tourist",
+        "rating": 3.5,
+        "open": false,
+        "visitors": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.35,
+          37.7
+        ]
+      },
+      "properties": {
+        "id": 5,
+        "name": "Alcatraz View",
+        "category": "business",
+        "rating": 4.0,
+        "open": true,
+        "visitors": 5000
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.5,
+          37.85
+        ]
+      },
+      "properties": {
+        "id": 6,
+        "name": "Mission District",
+        "category": "landmark",
+        "rating": 4.5,
+        "open": false,
+        "visitors": 6000
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.4625,
+          37.85
+        ]
+      },
+      "properties": {
+        "id": 7,
+        "name": "Castro",
+        "category": "park",
+        "rating": 3.5,
+        "open": true,
+        "visitors": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.425,
+          37.85
+        ]
+      },
+      "properties": {
+        "id": 8,
+        "name": "SOMA",
+        "category": "neighborhood",
+        "rating": 4.0,
+        "open": false,
+        "visitors": 8000
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.38749999999999,
+          37.85
+        ]
+      },
+      "properties": {
+        "id": 9,
+        "name": "Financial District",
+        "category": "tourist",
+        "rating": 4.5,
+        "open": true,
+        "visitors": 9000
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.35,
+          37.85
+        ]
+      },
+      "properties": {
+        "id": 10,
+        "name": "Embarcadero",
+        "category": "business",
+        "rating": 3.5,
+        "open": false,
+        "visitors": null
+      }
+    }
+  ]
+}

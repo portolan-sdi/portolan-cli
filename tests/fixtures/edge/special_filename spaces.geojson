@@ -1,0 +1,18 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.4,
+          37.78
+        ]
+      },
+      "properties": {
+        "name": "Test for filename with spaces"
+      }
+    }
+  ]
+}

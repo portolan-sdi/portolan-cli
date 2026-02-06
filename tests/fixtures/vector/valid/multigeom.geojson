@@ -1,0 +1,185 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.4,
+          37.78
+        ]
+      },
+      "properties": {
+        "id": 1,
+        "type": "point"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "MultiPoint",
+        "coordinates": [
+          [
+            -122.41,
+            37.78
+          ],
+          [
+            -122.42,
+            37.79
+          ]
+        ]
+      },
+      "properties": {
+        "id": 2,
+        "type": "multipoint"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -122.4,
+            37.77
+          ],
+          [
+            -122.41,
+            37.78
+          ]
+        ]
+      },
+      "properties": {
+        "id": 3,
+        "type": "linestring"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "MultiLineString",
+        "coordinates": [
+          [
+            [
+              -122.42,
+              37.77
+            ],
+            [
+              -122.43,
+              37.78
+            ]
+          ],
+          [
+            [
+              -122.42,
+              37.78
+            ],
+            [
+              -122.43,
+              37.79
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "id": 4,
+        "type": "multilinestring"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -122.45,
+              37.76
+            ],
+            [
+              -122.44,
+              37.76
+            ],
+            [
+              -122.44,
+              37.77
+            ],
+            [
+              -122.45,
+              37.77
+            ],
+            [
+              -122.45,
+              37.76
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "id": 5,
+        "type": "polygon"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [
+            [
+              [
+                -122.46,
+                37.76
+              ],
+              [
+                -122.455,
+                37.76
+              ],
+              [
+                -122.455,
+                37.765
+              ],
+              [
+                -122.46,
+                37.765
+              ],
+              [
+                -122.46,
+                37.76
+              ]
+            ]
+          ],
+          [
+            [
+              [
+                -122.46,
+                37.77
+              ],
+              [
+                -122.455,
+                37.77
+              ],
+              [
+                -122.455,
+                37.775
+              ],
+              [
+                -122.46,
+                37.775
+              ],
+              [
+                -122.46,
+                37.77
+              ]
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "id": 6,
+        "type": "multipolygon"
+      }
+    }
+  ]
+}

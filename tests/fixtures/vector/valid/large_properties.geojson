@@ -1,0 +1,170 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.4,
+          37.78
+        ]
+      },
+      "properties": {
+        "id": 1,
+        "name": "Feature 1",
+        "description": "This is a test feature number 1",
+        "category": "A",
+        "status": "active",
+        "code": "CODE-0000",
+        "count": 0,
+        "rank": 1,
+        "year": 2020,
+        "population": 10000,
+        "elevation_m": 50,
+        "rating": 3.0,
+        "percentage": 0.0,
+        "area_sq_km": 1.5,
+        "temperature_c": 15.0,
+        "price": 99.99,
+        "active": true,
+        "verified": true,
+        "public": true,
+        "optional_field": "value_0",
+        "nullable_int": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.39,
+          37.79
+        ]
+      },
+      "properties": {
+        "id": 2,
+        "name": "Feature 2",
+        "description": "This is a test feature number 2",
+        "category": "B",
+        "status": "inactive",
+        "code": "CODE-0001",
+        "count": 100,
+        "rank": 2,
+        "year": 2021,
+        "population": 20000,
+        "elevation_m": 60,
+        "rating": 3.4,
+        "percentage": 20.5,
+        "area_sq_km": 1.8,
+        "temperature_c": 17.1,
+        "price": 149.99,
+        "active": false,
+        "verified": false,
+        "public": true,
+        "optional_field": null,
+        "nullable_int": 10
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.38000000000001,
+          37.800000000000004
+        ]
+      },
+      "properties": {
+        "id": 3,
+        "name": "Feature 3",
+        "description": "This is a test feature number 3",
+        "category": "C",
+        "status": "active",
+        "code": "CODE-0002",
+        "count": 200,
+        "rank": 3,
+        "year": 2022,
+        "population": 30000,
+        "elevation_m": 70,
+        "rating": 3.8,
+        "percentage": 41.0,
+        "area_sq_km": 2.1,
+        "temperature_c": 19.2,
+        "price": 199.99,
+        "active": true,
+        "verified": false,
+        "public": true,
+        "optional_field": "value_2",
+        "nullable_int": 20
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.37,
+          37.81
+        ]
+      },
+      "properties": {
+        "id": 4,
+        "name": "Feature 4",
+        "description": "This is a test feature number 4",
+        "category": "D",
+        "status": "inactive",
+        "code": "CODE-0003",
+        "count": 300,
+        "rank": 4,
+        "year": 2023,
+        "population": 40000,
+        "elevation_m": 80,
+        "rating": 4.2,
+        "percentage": 61.5,
+        "area_sq_km": 2.4,
+        "temperature_c": 21.3,
+        "price": 249.99,
+        "active": false,
+        "verified": true,
+        "public": true,
+        "optional_field": null,
+        "nullable_int": null
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -122.36,
+          37.82
+        ]
+      },
+      "properties": {
+        "id": 5,
+        "name": "Feature 5",
+        "description": "This is a test feature number 5",
+        "category": "E",
+        "status": "active",
+        "code": "CODE-0004",
+        "count": 400,
+        "rank": 5,
+        "year": 2024,
+        "population": 50000,
+        "elevation_m": 90,
+        "rating": 4.6,
+        "percentage": 82.0,
+        "area_sq_km": 2.7,
+        "temperature_c": 23.4,
+        "price": 299.99,
+        "active": true,
+        "verified": false,
+        "public": true,
+        "optional_field": "value_4",
+        "nullable_int": 40
+      }
+    }
+  ]
+}

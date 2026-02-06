@@ -1,0 +1,132 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -122.42,
+            37.77
+          ],
+          [
+            -122.4,
+            37.79
+          ],
+          [
+            -122.39,
+            37.79
+          ]
+        ]
+      },
+      "properties": {
+        "id": 1,
+        "name": "Market Street",
+        "type": "major",
+        "lanes": 4,
+        "one_way": false
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -122.42,
+            37.76
+          ],
+          [
+            -122.4,
+            37.78
+          ]
+        ]
+      },
+      "properties": {
+        "id": 2,
+        "name": "Mission Street",
+        "type": "major",
+        "lanes": 4,
+        "one_way": false
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -122.42,
+            37.75
+          ],
+          [
+            -122.42,
+            37.82
+          ]
+        ]
+      },
+      "properties": {
+        "id": 3,
+        "name": "Van Ness Ave",
+        "type": "minor",
+        "lanes": 2,
+        "one_way": false
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -122.39,
+            37.79
+          ],
+          [
+            -122.385,
+            37.8
+          ],
+          [
+            -122.4,
+            37.81
+          ]
+        ]
+      },
+      "properties": {
+        "id": 4,
+        "name": "Embarcadero",
+        "type": "minor",
+        "lanes": 2,
+        "one_way": true
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -122.48,
+            37.78
+          ],
+          [
+            -122.42,
+            37.785
+          ],
+          [
+            -122.4,
+            37.787
+          ]
+        ]
+      },
+      "properties": {
+        "id": 5,
+        "name": "Geary Blvd",
+        "type": "minor",
+        "lanes": 2,
+        "one_way": false
+      }
+    }
+  ]
+}
