@@ -14,7 +14,7 @@ from __future__ import annotations
 from io import StringIO
 
 import pytest
-from hypothesis import given
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from portolan_cli.output import detail, error, info, success, warn
@@ -242,6 +242,7 @@ class TestDryRunMode:
         result = output.getvalue()
         assert "[DRY RUN]" not in result
 
+    @settings(suppress_health_check=[HealthCheck.differing_executors])
     @given(st.text(min_size=1))
     @pytest.mark.unit
     def test_dry_run_preserves_message_content(self, message: str) -> None:
