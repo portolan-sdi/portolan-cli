@@ -271,7 +271,10 @@ class TestAddDataset:
 
             # Collection should have been created
             collection_dir = initialized_catalog / ".portolan" / "collections" / "new-collection"
-            assert collection_dir.exists() or result.collection_id == "new-collection"
+            assert collection_dir.exists(), "Collection directory should exist"
+            assert result.collection_id == "new-collection", (
+                "Result should have correct collection_id"
+            )
 
 
 class TestListDatasets:
@@ -532,3 +535,46 @@ class TestRemoveDataset:
         remove_dataset(initialized_catalog, "to-remove-col", remove_collection=True)
 
         assert not col_dir.exists()
+
+
+class TestAddDatasetMissingBbox:
+    """Tests for add_dataset bbox validation."""
+
+    @pytest.mark.unit
+    def test_add_dataset_missing_bbox_raises(
+        self, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """add_dataset raises ValueError when metadata has no bbox (Null Island prevention)."""
+        geojson_path = tmp_path / "data.geojson"
+        geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
+
+        # Create the output file
+        output_dir = initialized_catalog / ".portolan" / "collections" / "test" / "data"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_file = output_dir / "data.parquet"
+        output_file.write_bytes(b"fake data")
+
+        with (
+            patch("portolan_cli.dataset.detect_format") as mock_detect,
+            patch("portolan_cli.dataset.convert_vector") as mock_convert,
+            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+        ):
+            mock_detect.return_value = FormatType.VECTOR
+            mock_convert.return_value = output_file
+            # Simulate missing bbox (None or empty tuple)
+            mock_metadata.return_value = MagicMock(
+                bbox=None,  # Missing bbox!
+                crs="EPSG:4326",
+                feature_count=0,
+                geometry_type="Point",
+                to_stac_properties=lambda: {},
+            )
+            mock_checksum.return_value = "xyz789"
+
+            with pytest.raises(ValueError, match="missing bounding box"):
+                add_dataset(
+                    path=geojson_path,
+                    catalog_root=initialized_catalog,
+                    collection_id="test",
+                )

@@ -17,7 +17,7 @@ Looking at production STAC catalogs (Planetary Computer, AWS Open Data, Element 
 
 Portolan uses a **flat three-level hierarchy**:
 
-```
+```text
 .portolan/                    ← catalog (one per init)
 ├── catalog.json
 ├── {collection}/             ← collection (first-level subdirectory)

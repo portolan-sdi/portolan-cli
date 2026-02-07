@@ -136,7 +136,12 @@ def add_dataset(
     checksum = compute_checksum(output_path)
 
     # Step 4: Extract bbox (handle tuple -> list conversion)
-    bbox = list(metadata.bbox) if metadata.bbox else [0, 0, 0, 0]
+    if not metadata.bbox:
+        raise ValueError(
+            f"Cannot create STAC item for '{metadata.id if hasattr(metadata, 'id') else path.stem}': "
+            f"missing bounding box. The source file may have no valid geometry."
+        )
+    bbox = list(metadata.bbox)
 
     # Step 5: Create STAC item
     stac_properties = metadata.to_stac_properties()
@@ -204,7 +209,7 @@ def convert_vector(source: Path, dest_dir: Path) -> Path:
     Returns:
         Path to the output GeoParquet file.
     """
-    from gpio import read_file, write_file  # type: ignore[import-not-found]
+    import geoparquet_io as gpio  # type: ignore[import-untyped]
 
     output_path = dest_dir / f"{source.stem}.parquet"
 
@@ -213,9 +218,8 @@ def convert_vector(source: Path, dest_dir: Path) -> Path:
         shutil.copy2(source, output_path)
         return output_path
 
-    # Convert using geoparquet-io
-    gdf = read_file(source)
-    write_file(gdf, output_path)
+    # Convert using geoparquet-io fluent API
+    gpio.convert(str(source)).write(str(output_path))
 
     return output_path
 
@@ -303,11 +307,25 @@ def _update_catalog_links(portolan_dir: Path, collection_id: str) -> None:
     catalog_path = portolan_dir / "catalog.json"
     catalog = load_catalog(catalog_path)
 
-    # Check if collection link already exists
-    collection_href = f"./collections/{collection_id}/collection.json"
-    existing_hrefs = {link.href for link in catalog.links if link.rel == "child"}
+    # Normalize hrefs to ensure consistent comparison
+    catalog.normalize_hrefs(str(portolan_dir))
 
-    if collection_href not in existing_hrefs:
+    # Extract collection IDs from existing child links
+    # Links may be in various formats: "./collections/{id}/collection.json" or absolute paths
+    existing_collection_ids: set[str] = set()
+    for link in catalog.links:
+        if link.rel != "child":
+            continue
+        href = link.href or ""
+        # Extract collection ID from href pattern: .../collections/{id}/collection.json
+        if "/collections/" in href and href.endswith("/collection.json"):
+            # Parse: anything/collections/{collection_id}/collection.json
+            parts = href.split("/collections/")[-1]
+            coll_id = parts.split("/")[0]
+            existing_collection_ids.add(coll_id)
+
+    if collection_id not in existing_collection_ids:
+        collection_href = f"./collections/{collection_id}/collection.json"
         catalog.add_link(pystac.Link(rel="child", target=collection_href))
         # Re-save catalog
         catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
@@ -418,7 +436,7 @@ def list_datasets(
             item_id = item_href.split("/")[1] if "/" in item_href else item_href
 
             # Load item
-            item_path = col_dir / item_href.lstrip("./")
+            item_path = col_dir / item_href.removeprefix("./")
             if not item_path.exists():
                 continue
 
