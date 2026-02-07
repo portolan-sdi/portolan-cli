@@ -1,7 +1,7 @@
 site_name: portolan-cli
 site_description: A CLI tool for managing cloud-native geospatial data
 site_author: Nissim Lebovits
-site_url: https://portolan.github.io/portolan-cli/
+site_url: https://portolan-sdi.github.io/portolan-cli/
 repo_name: portolan-sdi/portolan-cli
 repo_url: https://github.com/portolan-sdi/portolan-cli
 edit_uri: edit/main/docs/

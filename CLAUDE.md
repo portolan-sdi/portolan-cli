@@ -49,6 +49,10 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0006](context/shared/adr/0006-remote-ownership-model.md) | Portolan owns bucket contents (no external edits) |
 | [0007](context/shared/adr/0007-cli-wraps-api.md) | CLI wraps Python API (all logic in library layer) |
 | [0008](context/shared/adr/0008-pipx-for-installation.md) | pipx for global installation, uv for development |
+| [0009](context/shared/adr/0009-output-dry-run-and-verbose-modes.md) | Dry-run and verbose modes in output functions |
+| [0010](context/shared/adr/0010-delegate-conversion-validation.md) | Delegate conversion/validation to upstream libraries |
+| [0011](context/shared/adr/0011-mvp-validation-framework.md) | MVP validation framework for format handlers |
+| [0012](context/shared/adr/0012-flat-catalog-hierarchy.md) | Flat catalog hierarchy (no nested collections) |
 
 ## Common Commands
 
@@ -287,7 +291,7 @@ detail("Processing chunk 3/10...")         # Dimmed text
 | Tool | Purpose | Documentation |
 |------|---------|---------------|
 | context7 | Up-to-date library docs (official API) | — |
-| gitingest | Source code exploration (implementation details) | `https://github.com/coderamp-labs/gitingest` |
+| gitingest | Source code exploration (implementation details) | `https://github.com/cyclotruc/gitingest` |
 | distill | Token-efficient operations | `context/shared/documentation/distill-mcp.md` |
 | worktrunk | Worktree management | — |
 
@@ -340,3 +344,5 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 | Issue | Impact |
 |-------|--------|
 | [PyArrow v22+ ABI](context/shared/known-issues/pyarrow-abseil-abi.md) | Import failures on Ubuntu 22.04; pinned to `<22.0.0` |
+| [geoparquet-io Windows segfault](context/shared/known-issues/geoparquet-io-windows-segfault.md) | Crashes on malformed input; test skipped on Windows |
+| [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
