@@ -643,6 +643,9 @@ def main() -> None:
     print("\n--- Raster fixtures (COG) ---")
     generate_raster_fixtures()
 
+    # Note: Shapefile fixtures deferred - GeoJSON/GeoParquet sufficient for now
+    # See issue #30 for real-world data fixtures including Shapefiles
+
     print("\n" + "=" * 50)
     print("Done! All fixtures generated.")
 

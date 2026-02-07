@@ -11,6 +11,12 @@ from pathlib import Path
 import click
 
 from portolan_cli.catalog import Catalog, CatalogExistsError
+from portolan_cli.dataset import (
+    add_dataset,
+    get_dataset_info,
+    list_datasets,
+    remove_dataset,
+)
 from portolan_cli.output import detail, error, info, success, warn
 from portolan_cli.validation import Severity
 from portolan_cli.validation import check as validate_catalog
@@ -103,3 +109,216 @@ def check(path: Path, json_output: bool, verbose: bool) -> None:
     # Exit code: 1 if any errors (not warnings)
     if report.errors:
         raise SystemExit(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dataset commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def dataset() -> None:
+    """Manage datasets in the catalog."""
+    pass
+
+
+@dataset.command("add")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--collection",
+    "-c",
+    required=True,
+    help="Collection to add the dataset to.",
+)
+@click.option("--title", "-t", help="Display title for the dataset.")
+@click.option("--description", "-d", help="Description of the dataset.")
+@click.option("--id", "item_id", help="Item ID (defaults to filename).")
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=".",
+    help="Path to catalog root (default: current directory).",
+)
+def dataset_add(
+    path: Path,
+    collection: str,
+    title: str | None,
+    description: str | None,
+    item_id: str | None,
+    catalog_path: Path,
+) -> None:
+    """Add a dataset to the catalog.
+
+    PATH is the file or directory to add.
+
+    Examples:
+
+        portolan dataset add data.geojson --collection demographics
+
+        portolan dataset add raster.tif --collection imagery --title "Satellite Image"
+    """
+    try:
+        result = add_dataset(
+            path=path,
+            catalog_root=catalog_path,
+            collection_id=collection,
+            title=title,
+            description=description,
+            item_id=item_id,
+        )
+        success(f"Added {result.item_id} to collection {result.collection_id}")
+        if result.title:
+            detail(f"  Title: {result.title}")
+        detail(f"  Format: {result.format_type.value}")
+        detail(f"  Bbox: {result.bbox}")
+    except ValueError as err:
+        error(str(err))
+        raise SystemExit(1) from err
+    except FileNotFoundError as err:
+        error(str(err))
+        raise SystemExit(1) from err
+
+
+@dataset.command("list")
+@click.option(
+    "--collection",
+    "-c",
+    help="Filter by collection ID.",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=".",
+    help="Path to catalog root (default: current directory).",
+)
+def dataset_list(collection: str | None, catalog_path: Path) -> None:
+    """List datasets in the catalog.
+
+    Examples:
+
+        portolan dataset list
+
+        portolan dataset list --collection demographics
+    """
+    datasets = list_datasets(catalog_path, collection_id=collection)
+
+    if not datasets:
+        info("No datasets found")
+        return
+
+    for ds in datasets:
+        info(f"{ds.collection_id}/{ds.item_id}")
+        if ds.title:
+            detail(f"  Title: {ds.title}")
+        detail(f"  Format: {ds.format_type.value}")
+
+
+@dataset.command("info")
+@click.argument("dataset_id")
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=".",
+    help="Path to catalog root (default: current directory).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def dataset_info(dataset_id: str, catalog_path: Path, json_output: bool) -> None:
+    """Show information about a dataset.
+
+    DATASET_ID is in the format 'collection/item'.
+
+    Examples:
+
+        portolan dataset info demographics/census
+
+        portolan dataset info imagery/satellite-2024 --json
+    """
+    import json as json_module
+
+    try:
+        ds = get_dataset_info(catalog_path, dataset_id)
+    except KeyError as err:
+        error(str(err))
+        raise SystemExit(1) from err
+
+    if json_output:
+        data = {
+            "item_id": ds.item_id,
+            "collection_id": ds.collection_id,
+            "format": ds.format_type.value,
+            "bbox": ds.bbox,
+            "assets": ds.asset_paths,
+            "title": ds.title,
+            "description": ds.description,
+        }
+        click.echo(json_module.dumps(data, indent=2))
+    else:
+        info(f"Dataset: {ds.collection_id}/{ds.item_id}")
+        if ds.title:
+            detail(f"  Title: {ds.title}")
+        if ds.description:
+            detail(f"  Description: {ds.description}")
+        detail(f"  Format: {ds.format_type.value}")
+        detail(f"  Bbox: {ds.bbox}")
+        if ds.asset_paths:
+            detail(f"  Assets: {', '.join(ds.asset_paths)}")
+
+
+@dataset.command("remove")
+@click.argument("dataset_id")
+@click.option(
+    "--collection",
+    is_flag=True,
+    help="Remove entire collection (not just item).",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt.",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=".",
+    help="Path to catalog root (default: current directory).",
+)
+def dataset_remove(
+    dataset_id: str,
+    collection: bool,
+    yes: bool,
+    catalog_path: Path,
+) -> None:
+    """Remove a dataset from the catalog.
+
+    DATASET_ID is in the format 'collection/item' or just 'collection' with --collection.
+
+    Examples:
+
+        portolan dataset remove demographics/census
+
+        portolan dataset remove demographics --collection
+    """
+    # Confirm unless --yes
+    if not yes:
+        if collection:
+            msg = f"Remove entire collection '{dataset_id}'?"
+        else:
+            msg = f"Remove dataset '{dataset_id}'?"
+        if not click.confirm(msg):
+            info("Cancelled")
+            return
+
+    try:
+        remove_dataset(catalog_path, dataset_id, remove_collection=collection)
+        if collection:
+            success(f"Removed collection {dataset_id}")
+        else:
+            success(f"Removed dataset {dataset_id}")
+    except KeyError as err:
+        error(str(err))
+        raise SystemExit(1) from err
