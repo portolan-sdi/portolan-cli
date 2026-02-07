@@ -20,7 +20,12 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
-        run: uv python install 3.11
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.11
 
       - name: Install dependencies
         run: uv sync --all-extras
@@ -94,7 +99,12 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
-        run: uv python install 3.11
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.11
 
       - name: Install dependencies
         run: uv sync --all-extras
@@ -140,7 +150,12 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
-        run: uv python install 3.11
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.11
 
       - name: Install dependencies
         run: uv sync --all-extras
@@ -162,7 +177,12 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
-        run: uv python install 3.11
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.11
 
       - name: Install dependencies
         run: uv sync --all-extras
