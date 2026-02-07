@@ -261,6 +261,36 @@ Use the template at `context/shared/adr/0000-template.md`.
 | **Humans** | `docs/` (mkdocs) | *How to use* — tutorials, visual guides |
 | **AI agents** | Docstrings, CLAUDE.md, ADRs | *How to modify* — dense, structured, co-located with code |
 
+### Validating AI Guidance
+
+**When possible, back AI guidance with automated validation.** Documentation drifts; code doesn't lie.
+
+If CLAUDE.md says "all ADRs must be listed in the index," enforce it with a script. If it says "use `output.py` for terminal messages," add a lint rule. The goal: make it impossible for guidance to become stale.
+
+**Pattern:**
+1. Write guidance in CLAUDE.md
+2. Ask: "Can I validate this automatically?"
+3. If yes, write a script in `scripts/` and add a pre-commit hook
+
+**Example:** The ADR index in this file is validated by `scripts/validate_claude_md.py`:
+
+```python
+# Checks that all ADRs in context/shared/adr/ are listed in CLAUDE.md
+missing = actual_adrs - linked_adrs
+if missing:
+    fail(f"ADRs not in CLAUDE.md index: {missing}")
+```
+
+This runs as a pre-commit hook—commits that add ADRs without updating CLAUDE.md are blocked.
+
+**Validation scripts:**
+
+| Script | Validates |
+|--------|-----------|
+| `scripts/validate_claude_md.py` | ADR index, known issues table, link validity |
+
+When adding new guidance to CLAUDE.md, consider: can this be validated? If so, add a check.
+
 ## Standardized Terminal Output
 
 Use `portolan_cli/output.py` for all user-facing messages:
