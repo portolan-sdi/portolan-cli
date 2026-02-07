@@ -37,6 +37,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: validate-claude-md
+        name: validate CLAUDE.md references
+        entry: uv run python scripts/validate_claude_md.py
+        language: system
+        files: ^(CLAUDE\.md|context/shared/adr/.*\.md|context/shared/known-issues/.*\.md)$
+        pass_filenames: false
+
       - id: mypy
         name: mypy
         entry: uv run mypy
