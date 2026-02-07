@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "portolan-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "A CLI tool for managing cloud-native geospatial data"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -75,7 +75,7 @@ packages = ["portolan_cli"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.2.0"
+version = "0.3.0"
 version_files = ["pyproject.toml:^version"]
 tag_format = "v$version"
 update_changelog_on_bump = true
