@@ -81,6 +81,27 @@ class TestIterGeospatialFiles:
         files = list(iter_geospatial_files(tmp_path))
         assert files == []
 
+    @pytest.mark.unit
+    def test_iter_non_directory_returns_empty(self, tmp_path: Path) -> None:
+        """iter_geospatial_files returns empty for non-directory path."""
+        file_path = tmp_path / "not_a_dir.geojson"
+        file_path.write_text("{}")
+
+        files = list(iter_geospatial_files(file_path))
+        assert files == []
+
+    @pytest.mark.unit
+    def test_iter_returns_sorted(self, tmp_path: Path) -> None:
+        """iter_geospatial_files returns files in sorted order."""
+        (tmp_path / "z.geojson").write_text("{}")
+        (tmp_path / "a.geojson").write_text("{}")
+        (tmp_path / "m.geojson").write_text("{}")
+
+        files = iter_geospatial_files(tmp_path)
+
+        names = [f.name for f in files]
+        assert names == ["a.geojson", "m.geojson", "z.geojson"]
+
 
 class TestAddDirectory:
     """Tests for adding a directory of files."""

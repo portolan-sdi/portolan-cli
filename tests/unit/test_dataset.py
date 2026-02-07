@@ -287,6 +287,103 @@ class TestListDatasets:
         assert datasets == []
 
     @pytest.mark.unit
+    def test_list_no_catalog_returns_empty(self, tmp_path: Path) -> None:
+        """list_datasets returns empty for directory without catalog."""
+        datasets = list_datasets(tmp_path)
+        assert datasets == []
+
+    @pytest.mark.unit
+    def test_list_skips_non_directory_in_collections(self, initialized_catalog: Path) -> None:
+        """list_datasets skips files in collections directory."""
+        portolan_dir = initialized_catalog / ".portolan"
+        collections_dir = portolan_dir / "collections"
+        collections_dir.mkdir()
+        # Create a file (not directory) in collections
+        (collections_dir / "not-a-collection.txt").write_text("not a dir")
+
+        datasets = list_datasets(initialized_catalog)
+        assert datasets == []
+
+    @pytest.mark.unit
+    def test_list_skips_collection_without_json(self, initialized_catalog: Path) -> None:
+        """list_datasets skips collection directories without collection.json."""
+        portolan_dir = initialized_catalog / ".portolan"
+        col_dir = portolan_dir / "collections" / "incomplete"
+        col_dir.mkdir(parents=True)
+        # No collection.json created
+
+        datasets = list_datasets(initialized_catalog)
+        assert datasets == []
+
+    @pytest.mark.unit
+    def test_list_skips_missing_item_files(self, initialized_catalog: Path) -> None:
+        """list_datasets skips items where item.json doesn't exist."""
+        portolan_dir = initialized_catalog / ".portolan"
+        col_dir = portolan_dir / "collections" / "col"
+        col_dir.mkdir(parents=True)
+
+        # Collection references an item that doesn't exist
+        collection_data = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "col",
+            "description": "Test",
+            "license": "proprietary",
+            "extent": {
+                "spatial": {"bbox": [[0, 0, 1, 1]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [{"rel": "item", "href": "./missing/missing.json"}],
+        }
+        (col_dir / "collection.json").write_text(json.dumps(collection_data))
+
+        datasets = list_datasets(initialized_catalog)
+        assert datasets == []
+
+    @pytest.mark.unit
+    def test_list_detects_raster_format(self, initialized_catalog: Path) -> None:
+        """list_datasets correctly identifies raster format from .tif assets."""
+        portolan_dir = initialized_catalog / ".portolan"
+        col_dir = portolan_dir / "collections" / "imagery"
+        col_dir.mkdir(parents=True)
+
+        collection_data = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "imagery",
+            "description": "Raster imagery",
+            "license": "proprietary",
+            "extent": {
+                "spatial": {"bbox": [[0, 0, 1, 1]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [{"rel": "item", "href": "./raster/raster.json"}],
+        }
+        (col_dir / "collection.json").write_text(json.dumps(collection_data))
+
+        item_dir = col_dir / "raster"
+        item_dir.mkdir()
+        item_data = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "raster",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
+            },
+            "bbox": [0, 0, 1, 1],
+            "properties": {"datetime": "2024-01-01T00:00:00Z"},
+            "links": [],
+            "assets": {"data": {"href": "image.tif"}},
+        }
+        (item_dir / "raster.json").write_text(json.dumps(item_data))
+
+        datasets = list_datasets(initialized_catalog)
+
+        assert len(datasets) == 1
+        assert datasets[0].format_type == FormatType.RASTER
+
+    @pytest.mark.unit
     def test_list_all_datasets(self, initialized_catalog: Path) -> None:
         """list_datasets returns all datasets across collections."""
         # Create mock collection structure

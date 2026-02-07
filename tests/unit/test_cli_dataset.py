@@ -247,6 +247,155 @@ class TestDatasetInfo:
                 assert result.exit_code == 1
 
 
+class TestDatasetAddErrors:
+    """Tests for error handling in 'portolan dataset add' command."""
+
+    @pytest.mark.unit
+    def test_add_dataset_value_error(self, runner: CliRunner, tmp_path: Path) -> None:
+        """dataset add shows error for ValueError (unsupported format)."""
+        test_file = tmp_path / "test.xyz"
+        test_file.write_text("unknown format")
+
+        with patch("portolan_cli.cli.add_dataset") as mock_add:
+            mock_add.side_effect = ValueError("Unsupported format: .xyz")
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(
+                    cli,
+                    ["dataset", "add", str(test_file), "--collection", "col"],
+                )
+
+                assert result.exit_code == 1
+                assert "Unsupported format" in result.output
+
+    @pytest.mark.unit
+    def test_add_dataset_file_not_found(self, runner: CliRunner) -> None:
+        """dataset add shows error for FileNotFoundError."""
+        with patch("portolan_cli.cli.add_dataset") as mock_add:
+            mock_add.side_effect = FileNotFoundError("File not found: missing.geojson")
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+                # Create a dummy file so Click doesn't reject it
+                Path("dummy.geojson").write_text("{}")
+
+                result = runner.invoke(
+                    cli,
+                    ["dataset", "add", "dummy.geojson", "--collection", "col"],
+                )
+
+                assert result.exit_code == 1
+                assert "not found" in result.output.lower()
+
+
+class TestDatasetListWithTitle:
+    """Tests for dataset list with title display."""
+
+    @pytest.mark.unit
+    def test_list_shows_titles(self, runner: CliRunner) -> None:
+        """dataset list displays titles when present."""
+        with patch("portolan_cli.cli.list_datasets") as mock_list:
+            mock_list.return_value = [
+                DatasetInfo(
+                    item_id="item1",
+                    collection_id="col1",
+                    format_type=FormatType.VECTOR,
+                    bbox=[0, 0, 1, 1],
+                    asset_paths=["data.parquet"],
+                    title="My Dataset Title",
+                ),
+            ]
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "list"])
+
+                assert result.exit_code == 0
+                assert "My Dataset Title" in result.output
+
+
+class TestDatasetInfoJson:
+    """Tests for dataset info --json output."""
+
+    @pytest.mark.unit
+    def test_info_json_output(self, runner: CliRunner) -> None:
+        """dataset info --json outputs valid JSON."""
+        with patch("portolan_cli.cli.get_dataset_info") as mock_info:
+            mock_info.return_value = DatasetInfo(
+                item_id="my-item",
+                collection_id="my-collection",
+                format_type=FormatType.VECTOR,
+                bbox=[-122.5, 37.5, -122.0, 38.0],
+                asset_paths=["data.parquet"],
+                title="Test Title",
+                description="Test Description",
+            )
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "info", "my-collection/my-item", "--json"])
+
+                assert result.exit_code == 0
+                # Parse JSON to verify it's valid
+                data = json.loads(result.output)
+                assert data["item_id"] == "my-item"
+                assert data["collection_id"] == "my-collection"
+                assert data["title"] == "Test Title"
+                assert data["description"] == "Test Description"
+                assert data["bbox"] == [-122.5, 37.5, -122.0, 38.0]
+
+    @pytest.mark.unit
+    def test_info_displays_description(self, runner: CliRunner) -> None:
+        """dataset info displays description when present."""
+        with patch("portolan_cli.cli.get_dataset_info") as mock_info:
+            mock_info.return_value = DatasetInfo(
+                item_id="item",
+                collection_id="col",
+                format_type=FormatType.VECTOR,
+                bbox=[0, 0, 1, 1],
+                asset_paths=["data.parquet"],
+                description="A detailed description",
+            )
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "info", "col/item"])
+
+                assert result.exit_code == 0
+                assert "detailed description" in result.output
+
+    @pytest.mark.unit
+    def test_info_displays_assets(self, runner: CliRunner) -> None:
+        """dataset info displays asset paths."""
+        with patch("portolan_cli.cli.get_dataset_info") as mock_info:
+            mock_info.return_value = DatasetInfo(
+                item_id="item",
+                collection_id="col",
+                format_type=FormatType.VECTOR,
+                bbox=[0, 0, 1, 1],
+                asset_paths=["data.parquet", "thumbnail.png"],
+            )
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "info", "col/item"])
+
+                assert result.exit_code == 0
+                assert "data.parquet" in result.output
+
+
 class TestDatasetRemove:
     """Tests for 'portolan dataset remove' command."""
 
@@ -293,3 +442,62 @@ class TestDatasetRemove:
                 mock_remove.assert_called_once()
                 call_kwargs = mock_remove.call_args.kwargs
                 assert call_kwargs.get("remove_collection") is True
+
+    @pytest.mark.unit
+    def test_remove_confirms_yes(self, runner: CliRunner) -> None:
+        """dataset remove proceeds when user confirms with 'y'."""
+        with patch("portolan_cli.cli.remove_dataset") as mock_remove:
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "remove", "col/item"], input="y\n")
+
+                assert result.exit_code == 0
+                mock_remove.assert_called_once()
+                assert "Removed dataset" in result.output
+
+    @pytest.mark.unit
+    def test_remove_collection_confirms(self, runner: CliRunner) -> None:
+        """dataset remove --collection shows collection-specific prompt."""
+        with patch("portolan_cli.cli.remove_dataset") as mock_remove:
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(
+                    cli, ["dataset", "remove", "my-col", "--collection"], input="y\n"
+                )
+
+                assert result.exit_code == 0
+                assert "collection" in result.output.lower()
+                mock_remove.assert_called_once()
+
+    @pytest.mark.unit
+    def test_remove_cancelled(self, runner: CliRunner) -> None:
+        """dataset remove shows cancelled message when user declines."""
+        with patch("portolan_cli.cli.remove_dataset") as mock_remove:
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "remove", "col/item"], input="n\n")
+
+                assert result.exit_code == 0
+                assert "cancel" in result.output.lower()
+                mock_remove.assert_not_called()
+
+    @pytest.mark.unit
+    def test_remove_not_found(self, runner: CliRunner) -> None:
+        """dataset remove shows error for nonexistent dataset."""
+        with patch("portolan_cli.cli.remove_dataset") as mock_remove:
+            mock_remove.side_effect = KeyError("Dataset not found: nonexistent/item")
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "remove", "nonexistent/item", "--yes"])
+
+                assert result.exit_code == 1
+                assert "not found" in result.output.lower()
