@@ -131,8 +131,9 @@ class TestProcessHookInput:
 class TestHookEndToEnd:
     """End-to-end tests simulating actual hook JSON I/O."""
 
-    def test_main_with_valid_input(self) -> None:
+    def test_main_with_valid_input(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test main() with valid JSON input."""
+        import sys
         from io import StringIO
 
         import scripts.fetch_lib_docs as fetch_lib_docs
@@ -150,13 +151,10 @@ class TestHookEndToEnd:
                 "tool_result": {"content": "from obstore import ObjectStore"},
             }
 
-            # Capture stdout
-            import sys
-
-            old_stdin = sys.stdin
-            old_stdout = sys.stdout
-            sys.stdin = StringIO(json.dumps(hook_input))
-            sys.stdout = captured_output = StringIO()
+            # Use monkeypatch for exception-safe stdin/stdout replacement
+            captured_output = StringIO()
+            monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(hook_input)))
+            monkeypatch.setattr(sys, "stdout", captured_output)
 
             with (
                 patch.dict("os.environ", {"CLAUDE_SESSION_ID": session_id}),
@@ -164,9 +162,6 @@ class TestHookEndToEnd:
             ):
                 mock_ingest.return_value = ("summary", "tree", "content")
                 fetch_lib_docs.main()
-
-            sys.stdin = old_stdin
-            sys.stdout = old_stdout
 
             output = captured_output.getvalue()
             assert output  # Should have output
@@ -177,24 +172,21 @@ class TestHookEndToEnd:
             if cache_path.exists():
                 cache_path.unlink()
 
-    def test_main_with_invalid_json(self) -> None:
+    def test_main_with_invalid_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test main() gracefully handles invalid JSON."""
         import sys
         from io import StringIO
 
         import scripts.fetch_lib_docs as fetch_lib_docs
 
-        old_stdin = sys.stdin
-        old_stdout = sys.stdout
-        sys.stdin = StringIO("not valid json {{{")
-        sys.stdout = captured_output = StringIO()
+        # Use monkeypatch for exception-safe stdin/stdout replacement
+        captured_output = StringIO()
+        monkeypatch.setattr(sys, "stdin", StringIO("not valid json {{{"))
+        monkeypatch.setattr(sys, "stdout", captured_output)
 
         # Should exit with code 0 (silent failure)
         with pytest.raises(SystemExit) as exc_info:
             fetch_lib_docs.main()
-
-        sys.stdin = old_stdin
-        sys.stdout = old_stdout
 
         assert exc_info.value.code == 0
         output = captured_output.getvalue()

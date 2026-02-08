@@ -221,14 +221,19 @@ class TestFetchDocs:
     """Tests for the main fetch_docs function."""
 
     def test_fetch_docs_calls_gitingest(self) -> None:
-        """fetch_docs should call gitingest with correct URL."""
+        """fetch_docs should call gitingest with correct URL and filtering."""
         from scripts.fetch_lib_docs import fetch_docs
 
         with patch("gitingest.ingest") as mock_ingest:
             mock_ingest.return_value = ("summary", "tree", "content")
             result = fetch_docs("geoparquet_io")
 
-            mock_ingest.assert_called_once_with("https://github.com/geoparquet/geoparquet-io")
+            mock_ingest.assert_called_once_with(
+                "https://github.com/geoparquet/geoparquet-io",
+                include_patterns={"*.py", "*.md", "*.rst", "*.txt"},
+                exclude_patterns={"tests/*", "test/*", "*.png", "*.jpg", "*.gif", "*.svg"},
+                max_file_size=1024 * 1024,
+            )
             assert result is not None
 
     def test_fetch_docs_returns_none_on_error(self) -> None:

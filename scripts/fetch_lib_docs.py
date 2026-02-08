@@ -110,7 +110,7 @@ def is_library_fetched(library: str, session_id: str) -> bool:
     if not cache_path.exists():
         return False
 
-    fetched_libs = cache_path.read_text().strip().split("\n")
+    fetched_libs = cache_path.read_text(encoding="utf-8").strip().split("\n")
     return library in fetched_libs
 
 
@@ -125,11 +125,11 @@ def mark_library_fetched(library: str, session_id: str) -> None:
 
     # Append to existing cache or create new
     if cache_path.exists():
-        existing = cache_path.read_text().strip()
+        existing = cache_path.read_text(encoding="utf-8").strip()
         if library not in existing.split("\n"):
-            cache_path.write_text(f"{existing}\n{library}")
+            cache_path.write_text(f"{existing}\n{library}", encoding="utf-8")
     else:
-        cache_path.write_text(library)
+        cache_path.write_text(library, encoding="utf-8")
 
 
 def get_unfetched_libraries(detected: set[str], session_id: str) -> set[str]:
@@ -173,7 +173,13 @@ def fetch_docs(library: str) -> str | None:
     try:
         from gitingest import ingest
 
-        summary, tree, content = ingest(url)
+        # Use filtering to limit output size and focus on relevant files
+        summary, tree, content = ingest(
+            url,
+            include_patterns={"*.py", "*.md", "*.rst", "*.txt"},
+            exclude_patterns={"tests/*", "test/*", "*.png", "*.jpg", "*.gif", "*.svg"},
+            max_file_size=1024 * 1024,  # 1 MB max per file
+        )
         # Combine all parts into a useful format
         return f"# {library} Documentation\n\n## Summary\n{summary}\n\n## Structure\n{tree}\n\n## Content\n{content}"
     except ImportError:

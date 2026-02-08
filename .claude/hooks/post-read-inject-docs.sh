@@ -18,8 +18,8 @@ if [[ ! "$FILE_PATH" =~ \.py$ ]]; then
     exit 0
 fi
 
-# Generate session ID from terminal/process info for caching
-SESSION_ID="${CLAUDE_SESSION_ID:-$(echo "$$-$(date +%Y%m%d)" | md5sum | cut -d' ' -f1)}"
+# Generate session ID from parent process (Claude) for stable caching across hook invocations
+SESSION_ID="${CLAUDE_SESSION_ID:-$(echo "$PPID-$(date +%Y%m%d)" | md5sum | cut -d' ' -f1)}"
 
 # Run the Python script to detect imports and fetch docs
 # Pass the full hook input via stdin
