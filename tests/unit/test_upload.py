@@ -232,9 +232,18 @@ class TestCheckCredentials:
 
         from portolan_cli.upload import check_credentials
 
-        # Mock both env vars and ADC file check
+        # Mock ADC file check - don't clear env vars completely as it breaks
+        # Path.home() on Windows (needs HOME or USERPROFILE)
         with (
-            patch.dict(os.environ, {}, clear=True),
+            patch.dict(
+                os.environ,
+                {
+                    "GOOGLE_APPLICATION_CREDENTIALS": "",
+                    "GOOGLE_SERVICE_ACCOUNT": "",
+                    "GOOGLE_SERVICE_ACCOUNT_PATH": "",
+                    "GOOGLE_SERVICE_ACCOUNT_KEY": "",
+                },
+            ),
             patch.object(Path, "exists", return_value=False),
         ):
             valid, hint = check_credentials("gs://mybucket/path")
