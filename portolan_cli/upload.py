@@ -299,22 +299,42 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
 def _check_gcs_credentials() -> tuple[bool, str]:
     """Check if GCS credentials are available.
 
+    Checks all credential sources that obstore's GCSStore.from_url() supports.
+
     Returns:
         Tuple of (credentials_found, hint_message)
     """
-    # Check for application default credentials or service account key
+    # Check for application default credentials file
     gcloud_creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if gcloud_creds and os.path.exists(gcloud_creds):
         return True, ""
 
-    # For now, assume credentials might not be available
+    # Check for service account path (alias)
+    sa_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT") or os.environ.get(
+        "GOOGLE_SERVICE_ACCOUNT_PATH"
+    )
+    if sa_path and os.path.exists(sa_path):
+        return True, ""
+
+    # Check for inline service account key JSON
+    if os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY"):
+        return True, ""
+
+    # Check for ADC in default location (~/.config/gcloud/application_default_credentials.json)
+    adc_path = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+    if adc_path.exists():
+        return True, ""
+
     hints = []
     hints.append("GCS credentials not found. To configure credentials:")
     hints.append("")
-    hints.append("Option 1: Set service account key")
+    hints.append("Option 1: Set service account key file")
     hints.append("  export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json")
     hints.append("")
-    hints.append("Option 2: Use application default credentials")
+    hints.append("Option 2: Set inline service account key")
+    hints.append("  export GOOGLE_SERVICE_ACCOUNT_KEY='{...json...}'")
+    hints.append("")
+    hints.append("Option 3: Use application default credentials")
     hints.append("  gcloud auth application-default login")
 
     return False, "\n".join(hints)
@@ -323,15 +343,33 @@ def _check_gcs_credentials() -> tuple[bool, str]:
 def _check_azure_credentials() -> tuple[bool, str]:
     """Check if Azure credentials are available.
 
+    Checks all credential sources that obstore's AzureStore.from_url() supports.
+
     Returns:
         Tuple of (credentials_found, hint_message)
     """
-    # Check for various Azure credential env vars
-    account_key = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
-    sas_token = os.environ.get("AZURE_STORAGE_SAS_TOKEN")
-    client_id = os.environ.get("AZURE_CLIENT_ID")
+    # Check for storage account key (multiple aliases)
+    if any(
+        os.environ.get(key)
+        for key in [
+            "AZURE_STORAGE_ACCOUNT_KEY",
+            "AZURE_STORAGE_ACCESS_KEY",
+            "AZURE_STORAGE_MASTER_KEY",
+        ]
+    ):
+        return True, ""
 
-    if account_key or sas_token or client_id:
+    # Check for SAS token
+    if os.environ.get("AZURE_STORAGE_SAS_TOKEN") or os.environ.get("AZURE_STORAGE_SAS_KEY"):
+        return True, ""
+
+    # Check for service principal / managed identity credentials
+    if os.environ.get("AZURE_CLIENT_ID"):
+        return True, ""
+
+    # Check for federated token (workload identity)
+    federated_token = os.environ.get("AZURE_FEDERATED_TOKEN_FILE")
+    if federated_token and os.path.exists(federated_token):
         return True, ""
 
     hints = []
@@ -467,12 +505,14 @@ def _build_target_key(file_path: Path, source: Path, prefix: str) -> str:
         prefix: Prefix to prepend to the key
 
     Returns:
-        Target key for the object store
+        Target key for the object store (always uses forward slashes)
     """
     rel_path = file_path.relative_to(source)
+    # Always use POSIX separators for object store keys (forward slashes)
+    rel_posix = rel_path.as_posix()
     if prefix:
-        return f"{prefix.rstrip('/')}/{rel_path}"
-    return str(rel_path)
+        return f"{prefix.rstrip('/')}/{rel_posix}"
+    return rel_posix
 
 
 def _get_target_key(source: Path, prefix: str, is_dir_destination: bool) -> str:
@@ -649,8 +689,7 @@ def _print_dry_run_directory(
     """Print dry-run information for directory upload."""
     info(f"[DRY RUN] Would upload {len(files)} file(s) ({total_size_mb:.2f} MB total)")
     for f in files[:10]:
-        rel_path = f.relative_to(source)
-        target_key = f"{prefix.rstrip('/')}/{rel_path}" if prefix else str(rel_path)
+        target_key = _build_target_key(f, source, prefix)
         detail(f"  {f.name} -> {target_key}")
     if len(files) > 10:
         detail(f"  ... and {len(files) - 10} more file(s)")

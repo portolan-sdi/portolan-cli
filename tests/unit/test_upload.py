@@ -228,12 +228,57 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_gcs_missing_credentials(self) -> None:
         """Missing GCS credentials should return helpful hints."""
+        from pathlib import Path
+
         from portolan_cli.upload import check_credentials
 
-        with patch.dict(os.environ, {}, clear=True):
+        # Mock both env vars and ADC file check
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(Path, "exists", return_value=False),
+        ):
             valid, hint = check_credentials("gs://mybucket/path")
             assert valid is False
             assert "GOOGLE_APPLICATION_CREDENTIALS" in hint
+
+    @pytest.mark.unit
+    def test_gcs_with_service_account_key_env(self) -> None:
+        """GCS credentials should be found from inline GOOGLE_SERVICE_ACCOUNT_KEY."""
+        from portolan_cli.upload import check_credentials
+
+        with patch.dict(os.environ, {"GOOGLE_SERVICE_ACCOUNT_KEY": '{"type": "service_account"}'}):
+            valid, hint = check_credentials("gs://mybucket/path")
+            assert valid is True
+            assert hint == ""
+
+    @pytest.mark.unit
+    def test_gcs_with_adc_file(self, tmp_path: Path) -> None:
+        """GCS credentials should be found from ADC file in default location."""
+        from portolan_cli.upload import check_credentials
+
+        # Mock Path.home() to use tmp_path and create ADC file
+        adc_dir = tmp_path / ".config" / "gcloud"
+        adc_dir.mkdir(parents=True)
+        adc_file = adc_dir / "application_default_credentials.json"
+        adc_file.write_text('{"type": "authorized_user"}')
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("pathlib.Path.home", return_value=tmp_path),
+        ):
+            valid, hint = check_credentials("gs://mybucket/path")
+            assert valid is True
+            assert hint == ""
+
+    @pytest.mark.unit
+    def test_azure_with_access_key_alias(self) -> None:
+        """Azure credentials should be found from AZURE_STORAGE_ACCESS_KEY alias."""
+        from portolan_cli.upload import check_credentials
+
+        with patch.dict(os.environ, {"AZURE_STORAGE_ACCESS_KEY": "testkey"}):
+            valid, hint = check_credentials("az://myaccount/container")
+            assert valid is True
+            assert hint == ""
 
     @pytest.mark.unit
     def test_azure_with_account_key(self) -> None:
