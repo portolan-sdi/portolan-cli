@@ -42,7 +42,10 @@ jobs:
       - name: Extract version from pyproject.toml
         id: version
         run: |
-          VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          # Use head -1 because pyproject.toml has two version lines:
+          # 1. [project].version (the package version - what we want)
+          # 2. [tool.commitizen].version (kept in sync by cz bump)
+          VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION (tag: v$VERSION)"
