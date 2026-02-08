@@ -14,3 +14,8 @@ keep = None  # Used by prune() implementations
 # CLI options that are defined for future interactive prompting
 # The --auto flag is accepted by CLI but prompting not yet implemented
 auto_mode = None  # Will control interactive prompting when implemented
+
+# Test fixtures - pytest injects these, vulture doesn't understand
+mock_aws_credentials = None  # Fixture for AWS credentials tests
+capsys = None  # pytest built-in fixture
+args = None  # Mock function parameter in tests
