@@ -53,6 +53,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0010](context/shared/adr/0010-delegate-conversion-validation.md) | Delegate conversion/validation to upstream libraries |
 | [0011](context/shared/adr/0011-mvp-validation-framework.md) | MVP validation framework for format handlers |
 | [0012](context/shared/adr/0012-flat-catalog-hierarchy.md) | Flat catalog hierarchy (no nested collections) |
+| [0013](context/shared/adr/0013-gitingest-auto-fetch.md) | Auto-fetch dependency docs via gitingest |
 
 ## Common Commands
 

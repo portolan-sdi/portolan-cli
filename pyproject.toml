@@ -46,6 +46,7 @@ portolan = "portolan_cli:cli"
 [project.optional-dependencies]
 dev = [
     "bandit>=1.9.3",
+    "gitingest>=0.1.0",  # Auto-fetch API docs for core dependencies
     "codespell>=2.4.1",
     "commitizen>=4.13.4",
     "hypothesis>=6.151.5",
@@ -154,7 +155,7 @@ python_version = "3.10"
 strict = true  # Enables all strict flags at once
 
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "rasterio.*"]
+module = ["pyarrow.*", "rasterio.*", "gitingest.*"]
 ignore_missing_imports = true
 
 # ---------- security ----------
