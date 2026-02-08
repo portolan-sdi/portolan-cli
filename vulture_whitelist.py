@@ -6,7 +6,6 @@
 # These are used by concrete implementations
 catalog_path = None  # Used by ValidationRule.check() implementations
 
-# Test fixtures - pytest injects these, vulture doesn't understand
-mock_aws_credentials = None  # Fixture for AWS credentials tests
-capsys = None  # pytest built-in fixture
-args = None  # Mock function parameter in tests
+# Note: Test fixture parameters are now marked as used in-line with
+# assertions or assignment to _ to satisfy vulture. The blanket exclusion
+# of test_upload.py has been removed from pyproject.toml.

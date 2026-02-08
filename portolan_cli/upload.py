@@ -728,7 +728,10 @@ def _execute_parallel_uploads(
             result = future.result()
             results.append(result)
             if fail_fast and result[1] is not None:
-                # Cancel remaining futures on first error
+                # Cancel remaining futures on first error.
+                # Note: future.cancel() only prevents futures that haven't started yet;
+                # already-running tasks will complete. This is a Python ThreadPoolExecutor
+                # limitation and is acceptable behavior for our use case.
                 for pending_future in future_to_file:
                     pending_future.cancel()
                 break
