@@ -54,7 +54,7 @@ import configparser
 import os
 import re
 import time
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -86,9 +86,7 @@ class UploadResult:
         success: True if all files were uploaded successfully.
         files_uploaded: Number of files successfully uploaded.
         files_failed: Number of files that failed to upload.
-        total_bytes: Total bytes uploaded (only successful files). Note: for
-            very large uploads (> 9 PB), this may overflow on 32-bit systems.
-            Use 64-bit Python for large data transfers.
+        total_bytes: Total bytes uploaded (only successful files).
         errors: List of (file_path, exception) tuples for failed uploads.
     """
 
@@ -122,33 +120,24 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
         Tuple of (bucket_url, prefix)
 
     Raises:
-        ValueError: If URL scheme is not supported or bucket/container is empty
-
-    Note:
-        For Azure, only the `az://account/container/path` format is supported.
-        Other Azure URL formats (https://account.blob.core.windows.net/container)
-        are not currently supported.
+        ValueError: If URL scheme is not supported
     """
     if url.startswith("s3://"):
         parts = url[5:].split("/", 1)
         bucket = parts[0]
-        if not bucket:
-            raise ValueError(f"Empty bucket name in S3 URL: {url}")
         prefix = parts[1] if len(parts) > 1 else ""
         return f"s3://{bucket}", prefix
 
     elif url.startswith("gs://"):
         parts = url[5:].split("/", 1)
         bucket = parts[0]
-        if not bucket:
-            raise ValueError(f"Empty bucket name in GCS URL: {url}")
         prefix = parts[1] if len(parts) > 1 else ""
         return f"gs://{bucket}", prefix
 
     elif url.startswith("az://"):
         # Azure: az://account/container/path
         parts = url[5:].split("/", 2)
-        if len(parts) < 2 or not parts[0] or not parts[1]:
+        if len(parts) < 2:
             raise ValueError(f"Invalid Azure URL: {url}. Expected az://account/container/path")
         account, container = parts[0], parts[1]
         prefix = parts[2] if len(parts) > 2 else ""
@@ -298,10 +287,8 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
     hints.append("  export AWS_SECRET_ACCESS_KEY=your_secret_key")
     hints.append("  export AWS_REGION=us-west-2  # required for most buckets")
     hints.append("")
-    hints.append("Option 2: Configure AWS credentials file (~/.aws/credentials)")
-    hints.append("  [myprofile]")
-    hints.append("  aws_access_key_id = YOUR_ACCESS_KEY")
-    hints.append("  aws_secret_access_key = YOUR_SECRET_KEY")
+    hints.append("Option 2: Use --profile flag with AWS credentials file")
+    hints.append("  portolan sync --profile myprofile")
     hints.append("")
     hints.append("Option 3: Configure AWS CLI")
     hints.append("  aws configure")
@@ -312,45 +299,23 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
 def _check_gcs_credentials() -> tuple[bool, str]:
     """Check if GCS credentials are available.
 
-    Checks all credential sources that obstore's GCSStore.from_url() supports.
-
     Returns:
         Tuple of (credentials_found, hint_message)
     """
-    # Check for application default credentials file
+    # Check for application default credentials or service account key
     gcloud_creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if gcloud_creds and os.path.exists(gcloud_creds):
         return True, ""
 
-    # Check for service account path (alias)
-    sa_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT") or os.environ.get(
-        "GOOGLE_SERVICE_ACCOUNT_PATH"
-    )
-    if sa_path and os.path.exists(sa_path):
-        return True, ""
-
-    # Check for inline service account key JSON
-    if os.environ.get("GOOGLE_SERVICE_ACCOUNT_KEY"):
-        return True, ""
-
-    # Check for ADC in default location (~/.config/gcloud/application_default_credentials.json)
-    adc_path = Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
-    if adc_path.exists():
-        return True, ""
-
+    # For now, assume credentials might not be available
     hints = []
     hints.append("GCS credentials not found. To configure credentials:")
     hints.append("")
-    hints.append("Option 1: Set service account key file")
+    hints.append("Option 1: Set service account key")
     hints.append("  export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json")
     hints.append("")
-    hints.append("Option 2: Set inline service account key")
-    hints.append("  export GOOGLE_SERVICE_ACCOUNT_KEY='{...json...}'")
-    hints.append("")
-    hints.append("Option 3: Use application default credentials")
+    hints.append("Option 2: Use application default credentials")
     hints.append("  gcloud auth application-default login")
-    hints.append("")
-    hints.append("Note: Some buckets may also require GOOGLE_CLOUD_PROJECT to be set.")
 
     return False, "\n".join(hints)
 
@@ -358,33 +323,15 @@ def _check_gcs_credentials() -> tuple[bool, str]:
 def _check_azure_credentials() -> tuple[bool, str]:
     """Check if Azure credentials are available.
 
-    Checks all credential sources that obstore's AzureStore.from_url() supports.
-
     Returns:
         Tuple of (credentials_found, hint_message)
     """
-    # Check for storage account key (multiple aliases)
-    if any(
-        os.environ.get(key)
-        for key in [
-            "AZURE_STORAGE_ACCOUNT_KEY",
-            "AZURE_STORAGE_ACCESS_KEY",
-            "AZURE_STORAGE_MASTER_KEY",
-        ]
-    ):
-        return True, ""
+    # Check for various Azure credential env vars
+    account_key = os.environ.get("AZURE_STORAGE_ACCOUNT_KEY")
+    sas_token = os.environ.get("AZURE_STORAGE_SAS_TOKEN")
+    client_id = os.environ.get("AZURE_CLIENT_ID")
 
-    # Check for SAS token
-    if os.environ.get("AZURE_STORAGE_SAS_TOKEN") or os.environ.get("AZURE_STORAGE_SAS_KEY"):
-        return True, ""
-
-    # Check for service principal / managed identity credentials
-    if os.environ.get("AZURE_CLIENT_ID"):
-        return True, ""
-
-    # Check for federated token (workload identity)
-    federated_token = os.environ.get("AZURE_FEDERATED_TOKEN_FILE")
-    if federated_token and os.path.exists(federated_token):
+    if account_key or sas_token or client_id:
         return True, ""
 
     hints = []
@@ -449,15 +396,10 @@ def _setup_store_and_kwargs(
     Returns:
         Tuple of (store, kwargs) where kwargs are passed to obs.put
 
-    Note:
-        For S3, credentials are loaded from (in order):
-        1. --profile flag (reads ~/.aws/credentials)
-        2. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-        3. Default profile in ~/.aws/credentials (automatic fallback)
-
-        The returned ObjectStore does not require explicit cleanup. obstore
-        manages HTTP connection pooling internally and connections are released
-        when the store object is garbage collected.
+    Note: For S3, credentials are loaded from (in order):
+    1. --profile flag (reads ~/.aws/credentials)
+    2. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+    3. Default profile in ~/.aws/credentials (automatic fallback)
     """
     if bucket_url.startswith("s3://"):
         bucket = bucket_url.replace("s3://", "").split("/")[0]
@@ -497,14 +439,8 @@ def _setup_store_and_kwargs(
             store_kwargs["secret_access_key"] = secret_key
 
         if s3_endpoint:
-            # Strip existing scheme if present to avoid double-protocol
-            endpoint = s3_endpoint
-            if endpoint.startswith("https://"):
-                endpoint = endpoint[8:]
-            elif endpoint.startswith("http://"):
-                endpoint = endpoint[7:]
             protocol = "https" if s3_use_ssl else "http"
-            store_kwargs["endpoint"] = f"{protocol}://{endpoint}"
+            store_kwargs["endpoint"] = f"{protocol}://{s3_endpoint}"
             if not region:
                 store_kwargs["region"] = "us-east-1"  # Default for custom endpoints
 
@@ -515,30 +451,6 @@ def _setup_store_and_kwargs(
 
     kwargs = {"max_concurrency": chunk_concurrency}
     return store, kwargs
-
-
-# =============================================================================
-# Display Helpers
-# =============================================================================
-
-
-def _format_upload_speed(size_mb: float, elapsed_seconds: float) -> str:
-    """Format upload speed for display.
-
-    Handles edge cases like very fast uploads (< 1ms) to avoid showing
-    misleading "0.00 MB/s" or division by zero.
-
-    Args:
-        size_mb: Size in megabytes
-        elapsed_seconds: Time elapsed in seconds
-
-    Returns:
-        Formatted speed string (e.g., "12.34 MB/s" or "< 1ms")
-    """
-    if elapsed_seconds <= 0.001:
-        return "< 1ms"
-    speed_mbps = size_mb / elapsed_seconds
-    return f"{speed_mbps:.2f} MB/s"
 
 
 # =============================================================================
@@ -555,35 +467,12 @@ def _build_target_key(file_path: Path, source: Path, prefix: str) -> str:
         prefix: Prefix to prepend to the key
 
     Returns:
-        Target key for the object store (always uses forward slashes)
-
-    Raises:
-        ValueError: If the resolved file path escapes the source directory
-            (e.g., via symlink path traversal)
-
-    Note:
-        This function validates that the file's resolved (real) path is within
-        the source directory to prevent symlink-based path traversal attacks.
+        Target key for the object store
     """
-    # Resolve both paths to check for symlink-based path traversal
-    resolved_file = file_path.resolve()
-    resolved_source = source.resolve()
-
-    # Verify the file is actually within the source directory
-    try:
-        resolved_file.relative_to(resolved_source)
-    except ValueError as err:
-        raise ValueError(
-            f"Path traversal detected: {file_path} resolves to {resolved_file} "
-            f"which is outside source directory {resolved_source}"
-        ) from err
-
     rel_path = file_path.relative_to(source)
-    # Always use POSIX separators for object store keys (forward slashes)
-    rel_posix = rel_path.as_posix()
     if prefix:
-        return f"{prefix.rstrip('/')}/{rel_posix}"
-    return rel_posix
+        return f"{prefix.rstrip('/')}/{rel_path}"
+    return str(rel_path)
 
 
 def _get_target_key(source: Path, prefix: str, is_dir_destination: bool) -> str:
@@ -628,12 +517,6 @@ def _upload_one_file(
 
     Returns:
         Tuple of (file_path, error_or_none, bytes_uploaded)
-
-    Note:
-        The underlying obstore library does not support upload timeouts.
-        Uploads may hang indefinitely on network issues. Consider implementing
-        application-level timeouts if needed (e.g., using threading.Timer or
-        signal-based timeout wrappers).
     """
     try:
         target_key = _build_target_key(file_path, source, prefix)
@@ -646,9 +529,9 @@ def _upload_one_file(
         obs.put(store, target_key, file_path, max_concurrency=kwargs.get("max_concurrency", 12))
 
         elapsed = time.time() - start_time
-        speed_display = _format_upload_speed(size_mb, elapsed)
+        speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        success(f"{file_path.name} ({speed_display})")
+        success(f"{file_path.name} ({speed_mbps:.2f} MB/s)")
         return file_path, None, file_size
     except Exception as e:
         error(f"{file_path.name}: {e}")
@@ -721,9 +604,9 @@ def upload_file(
         obs.put(store, target_key, source, max_concurrency=kwargs.get("max_concurrency", 12))
 
         elapsed = time.time() - start_time
-        speed_display = _format_upload_speed(size_mb, elapsed)
+        speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        success(f"Upload complete ({speed_display})")
+        success(f"Upload complete ({speed_mbps:.2f} MB/s)")
 
         return UploadResult(
             success=True,
@@ -752,16 +635,6 @@ def _find_files_to_upload(source: Path, pattern: str | None) -> list[Path]:
 
     Returns:
         List of file paths to upload
-
-    Note:
-        This function uses Path.rglob() which follows symlinks by default.
-        Symlinked files will be uploaded, and symlinked directories will be
-        traversed. Be aware that:
-        1. Symlinks pointing outside the source directory will be followed
-        2. Circular symlinks may cause infinite loops (handled by the OS)
-        3. The uploaded content will be the target of the symlink, not the link itself
-
-        If you need to exclude symlinks, filter the result with `f.is_symlink()`.
     """
     if pattern:
         files = list(source.rglob(pattern))
@@ -776,7 +649,8 @@ def _print_dry_run_directory(
     """Print dry-run information for directory upload."""
     info(f"[DRY RUN] Would upload {len(files)} file(s) ({total_size_mb:.2f} MB total)")
     for f in files[:10]:
-        target_key = _build_target_key(f, source, prefix)
+        rel_path = f.relative_to(source)
+        target_key = f"{prefix.rstrip('/')}/{rel_path}" if prefix else str(rel_path)
         detail(f"  {f.name} -> {target_key}")
     if len(files) > 10:
         detail(f"  ... and {len(files) - 10} more file(s)")
@@ -799,76 +673,26 @@ def _execute_parallel_uploads(
         source: Source directory for relative path calculation
         prefix: Prefix for target keys
         max_files: Max concurrent file uploads
-        fail_fast: Stop on first error if True (best-effort stopping - see note)
+        fail_fast: Stop on first error if True
         kwargs: Additional args for obs.put
 
     Returns:
         List of (file_path, error_or_none, bytes_uploaded) tuples
-
-    Note:
-        fail_fast mode uses **best-effort stopping**. When an error occurs:
-        1. No new uploads are started
-        2. Already-running uploads continue to completion (cannot be interrupted)
-
-        This is a limitation of Python's ThreadPoolExecutor - Future.cancel()
-        only prevents tasks that haven't started yet. For true cancellation,
-        consider using asyncio with cancellation tokens, or accept that a few
-        in-flight uploads may complete after the first error is detected.
     """
     results: list[tuple[Path, Exception | None, int]] = []
+    with ThreadPoolExecutor(max_workers=max_files) as executor:
+        future_to_file = {
+            executor.submit(_upload_one_file, store, f, source, prefix, **kwargs): f for f in files
+        }
 
-    # Type alias for upload result future
-    UploadResultFuture = Future[tuple[Path, Exception | None, int]]
-
-    if fail_fast:
-        # For fail_fast mode, submit futures incrementally to ensure we can stop
-        # after the first error without starting additional tasks.
-        with ThreadPoolExecutor(max_workers=max_files) as executor:
-            pending: dict[UploadResultFuture, Path] = {}
-            files_iter = iter(files)
-
-            # Submit initial batch up to max_files
-            for f in files_iter:
-                future: UploadResultFuture = executor.submit(
-                    _upload_one_file, store, f, source, prefix, **kwargs
-                )
-                pending[future] = f
-                if len(pending) >= max_files:
-                    break
-
-            while pending:
-                # Wait for next completed future
-                done: UploadResultFuture = next(iter(as_completed(pending)))
-                result = done.result()
-                results.append(result)
-                del pending[done]
-
-                # Stop on first error
-                if result[1] is not None:
-                    for pending_future in pending:
-                        pending_future.cancel()
-                    break
-
-                # Submit next file if available
-                try:
-                    next_file = next(files_iter)
-                    new_future: UploadResultFuture = executor.submit(
-                        _upload_one_file, store, next_file, source, prefix, **kwargs
-                    )
-                    pending[new_future] = next_file
-                except StopIteration:
-                    pass
-    else:
-        # For non-fail_fast mode, submit all futures upfront for maximum parallelism
-        with ThreadPoolExecutor(max_workers=max_files) as executor:
-            future_to_file = {
-                executor.submit(_upload_one_file, store, f, source, prefix, **kwargs): f
-                for f in files
-            }
-
-            for future in as_completed(future_to_file):
-                result = future.result()
-                results.append(result)
+        for future in as_completed(future_to_file):
+            result = future.result()
+            results.append(result)
+            if fail_fast and result[1] is not None:
+                # Cancel remaining futures on first error
+                for pending_future in future_to_file:
+                    pending_future.cancel()
+                break
 
     return results
 

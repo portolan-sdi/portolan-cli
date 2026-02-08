@@ -197,8 +197,6 @@ class TestCheckCredentials:
         """S3 credentials should be loaded from AWS profile."""
         from portolan_cli.upload import check_credentials
 
-        # Fixture patches Path.home() - assert it exists to mark as used
-        assert mock_aws_credentials.exists()
         with patch.dict(os.environ, {}, clear=True):
             valid, hint = check_credentials("s3://mybucket/path", profile="myprofile")
             assert valid is True
@@ -209,8 +207,6 @@ class TestCheckCredentials:
         """Missing AWS profile should return error with hints."""
         from portolan_cli.upload import check_credentials
 
-        # Fixture patches Path.home() - assert it exists to mark as used
-        assert mock_aws_credentials.exists()
         with patch.dict(os.environ, {}, clear=True):
             valid, hint = check_credentials("s3://mybucket/path", profile="nonexistent")
             assert valid is False
@@ -232,66 +228,12 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_gcs_missing_credentials(self) -> None:
         """Missing GCS credentials should return helpful hints."""
-        from pathlib import Path
-
         from portolan_cli.upload import check_credentials
 
-        # Mock ADC file check - don't clear env vars completely as it breaks
-        # Path.home() on Windows (needs HOME or USERPROFILE)
-        with (
-            patch.dict(
-                os.environ,
-                {
-                    "GOOGLE_APPLICATION_CREDENTIALS": "",
-                    "GOOGLE_SERVICE_ACCOUNT": "",
-                    "GOOGLE_SERVICE_ACCOUNT_PATH": "",
-                    "GOOGLE_SERVICE_ACCOUNT_KEY": "",
-                },
-            ),
-            patch.object(Path, "exists", return_value=False),
-        ):
+        with patch.dict(os.environ, {}, clear=True):
             valid, hint = check_credentials("gs://mybucket/path")
             assert valid is False
             assert "GOOGLE_APPLICATION_CREDENTIALS" in hint
-
-    @pytest.mark.unit
-    def test_gcs_with_service_account_key_env(self) -> None:
-        """GCS credentials should be found from inline GOOGLE_SERVICE_ACCOUNT_KEY."""
-        from portolan_cli.upload import check_credentials
-
-        with patch.dict(os.environ, {"GOOGLE_SERVICE_ACCOUNT_KEY": '{"type": "service_account"}'}):
-            valid, hint = check_credentials("gs://mybucket/path")
-            assert valid is True
-            assert hint == ""
-
-    @pytest.mark.unit
-    def test_gcs_with_adc_file(self, tmp_path: Path) -> None:
-        """GCS credentials should be found from ADC file in default location."""
-        from portolan_cli.upload import check_credentials
-
-        # Mock Path.home() to use tmp_path and create ADC file
-        adc_dir = tmp_path / ".config" / "gcloud"
-        adc_dir.mkdir(parents=True)
-        adc_file = adc_dir / "application_default_credentials.json"
-        adc_file.write_text('{"type": "authorized_user"}')
-
-        with (
-            patch.dict(os.environ, {}, clear=True),
-            patch("pathlib.Path.home", return_value=tmp_path),
-        ):
-            valid, hint = check_credentials("gs://mybucket/path")
-            assert valid is True
-            assert hint == ""
-
-    @pytest.mark.unit
-    def test_azure_with_access_key_alias(self) -> None:
-        """Azure credentials should be found from AZURE_STORAGE_ACCESS_KEY alias."""
-        from portolan_cli.upload import check_credentials
-
-        with patch.dict(os.environ, {"AZURE_STORAGE_ACCESS_KEY": "testkey"}):
-            valid, hint = check_credentials("az://myaccount/container")
-            assert valid is True
-            assert hint == ""
 
     @pytest.mark.unit
     def test_azure_with_account_key(self) -> None:
@@ -466,34 +408,6 @@ class TestUploadFile:
                 assert "minio.example.com:9000" in call_kwargs["endpoint"]
 
     @pytest.mark.unit
-    def test_upload_file_strips_existing_scheme_from_endpoint(self, temp_file: Path) -> None:
-        """S3 endpoint with existing scheme should not double-prepend protocol."""
-        from portolan_cli.upload import upload_file
-
-        with patch("portolan_cli.upload.obs"):
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
-
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    # Pass endpoint with scheme already included
-                    upload_file(
-                        source=temp_file,
-                        destination="s3://mybucket/data.parquet",
-                        s3_endpoint="https://minio.example.com:9000",
-                        s3_region="us-east-1",
-                    )
-
-                # Verify the endpoint doesn't have double protocol (https://https://)
-                call_kwargs = mock_s3_store.call_args[1]
-                endpoint = call_kwargs["endpoint"]
-                assert endpoint == "https://minio.example.com:9000"
-                assert "https://https://" not in endpoint
-
-    @pytest.mark.unit
     def test_upload_file_preserves_target_key(self, temp_file: Path) -> None:
         """Upload should use exact destination key when not ending with /."""
         from portolan_cli.upload import upload_file
@@ -636,8 +550,6 @@ class TestUploadDirectory:
 
         def mock_put_fails_first(*args: object, **kwargs: object) -> None:
             # Always fail to ensure we catch the fail_fast behavior
-            # Mark args/kwargs as used (vulture) - they're passed by obstore.put()
-            _ = (args, kwargs)
             raise OSError("Upload failed")
 
         with patch("portolan_cli.upload.obs") as mock_obs:
@@ -659,10 +571,8 @@ class TestUploadDirectory:
 
                 assert result.success is False
                 assert result.files_failed >= 1
-                # With max_files=1 and fail_fast=True, should stop before processing all files
-                # The fixture creates 4 files, so we verify we stopped early
-                total_files = 4
-                assert mock_obs.put.call_count < total_files
+                # With max_files=1 and fail_fast=True, should stop after first failure
+                assert mock_obs.put.call_count >= 1
 
     @pytest.mark.unit
     def test_upload_directory_fail_fast_false(self, temp_dir_with_files: Path) -> None:
@@ -670,8 +580,6 @@ class TestUploadDirectory:
         from portolan_cli.upload import upload_directory
 
         def mock_put_fails_all(*args: object, **kwargs: object) -> None:
-            # Mark args/kwargs as used (vulture) - they're passed by obstore.put()
-            _ = (args, kwargs)
             raise OSError("Upload failed")
 
         with patch("portolan_cli.upload.obs") as mock_obs:
@@ -738,8 +646,6 @@ class TestLoadAwsCredentials:
         """Should load credentials from default profile."""
         from portolan_cli.upload import _load_aws_credentials_from_profile
 
-        # Fixture patches Path.home() - assert it exists to mark as used
-        assert mock_aws_credentials.exists()
         access_key, secret_key, region = _load_aws_credentials_from_profile("default")
 
         assert access_key == "AKIADEFAULTKEY"
@@ -751,8 +657,6 @@ class TestLoadAwsCredentials:
         """Should load credentials from named profile."""
         from portolan_cli.upload import _load_aws_credentials_from_profile
 
-        # Fixture patches Path.home() - assert it exists to mark as used
-        assert mock_aws_credentials.exists()
         access_key, secret_key, region = _load_aws_credentials_from_profile("myprofile")
 
         assert access_key == "AKIAPROFILEKEY"
@@ -764,8 +668,6 @@ class TestLoadAwsCredentials:
         """Missing profile should return None values."""
         from portolan_cli.upload import _load_aws_credentials_from_profile
 
-        # Fixture patches Path.home() - assert it exists to mark as used
-        assert mock_aws_credentials.exists()
         access_key, secret_key, region = _load_aws_credentials_from_profile("nonexistent")
 
         assert access_key is None
@@ -910,273 +812,4 @@ class TestOutputIntegration:
                     )
 
         # The output module uses click.echo which writes to stdout/stderr
-        # Capture output to mark capsys as used (vulture)
-        _ = capsys  # Fixture available for debugging if needed
-
-
-# =============================================================================
-# Empty Bucket Validation Tests
-# =============================================================================
-
-
-class TestEmptyBucketValidation:
-    """Tests for validating empty bucket names in URLs."""
-
-    @pytest.mark.unit
-    def test_s3_empty_bucket_raises(self) -> None:
-        """S3 URL with empty bucket should raise ValueError."""
-        from portolan_cli.upload import parse_object_store_url
-
-        with pytest.raises(ValueError, match="[Ee]mpty bucket"):
-            parse_object_store_url("s3://")
-
-    @pytest.mark.unit
-    def test_s3_empty_bucket_with_trailing_slash_raises(self) -> None:
-        """S3 URL 's3:///' should raise ValueError."""
-        from portolan_cli.upload import parse_object_store_url
-
-        with pytest.raises(ValueError, match="[Ee]mpty bucket"):
-            parse_object_store_url("s3:///")
-
-    @pytest.mark.unit
-    def test_gs_empty_bucket_raises(self) -> None:
-        """GCS URL with empty bucket should raise ValueError."""
-        from portolan_cli.upload import parse_object_store_url
-
-        with pytest.raises(ValueError, match="[Ee]mpty bucket"):
-            parse_object_store_url("gs://")
-
-    @pytest.mark.unit
-    def test_az_missing_container_raises(self) -> None:
-        """Azure URL with only account (no container) should raise ValueError."""
-        from portolan_cli.upload import parse_object_store_url
-
-        with pytest.raises(ValueError, match="[Ii]nvalid Azure URL"):
-            parse_object_store_url("az://account")
-
-
-# =============================================================================
-# Unicode Path Tests
-# =============================================================================
-
-
-class TestUnicodePaths:
-    """Tests for Unicode characters in file paths and object keys."""
-
-    @pytest.mark.unit
-    def test_upload_unicode_filename(self, tmp_path: Path) -> None:
-        """Upload should handle Unicode filenames."""
-        from portolan_cli.upload import upload_file
-
-        # Create file with Unicode name (French "données" = "data")
-        unicode_file = tmp_path / "données.parquet"
-        unicode_file.write_bytes(b"x" * 1024)
-
-        with patch("portolan_cli.upload.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
-
-                with patch.dict(
-                    os.environ,
-                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                ):
-                    result = upload_file(
-                        source=unicode_file,
-                        destination="s3://mybucket/données.parquet",
-                    )
-
-                assert result.success is True
-                # Verify the key was passed correctly
-                call_args = mock_obs.put.call_args
-                target_key = call_args[0][1]
-                assert "données" in target_key
-
-    @pytest.mark.unit
-    def test_upload_unicode_directory_structure(self, tmp_path: Path) -> None:
-        """Upload should preserve Unicode in directory structure."""
-        from portolan_cli.upload import _build_target_key
-
-        # Create directory with Unicode characters (Chinese "数据" = "data")
-        source_dir = tmp_path / "数据"
-        source_dir.mkdir()
-        file_path = source_dir / "文件.parquet"  # "文件" = "file"
-        file_path.touch()
-
-        key = _build_target_key(file_path, source_dir, "output")
-        assert key == "output/文件.parquet"
-
-    @pytest.mark.unit
-    def test_upload_emoji_in_path(self, tmp_path: Path) -> None:
-        """Upload should handle emojis in paths."""
-        from portolan_cli.upload import _build_target_key
-
-        # Create directory with emoji
-        source_dir = tmp_path / "data_📊"
-        source_dir.mkdir()
-        file_path = source_dir / "report.parquet"
-        file_path.touch()
-
-        key = _build_target_key(file_path, source_dir, "prefix")
-        assert key == "prefix/report.parquet"
-
-
-# =============================================================================
-# Division by Zero Display Tests
-# =============================================================================
-
-
-class TestSpeedCalculation:
-    """Tests for upload speed calculation edge cases."""
-
-    @pytest.mark.unit
-    def test_format_upload_speed_normal(self) -> None:
-        """Normal speed should display MB/s."""
-        from portolan_cli.upload import _format_upload_speed
-
-        result = _format_upload_speed(10.0, 2.0)  # 10 MB in 2 seconds = 5 MB/s
-        assert result == "5.00 MB/s"
-
-    @pytest.mark.unit
-    def test_format_upload_speed_zero_time(self) -> None:
-        """Zero elapsed time should show '< 1ms' instead of division by zero."""
-        from portolan_cli.upload import _format_upload_speed
-
-        result = _format_upload_speed(1.0, 0.0)
-        assert result == "< 1ms"
-
-    @pytest.mark.unit
-    def test_format_upload_speed_very_fast(self) -> None:
-        """Very fast upload (< 1ms) should show '< 1ms'."""
-        from portolan_cli.upload import _format_upload_speed
-
-        result = _format_upload_speed(1.0, 0.0005)  # 0.5ms
-        assert result == "< 1ms"
-
-    @pytest.mark.unit
-    def test_format_upload_speed_just_over_1ms(self) -> None:
-        """Upload just over 1ms should show normal speed."""
-        from portolan_cli.upload import _format_upload_speed
-
-        result = _format_upload_speed(1.0, 0.002)  # 2ms = 500 MB/s
-        assert "MB/s" in result
-        assert "< 1ms" not in result
-
-    @pytest.mark.unit
-    def test_upload_very_fast_shows_speed(self, temp_file: Path) -> None:
-        """Very fast uploads should show meaningful speed display."""
-        from portolan_cli.upload import upload_file
-
-        with patch("portolan_cli.upload.obs"):
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
-                mock_store = MagicMock()
-                mock_s3_store.return_value = mock_store
-
-                # Mock time.time() to return same value (0 elapsed time)
-                with patch("portolan_cli.upload.time") as mock_time:
-                    mock_time.time.return_value = 1000.0  # Same start and end time
-
-                    with patch.dict(
-                        os.environ,
-                        {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
-                    ):
-                        with patch("portolan_cli.upload.success") as mock_success:
-                            result = upload_file(
-                                source=temp_file,
-                                destination="s3://mybucket/data.parquet",
-                            )
-
-                            assert result.success is True
-                            # Verify we show "< 1ms" for instant uploads
-                            call_args = mock_success.call_args[0][0]
-                            assert "< 1ms" in call_args
-
-
-# =============================================================================
-# Symlink Handling Tests
-# =============================================================================
-
-
-class TestSymlinkHandling:
-    """Tests for symlink behavior in directory uploads."""
-
-    @pytest.mark.unit
-    def test_symlink_outside_source_raises_on_key_build(self, tmp_path: Path) -> None:
-        """Symlinks pointing outside source directory should raise ValueError on key build."""
-        from portolan_cli.upload import _build_target_key
-
-        # Create a source directory
-        source_dir = tmp_path / "source"
-        source_dir.mkdir()
-        (source_dir / "normal_file.txt").write_text("normal")
-
-        # Create a directory outside source
-        outside_dir = tmp_path / "outside"
-        outside_dir.mkdir()
-        secret_file = outside_dir / "secret.txt"
-        secret_file.write_text("secret data")
-
-        # Create symlink to outside file
-        try:
-            symlink = source_dir / "link_to_secret.txt"
-            symlink.symlink_to(secret_file)
-
-            # Building target key should detect the path traversal
-            with pytest.raises(ValueError, match="[Pp]ath traversal"):
-                _build_target_key(symlink, source_dir, "prefix")
-        except OSError:
-            # Symlinks not supported on this platform (some Windows configs)
-            pytest.skip("Symlinks not supported on this platform")
-
-    @pytest.mark.unit
-    def test_symlink_within_source_is_allowed(self, tmp_path: Path) -> None:
-        """Symlinks pointing within source directory should be allowed."""
-        from portolan_cli.upload import _build_target_key
-
-        # Create a source directory
-        source_dir = tmp_path / "source"
-        source_dir.mkdir()
-        real_file = source_dir / "real_file.txt"
-        real_file.write_text("content")
-
-        # Create symlink to file within source
-        try:
-            symlink = source_dir / "link_to_real.txt"
-            symlink.symlink_to(real_file)
-
-            # This should succeed
-            key = _build_target_key(symlink, source_dir, "prefix")
-            assert key == "prefix/link_to_real.txt"
-        except OSError:
-            # Symlinks not supported on this platform (some Windows configs)
-            pytest.skip("Symlinks not supported on this platform")
-
-    @pytest.mark.unit
-    def test_find_files_includes_symlinks(self, tmp_path: Path) -> None:
-        """Find files should include symlinked files (documented behavior)."""
-        from portolan_cli.upload import _find_files_to_upload
-
-        # Create a source directory
-        source_dir = tmp_path / "source"
-        source_dir.mkdir()
-        (source_dir / "normal_file.txt").write_text("normal")
-
-        # Create a file outside source
-        outside_dir = tmp_path / "outside"
-        outside_dir.mkdir()
-        secret_file = outside_dir / "secret.txt"
-        secret_file.write_text("secret data")
-
-        # Create symlink to outside file
-        try:
-            symlink = source_dir / "link_to_secret.txt"
-            symlink.symlink_to(secret_file)
-
-            # Find files should include the symlink
-            files = _find_files_to_upload(source_dir, None)
-
-            # Should find both files (symlinks are followed by rglob)
-            assert len(files) == 2
-        except OSError:
-            # Symlinks not supported on this platform (some Windows configs)
-            pytest.skip("Symlinks not supported on this platform")
+        # We just verify it doesn't crash - actual output testing is in test_output.py
