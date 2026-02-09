@@ -1,3 +1,16 @@
+## v0.4.0 (2026-02-09)
+
+### Feat
+
+- **validation**: PMTiles recommended, not required (#49)
+- warn on non-cloud-native formats (#48)
+- **workflow**: add speckit for specification-driven development (#47)
+- **hooks**: add auto-fetch for core dependency docs via gitingest (#44)
+
+### Fix
+
+- **ci**: extract only project version from pyproject.toml (#45)
+
 ## v0.3.0 (2026-02-07)
 
 ### Feat
