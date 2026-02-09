@@ -10,18 +10,22 @@
 # 1. Accumulate changes via normal PR merges
 # 2. When ready to release, create a PR running: uv run cz bump --changelog
 # 3. Merge bump PR → this workflow creates tag and publishes
+#
+# Recovery workflow (when release fails after bump merge):
+# 1. Delete orphan tag if exists: git push origin :refs/tags/vX.Y.Z
+# 2. Trigger manually: gh workflow run release.yml --ref main
 name: Release
 on:
   push:
     branches: [main]
-  workflow_dispatch:  # Allow manual triggering
+  workflow_dispatch:  # Manual trigger for recovery scenarios
 
 jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    # Only run if the commit message starts with "bump:" (from cz bump)
-    if: startsWith(github.event.head_commit.message, 'bump:')
+    # Run if: push with bump commit OR manual trigger (workflow_dispatch)
+    if: startsWith(github.event.head_commit.message, 'bump:') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: write  # Required for creating tags and releases
       id-token: write  # Required for trusted PyPI publishing
@@ -50,20 +54,32 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION (tag: v$VERSION)"
 
-      - name: Check if tag already exists
-        id: tag_check
+      - name: Check release status
+        id: release_check
         run: |
           TAG="v${{ steps.version.outputs.version }}"
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists, skipping release"
-            echo "exists=true" >> $GITHUB_OUTPUT
+
+          # Check if GitHub Release exists (the real indicator of a completed release)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, nothing to do"
+            echo "release_exists=true" >> $GITHUB_OUTPUT
+            echo "tag_exists=true" >> $GITHUB_OUTPUT
           else
-            echo "Tag $TAG does not exist, proceeding with release"
-            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "release_exists=false" >> $GITHUB_OUTPUT
+            # Check if tag exists (may need to skip tag creation but still publish)
+            if git rev-parse "$TAG" >/dev/null 2>&1; then
+              echo "Tag $TAG exists but no release - recovery mode"
+              echo "tag_exists=true" >> $GITHUB_OUTPUT
+            else
+              echo "Tag $TAG does not exist, full release"
+              echo "tag_exists=false" >> $GITHUB_OUTPUT
+            fi
           fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create git tag
-        if: steps.tag_check.outputs.exists == 'false'
+        if: steps.release_check.outputs.tag_exists == 'false'
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
@@ -71,17 +87,17 @@ jobs:
           git push origin "${{ steps.version.outputs.tag }}"
 
       - name: Build package
-        if: steps.tag_check.outputs.exists == 'false'
+        if: steps.release_check.outputs.release_exists == 'false'
         run: uv build
 
       - name: Publish to PyPI
-        if: steps.tag_check.outputs.exists == 'false'
+        if: steps.release_check.outputs.release_exists == 'false'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           print-hash: true
 
       - name: Create GitHub Release
-        if: steps.tag_check.outputs.exists == 'false'
+        if: steps.release_check.outputs.release_exists == 'false'
         run: |
           gh release create "${{ steps.version.outputs.tag }}" \
             --title "${{ steps.version.outputs.tag }}" \
