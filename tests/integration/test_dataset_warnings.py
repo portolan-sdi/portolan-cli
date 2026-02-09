@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
 
@@ -17,9 +16,6 @@ from portolan_cli.formats import (
     UnsupportedFormatError,
     get_cloud_native_status,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 class TestCloudNativeNoWarnings:

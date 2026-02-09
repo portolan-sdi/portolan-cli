@@ -12,9 +12,12 @@ Additionally, it provides cloud-native status classification (see issue #10):
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Cloud-Native Status Classification (Issue #10)
@@ -165,12 +168,20 @@ def is_geoparquet(path: Path) -> bool:
     """
     try:
         import pyarrow.parquet as pq
+    except ImportError:
+        logger.warning(
+            "pyarrow not installed; cannot detect GeoParquet metadata. "
+            "Install with: pip install pyarrow"
+        )
+        return False
 
+    try:
         metadata = pq.read_metadata(str(path))
         schema_metadata = metadata.schema.to_arrow_schema().metadata or {}
         # GeoParquet files have 'geo' key in schema metadata
         return b"geo" in schema_metadata
     except Exception:
+        logger.exception("Failed to read Parquet metadata from %s", path)
         return False
 
 
@@ -188,10 +199,17 @@ def is_cloud_optimized_geotiff(path: Path) -> bool:
     """
     try:
         from rio_cogeo.cogeo import cog_validate
+    except ImportError:
+        logger.warning(
+            "rio-cogeo not installed; cannot validate COG. Install with: pip install rio-cogeo"
+        )
+        return False
 
+    try:
         is_valid, _errors, _warnings = cog_validate(str(path))
         return is_valid
     except Exception:
+        logger.exception("Failed to validate COG for %s", path)
         return False
 
 
@@ -324,6 +342,17 @@ def get_cloud_native_status(path: Path) -> FormatInfo:
                 target_format="GeoParquet",
                 error_message=None,
             )
+        # .json file doesn't appear to be GeoJSON - provide clear message
+        return FormatInfo(
+            status=CloudNativeStatus.UNSUPPORTED,
+            display_name="JSON",
+            target_format=None,
+            error_message=(
+                "JSON file does not appear to be GeoJSON. "
+                "Rename to .geojson if it contains geospatial data, "
+                "or use a supported format."
+            ),
+        )
 
     # Unknown format - treat as unsupported
     if extension:

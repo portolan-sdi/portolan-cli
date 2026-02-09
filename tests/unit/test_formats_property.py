@@ -1,6 +1,6 @@
-"""Property-based tests for format detection.
+"""Invariant tests for format detection.
 
-Uses hypothesis to verify invariants across all known extensions.
+Verifies invariants across all known extensions using parameterized tests.
 """
 
 from __future__ import annotations
