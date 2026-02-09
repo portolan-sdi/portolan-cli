@@ -32,6 +32,8 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | Distill MCP tools | `context/shared/documentation/distill-mcp.md` |
 | ADRs | `context/shared/adr/` |
 | Plans & research | `context/shared/` |
+| **Speckit constitution** | `.specify/memory/constitution.md` |
+| Speckit templates | `.specify/templates/` |
 
 **Target Python version:** 3.10+ (matches geoparquet-io dependency)
 
@@ -262,6 +264,15 @@ Use the template at `context/shared/adr/0000-template.md`.
 | **Humans** | `docs/` (mkdocs) | *How to use* — tutorials, visual guides |
 | **AI agents** | Docstrings, CLAUDE.md, ADRs | *How to modify* — dense, structured, co-located with code |
 
+### AI Tools: Document in Both Places
+
+When adding or documenting AI development tools (speckit, Context7, gitingest, etc.), **update both audiences**:
+
+1. **CLAUDE.md** — Technical details, workflow integration, how agents should use it
+2. **docs/contributing.md** — Human-friendly overview in the "AI-Assisted Development" section
+
+This ensures both AI agents and human contributors can discover and use the same tooling.
+
 ### Validating AI Guidance
 
 **When possible, back AI guidance with automated validation.** Documentation drifts; code doesn't lie.
@@ -367,6 +378,26 @@ For core dependencies (**geoparquet-io**, **rio-cogeo**, **gpio-pmtiles**), use 
 - Don't assume API behavior without checking source (when tools permit)
 - Search for edge cases, error handling, and validation logic
 - Ask implementation-level questions ("How does it actually...?" not just "What's the API?")
+
+## Speckit Workflow (Specification-Driven Development)
+
+Portolan uses [Speckit](https://github.com/speckit/speckit) for specification-driven development. The workflow is defined in `.specify/memory/constitution.md`.
+
+**Workflow order:**
+1. `/speckit.specify` — Create feature specification from description
+2. `/speckit.clarify` — Ask clarifying questions, encode answers in spec
+3. `/speckit.plan` — Generate implementation plan from spec
+4. `/speckit.tasks` — Generate dependency-ordered task list
+5. `/speckit.checklist` — Generate custom checklist for the feature
+6. `/speckit.implement` — Execute tasks from tasks.md
+7. `/speckit.analyze` — Cross-artifact consistency check
+
+**Key files:**
+- `.specify/memory/constitution.md` — Core principles (TDD, edge cases, etc.)
+- `.specify/templates/` — Templates for spec, plan, tasks
+- `.claude/commands/speckit.*.md` — Command definitions
+
+See the constitution for principles on geospatial edge cases and test fixtures.
 
 ## Known Issues
 
