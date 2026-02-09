@@ -510,3 +510,184 @@ class TestCatalogJsonValidRuleOSError:
                 os.chmod(catalog_file, 0o644)
         else:
             pytest.skip("OSError test requires Unix file permissions")
+
+
+class TestPMTilesRecommendedRule:
+    """Tests for PMTilesRecommendedRule.
+
+    This rule emits a WARNING (not ERROR) when GeoParquet datasets
+    don't have corresponding PMTiles derivatives.
+    """
+
+    @pytest.fixture
+    def catalog_with_geoparquet(self, tmp_path: Path, fixtures_dir: Path) -> Path:
+        """Create a catalog with a GeoParquet dataset but no PMTiles."""
+        import shutil
+
+        # Create catalog structure
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        datasets_dir = portolan_dir / "datasets" / "test-dataset"
+        datasets_dir.mkdir(parents=True)
+
+        # Copy sample.parquet to datasets dir
+        src = fixtures_dir / "validation" / "pmtiles" / "sample.parquet"
+        shutil.copy(src, datasets_dir / "test-dataset.parquet")
+
+        return tmp_path
+
+    @pytest.fixture
+    def catalog_with_pmtiles(self, tmp_path: Path, fixtures_dir: Path) -> Path:
+        """Create a catalog with both GeoParquet and PMTiles."""
+        import shutil
+
+        # Create catalog structure
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        datasets_dir = portolan_dir / "datasets" / "test-dataset"
+        datasets_dir.mkdir(parents=True)
+
+        # Copy both files
+        src_parquet = fixtures_dir / "validation" / "pmtiles" / "sample.parquet"
+        src_pmtiles = fixtures_dir / "validation" / "pmtiles" / "sample.pmtiles"
+        shutil.copy(src_parquet, datasets_dir / "test-dataset.parquet")
+        shutil.copy(src_pmtiles, datasets_dir / "test-dataset.pmtiles")
+
+        return tmp_path
+
+    @pytest.fixture
+    def catalog_empty(self, tmp_path: Path) -> Path:
+        """Create an empty catalog with no datasets."""
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        datasets_dir = portolan_dir / "datasets"
+        datasets_dir.mkdir()
+        return tmp_path
+
+    @pytest.fixture
+    def catalog_raster_only(self, tmp_path: Path, fixtures_dir: Path) -> Path:
+        """Create a catalog with only raster (COG) datasets."""
+        import shutil
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        datasets_dir = portolan_dir / "datasets" / "raster-dataset"
+        datasets_dir.mkdir(parents=True)
+
+        # Copy a COG file (no PMTiles expected for raster)
+        src = fixtures_dir / "raster" / "valid" / "rgb.tif"
+        if src.exists():
+            shutil.copy(src, datasets_dir / "raster-dataset.tif")
+        else:
+            # Create a placeholder if fixture doesn't exist
+            (datasets_dir / "raster-dataset.tif").write_bytes(b"placeholder")
+
+        return tmp_path
+
+    @pytest.fixture
+    def fixtures_dir(self) -> Path:
+        """Return the path to the test fixtures directory."""
+        return Path(__file__).parent.parent / "fixtures"
+
+    @pytest.mark.unit
+    def test_has_warning_severity(self) -> None:
+        """PMTiles recommendation is a WARNING, not ERROR."""
+        from portolan_cli.validation.rules import PMTilesRecommendedRule
+
+        rule = PMTilesRecommendedRule()
+        assert rule.severity == Severity.WARNING
+
+    @pytest.mark.unit
+    def test_has_descriptive_name(self) -> None:
+        """Rule has a unique identifier."""
+        from portolan_cli.validation.rules import PMTilesRecommendedRule
+
+        rule = PMTilesRecommendedRule()
+        assert rule.name == "pmtiles_recommended"
+
+    @pytest.mark.unit
+    def test_has_description(self) -> None:
+        """Rule has human-readable description."""
+        from portolan_cli.validation.rules import PMTilesRecommendedRule
+
+        rule = PMTilesRecommendedRule()
+        assert "pmtiles" in rule.description.lower()
+
+    @pytest.mark.unit
+    def test_warns_when_geoparquet_without_pmtiles(self, catalog_with_geoparquet: Path) -> None:
+        """Rule emits warning when GeoParquet lacks PMTiles derivative."""
+        from portolan_cli.validation.rules import PMTilesRecommendedRule
+
+        rule = PMTilesRecommendedRule()
+        result = rule.check(catalog_with_geoparquet)
+
+        assert result.passed is False
+        assert result.severity == Severity.WARNING
+        assert "pmtiles" in result.message.lower()
+
+    @pytest.mark.unit
+    def test_passes_when_pmtiles_exists(self, catalog_with_pmtiles: Path) -> None:
+        """Rule passes when PMTiles exists alongside GeoParquet."""
+        from portolan_cli.validation.rules import PMTilesRecommendedRule
+
+        rule = PMTilesRecommendedRule()
+        result = rule.check(catalog_with_pmtiles)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_passes_for_empty_catalog(self, catalog_empty: Path) -> None:
+        """Rule passes when catalog has no datasets (nothing to recommend)."""
+        from portolan_cli.validation.rules import PMTilesRecommendedRule
+
+        rule = PMTilesRecommendedRule()
+        result = rule.check(catalog_empty)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_passes_for_raster_only_catalog(self, catalog_raster_only: Path) -> None:
+        """Rule passes for raster-only catalogs (PMTiles is for vector data)."""
+        from portolan_cli.validation.rules import PMTilesRecommendedRule
+
+        rule = PMTilesRecommendedRule()
+        result = rule.check(catalog_raster_only)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_provides_fix_hint_with_plugin_info(self, catalog_with_geoparquet: Path) -> None:
+        """Failure includes hint about portolan-pmtiles plugin."""
+        from portolan_cli.validation.rules import PMTilesRecommendedRule
+
+        rule = PMTilesRecommendedRule()
+        result = rule.check(catalog_with_geoparquet)
+
+        assert result.fix_hint is not None
+        assert "portolan-pmtiles" in result.fix_hint.lower()
+
+    @pytest.mark.unit
+    def test_handles_missing_datasets_dir_gracefully(self, tmp_path: Path) -> None:
+        """Rule handles missing datasets directory without error."""
+        from portolan_cli.validation.rules import PMTilesRecommendedRule
+
+        # Create catalog without datasets dir
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+
+        rule = PMTilesRecommendedRule()
+        result = rule.check(tmp_path)
+
+        # Should pass (no datasets to check)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_handles_missing_portolan_dir_gracefully(self, tmp_path: Path) -> None:
+        """Rule handles missing .portolan directory without error."""
+        from portolan_cli.validation.rules import PMTilesRecommendedRule
+
+        rule = PMTilesRecommendedRule()
+        result = rule.check(tmp_path)
+
+        # Should pass (no catalog to check)
+        assert result.passed is True

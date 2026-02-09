@@ -190,3 +190,65 @@ class StacFieldsRule(ValidationRule):
             )
 
         return self._pass("All required STAC fields present")
+
+
+class PMTilesRecommendedRule(ValidationRule):
+    """Recommend PMTiles for GeoParquet datasets without them.
+
+    This is a WARNING-level rule - it doesn't block validation,
+    just suggests an improvement for web display capabilities.
+
+    PMTiles are generated from GeoParquet using the portolan-pmtiles
+    plugin and provide efficient vector tile rendering for web maps.
+    """
+
+    name = "pmtiles_recommended"
+    severity = Severity.WARNING
+    description = "Check if GeoParquet datasets have PMTiles derivatives"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Check for PMTiles derivatives alongside GeoParquet files.
+
+        Args:
+            catalog_path: Path to the directory containing .portolan.
+
+        Returns:
+            ValidationResult with warning if any GeoParquet lacks PMTiles.
+        """
+        datasets_dir = catalog_path / ".portolan" / "datasets"
+
+        # Handle missing directories gracefully
+        if not datasets_dir.exists():
+            return self._pass("No datasets directory found")
+
+        # Find all .parquet files in datasets
+        parquet_files = list(datasets_dir.rglob("*.parquet"))
+
+        if not parquet_files:
+            return self._pass("No GeoParquet datasets found")
+
+        # Check each parquet file for a corresponding .pmtiles file
+        missing_pmtiles: list[str] = []
+        for parquet_file in parquet_files:
+            # PMTiles file should have same name but .pmtiles extension
+            pmtiles_file = parquet_file.with_suffix(".pmtiles")
+            if not pmtiles_file.exists():
+                # Use relative path for cleaner messages
+                rel_path = parquet_file.relative_to(datasets_dir)
+                missing_pmtiles.append(str(rel_path))
+
+        if missing_pmtiles:
+            if len(missing_pmtiles) == 1:
+                msg = f"GeoParquet dataset missing PMTiles: {missing_pmtiles[0]}"
+            else:
+                msg = f"{len(missing_pmtiles)} GeoParquet datasets missing PMTiles"
+
+            return self._fail(
+                msg,
+                fix_hint=(
+                    "Install portolan-pmtiles plugin and run "
+                    "'portolan dataset add --pmtiles' to generate vector tiles"
+                ),
+            )
+
+        return self._pass(f"All {len(parquet_files)} GeoParquet datasets have PMTiles derivatives")
