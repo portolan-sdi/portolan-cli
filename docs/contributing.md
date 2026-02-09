@@ -162,9 +162,22 @@ We use AI assistants (Claude Code, etc.) extensively for development. If you do 
 
 | Tool | Purpose | Install |
 |------|---------|---------|
+| [Speckit](https://github.com/speckit/speckit) | Specification-driven development workflow | Claude Code plugin |
 | [Context7](https://context7.io) | Up-to-date library docs via MCP | MCP server config |
 | [Gitingest](https://github.com/cyclotruc/gitingest) | Source code exploration | `pipx install gitingest` |
 | Distill | Token compression for large outputs | MCP server config |
+
+### Speckit Workflow
+
+For complex features, we use speckit's structured workflow:
+
+1. `/speckit.specify` — Create a feature specification from your description
+2. `/speckit.clarify` — Get clarifying questions answered and encoded in the spec
+3. `/speckit.plan` — Generate an implementation plan
+4. `/speckit.tasks` — Break the plan into dependency-ordered tasks
+5. `/speckit.implement` — Execute the tasks with TDD
+
+See `.specify/memory/constitution.md` for the project's core development principles.
 
 These are **entirely optional**—the project works fine without them. We document our AI workflows in `CLAUDE.md` and `context/shared/documentation/context-guide.md` for those who want to use similar approaches.
 

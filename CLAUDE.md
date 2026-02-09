@@ -264,6 +264,15 @@ Use the template at `context/shared/adr/0000-template.md`.
 | **Humans** | `docs/` (mkdocs) | *How to use* — tutorials, visual guides |
 | **AI agents** | Docstrings, CLAUDE.md, ADRs | *How to modify* — dense, structured, co-located with code |
 
+### AI Tools: Document in Both Places
+
+When adding or documenting AI development tools (speckit, Context7, gitingest, etc.), **update both audiences**:
+
+1. **CLAUDE.md** — Technical details, workflow integration, how agents should use it
+2. **docs/contributing.md** — Human-friendly overview in the "AI-Assisted Development" section
+
+This ensures both AI agents and human contributors can discover and use the same tooling.
+
 ### Validating AI Guidance
 
 **When possible, back AI guidance with automated validation.** Documentation drifts; code doesn't lie.
