@@ -56,6 +56,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0011](context/shared/adr/0011-mvp-validation-framework.md) | MVP validation framework for format handlers |
 | [0012](context/shared/adr/0012-flat-catalog-hierarchy.md) | Flat catalog hierarchy (no nested collections) |
 | [0013](context/shared/adr/0013-gitingest-auto-fetch.md) | Auto-fetch dependency docs via gitingest |
+| [0014](context/shared/adr/0014-accept-non-cloud-native-formats.md) | Accept non-cloud-native formats with warnings |
 
 ## Common Commands
 
@@ -408,10 +409,3 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 | [PyArrow v22+ ABI](context/shared/known-issues/pyarrow-abseil-abi.md) | Import failures on Ubuntu 22.04; pinned to `<22.0.0` |
 | [geoparquet-io Windows segfault](context/shared/known-issues/geoparquet-io-windows-segfault.md) | Crashes on malformed input; test skipped on Windows |
 | [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
-
-## Active Technologies
-- Python 3.10+ + click (CLI), geoparquet-io (vector conversion), rio-cogeo (raster conversion), rasterio (COG detection) (002-cloud-native-warnings)
-- N/A (file-based, no database) (002-cloud-native-warnings)
-
-## Recent Changes
-- 002-cloud-native-warnings: Added Python 3.10+ + click (CLI), geoparquet-io (vector conversion), rio-cogeo (raster conversion), rasterio (COG detection)
