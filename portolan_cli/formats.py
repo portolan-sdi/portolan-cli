@@ -326,11 +326,15 @@ def get_cloud_native_status(path: Path) -> FormatInfo:
             )
 
     # Unknown format - treat as unsupported
+    if extension:
+        error_msg = f"Unknown format '{extension}' is not supported."
+    else:
+        error_msg = "File has no extension and format could not be detected."
     return FormatInfo(
         status=CloudNativeStatus.UNSUPPORTED,
         display_name=extension.upper().lstrip(".") if extension else "Unknown",
         target_format=None,
-        error_message=f"Unknown format '{extension}' is not supported.",
+        error_message=error_msg,
     )
 
 
