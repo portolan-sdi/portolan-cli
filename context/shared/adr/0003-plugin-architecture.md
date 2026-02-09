@@ -81,3 +81,36 @@ Internal format handlers follow a consistent interface from day one, even before
 
 ### 3. No plugin system, add formats as needed
 **Rejected:** Doesn't scale. Each format addition requires core changes and full release cycle.
+
+## PMTiles Clarification
+
+PMTiles is a **plugin format** (`portolan-pmtiles`), not a core requirement. This section clarifies its status:
+
+### Recommended, Not Required
+
+- PMTiles derivatives are **recommended** for GeoParquet datasets to enable web map display
+- PMTiles are **not required** for valid catalogs
+- Missing PMTiles produces a **validation warning**, not an error
+- Catalogs without PMTiles are fully functional for data access and analysis
+
+### External Dependencies
+
+The `portolan-pmtiles` plugin requires:
+- **tippecanoe** — External binary for vector tile generation
+- This dependency is why PMTiles remains a plugin (tippecanoe is not pip-installable)
+
+### Validation Behavior
+
+The `PMTilesRecommendedRule` (severity: WARNING):
+- Checks if GeoParquet datasets have corresponding `.pmtiles` files
+- Emits a warning with installation hint if PMTiles are missing
+- Does not block validation or catalog operations
+- Skips raster datasets (PMTiles is for vector data only)
+
+### Rationale
+
+PMTiles improve web display but add complexity (tippecanoe dependency, extra storage). Users who:
+- Only need data access (DuckDB, GeoPandas) → don't need PMTiles
+- Want web map visualization → should install the plugin
+
+This keeps core installation simple while allowing opt-in web capabilities.

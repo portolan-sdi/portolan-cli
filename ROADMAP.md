@@ -68,6 +68,8 @@ Generate vector tile overviews from GeoParquet datasets using [gpio-pmtiles](htt
 
 **Note:** PMTiles are a *view* of the data for rendering, not the source of truth. GeoParquet remains the canonical format. (PMTiles *could* be added as standalone datasets, but the primary use case is as overviews.)
 
+**Validation:** Absence of PMTiles produces a validation **warning**, not an error. PMTiles improve web display but are not required for valid catalogs. See [ADR-0003](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0003-plugin-architecture.md) for details.
+
 ### Epic: COPC Support
 
 Cloud-optimized point clouds for LiDAR and similar data.

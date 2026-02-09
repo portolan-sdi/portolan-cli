@@ -9,6 +9,7 @@ from portolan_cli.validation.results import ValidationReport, ValidationResult
 from portolan_cli.validation.rules import (
     CatalogExistsRule,
     CatalogJsonValidRule,
+    PMTilesRecommendedRule,
     StacFieldsRule,
     ValidationRule,
 )
@@ -19,6 +20,7 @@ DEFAULT_RULES: tuple[ValidationRule, ...] = (
     CatalogExistsRule(),
     CatalogJsonValidRule(),
     StacFieldsRule(),
+    PMTilesRecommendedRule(),
 )
 
 
