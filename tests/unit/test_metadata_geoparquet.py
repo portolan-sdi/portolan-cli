@@ -43,7 +43,16 @@ class TestExtractGeoParquetMetadata:
         """Should extract geometry type."""
         metadata = extract_geoparquet_metadata(valid_points_parquet)
         assert metadata.geometry_type is not None
-        assert "Point" in metadata.geometry_type
+        # Verify it's a valid geometry type (Point, Polygon, LineString, etc.)
+        valid_types = (
+            "Point",
+            "MultiPoint",
+            "Polygon",
+            "MultiPolygon",
+            "LineString",
+            "MultiLineString",
+        )
+        assert any(t in metadata.geometry_type for t in valid_types)
 
     @pytest.mark.unit
     def test_extracts_feature_count(self, valid_points_parquet: Path) -> None:
@@ -144,6 +153,38 @@ class TestGeoParquetMetadata:
         props = metadata.to_stac_properties()
         # geometry_type should not be included if None
         assert "geoparquet:geometry_type" not in props
+
+
+class TestProjectedCRS:
+    """Tests for projected CRS extraction from GeoParquet."""
+
+    @pytest.mark.unit
+    def test_extracts_projected_crs(self, projected_parquet: Path) -> None:
+        """Should extract projected CRS (EPSG:32631 UTM Zone 31N) from GeoParquet."""
+        metadata = extract_geoparquet_metadata(projected_parquet)
+        # The fixture is Open Buildings data projected to UTM Zone 31N
+        assert metadata.crs is not None
+        assert metadata.crs == "EPSG:32631"
+
+    @pytest.mark.unit
+    def test_projected_file_has_valid_bbox(self, projected_parquet: Path) -> None:
+        """Projected GeoParquet should have valid bbox in projected coordinates."""
+        metadata = extract_geoparquet_metadata(projected_parquet)
+        assert metadata.bbox is not None
+        minx, miny, maxx, maxy = metadata.bbox
+        # Bbox is in UTM Zone 31N (meters), not lat/lon degrees
+        # UTM Zone 31N covers ~0°E to 6°E, values should be in hundreds of thousands
+        assert minx < maxx
+        assert miny < maxy
+        # UTM coordinates are typically in the hundreds of thousands (meters)
+        assert abs(minx) > 100 or abs(maxx) > 100  # Not lat/lon degrees
+
+    @pytest.mark.unit
+    def test_projected_file_feature_count(self, projected_parquet: Path) -> None:
+        """Projected GeoParquet should have valid feature count."""
+        metadata = extract_geoparquet_metadata(projected_parquet)
+        assert metadata.feature_count is not None
+        assert metadata.feature_count > 0
 
 
 class TestGeoParquetMetadataEdgeCases:

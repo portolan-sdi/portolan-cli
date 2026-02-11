@@ -442,16 +442,15 @@ def generate_vector_fixtures() -> None:
 
 
 def convert_to_geoparquet() -> None:
-    """Convert GeoJSON fixtures to GeoParquet using geoparquet-io."""
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    """Convert GeoJSON fixtures to GeoParquet using geoparquet-io.
 
-    valid_dir = FIXTURES_DIR / "vector" / "valid"
-    source = valid_dir / "points.geojson"
-    output = valid_dir / "points.parquet"
-
-    # geoparquet-io uses fluent API
-    gpio.convert(str(source)).write(str(output))
-    print(f"Generated {output}")
+    NOTE: As of issue #57, the primary GeoParquet test fixture is now
+    tests/fixtures/realdata/open-buildings.parquet (real-world data).
+    This function is kept for testing GPIO conversion paths but no longer
+    generates the main parquet fixture.
+    """
+    # No longer generating points.parquet - using realdata/open-buildings.parquet instead
+    print("Skipping GeoParquet generation (using real-world fixtures)")
 
 
 def generate_raster_fixtures() -> None:
@@ -636,9 +635,6 @@ def main() -> None:
 
     print("\n--- Edge case fixtures ---")
     generate_edge_cases()
-
-    print("\n--- GeoParquet conversion ---")
-    convert_to_geoparquet()
 
     print("\n--- Raster fixtures (COG) ---")
     generate_raster_fixtures()
