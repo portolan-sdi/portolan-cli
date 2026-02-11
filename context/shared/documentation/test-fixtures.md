@@ -149,7 +149,10 @@ curl -o rapidai4eo-sample.tif \
 
 1. **Identify the edge case** — What orchestration behavior needs testing?
 2. **Find minimal real data** — Prefer <5MB, <10K features
-3. **Document provenance** — SQL/command to reproduce
-4. **Upload to S3:** `aws s3 cp fixture.parquet s3://us-west-2.opendata.source.coop/nlebovits/portolan-test-fixtures/sources/`
-5. **Update manifest** — Add checksum and metadata, bump version
+3. **Document provenance** — Add SQL/command to this file under "Fixture Provenance"
+4. **Add fixture to repo** — Place in `tests/fixtures/realdata/`
+5. **Add pytest fixture** — Update `tests/realdata/conftest.py`
 6. **Write the test** — Focus on Portolan's orchestration, not upstream behavior
+7. **Update pre-commit if needed** — Large files may need exclusion in `.pre-commit-config.yaml`
+
+Optionally mirror to S3 for backup: `aws s3 cp fixture.parquet s3://us-west-2.opendata.source.coop/nlebovits/portolan-test-fixtures/sources/`
