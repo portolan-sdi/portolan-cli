@@ -37,13 +37,19 @@ from pathlib import Path
 # =============================================================================
 
 # Recognized geospatial file extensions (primary assets)
-RECOGNIZED_VECTOR_EXTENSIONS: frozenset[str] = frozenset(
-    {".parquet", ".geojson", ".shp", ".gpkg", ".fgb"}
-)
+# Note: .parquet is NOT here because we need to check metadata to distinguish
+# GeoParquet (geospatial) from regular Parquet (tabular data).
+RECOGNIZED_VECTOR_EXTENSIONS: frozenset[str] = frozenset({".geojson", ".shp", ".gpkg", ".fgb"})
 
 RECOGNIZED_RASTER_EXTENSIONS: frozenset[str] = frozenset({".tif", ".tiff", ".jp2"})
 
 RECOGNIZED_EXTENSIONS: frozenset[str] = RECOGNIZED_VECTOR_EXTENSIONS | RECOGNIZED_RASTER_EXTENSIONS
+
+# Extensions that need metadata inspection to determine if geospatial
+PARQUET_EXTENSION: str = ".parquet"
+
+# Overview/derivative formats (not primary assets)
+OVERVIEW_EXTENSIONS: frozenset[str] = frozenset({".pmtiles"})
 
 # Shapefile sidecar extensions
 SHAPEFILE_REQUIRED_SIDECARS: frozenset[str] = frozenset({".dbf", ".shx"})
@@ -286,6 +292,40 @@ def _get_relative_path(path: Path, root: Path) -> str:
         return str(path)
 
 
+def _is_geoparquet(path: Path) -> bool:
+    """Check if a Parquet file is GeoParquet by inspecting metadata.
+
+    GeoParquet files have a 'geo' key in their schema metadata containing
+    JSON with version, primary_column, and columns fields.
+
+    Args:
+        path: Path to a .parquet file
+
+    Returns:
+        True if the file has GeoParquet metadata, False otherwise.
+        Returns False if file cannot be read or is not valid Parquet.
+    """
+    try:
+        import pyarrow.parquet as pq
+
+        # Use ParquetFile to get Arrow schema with metadata
+        pq_file = pq.ParquetFile(path)
+        schema_metadata = pq_file.schema_arrow.metadata
+        if schema_metadata is None:
+            return False
+        # GeoParquet spec requires 'geo' key in schema metadata
+        return b"geo" in schema_metadata
+    except Exception:
+        # If we can't read it, assume it's not GeoParquet
+        # (could be corrupted, not a Parquet file, etc.)
+        return False
+
+
+def _is_overview_extension(ext: str) -> bool:
+    """Check if extension is an overview/derivative format."""
+    return ext.lower() in OVERVIEW_EXTENSIONS
+
+
 # =============================================================================
 # Issue Detection Functions
 # =============================================================================
@@ -434,20 +474,29 @@ def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
                 )
             )
 
-    # Check for duplicate basenames (already keyed by name.lower() in _process_file)
+    # Check for duplicate basenames WITHIN the same directory only.
+    # Files with same name in sibling directories (e.g., 2010/radios.parquet and
+    # 2022/radios.parquet) are intentional organization, not duplicates.
     for _basename, paths in ctx.basenames.items():
         if len(paths) > 1:
-            locations = ", ".join(_get_relative_path(p.parent, ctx.root) for p in paths)
-            ctx.issues.append(
-                ScanIssue(
-                    path=paths[0],
-                    relative_path=_get_relative_path(paths[0], ctx.root),
-                    issue_type=IssueType.DUPLICATE_BASENAME,
-                    severity=Severity.INFO,
-                    message=f"Duplicate basename '{paths[0].name}' found in: {locations}",
-                    suggestion="Rename files to have unique names",
-                )
-            )
+            # Group by parent directory
+            by_dir: dict[Path, list[Path]] = defaultdict(list)
+            for p in paths:
+                by_dir[p.parent].append(p)
+            # Only warn about directories with multiple files of same basename
+            for _dir_path, same_dir_paths in by_dir.items():
+                if len(same_dir_paths) > 1:
+                    names = ", ".join(p.name for p in same_dir_paths)
+                    ctx.issues.append(
+                        ScanIssue(
+                            path=same_dir_paths[0],
+                            relative_path=_get_relative_path(same_dir_paths[0], ctx.root),
+                            issue_type=IssueType.DUPLICATE_BASENAME,
+                            severity=Severity.INFO,
+                            message=f"Duplicate basenames in same directory: {names}",
+                            suggestion="Rename files to have unique names",
+                        )
+                    )
 
 
 # =============================================================================
@@ -565,13 +614,26 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         ctx.skipped.append(path)
         return
 
-    # Check if recognized extension
-    if not _is_recognized_extension(ext):
+    # Handle overview/derivative formats (PMTiles, etc.) - skip, not primary assets
+    if _is_overview_extension(ext):
         ctx.skipped.append(path)
         return
 
-    # Get format type
-    format_type = _get_format_type(ext)
+    # Handle .parquet specially - must check if it's GeoParquet
+    if ext == PARQUET_EXTENSION:
+        if not _is_geoparquet(path):
+            # Regular Parquet (tabular data), not a geospatial asset
+            ctx.skipped.append(path)
+            return
+        # It's GeoParquet - treat as vector format
+        format_type = FormatType.VECTOR
+    elif _is_recognized_extension(ext):
+        # Get format type for other recognized extensions
+        format_type = _get_format_type(ext)
+    else:
+        # Unrecognized extension
+        ctx.skipped.append(path)
+        return
 
     # Create scanned file
     scanned = ScannedFile(

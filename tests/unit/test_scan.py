@@ -558,11 +558,11 @@ class TestIssueDetection:
         """scan_directory detects very long paths (200+ chars)."""
         from portolan_cli.scan import IssueType, Severity, scan_directory
 
-        # Create a deeply nested path to exceed 200 chars
+        # Create a deeply nested path to exceed 200 chars (use .geojson since .parquet needs metadata)
         long_name = "a" * 50
-        nested = tmp_path / long_name / long_name / long_name / long_name / "data.parquet"
+        nested = tmp_path / long_name / long_name / long_name / long_name / "data.geojson"
         nested.parent.mkdir(parents=True)
-        nested.write_text("test")
+        nested.write_text('{"type": "FeatureCollection", "features": []}')
 
         result = scan_directory(tmp_path)
 
@@ -570,15 +570,39 @@ class TestIssueDetection:
         assert len(long_issues) >= 1
         assert long_issues[0].severity == Severity.WARNING
 
-    def test_detect_duplicate_basenames(self, fixtures_dir: Path) -> None:
-        """scan_directory detects duplicate basenames across directories."""
-        from portolan_cli.scan import IssueType, Severity, scan_directory
+    def test_sibling_directories_same_filename_no_warning(self, fixtures_dir: Path) -> None:
+        """Sibling directories with same filename should NOT produce duplicate warning.
+
+        This is intentional organization (e.g., 2010/radios.parquet and 2022/radios.parquet).
+        Only duplicates within the SAME directory should warn.
+        """
+        from portolan_cli.scan import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "duplicate_basenames")
 
         dup_issues = [i for i in result.issues if i.issue_type == IssueType.DUPLICATE_BASENAME]
-        assert len(dup_issues) >= 1
-        assert dup_issues[0].severity == Severity.INFO
+        # Should be empty - files are in different directories (dir_a, dir_b)
+        assert len(dup_issues) == 0
+
+    def test_detect_duplicate_basenames_same_directory(self, tmp_path: Path) -> None:
+        """scan_directory detects duplicate basenames within the same directory."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create two files with same basename (case-insensitive) in SAME directory
+        # Note: On case-insensitive filesystems, we can't have Argentina.geojson and
+        # argentina.geojson, so we use different names that would normalize the same
+        (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "DATA.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        dup_issues = [i for i in result.issues if i.issue_type == IssueType.DUPLICATE_BASENAME]
+        # On case-sensitive filesystems, both files exist and share lowercase basename
+        # On case-insensitive, only one file exists so no duplicate
+        # We test the case-sensitive scenario which should produce a warning
+        if (tmp_path / "data.geojson").exists() and (tmp_path / "DATA.geojson").exists():
+            assert len(dup_issues) >= 1
+            assert dup_issues[0].severity == Severity.INFO
 
     def test_detect_mixed_formats(self, fixtures_dir: Path) -> None:
         """scan_directory detects mixed raster/vector in same directory."""
@@ -699,23 +723,23 @@ class TestHiddenAndSymlinks:
         """Hidden files are skipped by default."""
         from portolan_cli.scan import scan_directory
 
-        # Create hidden and visible files
-        (tmp_path / ".hidden.parquet").write_text("hidden")
-        (tmp_path / "visible.parquet").write_text("visible")
+        # Create hidden and visible files (use .geojson since .parquet needs geo metadata)
+        (tmp_path / ".hidden.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "visible.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
         result = scan_directory(tmp_path)
 
         # Only visible file should be found
         assert len(result.ready) == 1
-        assert result.ready[0].basename == "visible.parquet"
+        assert result.ready[0].basename == "visible.geojson"
 
     def test_include_hidden_includes_hidden_files(self, tmp_path: Path) -> None:
         """--include-hidden includes hidden files."""
         from portolan_cli.scan import ScanOptions, scan_directory
 
-        # Create hidden and visible files
-        (tmp_path / ".hidden.parquet").write_text("hidden")
-        (tmp_path / "visible.parquet").write_text("visible")
+        # Create hidden and visible files (use .geojson since .parquet needs geo metadata)
+        (tmp_path / ".hidden.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "visible.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
         opts = ScanOptions(include_hidden=True)
         result = scan_directory(tmp_path, opts)
@@ -727,26 +751,26 @@ class TestHiddenAndSymlinks:
         """Symlinks are skipped by default."""
         from portolan_cli.scan import scan_directory
 
-        # Create a real file and a symlink
-        real_file = tmp_path / "real.parquet"
-        real_file.write_text("content")
-        symlink = tmp_path / "link.parquet"
+        # Create a real file and a symlink (use .geojson since .parquet needs geo metadata)
+        real_file = tmp_path / "real.geojson"
+        real_file.write_text('{"type": "FeatureCollection", "features": []}')
+        symlink = tmp_path / "link.geojson"
         symlink.symlink_to(real_file)
 
         result = scan_directory(tmp_path)
 
         # Only the real file should be found
         assert len(result.ready) == 1
-        assert result.ready[0].basename == "real.parquet"
+        assert result.ready[0].basename == "real.geojson"
 
     def test_follow_symlinks_includes_symlinks(self, tmp_path: Path) -> None:
         """--follow-symlinks includes symlinked files."""
         from portolan_cli.scan import ScanOptions, scan_directory
 
-        # Create a real file and a symlink
-        real_file = tmp_path / "real.parquet"
-        real_file.write_text("content")
-        symlink = tmp_path / "link.parquet"
+        # Create a real file and a symlink (use .geojson since .parquet needs geo metadata)
+        real_file = tmp_path / "real.geojson"
+        real_file.write_text('{"type": "FeatureCollection", "features": []}')
+        symlink = tmp_path / "link.geojson"
         symlink.symlink_to(real_file)
 
         opts = ScanOptions(follow_symlinks=True)
@@ -773,3 +797,132 @@ class TestHiddenAndSymlinks:
         loop_issues = [i for i in result.issues if i.issue_type == IssueType.SYMLINK_LOOP]
         assert len(loop_issues) >= 1
         assert loop_issues[0].severity == Severity.ERROR
+
+
+# =============================================================================
+# GeoParquet vs Regular Parquet Detection
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestGeoParquetDetection:
+    """Tests for distinguishing GeoParquet from regular Parquet files."""
+
+    def test_geoparquet_file_is_primary_asset(self, tmp_path: Path) -> None:
+        """GeoParquet files (with 'geo' metadata) are recognized as primary assets."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.scan import FormatType, scan_directory
+
+        # Create a minimal GeoParquet file with geo metadata
+        table = pa.table({"name": ["test"], "value": [1]})
+        geo_metadata = b'{"version": "1.0.0", "primary_column": "geometry", "columns": {}}'
+        existing_meta = table.schema.metadata or {}
+        new_meta = {**existing_meta, b"geo": geo_metadata}
+        table = table.replace_schema_metadata(new_meta)
+
+        parquet_path = tmp_path / "data.parquet"
+        pq.write_table(table, parquet_path)
+
+        result = scan_directory(tmp_path)
+
+        # Should be recognized as a ready file
+        assert len(result.ready) == 1
+        assert result.ready[0].extension == ".parquet"
+        assert result.ready[0].format_type == FormatType.VECTOR
+
+    def test_regular_parquet_file_is_skipped(self, tmp_path: Path) -> None:
+        """Regular Parquet files (without 'geo' metadata) are skipped."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.scan import scan_directory
+
+        # Create a regular Parquet file without geo metadata
+        table = pa.table({"name": ["test"], "value": [1]})
+        parquet_path = tmp_path / "census-data.parquet"
+        pq.write_table(table, parquet_path)
+
+        result = scan_directory(tmp_path)
+
+        # Should NOT be in ready files
+        assert len(result.ready) == 0
+        # Should be in skipped files
+        assert len(result.skipped) == 1
+        assert result.skipped[0].name == "census-data.parquet"
+
+    def test_mixed_parquet_types_only_geoparquet_ready(self, tmp_path: Path) -> None:
+        """Directory with both GeoParquet and regular Parquet only has GeoParquet ready."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.scan import scan_directory
+
+        # Create GeoParquet file
+        geo_table = pa.table({"name": ["test"]})
+        geo_metadata = b'{"version": "1.0.0", "primary_column": "geometry", "columns": {}}'
+        geo_table = geo_table.replace_schema_metadata({b"geo": geo_metadata})
+        pq.write_table(geo_table, tmp_path / "radios.parquet")
+
+        # Create regular Parquet files
+        regular_table = pa.table({"census_id": [1], "population": [1000]})
+        pq.write_table(regular_table, tmp_path / "census-data.parquet")
+        pq.write_table(regular_table, tmp_path / "metadata.parquet")
+
+        result = scan_directory(tmp_path)
+
+        # Only the GeoParquet should be ready
+        assert len(result.ready) == 1
+        assert result.ready[0].basename == "radios.parquet"
+        # The other two should be skipped
+        assert len(result.skipped) == 2
+
+
+# =============================================================================
+# PMTiles as Overview Format
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestOverviewFormats:
+    """Tests for overview/derivative format handling."""
+
+    def test_pmtiles_files_are_skipped(self, tmp_path: Path) -> None:
+        """PMTiles files are recognized as overviews and skipped (not primary assets)."""
+        from portolan_cli.scan import scan_directory
+
+        # Create a PMTiles file (just needs to exist for extension detection)
+        pmtiles_path = tmp_path / "overview.pmtiles"
+        pmtiles_path.write_bytes(b"fake pmtiles content")
+
+        result = scan_directory(tmp_path)
+
+        # Should NOT be in ready files
+        assert len(result.ready) == 0
+        # Should be in skipped files
+        assert len(result.skipped) == 1
+        assert result.skipped[0].name == "overview.pmtiles"
+
+    def test_pmtiles_does_not_count_as_primary(self, tmp_path: Path) -> None:
+        """PMTiles should not trigger 'multiple primaries' warning."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # Create one GeoParquet and one PMTiles
+        geo_table = pa.table({"name": ["test"]})
+        geo_metadata = b'{"version": "1.0.0", "primary_column": "geometry", "columns": {}}'
+        geo_table = geo_table.replace_schema_metadata({b"geo": geo_metadata})
+        pq.write_table(geo_table, tmp_path / "radios.parquet")
+
+        (tmp_path / "overview.pmtiles").write_bytes(b"fake pmtiles")
+
+        result = scan_directory(tmp_path)
+
+        # Only one primary asset (the GeoParquet)
+        assert len(result.ready) == 1
+        # No "multiple primaries" warning
+        multi_issues = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
+        assert len(multi_issues) == 0

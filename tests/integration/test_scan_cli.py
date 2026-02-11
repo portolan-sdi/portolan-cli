@@ -121,14 +121,14 @@ class TestScanCLI:
 
     def test_scan_follow_symlinks_flag(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan scan --follow-symlinks follows symlinks."""
-        # Create a target file
-        target = tmp_path / "target.parquet"
-        target.write_bytes(b"dummy parquet content")  # Not zero-byte
+        # Create a target file (use .geojson since .parquet requires geo metadata)
+        target = tmp_path / "target.geojson"
+        target.write_text('{"type": "FeatureCollection", "features": []}')
 
         # Create a subdirectory with a symlink
         subdir = tmp_path / "links"
         subdir.mkdir()
-        link = subdir / "link.parquet"
+        link = subdir / "link.geojson"
         link.symlink_to(target)
 
         # Without flag (default: skip symlinks)
