@@ -29,6 +29,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | Contributing guide | `docs/contributing.md` |
 | Architecture | `context/architecture.md` |
 | CI/CD documentation | `context/shared/documentation/ci.md` |
+| **Real-world test fixtures** | `context/shared/documentation/test-fixtures.md` |
 | Distill MCP tools | `context/shared/documentation/distill-mcp.md` |
 | ADRs | `context/shared/adr/` |
 | Plans & research | `context/shared/` |
@@ -131,10 +132,14 @@ Always research before implementing:
 ```python
 @pytest.mark.unit        # Fast, isolated, no I/O (< 100ms)
 @pytest.mark.integration # Multi-component, may touch filesystem
-@pytest.mark.network     # Requires network (mocked locally)
+@pytest.mark.network     # Requires network (mocked locally, live in nightly)
+@pytest.mark.realdata    # Uses real-world fixtures from S3 (cached in CI)
 @pytest.mark.benchmark   # Performance measurement
 @pytest.mark.slow        # Takes > 5 seconds
 ```
+
+**Real-world fixtures:** See `context/shared/documentation/test-fixtures.md` for details.
+These test Portolan's **orchestration** with production data — they do NOT test geometry conversion (that's upstream's job per [ADR-0010](context/shared/adr/0010-delegate-conversion-validation.md)).
 
 ### Defending Against Tautological Tests
 
