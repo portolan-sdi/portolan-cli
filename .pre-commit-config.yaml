@@ -13,7 +13,7 @@ repos:
         args: ['--unsafe']  # Allow Python tags in mkdocs.yml
       - id: check-added-large-files
         args: ['--maxkb=500']
-        exclude: '^tests/fixtures/realdata/.*\.(parquet|tif)$'
+        exclude: '^tests/fixtures/(realdata|raster|vector)/.*\.(parquet|tif)$'
       - id: check-merge-conflict
       - id: check-toml
       - id: mixed-line-ending

@@ -30,8 +30,10 @@ Fixtures are committed to git for robustness — no network dependency during te
 | `road-detections.parquet` | 92KB | 1,000 | [Microsoft ML Road Detections](https://source.coop/nlebovits/microsoft-ml-road-detections) |
 | `fieldmaps-boundaries.parquet` | 2.3MB | 3 | [FieldMaps](https://fieldmaps.io/) |
 | `rapidai4eo-sample.tif` | 205KB | N/A | [RapidAI4EO](https://source.coop/planet/rapidai4eo) |
+| `natural-earth-non-cog.tif` | 1.3MB | N/A | [Natural Earth 50m Shaded Relief](https://www.naturalearthdata.com/downloads/50m-raster-data/50m-shaded-relief/) |
+| `open-buildings-utm31n.parquet` | 147KB | 1,000 | Derived from `open-buildings.parquet`, reprojected to EPSG:32631 |
 
-**Total size:** ~4.3MB
+**Total size:** ~5.8MB
 
 ## What Each Fixture Tests
 
@@ -74,6 +76,22 @@ Fixtures are committed to git for robustness — no network dependency during te
 - **Portolan tests:**
   - File passes to rio-cogeo without corruption
   - Raster metadata extraction works on real COG
+
+#### `natural-earth-non-cog.tif` (1.3MB)
+- **Data:** Natural Earth 50m shaded relief, cropped to 1000x1000 pixels
+- **Why:** **NOT a Cloud-Optimized GeoTIFF** (non-tiled, overviews in wrong order)
+- **Portolan tests:**
+  - "Not cloud-native" warning is triggered
+  - Raster validation correctly identifies non-COG files
+
+### Projected Vector Dataset
+
+#### `open-buildings-utm31n.parquet` (147KB, 1,000 features)
+- **Data:** Same as `open-buildings.parquet`, reprojected to UTM Zone 31N (EPSG:32631)
+- **Why:** **Non-WGS84 CRS** — tests CRS extraction for projected coordinate systems
+- **Portolan tests:**
+  - CRS extraction works with PROJJSON format
+  - Non-EPSG:4326 coordinates handled correctly in metadata
 
 ## CI Integration
 
@@ -143,6 +161,36 @@ COPY (
 # Direct download of a single COG tile
 curl -o rapidai4eo-sample.tif \
   "https://data.source.coop/planet/rapidai4eo/imagery/33N/15E-200N/33N_15E-200N_01_09/PF-SR/2018-01-03.tif"
+```
+
+### Natural Earth Non-COG
+```bash
+# Source: https://www.naturalearthdata.com/downloads/50m-raster-data/50m-shaded-relief/
+# Download 50m shaded relief (SR_50M.zip)
+curl -L -o SR_50M.zip "https://naciscdn.org/naturalearth/50m/raster/SR_50M.zip"
+unzip SR_50M.zip
+
+# Crop to 1000x1000, non-tiled, then add overviews in wrong order to break COG validity
+gdal_translate -co TILED=NO -srcwin 0 0 1000 1000 SR_50M.tif natural-earth-non-cog.tif
+gdaladdo -r average natural-earth-non-cog.tif 2 4 8
+
+# Verify it's NOT a COG
+rio cogeo validate natural-earth-non-cog.tif
+# Should report: "is NOT a valid cloud optimized GeoTIFF"
+```
+
+### Open Buildings UTM 31N
+```sql
+-- Derived from open-buildings.parquet
+-- Reprojected using DuckDB spatial extension, then CRS metadata added via PyArrow
+LOAD spatial;
+COPY (
+  SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:32631') as geometry, * EXCLUDE geometry
+  FROM read_parquet('open-buildings.parquet')
+) TO 'open-buildings-utm31n.parquet' (FORMAT PARQUET);
+
+-- Note: DuckDB doesn't write CRS to GeoParquet metadata, so we add it manually:
+-- See tests/fixtures/generate.py or use PyArrow to add PROJJSON CRS metadata
 ```
 
 ## Adding New Fixtures
