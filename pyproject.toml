@@ -93,6 +93,7 @@ markers = [
     "unit: Fast, isolated, no I/O (< 100ms each)",
     "integration: Multi-component, may touch filesystem",
     "network: Requires network access (mocked locally, real in CI nightly)",
+    "realdata: Uses real-world fixtures from tests/fixtures/realdata/ (tests orchestration, not geometry)",
     "snapshot: Compares output against golden files",
     "benchmark: Performance measurement, tracked over time",
     "slow: Takes > 5 seconds",

@@ -149,6 +149,7 @@ markers = [
     "unit: Fast, isolated, no I/O (< 100ms each)",
     "integration: Multi-component, may touch filesystem",
     "network: Requires network access (mocked locally, real in CI)",
+    "realdata: Uses real-world fixtures from tests/fixtures/realdata/ (tests orchestration, not geometry)",
     "snapshot: Compares output against golden files",
     "benchmark: Performance measurement, tracked over time",
     "slow: Takes > 5 seconds",
@@ -160,8 +161,16 @@ markers = [
 | Gate | Tests |
 |------|-------|
 | Pre-commit | unit only (fast, < 30s total) |
-| CI (PR) | unit, integration, snapshot (no network, slow, benchmark) |
+| CI (PR) | unit, integration, snapshot, **realdata** |
 | Nightly | All markers including network and benchmark |
+
+### Real-World Fixtures
+
+The `realdata` marker uses fixtures committed to `tests/fixtures/realdata/` (~4MB total).
+
+These are production data samples that test Portolan's orchestration with real-world edge cases (antimeridian, complex polygons, LineStrings, COGs). No network access needed.
+
+See `context/shared/documentation/test-fixtures.md` for details.
 
 ---
 
