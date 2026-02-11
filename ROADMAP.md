@@ -115,7 +115,10 @@ Phase 1 is broken into incremental releases. Each builds on the previous—later
 | **v0.7** | Versioning | Schema fingerprints, `rollback`, `--breaking` flag, version numbering ([#14](https://github.com/portolan-sdi/portolan-cli/issues/14)) |
 | **v0.8** | Maintenance | `prune` with safety mechanisms ([#15](https://github.com/portolan-sdi/portolan-cli/issues/15)), `repair`|
 
-**Note on multi-user:** Per [ADR-0015](context/shared/adr/0015-two-tier-versioning-architecture.md), multi-user/concurrent access is deferred to the `portolan-iceberg` plugin. The core CLI assumes single-writer access.
+**Note on multi-user:** Per [ADR-0015][adr-0015], multi-user/concurrent access is deferred to the [portolake][] plugin. The core CLI assumes single-writer access.
+
+[adr-0015]: https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0015-two-tier-versioning-architecture.md
+[portolake]: https://github.com/portolan-sdi/portolake
 
 **Why this order?**
 
@@ -135,23 +138,23 @@ init → conversion → validation → add → sync → multi-user → maintenan
 - **v0.7**: [#14 (Schema evolution)](https://github.com/portolan-sdi/portolan-cli/issues/14) — schema fingerprints and breaking change detection
 - **v0.8**: [#15 (Prune safety)](https://github.com/portolan-sdi/portolan-cli/issues/15) — `--dry-run`, confirmation
 
-**Deferred to plugin:** [#33 (Multi-user ADR)](https://github.com/portolan-sdi/portolan-cli/issues/33), [#18 (Concurrent access)](https://github.com/portolan-sdi/portolan-cli/issues/18) — see [ADR-0015](context/shared/adr/0015-two-tier-versioning-architecture.md)
+**Deferred to plugin:** [#33 (Multi-user ADR)](https://github.com/portolan-sdi/portolan-cli/issues/33), [#18 (Concurrent access)](https://github.com/portolan-sdi/portolan-cli/issues/18) — see [ADR-0015][adr-0015]
 
 ---
 
-## Parallel: Iceberg + Icechunk Plugin
+## Parallel: Portolake (Iceberg + Icechunk Plugin)
 
 Multi-user versioning and tabular analytics. Developed by Javier alongside Phase 1.
 
 | Capability | Description |
 |------------|-------------|
-| `portolan-iceberg` | Apache Iceberg + Icechunk backend for versioning |
+| [portolake][] | Apache Iceberg + Icechunk backend for versioning |
 | **Multi-writer ACID** | Concurrent access with optimistic locking |
 | **Native time travel** | Branch, tag, and query historical versions |
 | **Schema evolution** | Automatic breaking change detection |
 | Query integration | SQL/DataFrame access to versioned data |
 
-**Architecture:** The plugin implements the same `VersioningBackend` protocol as the MVP's `versions.json` backend, allowing seamless upgrade. See [ADR-0015](context/shared/adr/0015-two-tier-versioning-architecture.md) for details.
+**Architecture:** The plugin implements the same `VersioningBackend` protocol as the MVP's `versions.json` backend, allowing seamless upgrade. See [ADR-0015][adr-0015] for details.
 
 **Target users:** Organizations needing concurrent access (Carto, HDX, multi-user teams).
 

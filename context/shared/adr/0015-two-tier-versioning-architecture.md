@@ -33,9 +33,14 @@ A file-based versioning system that:
 
 **Target users:** Municipalities, small teams, individual publishers. Anyone who doesn't need concurrent access.
 
-### Tier 2: Iceberg Plugin (`portolan-iceberg`)
+### Tier 2: Portolake Plugin
 
-A plugin that replaces the versioning backend with Iceberg + Icechunk:
+[Portolake](https://github.com/portolan-sdi/portolake) is a plugin that replaces the versioning backend with:
+
+- **Apache Iceberg** — For tabular/vector data (GeoParquet) with ACID transactions
+- **Icechunk** — For array/raster data (COG, NetCDF, HDF, Zarr) via VirtualiZarr
+
+Features:
 - ACID transactions for concurrent writes
 - Native time travel and version branching
 - Schema evolution with automatic detection
@@ -75,7 +80,7 @@ This allows the CLI to remain unchanged regardless of backend.
 Via Python entry points (consistent with [ADR-0003](0003-plugin-architecture.md)):
 
 ```toml
-# portolan-iceberg/pyproject.toml
+# portolake/pyproject.toml
 [project.entry-points."portolan.backends"]
 iceberg = "portolan_iceberg:IcebergBackend"
 ```
@@ -125,7 +130,7 @@ The single-writer assumption must be prominently documented:
 ```
 Note: Portolan MVP assumes single-writer access. Do not run concurrent
 publish, sync, or prune operations on the same catalog. For multi-user
-support, see the portolan-iceberg plugin.
+support, see the portolake plugin.
 ```
 
 ### Drift Detection
@@ -147,7 +152,7 @@ This catches accidental concurrent access even without true locking.
 
 When users outgrow MVP:
 
-1. Install `portolan-iceberg` plugin
+1. Install `portolake` plugin
 2. Configure Iceberg catalog connection
 3. Run `portolan migrate --to iceberg` (future command)
 4. Existing version history preserved in Iceberg format
@@ -162,5 +167,7 @@ When users outgrow MVP:
 ## References
 
 - [MVP Versioning Strategy](../plans/mvp-versioning-strategy.md) — Detailed implementation plan
-- [Icechunk](https://github.com/earth-mover/icechunk) — Versioned cloud-native array storage
+- [Portolake](https://github.com/portolan-sdi/portolake) — Enterprise versioning plugin for Portolan
 - [Apache Iceberg](https://iceberg.apache.org/) — Table format for huge analytic datasets
+- [Icechunk](https://github.com/earth-mover/icechunk) — Versioned cloud-native array storage
+- [VirtualiZarr](https://github.com/zarr-developers/VirtualiZarr) — Virtual Zarr stores for legacy formats

@@ -151,7 +151,7 @@ Adding columns or bands is NOT breaking (additive change).
 
 ### Trade-offs
 - We accept file growth for simplicity
-- We accept single-writer constraint for consistency (multi-user deferred to Iceberg plugin)
+- We accept single-writer constraint for consistency (multi-user deferred to portolake plugin)
 
 ## Alternatives Considered
 
@@ -170,7 +170,7 @@ Adding columns or bands is NOT breaking (additive change).
 ## Related ADRs
 
 - [ADR-0006: Remote Ownership Model](0006-remote-ownership-model.md) — Portolan owns bucket contents
-- [ADR-0015: Two-Tier Versioning Architecture](0015-two-tier-versioning-architecture.md) — MVP vs Iceberg plugin
+- [ADR-0015: Two-Tier Versioning Architecture](0015-two-tier-versioning-architecture.md) — MVP vs portolake plugin
 
 ## References
 

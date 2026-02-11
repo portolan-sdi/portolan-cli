@@ -5,7 +5,7 @@
 
 ## Executive Summary
 
-Portolan will ship an MVP with simple, file-based versioning (`versions.json`) that assumes single-writer access. Advanced features (concurrency, ACID writes, multi-user collaboration) will be provided via an **Iceberg + Icechunk plugin** that Javier will develop in parallel.
+Portolan will ship an MVP with simple, file-based versioning (`versions.json`) that assumes single-writer access. Advanced features (concurrency, ACID writes, multi-user collaboration) will be provided via **[portolake](https://github.com/portolan-sdi/portolake)**, a plugin combining Apache Iceberg (for tabular/vector data) and Icechunk (for raster/array data via VirtualiZarr) that Javier will develop in parallel.
 
 This approach:
 1. Gets a working product to entry-level users (municipalities, small orgs) quickly
@@ -25,8 +25,8 @@ This approach:
               ┌───────────────────────┴───────────────────────┐
               │                                               │
      ┌────────▼────────┐                          ┌──────────▼──────────┐
-     │  MVP Backend    │                          │  Plugin: icechunk   │
-     │  (versions.json)│                          │  + iceberg          │
+     │  MVP Backend    │                          │  Plugin: portolake  │
+     │  (versions.json)│                          │  (Iceberg+Icechunk) │
      ├─────────────────┤                          ├─────────────────────┤
      │ • Single writer │                          │ • Multi-writer ACID │
      │ • File-based    │                          │ • Native versioning │
@@ -434,7 +434,7 @@ class IcebergBackend(VersioningBackend):
 Plugins register via Python entry points:
 
 ```toml
-# portolan-iceberg/pyproject.toml
+# portolake/pyproject.toml
 [project.entry-points."portolan.backends"]
 iceberg = "portolan_iceberg:IcebergBackend"
 ```
@@ -450,7 +450,7 @@ The MVP must clearly document the single-writer assumption:
 ```
 Note: Portolan MVP assumes single-writer access. Do not run concurrent
 publish, sync, or prune operations on the same catalog. For multi-user
-support, see the portolan-iceberg plugin.
+support, see the portolake plugin.
 ```
 
 ### In docs:
@@ -460,7 +460,7 @@ support, see the portolan-iceberg plugin.
 > The MVP versioning system (`versions.json`) does not support concurrent writes.
 > If two users publish to the same catalog simultaneously, data corruption may occur.
 >
-> For multi-user environments, install the `portolan-iceberg` plugin which provides
+> For multi-user environments, install the `portolake` plugin which provides
 > ACID transactions and optimistic concurrency control.
 
 ### In code (fail loudly):
@@ -514,6 +514,8 @@ def sync(self, collection: str, force: bool = False) -> None:
 - [Issue #15: Prune safety](https://github.com/portolan-sdi/portolan-cli/issues/15)
 - [Issue #18: Concurrent access](https://github.com/portolan-sdi/portolan-cli/issues/18)
 - [Issue #33: Multi-user ADR](https://github.com/portolan-sdi/portolan-cli/issues/33)
-- [Icechunk](https://github.com/earth-mover/icechunk) — Versioned cloud-native array storage
+- [Portolake](https://github.com/portolan-sdi/portolake) — Enterprise versioning plugin for Portolan
 - [Apache Iceberg](https://iceberg.apache.org/) — Table format for huge analytic datasets
+- [Icechunk](https://github.com/earth-mover/icechunk) — Versioned cloud-native array storage
+- [VirtualiZarr](https://github.com/zarr-developers/VirtualiZarr) — Virtual Zarr stores for legacy formats
 - [STAC Spec](https://github.com/radiantearth/stac-spec) — SpatioTemporal Asset Catalog specification
