@@ -97,10 +97,10 @@ Fixtures are committed to git for robustness — no network dependency during te
 
 ### Marker
 
-Tests using these fixtures are marked with `@pytest.mark.realdata`:
+Tests using these fixtures are marked with `@pytest.mark.integration`:
 
 ```python
-@pytest.mark.realdata
+@pytest.mark.integration
 def test_antimeridian_bbox_computation(fieldmaps_fixture):
     """Bounding box for Fiji/Kiribati computed correctly."""
     ...
@@ -108,8 +108,8 @@ def test_antimeridian_bbox_computation(fieldmaps_fixture):
 
 ### When Tests Run
 
-| CI Tier | Runs `realdata` tests? | Notes |
-|---------|------------------------|-------|
+| CI Tier | Runs `integration` tests? | Notes |
+|---------|---------------------------|-------|
 | Pre-commit | No | Too slow for local hooks |
 | PR CI | **Yes** | Fixtures in repo, no network needed |
 | Nightly | Yes | Same as PR CI |
@@ -199,7 +199,7 @@ COPY (
 2. **Find minimal real data** — Prefer <5MB, <10K features
 3. **Document provenance** — Add SQL/command to this file under "Fixture Provenance"
 4. **Add fixture to repo** — Place in `tests/fixtures/realdata/`
-5. **Add pytest fixture** — Update `tests/realdata/conftest.py`
+5. **Add pytest fixture** — Update `tests/conftest.py`
 6. **Write the test** — Focus on Portolan's orchestration, not upstream behavior
 7. **Update pre-commit if needed** — Large files may need exclusion in `.pre-commit-config.yaml`
 
