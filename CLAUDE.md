@@ -58,6 +58,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0012](context/shared/adr/0012-flat-catalog-hierarchy.md) | Flat catalog hierarchy (no nested collections) |
 | [0013](context/shared/adr/0013-gitingest-auto-fetch.md) | Auto-fetch dependency docs via gitingest |
 | [0014](context/shared/adr/0014-accept-non-cloud-native-formats.md) | Accept non-cloud-native formats with warnings |
+| [0015](context/shared/adr/0015-two-tier-versioning-architecture.md) | Two-tier versioning: simple MVP + [portolake](https://github.com/portolan-sdi/portolake) plugin for enterprise |
 
 ## Common Commands
 

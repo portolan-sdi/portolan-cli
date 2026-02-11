@@ -26,7 +26,7 @@ We use a **plugin architecture** with Python entry points:
 - PMTiles → `portolan-pmtiles`
 - COPC → `portolan-copc`
 - 3D Tiles → `portolan-3dtiles`
-- Iceberg → `portolan-iceberg`
+- Iceberg + Icechunk → [portolake](https://github.com/portolan-sdi/portolake)
 
 ### Entry point registration
 

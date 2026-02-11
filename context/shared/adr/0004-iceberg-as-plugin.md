@@ -41,7 +41,7 @@ GeoParquet and COG files are the same regardless of catalog layer. If someone wa
 
 ### Plugin path
 
-A `portolan-iceberg` plugin could:
+The [portolake](https://github.com/portolan-sdi/portolake) plugin could:
 - Export Portolan catalogs to Iceberg format
 - Register GeoParquet files in an existing Iceberg catalog
 - Sync Iceberg metadata alongside STAC

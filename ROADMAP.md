@@ -112,8 +112,13 @@ Phase 1 is broken into incremental releases. Each builds on the previous—later
 | **v0.4** | Metadata + validation | Extract metadata (extent, schema, CRS), validation rules, `portolan check` for local catalogs ✓ |
 | **v0.5** | Dataset CRUD | `dataset add` (orchestrates conversion + validation), `dataset list`, `dataset info`, `dataset remove` |
 | **v0.6** | Remote sync | `remote add`, `sync` (single-user), drift detection, `--dry-run` and `--verbose` flags |
-| **v0.7** | Multi-user | ADR decision ([#33](https://github.com/portolan-sdi/portolan-cli/issues/33)), locking strategy, conflict handling ([#16](https://github.com/portolan-sdi/portolan-cli/issues/16), [#18](https://github.com/portolan-sdi/portolan-cli/issues/18)) |
-| **v0.8** | Maintenance | `prune` with safety mechanisms ([#15](https://github.com/portolan-sdi/portolan-cli/issues/15)), `repair`, soft-delete |
+| **v0.7** | Versioning | Schema fingerprints, `rollback`, `--breaking` flag, version numbering ([#14](https://github.com/portolan-sdi/portolan-cli/issues/14)) |
+| **v0.8** | Maintenance | `prune` with safety mechanisms ([#15](https://github.com/portolan-sdi/portolan-cli/issues/15)), `repair`|
+
+**Note on multi-user:** Per [ADR-0015][adr-0015], multi-user/concurrent access is deferred to the [portolake][] plugin. The core CLI assumes single-writer access.
+
+[adr-0015]: https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0015-two-tier-versioning-architecture.md
+[portolake]: https://github.com/portolan-sdi/portolake
 
 **Why this order?**
 
@@ -129,23 +134,31 @@ init → conversion → validation → add → sync → multi-user → maintenan
 
 **Related issues by milestone:**
 
-- **v0.4**: [#14 (Schema evolution)](https://github.com/portolan-sdi/portolan-cli/issues/14) — defines what "breaking change" means for validation
 - **v0.6**: [#16 (Conflict handling)](https://github.com/portolan-sdi/portolan-cli/issues/16) — drift detection behavior
-- **v0.7**: [#33 (Multi-user ADR)](https://github.com/portolan-sdi/portolan-cli/issues/33), [#18 (Concurrent access)](https://github.com/portolan-sdi/portolan-cli/issues/18) — locking and safety
-- **v0.8**: [#15 (Prune safety)](https://github.com/portolan-sdi/portolan-cli/issues/15) — `--dry-run`, confirmation, soft-delete
+- **v0.7**: [#14 (Schema evolution)](https://github.com/portolan-sdi/portolan-cli/issues/14) — schema fingerprints and breaking change detection
+- **v0.8**: [#15 (Prune safety)](https://github.com/portolan-sdi/portolan-cli/issues/15) — `--dry-run`, confirmation
+
+**Deferred to plugin:** [#33 (Multi-user ADR)](https://github.com/portolan-sdi/portolan-cli/issues/33), [#18 (Concurrent access)](https://github.com/portolan-sdi/portolan-cli/issues/18) — see [ADR-0015][adr-0015]
 
 ---
 
-## Parallel: Iceberg Plugin
+## Parallel: Portolake (Iceberg + Icechunk Plugin)
 
-Tabular analytics on geospatial data. Developed by Javier alongside Phase 1.
+Multi-user versioning and tabular analytics. Developed by Javier alongside Phase 1.
 
 | Capability | Description |
 |------------|-------------|
-| `portolan-iceberg` | Apache Iceberg tables alongside STAC |
+| [portolake][] | Apache Iceberg + Icechunk backend for versioning |
+| **Multi-writer ACID** | Concurrent access with optimistic locking |
+| **Native time travel** | Branch, tag, and query historical versions |
+| **Schema evolution** | Automatic breaking change detection |
 | Query integration | SQL/DataFrame access to versioned data |
 
-**Note:** Separate package, separate maintainer, but expected to land around the same time as Phase 1. STAC remains the catalog layer; Iceberg is the analytics layer.
+**Architecture:** The plugin implements the same `VersioningBackend` protocol as the MVP's `versions.json` backend, allowing seamless upgrade. See [ADR-0015][adr-0015] for details.
+
+**Target users:** Organizations needing concurrent access (Carto, HDX, multi-user teams).
+
+**Note:** Separate package, separate maintainer. STAC remains the catalog layer; Iceberg provides the versioning backend for enterprise use cases.
 
 ---
 
