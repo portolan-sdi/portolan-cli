@@ -52,7 +52,8 @@ class TestScanCLI:
         """portolan scan on nonexistent path exits with error."""
         result = runner.invoke(cli, ["scan", "/nonexistent/path/that/does/not/exist"])
 
-        assert result.exit_code == 1
+        # Click returns exit code 2 for usage errors (path validation failure)
+        assert result.exit_code == 2
         assert "not exist" in result.output.lower() or "error" in result.output.lower()
 
     def test_scan_json_output(self, runner: CliRunner, fixtures_dir: Path) -> None:

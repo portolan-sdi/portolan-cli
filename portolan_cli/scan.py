@@ -540,6 +540,7 @@ def _discover_files(
                     issue_type=IssueType.PERMISSION_DENIED,
                     severity=Severity.ERROR,
                     message="Permission denied",
+                    suggestion="Check directory permissions or run with appropriate access",
                 )
             )
             return

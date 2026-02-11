@@ -127,7 +127,7 @@ def check(path: Path, json_output: bool, verbose: bool) -> None:
 
 
 @cli.command()
-@click.argument("path", type=click.Path(path_type=Path))
+@click.argument("path", type=click.Path(path_type=Path, exists=True, file_okay=False))
 @click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
 @click.option(
     "--no-recursive",
@@ -241,7 +241,7 @@ def _print_issue_group(
     for issue in issues:
         if issue.severity == severity:
             header_fn(f"  {issue.relative_path}: {issue.message}")
-            if issue.suggestion:
+            if issue.suggestion is not None:
                 detail(f"    Hint: {issue.suggestion}")
 
 
