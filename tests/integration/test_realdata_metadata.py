@@ -16,7 +16,7 @@ from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
 class TestAntimeridian:
     """Test antimeridian edge case — this is Portolan-specific logic."""
 
-    @pytest.mark.realdata
+    @pytest.mark.integration
     def test_fieldmaps_antimeridian_bbox(self, fieldmaps_boundaries_path: Path) -> None:
         """FieldMaps: antimeridian-crossing bbox is valid.
 
@@ -62,21 +62,21 @@ class TestSmokeTests:
     upstream/data issue.
     """
 
-    @pytest.mark.realdata
+    @pytest.mark.integration
     def test_smoke_nwi_wetlands(self, nwi_wetlands_path: Path) -> None:
         """Smoke test: NWI Wetlands (complex polygons with holes)."""
         metadata = extract_geoparquet_metadata(nwi_wetlands_path)
         assert metadata.feature_count == 1000
         assert metadata.bbox is not None
 
-    @pytest.mark.realdata
+    @pytest.mark.integration
     def test_smoke_open_buildings(self, open_buildings_path: Path) -> None:
         """Smoke test: Open Buildings (1000 simple polygons)."""
         metadata = extract_geoparquet_metadata(open_buildings_path)
         assert metadata.feature_count == 1000
         assert metadata.bbox is not None
 
-    @pytest.mark.realdata
+    @pytest.mark.integration
     def test_smoke_road_detections(self, road_detections_path: Path) -> None:
         """Smoke test: Road Detections (LineString geometries)."""
         metadata = extract_geoparquet_metadata(road_detections_path)

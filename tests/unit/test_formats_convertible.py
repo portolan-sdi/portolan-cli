@@ -104,6 +104,19 @@ class TestConvertibleRasterDetection:
         assert result.target_format == "COG"
         assert result.error_message is None
 
+    @pytest.mark.unit
+    def test_real_non_cog_tiff_returns_convertible(self, non_cog_tif: Path) -> None:
+        """Real-world non-COG TIFF fixture returns CONVERTIBLE status.
+
+        Uses Natural Earth data that is a valid GeoTIFF but NOT cloud-optimized.
+        This is more realistic than testing with corrupted files.
+        """
+        result = get_cloud_native_status(non_cog_tif)
+        assert result.status == CloudNativeStatus.CONVERTIBLE
+        assert result.display_name == "TIFF"
+        assert result.target_format == "COG"
+        assert result.error_message is None
+
 
 class TestWarningMessageFormat:
     """Tests for warning message format per spec."""

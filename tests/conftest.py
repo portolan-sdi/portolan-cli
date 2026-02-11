@@ -59,8 +59,18 @@ def valid_large_properties_geojson(fixtures_dir: Path) -> Path:
 
 @pytest.fixture
 def valid_points_parquet(fixtures_dir: Path) -> Path:
-    """Path to valid GeoParquet fixture (pre-converted points)."""
-    return fixtures_dir / "vector" / "valid" / "points.parquet"
+    """Path to valid GeoParquet fixture (real-world Open Buildings data).
+
+    This uses real-world data from Open Buildings (1000 building footprints).
+    Previously pointed to synthetic fixture at vector/valid/points.parquet.
+    """
+    return fixtures_dir / "realdata" / "open-buildings.parquet"
+
+
+@pytest.fixture
+def projected_parquet(fixtures_dir: Path) -> Path:
+    """Path to GeoParquet with projected CRS (EPSG:32631 UTM Zone 31N)."""
+    return fixtures_dir / "vector" / "open-buildings-utm31n.parquet"
 
 
 # Invalid vector fixtures
@@ -97,8 +107,12 @@ def invalid_null_geometries_geojson(fixtures_dir: Path) -> Path:
 
 @pytest.fixture
 def valid_rgb_cog(fixtures_dir: Path) -> Path:
-    """Path to valid 3-band RGB COG fixture (64x64)."""
-    return fixtures_dir / "raster" / "valid" / "rgb.tif"
+    """Path to valid COG fixture (real-world RapidAI4EO satellite imagery).
+
+    This uses real-world data from ESA's RapidAI4EO program (100x100 Sentinel-2 sample).
+    Previously pointed to synthetic fixture at raster/valid/rgb.tif.
+    """
+    return fixtures_dir / "realdata" / "rapidai4eo-sample.tif"
 
 
 @pytest.fixture
@@ -134,6 +148,12 @@ def invalid_truncated_tif(fixtures_dir: Path) -> Path:
     return fixtures_dir / "raster" / "invalid" / "truncated.tif"
 
 
+@pytest.fixture
+def non_cog_tif(fixtures_dir: Path) -> Path:
+    """Path to non-cloud-optimized GeoTIFF (Natural Earth data)."""
+    return fixtures_dir / "raster" / "natural-earth-non-cog.tif"
+
+
 # =============================================================================
 # Edge Case Fixtures
 # =============================================================================
@@ -155,6 +175,41 @@ def edge_special_filename_geojson(fixtures_dir: Path) -> Path:
 def edge_antimeridian_geojson(fixtures_dir: Path) -> Path:
     """Path to GeoJSON crossing the antimeridian."""
     return fixtures_dir / "edge" / "antimeridian.geojson"
+
+
+# =============================================================================
+# Real-World Data Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def nwi_wetlands_path(fixtures_dir: Path) -> Path:
+    """NWI Wetlands - complex polygons with holes (1,000 features)."""
+    return fixtures_dir / "realdata" / "nwi-wetlands.parquet"
+
+
+@pytest.fixture
+def open_buildings_path(fixtures_dir: Path) -> Path:
+    """Open Buildings - bulk polygon ingestion (1,000 features)."""
+    return fixtures_dir / "realdata" / "open-buildings.parquet"
+
+
+@pytest.fixture
+def road_detections_path(fixtures_dir: Path) -> Path:
+    """Road Detections - LineString geometries (1,000 features)."""
+    return fixtures_dir / "realdata" / "road-detections.parquet"
+
+
+@pytest.fixture
+def fieldmaps_boundaries_path(fixtures_dir: Path) -> Path:
+    """FieldMaps Boundaries - antimeridian crossing (3 features)."""
+    return fixtures_dir / "realdata" / "fieldmaps-boundaries.parquet"
+
+
+@pytest.fixture
+def rapidai4eo_path(fixtures_dir: Path) -> Path:
+    """RapidAI4EO - Cloud-Optimized GeoTIFF raster."""
+    return fixtures_dir / "realdata" / "rapidai4eo-sample.tif"
 
 
 # =============================================================================
