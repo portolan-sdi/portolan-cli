@@ -585,24 +585,33 @@ class TestIssueDetection:
         assert len(dup_issues) == 0
 
     def test_detect_duplicate_basenames_same_directory(self, tmp_path: Path) -> None:
-        """scan_directory detects duplicate basenames within the same directory."""
+        """scan_directory detects duplicate basenames within the same directory.
+
+        This test creates two files with names that differ only in case (data.geojson
+        and DATA.geojson). On case-sensitive filesystems (Linux), both files exist and
+        the scan should detect them as duplicates. On case-insensitive filesystems
+        (macOS, Windows), only one file can exist, so we skip the test there.
+        """
         from portolan_cli.scan import IssueType, Severity, scan_directory
 
         # Create two files with same basename (case-insensitive) in SAME directory
-        # Note: On case-insensitive filesystems, we can't have Argentina.geojson and
-        # argentina.geojson, so we use different names that would normalize the same
         (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
         (tmp_path / "DATA.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        # Skip on case-insensitive filesystems where we can't create both files
+        if not (tmp_path / "DATA.geojson").exists() or not (tmp_path / "data.geojson").exists():
+            pytest.skip("Case-insensitive filesystem: cannot create files differing only by case")
+
+        # Verify we actually have two distinct files
+        files_in_dir = list(tmp_path.iterdir())
+        if len(files_in_dir) < 2:
+            pytest.skip("Case-insensitive filesystem: files were merged")
 
         result = scan_directory(tmp_path)
 
         dup_issues = [i for i in result.issues if i.issue_type == IssueType.DUPLICATE_BASENAME]
-        # On case-sensitive filesystems, both files exist and share lowercase basename
-        # On case-insensitive, only one file exists so no duplicate
-        # We test the case-sensitive scenario which should produce a warning
-        if (tmp_path / "data.geojson").exists() and (tmp_path / "DATA.geojson").exists():
-            assert len(dup_issues) >= 1
-            assert dup_issues[0].severity == Severity.INFO
+        assert len(dup_issues) >= 1
+        assert dup_issues[0].severity == Severity.INFO
 
     def test_detect_mixed_formats(self, fixtures_dir: Path) -> None:
         """scan_directory detects mixed raster/vector in same directory."""
