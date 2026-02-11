@@ -62,7 +62,12 @@ def benchmark_dir_deep(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def _create_benchmark_structure(base: Path, dirs: int, files_per_dir: int) -> None:
-    """Create benchmark directory structure with mixed formats."""
+    """Create benchmark directory structure with mixed formats.
+
+    Note: Every 4th file adds 3 sidecar files (.shp, .dbf, .shx), so actual
+    file count = dirs × files_per_dir + dirs × (files_per_dir // 4) × 3.
+    For default 1K target (100 dirs × 10 files): ~1900 files total.
+    """
     extensions = [".parquet", ".geojson", ".tif", ".gpkg"]
 
     for i in range(dirs):

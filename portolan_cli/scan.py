@@ -54,8 +54,8 @@ SHAPEFILE_ALL_SIDECARS: frozenset[str] = SHAPEFILE_REQUIRED_SIDECARS | SHAPEFILE
 LONG_PATH_THRESHOLD: int = 200
 
 # Pattern for invalid filename characters
-# Matches: spaces, parentheses, brackets, and non-ASCII characters
-INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[\s()\[\]]|[^\x00-\x7F]")
+# Matches: spaces, parentheses, brackets, control chars (0x00-0x1F, 0x7F), and non-ASCII
+INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[\s()\[\]\x00-\x1f\x7f]|[^\x00-\x7f]")
 
 
 # =============================================================================
@@ -77,6 +77,7 @@ class IssueType(Enum):
     INCOMPLETE_SHAPEFILE = "incomplete_shapefile"
     ZERO_BYTE_FILE = "zero_byte_file"
     SYMLINK_LOOP = "symlink_loop"
+    PERMISSION_DENIED = "permission_denied"
     INVALID_CHARACTERS = "invalid_characters"
     MULTIPLE_PRIMARIES = "multiple_primaries"
     LONG_PATH = "long_path"
@@ -363,8 +364,24 @@ def _check_long_path(ctx: _ScanContext, path: Path) -> None:
         )
 
 
-def _check_symlink_loop(ctx: _ScanContext, path: Path) -> bool:
-    """Check for symlink loop using inode tracking. Returns True if loop detected."""
+def _check_symlink_loop(ctx: _ScanContext, path: Path, is_directory: bool) -> bool:
+    """Check for symlink loop using inode tracking. Returns True if loop detected.
+
+    Only tracks inodes for directories to prevent infinite recursion.
+    File symlinks pointing to the same target are NOT considered loops.
+
+    Args:
+        ctx: Scan context with visited_inodes set.
+        path: Path to check (must be a symlink).
+        is_directory: True if the symlink target is a directory.
+
+    Returns:
+        True if a directory symlink loop was detected, False otherwise.
+    """
+    # Only track directory inodes - file symlinks to same target are valid
+    if not is_directory:
+        return False
+
     try:
         stat_info = path.stat()
         inode_key = (stat_info.st_dev, stat_info.st_ino)
@@ -417,29 +434,20 @@ def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
                 )
             )
 
-    # Check for duplicate basenames
+    # Check for duplicate basenames (already keyed by name.lower() in _process_file)
     for _basename, paths in ctx.basenames.items():
         if len(paths) > 1:
-            # Check for case-insensitive duplicates
-            lower_names = defaultdict(list)
-            for p in paths:
-                lower_names[p.name.lower()].append(p)
-
-            for _lower_name, matching_paths in lower_names.items():
-                if len(matching_paths) > 1:
-                    locations = ", ".join(
-                        _get_relative_path(p.parent, ctx.root) for p in matching_paths
-                    )
-                    ctx.issues.append(
-                        ScanIssue(
-                            path=matching_paths[0],
-                            relative_path=_get_relative_path(matching_paths[0], ctx.root),
-                            issue_type=IssueType.DUPLICATE_BASENAME,
-                            severity=Severity.INFO,
-                            message=f"Duplicate basename '{matching_paths[0].name}' found in: {locations}",
-                            suggestion="Rename files to have unique names",
-                        )
-                    )
+            locations = ", ".join(_get_relative_path(p.parent, ctx.root) for p in paths)
+            ctx.issues.append(
+                ScanIssue(
+                    path=paths[0],
+                    relative_path=_get_relative_path(paths[0], ctx.root),
+                    issue_type=IssueType.DUPLICATE_BASENAME,
+                    severity=Severity.INFO,
+                    message=f"Duplicate basename '{paths[0].name}' found in: {locations}",
+                    suggestion="Rename files to have unique names",
+                )
+            )
 
 
 # =============================================================================
@@ -480,7 +488,7 @@ def _discover_files(
                 ScanIssue(
                     path=start,
                     relative_path=_get_relative_path(start, root),
-                    issue_type=IssueType.SYMLINK_LOOP,  # Reuse for permission issues
+                    issue_type=IssueType.PERMISSION_DENIED,
                     severity=Severity.ERROR,
                     message="Permission denied",
                 )
@@ -509,9 +517,9 @@ def _discover_files(
             if is_symlink and not options.follow_symlinks:
                 continue
 
-            # Check for symlink loops when following
+            # Check for symlink loops when following (only for directories)
             if is_symlink and options.follow_symlinks:
-                if _check_symlink_loop(ctx, path):
+                if _check_symlink_loop(ctx, path, is_directory=is_dir):
                     continue
 
             if is_dir:
