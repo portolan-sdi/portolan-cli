@@ -6,6 +6,7 @@ All business logic lives in the library; the CLI handles user interaction.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import click
@@ -18,6 +19,15 @@ from portolan_cli.dataset import (
     remove_dataset,
 )
 from portolan_cli.output import detail, error, info, success, warn
+from portolan_cli.scan import (
+    ScanIssue,
+    ScanOptions,
+    ScanResult,
+    scan_directory,
+)
+from portolan_cli.scan import (
+    Severity as ScanSeverity,
+)
 from portolan_cli.validation import Severity
 from portolan_cli.validation import check as validate_catalog
 
@@ -109,6 +119,150 @@ def check(path: Path, json_output: bool, verbose: bool) -> None:
     # Exit code: 1 if any errors (not warnings)
     if report.errors:
         raise SystemExit(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scan command
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.command()
+@click.argument("path", type=click.Path(path_type=Path, exists=True, file_okay=False))
+@click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
+@click.option(
+    "--no-recursive",
+    is_flag=True,
+    help="Scan only the target directory (no subdirectories)",
+)
+@click.option(
+    "--max-depth",
+    type=int,
+    default=None,
+    help="Maximum recursion depth (0 = target directory only)",
+)
+@click.option(
+    "--include-hidden",
+    is_flag=True,
+    help="Include hidden files (starting with .)",
+)
+@click.option(
+    "--follow-symlinks",
+    is_flag=True,
+    help="Follow symbolic links (may cause loops)",
+)
+def scan(
+    path: Path,
+    json_output: bool,
+    no_recursive: bool,
+    max_depth: int | None,
+    include_hidden: bool,
+    follow_symlinks: bool,
+) -> None:
+    """Scan a directory for geospatial files and potential issues.
+
+    Discovers files by extension, validates shapefile completeness,
+    and reports issues that may cause problems during import.
+
+    PATH is the directory to scan.
+
+    Examples:
+
+        portolan scan /data/geospatial
+
+        portolan scan . --json
+
+        portolan scan /large/tree --max-depth=2
+
+        portolan scan /data --no-recursive
+    """
+    import json as json_module
+
+    # Build options from CLI flags
+    options = ScanOptions(
+        recursive=not no_recursive,
+        max_depth=max_depth,
+        include_hidden=include_hidden,
+        follow_symlinks=follow_symlinks,
+    )
+
+    try:
+        result = scan_directory(path, options)
+    except FileNotFoundError as err:
+        error(str(err))
+        raise SystemExit(1) from err
+    except NotADirectoryError as err:
+        error(str(err))
+        raise SystemExit(1) from err
+
+    if json_output:
+        # JSON output per FR-019
+        click.echo(json_module.dumps(result.to_dict(), indent=2))
+    else:
+        # Human-readable output per FR-018
+        _print_scan_summary(result)
+
+    # Exit code per FR-020: 0 if no errors, 1 if errors exist
+    if result.has_errors:
+        raise SystemExit(1)
+
+
+def _print_scan_header(result: ScanResult) -> None:
+    """Print scan header with file counts."""
+    ready_count = len(result.ready)
+    if ready_count == 0:
+        info(f"Scanned {result.directories_scanned} directories")
+        warn("0 files ready to import")
+    else:
+        success(f"{ready_count} files ready to import")
+
+
+def _print_format_breakdown(result: ScanResult) -> None:
+    """Print breakdown of files by format."""
+    if not result.ready:
+        return
+    formats: dict[str, int] = {}
+    for f in result.ready:
+        formats[f.extension] = formats.get(f.extension, 0) + 1
+    for ext, count in sorted(formats.items()):
+        detail(f"  {count} {ext} file{'s' if count != 1 else ''}")
+
+
+def _print_issue_group(
+    issues: list[ScanIssue],
+    severity: ScanSeverity,
+    header_fn: Callable[[str], None],
+    count: int,
+    label: str,
+) -> None:
+    """Print a group of issues with the same severity."""
+    if count == 0:
+        return
+    header_fn(f"{count} {label}{'s' if count != 1 else ''}")
+    for issue in issues:
+        if issue.severity == severity:
+            header_fn(f"  {issue.relative_path}: {issue.message}")
+            if issue.suggestion is not None:
+                detail(f"    Hint: {issue.suggestion}")
+
+
+def _print_issues_by_severity(result: ScanResult) -> None:
+    """Print issues grouped by severity."""
+    if not result.issues:
+        return
+
+    _print_issue_group(result.issues, ScanSeverity.ERROR, error, result.error_count, "error")
+    _print_issue_group(result.issues, ScanSeverity.WARNING, warn, result.warning_count, "warning")
+    _print_issue_group(result.issues, ScanSeverity.INFO, info, result.info_count, "info message")
+
+
+def _print_scan_summary(result: ScanResult) -> None:
+    """Print human-readable scan summary."""
+    _print_scan_header(result)
+    _print_format_breakdown(result)
+    _print_issues_by_severity(result)
+
+    if result.skipped:
+        detail(f"{len(result.skipped)} files skipped (unrecognized format)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
