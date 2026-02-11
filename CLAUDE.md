@@ -133,7 +133,7 @@ Always research before implementing:
 @pytest.mark.unit        # Fast, isolated, no I/O (< 100ms)
 @pytest.mark.integration # Multi-component, may touch filesystem
 @pytest.mark.network     # Requires network (mocked locally, live in nightly)
-@pytest.mark.realdata    # Uses real-world fixtures from S3 (cached in CI)
+@pytest.mark.realdata    # Uses real-world fixtures committed in tests/fixtures/realdata/
 @pytest.mark.benchmark   # Performance measurement
 @pytest.mark.slow        # Takes > 5 seconds
 ```
