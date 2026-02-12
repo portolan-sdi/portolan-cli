@@ -5,6 +5,8 @@ Tests file classification into 10 categories and skip reason generation.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from portolan_cli.scan_classify import (
@@ -16,6 +18,7 @@ from portolan_cli.scan_classify import (
 )
 
 
+@pytest.mark.unit
 class TestFileCategory:
     """Tests for FileCategory enum."""
 
@@ -33,6 +36,7 @@ class TestFileCategory:
             assert isinstance(category.value, str)
 
 
+@pytest.mark.unit
 class TestSkipReasonType:
     """Tests for SkipReasonType enum."""
 
@@ -52,10 +56,11 @@ class TestSkipReasonType:
         assert actual == expected
 
 
+@pytest.mark.unit
 class TestSkippedFile:
     """Tests for SkippedFile dataclass."""
 
-    def test_skipped_file_creation(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_skipped_file_creation(self, tmp_path: Path) -> None:
         """SkippedFile can be created with all required fields."""
 
         test_path = tmp_path / "test.csv"
@@ -72,7 +77,7 @@ class TestSkippedFile:
         assert skipped.reason_type == SkipReasonType.NOT_GEOSPATIAL
         assert "tabular" in skipped.reason_message.lower()
 
-    def test_skipped_file_is_frozen(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_skipped_file_is_frozen(self, tmp_path: Path) -> None:
         """SkippedFile should be immutable (frozen dataclass)."""
 
         test_path = tmp_path / "test.csv"
@@ -86,7 +91,7 @@ class TestSkippedFile:
         with pytest.raises(AttributeError):
             skipped.category = FileCategory.JUNK  # type: ignore[misc]
 
-    def test_skipped_file_to_dict(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_skipped_file_to_dict(self, tmp_path: Path) -> None:
         """SkippedFile.to_dict() returns expected structure."""
 
         test_path = tmp_path / "test.csv"
@@ -105,10 +110,11 @@ class TestSkippedFile:
         assert result["reason"] == "CSV is tabular data"
 
 
+@pytest.mark.unit
 class TestClassifyFile:
     """Tests for classify_file function."""
 
-    def test_csv_classified_as_tabular_data(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_csv_classified_as_tabular_data(self, tmp_path: Path) -> None:
         """CSV files are classified as TABULAR_DATA."""
 
         test_path = tmp_path / "data.csv"
@@ -118,7 +124,7 @@ class TestClassifyFile:
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL
         assert skip_msg is not None
 
-    def test_exe_classified_as_junk(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_exe_classified_as_junk(self, tmp_path: Path) -> None:
         """Executable files are classified as JUNK."""
 
         test_path = tmp_path / "program.exe"
@@ -128,7 +134,7 @@ class TestClassifyFile:
         assert skip_type == SkipReasonType.JUNK_FILE
         assert skip_msg is not None
 
-    def test_pycache_classified_as_junk(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_pycache_classified_as_junk(self, tmp_path: Path) -> None:
         """__pycache__ files are classified as JUNK."""
 
         pycache = tmp_path / "__pycache__"
@@ -139,7 +145,7 @@ class TestClassifyFile:
         assert category == FileCategory.JUNK
         assert skip_type == SkipReasonType.JUNK_FILE
 
-    def test_pmtiles_classified_as_visualization(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_pmtiles_classified_as_visualization(self, tmp_path: Path) -> None:
         """.pmtiles files are classified as VISUALIZATION."""
 
         test_path = tmp_path / "tiles.pmtiles"
@@ -148,7 +154,7 @@ class TestClassifyFile:
         assert category == FileCategory.VISUALIZATION
         assert skip_type == SkipReasonType.VISUALIZATION_ONLY
 
-    def test_geojson_classified_as_geo_asset(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_geojson_classified_as_geo_asset(self, tmp_path: Path) -> None:
         """GeoJSON files are classified as GEO_ASSET."""
 
         test_path = tmp_path / "data.geojson"
@@ -158,9 +164,7 @@ class TestClassifyFile:
         assert skip_type is None
         assert skip_msg is None
 
-    def test_shapefile_sidecar_classified_as_sidecar(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_shapefile_sidecar_classified_as_sidecar(self, tmp_path: Path) -> None:
         """Shapefile sidecar (.dbf) classified as KNOWN_SIDECAR."""
 
         test_path = tmp_path / "data.dbf"
@@ -169,7 +173,7 @@ class TestClassifyFile:
         assert category == FileCategory.KNOWN_SIDECAR
         assert skip_type == SkipReasonType.SIDECAR_FILE
 
-    def test_markdown_classified_as_documentation(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_markdown_classified_as_documentation(self, tmp_path: Path) -> None:
         """Markdown files are classified as DOCUMENTATION."""
 
         test_path = tmp_path / "README.md"
@@ -178,9 +182,7 @@ class TestClassifyFile:
         assert category == FileCategory.DOCUMENTATION
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL
 
-    def test_catalog_json_classified_as_stac_metadata(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_catalog_json_classified_as_stac_metadata(self, tmp_path: Path) -> None:
         """catalog.json files are classified as STAC_METADATA."""
 
         test_path = tmp_path / "catalog.json"
@@ -189,7 +191,7 @@ class TestClassifyFile:
         assert category == FileCategory.STAC_METADATA
         assert skip_type == SkipReasonType.METADATA_FILE
 
-    def test_small_png_classified_as_thumbnail(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_small_png_classified_as_thumbnail(self, tmp_path: Path) -> None:
         """Small PNG files (<1MB) are classified as THUMBNAIL."""
 
         test_path = tmp_path / "preview.png"
@@ -199,9 +201,7 @@ class TestClassifyFile:
         assert category == FileCategory.THUMBNAIL
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL
 
-    def test_unknown_extension_classified_as_unknown(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
+    def test_unknown_extension_classified_as_unknown(self, tmp_path: Path) -> None:
         """Unknown extensions are classified as UNKNOWN."""
 
         test_path = tmp_path / "mystery.xyz123"
@@ -211,10 +211,11 @@ class TestClassifyFile:
         assert skip_type == SkipReasonType.UNKNOWN_FORMAT
 
 
+@pytest.mark.unit
 class TestSkipReasons:
     """Tests for get_skip_reason function."""
 
-    def test_get_skip_reason_tabular(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_get_skip_reason_tabular(self, tmp_path: Path) -> None:
         """get_skip_reason returns appropriate message for TABULAR_DATA."""
 
         test_path = tmp_path / "data.csv"
@@ -222,7 +223,7 @@ class TestSkipReasons:
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL
         assert "tabular" in msg.lower() or "csv" in msg.lower()
 
-    def test_get_skip_reason_junk(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_get_skip_reason_junk(self, tmp_path: Path) -> None:
         """get_skip_reason returns appropriate message for JUNK."""
 
         test_path = tmp_path / "program.exe"
@@ -230,7 +231,7 @@ class TestSkipReasons:
         assert skip_type == SkipReasonType.JUNK_FILE
         assert len(msg) > 0
 
-    def test_get_skip_reason_geo_asset_raises(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_get_skip_reason_geo_asset_raises(self, tmp_path: Path) -> None:
         """get_skip_reason raises ValueError for GEO_ASSET."""
 
         test_path = tmp_path / "data.geojson"
