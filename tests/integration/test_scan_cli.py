@@ -435,3 +435,65 @@ class TestScanEnhancedOutput:
         # Should document new flags
         assert "--tree" in result.output
         assert "--suggest-collections" in result.output
+
+
+# =============================================================================
+# Error Handling Tests (Coverage Improvement)
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScanErrorHandling:
+    """Integration tests for scan error handling paths."""
+
+    def test_scan_file_path_exits_with_error(self, runner: CliRunner, tmp_path: Path) -> None:
+        """portolan scan on a file (not directory) exits with error code 1."""
+        # Create a regular file, not a directory
+        file_path = tmp_path / "not_a_directory.geojson"
+        file_path.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(file_path)])
+
+        # Should exit with error code (either 1 for NotADirectoryError or 2 for Click validation)
+        assert result.exit_code != 0
+        # Should show error message
+        assert "not a directory" in result.output.lower() or "error" in result.output.lower()
+
+    def test_scan_issue_truncation_shows_count(self, runner: CliRunner, tmp_path: Path) -> None:
+        """When issues are truncated, shows count of hidden issues."""
+        # Create more than 10 files with invalid characters to trigger truncation
+        for i in range(15):
+            (tmp_path / f"file with spaces {i}.geojson").write_text(
+                '{"type": "FeatureCollection", "features": []}'
+            )
+
+        result = runner.invoke(cli, ["scan", str(tmp_path)])
+
+        # Should show truncation message with count
+        assert result.exit_code == 0
+        # Look for "more" in output (truncation indicator)
+        assert "more" in result.output.lower()
+
+    def test_scan_zero_count_issue_group_skipped(
+        self, runner: CliRunner, fixtures_dir: Path
+    ) -> None:
+        """Issue groups with zero count are not printed."""
+        # Use clean_flat fixture which has no errors
+        result = runner.invoke(cli, ["scan", str(fixtures_dir / "clean_flat")])
+
+        # Should exit with 0 (no errors)
+        assert result.exit_code == 0
+        # Should NOT show "0 errors" - groups with count=0 are skipped
+        assert "0 error" not in result.output.lower()
+
+    def test_scan_issue_with_suggestion_shows_hint(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Issues with suggestions show hint in output."""
+        # Create incomplete shapefile - has suggestion to add missing files
+        shp_file = tmp_path / "data.shp"
+        shp_file.write_bytes(b"\x00\x00\x27\x0a")  # Shapefile magic bytes
+
+        result = runner.invoke(cli, ["scan", str(tmp_path)])
+
+        # Should show hint/suggestion
+        assert result.exit_code == 1  # Incomplete shapefile is an error
+        assert "hint" in result.output.lower() or "add" in result.output.lower()

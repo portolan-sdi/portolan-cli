@@ -573,6 +573,158 @@ class TestScanResult:
         assert d["issues"][0]["severity"] == "error"
         assert d["issues"][0]["suggestion"] == "Add the .dbf file"
 
+    def test_to_dict_includes_proposed_fixes(self, tmp_path: Path) -> None:
+        """ScanResult.to_dict includes proposed_fixes when present."""
+        from portolan_cli.scan import (
+            FormatType,
+            IssueType,
+            ScanIssue,
+            ScannedFile,
+            ScanResult,
+            Severity,
+        )
+        from portolan_cli.scan_fix import FixCategory, ProposedFix
+
+        issue = ScanIssue(
+            path=tmp_path / "bad name.geojson",
+            relative_path="bad name.geojson",
+            issue_type=IssueType.INVALID_CHARACTERS,
+            severity=Severity.WARNING,
+            message="Contains spaces",
+        )
+
+        fix = ProposedFix(
+            issue=issue,
+            category=FixCategory.SAFE,
+            action="rename",
+            details={"old": "bad name.geojson", "new": "bad_name.geojson"},
+            preview="bad name.geojson -> bad_name.geojson",
+        )
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "data.parquet",
+                    relative_path="data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=1024,
+                )
+            ],
+            issues=[issue],
+            skipped=[],
+            directories_scanned=1,
+            proposed_fixes=[fix],
+        )
+
+        d = result.to_dict()
+
+        # Should include proposed_fixes
+        assert "proposed_fixes" in d
+        assert len(d["proposed_fixes"]) == 1
+        assert d["proposed_fixes"][0]["category"] == "safe"
+        assert d["proposed_fixes"][0]["action"] == "rename"
+
+    def test_to_dict_includes_applied_fixes(self, tmp_path: Path) -> None:
+        """ScanResult.to_dict includes applied_fixes when present."""
+        from portolan_cli.scan import (
+            FormatType,
+            IssueType,
+            ScanIssue,
+            ScannedFile,
+            ScanResult,
+            Severity,
+        )
+        from portolan_cli.scan_fix import FixCategory, ProposedFix
+
+        issue = ScanIssue(
+            path=tmp_path / "bad name.geojson",
+            relative_path="bad name.geojson",
+            issue_type=IssueType.INVALID_CHARACTERS,
+            severity=Severity.WARNING,
+            message="Contains spaces",
+        )
+
+        applied = ProposedFix(
+            issue=issue,
+            category=FixCategory.SAFE,
+            action="rename",
+            details={"old": "bad name.geojson", "new": "bad_name.geojson"},
+            preview="bad name.geojson -> bad_name.geojson",
+        )
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "data.parquet",
+                    relative_path="data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=1024,
+                )
+            ],
+            issues=[],  # Issue resolved
+            skipped=[],
+            directories_scanned=1,
+            applied_fixes=[applied],
+        )
+
+        d = result.to_dict()
+
+        # Should include applied_fixes
+        assert "applied_fixes" in d
+        assert len(d["applied_fixes"]) == 1
+        assert d["applied_fixes"][0]["category"] == "safe"
+        assert d["applied_fixes"][0]["preview"] == "bad name.geojson -> bad_name.geojson"
+
+    def test_to_dict_excludes_empty_fixes(self, tmp_path: Path) -> None:
+        """ScanResult.to_dict excludes proposed_fixes/applied_fixes when empty."""
+        from portolan_cli.scan import ScanResult
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        d = result.to_dict()
+
+        # Should NOT include proposed_fixes or applied_fixes when empty
+        assert "proposed_fixes" not in d
+        assert "applied_fixes" not in d
+
+
+@pytest.mark.unit
+class TestScanResultIsRelativeTo:
+    """Tests for ScanResult._is_relative_to helper method."""
+
+    def test_is_relative_to_true(self, tmp_path: Path) -> None:
+        """_is_relative_to returns True for child paths."""
+        from portolan_cli.scan import ScanResult
+
+        child = tmp_path / "subdir" / "file.txt"
+        result = ScanResult._is_relative_to(child, tmp_path)
+        assert result is True
+
+    def test_is_relative_to_false(self, tmp_path: Path) -> None:
+        """_is_relative_to returns False for unrelated paths."""
+        from portolan_cli.scan import ScanResult
+
+        other = Path("/completely/different/path")
+        result = ScanResult._is_relative_to(other, tmp_path)
+        assert result is False
+
+    def test_is_relative_to_same_path(self, tmp_path: Path) -> None:
+        """_is_relative_to returns True when path equals base."""
+        from portolan_cli.scan import ScanResult
+
+        result = ScanResult._is_relative_to(tmp_path, tmp_path)
+        assert result is True
+
 
 # =============================================================================
 # Phase 3: User Story 1 - Basic Directory Scan

@@ -499,6 +499,285 @@ class TestTreeViewOutput:
 
 
 # =============================================================================
+# Tests for _format_size Function (Coverage Improvement)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestFormatSize:
+    """Tests for _format_size helper function."""
+
+    def test_format_size_none(self) -> None:
+        """_format_size returns empty string for None."""
+        from portolan_cli.scan_output import _format_size
+
+        assert _format_size(None) == ""
+
+    def test_format_size_bytes(self) -> None:
+        """_format_size returns bytes format for small sizes."""
+        from portolan_cli.scan_output import _format_size
+
+        assert _format_size(500) == "500 B"
+        assert _format_size(0) == "0 B"
+        assert _format_size(1023) == "1023 B"
+
+    def test_format_size_kilobytes(self) -> None:
+        """_format_size returns KB format for kilobyte range."""
+        from portolan_cli.scan_output import _format_size
+
+        # 1024 bytes = 1 KB
+        assert _format_size(1024) == "1.0 KB"
+        # 10 KB
+        assert _format_size(10 * 1024) == "10.0 KB"
+        # Just under 1 MB
+        assert _format_size(1024 * 1024 - 1) == "1024.0 KB"
+
+    def test_format_size_megabytes(self) -> None:
+        """_format_size returns MB format for megabyte range."""
+        from portolan_cli.scan_output import _format_size
+
+        # 1 MB
+        assert _format_size(1024 * 1024) == "1.0 MB"
+        # 500 MB
+        assert _format_size(500 * 1024 * 1024) == "500.0 MB"
+        # Just under 1 GB
+        assert _format_size(1024 * 1024 * 1024 - 1) == "1024.0 MB"
+
+    def test_format_size_gigabytes(self) -> None:
+        """_format_size returns GB format for gigabyte range."""
+        from portolan_cli.scan_output import _format_size
+
+        # 1 GB
+        assert _format_size(1024 * 1024 * 1024) == "1.0 GB"
+        # 10 GB
+        assert _format_size(10 * 1024 * 1024 * 1024) == "10.0 GB"
+
+
+# =============================================================================
+# Tests for Empty Sections in Formatted Output (Coverage Improvement)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestEmptySectionFormatting:
+    """Tests for empty section handling in output formatting."""
+
+    def test_format_header_no_geo_assets(self, tmp_path: Path) -> None:
+        """_format_header shows 'No geo-assets found' when none exist."""
+        from portolan_cli.scan_output import _format_header
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[],
+            directories_scanned=5,
+        )
+
+        lines = _format_header(result)
+        combined = " ".join(lines).lower()
+
+        assert "scanned" in combined
+        assert "no geo-assets" in combined
+
+    def test_format_breakdown_empty(self, tmp_path: Path) -> None:
+        """_format_breakdown returns empty list when no ready files."""
+        from portolan_cli.scan_output import _format_breakdown
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        lines = _format_breakdown(result)
+        assert lines == []
+
+    def test_format_issues_empty(self, tmp_path: Path) -> None:
+        """_format_issues returns empty list when no issues."""
+        from portolan_cli.scan_output import _format_issues
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[make_scanned_file(tmp_path / "data.geojson")],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        lines = _format_issues(result)
+        assert lines == []
+
+    def test_format_skipped_empty(self, tmp_path: Path) -> None:
+        """_format_skipped returns empty list when no skipped files."""
+        from portolan_cli.scan_output import _format_skipped
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[make_scanned_file(tmp_path / "data.geojson")],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        lines = _format_skipped(result)
+        assert lines == []
+
+    def test_format_skipped_with_empty_grouped(self, tmp_path: Path) -> None:
+        """_format_skipped handles legacy Path objects in skipped list."""
+        from portolan_cli.scan_output import _format_skipped
+
+        # Only legacy Path objects (no SkippedFile instances) will result in
+        # group_skipped_files returning an empty dict
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[tmp_path / "unknown.xyz"],  # Legacy Path
+            directories_scanned=1,
+        )
+
+        # Legacy paths are still counted as unknown, so may not be empty
+        # But the function should handle gracefully without raising
+        _format_skipped(result)  # Should not raise
+
+
+@pytest.mark.unit
+class TestIssuesFormattingTruncation:
+    """Tests for issue truncation in formatted output."""
+
+    def test_format_issues_truncates_at_10(self, tmp_path: Path) -> None:
+        """_format_issues truncates each severity group at 10."""
+        from portolan_cli.scan_output import _format_issues
+
+        # Create 15 warnings
+        issues = [
+            make_scan_issue(
+                tmp_path / f"file{i}.geojson",
+                IssueType.INVALID_CHARACTERS,
+                Severity.WARNING,
+                f"Warning {i}",
+            )
+            for i in range(15)
+        ]
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[make_scanned_file(tmp_path / "data.geojson")],
+            issues=issues,
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        lines = _format_issues(result)
+        combined = "\n".join(lines)
+
+        # Should show truncation indicator
+        assert "more" in combined.lower()
+
+
+@pytest.mark.unit
+class TestTreeBuildingEdgeCases:
+    """Tests for edge cases in tree building."""
+
+    def test_tree_with_path_outside_root(self, tmp_path: Path) -> None:
+        """build_tree_structure handles paths not relative to root gracefully."""
+        from portolan_cli.scan_output import build_tree_structure
+
+        # Create a result where issue path is outside the root (edge case)
+        external_path = Path("/completely/different/path/file.geojson")
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[
+                make_scan_issue(
+                    external_path,
+                    IssueType.PERMISSION_DENIED,
+                    Severity.ERROR,
+                    "Permission denied",
+                )
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        # Should not raise - should handle gracefully by skipping
+        tree = build_tree_structure(result)
+        # External path should not be added to tree
+        assert "completely" not in str(tree)
+
+    def test_tree_with_skipped_legacy_path(self, tmp_path: Path) -> None:
+        """build_tree_structure handles legacy Path in skipped list."""
+        from portolan_cli.scan_output import build_tree_structure
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[tmp_path / "legacy.csv"],  # Legacy Path object
+            directories_scanned=1,
+        )
+
+        tree = build_tree_structure(result)
+        # Should include the legacy path with "skipped" status
+        assert "legacy.csv" in tree
+
+
+@pytest.mark.unit
+class TestFormatScanOutputWithCollections:
+    """Tests for format_scan_output with collection suggestions."""
+
+    def test_format_scan_output_with_collection_suggestions(self, tmp_path: Path) -> None:
+        """format_scan_output includes collection suggestions section."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                make_scanned_file(tmp_path / "flood_rp10.tif", ext=".tif"),
+                make_scanned_file(tmp_path / "flood_rp50.tif", ext=".tif"),
+            ],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+            collection_suggestions=[
+                CollectionSuggestion(
+                    suggested_name="flood-depth",
+                    files=(tmp_path / "flood_rp10.tif", tmp_path / "flood_rp50.tif"),
+                    pattern_type="return_period",
+                    confidence=0.85,
+                    reason="Detected return period pattern",
+                )
+            ],
+        )
+
+        output = format_scan_output(result)
+
+        assert "suggested collections" in output.lower()
+        assert "flood-depth" in output
+
+    def test_format_scan_output_with_tree(self, tmp_path: Path) -> None:
+        """format_scan_output includes tree view when show_tree=True."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[make_scanned_file(tmp_path / "data.geojson")],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, show_tree=True)
+
+        # Tree should have tree characters
+        assert "├" in output or "└" in output
+
+
+# =============================================================================
 # Integration Tests for Full Output
 # =============================================================================
 
