@@ -167,7 +167,7 @@ def detect_pattern_marker(names: list[str]) -> tuple[str, str] | None:
 
 def _infer_from_markers(
     names: list[str],
-    path_by_name: dict[str, Path],
+    paths_by_name: dict[str, list[Path]],
 ) -> CollectionSuggestion | None:
     """Infer collection from known pattern markers (highest confidence)."""
     marker_result = detect_pattern_marker(names)
@@ -190,10 +190,13 @@ def _infer_from_markers(
     if len(matching_names) < 2:
         return None
 
-    matching_paths = tuple(path_by_name[n] for n in matching_names)
+    # Flatten all paths for matching names (handles duplicate filenames across dirs)
+    matching_paths: list[Path] = []
+    for n in matching_names:
+        matching_paths.extend(paths_by_name[n])
     return CollectionSuggestion(
         suggested_name=base_name,
-        files=matching_paths,
+        files=tuple(matching_paths),
         pattern_type=pattern_type,
         confidence=0.9,
         reason=f"Detected {pattern_type} pattern in filenames",
@@ -202,7 +205,7 @@ def _infer_from_markers(
 
 def _infer_from_numeric(
     names: list[str],
-    path_by_name: dict[str, Path],
+    paths_by_name: dict[str, list[Path]],
     existing_names: set[str],
 ) -> list[CollectionSuggestion]:
     """Infer collections from numeric suffix patterns."""
@@ -214,13 +217,16 @@ def _infer_from_numeric(
         if base in existing_names:
             continue
 
-        matching_paths = tuple(path_by_name[n] for n in group_names)
+        # Flatten all paths for group names (handles duplicate filenames across dirs)
+        matching_paths: list[Path] = []
+        for n in group_names:
+            matching_paths.extend(paths_by_name[n])
         # Confidence based on group size
         confidence = min(0.8, 0.5 + 0.1 * len(group_names))
         suggestions.append(
             CollectionSuggestion(
                 suggested_name=base,
-                files=matching_paths,
+                files=tuple(matching_paths),
                 pattern_type="numeric",
                 confidence=confidence,
                 reason=f"Found {len(group_names)} files with numeric suffix pattern",
@@ -232,7 +238,7 @@ def _infer_from_numeric(
 
 def _infer_from_prefix(
     names: list[str],
-    path_by_name: dict[str, Path],
+    paths_by_name: dict[str, list[Path]],
     existing_names: set[str],
 ) -> CollectionSuggestion | None:
     """Infer collection from common prefix (lower confidence)."""
@@ -240,13 +246,17 @@ def _infer_from_prefix(
     if not prefix or prefix in existing_names:
         return None
 
-    matching_paths = tuple(path_by_name[n] for n in names if _get_stem(n).startswith(prefix))
+    # Flatten all paths for matching names (handles duplicate filenames across dirs)
+    matching_paths: list[Path] = []
+    for n in names:
+        if _get_stem(n).startswith(prefix):
+            matching_paths.extend(paths_by_name[n])
     if len(matching_paths) < 2:
         return None
 
     return CollectionSuggestion(
         suggested_name=prefix,
-        files=matching_paths,
+        files=tuple(matching_paths),
         pattern_type="prefix",
         confidence=0.6,
         reason=f"Found common prefix '{prefix}' in filenames",
@@ -275,24 +285,28 @@ def infer_collections(
         return []
 
     names = [f.path.name for f in files]
-    path_by_name = {f.path.name: f.path for f in files}
+    # Use multimap to handle duplicate filenames across directories
+    # e.g., 2020/rivers.geojson and 2021/rivers.geojson both get tracked
+    paths_by_name: dict[str, list[Path]] = defaultdict(list)
+    for f in files:
+        paths_by_name[f.path.name].append(f.path)
     suggestions: list[CollectionSuggestion] = []
     existing_names: set[str] = set()
 
     # 1. Pattern markers (highest confidence)
-    marker_suggestion = _infer_from_markers(names, path_by_name)
+    marker_suggestion = _infer_from_markers(names, paths_by_name)
     if marker_suggestion:
         suggestions.append(marker_suggestion)
         existing_names.add(marker_suggestion.suggested_name)
 
     # 2. Numeric suffix groups
-    numeric_suggestions = _infer_from_numeric(names, path_by_name, existing_names)
+    numeric_suggestions = _infer_from_numeric(names, paths_by_name, existing_names)
     for s in numeric_suggestions:
         suggestions.append(s)
         existing_names.add(s.suggested_name)
 
     # 3. Common prefix (lower confidence)
-    prefix_suggestion = _infer_from_prefix(names, path_by_name, existing_names)
+    prefix_suggestion = _infer_from_prefix(names, paths_by_name, existing_names)
     if prefix_suggestion:
         suggestions.append(prefix_suggestion)
 

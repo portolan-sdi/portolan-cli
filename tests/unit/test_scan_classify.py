@@ -145,6 +145,34 @@ class TestClassifyFile:
         assert category == FileCategory.JUNK
         assert skip_type == SkipReasonType.JUNK_FILE
 
+    def test_pycache_uppercase_classified_as_junk(self, tmp_path: Path) -> None:
+        """__PYCACHE__ (uppercase) files are classified as JUNK.
+
+        Windows/macOS filesystems are case-insensitive, so __PYCACHE__
+        should be treated the same as __pycache__.
+        """
+        pycache = tmp_path / "__PYCACHE__"
+        pycache.mkdir()
+        test_path = pycache / "module.cpython-312.pyc"
+        test_path.write_bytes(b"\x00")
+        category, skip_type, skip_msg = classify_file(test_path)
+        assert category == FileCategory.JUNK
+        assert skip_type == SkipReasonType.JUNK_FILE
+
+    def test_git_uppercase_classified_as_junk(self, tmp_path: Path) -> None:
+        """.GIT (uppercase) directories are classified as JUNK.
+
+        Windows/macOS filesystems are case-insensitive, so .GIT
+        should be treated the same as .git.
+        """
+        git_dir = tmp_path / ".GIT"
+        git_dir.mkdir()
+        test_path = git_dir / "config"
+        test_path.write_text("[core]\n")
+        category, skip_type, skip_msg = classify_file(test_path)
+        assert category == FileCategory.JUNK
+        assert skip_type == SkipReasonType.JUNK_FILE
+
     def test_pmtiles_classified_as_visualization(self, tmp_path: Path) -> None:
         """.pmtiles files are classified as VISUALIZATION."""
 

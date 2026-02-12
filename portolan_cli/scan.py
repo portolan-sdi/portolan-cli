@@ -18,7 +18,7 @@ Phase 1 MVP features:
 - File discovery with extension filtering
 - Recursive scanning with depth controls
 - Hidden file and symlink handling
-- Issue detection (8 types with 3 severity levels)
+- Issue detection (14 types with 3 severity levels)
 - Human-readable and JSON output
 """
 

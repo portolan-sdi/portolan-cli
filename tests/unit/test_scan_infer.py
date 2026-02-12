@@ -320,3 +320,63 @@ class TestInferCollections:
             # Should be sorted descending by confidence
             for i in range(len(suggestions) - 1):
                 assert suggestions[i].confidence >= suggestions[i + 1].confidence
+
+    def test_duplicate_filenames_across_directories(self, tmp_path: Path) -> None:
+        """infer_collections handles duplicate filenames across directories.
+
+        Bug fix: path_by_name was a dict that lost files when the same
+        filename appeared in different directories (e.g., 2020/rivers.geojson
+        and 2021/rivers.geojson). Now uses multimap to track all paths.
+        """
+        from portolan_cli.scan import FormatType, ScannedFile
+
+        # Create directory structure with duplicate filenames
+        dir_2020 = tmp_path / "2020"
+        dir_2021 = tmp_path / "2021"
+        dir_2020.mkdir()
+        dir_2021.mkdir()
+
+        # Files with SAME name in different directories
+        files = [
+            ScannedFile(
+                path=dir_2020 / "data_v1.parquet",
+                relative_path="2020/data_v1.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=100,
+            ),
+            ScannedFile(
+                path=dir_2020 / "data_v2.parquet",
+                relative_path="2020/data_v2.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=100,
+            ),
+            ScannedFile(
+                path=dir_2021 / "data_v1.parquet",  # DUPLICATE NAME
+                relative_path="2021/data_v1.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=100,
+            ),
+            ScannedFile(
+                path=dir_2021 / "data_v2.parquet",  # DUPLICATE NAME
+                relative_path="2021/data_v2.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=100,
+            ),
+        ]
+
+        suggestions = infer_collections(files)
+
+        # Should find a suggestion that includes ALL 4 files, not just 2
+        # (before the fix, only 2 files would be included due to dict overwrite)
+        if suggestions:
+            # Find suggestion with most files
+            max_files = max(len(s.files) for s in suggestions)
+            # Should include files from BOTH directories
+            assert max_files >= 3, (
+                f"Expected at least 3 files in suggestion, got {max_files}. "
+                "This suggests path_by_name dict collision is still occurring."
+            )

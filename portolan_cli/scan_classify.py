@@ -41,6 +41,8 @@ GEO_ASSET_EXTENSIONS: frozenset[str] = frozenset(
 )
 
 # Shapefile sidecars (KNOWN_SIDECAR)
+# Note: .aux.xml removed - Path.suffix returns ".xml" not ".aux.xml",
+# so .xml already catches these files
 SIDECAR_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".dbf",
@@ -49,7 +51,6 @@ SIDECAR_EXTENSIONS: frozenset[str] = frozenset(
         ".cpg",
         ".sbn",
         ".sbx",
-        ".aux.xml",
         ".ovr",
         ".xml",
     }
@@ -194,9 +195,13 @@ class SkippedFile:
 
 
 def _is_in_junk_dir(path: Path) -> bool:
-    """Check if path is inside a junk directory."""
+    """Check if path is inside a junk directory.
+
+    Uses case-insensitive matching to handle Windows/macOS filesystems
+    where __PYCACHE__ or .GIT are valid directory names.
+    """
     for part in path.parts:
-        if part in JUNK_DIRS:
+        if part.lower() in JUNK_DIRS:
             return True
     return False
 
