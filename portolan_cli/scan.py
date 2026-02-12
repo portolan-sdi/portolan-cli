@@ -18,7 +18,7 @@ Phase 1 MVP features:
 - File discovery with extension filtering
 - Recursive scanning with depth controls
 - Hidden file and symlink handling
-- Issue detection (8 types with 3 severity levels)
+- Issue detection (14 types with 3 severity levels)
 - Human-readable and JSON output
 """
 
@@ -31,6 +31,17 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+
+# Import new types from scan modules
+from portolan_cli.scan_classify import (
+    FileCategory,
+    SkippedFile,
+    SkipReasonType,
+    classify_file,
+)
+from portolan_cli.scan_detect import DualFormatPair, SpecialFormat
+from portolan_cli.scan_fix import ProposedFix
+from portolan_cli.scan_infer import CollectionSuggestion
 
 # =============================================================================
 # Constants
@@ -63,6 +74,35 @@ LONG_PATH_THRESHOLD: int = 200
 # Matches: spaces, parentheses, brackets, control chars (0x00-0x1F, 0x7F), and non-ASCII
 INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[\s()\[\]\x00-\x1f\x7f]|[^\x00-\x7f]")
 
+# Windows reserved device names (case-insensitive)
+# Files with these names (with any extension) are problematic on Windows
+WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        "com1",
+        "com2",
+        "com3",
+        "com4",
+        "com5",
+        "com6",
+        "com7",
+        "com8",
+        "com9",
+        "lpt1",
+        "lpt2",
+        "lpt3",
+        "lpt4",
+        "lpt5",
+        "lpt6",
+        "lpt7",
+        "lpt8",
+        "lpt9",
+    }
+)
+
 
 # =============================================================================
 # Enums
@@ -80,15 +120,31 @@ class Severity(Enum):
 class IssueType(Enum):
     """Categories of scan issues."""
 
+    # Existing issue types
     INCOMPLETE_SHAPEFILE = "incomplete_shapefile"
     ZERO_BYTE_FILE = "zero_byte_file"
     SYMLINK_LOOP = "symlink_loop"
+    BROKEN_SYMLINK = "broken_symlink"
     PERMISSION_DENIED = "permission_denied"
     INVALID_CHARACTERS = "invalid_characters"
     MULTIPLE_PRIMARIES = "multiple_primaries"
     LONG_PATH = "long_path"
     DUPLICATE_BASENAME = "duplicate_basename"
     MIXED_FORMATS = "mixed_formats"
+
+    # NEW: Special format detection
+    FILEGDB_DETECTED = "filegdb_detected"
+    HIVE_PARTITION_DETECTED = "hive_partition"
+    EXISTING_CATALOG = "existing_catalog"
+    DUAL_FORMAT = "dual_format"
+
+    # NEW: Cross-platform compatibility
+    WINDOWS_RESERVED_NAME = "windows_reserved_name"
+    PATH_TOO_LONG = "path_too_long"
+
+    # NEW: Structure issues
+    MIXED_FLAT_MULTIITEM = "mixed_flat_multiitem"
+    ORPHAN_SIDECAR = "orphan_sidecar"
 
 
 class FormatType(Enum):
@@ -107,10 +163,32 @@ class FormatType(Enum):
 class ScanOptions:
     """Configuration options for scan operation."""
 
+    # Existing options
     recursive: bool = True
     max_depth: int | None = None
     include_hidden: bool = False
     follow_symlinks: bool = False
+
+    # NEW: Output control
+    show_all: bool = False  # Don't truncate output
+    verbose: bool = False  # Show detailed skip reasons
+
+    # NEW: Special format handling
+    allow_existing_catalogs: bool = False  # Proceed even if STAC catalog found
+
+    # NEW: Fix modes
+    fix: bool = False  # Apply safe fixes
+    unsafe_fix: bool = False  # Apply unsafe fixes (requires fix=True)
+    dry_run: bool = False  # Preview fixes without applying
+
+    # NEW: Collection inference
+    suggest_collections: bool = False  # Suggest collection groupings
+
+    def __post_init__(self) -> None:
+        """Validate options."""
+        if self.unsafe_fix and not self.fix:
+            msg = "--unsafe-fix requires --fix"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -148,8 +226,22 @@ class ScanResult:
     root: Path
     ready: list[ScannedFile]
     issues: list[ScanIssue]
-    skipped: list[Path]
+    # CHANGED: Now accepts either Path (legacy) or SkippedFile (new)
+    skipped: list[Path | SkippedFile]
     directories_scanned: int
+
+    # NEW: Special formats detected (FileGDB, Hive partitions, etc.)
+    special_formats: list[SpecialFormat] = field(default_factory=list)
+
+    # NEW: Collection suggestions (when suggest_collections=True)
+    collection_suggestions: list[CollectionSuggestion] = field(default_factory=list)
+
+    # NEW: Dual-format pairs detected
+    dual_format_pairs: list[DualFormatPair] = field(default_factory=list)
+
+    # NEW: Fix mode results
+    proposed_fixes: list[ProposedFix] = field(default_factory=list)
+    applied_fixes: list[ProposedFix] = field(default_factory=list)
 
     @property
     def has_errors(self) -> bool:
@@ -171,16 +263,39 @@ class ScanResult:
         """Count of INFO severity issues."""
         return sum(1 for i in self.issues if i.severity == Severity.INFO)
 
+    @property
+    def classification_summary(self) -> dict[str, int]:
+        """Count of files by category.
+
+        Includes ready files as GEO_ASSET and skipped files by their category.
+        """
+        from collections import Counter
+
+        counts: Counter[str] = Counter()
+        # All ready files are geo_assets
+        counts["geo_asset"] = len(self.ready)
+        # Count skipped by category
+        for item in self.skipped:
+            if isinstance(item, SkippedFile):
+                counts[item.category.value] += 1
+            else:
+                # Legacy Path - count as unknown
+                counts["unknown"] += 1
+        return dict(counts)
+
     def to_dict(self) -> dict[str, object]:
         """Convert to JSON-serializable dictionary."""
-        return {
+        base: dict[str, object] = {
             "root": str(self.root),
             "summary": {
                 "directories_scanned": self.directories_scanned,
                 "ready_count": len(self.ready),
                 "issue_count": len(self.issues),
                 "skipped_count": len(self.skipped),
+                "special_formats_count": len(self.special_formats),
+                "suggested_collections_count": len(self.collection_suggestions),
             },
+            "classification": self.classification_summary,
             "ready": [
                 {
                     "path": str(f.path),
@@ -203,16 +318,26 @@ class ScanResult:
                 for i in self.issues
             ],
             "skipped": [
-                {
-                    "path": str(p),
-                    "relative_path": str(p.relative_to(self.root))
-                    if self._is_relative_to(p, self.root)
-                    else str(p),
+                item.to_dict()
+                if isinstance(item, SkippedFile)
+                else {
+                    "path": str(item),
+                    "relative_path": str(item.relative_to(self.root))
+                    if self._is_relative_to(item, self.root)
+                    else str(item),
                     "reason": "unsupported_format",
                 }
-                for p in self.skipped
+                for item in self.skipped
             ],
+            "special_formats": [sf.to_dict() for sf in self.special_formats],
+            "collection_suggestions": [cs.to_dict() for cs in self.collection_suggestions],
+            "dual_format_pairs": [dfp.to_dict() for dfp in self.dual_format_pairs],
         }
+        if self.proposed_fixes:
+            base["proposed_fixes"] = [pf.to_dict() for pf in self.proposed_fixes]
+        if self.applied_fixes:
+            base["applied_fixes"] = [af.to_dict() for af in self.applied_fixes]
+        return base
 
     @staticmethod
     def _is_relative_to(path: Path, base: Path) -> bool:
@@ -238,7 +363,7 @@ class _ScanContext:
     visited_inodes: set[tuple[int, int]] = field(default_factory=set)
     ready: list[ScannedFile] = field(default_factory=list)
     issues: list[ScanIssue] = field(default_factory=list)
-    skipped: list[Path] = field(default_factory=list)
+    skipped: list[Path | SkippedFile] = field(default_factory=list)
     directories_scanned: int = 0
     # For detecting duplicates and multiple primaries
     basenames: dict[str, list[Path]] = field(default_factory=lambda: defaultdict(list))
@@ -290,6 +415,31 @@ def _get_relative_path(path: Path, root: Path) -> str:
         return str(path.relative_to(root))
     except ValueError:
         return str(path)
+
+
+def _make_skipped_file(
+    ctx: _ScanContext,
+    path: Path,
+    size_bytes: int | None = None,
+) -> SkippedFile:
+    """Create a SkippedFile with proper classification.
+
+    Args:
+        ctx: Scan context (provides root for relative path).
+        path: Path to the file being skipped.
+        size_bytes: File size in bytes (for thumbnail classification).
+
+    Returns:
+        SkippedFile with category and reason from classify_file.
+    """
+    category, reason_type, reason_message = classify_file(path, size_bytes)
+    return SkippedFile(
+        path=path,
+        relative_path=_get_relative_path(path, ctx.root),
+        category=category,
+        reason_type=reason_type or SkipReasonType.UNKNOWN_FORMAT,
+        reason_message=reason_message or f"Unrecognized extension: {path.suffix}",
+    )
 
 
 def _is_geoparquet(path: Path) -> bool:
@@ -443,6 +593,121 @@ def _check_symlink_loop(ctx: _ScanContext, path: Path, is_directory: bool) -> bo
     return False
 
 
+def _check_broken_symlink(
+    ctx: _ScanContext, path: Path, is_symlink: bool, is_file: bool, is_dir: bool
+) -> bool:
+    """Check if a symlink is broken (target doesn't exist). Returns True if broken.
+
+    A broken symlink is one where:
+    - is_symlink is True (it's a symlink)
+    - is_file is False (target isn't a file or doesn't exist)
+    - is_dir is False (target isn't a directory)
+
+    Args:
+        ctx: Scan context for recording issues.
+        path: Path to check.
+        is_symlink: True if entry is a symlink.
+        is_file: Result of is_file(follow_symlinks=True).
+        is_dir: Result of is_dir(follow_symlinks=True).
+
+    Returns:
+        True if broken symlink was detected and reported, False otherwise.
+    """
+    if is_symlink and not is_file and not is_dir:
+        # Read the symlink target for the message
+        try:
+            target = path.readlink()
+            target_str = str(target)
+        except OSError:
+            target_str = "unknown"
+
+        ctx.issues.append(
+            ScanIssue(
+                path=path,
+                relative_path=_get_relative_path(path, ctx.root),
+                issue_type=IssueType.BROKEN_SYMLINK,
+                severity=Severity.WARNING,
+                message=f"Broken symlink: target '{target_str}' does not exist",
+                suggestion="Remove symlink or create the target file",
+            )
+        )
+        return True
+    return False
+
+
+def _check_orphan_sidecars(ctx: _ScanContext) -> None:
+    """Check for sidecar files without a corresponding primary (.shp) file.
+
+    Orphan sidecars are .dbf, .shx, .prj, etc. files that don't have a
+    matching .shp file in the same directory with the same stem.
+    """
+    # Get all stems that have a .shp file
+    shp_stems: set[str] = set()
+    for scanned in ctx.ready:
+        if scanned.extension == ".shp":
+            key = f"{scanned.path.parent}/{scanned.path.stem}"
+            shp_stems.add(key)
+
+    # Check each sidecar group for orphans
+    for key, sidecars in ctx.shapefile_sidecars.items():
+        if key not in shp_stems and sidecars:
+            # This is an orphan - sidecars exist but no .shp
+            # Extract parent dir and stem from key
+            parts = key.rsplit("/", 1)
+            if len(parts) == 2:
+                parent_str, stem = parts
+                parent = Path(parent_str)
+            else:
+                continue
+
+            # Find one of the sidecar files to use as the issue path
+            sidecar_exts = sorted(sidecars)
+            example_sidecar = parent / f"{stem}{sidecar_exts[0]}"
+
+            ctx.issues.append(
+                ScanIssue(
+                    path=example_sidecar,
+                    relative_path=_get_relative_path(example_sidecar, ctx.root),
+                    issue_type=IssueType.ORPHAN_SIDECAR,
+                    severity=Severity.WARNING,
+                    message=f"Sidecar files without primary .shp: {', '.join(sidecar_exts)}",
+                    suggestion=f"Add {stem}.shp or remove orphan sidecars",
+                )
+            )
+
+
+def _check_mixed_structure(ctx: _ScanContext) -> None:
+    """Check for mixed flat/multi-item directory structure.
+
+    This detects directories that have both files at the root level AND
+    files in subdirectories, which indicates an unclear catalog structure.
+    Is the root a single item with multiple files, or is each subdirectory
+    a separate item?
+    """
+    # Check if root has files directly and also has subdirectories with files
+    root = ctx.root
+    root_has_files = root in ctx.primaries_by_dir and len(ctx.primaries_by_dir[root]) > 0
+
+    if not root_has_files:
+        return
+
+    # Check if any subdirectory has files
+    for dir_path in ctx.primaries_by_dir:
+        if dir_path != root and dir_path.is_relative_to(root):
+            # Found files in a subdirectory
+            ctx.issues.append(
+                ScanIssue(
+                    path=root,
+                    relative_path=".",
+                    issue_type=IssueType.MIXED_FLAT_MULTIITEM,
+                    severity=Severity.WARNING,
+                    message="Directory has files at root and in subdirectories - unclear catalog structure",
+                    suggestion="Organize as either flat (all files at root) or hierarchical (files only in subdirectories)",
+                )
+            )
+            return  # Only report once per root
+
+
 def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
     """Run checks that need all files collected first."""
     # Check for multiple primaries per directory
@@ -497,6 +762,58 @@ def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
                             suggestion="Rename files to have unique names",
                         )
                     )
+
+
+def is_windows_reserved_name(name: str) -> bool:
+    """Check if a filename is a Windows reserved device name.
+
+    Args:
+        name: Filename (stem only, without extension) to check.
+
+    Returns:
+        True if the name is a Windows reserved name.
+    """
+    return name.lower() in WINDOWS_RESERVED_NAMES
+
+
+def _check_windows_reserved(ctx: _ScanContext, path: Path) -> None:
+    """Check if path contains Windows reserved names.
+
+    This is a cross-platform compatibility check. Files with Windows
+    reserved names (CON, PRN, AUX, NUL, COMx, LPTx) cannot be created
+    or accessed on Windows systems.
+    """
+    # Check the file/directory name itself
+    stem = path.stem.lower()
+    if stem in WINDOWS_RESERVED_NAMES:
+        ctx.issues.append(
+            ScanIssue(
+                path=path,
+                relative_path=_get_relative_path(path, ctx.root),
+                issue_type=IssueType.WINDOWS_RESERVED_NAME,
+                severity=Severity.WARNING,
+                message=f"'{path.stem}' is a Windows reserved name",
+                suggestion="Rename to avoid cross-platform issues",
+            )
+        )
+        return
+
+    # Check if any parent directory has a reserved name
+    for parent in path.parents:
+        if parent == ctx.root:
+            break
+        if parent.name.lower() in WINDOWS_RESERVED_NAMES:
+            ctx.issues.append(
+                ScanIssue(
+                    path=path,
+                    relative_path=_get_relative_path(path, ctx.root),
+                    issue_type=IssueType.WINDOWS_RESERVED_NAME,
+                    severity=Severity.WARNING,
+                    message=f"File is in directory '{parent.name}' which is a Windows reserved name",
+                    suggestion="Rename parent directory to avoid cross-platform issues",
+                )
+            )
+            break
 
 
 # =============================================================================
@@ -572,6 +889,10 @@ def _discover_files(
                 if _check_symlink_loop(ctx, path, is_directory=is_dir):
                     continue
 
+                # Check for broken symlinks (target doesn't exist)
+                if _check_broken_symlink(ctx, path, is_symlink, is_file, is_dir):
+                    continue
+
             if is_dir:
                 # Queue directory for later processing
                 dirs_to_process.append(path)
@@ -579,7 +900,18 @@ def _discover_files(
                 try:
                     size = entry.stat(follow_symlinks=options.follow_symlinks).st_size
                     yield (path, size)
-                except OSError:
+                except OSError as e:
+                    # Emit warning for stat failures (e.g., race conditions, permission issues)
+                    ctx.issues.append(
+                        ScanIssue(
+                            path=path,
+                            relative_path=_get_relative_path(path, root),
+                            issue_type=IssueType.PERMISSION_DENIED,
+                            severity=Severity.WARNING,
+                            message=f"Cannot read file: {e}",
+                            suggestion="Check file permissions or if file still exists",
+                        )
+                    )
                     continue
 
         # Process subdirectories (if recursive)
@@ -606,25 +938,37 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
     # Check for invalid characters
     _check_invalid_characters(ctx, path)
 
+    # Check for Windows reserved names (cross-platform compatibility)
+    _check_windows_reserved(ctx, path)
+
     # Handle shapefile sidecars
     if _is_sidecar_extension(ext):
         # Track sidecar for later shapefile completeness check
         stem = path.stem
         key = f"{parent}/{stem}"
         ctx.shapefile_sidecars[key].add(ext)
-        ctx.skipped.append(path)
+        ctx.skipped.append(_make_skipped_file(ctx, path, size))
         return
 
     # Handle overview/derivative formats (PMTiles, etc.) - skip, not primary assets
     if _is_overview_extension(ext):
-        ctx.skipped.append(path)
+        ctx.skipped.append(_make_skipped_file(ctx, path, size))
         return
 
     # Handle .parquet specially - must check if it's GeoParquet
     if ext == PARQUET_EXTENSION:
         if not _is_geoparquet(path):
             # Regular Parquet (tabular data), not a geospatial asset
-            ctx.skipped.append(path)
+            # Create SkippedFile directly since classify_file can't detect non-geo parquet
+            ctx.skipped.append(
+                SkippedFile(
+                    path=path,
+                    relative_path=_get_relative_path(path, ctx.root),
+                    category=FileCategory.TABULAR_DATA,
+                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
+                    reason_message="Parquet file without GeoParquet metadata (tabular data)",
+                )
+            )
             return
         # It's GeoParquet - treat as vector format
         format_type = FormatType.VECTOR
@@ -633,7 +977,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         format_type = _get_format_type(ext)
     else:
         # Unrecognized extension
-        ctx.skipped.append(path)
+        ctx.skipped.append(_make_skipped_file(ctx, path, size))
         return
 
     # Create scanned file
@@ -707,6 +1051,12 @@ def scan_directory(
     for scanned in ctx.ready:
         if scanned.extension == ".shp":
             _check_incomplete_shapefile(ctx, scanned.path)
+
+    # Check for orphan sidecars (sidecars without a .shp file)
+    _check_orphan_sidecars(ctx)
+
+    # Check for mixed flat/multi-item structure
+    _check_mixed_structure(ctx)
 
     # Run multi-asset checks
     _finalize_multi_asset_checks(ctx)
