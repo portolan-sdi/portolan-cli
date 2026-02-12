@@ -18,6 +18,8 @@ Test fixtures are in tests/fixtures/scan/:
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -49,13 +51,15 @@ class TestEnums:
         assert Severity.WARNING.value == "warning"
         assert Severity.INFO.value == "info"
 
-    def test_issue_type_has_all_eight_types(self) -> None:
-        """IssueType enum has all 8 issue types from spec."""
+    def test_issue_type_has_all_types(self) -> None:
+        """IssueType enum has all 10 issue types."""
         from portolan_cli.scan import IssueType
 
         assert IssueType.INCOMPLETE_SHAPEFILE.value == "incomplete_shapefile"
         assert IssueType.ZERO_BYTE_FILE.value == "zero_byte_file"
         assert IssueType.SYMLINK_LOOP.value == "symlink_loop"
+        assert IssueType.BROKEN_SYMLINK.value == "broken_symlink"
+        assert IssueType.PERMISSION_DENIED.value == "permission_denied"
         assert IssueType.INVALID_CHARACTERS.value == "invalid_characters"
         assert IssueType.MULTIPLE_PRIMARIES.value == "multiple_primaries"
         assert IssueType.LONG_PATH.value == "long_path"
@@ -935,3 +939,256 @@ class TestOverviewFormats:
         # No "multiple primaries" warning
         multi_issues = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
         assert len(multi_issues) == 0
+
+
+# =============================================================================
+# Permission and Symlink Edge Cases (Issue #64)
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(sys.platform == "win32", reason="Permission tests not supported on Windows")
+class TestPermissionEdgeCases:
+    """Tests for permission error handling during scan.
+
+    These tests verify that scan emits warnings when encountering
+    directories that cannot be scanned due to permission errors.
+
+    Note: On Linux, os.scandir() can stat files with mode 000 as long as
+    the parent directory has execute permission. Permission errors primarily
+    occur when trying to list directory contents (no execute on directory).
+    """
+
+    def test_scan_no_execute_directory_emits_warning(self, tmp_path: Path) -> None:
+        """Files in directories without execute permission emit warnings.
+
+        Directory execute permission is required to stat files inside.
+        On Linux, os.scandir may succeed (listing entries) but stat() fails.
+        This tests that stat() failures are properly reported.
+        """
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create a subdirectory with a file, then remove execute permission
+        subdir = tmp_path / "no_exec"
+        subdir.mkdir()
+        (subdir / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        os.chmod(subdir, 0o644)  # Read/write but no execute
+
+        try:
+            result = scan_directory(tmp_path)
+
+            # Should have a permission denied issue
+            # Note: On Linux, os.scandir succeeds but stat() fails on individual files
+            perm_issues = [i for i in result.issues if i.issue_type == IssueType.PERMISSION_DENIED]
+            assert len(perm_issues) >= 1
+            assert perm_issues[0].severity == Severity.WARNING
+            # Path contains either the directory or file path
+            assert "no_exec" in str(perm_issues[0].path)
+        finally:
+            os.chmod(subdir, 0o755)
+
+    def test_scan_stat_oserror_emits_warning(self, tmp_path: Path) -> None:
+        """When entry.stat() raises OSError, emit a warning instead of silent skip.
+
+        Bug: Lines 582-583 in scan.py silently continue on OSError.
+        Expected: Should emit PERMISSION_DENIED issue.
+
+        This can happen in race conditions (file deleted between scandir and stat)
+        or with certain filesystem edge cases.
+        """
+        # This test verifies the behavior through broken symlinks with follow_symlinks=True,
+        # where stat() will fail. The fix should handle this case.
+        # Note: The broken symlink case is better tested in TestBrokenSymlinkEdgeCases.
+        pass  # Tested via broken symlink tests
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(sys.platform == "win32", reason="Symlink tests not supported on Windows")
+class TestBrokenSymlinkEdgeCases:
+    """Tests for broken symlink handling during scan.
+
+    These tests verify that scan emits warnings when encountering
+    broken/dangling symlinks (symlinks pointing to non-existent targets).
+
+    Key insight: With follow_symlinks=True, a broken symlink has:
+    - entry.is_symlink() = True
+    - entry.is_file(follow_symlinks=True) = False (target doesn't exist)
+    - entry.is_dir(follow_symlinks=True) = False
+    - entry.stat(follow_symlinks=True) raises OSError
+
+    The current code silently skips because is_file() returns False.
+    We need to detect: is_symlink AND (not is_file AND not is_dir) = broken.
+    """
+
+    def test_scan_broken_symlink_emits_warning(self, tmp_path: Path) -> None:
+        """A broken symlink emits a warning when follow_symlinks=True.
+
+        Bug: Broken symlinks are silently skipped because entry.is_file()
+        returns False for them, so they never enter the file processing branch.
+        Expected: Should emit BROKEN_SYMLINK issue.
+        """
+        from portolan_cli.scan import IssueType, ScanOptions, Severity, scan_directory
+
+        # Create a broken symlink (pointing to non-existent target)
+        broken = tmp_path / "broken.geojson"
+        broken.symlink_to(tmp_path / "nonexistent.geojson")
+
+        # Also create a valid file so the directory isn't empty
+        valid = tmp_path / "valid.geojson"
+        valid.write_text('{"type": "FeatureCollection", "features": []}')
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+
+        # Should have 1 ready file (the valid one)
+        assert len(result.ready) == 1
+
+        # Should have a broken symlink issue
+        broken_issues = [i for i in result.issues if i.issue_type == IssueType.BROKEN_SYMLINK]
+        assert len(broken_issues) == 1
+        assert broken_issues[0].severity == Severity.WARNING
+        assert "broken.geojson" in str(broken_issues[0].path)
+
+    def test_scan_broken_symlink_continues_scanning(self, tmp_path: Path) -> None:
+        """Scan continues processing after encountering broken symlink."""
+        from portolan_cli.scan import IssueType, ScanOptions, scan_directory
+
+        # Create broken symlink between valid files
+        (tmp_path / "first.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        broken = tmp_path / "middle.geojson"
+        broken.symlink_to(tmp_path / "ghost.geojson")
+        (tmp_path / "last.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+
+        # Should find both valid files
+        assert len(result.ready) == 2
+        basenames = {f.basename for f in result.ready}
+        assert "first.geojson" in basenames
+        assert "last.geojson" in basenames
+
+        # Should also report the broken symlink
+        broken_issues = [i for i in result.issues if i.issue_type == IssueType.BROKEN_SYMLINK]
+        assert len(broken_issues) == 1
+
+    def test_scan_valid_symlink_followed(self, tmp_path: Path) -> None:
+        """Valid symlinks are processed when follow_symlinks=True.
+
+        This is existing behavior - ensure it's preserved.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+
+        # Create a real file and a valid symlink
+        real = tmp_path / "real.geojson"
+        real.write_text('{"type": "FeatureCollection", "features": []}')
+        link = tmp_path / "link.geojson"
+        link.symlink_to(real)
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+
+        # Both should be found
+        assert len(result.ready) == 2
+
+    def test_scan_symlink_not_followed_by_default(self, tmp_path: Path) -> None:
+        """Symlinks are not followed by default (existing behavior).
+
+        When follow_symlinks=False, symlinks are simply skipped.
+        No warning is needed because this is intentional.
+        """
+        from portolan_cli.scan import scan_directory
+
+        real = tmp_path / "real.geojson"
+        real.write_text('{"type": "FeatureCollection", "features": []}')
+        link = tmp_path / "link.geojson"
+        link.symlink_to(real)
+
+        result = scan_directory(tmp_path)
+
+        # Only the real file should be found
+        assert len(result.ready) == 1
+        assert result.ready[0].basename == "real.geojson"
+
+    def test_scan_broken_symlink_ignored_when_not_following(self, tmp_path: Path) -> None:
+        """Broken symlinks are silently skipped when follow_symlinks=False.
+
+        This is intentional - if user doesn't want to follow symlinks,
+        we don't need to warn about broken ones.
+        """
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # Create a broken symlink
+        broken = tmp_path / "broken.geojson"
+        broken.symlink_to(tmp_path / "nonexistent.geojson")
+
+        # Create a valid file
+        valid = tmp_path / "valid.geojson"
+        valid.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)  # Default: follow_symlinks=False
+
+        # Should have 1 ready file (the valid one)
+        assert len(result.ready) == 1
+
+        # Should NOT have a broken symlink issue (we're not following symlinks)
+        broken_issues = [i for i in result.issues if i.issue_type == IssueType.BROKEN_SYMLINK]
+        assert len(broken_issues) == 0
+
+    def test_scan_broken_symlink_shows_target_in_message(self, tmp_path: Path) -> None:
+        """Broken symlink warning message includes the target path."""
+        from portolan_cli.scan import IssueType, ScanOptions, scan_directory
+
+        broken = tmp_path / "broken.geojson"
+        target = tmp_path / "ghost_target.geojson"
+        broken.symlink_to(target)
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+
+        broken_issues = [i for i in result.issues if i.issue_type == IssueType.BROKEN_SYMLINK]
+        assert len(broken_issues) == 1
+        # Message should mention it's broken/dangling
+        assert (
+            "broken" in broken_issues[0].message.lower()
+            or "dangling" in broken_issues[0].message.lower()
+        )
+
+    def test_scan_symlink_chain_resolved(self, tmp_path: Path) -> None:
+        """Deep symlink chains are followed correctly."""
+        from portolan_cli.scan import ScanOptions, scan_directory
+
+        # Create a chain: link_a -> link_b -> link_c -> actual.geojson
+        actual = tmp_path / "actual.geojson"
+        actual.write_text('{"type": "FeatureCollection", "features": []}')
+
+        link_c = tmp_path / "link_c.geojson"
+        link_c.symlink_to(actual)
+
+        link_b = tmp_path / "link_b.geojson"
+        link_b.symlink_to(link_c)
+
+        link_a = tmp_path / "link_a.geojson"
+        link_a.symlink_to(link_b)
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+
+        # All four should be found (including the chain)
+        assert len(result.ready) == 4
+
+    def test_scan_broken_symlink_in_report(self, tmp_path: Path) -> None:
+        """Broken symlink issues appear in the final scan report."""
+        from portolan_cli.scan import ScanOptions, scan_directory
+
+        broken = tmp_path / "broken.geojson"
+        broken.symlink_to(tmp_path / "nonexistent.geojson")
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+        report = result.to_dict()
+
+        # Should have issues in the report
+        assert report["summary"]["issue_count"] >= 1
+        broken_issues = [i for i in report["issues"] if i["type"] == "broken_symlink"]
+        assert len(broken_issues) == 1

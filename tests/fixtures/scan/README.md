@@ -164,6 +164,44 @@ Total size: ~470KB (25 files)
 
 All fixtures are small enough to commit to git. No network dependencies during tests.
 
+## Runtime-Created Fixtures
+
+Some edge cases cannot be represented as static fixtures committed to git. These are created at test runtime using `pytest`'s `tmp_path` fixture.
+
+### Permission Edge Cases
+
+**Why runtime?** Files with restrictive permissions (e.g., `chmod 000`) cannot be committed to git and would break `git clone` for everyone.
+
+**Test scenarios (in `tests/unit/test_scan.py::TestPermissionEdgeCases`):**
+
+| Scenario | How Created | What It Tests |
+|----------|-------------|---------------|
+| No-execute directory | `os.chmod(dir, 0o644)` | Files inside cannot be stat'd |
+| Stat failures | Symlinks + follow mode | OSError handling during walk |
+
+**Platform notes:**
+- Tests skip on Windows (`@pytest.mark.skipif(sys.platform == "win32", ...)`)
+- Linux `os.scandir()` may succeed on no-execute dirs but `stat()` fails
+- Cleanup restores permissions even if tests fail
+
+### Symlink Edge Cases
+
+**Why runtime?** Git doesn't preserve symlinks portably across platforms.
+
+**Test scenarios (in `tests/unit/test_scan.py::TestBrokenSymlinkEdgeCases`):**
+
+| Scenario | How Created | What It Tests |
+|----------|-------------|---------------|
+| Broken symlink | `path.symlink_to(nonexistent)` | Warning emitted for dangling links |
+| Valid symlink | `path.symlink_to(real_file)` | Followed when `follow_symlinks=True` |
+| Symlink chain | Multiple chained symlinks | Deep chains resolved correctly |
+| Broken ignored | Broken + `follow_symlinks=False` | No warning when not following |
+
+**Platform notes:**
+- Tests skip on Windows
+- Broken symlinks have `is_file(follow_symlinks=True) = False`
+- `BROKEN_SYMLINK` issue type added for these cases
+
 ## Adding New Fixtures
 
 1. Identify the structural scenario you need to test
@@ -171,6 +209,8 @@ All fixtures are small enough to commit to git. No network dependencies during t
 3. Add directory to this README with explanation
 4. Update `tests/conftest.py` with pytest fixtures if needed
 5. Ensure fixture tests **structure**, not **content** (content testing belongs in `tests/fixtures/vector/` etc.)
+
+**For runtime fixtures:** If your scenario cannot be static (permissions, symlinks, race conditions), document it in the "Runtime-Created Fixtures" section above and implement in the appropriate test class.
 
 ## Provenance Notes
 

@@ -83,6 +83,7 @@ class IssueType(Enum):
     INCOMPLETE_SHAPEFILE = "incomplete_shapefile"
     ZERO_BYTE_FILE = "zero_byte_file"
     SYMLINK_LOOP = "symlink_loop"
+    BROKEN_SYMLINK = "broken_symlink"
     PERMISSION_DENIED = "permission_denied"
     INVALID_CHARACTERS = "invalid_characters"
     MULTIPLE_PRIMARIES = "multiple_primaries"
@@ -443,6 +444,48 @@ def _check_symlink_loop(ctx: _ScanContext, path: Path, is_directory: bool) -> bo
     return False
 
 
+def _check_broken_symlink(
+    ctx: _ScanContext, path: Path, is_symlink: bool, is_file: bool, is_dir: bool
+) -> bool:
+    """Check if a symlink is broken (target doesn't exist). Returns True if broken.
+
+    A broken symlink is one where:
+    - is_symlink is True (it's a symlink)
+    - is_file is False (target isn't a file or doesn't exist)
+    - is_dir is False (target isn't a directory)
+
+    Args:
+        ctx: Scan context for recording issues.
+        path: Path to check.
+        is_symlink: True if entry is a symlink.
+        is_file: Result of is_file(follow_symlinks=True).
+        is_dir: Result of is_dir(follow_symlinks=True).
+
+    Returns:
+        True if broken symlink was detected and reported, False otherwise.
+    """
+    if is_symlink and not is_file and not is_dir:
+        # Read the symlink target for the message
+        try:
+            target = path.readlink()
+            target_str = str(target)
+        except OSError:
+            target_str = "unknown"
+
+        ctx.issues.append(
+            ScanIssue(
+                path=path,
+                relative_path=_get_relative_path(path, ctx.root),
+                issue_type=IssueType.BROKEN_SYMLINK,
+                severity=Severity.WARNING,
+                message=f"Broken symlink: target '{target_str}' does not exist",
+                suggestion="Remove symlink or create the target file",
+            )
+        )
+        return True
+    return False
+
+
 def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
     """Run checks that need all files collected first."""
     # Check for multiple primaries per directory
@@ -572,6 +615,10 @@ def _discover_files(
                 if _check_symlink_loop(ctx, path, is_directory=is_dir):
                     continue
 
+                # Check for broken symlinks (target doesn't exist)
+                if _check_broken_symlink(ctx, path, is_symlink, is_file, is_dir):
+                    continue
+
             if is_dir:
                 # Queue directory for later processing
                 dirs_to_process.append(path)
@@ -579,7 +626,18 @@ def _discover_files(
                 try:
                     size = entry.stat(follow_symlinks=options.follow_symlinks).st_size
                     yield (path, size)
-                except OSError:
+                except OSError as e:
+                    # Emit warning for stat failures (e.g., race conditions, permission issues)
+                    ctx.issues.append(
+                        ScanIssue(
+                            path=path,
+                            relative_path=_get_relative_path(path, root),
+                            issue_type=IssueType.PERMISSION_DENIED,
+                            severity=Severity.WARNING,
+                            message=f"Cannot read file: {e}",
+                            suggestion="Check file permissions or if file still exists",
+                        )
+                    )
                     continue
 
         # Process subdirectories (if recursive)
