@@ -52,9 +52,10 @@ class TestEnums:
         assert Severity.INFO.value == "info"
 
     def test_issue_type_has_all_types(self) -> None:
-        """IssueType enum has all 10 issue types."""
+        """IssueType enum has all 18 issue types (10 original + 8 new)."""
         from portolan_cli.scan import IssueType
 
+        # Original 10 issue types
         assert IssueType.INCOMPLETE_SHAPEFILE.value == "incomplete_shapefile"
         assert IssueType.ZERO_BYTE_FILE.value == "zero_byte_file"
         assert IssueType.SYMLINK_LOOP.value == "symlink_loop"
@@ -65,6 +66,23 @@ class TestEnums:
         assert IssueType.LONG_PATH.value == "long_path"
         assert IssueType.DUPLICATE_BASENAME.value == "duplicate_basename"
         assert IssueType.MIXED_FORMATS.value == "mixed_formats"
+
+        # NEW: Special format detection (4)
+        assert IssueType.FILEGDB_DETECTED.value == "filegdb_detected"
+        assert IssueType.HIVE_PARTITION_DETECTED.value == "hive_partition"
+        assert IssueType.EXISTING_CATALOG.value == "existing_catalog"
+        assert IssueType.DUAL_FORMAT.value == "dual_format"
+
+        # NEW: Cross-platform compatibility (2)
+        assert IssueType.WINDOWS_RESERVED_NAME.value == "windows_reserved_name"
+        assert IssueType.PATH_TOO_LONG.value == "path_too_long"
+
+        # NEW: Structure issues (2)
+        assert IssueType.MIXED_FLAT_MULTIITEM.value == "mixed_flat_multiitem"
+        assert IssueType.ORPHAN_SIDECAR.value == "orphan_sidecar"
+
+        # Total should be 18
+        assert len(IssueType) == 18
 
     def test_format_type_has_vector_and_raster(self) -> None:
         """FormatType enum has VECTOR and RASTER values."""
@@ -83,10 +101,19 @@ class TestScanOptions:
         from portolan_cli.scan import ScanOptions
 
         opts = ScanOptions()
+        # Original defaults
         assert opts.recursive is True
         assert opts.max_depth is None
         assert opts.include_hidden is False
         assert opts.follow_symlinks is False
+        # NEW defaults
+        assert opts.show_all is False
+        assert opts.verbose is False
+        assert opts.allow_existing_catalogs is False
+        assert opts.fix is False
+        assert opts.unsafe_fix is False
+        assert opts.dry_run is False
+        assert opts.suggest_collections is False
 
     def test_custom_values(self) -> None:
         """ScanOptions accepts custom values."""
@@ -102,6 +129,34 @@ class TestScanOptions:
         assert opts.max_depth == 3
         assert opts.include_hidden is True
         assert opts.follow_symlinks is True
+
+    def test_new_options(self) -> None:
+        """ScanOptions accepts new option values."""
+        from portolan_cli.scan import ScanOptions
+
+        opts = ScanOptions(
+            show_all=True,
+            verbose=True,
+            allow_existing_catalogs=True,
+            fix=True,
+            unsafe_fix=True,  # Valid because fix=True
+            dry_run=True,
+            suggest_collections=True,
+        )
+        assert opts.show_all is True
+        assert opts.verbose is True
+        assert opts.allow_existing_catalogs is True
+        assert opts.fix is True
+        assert opts.unsafe_fix is True
+        assert opts.dry_run is True
+        assert opts.suggest_collections is True
+
+    def test_unsafe_fix_requires_fix(self) -> None:
+        """ScanOptions raises ValueError if unsafe_fix=True but fix=False."""
+        from portolan_cli.scan import ScanOptions
+
+        with pytest.raises(ValueError, match="--unsafe-fix requires --fix"):
+            ScanOptions(unsafe_fix=True, fix=False)
 
     def test_is_frozen(self) -> None:
         """ScanOptions is immutable (frozen dataclass)."""
@@ -356,6 +411,109 @@ class TestScanResult:
             directories_scanned=1,
         )
         assert result.info_count == 1
+
+    def test_classification_summary_empty(self, tmp_path: Path) -> None:
+        """ScanResult.classification_summary returns empty dict for empty result."""
+        from portolan_cli.scan import ScanResult
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+        summary = result.classification_summary
+        # Empty result has geo_asset=0
+        assert summary.get("geo_asset", 0) == 0
+
+    def test_classification_summary_counts_ready_as_geo_asset(self, tmp_path: Path) -> None:
+        """ScanResult.classification_summary counts ready files as geo_asset."""
+        from portolan_cli.scan import FormatType, ScannedFile, ScanResult
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "a.geojson",
+                    relative_path="a.geojson",
+                    extension=".geojson",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=100,
+                ),
+                ScannedFile(
+                    path=tmp_path / "b.geojson",
+                    relative_path="b.geojson",
+                    extension=".geojson",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=200,
+                ),
+            ],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+        summary = result.classification_summary
+        assert summary["geo_asset"] == 2
+
+    def test_classification_summary_counts_skipped_by_category(self, tmp_path: Path) -> None:
+        """ScanResult.classification_summary counts skipped files by category."""
+        from portolan_cli.scan import ScanResult
+        from portolan_cli.scan_classify import (
+            FileCategory,
+            SkippedFile,
+            SkipReasonType,
+        )
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[
+                SkippedFile(
+                    path=tmp_path / "a.csv",
+                    relative_path="a.csv",
+                    category=FileCategory.TABULAR_DATA,
+                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
+                    reason_message="CSV is tabular data",
+                ),
+                SkippedFile(
+                    path=tmp_path / "b.md",
+                    relative_path="b.md",
+                    category=FileCategory.DOCUMENTATION,
+                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
+                    reason_message="Markdown is documentation",
+                ),
+                SkippedFile(
+                    path=tmp_path / "c.csv",
+                    relative_path="c.csv",
+                    category=FileCategory.TABULAR_DATA,
+                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
+                    reason_message="CSV is tabular data",
+                ),
+            ],
+            directories_scanned=1,
+        )
+        summary = result.classification_summary
+        assert summary["tabular_data"] == 2
+        assert summary["documentation"] == 1
+
+    def test_classification_summary_handles_legacy_paths(self, tmp_path: Path) -> None:
+        """ScanResult.classification_summary handles legacy Path objects in skipped."""
+        from portolan_cli.scan import ScanResult
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[
+                tmp_path / "unknown.xyz",  # Legacy Path object
+            ],
+            directories_scanned=1,
+        )
+        summary = result.classification_summary
+        # Legacy paths are counted as unknown
+        assert summary["unknown"] == 1
 
     def test_to_dict_returns_json_serializable(self, tmp_path: Path) -> None:
         """ScanResult.to_dict returns JSON-serializable dictionary."""
@@ -626,6 +784,169 @@ class TestIssueDetection:
         mixed_issues = [i for i in result.issues if i.issue_type == IssueType.MIXED_FORMATS]
         assert len(mixed_issues) >= 1
         assert mixed_issues[0].severity == Severity.INFO
+
+
+@pytest.mark.unit
+class TestStructureValidation:
+    """Tests for structure validation (US3) - structural issues in directories."""
+
+    def test_orphan_sidecar_detected(self, tmp_path: Path) -> None:
+        """Sidecar files without a primary (.shp) are flagged as orphan."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create sidecar files without matching .shp
+        (tmp_path / "orphan.dbf").write_bytes(b"\x00" * 100)
+        (tmp_path / "orphan.shx").write_bytes(b"\x00" * 100)
+        # No orphan.shp exists!
+
+        result = scan_directory(tmp_path)
+
+        orphan_issues = [i for i in result.issues if i.issue_type == IssueType.ORPHAN_SIDECAR]
+        # Should detect orphan sidecars
+        assert len(orphan_issues) >= 1
+        assert orphan_issues[0].severity == Severity.WARNING
+
+    def test_multiple_primaries_detected(self, tmp_path: Path) -> None:
+        """Multiple primary assets in one directory are flagged."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create multiple geospatial files in same directory
+        (tmp_path / "dataset1.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "dataset2.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "dataset3.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        multi_issues = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
+        assert len(multi_issues) >= 1
+        assert multi_issues[0].severity == Severity.WARNING
+        # Message should indicate the count
+        assert "3" in multi_issues[0].message
+
+    def test_incomplete_shapefile_detected(self, tmp_path: Path) -> None:
+        """Shapefile missing required sidecars (.dbf, .shx) is flagged as incomplete."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create a .shp file without required sidecars
+        (tmp_path / "incomplete.shp").write_bytes(b"\x00" * 100)
+        # Only add optional sidecar, not required ones
+        (tmp_path / "incomplete.prj").write_text("GEOGCS[...]")
+        # Missing: .dbf and .shx (required)
+
+        result = scan_directory(tmp_path)
+
+        incomplete_issues = [
+            i for i in result.issues if i.issue_type == IssueType.INCOMPLETE_SHAPEFILE
+        ]
+        assert len(incomplete_issues) >= 1
+        assert incomplete_issues[0].severity == Severity.ERROR
+        # Message should mention missing sidecars
+        assert ".dbf" in incomplete_issues[0].message or ".shx" in incomplete_issues[0].message
+
+    def test_mixed_formats_detected(self, tmp_path: Path) -> None:
+        """Mixed raster/vector in same directory is flagged."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create both vector and raster files in same directory
+        (tmp_path / "vector.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "raster.tif").write_bytes(b"II*\x00" + b"\x00" * 100)  # Minimal TIFF header
+
+        result = scan_directory(tmp_path)
+
+        mixed_issues = [i for i in result.issues if i.issue_type == IssueType.MIXED_FORMATS]
+        assert len(mixed_issues) >= 1
+        assert mixed_issues[0].severity == Severity.INFO
+
+    def test_mixed_flat_multiitem_detected(self, tmp_path: Path) -> None:
+        """Directory with files both at root and in subdirectories is flagged.
+
+        This indicates an unclear catalog structure - is the root a single item
+        with multiple files, or is each subdirectory a separate item?
+        """
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create files at root level
+        (tmp_path / "root_data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        # Create files in subdirectory
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "nested_data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        mixed_structure_issues = [
+            i for i in result.issues if i.issue_type == IssueType.MIXED_FLAT_MULTIITEM
+        ]
+        assert len(mixed_structure_issues) >= 1
+        assert mixed_structure_issues[0].severity == Severity.WARNING
+
+
+# =============================================================================
+# Phase 11: User Story 9 - Windows Reserved Names
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestWindowsReservedNames:
+    """Tests for Windows reserved name detection (US9)."""
+
+    def test_con_geojson_detected(self, tmp_path: Path) -> None:
+        """Windows reserved name CON.geojson is flagged."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        (tmp_path / "CON.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        reserved_issues = [
+            i for i in result.issues if i.issue_type == IssueType.WINDOWS_RESERVED_NAME
+        ]
+        assert len(reserved_issues) >= 1
+        assert reserved_issues[0].severity == Severity.WARNING
+
+    def test_prn_parquet_detected(self, tmp_path: Path) -> None:
+        """Windows reserved name PRN.parquet is flagged."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        (tmp_path / "PRN.parquet").write_bytes(b"\x00" * 100)
+
+        result = scan_directory(tmp_path)
+
+        reserved_issues = [
+            i for i in result.issues if i.issue_type == IssueType.WINDOWS_RESERVED_NAME
+        ]
+        assert len(reserved_issues) >= 1
+
+    def test_nul_data_not_flagged(self, tmp_path: Path) -> None:
+        """File containing reserved name (nul_data.parquet) is NOT flagged."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # "nul_data" contains "nul" but is not exactly a reserved name
+        (tmp_path / "nul_data.parquet").write_bytes(b"\x00" * 100)
+
+        result = scan_directory(tmp_path)
+
+        reserved_issues = [
+            i for i in result.issues if i.issue_type == IssueType.WINDOWS_RESERVED_NAME
+        ]
+        assert len(reserved_issues) == 0
+
+    def test_aux_directory_detected(self, tmp_path: Path) -> None:
+        """Windows reserved name AUX as directory is flagged."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        aux_dir = tmp_path / "AUX"
+        aux_dir.mkdir()
+        (aux_dir / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        reserved_issues = [
+            i for i in result.issues if i.issue_type == IssueType.WINDOWS_RESERVED_NAME
+        ]
+        # Files inside a reserved-name directory should be flagged
+        assert len(reserved_issues) >= 1
 
 
 # =============================================================================
