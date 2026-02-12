@@ -169,3 +169,150 @@ class TestScanCLI:
             assert "issue_type" in issue or "type" in issue
             assert "severity" in issue
             assert "message" in issue
+
+
+# =============================================================================
+# Phase 12: Output Truncation Tests (US10)
+# =============================================================================
+
+
+# =============================================================================
+# Phase 15: Full Workflow Integration Tests
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScanFullWorkflow:
+    """Integration tests for complete scan workflows."""
+
+    def test_scan_nested_directory_full_report(self, runner: CliRunner, fixtures_dir: Path) -> None:
+        """Scan nested directory and verify complete report structure."""
+        result = runner.invoke(cli, ["scan", str(fixtures_dir / "nested"), "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+
+        # Should have summary with all required fields
+        assert "summary" in data
+        assert "directories_scanned" in data["summary"]
+        assert "ready_count" in data["summary"]
+        assert "issue_count" in data["summary"]
+        assert "skipped_count" in data["summary"]
+
+        # Should find files in nested structure
+        assert data["summary"]["ready_count"] == 3  # 3 files in nested fixture
+
+    def test_scan_with_mixed_issues_complete_output(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Scan directory with multiple issue types and verify all reported."""
+        # Create files that trigger various issues
+        # 1. Zero-byte file (ERROR)
+        (tmp_path / "empty.geojson").touch()
+        # 2. Invalid characters (WARNING)
+        (tmp_path / "file with spaces.geojson").write_text(
+            '{"type": "FeatureCollection", "features": []}'
+        )
+        # 3. Valid file for comparison
+        (tmp_path / "valid.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
+
+        # Should exit with 1 due to ERROR (zero-byte file)
+        assert result.exit_code == 1
+
+        data = json.loads(result.output)
+
+        # Should have both errors and warnings
+        issue_types = {i["type"] for i in data.get("issues", [])}
+        assert "zero_byte_file" in issue_types  # ERROR
+        assert "invalid_characters" in issue_types  # WARNING
+
+    def test_scan_help_shows_all_flags(self, runner: CliRunner) -> None:
+        """Verify all scan flags appear in help text."""
+        result = runner.invoke(cli, ["scan", "--help"])
+
+        assert result.exit_code == 0
+        # Check all flags are documented
+        assert "--json" in result.output
+        assert "--no-recursive" in result.output
+        assert "--max-depth" in result.output
+        assert "--include-hidden" in result.output
+        assert "--follow-symlinks" in result.output
+        assert "--all" in result.output
+
+    def test_scan_empty_directory(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Scan empty directory returns gracefully."""
+        result = runner.invoke(cli, ["scan", str(tmp_path)])
+
+        assert result.exit_code == 0
+        assert "0 files" in result.output.lower()
+
+    def test_scan_classification_summary_in_json(
+        self, runner: CliRunner, fixtures_dir: Path
+    ) -> None:
+        """JSON output includes classification summary."""
+        result = runner.invoke(cli, ["scan", str(fixtures_dir / "unsupported"), "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+
+        # Should have classification breakdown
+        assert "classification" in data
+        assert "geo_asset" in data["classification"]
+
+
+@pytest.mark.integration
+class TestScanOutputTruncation:
+    """Integration tests for output truncation with --all flag."""
+
+    def test_scan_default_truncates_many_issues(self, runner: CliRunner, tmp_path: Path) -> None:
+        """By default, scan truncates output when many issues exist."""
+        # Create 15 files with invalid characters to generate many warnings
+        for i in range(15):
+            (tmp_path / f"file with spaces {i}.geojson").write_text(
+                '{"type": "FeatureCollection", "features": []}'
+            )
+
+        result = runner.invoke(cli, ["scan", str(tmp_path)])
+
+        # Should show truncation message
+        assert result.exit_code == 0
+        assert "truncated" in result.output.lower() or "more" in result.output.lower()
+
+    def test_scan_all_shows_all_issues(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--all flag shows all issues without truncation."""
+        # Create 15 files with invalid characters
+        for i in range(15):
+            (tmp_path / f"file with spaces {i}.geojson").write_text(
+                '{"type": "FeatureCollection", "features": []}'
+            )
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--all"])
+
+        # Should NOT show truncation message
+        assert result.exit_code == 0
+        assert "more" not in result.output.lower() or "use --all" not in result.output
+        # Should show all 15 invalid character warnings (message uses "problematic")
+        assert result.output.count("problematic") >= 15
+
+    def test_scan_json_never_truncates(self, runner: CliRunner, tmp_path: Path) -> None:
+        """JSON output never truncates regardless of --all flag."""
+        # Create 15 files with invalid characters
+        for i in range(15):
+            (tmp_path / f"file with spaces {i}.geojson").write_text(
+                '{"type": "FeatureCollection", "features": []}'
+            )
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
+
+        data = json.loads(result.output)
+        # Should have all 15+ issues (15 invalid chars + multiple primaries)
+        assert len(data.get("issues", [])) >= 15
+
+    def test_scan_few_issues_no_truncation(self, runner: CliRunner, fixtures_dir: Path) -> None:
+        """Small number of issues are not truncated."""
+        result = runner.invoke(cli, ["scan", str(fixtures_dir / "invalid_chars")])
+
+        # Should NOT show truncation message for small issue count
+        assert "truncated" not in result.output.lower()

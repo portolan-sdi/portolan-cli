@@ -150,6 +150,12 @@ def check(path: Path, json_output: bool, verbose: bool) -> None:
     is_flag=True,
     help="Follow symbolic links (may cause loops)",
 )
+@click.option(
+    "--all",
+    "show_all",
+    is_flag=True,
+    help="Show all issues without truncation (default: show first 10 per severity)",
+)
 def scan(
     path: Path,
     json_output: bool,
@@ -157,6 +163,7 @@ def scan(
     max_depth: int | None,
     include_hidden: bool,
     follow_symlinks: bool,
+    show_all: bool,
 ) -> None:
     """Scan a directory for geospatial files and potential issues.
 
@@ -183,6 +190,7 @@ def scan(
         max_depth=max_depth,
         include_hidden=include_hidden,
         follow_symlinks=follow_symlinks,
+        show_all=show_all,
     )
 
     try:
@@ -195,11 +203,11 @@ def scan(
         raise SystemExit(1) from err
 
     if json_output:
-        # JSON output per FR-019
+        # JSON output per FR-019 (never truncated)
         click.echo(json_module.dumps(result.to_dict(), indent=2))
     else:
         # Human-readable output per FR-018
-        _print_scan_summary(result)
+        _print_scan_summary(result, show_all=show_all)
 
     # Exit code per FR-020: 0 if no errors, 1 if errors exist
     if result.has_errors:
@@ -227,39 +235,88 @@ def _print_format_breakdown(result: ScanResult) -> None:
         detail(f"  {count} {ext} file{'s' if count != 1 else ''}")
 
 
+# Default maximum issues to show per severity before truncation
+DEFAULT_ISSUE_LIMIT = 10
+
+
 def _print_issue_group(
     issues: list[ScanIssue],
     severity: ScanSeverity,
     header_fn: Callable[[str], None],
     count: int,
     label: str,
+    *,
+    show_all: bool = False,
+    limit: int = DEFAULT_ISSUE_LIMIT,
 ) -> None:
-    """Print a group of issues with the same severity."""
+    """Print a group of issues with the same severity.
+
+    Args:
+        issues: List of all issues.
+        severity: Severity level to filter for.
+        header_fn: Function to print header (error/warn/info).
+        count: Total count of issues with this severity.
+        label: Label for the issue type (e.g., "error", "warning").
+        show_all: If True, show all issues without truncation.
+        limit: Maximum issues to show per severity (default: 10).
+    """
     if count == 0:
         return
     header_fn(f"{count} {label}{'s' if count != 1 else ''}")
-    for issue in issues:
-        if issue.severity == severity:
-            header_fn(f"  {issue.relative_path}: {issue.message}")
-            if issue.suggestion is not None:
-                detail(f"    Hint: {issue.suggestion}")
+
+    # Filter issues by severity
+    severity_issues = [i for i in issues if i.severity == severity]
+
+    # Apply truncation if needed
+    displayed = severity_issues if show_all else severity_issues[:limit]
+    truncated_count = len(severity_issues) - len(displayed)
+
+    for issue in displayed:
+        header_fn(f"  {issue.relative_path}: {issue.message}")
+        if issue.suggestion is not None:
+            detail(f"    Hint: {issue.suggestion}")
+
+    # Show truncation message if issues were hidden
+    if truncated_count > 0:
+        detail(f"  ... and {truncated_count} more (use --all to see all)")
 
 
-def _print_issues_by_severity(result: ScanResult) -> None:
-    """Print issues grouped by severity."""
+def _print_issues_by_severity(result: ScanResult, *, show_all: bool = False) -> None:
+    """Print issues grouped by severity.
+
+    Args:
+        result: The scan result containing issues.
+        show_all: If True, show all issues without truncation.
+    """
     if not result.issues:
         return
 
-    _print_issue_group(result.issues, ScanSeverity.ERROR, error, result.error_count, "error")
-    _print_issue_group(result.issues, ScanSeverity.WARNING, warn, result.warning_count, "warning")
-    _print_issue_group(result.issues, ScanSeverity.INFO, info, result.info_count, "info message")
+    _print_issue_group(
+        result.issues, ScanSeverity.ERROR, error, result.error_count, "error", show_all=show_all
+    )
+    _print_issue_group(
+        result.issues,
+        ScanSeverity.WARNING,
+        warn,
+        result.warning_count,
+        "warning",
+        show_all=show_all,
+    )
+    _print_issue_group(
+        result.issues, ScanSeverity.INFO, info, result.info_count, "info message", show_all=show_all
+    )
 
 
-def _print_scan_summary(result: ScanResult) -> None:
-    """Print human-readable scan summary."""
+def _print_scan_summary(result: ScanResult, *, show_all: bool = False) -> None:
+    """Print human-readable scan summary.
+
+    Args:
+        result: The scan result to print.
+        show_all: If True, show all issues without truncation.
+    """
     _print_scan_header(result)
     _print_format_breakdown(result)
-    _print_issues_by_severity(result)
+    _print_issues_by_severity(result, show_all=show_all)
 
     if result.skipped:
         detail(f"{len(result.skipped)} files skipped (unrecognized format)")
