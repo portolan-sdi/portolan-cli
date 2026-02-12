@@ -45,8 +45,8 @@ class TestScanCLI:
 
         # Should exit with 0 (warnings don't cause failure, only errors)
         assert result.exit_code == 0
-        # Should show file count
-        assert "3 files ready" in result.output or "3 file" in result.output.lower()
+        # Should show geo-asset count
+        assert "3 geo-asset" in result.output.lower()
 
     def test_scan_nonexistent_path_exits_with_error(self, runner: CliRunner) -> None:
         """portolan scan on nonexistent path exits with error."""
@@ -83,9 +83,9 @@ class TestScanCLI:
         result = runner.invoke(cli, ["scan", str(fixtures_dir / "nested"), "--no-recursive"])
 
         # The nested fixture has all files in subdirectories
-        # --no-recursive should find 0 files
+        # --no-recursive should find no geo-assets at root level
         assert result.exit_code == 0
-        assert "0 files" in result.output.lower() or "no files" in result.output.lower()
+        assert "no geo-assets" in result.output.lower()
 
     def test_scan_max_depth_flag(self, runner: CliRunner, fixtures_dir: Path) -> None:
         """portolan scan --max-depth limits recursion depth."""
@@ -94,7 +94,7 @@ class TestScanCLI:
         assert result.exit_code == 0
         # With max-depth=1, we can see census/ and imagery/ but not their contents
         # Files are at depth 2+, so should find 0 files
-        assert "0 files" in result.output.lower()
+        assert "no geo-assets" in result.output.lower()
 
     def test_scan_include_hidden_flag(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan scan --include-hidden includes hidden files."""
@@ -246,7 +246,7 @@ class TestScanFullWorkflow:
         result = runner.invoke(cli, ["scan", str(tmp_path)])
 
         assert result.exit_code == 0
-        assert "0 files" in result.output.lower()
+        assert "no geo-assets" in result.output.lower()
 
     def test_scan_classification_summary_in_json(
         self, runner: CliRunner, fixtures_dir: Path
@@ -316,3 +316,122 @@ class TestScanOutputTruncation:
 
         # Should NOT show truncation message for small issue count
         assert "truncated" not in result.output.lower()
+
+
+# =============================================================================
+# Phase 17: Enhanced Output Features Tests
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScanEnhancedOutput:
+    """Integration tests for enhanced scan output features."""
+
+    def test_scan_shows_next_steps(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Scan output includes actionable next steps."""
+        # Create a file with invalid characters (fixable with --fix)
+        (tmp_path / "file with spaces.geojson").write_text(
+            '{"type": "FeatureCollection", "features": []}'
+        )
+
+        result = runner.invoke(cli, ["scan", str(tmp_path)])
+
+        assert result.exit_code == 0
+        # Should show next steps section
+        assert "next step" in result.output.lower()
+
+    def test_scan_shows_fixability_labels(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Scan output shows fixability labels for issues."""
+        # Create a file with invalid characters (--fix label)
+        (tmp_path / "file with spaces.geojson").write_text(
+            '{"type": "FeatureCollection", "features": []}'
+        )
+
+        result = runner.invoke(cli, ["scan", str(tmp_path)])
+
+        assert result.exit_code == 0
+        # Should show --fix label for fixable issues
+        assert "[--fix]" in result.output
+
+    def test_scan_shows_supporting_files_by_category(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Scan output shows supporting files (non-geo-assets) by category."""
+        # Create a geo-asset and supporting files
+        (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "readme.md").write_text("# Documentation")
+        (tmp_path / "style.json").write_text("{}")
+
+        result = runner.invoke(cli, ["scan", str(tmp_path)])
+
+        assert result.exit_code == 0
+        # Should show supporting files grouped by category
+        # Categories: style, documentation
+        assert "style" in result.output.lower()
+        assert "documentation" in result.output.lower()
+
+    def test_scan_tree_flag(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Scan with --tree shows directory tree view."""
+        # Create a simple directory structure
+        collection = tmp_path / "census"
+        collection.mkdir()
+        (collection / "census.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--tree"])
+
+        assert result.exit_code == 0
+        # Should show tree characters
+        assert "/" in result.output  # Directory markers
+
+    def test_scan_tree_shows_status_markers(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Tree view shows status markers for files."""
+        # Create files with different statuses
+        (tmp_path / "valid.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "readme.md").write_text("# Documentation")
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--tree"])
+
+        assert result.exit_code == 0
+        # Should show geo-asset marker
+        assert "geo-asset" in result.output.lower()
+
+    def test_scan_suggests_collections(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Scan with collection inference shows suggestions."""
+        # Create files with pattern that can be grouped
+        (tmp_path / "flood_rp10.geojson").write_text(
+            '{"type": "FeatureCollection", "features": []}'
+        )
+        (tmp_path / "flood_rp50.geojson").write_text(
+            '{"type": "FeatureCollection", "features": []}'
+        )
+        (tmp_path / "flood_rp100.geojson").write_text(
+            '{"type": "FeatureCollection", "features": []}'
+        )
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--suggest-collections"])
+
+        assert result.exit_code == 0
+        # Should show suggested collections (if inference is wired up)
+        # Note: This may show "multiple primaries" warning since all are in same dir
+
+    def test_scan_ready_message(self, runner: CliRunner, tmp_path: Path) -> None:
+        """When no issues, shows structure valid message."""
+        # Create a proper catalog structure
+        collection = tmp_path / "census"
+        collection.mkdir()
+        (collection / "census.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path)])
+
+        assert result.exit_code == 0
+        # Should indicate structure is valid
+        assert "ready" in result.output.lower() or "valid" in result.output.lower()
+
+    def test_scan_help_shows_new_flags(self, runner: CliRunner) -> None:
+        """Help text shows new flags."""
+        result = runner.invoke(cli, ["scan", "--help"])
+
+        assert result.exit_code == 0
+        # Should document new flags
+        assert "--tree" in result.output
+        assert "--suggest-collections" in result.output

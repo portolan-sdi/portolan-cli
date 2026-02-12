@@ -28,6 +28,15 @@ from portolan_cli.scan import (
 from portolan_cli.scan import (
     Severity as ScanSeverity,
 )
+from portolan_cli.scan_infer import infer_collections
+from portolan_cli.scan_output import (
+    format_collection_suggestion,
+    generate_next_steps,
+    get_category_display_name,
+    get_fixability,
+    group_skipped_files,
+    render_tree_view,
+)
 from portolan_cli.validation import Severity
 from portolan_cli.validation import check as validate_catalog
 
@@ -156,6 +165,18 @@ def check(path: Path, json_output: bool, verbose: bool) -> None:
     is_flag=True,
     help="Show all issues without truncation (default: show first 10 per severity)",
 )
+@click.option(
+    "--tree",
+    "show_tree",
+    is_flag=True,
+    help="Show directory tree view with file status markers",
+)
+@click.option(
+    "--suggest-collections",
+    "suggest_collections",
+    is_flag=True,
+    help="Suggest collection groupings based on filename patterns",
+)
 def scan(
     path: Path,
     json_output: bool,
@@ -164,6 +185,8 @@ def scan(
     include_hidden: bool,
     follow_symlinks: bool,
     show_all: bool,
+    show_tree: bool,
+    suggest_collections: bool,
 ) -> None:
     """Scan a directory for geospatial files and potential issues.
 
@@ -191,6 +214,7 @@ def scan(
         include_hidden=include_hidden,
         follow_symlinks=follow_symlinks,
         show_all=show_all,
+        suggest_collections=suggest_collections,
     )
 
     try:
@@ -202,12 +226,16 @@ def scan(
         error(str(err))
         raise SystemExit(1) from err
 
+    # Run collection inference if requested
+    if suggest_collections and result.ready:
+        result.collection_suggestions = infer_collections(result.ready)
+
     if json_output:
         # JSON output per FR-019 (never truncated)
         click.echo(json_module.dumps(result.to_dict(), indent=2))
     else:
         # Human-readable output per FR-018
-        _print_scan_summary(result, show_all=show_all)
+        _print_scan_summary_enhanced(result, show_all=show_all, show_tree=show_tree)
 
     # Exit code per FR-020: 0 if no errors, 1 if errors exist
     if result.has_errors:
@@ -219,9 +247,9 @@ def _print_scan_header(result: ScanResult) -> None:
     ready_count = len(result.ready)
     if ready_count == 0:
         info(f"Scanned {result.directories_scanned} directories")
-        warn("0 files ready to import")
+        warn("No geo-assets found")
     else:
-        success(f"{ready_count} files ready to import")
+        success(f"{ready_count} geo-asset{'s' if ready_count != 1 else ''} found")
 
 
 def _print_format_breakdown(result: ScanResult) -> None:
@@ -308,7 +336,7 @@ def _print_issues_by_severity(result: ScanResult, *, show_all: bool = False) -> 
 
 
 def _print_scan_summary(result: ScanResult, *, show_all: bool = False) -> None:
-    """Print human-readable scan summary.
+    """Print human-readable scan summary (legacy).
 
     Args:
         result: The scan result to print.
@@ -320,6 +348,161 @@ def _print_scan_summary(result: ScanResult, *, show_all: bool = False) -> None:
 
     if result.skipped:
         detail(f"{len(result.skipped)} files skipped (unrecognized format)")
+
+
+def _print_scan_summary_enhanced(
+    result: ScanResult,
+    *,
+    show_all: bool = False,
+    show_tree: bool = False,
+) -> None:
+    """Print enhanced human-readable scan summary.
+
+    Includes:
+    - Summary header
+    - Format breakdown
+    - Tree view (if --tree)
+    - Issues with fixability labels
+    - Skipped files by category
+    - Collection suggestions
+    - Actionable next steps
+
+    Args:
+        result: The scan result to print.
+        show_all: If True, show all issues without truncation.
+        show_tree: If True, show directory tree view.
+    """
+    # Header
+    _print_scan_header(result)
+    _print_format_breakdown(result)
+
+    # Tree view (if requested)
+    if show_tree:
+        click.echo()
+        tree_output = render_tree_view(result, show_missing=True)
+        click.echo(tree_output)
+
+    # Issues with fixability labels
+    _print_issues_with_fixability(result, show_all=show_all)
+
+    # Skipped files by category
+    _print_skipped_by_category(result)
+
+    # Collection suggestions
+    _print_collection_suggestions(result)
+
+    # Next steps
+    _print_next_steps(result)
+
+
+def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False) -> None:
+    """Print issues grouped by severity with fixability labels.
+
+    Args:
+        result: The scan result containing issues.
+        show_all: If True, show all issues without truncation.
+    """
+    if not result.issues:
+        return
+
+    limit = None if show_all else DEFAULT_ISSUE_LIMIT
+
+    # Group by severity
+    for severity, header_fn, label in [
+        (ScanSeverity.ERROR, error, "error"),
+        (ScanSeverity.WARNING, warn, "warning"),
+        (ScanSeverity.INFO, info, "info message"),
+    ]:
+        severity_issues = [i for i in result.issues if i.severity == severity]
+        if not severity_issues:
+            continue
+
+        count = len(severity_issues)
+        header_fn(f"{count} {label}{'s' if count != 1 else ''}")
+
+        # Apply truncation if needed
+        displayed = severity_issues if limit is None else severity_issues[:limit]
+        truncated_count = len(severity_issues) - len(displayed)
+
+        for issue in displayed:
+            fix_label = get_fixability(issue.issue_type).label
+            header_fn(f"  {fix_label} {issue.relative_path}: {issue.message}")
+            if issue.suggestion is not None:
+                detail(f"    Hint: {issue.suggestion}")
+
+        if truncated_count > 0:
+            detail(f"  ... and {truncated_count} more (use --all to see all)")
+
+
+def _print_skipped_by_category(result: ScanResult) -> None:
+    """Print skipped files grouped by category.
+
+    Args:
+        result: The scan result containing skipped files.
+    """
+    if not result.skipped:
+        return
+
+    grouped = group_skipped_files(result.skipped)
+    if not grouped:
+        # Fallback for legacy Path objects
+        detail(f"{len(result.skipped)} files skipped (unrecognized format)")
+        return
+
+    # Check if any files are truly unknown
+    from portolan_cli.scan_classify import FileCategory
+
+    unknown_count = len(grouped.get(FileCategory.UNKNOWN, []))
+    recognized_count = len(result.skipped) - unknown_count
+
+    # If all files are recognized (no unknowns), show a concise summary
+    if unknown_count == 0:
+        # Build a compact list: "5 catalog files, 4 tabular, 2 thumbnails, ..."
+        parts = []
+        for category, files in sorted(grouped.items(), key=lambda x: len(x[1]), reverse=True):
+            display_name = get_category_display_name(category)
+            parts.append(f"{len(files)} {display_name}")
+        detail(f"  {', '.join(parts)}")
+    else:
+        # Some unknown files - show the detailed breakdown
+        click.echo()
+        if unknown_count > 0:
+            warn(f"{unknown_count} files with unrecognized format")
+        detail(f"Other files ({recognized_count} recognized):")
+        for category, files in sorted(grouped.items(), key=lambda x: len(x[1]), reverse=True):
+            display_name = get_category_display_name(category)
+            detail(f"  {len(files)} {display_name}")
+
+
+def _print_collection_suggestions(result: ScanResult) -> None:
+    """Print collection suggestions if available.
+
+    Args:
+        result: The scan result with collection suggestions.
+    """
+    if not result.collection_suggestions:
+        return
+
+    click.echo()
+    info("Suggested collections:")
+    for suggestion in result.collection_suggestions:
+        click.echo(format_collection_suggestion(suggestion))
+
+
+def _print_next_steps(result: ScanResult) -> None:
+    """Print actionable next steps.
+
+    Args:
+        result: The scan result to analyze for next steps.
+    """
+    steps = generate_next_steps(result)
+    if not steps:
+        return
+
+    click.echo()
+    info("Next steps:")
+    for step in steps:
+        detail(f"  \u2192 {step}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

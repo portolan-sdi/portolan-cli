@@ -126,11 +126,12 @@ JUNK_DIRS: frozenset[str] = frozenset(
     }
 )
 
-# STAC metadata filenames (STAC_METADATA)
+# STAC/catalog metadata filenames (STAC_METADATA)
 STAC_FILENAMES: frozenset[str] = frozenset(
     {
         "catalog.json",
         "collection.json",
+        "versions.json",  # Portolan version history
     }
 )
 

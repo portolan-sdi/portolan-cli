@@ -33,7 +33,12 @@ from enum import Enum
 from pathlib import Path
 
 # Import new types from scan modules
-from portolan_cli.scan_classify import SkippedFile
+from portolan_cli.scan_classify import (
+    FileCategory,
+    SkippedFile,
+    SkipReasonType,
+    classify_file,
+)
 from portolan_cli.scan_detect import DualFormatPair, SpecialFormat
 from portolan_cli.scan_fix import ProposedFix
 from portolan_cli.scan_infer import CollectionSuggestion
@@ -410,6 +415,31 @@ def _get_relative_path(path: Path, root: Path) -> str:
         return str(path.relative_to(root))
     except ValueError:
         return str(path)
+
+
+def _make_skipped_file(
+    ctx: _ScanContext,
+    path: Path,
+    size_bytes: int | None = None,
+) -> SkippedFile:
+    """Create a SkippedFile with proper classification.
+
+    Args:
+        ctx: Scan context (provides root for relative path).
+        path: Path to the file being skipped.
+        size_bytes: File size in bytes (for thumbnail classification).
+
+    Returns:
+        SkippedFile with category and reason from classify_file.
+    """
+    category, reason_type, reason_message = classify_file(path, size_bytes)
+    return SkippedFile(
+        path=path,
+        relative_path=_get_relative_path(path, ctx.root),
+        category=category,
+        reason_type=reason_type or SkipReasonType.UNKNOWN_FORMAT,
+        reason_message=reason_message or f"Unrecognized extension: {path.suffix}",
+    )
 
 
 def _is_geoparquet(path: Path) -> bool:
@@ -917,19 +947,28 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         stem = path.stem
         key = f"{parent}/{stem}"
         ctx.shapefile_sidecars[key].add(ext)
-        ctx.skipped.append(path)
+        ctx.skipped.append(_make_skipped_file(ctx, path, size))
         return
 
     # Handle overview/derivative formats (PMTiles, etc.) - skip, not primary assets
     if _is_overview_extension(ext):
-        ctx.skipped.append(path)
+        ctx.skipped.append(_make_skipped_file(ctx, path, size))
         return
 
     # Handle .parquet specially - must check if it's GeoParquet
     if ext == PARQUET_EXTENSION:
         if not _is_geoparquet(path):
             # Regular Parquet (tabular data), not a geospatial asset
-            ctx.skipped.append(path)
+            # Create SkippedFile directly since classify_file can't detect non-geo parquet
+            ctx.skipped.append(
+                SkippedFile(
+                    path=path,
+                    relative_path=_get_relative_path(path, ctx.root),
+                    category=FileCategory.TABULAR_DATA,
+                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
+                    reason_message="Parquet file without GeoParquet metadata (tabular data)",
+                )
+            )
             return
         # It's GeoParquet - treat as vector format
         format_type = FormatType.VECTOR
@@ -938,7 +977,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         format_type = _get_format_type(ext)
     else:
         # Unrecognized extension
-        ctx.skipped.append(path)
+        ctx.skipped.append(_make_skipped_file(ctx, path, size))
         return
 
     # Create scanned file

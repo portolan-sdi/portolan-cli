@@ -1184,7 +1184,7 @@ class TestGeoParquetDetection:
         assert len(result.ready) == 0
         # Should be in skipped files
         assert len(result.skipped) == 1
-        assert result.skipped[0].name == "census-data.parquet"
+        assert result.skipped[0].path.name == "census-data.parquet"
 
     def test_mixed_parquet_types_only_geoparquet_ready(self, tmp_path: Path) -> None:
         """Directory with both GeoParquet and regular Parquet only has GeoParquet ready."""
@@ -1236,7 +1236,7 @@ class TestOverviewFormats:
         assert len(result.ready) == 0
         # Should be in skipped files
         assert len(result.skipped) == 1
-        assert result.skipped[0].name == "overview.pmtiles"
+        assert result.skipped[0].path.name == "overview.pmtiles"
 
     def test_pmtiles_does_not_count_as_primary(self, tmp_path: Path) -> None:
         """PMTiles should not trigger 'multiple primaries' warning."""
