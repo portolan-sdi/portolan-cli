@@ -380,3 +380,61 @@ class TestInferCollections:
                 f"Expected at least 3 files in suggestion, got {max_files}. "
                 "This suggests path_by_name dict collision is still occurring."
             )
+
+    def test_no_duplicate_paths_in_suggestions(self, tmp_path: Path) -> None:
+        """infer_collections should not include duplicate paths in files.
+
+        Bug fix: When iterating over 'names' list which contains duplicates
+        (e.g., ["rivers.geojson", "rivers.geojson"] from different dirs),
+        paths_by_name[n] returns ALL paths for that name, causing duplicates.
+        """
+        from portolan_cli.scan import FormatType, ScannedFile
+
+        # Create directory structure with duplicate filenames
+        dir_2020 = tmp_path / "2020"
+        dir_2021 = tmp_path / "2021"
+        dir_2020.mkdir()
+        dir_2021.mkdir()
+
+        # Files with SAME name in different directories
+        files = [
+            ScannedFile(
+                path=dir_2020 / "data_v1.parquet",
+                relative_path="2020/data_v1.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=100,
+            ),
+            ScannedFile(
+                path=dir_2020 / "data_v2.parquet",
+                relative_path="2020/data_v2.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=100,
+            ),
+            ScannedFile(
+                path=dir_2021 / "data_v1.parquet",  # DUPLICATE NAME
+                relative_path="2021/data_v1.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=100,
+            ),
+            ScannedFile(
+                path=dir_2021 / "data_v2.parquet",  # DUPLICATE NAME
+                relative_path="2021/data_v2.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=100,
+            ),
+        ]
+
+        suggestions = infer_collections(files)
+
+        # Check that NO suggestion has duplicate paths
+        for suggestion in suggestions:
+            unique_paths = set(suggestion.files)
+            assert len(unique_paths) == len(suggestion.files), (
+                f"Suggestion '{suggestion.suggested_name}' has duplicate paths. "
+                f"Total: {len(suggestion.files)}, Unique: {len(unique_paths)}. "
+                f"Paths: {suggestion.files}"
+            )

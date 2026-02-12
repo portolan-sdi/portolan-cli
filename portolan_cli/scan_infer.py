@@ -284,7 +284,11 @@ def infer_collections(
     if len(files) < 2:
         return []
 
-    names = [f.path.name for f in files]
+    # Dedupe names to avoid iterating same filename multiple times when files
+    # with identical names exist in different directories. This prevents
+    # paths_by_name[n] from being called multiple times for the same name,
+    # which would add duplicate paths to the result.
+    names = sorted({f.path.name for f in files})
     # Use multimap to handle duplicate filenames across directories
     # e.g., 2020/rivers.geojson and 2021/rivers.geojson both get tracked
     paths_by_name: dict[str, list[Path]] = defaultdict(list)
