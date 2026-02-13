@@ -268,6 +268,12 @@ def check(ctx: click.Context, path: Path, json_output: bool, verbose: bool) -> N
     is_flag=True,
     help="Suggest collection groupings based on filename patterns",
 )
+@click.option(
+    "--manual",
+    "manual_only",
+    is_flag=True,
+    help="Show only issues requiring manual resolution",
+)
 @click.pass_context
 def scan(
     ctx: click.Context,
@@ -280,6 +286,7 @@ def scan(
     show_all: bool,
     show_tree: bool,
     suggest_collections: bool,
+    manual_only: bool,
 ) -> None:
     """Scan a directory for geospatial files and potential issues.
 
@@ -390,13 +397,17 @@ def scan(
             envelope = success_envelope("scan", data)
 
         output_json_envelope(envelope)
+    elif manual_only:
+        # Show only issues requiring manual resolution
+        from portolan_cli.scan_output import format_scan_output
+
+        output = format_scan_output(result, manual_only=True)
+        click.echo(output)
     else:
         # Human-readable output per FR-018
         _print_scan_summary_enhanced(result, show_all=show_all, show_tree=show_tree)
 
-    # Exit code per FR-020: 0 if no errors, 1 if errors exist
-    if result.has_errors:
-        raise SystemExit(1)
+    # Scan is informational — always exit 0 on success
 
 
 def _print_scan_header(result: ScanResult) -> None:

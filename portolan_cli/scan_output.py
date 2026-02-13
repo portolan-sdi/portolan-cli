@@ -23,7 +23,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.scan import IssueType, ScanResult, Severity
+from portolan_cli.scan import IssueType, ScanIssue, ScanResult, Severity
 from portolan_cli.scan_classify import FileCategory, SkippedFile
 
 if TYPE_CHECKING:
@@ -574,10 +574,176 @@ def _format_skipped(result: ScanResult) -> list[str]:
     return lines
 
 
+def _get_severity_marker(severity: Severity) -> str:
+    """Get the marker symbol for a severity level.
+
+    Args:
+        severity: The severity level.
+
+    Returns:
+        Unicode marker: ✗ for error, ⚠ for warning, ℹ for info.
+    """
+    markers = {
+        Severity.ERROR: "\u2717",  # ✗
+        Severity.WARNING: "\u26a0",  # ⚠
+        Severity.INFO: "\u2139",  # ℹ
+    }
+    return markers.get(severity, "\u2022")  # • as fallback
+
+
+def _build_errors_tree(
+    manual_issues: list[ScanIssue], root: Path
+) -> dict[str, list[tuple[str, Severity, str]]]:
+    """Build a tree structure grouping issues by directory.
+
+    Args:
+        manual_issues: List of issues requiring manual resolution.
+        root: The root path of the scan.
+
+    Returns:
+        Dict mapping directory paths to list of (filename, severity, message) tuples.
+    """
+    from collections import defaultdict
+
+    tree: dict[str, list[tuple[str, Severity, str]]] = defaultdict(list)
+
+    for issue in manual_issues:
+        # Get the path relative to root
+        try:
+            rel_path = Path(issue.relative_path)
+        except (TypeError, ValueError):
+            rel_path = Path(issue.relative_path) if issue.relative_path else Path(".")
+
+        # Determine directory and filename
+        if rel_path.name == ".":
+            # Issue is on the root directory itself
+            dir_path = "."
+            filename = "."
+        elif rel_path.parent == Path("."):
+            # File is directly in root
+            dir_path = "."
+            filename = str(rel_path)
+        else:
+            dir_path = str(rel_path.parent)
+            filename = rel_path.name
+
+        # Shorten the message for inline display
+        short_msg = _shorten_message(issue.message)
+        tree[dir_path].append((filename, issue.severity, short_msg))
+
+    return dict(tree)
+
+
+def _shorten_message(message: str) -> str:
+    """Shorten a message for inline tree display.
+
+    Args:
+        message: The full issue message.
+
+    Returns:
+        Shortened message suitable for inline display.
+    """
+    # Common patterns to shorten
+    if message.startswith("Shapefile missing required sidecars:"):
+        sidecars = message.split(":")[1].strip()
+        return f"missing {sidecars}"
+    if message.startswith("File is empty"):
+        return "empty file"
+    if message.startswith("Directory has") and "primary assets" in message:
+        # Extract count: "Directory has 5 primary assets: ..."
+        parts = message.split()
+        if len(parts) >= 4:
+            count = parts[2]
+            return f"{count} primary assets"
+    if "Sidecar files without primary" in message:
+        return "orphan sidecar"
+    if "both raster and vector" in message:
+        return "mixed formats"
+    if "Duplicate basenames" in message:
+        return "duplicate basename"
+    if "files at root and in subdirectories" in message:
+        return "unclear structure"
+
+    # Default: truncate if too long
+    if len(message) > 40:
+        return message[:37] + "..."
+    return message
+
+
+def _render_errors_tree(tree: dict[str, list[tuple[str, Severity, str]]]) -> list[str]:
+    """Render the error tree as formatted lines.
+
+    Args:
+        tree: Dict mapping directory paths to list of (filename, severity, message).
+
+    Returns:
+        List of formatted output lines.
+    """
+    lines: list[str] = []
+
+    # Sort directories: root first, then alphabetically
+    sorted_dirs = sorted(tree.keys(), key=lambda d: ("" if d == "." else d))
+
+    for dir_path in sorted_dirs:
+        issues = tree[dir_path]
+
+        # Show directory header (skip for root if only one entry)
+        if dir_path != "." or len(tree) > 1:
+            if dir_path == ".":
+                lines.append("./")
+            else:
+                lines.append(f"{dir_path}/")
+
+        # Show issues under this directory
+        indent = "  " if (dir_path != "." or len(tree) > 1) else ""
+        for filename, severity, message in issues:
+            marker = _get_severity_marker(severity)
+            if filename == ".":
+                # Directory-level issue
+                lines.append(f"{indent}{marker} {message}")
+            else:
+                lines.append(f"{indent}{marker} {filename} ({message})")
+
+    return lines
+
+
+def _format_manual_only(result: ScanResult) -> str:
+    """Format output showing only issues requiring manual resolution.
+
+    Uses a tree structure grouped by directory for easier scanning.
+
+    Args:
+        result: The scan result to format.
+
+    Returns:
+        Formatted output showing only manual-resolution issues.
+    """
+    # Filter to only MANUAL fixability issues
+    manual_issues = [
+        issue for issue in result.issues if get_fixability(issue.issue_type) == Fixability.MANUAL
+    ]
+
+    if not manual_issues:
+        return "\u2713 No files require manual resolution"
+
+    lines: list[str] = []
+    count = len(manual_issues)
+    plural = "s" if count != 1 else ""
+    lines.append(f"\u2717 {count} file{plural} require manual resolution")
+    lines.append("")
+
+    # Build and render the tree
+    tree = _build_errors_tree(manual_issues, result.root)
+    lines.extend(_render_errors_tree(tree))
+
+    return "\n".join(lines)
+
+
 def format_scan_output(
     result: ScanResult,
     show_tree: bool = False,
     show_missing: bool = True,
+    manual_only: bool = False,
 ) -> str:
     """Format complete scan output for terminal display.
 
@@ -585,10 +751,15 @@ def format_scan_output(
         result: The scan result to format.
         show_tree: If True, include tree view.
         show_missing: If True, show expected but missing files in tree.
+        manual_only: If True, show only issues requiring manual resolution.
 
     Returns:
         Complete formatted output string.
     """
+    # Handle manual-only mode
+    if manual_only:
+        return _format_manual_only(result)
+
     lines: list[str] = []
 
     # Header and format breakdown
