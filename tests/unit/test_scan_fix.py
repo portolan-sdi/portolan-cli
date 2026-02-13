@@ -116,6 +116,51 @@ class TestComputeSafeRename:
 
         assert result is None
 
+    def test_only_non_ascii_chars_uses_hash_fallback(self, tmp_path: Path) -> None:
+        """Filenames with ONLY non-ASCII chars should get hash-based name."""
+        # This would produce empty string after transliteration
+        path = tmp_path / "日本語.shp"
+        path.touch()
+
+        result = _compute_safe_rename(path)
+
+        assert result is not None
+        new_path, _ = result
+        # Should NOT be empty or hidden file
+        assert new_path.stem != ""
+        assert not new_path.stem.startswith(".")
+        # Should have "file_" prefix with hash
+        assert new_path.stem.startswith("file_")
+        assert len(new_path.stem) > 5  # "file_" + hash
+
+    def test_curly_braces_sanitized(self, tmp_path: Path) -> None:
+        """Curly braces should be replaced with underscores."""
+        path = tmp_path / "test{data}.geojson"
+        path.touch()
+
+        result = _compute_safe_rename(path)
+
+        assert result is not None
+        new_path, _ = result
+        assert "{" not in new_path.name
+        assert "}" not in new_path.name
+
+    def test_path_traversal_sanitized(self, tmp_path: Path) -> None:
+        """Path separators should be sanitized for defense-in-depth."""
+        from portolan_cli.scan_fix import _sanitize_filename
+
+        # Test sanitization directly - path separators should become underscores
+        result = _sanitize_filename("test_data")
+        assert result == "test_data"
+
+        # Backslashes should be sanitized
+        result = _sanitize_filename(r"test\data")
+        assert "\\" not in result
+
+        # Forward slashes should be sanitized
+        result = _sanitize_filename("test/data")
+        assert "/" not in result
+
     # -------------------------------------------------------------------------
     # WINDOWS_RESERVED_NAME: CON, PRN, etc. → _CON, _PRN
     # -------------------------------------------------------------------------
@@ -201,6 +246,29 @@ class TestComputeSafeRename:
         # No rename needed for valid short paths
         assert result is None
 
+    def test_long_directory_path_returns_none(self, tmp_path: Path) -> None:
+        """When directory path alone exceeds threshold, should return None."""
+        # Create a directory structure where the DIR path is > 200 chars
+        # This cannot be auto-fixed by truncating filename
+        long_dir_name = "d" * 100
+        deep_path = tmp_path
+        # Create nested dirs to exceed threshold
+        for _ in range(3):  # 3 x 100 = 300 chars just in dir names
+            deep_path = deep_path / long_dir_name
+        deep_path.mkdir(parents=True, exist_ok=True)
+
+        # Even a short filename can't help
+        path = deep_path / "x.shp"
+        path.touch()
+
+        # Verify the path is actually long
+        assert len(str(path)) > 200, f"Test setup failed: path is only {len(str(path))} chars"
+
+        result = _compute_safe_rename(path)
+
+        # Should return None because dir path is too long to fix
+        assert result is None, "Should return None when directory path exceeds threshold"
+
 
 # =============================================================================
 # Tests for shapefile sidecar handling
@@ -240,6 +308,43 @@ class TestSidecarHandling:
         _, preview = result
         # Preview should mention sidecars being renamed
         assert "dbf" in preview.lower() or "sidecar" in preview.lower()
+
+    def test_find_sidecars_includes_qix(self, tmp_path: Path) -> None:
+        """Should detect .qix spatial index sidecar."""
+        (tmp_path / "data.shp").touch()
+        (tmp_path / "data.qix").touch()
+
+        from portolan_cli.scan_fix import _find_sidecars
+
+        sidecars = _find_sidecars(tmp_path / "data.shp")
+
+        extensions = {s.suffix for s in sidecars}
+        assert ".qix" in extensions
+
+    def test_find_sidecars_includes_shp_xml(self, tmp_path: Path) -> None:
+        """Should detect .shp.xml metadata sidecar."""
+        (tmp_path / "data.shp").touch()
+        (tmp_path / "data.shp.xml").touch()
+
+        from portolan_cli.scan_fix import _find_sidecars
+
+        sidecars = _find_sidecars(tmp_path / "data.shp")
+
+        # Should find the .shp.xml file
+        sidecar_names = [s.name for s in sidecars]
+        assert "data.shp.xml" in sidecar_names
+
+    def test_find_sidecars_includes_qmd(self, tmp_path: Path) -> None:
+        """Should detect .qmd QGIS metadata sidecar."""
+        (tmp_path / "data.shp").touch()
+        (tmp_path / "data.qmd").touch()
+
+        from portolan_cli.scan_fix import _find_sidecars
+
+        sidecars = _find_sidecars(tmp_path / "data.shp")
+
+        extensions = {s.suffix for s in sidecars}
+        assert ".qmd" in extensions
 
 
 # =============================================================================
@@ -371,6 +476,46 @@ class TestApplySafeFixes:
         proposed, applied = apply_safe_fixes(issues, dry_run=False)
 
         # Should handle gracefully without crashing
+        assert len(applied) == 0
+
+    def test_collision_between_two_source_files(self, tmp_path: Path) -> None:
+        """Two files that sanitize to same name should both fail gracefully."""
+        # Both of these would become "donnees.geojson"
+        file1 = tmp_path / "données.geojson"
+        file2 = tmp_path / "donnees.geojson"  # Already the target name
+        file1.write_text("file1")
+        file2.write_text("file2")
+
+        issues = [self._make_issue(file1)]
+
+        proposed, applied = apply_safe_fixes(issues, dry_run=False)
+
+        # Should NOT overwrite existing file
+        assert file1.exists()
+        assert file2.read_text() == "file2"  # Unchanged
+        assert len(applied) == 0
+
+    def test_sidecar_collision_prevents_all_renames(self, tmp_path: Path) -> None:
+        """If any sidecar target exists, entire shapefile rename should fail."""
+        # Source shapefile
+        (tmp_path / "données.shp").touch()
+        (tmp_path / "données.dbf").touch()
+        (tmp_path / "données.shx").touch()
+
+        # Target sidecar already exists
+        (tmp_path / "donnees.dbf").write_text("existing")
+
+        issues = [self._make_issue(tmp_path / "données.shp")]
+
+        proposed, applied = apply_safe_fixes(issues, dry_run=False)
+
+        # All original files should still exist
+        assert (tmp_path / "données.shp").exists()
+        assert (tmp_path / "données.dbf").exists()
+        assert (tmp_path / "données.shx").exists()
+        # Target .dbf should be unchanged
+        assert (tmp_path / "donnees.dbf").read_text() == "existing"
+        # No fixes should have been applied
         assert len(applied) == 0
 
 

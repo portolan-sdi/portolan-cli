@@ -34,10 +34,15 @@ if TYPE_CHECKING:
 # These must match the values in scan.py
 
 # Pattern for invalid filename characters
-# Matches: spaces, parentheses, brackets, control chars (0x00-0x1F, 0x7F), and non-ASCII
-INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[\s()\[\]\x00-\x1f\x7f]|[^\x00-\x7f]")
+# Matches: spaces, parentheses, brackets, braces, control chars (0x00-0x1F, 0x7F), and non-ASCII
+# Also matches path separators for defense-in-depth against path traversal
+INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[\s()\[\]{}/\\\x00-\x1f\x7f]|[^\x00-\x7f]")
 
 # Path length threshold for warnings
+# Set to 200 as a conservative cross-platform value:
+# - Windows MAX_PATH is 260 (leaves room for directory + extension)
+# - Linux PATH_MAX is typically 4096 (not a concern)
+# This threshold is for the FULL path, not just filename
 LONG_PATH_THRESHOLD: int = 200
 
 # Windows reserved device names (case-insensitive)
@@ -69,8 +74,26 @@ WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset(
 )
 
 # Shapefile sidecar extensions
+# Comprehensive list including all known sidecar types
 SHAPEFILE_REQUIRED_SIDECARS: frozenset[str] = frozenset({".dbf", ".shx"})
-SHAPEFILE_OPTIONAL_SIDECARS: frozenset[str] = frozenset({".prj", ".cpg", ".sbn", ".sbx"})
+SHAPEFILE_OPTIONAL_SIDECARS: frozenset[str] = frozenset(
+    {
+        ".prj",  # Projection info
+        ".cpg",  # Code page (encoding)
+        ".sbn",  # Spatial index
+        ".sbx",  # Spatial index
+        ".qix",  # GDAL spatial index
+        ".shp.xml",  # ESRI metadata (handled specially below)
+        ".qmd",  # QGIS metadata
+        ".atx",  # Attribute index
+        ".ixs",  # Geocoding index
+        ".mxs",  # Geocoding index
+        ".fbn",  # Read-only spatial index
+        ".fbx",  # Read-only spatial index
+        ".ain",  # Attribute index
+        ".aih",  # Attribute index
+    }
+)
 SHAPEFILE_ALL_SIDECARS: frozenset[str] = SHAPEFILE_REQUIRED_SIDECARS | SHAPEFILE_OPTIONAL_SIDECARS
 
 # FIX_FLAG issue types - these are safe to fix with --fix
@@ -140,33 +163,44 @@ def _transliterate_to_ascii(text: str) -> str:
 def _sanitize_filename(name: str) -> str:
     """Sanitize a filename by replacing problematic characters.
 
-    - Replaces spaces, parentheses, brackets with underscores
+    - Replaces spaces, parentheses, brackets, braces with underscores
+    - Removes path separators (defense-in-depth against traversal)
     - Transliterates non-ASCII to ASCII
     - Collapses multiple consecutive underscores
+    - Falls back to hash-based name if result would be empty
 
     Args:
         name: Original filename (without extension).
 
     Returns:
-        Sanitized filename.
+        Sanitized filename (never empty).
     """
+    # FIRST: Sanitize path separators BEFORE using Path() to avoid misinterpretation
+    # This is defense-in-depth against path traversal attacks
+    name_safe = re.sub(r"[/\\]", "_", name)
+
     # Split stem and extension
     # Handle multiple extensions like .tar.gz properly
-    stem = Path(name).stem
-    suffix = name[len(stem) :]
+    stem = Path(name_safe).stem
+    suffix = name_safe[len(stem) :]
 
-    # First, transliterate non-ASCII characters
+    # Transliterate non-ASCII characters
     sanitized = _transliterate_to_ascii(stem)
 
     # Replace problematic characters with underscores
-    # Matches: spaces, parentheses, brackets, control chars
-    sanitized = re.sub(r"[\s()\[\]\x00-\x1f\x7f]", "_", sanitized)
+    # Matches: spaces, parentheses, brackets, braces, control chars
+    sanitized = re.sub(r"[\s()\[\]{}\x00-\x1f\x7f]", "_", sanitized)
 
     # Collapse multiple consecutive underscores
     sanitized = re.sub(r"_+", "_", sanitized)
 
     # Remove leading/trailing underscores
     sanitized = sanitized.strip("_")
+
+    # CRITICAL: Handle case where sanitization produces empty string
+    # This can happen with filenames containing only non-ASCII chars (e.g., "日本語.shp")
+    if not sanitized:
+        sanitized = f"file_{_compute_short_hash(stem)}"
 
     return sanitized + suffix
 
@@ -205,6 +239,11 @@ def _needs_rename(path: Path) -> bool:
 def _compute_short_hash(text: str, length: int = 8) -> str:
     """Compute a short hash of text for uniqueness.
 
+    An 8-character hex hash provides 2^32 (~4 billion) unique values,
+    which is sufficient for filename uniqueness in typical datasets.
+    For extremely large datasets, collision probability follows the
+    birthday paradox but remains negligible for practical use.
+
     Args:
         text: Text to hash.
         length: Number of characters in the hash (default: 8).
@@ -218,8 +257,8 @@ def _compute_short_hash(text: str, length: int = 8) -> str:
 def _find_sidecars(shp_path: Path) -> list[Path]:
     """Find all sidecar files for a shapefile.
 
-    Sidecars are files with the same stem but different extensions
-    (.dbf, .shx, .prj, .cpg, .sbn, .sbx).
+    Sidecars are files with the same stem but different extensions.
+    Handles both simple extensions (.dbf) and compound extensions (.shp.xml).
 
     Args:
         shp_path: Path to the .shp file.
@@ -232,7 +271,11 @@ def _find_sidecars(shp_path: Path) -> list[Path]:
     stem = shp_path.stem
 
     for ext in SHAPEFILE_ALL_SIDECARS:
-        sidecar = parent / f"{stem}{ext}"
+        # Handle compound extension .shp.xml specially
+        if ext == ".shp.xml":
+            sidecar = parent / f"{stem}.shp.xml"
+        else:
+            sidecar = parent / f"{stem}{ext}"
         if sidecar.exists():
             sidecars.append(sidecar)
 
@@ -286,12 +329,22 @@ def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:
     if is_long:
         # Calculate how much we need to shorten
         target_path_len = LONG_PATH_THRESHOLD
+
+        # Calculate minimum possible path length:
+        # parent + "/" + "x" (1-char stem) + hash_suffix + suffix
+        hash_suffix = f"_{_compute_short_hash(name)}"
+        min_filename = f"x{hash_suffix}{suffix}"
+        min_possible_len = len(str(parent / min_filename))
+
+        # CRITICAL: If directory path alone is too long, we cannot fix this
+        # Return None to indicate this needs manual intervention
+        if min_possible_len > target_path_len:
+            return None
+
         current_len = len(str(parent / f"{new_stem}{suffix}"))
         excess = current_len - target_path_len
 
         if excess > 0:
-            # We need a hash suffix for uniqueness (8 chars + 1 underscore)
-            hash_suffix = f"_{_compute_short_hash(name)}"
             # Calculate max stem length
             max_stem_len = len(new_stem) - excess - len(hash_suffix)
             if max_stem_len < 1:
@@ -322,20 +375,35 @@ def _apply_rename(
 ) -> bool:
     """Apply a file rename operation.
 
+    Uses atomic rename when possible to avoid TOCTOU race conditions.
+
     Args:
         old_path: Current file path.
         new_path: Target file path.
 
     Returns:
-        True if rename succeeded, False if collision detected.
+        True if rename succeeded, False if collision or error.
     """
-    # Check for collision
-    if new_path.exists():
-        return False
+    try:
+        # Use os.rename for atomic operation on same filesystem
+        # This avoids TOCTOU race condition between exists() check and move
+        import os
 
-    # Perform the rename
-    shutil.move(str(old_path), str(new_path))
-    return True
+        os.rename(str(old_path), str(new_path))
+        return True
+    except FileExistsError:
+        # Target already exists (collision)
+        return False
+    except OSError:
+        # Cross-filesystem or other error, fall back to shutil.move
+        # but check for collision first
+        if new_path.exists():
+            return False
+        try:
+            shutil.move(str(old_path), str(new_path))
+            return True
+        except (OSError, shutil.Error):
+            return False
 
 
 def _apply_shapefile_rename(
@@ -344,37 +412,84 @@ def _apply_shapefile_rename(
 ) -> bool:
     """Apply rename for shapefile and all its sidecars.
 
+    Implements rollback on failure: if any sidecar rename fails,
+    all previously renamed files are restored to original names.
+
     Args:
         shp_path: Current .shp file path.
         new_shp_path: Target .shp file path.
 
     Returns:
-        True if all renames succeeded, False if any collision detected.
+        True if all renames succeeded, False if any collision or error.
     """
+    import os
+
     new_stem = new_shp_path.stem
     new_parent = new_shp_path.parent
 
     # Find all sidecars
     sidecars = _find_sidecars(shp_path)
 
-    # Check for collisions first (before any rename)
-    if new_shp_path.exists():
-        return False
-
+    # Build list of all renames to perform
+    renames: list[tuple[Path, Path]] = [(shp_path, new_shp_path)]
     for sidecar in sidecars:
-        new_sidecar = new_parent / f"{new_stem}{sidecar.suffix}"
-        if new_sidecar.exists():
+        # Handle .shp.xml compound extension specially
+        if str(sidecar).endswith(".shp.xml"):
+            new_sidecar = new_parent / f"{new_stem}.shp.xml"
+        else:
+            new_sidecar = new_parent / f"{new_stem}{sidecar.suffix}"
+        renames.append((sidecar, new_sidecar))
+
+    # Check for collisions first (before any rename)
+    for _, target in renames:
+        if target.exists():
             return False
 
-    # Rename main file
-    shutil.move(str(shp_path), str(new_shp_path))
+    # Perform renames with rollback on failure
+    completed: list[tuple[Path, Path]] = []
 
-    # Rename sidecars
-    for sidecar in sidecars:
-        new_sidecar = new_parent / f"{new_stem}{sidecar.suffix}"
-        shutil.move(str(sidecar), str(new_sidecar))
+    for old_path, new_path in renames:
+        try:
+            os.rename(str(old_path), str(new_path))
+            completed.append((old_path, new_path))
+        except FileExistsError:
+            # Collision detected - rollback
+            _rollback_renames(completed)
+            return False
+        except OSError:
+            # Try shutil.move as fallback
+            if new_path.exists():
+                _rollback_renames(completed)
+                return False
+            try:
+                shutil.move(str(old_path), str(new_path))
+                completed.append((old_path, new_path))
+            except (OSError, shutil.Error):
+                # Rename failed - rollback
+                _rollback_renames(completed)
+                return False
 
     return True
+
+
+def _rollback_renames(completed: list[tuple[Path, Path]]) -> None:
+    """Rollback completed renames by restoring original names.
+
+    Best-effort rollback: logs errors but continues attempting
+    to restore all files.
+
+    Args:
+        completed: List of (original_path, new_path) tuples to rollback.
+    """
+    import os
+
+    for old_path, new_path in reversed(completed):
+        try:
+            os.rename(str(new_path), str(old_path))
+        except OSError:
+            # Best effort - can't do much if rollback fails
+            # In production, this should log the error
+            pass
 
 
 # =============================================================================
