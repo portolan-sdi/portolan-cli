@@ -131,17 +131,17 @@ class TestScanJsonOutput:
     def test_scan_json_error_has_errors_array(
         self, runner: CliRunner, scan_fixtures_dir: Path
     ) -> None:
-        """--format=json scan with errors includes errors array."""
+        """--format=json scan with issues includes data with issues."""
         result = runner.invoke(
             cli, ["--format=json", "scan", str(scan_fixtures_dir / "incomplete_shapefile")]
         )
 
-        # Should exit 1 for errors
-        assert result.exit_code == 1
+        # Scan is informational — always exit 0 on success
+        assert result.exit_code == 0
 
         data = json.loads(result.output)
 
-        # Error case: success=false, errors present
+        # Issues found: success=false in envelope, but exit code still 0
         # Note: The scan issues are reported in data, not top-level errors
         # The envelope errors are for CLI-level errors (like FileNotFoundError)
         assert "success" in data

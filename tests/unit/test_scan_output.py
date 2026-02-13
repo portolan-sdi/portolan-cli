@@ -53,11 +53,22 @@ def make_scan_issue(
     severity: Severity,
     message: str = "Test issue",
     suggestion: str | None = None,
+    relative_path: str | None = None,
 ) -> ScanIssue:
-    """Create a ScanIssue for testing."""
+    """Create a ScanIssue for testing.
+
+    Args:
+        path: The absolute path to the file/directory with the issue.
+        issue_type: The type of issue.
+        severity: The severity level.
+        message: The issue message.
+        suggestion: Optional suggestion for fixing.
+        relative_path: Optional relative path override. If not provided,
+            uses path.name (basename only).
+    """
     return ScanIssue(
         path=path,
-        relative_path=str(path.name),
+        relative_path=relative_path if relative_path is not None else str(path.name),
         issue_type=issue_type,
         severity=severity,
         message=message,
@@ -817,3 +828,317 @@ class TestFullScanOutputFormat:
 
         # Should have next steps
         assert "next step" in output.lower()
+
+
+# =============================================================================
+# Tests for --errors-only Output Mode
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestManualOnlyOutput:
+    """Tests for --errors-only flag output formatting with tree structure."""
+
+    def test_manual_only_shows_tree_structure(self, tmp_path: Path) -> None:
+        """manual_only=True shows issues in tree structure."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[make_scanned_file(tmp_path / "data.geojson")],
+            issues=[
+                make_scan_issue(
+                    tmp_path / "subdir" / "nested",
+                    IssueType.MULTIPLE_PRIMARIES,
+                    Severity.ERROR,
+                    message="Multiple primary geo files",
+                    relative_path="subdir/nested",
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should show tree structure with directory
+        assert "subdir" in output
+        # Should show the issue marker (✗ for error)
+        assert "\u2717" in output or "nested" in output
+
+    def test_manual_only_groups_by_directory(self, tmp_path: Path) -> None:
+        """manual_only=True groups multiple issues under same directory."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[
+                make_scan_issue(
+                    tmp_path / "data" / "file1.shp",
+                    IssueType.INCOMPLETE_SHAPEFILE,
+                    Severity.ERROR,
+                    message="Missing .shx",
+                    relative_path="data/file1.shp",
+                ),
+                make_scan_issue(
+                    tmp_path / "data" / "file2.shp",
+                    IssueType.INCOMPLETE_SHAPEFILE,
+                    Severity.ERROR,
+                    message="Missing .dbf",
+                    relative_path="data/file2.shp",
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Directory should appear once, not repeated for each issue
+        assert output.count("data") >= 1
+        # Both files should be shown
+        assert "file1.shp" in output
+        assert "file2.shp" in output
+
+    def test_manual_only_hides_ready_files(self, tmp_path: Path) -> None:
+        """manual_only=True hides the 'ready to import' section."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                make_scanned_file(tmp_path / "a.geojson"),
+                make_scanned_file(tmp_path / "b.geojson"),
+                make_scanned_file(tmp_path / "c.geojson"),
+            ],
+            issues=[
+                make_scan_issue(
+                    tmp_path / "collection",
+                    IssueType.MULTIPLE_PRIMARIES,
+                    Severity.ERROR,
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should NOT show ready files count
+        assert "3 geo-asset" not in output.lower()
+        assert "ready to import" not in output.lower()
+
+    def test_manual_only_hides_fixable_issues(self, tmp_path: Path) -> None:
+        """manual_only=True hides issues fixable with --fix."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[make_scanned_file(tmp_path / "data.geojson")],
+            issues=[
+                # FIX_FLAG issue - should be hidden
+                make_scan_issue(
+                    tmp_path / "file with spaces.geojson",
+                    IssueType.INVALID_CHARACTERS,
+                    Severity.WARNING,
+                    message="Invalid characters in filename",
+                ),
+                # Manual issue - should be shown
+                make_scan_issue(
+                    tmp_path / "collection",
+                    IssueType.MULTIPLE_PRIMARIES,
+                    Severity.ERROR,
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should NOT show fixable issue details
+        assert "invalid characters" not in output.lower()
+        assert "--fix" not in output
+
+    def test_manual_only_shows_count_header(self, tmp_path: Path) -> None:
+        """manual_only=True shows count of manual resolution items in header."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[make_scanned_file(tmp_path / "data.geojson")],
+            issues=[
+                make_scan_issue(
+                    tmp_path / "dir1",
+                    IssueType.MULTIPLE_PRIMARIES,
+                    Severity.ERROR,
+                ),
+                make_scan_issue(
+                    tmp_path / "dir2",
+                    IssueType.MIXED_FORMATS,
+                    Severity.WARNING,
+                ),
+            ],
+            skipped=[],
+            directories_scanned=2,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should show count of manual issues (2) in header
+        assert "2" in output
+        assert "manual" in output.lower() or "require" in output.lower()
+
+    def test_manual_only_shows_short_descriptions(self, tmp_path: Path) -> None:
+        """manual_only=True shows short inline descriptions, not full sentences."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[
+                make_scan_issue(
+                    tmp_path / "data.shp",
+                    IssueType.INCOMPLETE_SHAPEFILE,
+                    Severity.ERROR,
+                    message="Shapefile missing required sidecars: .shx, .dbf",
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should show the file with a short description
+        assert "data.shp" in output
+        # Description should be present (either full or shortened)
+        assert "shx" in output.lower() or "missing" in output.lower()
+
+    def test_manual_only_no_errors_message(self, tmp_path: Path) -> None:
+        """manual_only=True with no manual issues shows success message."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                make_scanned_file(tmp_path / "a.geojson"),
+                make_scanned_file(tmp_path / "b.geojson"),
+            ],
+            issues=[
+                # Only fixable issues, no manual
+                make_scan_issue(
+                    tmp_path / "file with spaces.geojson",
+                    IssueType.INVALID_CHARACTERS,
+                    Severity.WARNING,
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should show success message
+        assert "no files require manual resolution" in output.lower()
+
+    def test_manual_only_completely_clean(self, tmp_path: Path) -> None:
+        """manual_only=True with no issues at all shows success message."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[make_scanned_file(tmp_path / "data.geojson")],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should show success message
+        assert "no files require manual resolution" in output.lower()
+
+    def test_manual_only_uses_severity_markers(self, tmp_path: Path) -> None:
+        """manual_only=True uses ✗ for errors and ⚠ for warnings."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[
+                make_scan_issue(
+                    tmp_path / "error_file.shp",
+                    IssueType.INCOMPLETE_SHAPEFILE,
+                    Severity.ERROR,
+                    message="Missing sidecars",
+                ),
+                make_scan_issue(
+                    tmp_path / "warning_dir",
+                    IssueType.MULTIPLE_PRIMARIES,
+                    Severity.WARNING,
+                    message="Multiple primaries",
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should use markers: ✗ for error, ⚠ for warning
+        assert "\u2717" in output  # ✗
+        assert "\u26a0" in output  # ⚠
+
+    def test_manual_only_handles_root_directory_issues(self, tmp_path: Path) -> None:
+        """manual_only=True handles issues on the root directory itself."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[
+                # Directory-level issue (relative_path is ".")
+                make_scan_issue(
+                    tmp_path,
+                    IssueType.MULTIPLE_PRIMARIES,
+                    Severity.WARNING,
+                    message="Directory has 5 primary assets",
+                    relative_path=".",
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should show the root directory issue
+        assert "5 primary assets" in output
+        # Should have the warning marker
+        assert "\u26a0" in output
+
+    def test_manual_only_singular_grammar(self, tmp_path: Path) -> None:
+        """manual_only=True uses correct grammar for singular case."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[
+                make_scan_issue(
+                    tmp_path / "file.shp",
+                    IssueType.INCOMPLETE_SHAPEFILE,
+                    Severity.ERROR,
+                    message="Missing sidecars",
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should say "1 file requires" not "1 file require"
+        assert "1 file requires" in output

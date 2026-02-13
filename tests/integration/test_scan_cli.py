@@ -76,12 +76,12 @@ class TestScanCLI:
         assert "issues" in data
         assert "summary" in data
 
-    def test_scan_detects_errors_exits_nonzero(self, runner: CliRunner, fixtures_dir: Path) -> None:
-        """portolan scan exits with code 1 when errors found."""
+    def test_scan_detects_issues_exits_zero(self, runner: CliRunner, fixtures_dir: Path) -> None:
+        """portolan scan exits with code 0 even when issues found (informational)."""
         result = runner.invoke(cli, ["scan", str(fixtures_dir / "incomplete_shapefile")])
 
-        # Should exit with 1 due to incomplete shapefile error
-        assert result.exit_code == 1
+        # Scan is informational — always exit 0 on success
+        assert result.exit_code == 0
         assert "error" in result.output.lower() or "missing" in result.output.lower()
 
     def test_scan_no_recursive_flag(self, runner: CliRunner, fixtures_dir: Path) -> None:
@@ -235,12 +235,12 @@ class TestScanFullWorkflow:
 
         result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
 
-        # Should exit with 1 due to ERROR (zero-byte file)
-        assert result.exit_code == 1
+        # Scan is informational — always exit 0 on success
+        assert result.exit_code == 0
 
         envelope = json.loads(result.output)
 
-        # Should have envelope structure (success=False due to errors)
+        # JSON envelope still indicates issues found (success=False)
         assert envelope["success"] is False
         assert envelope["command"] == "scan"
 
@@ -525,5 +525,76 @@ class TestScanErrorHandling:
         result = runner.invoke(cli, ["scan", str(tmp_path)])
 
         # Should show hint/suggestion
-        assert result.exit_code == 1  # Incomplete shapefile is an error
+        assert result.exit_code == 0  # Scan is informational
         assert "hint" in result.output.lower() or "add" in result.output.lower()
+
+
+# =============================================================================
+# Tests for --manual Flag
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScanManualFlag:
+    """Tests for the --manual CLI flag."""
+
+    def test_manual_flag_exists(self, runner: CliRunner, tmp_path: Path) -> None:
+        """The --manual flag is recognized by the CLI."""
+        geo_file = tmp_path / "data.geojson"
+        geo_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--manual"])
+
+        # Should not fail with "no such option" error
+        assert "no such option" not in result.output.lower()
+        assert result.exit_code == 0
+
+    def test_manual_shows_manual_issues(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--manual shows issues requiring manual resolution."""
+        # Create multiple primary files in same directory (MANUAL issue)
+        (tmp_path / "a.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "b.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--manual"])
+
+        # Should mention manual resolution needed
+        assert "manual" in result.output.lower() or "require" in result.output.lower()
+
+    def test_manual_hides_ready_count(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--manual hides the 'X geo-assets ready' message."""
+        # Create multiple primary files (will trigger MANUAL issue)
+        (tmp_path / "a.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "b.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--manual"])
+
+        # Should NOT show the ready count
+        assert "geo-asset" not in result.output.lower()
+
+    def test_manual_no_errors_shows_success(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--manual with no manual issues shows success message."""
+        # Single file = no manual issues
+        subdir = tmp_path / "collection"
+        subdir.mkdir()
+        (subdir / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--manual"])
+
+        # Should show success message
+        assert "no files require manual resolution" in result.output.lower()
+        assert result.exit_code == 0
+
+    def test_manual_hides_fixable_issues(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--manual hides issues fixable with --fix."""
+        # File with invalid characters (FIX_FLAG issue)
+        subdir = tmp_path / "collection"
+        subdir.mkdir()
+        bad_file = subdir / "file with spaces.geojson"
+        bad_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--manual"])
+
+        # Should NOT show the fixable issue
+        assert "--fix" not in result.output
+        # Should show success since no manual issues
+        assert "no files require manual resolution" in result.output.lower()

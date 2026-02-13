@@ -23,7 +23,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.scan import IssueType, ScanResult, Severity
+from portolan_cli.scan import IssueType, ScanIssue, ScanResult, Severity
 from portolan_cli.scan_classify import FileCategory, SkippedFile
 
 if TYPE_CHECKING:
@@ -107,6 +107,26 @@ class ChecklistItem:
     message: str | None = None
 
 
+def _check_naming_match(stem: str, parent: str) -> bool:
+    """Check if a file stem matches its parent directory name (flexible)."""
+    stem_l, parent_l = stem.lower(), parent.lower()
+    return stem_l == parent_l or parent_l in stem_l or stem_l in parent_l
+
+
+def _count_naming_issues(result: ScanResult) -> int:
+    """Count geo-assets with names that don't match their parent directory."""
+    return sum(
+        1
+        for f in result.ready
+        if f.path.parent != result.root and not _check_naming_match(f.path.stem, f.path.parent.name)
+    )
+
+
+def _count_issues_by_type(result: ScanResult, issue_type: IssueType) -> int:
+    """Count issues of a specific type."""
+    return sum(1 for i in result.issues if i.issue_type == issue_type)
+
+
 def generate_structure_checklist(result: ScanResult) -> list[ChecklistItem]:
     """Generate a structure validation checklist from scan result.
 
@@ -126,88 +146,53 @@ def generate_structure_checklist(result: ScanResult) -> list[ChecklistItem]:
     Returns:
         List of checklist items with pass/fail status.
     """
-    items: list[ChecklistItem] = []
-
-    # Check 1: Root catalog.json (will be generated, so always "pass" with note)
     catalog_exists = (result.root / "catalog.json").exists()
-    items.append(
+    readme_exists = (result.root / "README.md").exists()
+    root_asset_count = sum(1 for f in result.ready if f.path.parent == result.root)
+    multiple_primaries = _count_issues_by_type(result, IssueType.MULTIPLE_PRIMARIES)
+    mixed_structure = _count_issues_by_type(result, IssueType.MIXED_FLAT_MULTIITEM)
+    naming_issues = _count_naming_issues(result)
+
+    return [
         ChecklistItem(
             name="root_catalog",
             description="Root catalog.json",
-            passed=True,  # Will be generated if missing
+            passed=True,
             message="exists" if catalog_exists else "will generate",
-        )
-    )
-
-    # Check 2: Root README.md
-    readme_exists = (result.root / "README.md").exists()
-    items.append(
+        ),
         ChecklistItem(
             name="root_readme",
             description="Root README.md",
-            passed=True,  # Will be generated if missing
+            passed=True,
             message="exists" if readme_exists else "will generate",
-        )
-    )
-
-    # Check 3: No geo-assets at root level
-    root_assets = [f for f in result.ready if f.path.parent == result.root]
-    items.append(
+        ),
         ChecklistItem(
             name="no_root_geo_assets",
             description="No geo-assets at root level",
-            passed=len(root_assets) == 0,
-            message=f"{len(root_assets)} found at root" if root_assets else None,
-        )
-    )
-
-    # Check 4: Check for multiple primaries issues
-    multiple_primaries = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
-    items.append(
+            passed=root_asset_count == 0,
+            message=f"{root_asset_count} found at root" if root_asset_count else None,
+        ),
         ChecklistItem(
             name="single_geo_asset_per_dir",
             description="Each leaf dir has exactly 1 geo-asset",
-            passed=len(multiple_primaries) == 0,
-            message=f"{len(multiple_primaries)} dirs with multiple assets"
+            passed=multiple_primaries == 0,
+            message=f"{multiple_primaries} dirs with multiple assets"
             if multiple_primaries
             else None,
-        )
-    )
-
-    # Check 5: No mixed flat/multi-item
-    mixed_structure = [i for i in result.issues if i.issue_type == IssueType.MIXED_FLAT_MULTIITEM]
-    items.append(
+        ),
         ChecklistItem(
             name="no_mixed_structure",
             description="No mixed flat/multi-item collections",
-            passed=len(mixed_structure) == 0,
+            passed=mixed_structure == 0,
             message="unclear structure detected" if mixed_structure else None,
-        )
-    )
-
-    # Check 6: Geo-asset naming (basic check - stem matches parent dir name)
-    naming_issues = []
-    for f in result.ready:
-        parent_name = f.path.parent.name
-        # Skip root-level files (already handled)
-        if f.path.parent == result.root:
-            continue
-        # Check if stem contains parent name or vice versa (flexible matching)
-        stem = f.path.stem.lower()
-        parent_lower = parent_name.lower()
-        if stem != parent_lower and parent_lower not in stem and stem not in parent_lower:
-            naming_issues.append(f.path)
-
-    items.append(
+        ),
         ChecklistItem(
             name="geo_asset_naming",
             description="Geo-asset names match dir/collection ID",
-            passed=len(naming_issues) <= len(result.ready) // 2,  # Allow some flexibility
-            message=f"{len(naming_issues)} may need renaming" if naming_issues else None,
-        )
-    )
-
-    return items
+            passed=naming_issues <= len(result.ready) // 2,
+            message=f"{naming_issues} may need renaming" if naming_issues else None,
+        ),
+    ]
 
 
 # =============================================================================
@@ -305,6 +290,16 @@ def format_collection_suggestion(
 # =============================================================================
 
 
+def _count_by_fixability(result: ScanResult, fixability: Fixability) -> int:
+    """Count issues with a specific fixability level."""
+    return sum(1 for i in result.issues if get_fixability(i.issue_type) == fixability)
+
+
+def _pluralize(count: int, singular: str, plural: str) -> str:
+    """Return singular or plural form based on count."""
+    return singular if count == 1 else plural
+
+
 def generate_next_steps(result: ScanResult) -> list[str]:
     """Generate actionable next steps based on scan result.
 
@@ -314,44 +309,35 @@ def generate_next_steps(result: ScanResult) -> list[str]:
     Returns:
         List of next step strings, ready for display.
     """
+    if not result.ready:
+        return [
+            "No geo-assets found. Check if files have supported extensions "
+            "(.geojson, .shp, .gpkg, .tif, .parquet)"
+        ]
+
+    fixable = _count_by_fixability(result, Fixability.FIX_FLAG)
+    manual = _count_by_fixability(result, Fixability.MANUAL)
     steps: list[str] = []
 
-    # No files found
-    if not result.ready:
+    if fixable > 0:
         steps.append(
-            "No geo-assets found. Check if files have supported extensions (.geojson, .shp, .gpkg, .tif, .parquet)"
+            f"Run `portolan scan --fix` to auto-rename {fixable} "
+            f"file{_pluralize(fixable, '', 's')} with invalid characters"
         )
-        return steps
-
-    # Count issues by fixability
-    fixable_count = sum(
-        1 for i in result.issues if get_fixability(i.issue_type) == Fixability.FIX_FLAG
-    )
-    manual_count = sum(
-        1 for i in result.issues if get_fixability(i.issue_type) == Fixability.MANUAL
-    )
-
-    # Add --fix suggestion if there are fixable issues
-    if fixable_count > 0:
+    if manual > 0:
         steps.append(
-            f"Run `portolan scan --fix` to auto-rename {fixable_count} file{'s' if fixable_count != 1 else ''} with invalid characters"
+            f"{manual} file{_pluralize(manual, ' needs', 's need')} manual grouping decisions "
+            "(multiple geo-assets in same dir)"
         )
-
-    # Add manual intervention guidance
-    if manual_count > 0:
+    if result.error_count > 0:
         steps.append(
-            f"{manual_count} file{'s need' if manual_count != 1 else ' needs'} manual grouping decisions (multiple geo-assets in same dir)"
+            f"Fix {result.error_count} error{_pluralize(result.error_count, '', 's')} before proceeding"
         )
-
-    # Ready for catalog generation?
-    if result.error_count == 0 and manual_count == 0:
-        if fixable_count == 0:
-            steps.append("Structure valid: ready to generate catalog")
-        else:
-            steps.append("After fixes: ready to generate catalog")
-    elif result.error_count > 0:
+    elif manual == 0:
         steps.append(
-            f"Fix {result.error_count} error{'s' if result.error_count != 1 else ''} before proceeding"
+            "After fixes: ready to generate catalog"
+            if fixable
+            else "Structure valid: ready to generate catalog"
         )
 
     return steps
@@ -574,10 +560,177 @@ def _format_skipped(result: ScanResult) -> list[str]:
     return lines
 
 
+def _get_severity_marker(severity: Severity) -> str:
+    """Get the marker symbol for a severity level.
+
+    Args:
+        severity: The severity level.
+
+    Returns:
+        Unicode marker: ✗ for error, ⚠ for warning, ℹ for info.
+    """
+    markers = {
+        Severity.ERROR: "\u2717",  # ✗
+        Severity.WARNING: "\u26a0",  # ⚠
+        Severity.INFO: "\u2139",  # ℹ
+    }
+    return markers.get(severity, "\u2022")  # • as fallback
+
+
+def _parse_issue_location(relative_path: str) -> tuple[str, str]:
+    """Parse an issue's relative path into (directory, filename).
+
+    Args:
+        relative_path: The relative path string from the issue.
+
+    Returns:
+        Tuple of (directory_path, filename) for tree grouping.
+    """
+    rel_path = Path(relative_path) if relative_path else Path(".")
+    rel_str = str(rel_path)
+
+    # Root directory issue
+    if rel_str in (".", ""):
+        return ".", "."
+    # File directly in root
+    if rel_path.parent == Path("."):
+        return ".", rel_str
+    # File in subdirectory
+    return str(rel_path.parent), rel_path.name
+
+
+def _build_errors_tree(
+    manual_issues: list[ScanIssue],
+) -> dict[str, list[tuple[str, Severity, str]]]:
+    """Build a tree structure grouping issues by directory.
+
+    Args:
+        manual_issues: List of issues requiring manual resolution.
+
+    Returns:
+        Dict mapping directory paths to list of (filename, severity, message) tuples.
+    """
+    tree: dict[str, list[tuple[str, Severity, str]]] = defaultdict(list)
+
+    for issue in manual_issues:
+        dir_path, filename = _parse_issue_location(issue.relative_path)
+        tree[dir_path].append((filename, issue.severity, _shorten_message(issue.message)))
+
+    return dict(tree)
+
+
+# Message shortening patterns: (substring_to_match, short_form)
+_MESSAGE_PATTERNS: list[tuple[str, str]] = [
+    ("File is empty", "empty file"),
+    ("Sidecar files without primary", "orphan sidecar"),
+    ("both raster and vector", "mixed formats"),
+    ("Duplicate basenames", "duplicate basename"),
+    ("files at root and in subdirectories", "unclear structure"),
+]
+
+
+def _shorten_message(message: str) -> str:
+    """Shorten a message for inline tree display.
+
+    Args:
+        message: The full issue message.
+
+    Returns:
+        Shortened message suitable for inline display.
+    """
+    # Handle special case: shapefile sidecars (extract the sidecar list)
+    if message.startswith("Shapefile missing required sidecars:"):
+        return f"missing {message.split(':')[1].strip()}"
+
+    # Handle special case: primary assets count (extract the number)
+    if message.startswith("Directory has") and "primary assets" in message:
+        parts = message.split()
+        return f"{parts[2]} primary assets" if len(parts) >= 4 else message[:37] + "..."
+
+    # Check simple substring patterns
+    for pattern, short_form in _MESSAGE_PATTERNS:
+        if pattern in message:
+            return short_form
+
+    # Default: truncate if too long
+    return message[:37] + "..." if len(message) > 40 else message
+
+
+def _render_errors_tree(tree: dict[str, list[tuple[str, Severity, str]]]) -> list[str]:
+    """Render the error tree as formatted lines.
+
+    Args:
+        tree: Dict mapping directory paths to list of (filename, severity, message).
+
+    Returns:
+        List of formatted output lines.
+    """
+    lines: list[str] = []
+
+    # Sort directories: root first, then alphabetically
+    sorted_dirs = sorted(tree.keys(), key=lambda d: ("" if d == "." else d))
+
+    for dir_path in sorted_dirs:
+        issues = tree[dir_path]
+
+        # Show directory header (skip for root if only one entry)
+        if dir_path != "." or len(tree) > 1:
+            if dir_path == ".":
+                lines.append("./")
+            else:
+                lines.append(f"{dir_path}/")
+
+        # Show issues under this directory
+        indent = "  " if (dir_path != "." or len(tree) > 1) else ""
+        for filename, severity, message in issues:
+            marker = _get_severity_marker(severity)
+            if filename == ".":
+                # Directory-level issue
+                lines.append(f"{indent}{marker} {message}")
+            else:
+                lines.append(f"{indent}{marker} {filename} ({message})")
+
+    return lines
+
+
+def _format_manual_only(result: ScanResult) -> str:
+    """Format output showing only issues requiring manual resolution.
+
+    Uses a tree structure grouped by directory for easier scanning.
+
+    Args:
+        result: The scan result to format.
+
+    Returns:
+        Formatted output showing only manual-resolution issues.
+    """
+    # Filter to only MANUAL fixability issues
+    manual_issues = [
+        issue for issue in result.issues if get_fixability(issue.issue_type) == Fixability.MANUAL
+    ]
+
+    if not manual_issues:
+        return "\u2713 No files require manual resolution"
+
+    lines: list[str] = []
+    count = len(manual_issues)
+    plural = "s" if count != 1 else ""
+    verb = "require" if count != 1 else "requires"
+    lines.append(f"\u2717 {count} file{plural} {verb} manual resolution")
+    lines.append("")
+
+    # Build and render the tree
+    tree = _build_errors_tree(manual_issues)
+    lines.extend(_render_errors_tree(tree))
+
+    return "\n".join(lines)
+
+
 def format_scan_output(
     result: ScanResult,
     show_tree: bool = False,
     show_missing: bool = True,
+    manual_only: bool = False,
 ) -> str:
     """Format complete scan output for terminal display.
 
@@ -585,10 +738,15 @@ def format_scan_output(
         result: The scan result to format.
         show_tree: If True, include tree view.
         show_missing: If True, show expected but missing files in tree.
+        manual_only: If True, show only issues requiring manual resolution.
 
     Returns:
         Complete formatted output string.
     """
+    # Handle manual-only mode
+    if manual_only:
+        return _format_manual_only(result)
+
     lines: list[str] = []
 
     # Header and format breakdown
