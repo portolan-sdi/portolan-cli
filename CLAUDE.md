@@ -416,3 +416,10 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 | [PyArrow v22+ ABI](context/shared/known-issues/pyarrow-abseil-abi.md) | Import failures on Ubuntu 22.04; pinned to `<22.0.0` |
 | [geoparquet-io Windows segfault](context/shared/known-issues/geoparquet-io-windows-segfault.md) | Crashes on malformed input; test skipped on Windows |
 | [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
+
+## Active Technologies
+- Python 3.10+ (per pyproject.toml) + Click (CLI framework per ADR-0002) (004-json-output)
+- N/A (no persistent storage changes) (004-json-output)
+
+## Recent Changes
+- 004-json-output: Added Python 3.10+ (per pyproject.toml) + Click (CLI framework per ADR-0002)
