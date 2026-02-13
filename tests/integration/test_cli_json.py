@@ -269,21 +269,61 @@ class TestErrorScenariosJsonOutput:
 
     @pytest.mark.integration
     def test_scan_nonexistent_produces_json_error(self, runner: CliRunner, tmp_path: Path) -> None:
-        """--format=json scan on nonexistent path produces JSON error."""
+        """--format=json scan on nonexistent path produces JSON error envelope."""
         nonexistent = tmp_path / "does_not_exist"
 
-        # Use a path that exists as a directory (tmp_path) but pass a nonexistent subdir
         result = runner.invoke(cli, ["--format=json", "scan", str(nonexistent)])
 
-        # Click validation happens before our code, so exit code 2
-        # But when path exists as requirement, we get our error handling
-        # For this test, let's use a path that doesn't exist
-        assert result.exit_code in (1, 2)
+        # Should exit 1 (our error handling) and produce valid JSON
+        assert result.exit_code == 1
 
-        # If it's our error (exit 1), should be valid JSON
-        if result.exit_code == 1:
-            data = json.loads(result.output)
-            assert data["success"] is False
+        # Output must be valid JSON with error envelope
+        data = json.loads(result.output)
+        assert data["success"] is False
+        assert data["command"] == "scan"
+        assert "errors" in data
+        assert len(data["errors"]) > 0
+        assert data["errors"][0]["type"] == "PathNotFoundError"
+
+    @pytest.mark.integration
+    def test_check_nonexistent_produces_json_error(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--format=json check on nonexistent path produces JSON error envelope."""
+        nonexistent = tmp_path / "does_not_exist"
+
+        result = runner.invoke(cli, ["--format=json", "check", str(nonexistent)])
+
+        # Should exit 1 (our error handling) and produce valid JSON
+        assert result.exit_code == 1
+
+        # Output must be valid JSON with error envelope
+        data = json.loads(result.output)
+        assert data["success"] is False
+        assert data["command"] == "check"
+        assert "errors" in data
+        assert len(data["errors"]) > 0
+        assert data["errors"][0]["type"] == "PathNotFoundError"
+
+    @pytest.mark.integration
+    def test_scan_file_instead_of_dir_produces_json_error(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--format=json scan on a file (not directory) produces JSON error envelope."""
+        # Create a file, not a directory
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("not a directory")
+
+        result = runner.invoke(cli, ["--format=json", "scan", str(test_file)])
+
+        # Should exit 1 (our error handling) and produce valid JSON
+        assert result.exit_code == 1
+
+        # Output must be valid JSON with error envelope
+        data = json.loads(result.output)
+        assert data["success"] is False
+        assert data["command"] == "scan"
+        assert "errors" in data
+        assert len(data["errors"]) > 0
+        assert data["errors"][0]["type"] == "NotADirectoryError"
 
     @pytest.mark.integration
     def test_all_errors_go_to_stdout_not_stderr(self, runner: CliRunner, tmp_path: Path) -> None:

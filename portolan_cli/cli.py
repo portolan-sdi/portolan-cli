@@ -171,7 +171,7 @@ def _print_check_summary(report: Any) -> None:
 
 
 @cli.command()
-@click.argument("path", type=click.Path(path_type=Path, exists=True), default=".")
+@click.argument("path", type=click.Path(path_type=Path), default=".")
 @click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
 @click.option("--verbose", "-v", is_flag=True, help="Show all validation rules, not just failures")
 @click.pass_context
@@ -183,6 +183,19 @@ def check(ctx: click.Context, path: Path, json_output: bool, verbose: bool) -> N
     PATH is the directory containing the .portolan catalog (default: current directory).
     """
     use_json = should_output_json(ctx, json_output)
+
+    # Validate path exists (handle in code for JSON envelope support)
+    if not path.exists():
+        if use_json:
+            envelope = error_envelope(
+                "check",
+                [ErrorDetail(type="PathNotFoundError", message=f"Path does not exist: {path}")],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Path does not exist: {path}")
+        raise SystemExit(1)
+
     report = validate_catalog(path)
 
     if use_json:
@@ -205,7 +218,7 @@ def check(ctx: click.Context, path: Path, json_output: bool, verbose: bool) -> N
 
 
 @cli.command()
-@click.argument("path", type=click.Path(path_type=Path, exists=True, file_okay=False))
+@click.argument("path", type=click.Path(path_type=Path))
 @click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
 @click.option(
     "--no-recursive",
@@ -256,6 +269,37 @@ def scan(
         portolan scan /data --no-recursive
     """
     use_json = should_output_json(ctx, json_output)
+
+    # Validate path exists and is a directory (handle in code for JSON envelope support)
+    if not path.exists():
+        if use_json:
+            envelope = error_envelope(
+                "scan",
+                [
+                    ErrorDetail(
+                        type="PathNotFoundError", message=f"Directory does not exist: {path}"
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Directory does not exist: {path}")
+        raise SystemExit(1)
+
+    if not path.is_dir():
+        if use_json:
+            envelope = error_envelope(
+                "scan",
+                [
+                    ErrorDetail(
+                        type="NotADirectoryError", message=f"Path is not a directory: {path}"
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Path is not a directory: {path}")
+        raise SystemExit(1)
 
     # Build options from CLI flags
     options = ScanOptions(
