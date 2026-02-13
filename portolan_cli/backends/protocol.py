@@ -6,6 +6,11 @@ This module defines the VersioningBackend Protocol that allows external backends
 See ADR-0015 (Two-Tier Versioning Architecture) for architectural context.
 See ADR-0003 (Plugin Architecture) for plugin discovery patterns.
 
+Thread Safety:
+    The MVP assumes single-writer access. Backends do NOT provide thread-safety
+    guarantees. For concurrent multi-user access, use the portolake plugin with
+    IcebergBackend which provides ACID transactions and distributed locking.
+
 Example usage for plugin authors:
     # In portolake/pyproject.toml:
     [project.entry-points."portolan.backends"]
@@ -19,12 +24,43 @@ Example usage for plugin authors:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol, TypedDict, runtime_checkable
 
 if TYPE_CHECKING:
     from portolan_cli.versions import Version
 
 
+class DriftReport(TypedDict):
+    """Report from drift detection between local and remote state.
+
+    Attributes:
+        has_drift: True if local and remote versions differ.
+        local_version: Local version string, or None if no local version exists.
+        remote_version: Remote version string, or None if no remote version exists.
+        message: Human-readable description of the drift status.
+    """
+
+    has_drift: bool
+    local_version: str | None
+    remote_version: str | None
+    message: str
+
+
+class SchemaFingerprint(TypedDict):
+    """Schema fingerprint for detecting breaking changes between versions.
+
+    Attributes:
+        columns: Ordered list of column names.
+        types: Mapping of column names to their data types (e.g., "int64", "geometry").
+        hash: Hash of the schema for quick comparison.
+    """
+
+    columns: list[str]
+    types: dict[str, str]
+    hash: str
+
+
+@runtime_checkable
 class VersioningBackend(Protocol):
     """Protocol for version storage and management backends.
 
@@ -34,6 +70,12 @@ class VersioningBackend(Protocol):
 
     All methods take a `collection` parameter identifying which collection/dataset
     to operate on. The collection path is relative to the catalog root.
+
+    Thread Safety:
+        This protocol assumes single-writer access. Implementations are NOT required
+        to be thread-safe. Use drift checking to detect concurrent modifications.
+        For true concurrent access, use a backend with distributed locking (e.g.,
+        IcebergBackend via portolake).
     """
 
     def get_current_version(self, collection: str) -> Version:
@@ -64,8 +106,8 @@ class VersioningBackend(Protocol):
     def publish(
         self,
         collection: str,
-        assets: dict[str, Any],
-        schema: dict[str, Any],
+        assets: dict[str, str],
+        schema: SchemaFingerprint,
         breaking: bool,
         message: str,
     ) -> Version:
@@ -73,7 +115,7 @@ class VersioningBackend(Protocol):
 
         Args:
             collection: Collection identifier/path.
-            assets: Mapping of asset names to asset metadata.
+            assets: Mapping of asset names to asset paths/URIs.
             schema: Schema fingerprint for change detection.
             breaking: Whether this is a breaking change.
             message: Human-readable description of the change.
@@ -114,7 +156,7 @@ class VersioningBackend(Protocol):
         """
         ...
 
-    def check_drift(self, collection: str) -> dict[str, Any]:
+    def check_drift(self, collection: str) -> DriftReport:
         """Check for drift between local and remote state.
 
         Detects if another process has modified the remote versions.json
@@ -125,8 +167,6 @@ class VersioningBackend(Protocol):
             collection: Collection identifier/path.
 
         Returns:
-            DriftReport dict containing drift status and details.
-            Keys: "has_drift" (bool), "local_version" (str | None),
-                  "remote_version" (str | None), "message" (str).
+            DriftReport with drift status and details.
         """
         ...

@@ -11,7 +11,9 @@ Implementation will wire to existing functions in portolan_cli.versions.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint
 
 if TYPE_CHECKING:
     from portolan_cli.versions import Version
@@ -63,8 +65,8 @@ class JsonFileBackend:
     def publish(
         self,
         collection: str,
-        assets: dict[str, Any],
-        schema: dict[str, Any],
+        assets: dict[str, str],
+        schema: SchemaFingerprint,
         breaking: bool,
         message: str,
     ) -> Version:
@@ -72,7 +74,7 @@ class JsonFileBackend:
 
         Args:
             collection: Collection identifier/path.
-            assets: Mapping of asset names to asset metadata.
+            assets: Mapping of asset names to asset paths/URIs.
             schema: Schema fingerprint for change detection.
             breaking: Whether this is a breaking change.
             message: Human-readable description of the change.
@@ -116,14 +118,14 @@ class JsonFileBackend:
         """
         raise NotImplementedError("Wire to versions.py")
 
-    def check_drift(self, collection: str) -> dict[str, Any]:
+    def check_drift(self, collection: str) -> DriftReport:
         """Check for drift between local and remote state.
 
         Args:
             collection: Collection identifier/path.
 
         Returns:
-            DriftReport dict with drift status and details.
+            DriftReport with drift status and details.
 
         Raises:
             NotImplementedError: Method is a stub, pending wiring to versions.py.

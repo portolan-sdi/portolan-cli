@@ -23,12 +23,14 @@ Plugin registration (in plugin's pyproject.toml):
 
 from __future__ import annotations
 
-from importlib.metadata import entry_points
-from typing import cast
+import logging
+from importlib.metadata import EntryPoint, entry_points
 
-from portolan_cli.backends.protocol import VersioningBackend
+from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint, VersioningBackend
 
-__all__ = ["VersioningBackend", "get_backend"]
+__all__ = ["DriftReport", "SchemaFingerprint", "VersioningBackend", "get_backend"]
+
+logger = logging.getLogger(__name__)
 
 
 def get_backend(name: str = "file") -> VersioningBackend:
@@ -38,6 +40,9 @@ def get_backend(name: str = "file") -> VersioningBackend:
     1. Built-in "file" backend (JsonFileBackend using versions.json)
     2. External plugins registered via "portolan.backends" entry point
 
+    Note: Creates a NEW instance on each call. This function does not implement
+    singleton semantics; each call returns a fresh backend instance.
+
     Args:
         name: Backend name. "file" for built-in, or plugin name (e.g., "iceberg").
 
@@ -45,7 +50,9 @@ def get_backend(name: str = "file") -> VersioningBackend:
         VersioningBackend instance.
 
     Raises:
-        ValueError: If backend not found. Message includes available backends.
+        ValueError: If backend not found, plugin fails to load, plugin fails
+            to instantiate, or plugin doesn't implement VersioningBackend.
+            Message includes available backends and error details.
 
     Example:
         >>> backend = get_backend()  # Default file backend
@@ -56,17 +63,58 @@ def get_backend(name: str = "file") -> VersioningBackend:
     if name == "file":
         from portolan_cli.backends.json_file import JsonFileBackend
 
+        logger.debug("Creating JsonFileBackend instance")
         return JsonFileBackend()
 
     # Discover plugin backends via entry points
     eps = entry_points(group="portolan.backends")
     for ep in eps:
+        logger.debug("Found backend plugin: %s", ep.name)
         if ep.name == name:
-            backend_class = ep.load()
-            # Entry points are dynamically loaded; cast for type safety
-            return cast(VersioningBackend, backend_class())
+            return _load_plugin_backend(ep, name)
 
     # Build helpful error message
     plugin_names = [ep.name for ep in eps]
     available = ["file"] + plugin_names
     raise ValueError(f"Unknown backend: {name}. Available: {', '.join(available)}")
+
+
+def _load_plugin_backend(ep: EntryPoint, name: str) -> VersioningBackend:
+    """Load and validate a plugin backend from an entry point.
+
+    Args:
+        ep: Entry point object with load() method.
+        name: Backend name for error messages.
+
+    Returns:
+        Validated VersioningBackend instance.
+
+    Raises:
+        ValueError: If loading fails, instantiation fails, or protocol not implemented.
+    """
+    # Load the backend class from the entry point
+    try:
+        logger.debug("Loading backend class from entry point: %s", name)
+        backend_class = ep.load()
+    except Exception as e:
+        msg = f"Failed to load backend '{name}': {e}"
+        logger.error(msg)
+        raise ValueError(msg) from e
+
+    # Instantiate the backend
+    try:
+        logger.debug("Instantiating backend: %s", name)
+        backend = backend_class()
+    except Exception as e:
+        msg = f"Failed to instantiate backend '{name}': {e}"
+        logger.error(msg)
+        raise ValueError(msg) from e
+
+    # Validate protocol compliance
+    if not isinstance(backend, VersioningBackend):
+        msg = f"Backend '{name}' does not implement VersioningBackend protocol"
+        logger.error(msg)
+        raise ValueError(msg)
+
+    logger.debug("Successfully loaded backend: %s", name)
+    return backend
