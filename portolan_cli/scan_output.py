@@ -615,14 +615,15 @@ def _build_errors_tree(
             rel_path = Path(issue.relative_path) if issue.relative_path else Path(".")
 
         # Determine directory and filename
-        if rel_path.name == ".":
+        rel_str = str(rel_path)
+        if rel_str == "." or rel_str == "":
             # Issue is on the root directory itself
             dir_path = "."
             filename = "."
         elif rel_path.parent == Path("."):
             # File is directly in root
             dir_path = "."
-            filename = str(rel_path)
+            filename = rel_str
         else:
             dir_path = str(rel_path.parent)
             filename = rel_path.name
@@ -729,7 +730,8 @@ def _format_manual_only(result: ScanResult) -> str:
     lines: list[str] = []
     count = len(manual_issues)
     plural = "s" if count != 1 else ""
-    lines.append(f"\u2717 {count} file{plural} require manual resolution")
+    verb = "require" if count != 1 else "requires"
+    lines.append(f"\u2717 {count} file{plural} {verb} manual resolution")
     lines.append("")
 
     # Build and render the tree

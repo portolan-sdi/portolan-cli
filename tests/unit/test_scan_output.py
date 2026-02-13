@@ -1090,3 +1090,55 @@ class TestManualOnlyOutput:
         # Should use markers: ✗ for error, ⚠ for warning
         assert "\u2717" in output  # ✗
         assert "\u26a0" in output  # ⚠
+
+    def test_manual_only_handles_root_directory_issues(self, tmp_path: Path) -> None:
+        """manual_only=True handles issues on the root directory itself."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[
+                # Directory-level issue (relative_path is ".")
+                make_scan_issue(
+                    tmp_path,
+                    IssueType.MULTIPLE_PRIMARIES,
+                    Severity.WARNING,
+                    message="Directory has 5 primary assets",
+                    relative_path=".",
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should show the root directory issue
+        assert "5 primary assets" in output
+        # Should have the warning marker
+        assert "\u26a0" in output
+
+    def test_manual_only_singular_grammar(self, tmp_path: Path) -> None:
+        """manual_only=True uses correct grammar for singular case."""
+        from portolan_cli.scan_output import format_scan_output
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[
+                make_scan_issue(
+                    tmp_path / "file.shp",
+                    IssueType.INCOMPLETE_SHAPEFILE,
+                    Severity.ERROR,
+                    message="Missing sidecars",
+                ),
+            ],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        output = format_scan_output(result, manual_only=True)
+
+        # Should say "1 file requires" not "1 file require"
+        assert "1 file requires" in output
