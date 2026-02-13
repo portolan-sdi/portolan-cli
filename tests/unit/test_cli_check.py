@@ -94,23 +94,27 @@ class TestCheckCommand:
 
     @pytest.mark.unit
     def test_check_json_output(self, runner: CliRunner, valid_catalog: Path) -> None:
-        """'portolan check --json' outputs JSON format."""
+        """'portolan check --json' outputs JSON format with envelope."""
         result = runner.invoke(cli, ["check", str(valid_catalog), "--json"])
         assert result.exit_code == 0
 
-        # Output should be valid JSON
+        # Output should be valid JSON with envelope structure
         output = json.loads(result.output)
-        assert "passed" in output
-        assert output["passed"] is True
+        assert output["success"] is True
+        assert output["command"] == "check"
+        assert "data" in output
+        assert output["data"]["passed"] is True
 
     @pytest.mark.unit
     def test_check_json_output_on_failure(self, runner: CliRunner, tmp_path: Path) -> None:
-        """'portolan check --json' outputs JSON even on failure."""
+        """'portolan check --json' outputs JSON envelope even on failure."""
         result = runner.invoke(cli, ["check", str(tmp_path), "--json"])
         assert result.exit_code == 1
 
         output = json.loads(result.output)
-        assert output["passed"] is False
+        assert output["success"] is False
+        assert output["command"] == "check"
+        assert output["data"]["passed"] is False
 
     @pytest.mark.unit
     def test_check_verbose_shows_all_rules(self, runner: CliRunner, valid_catalog: Path) -> None:

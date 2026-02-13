@@ -57,18 +57,24 @@ class TestScanCLI:
         assert "not exist" in result.output.lower() or "error" in result.output.lower()
 
     def test_scan_json_output(self, runner: CliRunner, fixtures_dir: Path) -> None:
-        """portolan scan --json outputs valid JSON."""
+        """portolan scan --json outputs valid JSON with envelope structure."""
         result = runner.invoke(cli, ["scan", str(fixtures_dir / "clean_flat"), "--json"])
 
         assert result.exit_code == 0
 
-        # Parse the JSON output
-        data = json.loads(result.output)
+        # Parse the JSON output - now has envelope structure
+        envelope = json.loads(result.output)
 
-        # Verify required fields per FR-019
-        assert "scanned" in data or "ready" in data
+        # Verify envelope structure
+        assert envelope["success"] is True
+        assert envelope["command"] == "scan"
+        assert "data" in envelope
+
+        # Verify required fields per FR-019 inside data
+        data = envelope["data"]
+        assert "ready" in data
         assert "issues" in data
-        assert "summary" in data or "directories_scanned" in data
+        assert "summary" in data
 
     def test_scan_detects_errors_exits_nonzero(self, runner: CliRunner, fixtures_dir: Path) -> None:
         """portolan scan exits with code 1 when errors found."""
@@ -110,14 +116,16 @@ class TestScanCLI:
         assert result_without.exit_code == 0
         assert result_with.exit_code == 0
 
-        # Parse JSON to compare file counts
+        # Parse JSON to compare file counts (now with envelope structure)
         result_json_without = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
         result_json_with = runner.invoke(cli, ["scan", str(tmp_path), "--include-hidden", "--json"])
 
-        data_without = json.loads(result_json_without.output)
-        data_with = json.loads(result_json_with.output)
+        envelope_without = json.loads(result_json_without.output)
+        envelope_with = json.loads(result_json_with.output)
 
         # Should have more files with --include-hidden
+        data_without = envelope_without["data"]
+        data_with = envelope_with["data"]
         assert len(data_with.get("ready", [])) > len(data_without.get("ready", []))
 
     def test_scan_follow_symlinks_flag(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -137,8 +145,11 @@ class TestScanCLI:
         # With flag
         result_with = runner.invoke(cli, ["scan", str(subdir), "--follow-symlinks", "--json"])
 
-        data_without = json.loads(result_without.output)
-        data_with = json.loads(result_with.output)
+        envelope_without = json.loads(result_without.output)
+        envelope_with = json.loads(result_with.output)
+
+        data_without = envelope_without["data"]
+        data_with = envelope_with["data"]
 
         # Without flag: symlink should be skipped
         assert len(data_without.get("ready", [])) == 0
@@ -159,7 +170,8 @@ class TestScanCLI:
         """portolan scan --json issues include path, type, severity, message."""
         result = runner.invoke(cli, ["scan", str(fixtures_dir / "invalid_chars"), "--json"])
 
-        data = json.loads(result.output)
+        envelope = json.loads(result.output)
+        data = envelope["data"]
         issues = data.get("issues", [])
 
         assert len(issues) > 0
