@@ -344,8 +344,11 @@ class TestDatasetInfoJson:
                 result = runner.invoke(cli, ["dataset", "info", "my-collection/my-item", "--json"])
 
                 assert result.exit_code == 0
-                # Parse JSON to verify it's valid
-                data = json.loads(result.output)
+                # Parse JSON to verify it's valid and has envelope structure
+                envelope = json.loads(result.output)
+                assert envelope["success"] is True
+                assert envelope["command"] == "dataset_info"
+                data = envelope["data"]
                 assert data["item_id"] == "my-item"
                 assert data["collection_id"] == "my-collection"
                 assert data["title"] == "Test Title"
