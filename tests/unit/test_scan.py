@@ -18,6 +18,8 @@ Test fixtures are in tests/fixtures/scan/:
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -49,18 +51,38 @@ class TestEnums:
         assert Severity.WARNING.value == "warning"
         assert Severity.INFO.value == "info"
 
-    def test_issue_type_has_all_eight_types(self) -> None:
-        """IssueType enum has all 8 issue types from spec."""
+    def test_issue_type_has_all_types(self) -> None:
+        """IssueType enum has all 18 issue types (10 original + 8 new)."""
         from portolan_cli.scan import IssueType
 
+        # Original 10 issue types
         assert IssueType.INCOMPLETE_SHAPEFILE.value == "incomplete_shapefile"
         assert IssueType.ZERO_BYTE_FILE.value == "zero_byte_file"
         assert IssueType.SYMLINK_LOOP.value == "symlink_loop"
+        assert IssueType.BROKEN_SYMLINK.value == "broken_symlink"
+        assert IssueType.PERMISSION_DENIED.value == "permission_denied"
         assert IssueType.INVALID_CHARACTERS.value == "invalid_characters"
         assert IssueType.MULTIPLE_PRIMARIES.value == "multiple_primaries"
         assert IssueType.LONG_PATH.value == "long_path"
         assert IssueType.DUPLICATE_BASENAME.value == "duplicate_basename"
         assert IssueType.MIXED_FORMATS.value == "mixed_formats"
+
+        # NEW: Special format detection (4)
+        assert IssueType.FILEGDB_DETECTED.value == "filegdb_detected"
+        assert IssueType.HIVE_PARTITION_DETECTED.value == "hive_partition"
+        assert IssueType.EXISTING_CATALOG.value == "existing_catalog"
+        assert IssueType.DUAL_FORMAT.value == "dual_format"
+
+        # NEW: Cross-platform compatibility (2)
+        assert IssueType.WINDOWS_RESERVED_NAME.value == "windows_reserved_name"
+        assert IssueType.PATH_TOO_LONG.value == "path_too_long"
+
+        # NEW: Structure issues (2)
+        assert IssueType.MIXED_FLAT_MULTIITEM.value == "mixed_flat_multiitem"
+        assert IssueType.ORPHAN_SIDECAR.value == "orphan_sidecar"
+
+        # Total should be 18
+        assert len(IssueType) == 18
 
     def test_format_type_has_vector_and_raster(self) -> None:
         """FormatType enum has VECTOR and RASTER values."""
@@ -79,10 +101,19 @@ class TestScanOptions:
         from portolan_cli.scan import ScanOptions
 
         opts = ScanOptions()
+        # Original defaults
         assert opts.recursive is True
         assert opts.max_depth is None
         assert opts.include_hidden is False
         assert opts.follow_symlinks is False
+        # NEW defaults
+        assert opts.show_all is False
+        assert opts.verbose is False
+        assert opts.allow_existing_catalogs is False
+        assert opts.fix is False
+        assert opts.unsafe_fix is False
+        assert opts.dry_run is False
+        assert opts.suggest_collections is False
 
     def test_custom_values(self) -> None:
         """ScanOptions accepts custom values."""
@@ -98,6 +129,34 @@ class TestScanOptions:
         assert opts.max_depth == 3
         assert opts.include_hidden is True
         assert opts.follow_symlinks is True
+
+    def test_new_options(self) -> None:
+        """ScanOptions accepts new option values."""
+        from portolan_cli.scan import ScanOptions
+
+        opts = ScanOptions(
+            show_all=True,
+            verbose=True,
+            allow_existing_catalogs=True,
+            fix=True,
+            unsafe_fix=True,  # Valid because fix=True
+            dry_run=True,
+            suggest_collections=True,
+        )
+        assert opts.show_all is True
+        assert opts.verbose is True
+        assert opts.allow_existing_catalogs is True
+        assert opts.fix is True
+        assert opts.unsafe_fix is True
+        assert opts.dry_run is True
+        assert opts.suggest_collections is True
+
+    def test_unsafe_fix_requires_fix(self) -> None:
+        """ScanOptions raises ValueError if unsafe_fix=True but fix=False."""
+        from portolan_cli.scan import ScanOptions
+
+        with pytest.raises(ValueError, match="--unsafe-fix requires --fix"):
+            ScanOptions(unsafe_fix=True, fix=False)
 
     def test_is_frozen(self) -> None:
         """ScanOptions is immutable (frozen dataclass)."""
@@ -353,6 +412,109 @@ class TestScanResult:
         )
         assert result.info_count == 1
 
+    def test_classification_summary_empty(self, tmp_path: Path) -> None:
+        """ScanResult.classification_summary returns empty dict for empty result."""
+        from portolan_cli.scan import ScanResult
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+        summary = result.classification_summary
+        # Empty result has geo_asset=0
+        assert summary.get("geo_asset", 0) == 0
+
+    def test_classification_summary_counts_ready_as_geo_asset(self, tmp_path: Path) -> None:
+        """ScanResult.classification_summary counts ready files as geo_asset."""
+        from portolan_cli.scan import FormatType, ScannedFile, ScanResult
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "a.geojson",
+                    relative_path="a.geojson",
+                    extension=".geojson",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=100,
+                ),
+                ScannedFile(
+                    path=tmp_path / "b.geojson",
+                    relative_path="b.geojson",
+                    extension=".geojson",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=200,
+                ),
+            ],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+        summary = result.classification_summary
+        assert summary["geo_asset"] == 2
+
+    def test_classification_summary_counts_skipped_by_category(self, tmp_path: Path) -> None:
+        """ScanResult.classification_summary counts skipped files by category."""
+        from portolan_cli.scan import ScanResult
+        from portolan_cli.scan_classify import (
+            FileCategory,
+            SkippedFile,
+            SkipReasonType,
+        )
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[
+                SkippedFile(
+                    path=tmp_path / "a.csv",
+                    relative_path="a.csv",
+                    category=FileCategory.TABULAR_DATA,
+                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
+                    reason_message="CSV is tabular data",
+                ),
+                SkippedFile(
+                    path=tmp_path / "b.md",
+                    relative_path="b.md",
+                    category=FileCategory.DOCUMENTATION,
+                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
+                    reason_message="Markdown is documentation",
+                ),
+                SkippedFile(
+                    path=tmp_path / "c.csv",
+                    relative_path="c.csv",
+                    category=FileCategory.TABULAR_DATA,
+                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
+                    reason_message="CSV is tabular data",
+                ),
+            ],
+            directories_scanned=1,
+        )
+        summary = result.classification_summary
+        assert summary["tabular_data"] == 2
+        assert summary["documentation"] == 1
+
+    def test_classification_summary_handles_legacy_paths(self, tmp_path: Path) -> None:
+        """ScanResult.classification_summary handles legacy Path objects in skipped."""
+        from portolan_cli.scan import ScanResult
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[
+                tmp_path / "unknown.xyz",  # Legacy Path object
+            ],
+            directories_scanned=1,
+        )
+        summary = result.classification_summary
+        # Legacy paths are counted as unknown
+        assert summary["unknown"] == 1
+
     def test_to_dict_returns_json_serializable(self, tmp_path: Path) -> None:
         """ScanResult.to_dict returns JSON-serializable dictionary."""
         from portolan_cli.scan import (
@@ -410,6 +572,158 @@ class TestScanResult:
         assert d["issues"][0]["type"] == "incomplete_shapefile"
         assert d["issues"][0]["severity"] == "error"
         assert d["issues"][0]["suggestion"] == "Add the .dbf file"
+
+    def test_to_dict_includes_proposed_fixes(self, tmp_path: Path) -> None:
+        """ScanResult.to_dict includes proposed_fixes when present."""
+        from portolan_cli.scan import (
+            FormatType,
+            IssueType,
+            ScanIssue,
+            ScannedFile,
+            ScanResult,
+            Severity,
+        )
+        from portolan_cli.scan_fix import FixCategory, ProposedFix
+
+        issue = ScanIssue(
+            path=tmp_path / "bad name.geojson",
+            relative_path="bad name.geojson",
+            issue_type=IssueType.INVALID_CHARACTERS,
+            severity=Severity.WARNING,
+            message="Contains spaces",
+        )
+
+        fix = ProposedFix(
+            issue=issue,
+            category=FixCategory.SAFE,
+            action="rename",
+            details={"old": "bad name.geojson", "new": "bad_name.geojson"},
+            preview="bad name.geojson -> bad_name.geojson",
+        )
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "data.parquet",
+                    relative_path="data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=1024,
+                )
+            ],
+            issues=[issue],
+            skipped=[],
+            directories_scanned=1,
+            proposed_fixes=[fix],
+        )
+
+        d = result.to_dict()
+
+        # Should include proposed_fixes
+        assert "proposed_fixes" in d
+        assert len(d["proposed_fixes"]) == 1
+        assert d["proposed_fixes"][0]["category"] == "safe"
+        assert d["proposed_fixes"][0]["action"] == "rename"
+
+    def test_to_dict_includes_applied_fixes(self, tmp_path: Path) -> None:
+        """ScanResult.to_dict includes applied_fixes when present."""
+        from portolan_cli.scan import (
+            FormatType,
+            IssueType,
+            ScanIssue,
+            ScannedFile,
+            ScanResult,
+            Severity,
+        )
+        from portolan_cli.scan_fix import FixCategory, ProposedFix
+
+        issue = ScanIssue(
+            path=tmp_path / "bad name.geojson",
+            relative_path="bad name.geojson",
+            issue_type=IssueType.INVALID_CHARACTERS,
+            severity=Severity.WARNING,
+            message="Contains spaces",
+        )
+
+        applied = ProposedFix(
+            issue=issue,
+            category=FixCategory.SAFE,
+            action="rename",
+            details={"old": "bad name.geojson", "new": "bad_name.geojson"},
+            preview="bad name.geojson -> bad_name.geojson",
+        )
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "data.parquet",
+                    relative_path="data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=1024,
+                )
+            ],
+            issues=[],  # Issue resolved
+            skipped=[],
+            directories_scanned=1,
+            applied_fixes=[applied],
+        )
+
+        d = result.to_dict()
+
+        # Should include applied_fixes
+        assert "applied_fixes" in d
+        assert len(d["applied_fixes"]) == 1
+        assert d["applied_fixes"][0]["category"] == "safe"
+        assert d["applied_fixes"][0]["preview"] == "bad name.geojson -> bad_name.geojson"
+
+    def test_to_dict_excludes_empty_fixes(self, tmp_path: Path) -> None:
+        """ScanResult.to_dict excludes proposed_fixes/applied_fixes when empty."""
+        from portolan_cli.scan import ScanResult
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+        )
+
+        d = result.to_dict()
+
+        # Should NOT include proposed_fixes or applied_fixes when empty
+        assert "proposed_fixes" not in d
+        assert "applied_fixes" not in d
+
+
+@pytest.mark.unit
+class TestScanResultIsRelativeTo:
+    """Tests for ScanResult._is_relative_to helper method."""
+
+    def test_is_relative_to_true(self, tmp_path: Path) -> None:
+        """_is_relative_to returns True for child paths."""
+        from portolan_cli.scan import ScanResult
+
+        child = tmp_path / "subdir" / "file.txt"
+        result = ScanResult._is_relative_to(child, tmp_path)
+        assert result is True
+
+    def test_is_relative_to_false(self, tmp_path: Path) -> None:
+        """_is_relative_to returns False for unrelated paths."""
+        from portolan_cli.scan import ScanResult
+
+        other = Path("/completely/different/path")
+        result = ScanResult._is_relative_to(other, tmp_path)
+        assert result is False
+
+    def test_is_relative_to_same_path(self, tmp_path: Path) -> None:
+        """_is_relative_to returns True when path equals base."""
+        from portolan_cli.scan import ScanResult
+
+        result = ScanResult._is_relative_to(tmp_path, tmp_path)
+        assert result is True
 
 
 # =============================================================================
@@ -622,6 +936,169 @@ class TestIssueDetection:
         mixed_issues = [i for i in result.issues if i.issue_type == IssueType.MIXED_FORMATS]
         assert len(mixed_issues) >= 1
         assert mixed_issues[0].severity == Severity.INFO
+
+
+@pytest.mark.unit
+class TestStructureValidation:
+    """Tests for structure validation (US3) - structural issues in directories."""
+
+    def test_orphan_sidecar_detected(self, tmp_path: Path) -> None:
+        """Sidecar files without a primary (.shp) are flagged as orphan."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create sidecar files without matching .shp
+        (tmp_path / "orphan.dbf").write_bytes(b"\x00" * 100)
+        (tmp_path / "orphan.shx").write_bytes(b"\x00" * 100)
+        # No orphan.shp exists!
+
+        result = scan_directory(tmp_path)
+
+        orphan_issues = [i for i in result.issues if i.issue_type == IssueType.ORPHAN_SIDECAR]
+        # Should detect orphan sidecars
+        assert len(orphan_issues) >= 1
+        assert orphan_issues[0].severity == Severity.WARNING
+
+    def test_multiple_primaries_detected(self, tmp_path: Path) -> None:
+        """Multiple primary assets in one directory are flagged."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create multiple geospatial files in same directory
+        (tmp_path / "dataset1.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "dataset2.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "dataset3.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        multi_issues = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
+        assert len(multi_issues) >= 1
+        assert multi_issues[0].severity == Severity.WARNING
+        # Message should indicate the count
+        assert "3" in multi_issues[0].message
+
+    def test_incomplete_shapefile_detected(self, tmp_path: Path) -> None:
+        """Shapefile missing required sidecars (.dbf, .shx) is flagged as incomplete."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create a .shp file without required sidecars
+        (tmp_path / "incomplete.shp").write_bytes(b"\x00" * 100)
+        # Only add optional sidecar, not required ones
+        (tmp_path / "incomplete.prj").write_text("GEOGCS[...]")
+        # Missing: .dbf and .shx (required)
+
+        result = scan_directory(tmp_path)
+
+        incomplete_issues = [
+            i for i in result.issues if i.issue_type == IssueType.INCOMPLETE_SHAPEFILE
+        ]
+        assert len(incomplete_issues) >= 1
+        assert incomplete_issues[0].severity == Severity.ERROR
+        # Message should mention missing sidecars
+        assert ".dbf" in incomplete_issues[0].message or ".shx" in incomplete_issues[0].message
+
+    def test_mixed_formats_detected(self, tmp_path: Path) -> None:
+        """Mixed raster/vector in same directory is flagged."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create both vector and raster files in same directory
+        (tmp_path / "vector.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "raster.tif").write_bytes(b"II*\x00" + b"\x00" * 100)  # Minimal TIFF header
+
+        result = scan_directory(tmp_path)
+
+        mixed_issues = [i for i in result.issues if i.issue_type == IssueType.MIXED_FORMATS]
+        assert len(mixed_issues) >= 1
+        assert mixed_issues[0].severity == Severity.INFO
+
+    def test_mixed_flat_multiitem_detected(self, tmp_path: Path) -> None:
+        """Directory with files both at root and in subdirectories is flagged.
+
+        This indicates an unclear catalog structure - is the root a single item
+        with multiple files, or is each subdirectory a separate item?
+        """
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create files at root level
+        (tmp_path / "root_data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        # Create files in subdirectory
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "nested_data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        mixed_structure_issues = [
+            i for i in result.issues if i.issue_type == IssueType.MIXED_FLAT_MULTIITEM
+        ]
+        assert len(mixed_structure_issues) >= 1
+        assert mixed_structure_issues[0].severity == Severity.WARNING
+
+
+# =============================================================================
+# Phase 11: User Story 9 - Windows Reserved Names
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestWindowsReservedNames:
+    """Tests for Windows reserved name detection (US9)."""
+
+    def test_con_geojson_detected(self, tmp_path: Path) -> None:
+        """Windows reserved name CON.geojson is flagged."""
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        (tmp_path / "CON.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        reserved_issues = [
+            i for i in result.issues if i.issue_type == IssueType.WINDOWS_RESERVED_NAME
+        ]
+        assert len(reserved_issues) >= 1
+        assert reserved_issues[0].severity == Severity.WARNING
+
+    def test_prn_parquet_detected(self, tmp_path: Path) -> None:
+        """Windows reserved name PRN.parquet is flagged."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        (tmp_path / "PRN.parquet").write_bytes(b"\x00" * 100)
+
+        result = scan_directory(tmp_path)
+
+        reserved_issues = [
+            i for i in result.issues if i.issue_type == IssueType.WINDOWS_RESERVED_NAME
+        ]
+        assert len(reserved_issues) >= 1
+
+    def test_nul_data_not_flagged(self, tmp_path: Path) -> None:
+        """File containing reserved name (nul_data.parquet) is NOT flagged."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # "nul_data" contains "nul" but is not exactly a reserved name
+        (tmp_path / "nul_data.parquet").write_bytes(b"\x00" * 100)
+
+        result = scan_directory(tmp_path)
+
+        reserved_issues = [
+            i for i in result.issues if i.issue_type == IssueType.WINDOWS_RESERVED_NAME
+        ]
+        assert len(reserved_issues) == 0
+
+    def test_aux_directory_detected(self, tmp_path: Path) -> None:
+        """Windows reserved name AUX as directory is flagged."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        aux_dir = tmp_path / "AUX"
+        aux_dir.mkdir()
+        (aux_dir / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        reserved_issues = [
+            i for i in result.issues if i.issue_type == IssueType.WINDOWS_RESERVED_NAME
+        ]
+        # Files inside a reserved-name directory should be flagged
+        assert len(reserved_issues) >= 1
 
 
 # =============================================================================
@@ -859,7 +1336,7 @@ class TestGeoParquetDetection:
         assert len(result.ready) == 0
         # Should be in skipped files
         assert len(result.skipped) == 1
-        assert result.skipped[0].name == "census-data.parquet"
+        assert result.skipped[0].path.name == "census-data.parquet"
 
     def test_mixed_parquet_types_only_geoparquet_ready(self, tmp_path: Path) -> None:
         """Directory with both GeoParquet and regular Parquet only has GeoParquet ready."""
@@ -911,7 +1388,7 @@ class TestOverviewFormats:
         assert len(result.ready) == 0
         # Should be in skipped files
         assert len(result.skipped) == 1
-        assert result.skipped[0].name == "overview.pmtiles"
+        assert result.skipped[0].path.name == "overview.pmtiles"
 
     def test_pmtiles_does_not_count_as_primary(self, tmp_path: Path) -> None:
         """PMTiles should not trigger 'multiple primaries' warning."""
@@ -935,3 +1412,257 @@ class TestOverviewFormats:
         # No "multiple primaries" warning
         multi_issues = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
         assert len(multi_issues) == 0
+
+
+# =============================================================================
+# Permission and Symlink Edge Cases (Issue #64)
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(sys.platform == "win32", reason="Permission tests not supported on Windows")
+class TestPermissionEdgeCases:
+    """Tests for permission error handling during scan.
+
+    These tests verify that scan emits warnings when encountering
+    directories that cannot be scanned due to permission errors.
+
+    Note: On Linux, os.scandir() can stat files with mode 000 as long as
+    the parent directory has execute permission. Permission errors primarily
+    occur when trying to list directory contents (no execute on directory).
+    """
+
+    def test_scan_no_execute_directory_emits_warning(self, tmp_path: Path) -> None:
+        """Files in directories without execute permission emit warnings.
+
+        Directory execute permission is required to stat files inside.
+        On Linux, os.scandir may succeed (listing entries) but stat() fails.
+        This tests that stat() failures are properly reported.
+        """
+        from portolan_cli.scan import IssueType, Severity, scan_directory
+
+        # Create a subdirectory with a file, then remove execute permission
+        subdir = tmp_path / "no_exec"
+        subdir.mkdir()
+        (subdir / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        os.chmod(subdir, 0o644)  # Read/write but no execute
+
+        try:
+            result = scan_directory(tmp_path)
+
+            # Should have a permission denied issue
+            # Note: On Linux, os.scandir succeeds but stat() fails on individual files
+            perm_issues = [i for i in result.issues if i.issue_type == IssueType.PERMISSION_DENIED]
+            assert len(perm_issues) >= 1
+            assert perm_issues[0].severity == Severity.WARNING
+            # Path contains either the directory or file path
+            assert "no_exec" in str(perm_issues[0].path)
+        finally:
+            os.chmod(subdir, 0o755)
+
+    def test_scan_stat_oserror_emits_warning(self, tmp_path: Path) -> None:
+        """When entry.stat() raises OSError, emit a warning instead of silent skip.
+
+        The stat() OSError behavior is tested via broken symlinks in
+        TestBrokenSymlinkEdgeCases, where stat() fails because the symlink
+        target doesn't exist. This test is kept as a marker for edge cases.
+        """
+        # stat() OSError handling is tested via broken symlinks:
+        # - TestBrokenSymlinkEdgeCases.test_scan_broken_symlink_emits_warning
+        # The current implementation detects broken symlinks specifically,
+        # which covers the main stat() failure case.
+        pytest.skip(
+            "stat() OSError is tested via broken symlink tests in TestBrokenSymlinkEdgeCases"
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(sys.platform == "win32", reason="Symlink tests not supported on Windows")
+class TestBrokenSymlinkEdgeCases:
+    """Tests for broken symlink handling during scan.
+
+    These tests verify that scan emits warnings when encountering
+    broken/dangling symlinks (symlinks pointing to non-existent targets).
+
+    Key insight: With follow_symlinks=True, a broken symlink has:
+    - entry.is_symlink() = True
+    - entry.is_file(follow_symlinks=True) = False (target doesn't exist)
+    - entry.is_dir(follow_symlinks=True) = False
+    - entry.stat(follow_symlinks=True) raises OSError
+
+    The current code silently skips because is_file() returns False.
+    We need to detect: is_symlink AND (not is_file AND not is_dir) = broken.
+    """
+
+    def test_scan_broken_symlink_emits_warning(self, tmp_path: Path) -> None:
+        """A broken symlink emits a warning when follow_symlinks=True.
+
+        Bug: Broken symlinks are silently skipped because entry.is_file()
+        returns False for them, so they never enter the file processing branch.
+        Expected: Should emit BROKEN_SYMLINK issue.
+        """
+        from portolan_cli.scan import IssueType, ScanOptions, Severity, scan_directory
+
+        # Create a broken symlink (pointing to non-existent target)
+        broken = tmp_path / "broken.geojson"
+        broken.symlink_to(tmp_path / "nonexistent.geojson")
+
+        # Also create a valid file so the directory isn't empty
+        valid = tmp_path / "valid.geojson"
+        valid.write_text('{"type": "FeatureCollection", "features": []}')
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+
+        # Should have 1 ready file (the valid one)
+        assert len(result.ready) == 1
+
+        # Should have a broken symlink issue
+        broken_issues = [i for i in result.issues if i.issue_type == IssueType.BROKEN_SYMLINK]
+        assert len(broken_issues) == 1
+        assert broken_issues[0].severity == Severity.WARNING
+        assert "broken.geojson" in str(broken_issues[0].path)
+
+    def test_scan_broken_symlink_continues_scanning(self, tmp_path: Path) -> None:
+        """Scan continues processing after encountering broken symlink."""
+        from portolan_cli.scan import IssueType, ScanOptions, scan_directory
+
+        # Create broken symlink between valid files
+        (tmp_path / "first.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        broken = tmp_path / "middle.geojson"
+        broken.symlink_to(tmp_path / "ghost.geojson")
+        (tmp_path / "last.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+
+        # Should find both valid files
+        assert len(result.ready) == 2
+        basenames = {f.basename for f in result.ready}
+        assert "first.geojson" in basenames
+        assert "last.geojson" in basenames
+
+        # Should also report the broken symlink
+        broken_issues = [i for i in result.issues if i.issue_type == IssueType.BROKEN_SYMLINK]
+        assert len(broken_issues) == 1
+
+    def test_scan_valid_symlink_followed(self, tmp_path: Path) -> None:
+        """Valid symlinks are processed when follow_symlinks=True.
+
+        This is existing behavior - ensure it's preserved.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+
+        # Create a real file and a valid symlink
+        real = tmp_path / "real.geojson"
+        real.write_text('{"type": "FeatureCollection", "features": []}')
+        link = tmp_path / "link.geojson"
+        link.symlink_to(real)
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+
+        # Both should be found
+        assert len(result.ready) == 2
+
+    def test_scan_symlink_not_followed_by_default(self, tmp_path: Path) -> None:
+        """Symlinks are not followed by default (existing behavior).
+
+        When follow_symlinks=False, symlinks are simply skipped.
+        No warning is needed because this is intentional.
+        """
+        from portolan_cli.scan import scan_directory
+
+        real = tmp_path / "real.geojson"
+        real.write_text('{"type": "FeatureCollection", "features": []}')
+        link = tmp_path / "link.geojson"
+        link.symlink_to(real)
+
+        result = scan_directory(tmp_path)
+
+        # Only the real file should be found
+        assert len(result.ready) == 1
+        assert result.ready[0].basename == "real.geojson"
+
+    def test_scan_broken_symlink_ignored_when_not_following(self, tmp_path: Path) -> None:
+        """Broken symlinks are silently skipped when follow_symlinks=False.
+
+        This is intentional - if user doesn't want to follow symlinks,
+        we don't need to warn about broken ones.
+        """
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # Create a broken symlink
+        broken = tmp_path / "broken.geojson"
+        broken.symlink_to(tmp_path / "nonexistent.geojson")
+
+        # Create a valid file
+        valid = tmp_path / "valid.geojson"
+        valid.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)  # Default: follow_symlinks=False
+
+        # Should have 1 ready file (the valid one)
+        assert len(result.ready) == 1
+
+        # Should NOT have a broken symlink issue (we're not following symlinks)
+        broken_issues = [i for i in result.issues if i.issue_type == IssueType.BROKEN_SYMLINK]
+        assert len(broken_issues) == 0
+
+    def test_scan_broken_symlink_shows_target_in_message(self, tmp_path: Path) -> None:
+        """Broken symlink warning message includes the target path."""
+        from portolan_cli.scan import IssueType, ScanOptions, scan_directory
+
+        broken = tmp_path / "broken.geojson"
+        target = tmp_path / "ghost_target.geojson"
+        broken.symlink_to(target)
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+
+        broken_issues = [i for i in result.issues if i.issue_type == IssueType.BROKEN_SYMLINK]
+        assert len(broken_issues) == 1
+        # Message should mention it's broken/dangling
+        assert (
+            "broken" in broken_issues[0].message.lower()
+            or "dangling" in broken_issues[0].message.lower()
+        )
+
+    def test_scan_symlink_chain_resolved(self, tmp_path: Path) -> None:
+        """Deep symlink chains are followed correctly."""
+        from portolan_cli.scan import ScanOptions, scan_directory
+
+        # Create a chain: link_a -> link_b -> link_c -> actual.geojson
+        actual = tmp_path / "actual.geojson"
+        actual.write_text('{"type": "FeatureCollection", "features": []}')
+
+        link_c = tmp_path / "link_c.geojson"
+        link_c.symlink_to(actual)
+
+        link_b = tmp_path / "link_b.geojson"
+        link_b.symlink_to(link_c)
+
+        link_a = tmp_path / "link_a.geojson"
+        link_a.symlink_to(link_b)
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+
+        # All four should be found (including the chain)
+        assert len(result.ready) == 4
+
+    def test_scan_broken_symlink_in_report(self, tmp_path: Path) -> None:
+        """Broken symlink issues appear in the final scan report."""
+        from portolan_cli.scan import ScanOptions, scan_directory
+
+        broken = tmp_path / "broken.geojson"
+        broken.symlink_to(tmp_path / "nonexistent.geojson")
+
+        opts = ScanOptions(follow_symlinks=True)
+        result = scan_directory(tmp_path, opts)
+        report = result.to_dict()
+
+        # Should have issues in the report
+        assert report["summary"]["issue_count"] >= 1
+        broken_issues = [i for i in report["issues"] if i["type"] == "broken_symlink"]
+        assert len(broken_issues) == 1

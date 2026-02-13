@@ -171,7 +171,11 @@ skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
 [tool.vulture]
 min_confidence = 80
 paths = ["portolan_cli", "tests", "vulture_whitelist.py"]
-exclude = ["portolan_cli/validation/rules.py"]  # Abstract methods have unused params
+exclude = [
+    "portolan_cli/validation/rules.py",  # Abstract methods have unused params
+    "portolan_cli/backends/protocol.py",  # Protocol method params are intentionally unused
+    "portolan_cli/backends/json_file.py",  # Stub methods raise NotImplementedError
+]
 sort_by_size = true
 verbose = false
 
