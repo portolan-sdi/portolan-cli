@@ -206,23 +206,31 @@ class TestComputeSafeRename:
 
     def test_long_filename_truncated(self, tmp_path: Path) -> None:
         """Long filenames should be truncated with hash suffix."""
-        # Create a filename that would make total path > 200 chars
-        long_stem = "a" * 200
-        path = tmp_path / f"{long_stem}.geojson"
+        # Calculate stem length to guarantee total path > 200 chars
+        # Formula: len(tmp_path) + 1 (/) + stem_len + len(".geojson") > 200
+        extension = ".geojson"
+        stem_len = 201 - len(str(tmp_path)) - len(extension)
+        # Ensure we have a reasonable stem length
+        if stem_len < 50:
+            stem_len = 50  # Force long enough to trigger truncation
+        long_stem = "a" * stem_len
+        path = tmp_path / f"{long_stem}{extension}"
         path.touch()
+
+        # Verify test setup - path must exceed threshold
+        assert len(str(path)) > 200, f"Test setup error: path is only {len(str(path))} chars"
 
         result = _compute_safe_rename(path)
 
-        # Only if path length exceeds threshold
-        if len(str(path)) > 200:
-            assert result is not None
-            new_path, _ = result
-            # Total path should be <= 200 chars
-            assert len(str(new_path)) <= 200
-            # Should preserve extension
-            assert new_path.suffix == ".geojson"
-            # Should have hash appended (8 chars)
-            assert "_" in new_path.stem
+        # Must return a rename since path exceeds threshold
+        assert result is not None, "Expected rename for long path"
+        new_path, _ = result
+        # Total path should be <= 200 chars
+        assert len(str(new_path)) <= 200, f"New path still too long: {len(str(new_path))} chars"
+        # Should preserve extension
+        assert new_path.suffix == extension
+        # Should have hash appended (8 chars after underscore)
+        assert "_" in new_path.stem, "Expected hash suffix in truncated filename"
 
     def test_long_path_preserves_extension(self, tmp_path: Path) -> None:
         """Truncation should preserve the file extension."""
@@ -583,6 +591,51 @@ class TestPreviewFix:
 
         fix = preview_fix(issue)
 
+        assert fix is None
+
+    def test_preview_missing_file_returns_none(self, tmp_path: Path) -> None:
+        """preview_fix should return None if file doesn't exist."""
+        path = tmp_path / "deleted file.geojson"
+        # Don't create the file
+
+        issue = ScanIssue(
+            path=path,
+            relative_path=path.name,
+            issue_type=IssueType.INVALID_CHARACTERS,
+            severity=Severity.WARNING,
+            message="File has spaces",
+        )
+
+        fix = preview_fix(issue)
+
+        assert fix is None
+
+    def test_preview_long_dir_returns_none(self, tmp_path: Path) -> None:
+        """preview_fix should return None when dir path exceeds threshold."""
+        # Create a directory structure where the DIR path is > 200 chars
+        long_dir_name = "d" * 100
+        deep_path = tmp_path
+        for _ in range(3):
+            deep_path = deep_path / long_dir_name
+        deep_path.mkdir(parents=True, exist_ok=True)
+
+        path = deep_path / "x.shp"
+        path.touch()
+
+        # Verify path exceeds threshold
+        assert len(str(path)) > 200
+
+        issue = ScanIssue(
+            path=path,
+            relative_path=path.name,
+            issue_type=IssueType.LONG_PATH,
+            severity=Severity.WARNING,
+            message="Path too long",
+        )
+
+        fix = preview_fix(issue)
+
+        # Should return None because dir path is too long to auto-fix
         assert fix is None
 
     def test_preview_details_contain_paths(self, tmp_path: Path) -> None:

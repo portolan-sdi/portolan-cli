@@ -30,7 +30,7 @@ from portolan_cli.scan import (
 from portolan_cli.scan import (
     Severity as ScanSeverity,
 )
-from portolan_cli.scan_fix import apply_safe_fixes
+from portolan_cli.scan_fix import ProposedFix, apply_safe_fixes
 from portolan_cli.scan_infer import infer_collections
 from portolan_cli.scan_output import (
     format_collection_suggestion,
@@ -232,7 +232,7 @@ def _handle_fix_mode(
     *,
     dry_run: bool,
     use_json: bool,
-) -> tuple[list[Any], list[Any]]:
+) -> tuple[list[ProposedFix], list[ProposedFix]]:
     """Handle --fix mode for scan command.
 
     Args:
@@ -451,6 +451,10 @@ def scan(
     # Run collection inference if requested
     if suggest_collections and result.ready:
         result.collection_suggestions = infer_collections(result.ready)
+
+    # Warn if --dry-run is used without --fix (no effect)
+    if dry_run and not fix:
+        warn("--dry-run has no effect without --fix")
 
     # Handle fix mode
     if fix:

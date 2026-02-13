@@ -702,8 +702,9 @@ class TestScanFixFlag:
         envelope = json.loads(result.output)
         data = envelope["data"]
 
-        # Should include fix information
-        assert "proposed_fixes" in data or "applied_fixes" in data
+        # Should include both proposed_fixes and applied_fixes
+        assert "proposed_fixes" in data, "Missing proposed_fixes in JSON output"
+        assert "applied_fixes" in data, "Missing applied_fixes in JSON output"
 
     def test_fix_collision_detection(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix detects collisions and doesn't overwrite existing files."""
