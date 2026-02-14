@@ -761,16 +761,15 @@ class TestApplyRenameEdgeCases:
         assert new_path.exists()
         assert new_path.read_text() == "content"
 
-    def test_rename_behavior_with_existing_target(self, tmp_path: Path) -> None:
-        """Test rename behavior when target already exists.
+    def test_rename_returns_false_when_target_exists_on_windows(self, tmp_path: Path) -> None:
+        """On Windows, _apply_rename returns False when target already exists.
 
-        NOTE: This test documents platform-specific behavior:
-        - On POSIX: os.rename atomically replaces target (succeeds)
-        - On Windows: os.rename raises FileExistsError, fallback used
+        NOTE: On POSIX, os.rename atomically replaces the target (succeeds).
+        On Windows, os.rename raises FileExistsError which is caught.
 
-        Collision detection is done at a higher level (apply_safe_fixes)
-        before calling _apply_rename, so this case shouldn't happen in
-        production code.
+        Collision detection is done at apply_safe_fixes level BEFORE calling
+        _apply_rename, so this scenario shouldn't occur in production.
+        This test verifies the defensive behavior on Windows.
         """
         import sys
 
@@ -785,11 +784,14 @@ class TestApplyRenameEdgeCases:
 
         if sys.platform == "win32":
             # Windows: os.rename raises FileExistsError, caught and returns False
-            # OR the shutil.move fallback succeeds
-            # Either behavior is acceptable - what matters is no crash
-            assert isinstance(result, bool)
+            assert result is False
+            # Source should still exist (not moved)
+            assert old_path.exists()
+            # Target should retain original content
+            assert new_path.read_text() == "existing content"
         else:
-            # POSIX: os.rename atomically replaces target
+            # POSIX: os.rename atomically replaces target (different behavior)
+            # This is expected POSIX semantics - we just verify no crash
             assert result is True
             assert not old_path.exists()
             assert new_path.read_text() == "old content"
@@ -903,12 +905,11 @@ class TestApplyShapefileRenameEdgeCases:
         assert shp.exists()
         assert dbf.exists()
 
-    def test_shapefile_rename_rollback_on_failure(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Shapefile rename should rollback completed renames on partial failure.
+    def test_shapefile_rename_collision_detected_preserves_originals(self, tmp_path: Path) -> None:
+        """Shapefile rename detects collision and preserves all original files.
 
-        This tests the rollback behavior by simulating a collision mid-rename.
+        When a collision is detected during the pre-check phase, no rename
+        is attempted and all original files remain in place.
         """
         from portolan_cli.scan_fix import _apply_shapefile_rename
 
@@ -922,20 +923,25 @@ class TestApplyShapefileRenameEdgeCases:
 
         new_shp = tmp_path / "new.shp"
 
-        # Create a collision that will be detected mid-rename
-        # First, create the target .shx file AFTER calling _apply_shapefile_rename
-        # but we can't do that, so instead test the collision detection path
-        # by having a target exist
+        # Create a collision on target .shx
         (tmp_path / "new.shx").write_text("collision")
 
         result = _apply_shapefile_rename(shp, new_shp)
 
-        # Collision detected during pre-check, no rename attempted
+        # Collision detected during pre-check, rename failed
         assert result is False
-        # Original files should still exist
-        assert shp.exists()
-        assert dbf.exists()
-        assert shx.exists()
+
+        # Explicit assertions: all original files must exist
+        assert shp.exists() is True, "Original .shp should still exist"
+        assert dbf.exists() is True, "Original .dbf should still exist"
+        assert shx.exists() is True, "Original .shx should still exist"
+
+        # Explicit assertions: no partial rename occurred
+        assert (tmp_path / "new.shp").exists() is False, "Target .shp should not exist"
+        assert (tmp_path / "new.dbf").exists() is False, "Target .dbf should not exist"
+        # new.shx exists because it was the collision file
+        assert (tmp_path / "new.shx").exists() is True, "Collision file should remain"
+        assert (tmp_path / "new.shx").read_text() == "collision", "Collision content preserved"
 
 
 # =============================================================================

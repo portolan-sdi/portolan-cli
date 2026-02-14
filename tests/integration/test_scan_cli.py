@@ -770,6 +770,8 @@ class TestScanFixFlag:
 
     def test_fix_multiple_files_shows_count(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix with multiple fixable files shows correct count."""
+        import re
+
         # Create multiple files with invalid chars
         (tmp_path / "file one.geojson").write_text('{"type": "FeatureCollection"}')
         (tmp_path / "file two.geojson").write_text('{"type": "FeatureCollection"}')
@@ -778,8 +780,12 @@ class TestScanFixFlag:
         result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
 
         assert result.exit_code == 0
-        # Should show count of applied fixes
-        assert "3" in result.output or "applied" in result.output.lower()
+        # Should show count of applied fixes with action word
+        # Match patterns like "Applied 3 fix(es)" or "3 fixes applied"
+        output_lower = result.output.lower()
+        assert re.search(r"(applied\s+3|3\s+(fix|fixes))", output_lower), (
+            f"Expected '3' adjacent to 'applied' or 'fix(es)' in output: {result.output}"
+        )
 
     def test_fix_with_collision_shows_failed_count(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix shows count of fixes that couldn't be applied."""
