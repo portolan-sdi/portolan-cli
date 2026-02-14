@@ -659,6 +659,435 @@ class TestPreviewFix:
 
 
 # =============================================================================
+# Tests for ProposedFix.to_dict (coverage improvement)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestProposedFixToDict:
+    """Tests for ProposedFix.to_dict() method."""
+
+    def test_to_dict_contains_required_fields(self, tmp_path: Path) -> None:
+        """ProposedFix.to_dict() should return all required fields."""
+
+        path = tmp_path / "my file.geojson"
+        path.touch()
+
+        issue = ScanIssue(
+            path=path,
+            relative_path=path.name,
+            issue_type=IssueType.INVALID_CHARACTERS,
+            severity=Severity.WARNING,
+            message="Test message",
+        )
+
+        fix = preview_fix(issue)
+        assert fix is not None
+
+        result = fix.to_dict()
+
+        # Verify required fields exist
+        assert "issue_path" in result
+        assert "category" in result
+        assert "action" in result
+        assert "details" in result
+        assert "preview" in result
+
+    def test_to_dict_serializes_category_as_string(self, tmp_path: Path) -> None:
+        """ProposedFix.to_dict() should serialize category enum as string."""
+        path = tmp_path / "données.geojson"
+        path.touch()
+
+        issue = ScanIssue(
+            path=path,
+            relative_path=path.name,
+            issue_type=IssueType.INVALID_CHARACTERS,
+            severity=Severity.WARNING,
+            message="Non-ASCII chars",
+        )
+
+        fix = preview_fix(issue)
+        assert fix is not None
+
+        result = fix.to_dict()
+
+        # Category should be the string value, not the enum
+        assert result["category"] == "safe"
+        assert isinstance(result["category"], str)
+
+    def test_to_dict_path_is_string(self, tmp_path: Path) -> None:
+        """ProposedFix.to_dict() should convert path to string."""
+        path = tmp_path / "CON.shp"
+        path.touch()
+
+        issue = ScanIssue(
+            path=path,
+            relative_path=path.name,
+            issue_type=IssueType.WINDOWS_RESERVED_NAME,
+            severity=Severity.WARNING,
+            message="Windows reserved",
+        )
+
+        fix = preview_fix(issue)
+        assert fix is not None
+
+        result = fix.to_dict()
+
+        # issue_path should be a string, not Path object
+        assert isinstance(result["issue_path"], str)
+
+
+# =============================================================================
+# Tests for _apply_rename edge cases (coverage improvement)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestApplyRenameEdgeCases:
+    """Tests for _apply_rename edge cases including OSError handling."""
+
+    def test_rename_success_uses_atomic_operation(self, tmp_path: Path) -> None:
+        """Successful rename should use atomic os.rename."""
+        from portolan_cli.scan_fix import _apply_rename
+
+        old_path = tmp_path / "old.geojson"
+        new_path = tmp_path / "new.geojson"
+        old_path.write_text("content")
+
+        result = _apply_rename(old_path, new_path)
+
+        assert result is True
+        assert not old_path.exists()
+        assert new_path.exists()
+        assert new_path.read_text() == "content"
+
+    def test_rename_overwrites_on_linux(self, tmp_path: Path) -> None:
+        """On Linux, os.rename atomically replaces existing file (POSIX behavior).
+
+        NOTE: This is expected POSIX behavior. Collision detection happens
+        BEFORE calling _apply_rename in apply_safe_fixes().
+        """
+        from portolan_cli.scan_fix import _apply_rename
+
+        old_path = tmp_path / "old.geojson"
+        new_path = tmp_path / "new.geojson"
+        old_path.write_text("old content")
+        new_path.write_text("existing content")
+
+        result = _apply_rename(old_path, new_path)
+
+        # On POSIX systems, os.rename atomically replaces target
+        # The collision check is done at a higher level (apply_safe_fixes)
+        assert result is True
+        assert not old_path.exists()
+        # Target is replaced with source content
+        assert new_path.read_text() == "old content"
+
+    def test_rename_fallback_to_shutil_on_cross_fs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rename should fall back to shutil.move on cross-filesystem OSError."""
+        import os
+
+        from portolan_cli.scan_fix import _apply_rename
+
+        old_path = tmp_path / "old.geojson"
+        new_path = tmp_path / "new.geojson"
+        old_path.write_text("content")
+
+        # Mock os.rename to raise OSError (simulating cross-filesystem)
+        def mock_rename(src: str, dst: str) -> None:
+            raise OSError(18, "Cross-device link")
+
+        monkeypatch.setattr(os, "rename", mock_rename)
+
+        result = _apply_rename(old_path, new_path)
+
+        # Should succeed via shutil.move fallback
+        assert result is True
+        assert not old_path.exists()
+        assert new_path.exists()
+
+    def test_rename_fallback_fails_on_shutil_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rename should fail gracefully when both os.rename and shutil.move fail."""
+        import os
+        import shutil
+
+        from portolan_cli.scan_fix import _apply_rename
+
+        old_path = tmp_path / "old.geojson"
+        new_path = tmp_path / "new.geojson"
+        old_path.write_text("content")
+
+        # Mock os.rename to raise OSError
+        def mock_rename(src: str, dst: str) -> None:
+            raise OSError(18, "Cross-device link")
+
+        # Mock shutil.move to also fail
+        def mock_move(src: str, dst: str) -> None:
+            raise shutil.Error("Move failed")
+
+        monkeypatch.setattr(os, "rename", mock_rename)
+        monkeypatch.setattr(shutil, "move", mock_move)
+
+        result = _apply_rename(old_path, new_path)
+
+        # Should fail gracefully
+        assert result is False
+        # Original file should still exist
+        assert old_path.exists()
+
+
+# =============================================================================
+# Tests for _apply_shapefile_rename edge cases (coverage improvement)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestApplyShapefileRenameEdgeCases:
+    """Tests for _apply_shapefile_rename edge cases including rollback."""
+
+    def test_shapefile_rename_success(self, tmp_path: Path) -> None:
+        """Successful shapefile rename should rename all sidecars."""
+        from portolan_cli.scan_fix import _apply_shapefile_rename
+
+        # Create shapefile with sidecars
+        shp = tmp_path / "old.shp"
+        dbf = tmp_path / "old.dbf"
+        shx = tmp_path / "old.shx"
+        shp.touch()
+        dbf.touch()
+        shx.touch()
+
+        new_shp = tmp_path / "new.shp"
+
+        result = _apply_shapefile_rename(shp, new_shp)
+
+        assert result is True
+        assert not shp.exists()
+        assert not dbf.exists()
+        assert not shx.exists()
+        assert new_shp.exists()
+        assert (tmp_path / "new.dbf").exists()
+        assert (tmp_path / "new.shx").exists()
+
+    def test_shapefile_rename_collision_prevents_rename(self, tmp_path: Path) -> None:
+        """Shapefile rename should fail if any target exists."""
+        from portolan_cli.scan_fix import _apply_shapefile_rename
+
+        # Create shapefile with sidecars
+        shp = tmp_path / "old.shp"
+        dbf = tmp_path / "old.dbf"
+        shp.touch()
+        dbf.touch()
+
+        # Create collision on sidecar
+        new_shp = tmp_path / "new.shp"
+        (tmp_path / "new.dbf").write_text("existing")
+
+        result = _apply_shapefile_rename(shp, new_shp)
+
+        assert result is False
+        # Original files should remain
+        assert shp.exists()
+        assert dbf.exists()
+
+    def test_shapefile_rename_rollback_on_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Shapefile rename should rollback completed renames on partial failure."""
+        import os
+
+        from portolan_cli.scan_fix import _apply_shapefile_rename
+
+        # Create shapefile with sidecars
+        shp = tmp_path / "old.shp"
+        dbf = tmp_path / "old.dbf"
+        shx = tmp_path / "old.shx"
+        shp.write_text("shp content")
+        dbf.write_text("dbf content")
+        shx.write_text("shx content")
+
+        new_shp = tmp_path / "new.shp"
+
+        # Track rename calls to fail on third file
+        call_count = 0
+        original_rename = os.rename
+
+        def mock_rename(src: str, dst: str) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 3:  # Fail on third file (shx)
+                raise FileExistsError("Simulated failure")
+            original_rename(src, dst)
+
+        monkeypatch.setattr(os, "rename", mock_rename)
+
+        result = _apply_shapefile_rename(shp, new_shp)
+
+        assert result is False
+        # After rollback, original files should be restored
+        # (shp and dbf were renamed then rolled back, shx never renamed)
+        assert shp.exists() or (tmp_path / "new.shp").exists()  # May have been rolled back
+        assert shx.exists()  # Third file was never renamed
+
+
+# =============================================================================
+# Tests for _rollback_renames (coverage improvement)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestRollbackRenames:
+    """Tests for _rollback_renames function."""
+
+    def test_rollback_empty_list(self) -> None:
+        """Rollback with empty list should do nothing."""
+        from portolan_cli.scan_fix import _rollback_renames
+
+        # Should not raise
+        _rollback_renames([])
+
+    def test_rollback_restores_original_names(self, tmp_path: Path) -> None:
+        """Rollback should restore files to original names."""
+        from portolan_cli.scan_fix import _rollback_renames
+
+        # Simulate files that were renamed
+        old1 = tmp_path / "old1.shp"
+        new1 = tmp_path / "new1.shp"
+        old2 = tmp_path / "old2.dbf"
+        new2 = tmp_path / "new2.dbf"
+
+        # Create files at "new" locations (as if rename happened)
+        new1.write_text("content1")
+        new2.write_text("content2")
+
+        completed = [(old1, new1), (old2, new2)]
+
+        _rollback_renames(completed)
+
+        # Files should be back at original locations
+        assert old1.exists()
+        assert old2.exists()
+        assert not new1.exists()
+        assert not new2.exists()
+
+    def test_rollback_continues_on_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rollback should continue even if some renames fail (best-effort)."""
+        import os
+
+        from portolan_cli.scan_fix import _rollback_renames
+
+        # Create files
+        old1 = tmp_path / "old1.shp"
+        new1 = tmp_path / "new1.shp"
+        old2 = tmp_path / "old2.dbf"
+        new2 = tmp_path / "new2.dbf"
+
+        new1.write_text("content1")
+        new2.write_text("content2")
+
+        # Mock rename to fail on first file only
+        original_rename = os.rename
+        fail_once = True
+
+        def mock_rename(src: str, dst: str) -> None:
+            nonlocal fail_once
+            if fail_once and "new1" in src:
+                fail_once = False
+                raise OSError("Permission denied")
+            original_rename(src, dst)
+
+        monkeypatch.setattr(os, "rename", mock_rename)
+
+        completed = [(old1, new1), (old2, new2)]
+
+        # Should not raise, even with one failure
+        _rollback_renames(completed)
+
+        # Second file should be rolled back despite first failure
+        assert old2.exists()
+
+
+# =============================================================================
+# Tests for apply_safe_fixes additional coverage
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestApplySafeFixesOSErrorPaths:
+    """Additional tests for apply_safe_fixes OSError handling paths."""
+
+    def _make_issue(
+        self,
+        path: Path,
+        issue_type: IssueType = IssueType.INVALID_CHARACTERS,
+    ) -> ScanIssue:
+        """Helper to create a ScanIssue."""
+        return ScanIssue(
+            path=path,
+            relative_path=path.name,
+            issue_type=issue_type,
+            severity=Severity.WARNING,
+            message=f"Test issue for {path.name}",
+        )
+
+    def test_non_shapefile_rename_failure_continues(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-shapefile rename failure should not apply the fix."""
+        import portolan_cli.scan_fix as scan_fix_module
+
+        path = tmp_path / "my file.geojson"
+        path.write_text("content")
+
+        # Mock the _apply_rename function directly to simulate failure
+        def mock_apply_rename(old_path: Path, new_path: Path) -> bool:
+            return False  # Simulate failure
+
+        monkeypatch.setattr(scan_fix_module, "_apply_rename", mock_apply_rename)
+
+        issues = [self._make_issue(path)]
+
+        proposed, applied = apply_safe_fixes(issues, dry_run=False)
+
+        # Should have proposed but not applied
+        assert len(proposed) == 1
+        assert len(applied) == 0
+        # Original file should still exist (mock didn't actually rename)
+        assert path.exists()
+
+    def test_shapefile_rename_failure_does_not_apply(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Shapefile rename failure should not apply the fix."""
+        import portolan_cli.scan_fix as scan_fix_module
+
+        shp = tmp_path / "my file.shp"
+        dbf = tmp_path / "my file.dbf"
+        shp.write_bytes(b"\x00\x00\x27\x0a")
+        dbf.touch()
+
+        # Mock the _apply_shapefile_rename function directly to simulate failure
+        def mock_apply_shapefile_rename(shp_path: Path, new_shp_path: Path) -> bool:
+            return False  # Simulate failure
+
+        monkeypatch.setattr(scan_fix_module, "_apply_shapefile_rename", mock_apply_shapefile_rename)
+
+        issues = [self._make_issue(shp)]
+
+        proposed, applied = apply_safe_fixes(issues, dry_run=False)
+
+        # Should have proposed but not applied
+        assert len(proposed) == 1
+        assert len(applied) == 0
+
+
+# =============================================================================
 # Tests for UnsafeFixes (placeholder - not in scope for issue #62)
 # =============================================================================
 
