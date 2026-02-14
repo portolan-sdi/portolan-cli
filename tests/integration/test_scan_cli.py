@@ -598,3 +598,231 @@ class TestScanManualFlag:
         assert "--fix" not in result.output
         # Should show success since no manual issues
         assert "no files require manual resolution" in result.output.lower()
+
+
+# =============================================================================
+# Tests for --fix Flag
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScanFixFlag:
+    """Tests for the --fix CLI flag."""
+
+    def test_fix_flag_help_exists(self, runner: CliRunner) -> None:
+        """The --fix flag is documented in help."""
+        result = runner.invoke(cli, ["scan", "--help"])
+
+        assert "--fix" in result.output
+        assert "--dry-run" in result.output
+
+    def test_fix_dry_run_shows_preview(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix --dry-run shows what would be changed without modifying files."""
+        bad_file = tmp_path / "file with spaces.geojson"
+        bad_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix", "--dry-run"])
+
+        assert result.exit_code == 0
+        # Should show dry run message
+        assert "dry run" in result.output.lower()
+        # Should preview the rename
+        assert "file_with_spaces" in result.output
+        # File should NOT be renamed
+        assert bad_file.exists()
+        assert not (tmp_path / "file_with_spaces.geojson").exists()
+
+    def test_fix_applies_immediately(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix applies fixes immediately without prompting."""
+        bad_file = tmp_path / "file with spaces.geojson"
+        bad_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+
+        assert result.exit_code == 0
+        # Should show success message
+        assert "applied" in result.output.lower()
+        # File should be renamed
+        assert not bad_file.exists()
+        assert (tmp_path / "file_with_spaces.geojson").exists()
+
+    def test_fix_renames_windows_reserved(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix renames Windows reserved names."""
+        bad_file = tmp_path / "CON.geojson"
+        bad_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+
+        assert result.exit_code == 0
+        # Should rename to _CON.geojson
+        assert not bad_file.exists()
+        assert (tmp_path / "_CON.geojson").exists()
+
+    def test_fix_renames_shapefile_sidecars(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix renames shapefile sidecars along with primary file."""
+        # Create shapefile with sidecars (use non-ASCII to trigger rename)
+        shp_file = tmp_path / "données.shp"
+        dbf_file = tmp_path / "données.dbf"
+        shx_file = tmp_path / "données.shx"
+        shp_file.write_bytes(b"\x00\x00\x27\x0a")  # Shapefile magic bytes
+        dbf_file.touch()
+        shx_file.touch()
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+
+        assert result.exit_code == 0
+        # All files should be renamed
+        assert not shp_file.exists()
+        assert not dbf_file.exists()
+        assert not shx_file.exists()
+        assert (tmp_path / "donnees.shp").exists()
+        assert (tmp_path / "donnees.dbf").exists()
+        assert (tmp_path / "donnees.shx").exists()
+
+    def test_fix_no_issues_shows_info(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix with no fixable issues shows info message."""
+        # Create a valid file (no issues)
+        valid_file = tmp_path / "valid.geojson"
+        valid_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+
+        assert result.exit_code == 0
+        # Should show "no issues to fix"
+        assert "no issues" in result.output.lower()
+
+    def test_fix_json_output_includes_fixes(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix --json includes proposed and applied fixes in output."""
+        bad_file = tmp_path / "file with spaces.geojson"
+        bad_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix", "--json"])
+
+        assert result.exit_code == 0
+        envelope = json.loads(result.output)
+        data = envelope["data"]
+
+        # Should include both proposed_fixes and applied_fixes
+        assert "proposed_fixes" in data, "Missing proposed_fixes in JSON output"
+        assert "applied_fixes" in data, "Missing applied_fixes in JSON output"
+
+    def test_fix_collision_detection(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix detects collisions and doesn't overwrite existing files."""
+        # Create both source and would-be target
+        source = tmp_path / "file with spaces.geojson"
+        target = tmp_path / "file_with_spaces.geojson"
+        source.write_text('{"type": "source"}')
+        target.write_text('{"type": "target"}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+
+        assert result.exit_code == 0
+        # Source should still exist (collision prevented rename)
+        assert source.exists()
+        # Target should be unchanged
+        assert target.read_text() == '{"type": "target"}'
+        # Should mention collision
+        assert "collision" in result.output.lower() or "could not" in result.output.lower()
+
+    def test_fix_transliterates_non_ascii(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix transliterates non-ASCII characters to ASCII."""
+        bad_file = tmp_path / "données.geojson"
+        bad_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+
+        assert result.exit_code == 0
+        # Should rename to donnees.geojson
+        assert not bad_file.exists()
+        assert (tmp_path / "donnees.geojson").exists()
+
+    def test_dry_run_without_fix_shows_warning(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--dry-run without --fix shows warning that it has no effect."""
+        valid_file = tmp_path / "valid.geojson"
+        valid_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--dry-run"])
+
+        assert result.exit_code == 0
+        # Should warn about --dry-run having no effect
+        assert "no effect" in result.output.lower()
+
+    def test_fix_dry_run_json_includes_proposed_fixes(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--fix --dry-run --json includes proposed_fixes (applied_fixes omitted when empty)."""
+        bad_file = tmp_path / "file with spaces.geojson"
+        bad_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix", "--dry-run", "--json"])
+
+        assert result.exit_code == 0
+        envelope = json.loads(result.output)
+        data = envelope["data"]
+
+        # Should have proposed_fixes with content
+        assert "proposed_fixes" in data
+        assert len(data["proposed_fixes"]) > 0
+
+        # applied_fixes is omitted from JSON when empty (minimizes output)
+        # This is correct behavior - empty lists are not serialized
+        assert data.get("applied_fixes", []) == []
+
+    def test_fix_multiple_files_shows_count(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix with multiple fixable files shows correct count."""
+        import re
+
+        # Create multiple files with invalid chars
+        (tmp_path / "file one.geojson").write_text('{"type": "FeatureCollection"}')
+        (tmp_path / "file two.geojson").write_text('{"type": "FeatureCollection"}')
+        (tmp_path / "file three.geojson").write_text('{"type": "FeatureCollection"}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+
+        assert result.exit_code == 0
+        # Should show count of applied fixes with action word
+        # Match patterns like "Applied 3 fix(es)" or "3 fixes applied"
+        output_lower = result.output.lower()
+        assert re.search(r"(applied\s+3|3\s+(fix|fixes))", output_lower), (
+            f"Expected '3' adjacent to 'applied' or 'fix(es)' in output: {result.output}"
+        )
+
+    def test_fix_with_collision_shows_failed_count(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix shows count of fixes that couldn't be applied."""
+        # Create source with invalid chars and conflicting target
+        source = tmp_path / "file one.geojson"
+        target = tmp_path / "file_one.geojson"
+        source.write_text('{"type": "source"}')
+        target.write_text('{"type": "target"}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+
+        assert result.exit_code == 0
+        # Should show that fix could not be applied
+        assert "could not" in result.output.lower() or "collision" in result.output.lower()
+
+    def test_fix_dry_run_human_output_shows_preview(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--fix --dry-run shows preview of what would be changed (human output)."""
+        bad_file = tmp_path / "données.geojson"
+        bad_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix", "--dry-run"])
+
+        assert result.exit_code == 0
+        # Should show preview
+        assert "donnees" in result.output
+        # Should indicate it's a dry run
+        assert "dry run" in result.output.lower()
+
+    def test_fix_dry_run_no_issues_shows_info(self, runner: CliRunner, tmp_path: Path) -> None:
+        """--fix --dry-run with no fixable issues shows info message."""
+        valid_file = tmp_path / "valid.geojson"
+        valid_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix", "--dry-run"])
+
+        assert result.exit_code == 0
+        # Should show "no issues to fix"
+        assert "no issues" in result.output.lower()

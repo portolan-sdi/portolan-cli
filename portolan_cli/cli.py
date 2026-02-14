@@ -30,6 +30,7 @@ from portolan_cli.scan import (
 from portolan_cli.scan import (
     Severity as ScanSeverity,
 )
+from portolan_cli.scan_fix import ProposedFix, apply_safe_fixes
 from portolan_cli.scan_infer import infer_collections
 from portolan_cli.scan_output import (
     format_collection_suggestion,
@@ -226,6 +227,57 @@ def check(ctx: click.Context, path: Path, json_output: bool, verbose: bool) -> N
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _handle_fix_mode(
+    result: ScanResult,
+    *,
+    dry_run: bool,
+    use_json: bool,
+) -> tuple[list[ProposedFix], list[ProposedFix]]:
+    """Handle --fix mode for scan command.
+
+    Args:
+        result: Scan result with issues to fix.
+        dry_run: If True, preview fixes without applying.
+        use_json: If True, suppress human output.
+
+    Returns:
+        Tuple of (proposed_fixes, applied_fixes).
+    """
+    # Dry-run mode: compute and show what would be done
+    if dry_run:
+        proposed, _ = apply_safe_fixes(result.issues, dry_run=True)
+        if not use_json:
+            if not proposed:
+                info("No issues to fix")
+            else:
+                info(f"Dry run: {len(proposed)} fix(es) would be applied")
+                for fix in proposed:
+                    detail(f"  {fix.preview}")
+        return proposed, []
+
+    # Apply fixes
+    proposed, applied = apply_safe_fixes(result.issues, dry_run=False)
+
+    if not use_json:
+        if not proposed:
+            info("No issues to fix")
+        else:
+            # Show successful fixes
+            if applied:
+                success(f"Applied {len(applied)} fix(es)")
+                for fix in applied:
+                    detail(f"  {fix.preview}")
+
+            # Show any that failed to apply (collisions)
+            failed = [p for p in proposed if p not in applied]
+            if failed:
+                warn(f"{len(failed)} fix(es) could not be applied (collision):")
+                for fix in failed:
+                    detail(f"  {fix.preview}")
+
+    return proposed, applied
+
+
 @cli.command()
 @click.argument("path", type=click.Path(path_type=Path))
 @click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
@@ -274,6 +326,16 @@ def check(ctx: click.Context, path: Path, json_output: bool, verbose: bool) -> N
     is_flag=True,
     help="Show only issues requiring manual resolution",
 )
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="Apply safe fixes (rename files with invalid characters, Windows reserved names, or long paths)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview fixes without applying them (use with --fix)",
+)
 @click.pass_context
 def scan(
     ctx: click.Context,
@@ -287,6 +349,8 @@ def scan(
     show_tree: bool,
     suggest_collections: bool,
     manual_only: bool,
+    fix: bool,
+    dry_run: bool,
 ) -> None:
     """Scan a directory for geospatial files and potential issues.
 
@@ -294,6 +358,15 @@ def scan(
     and reports issues that may cause problems during import.
 
     PATH is the directory to scan.
+
+    \b
+    Fix Mode:
+        Use --fix to auto-rename files with:
+        - Invalid characters (spaces, parentheses, non-ASCII)
+        - Windows reserved names (CON, PRN, AUX, etc.)
+        - Long paths (> 200 characters)
+
+        Use --dry-run to preview changes without applying.
 
     Examples:
 
@@ -304,6 +377,10 @@ def scan(
         portolan scan /large/tree --max-depth=2
 
         portolan scan /data --no-recursive
+
+        portolan scan /data --fix --dry-run
+
+        portolan scan /data --fix
     """
     use_json = should_output_json(ctx, json_output)
 
@@ -374,6 +451,20 @@ def scan(
     # Run collection inference if requested
     if suggest_collections and result.ready:
         result.collection_suggestions = infer_collections(result.ready)
+
+    # Warn if --dry-run is used without --fix (no effect)
+    if dry_run and not fix:
+        warn("--dry-run has no effect without --fix")
+
+    # Handle fix mode
+    if fix:
+        proposed, applied = _handle_fix_mode(
+            result,
+            dry_run=dry_run,
+            use_json=use_json,
+        )
+        result.proposed_fixes = proposed
+        result.applied_fixes = applied
 
     if use_json:
         # JSON output with envelope
