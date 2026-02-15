@@ -23,10 +23,27 @@ NOT breaking:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
 from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
+
+
+def _nodata_equals(a: float | int | None, b: float | int | None) -> bool:
+    """Compare nodata values, handling NaN correctly.
+
+    In Python, float('nan') != float('nan') is always True.
+    This function treats two NaN values as equal.
+    """
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    if isinstance(a, float) and isinstance(b, float):
+        if math.isnan(a) and math.isnan(b):
+            return True
+    return a == b
 
 
 @dataclass
@@ -63,6 +80,8 @@ class BreakingChange:
             return f"Column '{self.element}' CRS changed: {self.old_value} -> {self.new_value}"
         elif self.change_type == "nodata_changed":
             return f"Band '{self.element}' nodata changed: {self.old_value} -> {self.new_value}"
+        elif self.change_type == "nullable_changed":
+            return f"Column '{self.element}' nullable changed: {self.old_value} -> {self.new_value}"
         else:
             return f"{self.change_type}: {self.element} ({self.old_value} -> {self.new_value})"
 
@@ -191,6 +210,27 @@ def _detect_geoparquet_changes(
                 )
             )
 
+        # Check nullable changes (True -> False is breaking)
+        old_nullable = (
+            old_col.get("nullable")
+            if isinstance(old_col, dict)
+            else getattr(old_col, "nullable", None)
+        )
+        new_nullable = (
+            new_col.get("nullable")
+            if isinstance(new_col, dict)
+            else getattr(new_col, "nullable", None)
+        )
+        if old_nullable is True and new_nullable is False:
+            changes.append(
+                BreakingChange(
+                    change_type="nullable_changed",
+                    element=name,
+                    old_value="true",
+                    new_value="false",
+                )
+            )
+
     return changes
 
 
@@ -242,7 +282,7 @@ def _detect_cog_changes(
                 )
             )
 
-        # Check nodata changes
+        # Check nodata changes (handles NaN correctly)
         old_nodata = (
             old_band.get("nodata")
             if isinstance(old_band, dict)
@@ -253,7 +293,7 @@ def _detect_cog_changes(
             if isinstance(new_band, dict)
             else getattr(new_band, "nodata", None)
         )
-        if old_nodata != new_nodata:
+        if not _nodata_equals(old_nodata, new_nodata):
             changes.append(
                 BreakingChange(
                     change_type="nodata_changed",

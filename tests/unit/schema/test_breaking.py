@@ -324,3 +324,73 @@ class TestIsBreaking:
         )
 
         assert is_breaking(old, new) is False
+
+
+class TestNullableChanges:
+    """Tests for nullable change detection."""
+
+    def _make_schema(self, columns: list[ColumnSchema]) -> SchemaModel:
+        """Helper to create a schema."""
+        return SchemaModel(
+            schema_version="1.0.0",
+            format="geoparquet",
+            columns=columns,
+        )
+
+    @pytest.mark.unit
+    def test_nullable_true_to_false_is_breaking(self) -> None:
+        """Changing nullable True -> False is breaking."""
+        old = self._make_schema([ColumnSchema(name="id", type="int64", nullable=True)])
+        new = self._make_schema([ColumnSchema(name="id", type="int64", nullable=False)])
+
+        changes = detect_breaking_changes(old, new)
+        assert len(changes) == 1
+        assert changes[0].change_type == "nullable_changed"
+        assert changes[0].old_value == "true"
+        assert changes[0].new_value == "false"
+
+    @pytest.mark.unit
+    def test_nullable_false_to_true_not_breaking(self) -> None:
+        """Changing nullable False -> True is NOT breaking (relaxing constraint)."""
+        old = self._make_schema([ColumnSchema(name="id", type="int64", nullable=False)])
+        new = self._make_schema([ColumnSchema(name="id", type="int64", nullable=True)])
+
+        changes = detect_breaking_changes(old, new)
+        assert len(changes) == 0
+
+
+class TestNanNodata:
+    """Tests for NaN nodata handling."""
+
+    def _make_cog_schema(self, bands: list[BandSchema]) -> SchemaModel:
+        """Helper to create a COG schema."""
+        return SchemaModel(
+            schema_version="1.0.0",
+            format="cog",
+            columns=bands,
+        )
+
+    @pytest.mark.unit
+    def test_identical_nan_nodata_not_breaking(self) -> None:
+        """Two NaN nodata values should be treated as equal."""
+        old = self._make_cog_schema(
+            [BandSchema(name="band_1", data_type="float32", nodata=float("nan"))]
+        )
+        new = self._make_cog_schema(
+            [BandSchema(name="band_1", data_type="float32", nodata=float("nan"))]
+        )
+
+        changes = detect_breaking_changes(old, new)
+        assert len(changes) == 0
+
+    @pytest.mark.unit
+    def test_nan_to_number_is_breaking(self) -> None:
+        """Changing NaN nodata to a number is breaking."""
+        old = self._make_cog_schema(
+            [BandSchema(name="band_1", data_type="float32", nodata=float("nan"))]
+        )
+        new = self._make_cog_schema([BandSchema(name="band_1", data_type="float32", nodata=0.0)])
+
+        changes = detect_breaking_changes(old, new)
+        assert len(changes) == 1
+        assert changes[0].change_type == "nodata_changed"

@@ -153,9 +153,10 @@ class CatalogModel:
             links=links,
         )
 
-        # Apply type and stac_version from input dict if present
+        # Apply type and stac_version from input dict if present and valid
         # These are init=False fields, so we set them after construction
-        if "type" in data:
+        # Only apply valid type values to prevent creating invalid STAC Catalogs
+        if "type" in data and data["type"] == "Catalog":
             object.__setattr__(catalog, "type", data["type"])
         if "stac_version" in data:
             object.__setattr__(catalog, "stac_version", data["stac_version"])

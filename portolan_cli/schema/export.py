@@ -29,11 +29,32 @@ def export_schema_json(schema: SchemaModel, path: Path) -> Path:
     return path
 
 
+def _write_sidecar_meta(schema: SchemaModel, path: Path) -> Path:
+    """Write schema metadata to a sidecar .meta.json file.
+
+    This preserves schema_version, format, crs, and statistics that
+    aren't stored in the columnar CSV/Parquet format.
+    """
+    meta_path = path.with_suffix(path.suffix + ".meta.json")
+    meta = {
+        "schema_version": schema.schema_version,
+        "format": schema.format,
+        "crs": schema.crs,
+        "statistics": schema.statistics,
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+    return meta_path
+
+
 def export_schema_csv(schema: SchemaModel, path: Path) -> Path:
     """Export schema columns to CSV file for editing.
 
     The CSV format is a flat table with one row per column.
     Only user-editable fields (description, unit, semantic_type) should be modified.
+
+    A sidecar .meta.json file is also written to preserve schema metadata
+    (schema_version, format, crs, statistics).
 
     Args:
         schema: SchemaModel to export.
@@ -66,6 +87,9 @@ def export_schema_csv(schema: SchemaModel, path: Path) -> Path:
             else:
                 row = dict(col)
             writer.writerow(row)
+
+    # Write sidecar metadata
+    _write_sidecar_meta(schema, path)
 
     return path
 
@@ -102,5 +126,8 @@ def export_schema_parquet(schema: SchemaModel, path: Path) -> Path:
 
     # Write to parquet
     pq.write_table(table, path)
+
+    # Write sidecar metadata
+    _write_sidecar_meta(schema, path)
 
     return path

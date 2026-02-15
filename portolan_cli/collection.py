@@ -97,7 +97,11 @@ def _extract_extent_from_file(
         from portolan_cli.metadata.cog import extract_cog_metadata
 
         cog_metadata = extract_cog_metadata(path)
-        bbox = [list(cog_metadata.bbox)]
+        if cog_metadata and cog_metadata.bbox:
+            bbox = [list(cog_metadata.bbox)]
+        else:
+            # Default to global extent if no bbox
+            bbox = [[-180.0, -90.0, 180.0, 90.0]]
     else:
         # Default to global extent
         bbox = [[-180.0, -90.0, 180.0, 90.0]]

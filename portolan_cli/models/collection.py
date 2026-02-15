@@ -225,7 +225,7 @@ class CollectionModel:
 
         links = [Link.from_dict(link) for link in data.get("links", [])]
 
-        return cls(
+        collection = cls(
             id=data["id"],
             description=data["description"],
             extent=ExtentModel.from_dict(data["extent"]),
@@ -238,3 +238,11 @@ class CollectionModel:
             updated=updated,
             links=links,
         )
+
+        # Respect type and stac_version from input if valid (consistency with CatalogModel)
+        if "type" in data and data["type"] == "Collection":
+            object.__setattr__(collection, "type", data["type"])
+        if "stac_version" in data:
+            object.__setattr__(collection, "stac_version", data["stac_version"])
+
+        return collection
