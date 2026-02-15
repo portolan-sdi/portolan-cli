@@ -14,6 +14,46 @@ from typing import Any
 from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
 
 
+def _parse_nodata(nodata_str: str | None) -> float | int | None:
+    """Parse nodata value from string, preserving int vs float type."""
+    if not nodata_str or not nodata_str.strip():
+        return None
+    nodata_str = nodata_str.strip()
+    try:
+        # Preserve integer type if no decimal point or exponent
+        if "." not in nodata_str and "e" not in nodata_str.lower():
+            return int(nodata_str)
+        return float(nodata_str)
+    except ValueError:
+        return None
+
+
+def _parse_csv_geoparquet_row(row: dict[str, str]) -> ColumnSchema:
+    """Parse a CSV row into a GeoParquet ColumnSchema."""
+    nullable = row.get("nullable", "true").lower() == "true"
+    return ColumnSchema(
+        name=row["name"],
+        type=row["type"],
+        nullable=nullable,
+        geometry_type=row.get("geometry_type") or None,
+        crs=row.get("crs") or None,
+        description=row.get("description") or None,
+        unit=row.get("unit") or None,
+        semantic_type=row.get("semantic_type") or None,
+    )
+
+
+def _parse_csv_cog_row(row: dict[str, str]) -> BandSchema:
+    """Parse a CSV row into a COG BandSchema."""
+    return BandSchema(
+        name=row["name"],
+        data_type=row["data_type"],
+        nodata=_parse_nodata(row.get("nodata")),
+        description=row.get("description") or None,
+        unit=row.get("unit") or None,
+    )
+
+
 def _read_sidecar_meta(path: Path) -> dict[str, Any]:
     """Read schema metadata from sidecar .meta.json file if present.
 
@@ -23,7 +63,7 @@ def _read_sidecar_meta(path: Path) -> dict[str, Any]:
     """
     meta_path = path.with_suffix(path.suffix + ".meta.json")
     if meta_path.exists():
-        with open(meta_path) as f:
+        with open(meta_path, encoding="utf-8") as f:
             result: dict[str, Any] = json.load(f)
             return result
     return {}
@@ -45,7 +85,7 @@ def import_schema_json(path: Path) -> SchemaModel:
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     return SchemaModel.from_dict(data)
@@ -90,47 +130,14 @@ def import_schema_csv(
 
     columns: list[ColumnSchema | BandSchema | dict[str, Any]] = []
 
-    with open(path, newline="") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row_num, row in enumerate(reader, start=2):  # start=2 for 1-indexed + header
             try:
                 if actual_format == "geoparquet":
-                    # Parse nullable as bool
-                    nullable = row.get("nullable", "true").lower() == "true"
-                    columns.append(
-                        ColumnSchema(
-                            name=row["name"],
-                            type=row["type"],
-                            nullable=nullable,
-                            geometry_type=row.get("geometry_type") or None,
-                            crs=row.get("crs") or None,
-                            description=row.get("description") or None,
-                            unit=row.get("unit") or None,
-                            semantic_type=row.get("semantic_type") or None,
-                        )
-                    )
+                    columns.append(_parse_csv_geoparquet_row(row))
                 else:  # COG
-                    nodata = row.get("nodata")
-                    nodata_val: float | int | None = None
-                    if nodata and nodata.strip():
-                        nodata_str = nodata.strip()
-                        try:
-                            # Preserve integer type if no decimal point
-                            if "." not in nodata_str and "e" not in nodata_str.lower():
-                                nodata_val = int(nodata_str)
-                            else:
-                                nodata_val = float(nodata_str)
-                        except ValueError:
-                            pass
-                    columns.append(
-                        BandSchema(
-                            name=row["name"],
-                            data_type=row["data_type"],
-                            nodata=nodata_val,
-                            description=row.get("description") or None,
-                            unit=row.get("unit") or None,
-                        )
-                    )
+                    columns.append(_parse_csv_cog_row(row))
             except KeyError as e:
                 raise ValueError(f"CSV row {row_num} missing required column: {e.args[0]}") from e
 

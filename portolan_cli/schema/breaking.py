@@ -46,6 +46,20 @@ def _nodata_equals(a: float | int | None, b: float | int | None) -> bool:
     return a == b
 
 
+# Message templates for breaking change types
+_CHANGE_MESSAGES: dict[str, str] = {
+    "column_removed": "Column '{element}' removed",
+    "band_removed": "Band '{element}' removed",
+    "type_changed": "Column '{element}' type changed: {old} -> {new}",
+    "data_type_changed": "Band '{element}' data_type changed: {old} -> {new}",
+    "geometry_type_changed": "Column '{element}' geometry_type changed: {old} -> {new}",
+    "crs_changed": "CRS changed: {old} -> {new}",
+    "column_crs_changed": "Column '{element}' CRS changed: {old} -> {new}",
+    "nodata_changed": "Band '{element}' nodata changed: {old} -> {new}",
+    "nullable_changed": "Column '{element}' nullable changed: {old} -> {new}",
+}
+
+
 @dataclass
 class BreakingChange:
     """A single breaking change detected between schemas."""
@@ -64,26 +78,14 @@ class BreakingChange:
 
     def __str__(self) -> str:
         """Human-readable description of the change."""
-        if self.change_type == "column_removed":
-            return f"Column '{self.element}' removed"
-        elif self.change_type == "band_removed":
-            return f"Band '{self.element}' removed"
-        elif self.change_type == "type_changed":
-            return f"Column '{self.element}' type changed: {self.old_value} -> {self.new_value}"
-        elif self.change_type == "data_type_changed":
-            return f"Band '{self.element}' data_type changed: {self.old_value} -> {self.new_value}"
-        elif self.change_type == "geometry_type_changed":
-            return f"Column '{self.element}' geometry_type changed: {self.old_value} -> {self.new_value}"
-        elif self.change_type == "crs_changed":
-            return f"CRS changed: {self.old_value} -> {self.new_value}"
-        elif self.change_type == "column_crs_changed":
-            return f"Column '{self.element}' CRS changed: {self.old_value} -> {self.new_value}"
-        elif self.change_type == "nodata_changed":
-            return f"Band '{self.element}' nodata changed: {self.old_value} -> {self.new_value}"
-        elif self.change_type == "nullable_changed":
-            return f"Column '{self.element}' nullable changed: {self.old_value} -> {self.new_value}"
-        else:
-            return f"{self.change_type}: {self.element} ({self.old_value} -> {self.new_value})"
+        template = _CHANGE_MESSAGES.get(self.change_type)
+        if template:
+            return template.format(
+                element=self.element,
+                old=self.old_value,
+                new=self.new_value,
+            )
+        return f"{self.change_type}: {self.element} ({self.old_value} -> {self.new_value})"
 
 
 def detect_breaking_changes(
@@ -132,6 +134,79 @@ def detect_breaking_changes(
     return changes
 
 
+def _get_col_attr(
+    col: ColumnSchema | BandSchema | dict[str, Any],
+    attr: str,
+) -> Any:
+    """Get attribute from column, supporting both dict and dataclass."""
+    if isinstance(col, dict):
+        return col.get(attr)
+    return getattr(col, attr, None)
+
+
+def _check_column_changes(
+    name: str,
+    old_col: ColumnSchema | BandSchema | dict[str, Any],
+    new_col: ColumnSchema | BandSchema | dict[str, Any],
+) -> list[BreakingChange]:
+    """Check for breaking changes between two columns."""
+    changes: list[BreakingChange] = []
+
+    # Check type changes
+    old_type = _get_col_attr(old_col, "type")
+    new_type = _get_col_attr(new_col, "type")
+    if old_type != new_type:
+        changes.append(
+            BreakingChange(
+                change_type="type_changed",
+                element=name,
+                old_value=str(old_type),
+                new_value=str(new_type),
+            )
+        )
+
+    # Check geometry type changes
+    old_geom = _get_col_attr(old_col, "geometry_type")
+    new_geom = _get_col_attr(new_col, "geometry_type")
+    if old_geom != new_geom and old_geom is not None:
+        changes.append(
+            BreakingChange(
+                change_type="geometry_type_changed",
+                element=name,
+                old_value=str(old_geom),
+                new_value=str(new_geom),
+            )
+        )
+
+    # Check column-level CRS changes
+    old_crs = _get_col_attr(old_col, "crs")
+    new_crs = _get_col_attr(new_col, "crs")
+    if old_crs != new_crs and old_crs is not None:
+        changes.append(
+            BreakingChange(
+                change_type="column_crs_changed",
+                element=name,
+                old_value=str(old_crs),
+                new_value=str(new_crs),
+            )
+        )
+
+    # Check nullable changes (True -> False is breaking)
+    old_nullable = _get_col_attr(old_col, "nullable")
+    new_nullable = _get_col_attr(new_col, "nullable")
+    if old_nullable is True and new_nullable is False:
+        changes.append(
+            BreakingChange(
+                change_type="nullable_changed",
+                element=name,
+                old_value="true",
+                new_value="false",
+            )
+        )
+
+    return changes
+
+
 def _detect_geoparquet_changes(
     old_schema: SchemaModel,
     new_schema: SchemaModel,
@@ -143,7 +218,7 @@ def _detect_geoparquet_changes(
     old_cols = _columns_by_name(old_schema)
     new_cols = _columns_by_name(new_schema)
 
-    # Check for removed columns
+    # Check for removed columns and changes
     for name in old_cols:
         if name not in new_cols:
             changes.append(
@@ -156,80 +231,44 @@ def _detect_geoparquet_changes(
             )
             continue
 
-        old_col = old_cols[name]
-        new_col = new_cols[name]
+        changes.extend(_check_column_changes(name, old_cols[name], new_cols[name]))
 
-        # Check type changes
-        old_type = (
-            old_col.get("type") if isinstance(old_col, dict) else getattr(old_col, "type", None)
-        )
-        new_type = (
-            new_col.get("type") if isinstance(new_col, dict) else getattr(new_col, "type", None)
-        )
-        if old_type != new_type:
-            changes.append(
-                BreakingChange(
-                    change_type="type_changed",
-                    element=name,
-                    old_value=str(old_type),
-                    new_value=str(new_type),
-                )
-            )
+    return changes
 
-        # Check geometry type changes
-        old_geom = (
-            old_col.get("geometry_type")
-            if isinstance(old_col, dict)
-            else getattr(old_col, "geometry_type", None)
-        )
-        new_geom = (
-            new_col.get("geometry_type")
-            if isinstance(new_col, dict)
-            else getattr(new_col, "geometry_type", None)
-        )
-        if old_geom != new_geom and old_geom is not None:
-            changes.append(
-                BreakingChange(
-                    change_type="geometry_type_changed",
-                    element=name,
-                    old_value=str(old_geom),
-                    new_value=str(new_geom),
-                )
-            )
 
-        # Check column-level CRS changes
-        old_crs = old_col.get("crs") if isinstance(old_col, dict) else getattr(old_col, "crs", None)
-        new_crs = new_col.get("crs") if isinstance(new_col, dict) else getattr(new_col, "crs", None)
-        if old_crs != new_crs and old_crs is not None:
-            changes.append(
-                BreakingChange(
-                    change_type="column_crs_changed",
-                    element=name,
-                    old_value=str(old_crs),
-                    new_value=str(new_crs),
-                )
-            )
+def _check_band_changes(
+    name: str,
+    old_band: ColumnSchema | BandSchema | dict[str, Any],
+    new_band: ColumnSchema | BandSchema | dict[str, Any],
+) -> list[BreakingChange]:
+    """Check for breaking changes between two bands."""
+    changes: list[BreakingChange] = []
 
-        # Check nullable changes (True -> False is breaking)
-        old_nullable = (
-            old_col.get("nullable")
-            if isinstance(old_col, dict)
-            else getattr(old_col, "nullable", None)
-        )
-        new_nullable = (
-            new_col.get("nullable")
-            if isinstance(new_col, dict)
-            else getattr(new_col, "nullable", None)
-        )
-        if old_nullable is True and new_nullable is False:
-            changes.append(
-                BreakingChange(
-                    change_type="nullable_changed",
-                    element=name,
-                    old_value="true",
-                    new_value="false",
-                )
+    # Check data_type changes
+    old_dtype = _get_col_attr(old_band, "data_type")
+    new_dtype = _get_col_attr(new_band, "data_type")
+    if old_dtype != new_dtype:
+        changes.append(
+            BreakingChange(
+                change_type="data_type_changed",
+                element=name,
+                old_value=str(old_dtype),
+                new_value=str(new_dtype),
             )
+        )
+
+    # Check nodata changes (handles NaN correctly)
+    old_nodata = _get_col_attr(old_band, "nodata")
+    new_nodata = _get_col_attr(new_band, "nodata")
+    if not _nodata_equals(old_nodata, new_nodata):
+        changes.append(
+            BreakingChange(
+                change_type="nodata_changed",
+                element=name,
+                old_value=str(old_nodata) if old_nodata is not None else None,
+                new_value=str(new_nodata) if new_nodata is not None else None,
+            )
+        )
 
     return changes
 
@@ -245,7 +284,7 @@ def _detect_cog_changes(
     old_bands = _columns_by_name(old_schema)
     new_bands = _columns_by_name(new_schema)
 
-    # Check for removed bands
+    # Check for removed bands and changes
     for name in old_bands:
         if name not in new_bands:
             changes.append(
@@ -258,50 +297,7 @@ def _detect_cog_changes(
             )
             continue
 
-        old_band = old_bands[name]
-        new_band = new_bands[name]
-
-        # Check data_type changes
-        old_dtype = (
-            old_band.get("data_type")
-            if isinstance(old_band, dict)
-            else getattr(old_band, "data_type", None)
-        )
-        new_dtype = (
-            new_band.get("data_type")
-            if isinstance(new_band, dict)
-            else getattr(new_band, "data_type", None)
-        )
-        if old_dtype != new_dtype:
-            changes.append(
-                BreakingChange(
-                    change_type="data_type_changed",
-                    element=name,
-                    old_value=str(old_dtype),
-                    new_value=str(new_dtype),
-                )
-            )
-
-        # Check nodata changes (handles NaN correctly)
-        old_nodata = (
-            old_band.get("nodata")
-            if isinstance(old_band, dict)
-            else getattr(old_band, "nodata", None)
-        )
-        new_nodata = (
-            new_band.get("nodata")
-            if isinstance(new_band, dict)
-            else getattr(new_band, "nodata", None)
-        )
-        if not _nodata_equals(old_nodata, new_nodata):
-            changes.append(
-                BreakingChange(
-                    change_type="nodata_changed",
-                    element=name,
-                    old_value=str(old_nodata) if old_nodata is not None else None,
-                    new_value=str(new_nodata) if new_nodata is not None else None,
-                )
-            )
+        changes.extend(_check_band_changes(name, old_bands[name], new_bands[name]))
 
     return changes
 
