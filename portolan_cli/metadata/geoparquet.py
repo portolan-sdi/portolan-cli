@@ -233,9 +233,7 @@ def extract_schema_from_geoparquet(
         if isinstance(crs_raw, str):
             crs_str = crs_raw
         elif isinstance(crs_raw, dict):
-            # Convert dict to string representation
-            import json
-
+            # Convert dict to string representation (json imported at module level)
             crs_str = json.dumps(crs_raw)
 
         # Track missing CRS warning for geometry columns

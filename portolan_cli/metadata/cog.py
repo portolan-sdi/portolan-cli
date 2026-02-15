@@ -159,16 +159,16 @@ def extract_schema_from_cog(
         raise FileNotFoundError(f"File not found: {path}")
 
     warnings: list[str] = []
-    statistics: dict[str, Any] = {}
+    crs_value: str | None = None
 
     with rasterio.open(path) as src:
-        # Check for missing CRS
+        # Extract CRS as schema-level spatial metadata
         if src.crs:
             epsg = src.crs.to_epsg()
             if epsg:
-                statistics["crs"] = f"EPSG:{epsg}"
+                crs_value = f"EPSG:{epsg}"
             else:
-                statistics["crs"] = src.crs.to_wkt()
+                crs_value = src.crs.to_wkt()
         else:
             warnings.append("Raster has no CRS defined. Consider adding CRS metadata.")
 
@@ -187,12 +187,12 @@ def extract_schema_from_cog(
             bands.append(band)
 
     # For COG, we store bands as "columns" in the schema
-    # This is a design choice - BandSchema is compatible via to_dict/from_dict
+    # BandSchema is now properly typed in SchemaModel.columns union
     schema = SchemaModel(
         schema_version="1.0.0",
         format="cog",
-        columns=bands,  # type: ignore[arg-type]
-        statistics=statistics if statistics else None,
+        columns=list(bands),
+        crs=crs_value,
     )
 
     if return_warnings:

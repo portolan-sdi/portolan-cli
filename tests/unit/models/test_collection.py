@@ -164,6 +164,20 @@ class TestCollectionValidation:
         with pytest.raises(ValueError, match="latitude"):
             SpatialExtent(bbox=[[0.0, -100.0, 0.0, 100.0]])
 
+    @pytest.mark.unit
+    def test_bbox_validation_south_must_be_less_than_north(self) -> None:
+        """Bbox south must be <= north (inverted latitudes are invalid)."""
+        # south=45, north=35 - south > north is invalid
+        with pytest.raises(ValueError, match="south must be <= north"):
+            SpatialExtent(bbox=[[0.0, 45.0, 10.0, 35.0]])
+
+    @pytest.mark.unit
+    def test_bbox_validation_south_equals_north_is_valid(self) -> None:
+        """Bbox south == north is valid (a line)."""
+        # Should not raise
+        spatial = SpatialExtent(bbox=[[0.0, 45.0, 10.0, 45.0]])
+        assert spatial.bbox[0][1] == spatial.bbox[0][3]
+
 
 class TestCollectionSerialization:
     """Tests for CollectionModel JSON serialization."""

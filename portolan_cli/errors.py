@@ -24,17 +24,23 @@ class PortolanError(Exception):
 
     code: str = "PRTLN-000"
 
+    # Reserved attribute names that cannot be overwritten by context
+    _RESERVED_ATTRS = frozenset({"code", "message", "context", "args"})
+
     def __init__(self, message: str, **context: Any) -> None:
         """Initialize a Portolan error.
 
         Args:
             message: Human-readable error message.
             **context: Additional context stored as error attributes.
+                Reserved keys (code, message, context, args) are ignored.
         """
         self.message = message
         self.context = context
         for key, value in context.items():
-            setattr(self, key, value)
+            # Skip reserved attributes to prevent clobbering
+            if key not in self._RESERVED_ATTRS:
+                setattr(self, key, value)
         super().__init__(f"[{self.code}] {message}")
 
     def to_dict(self) -> dict[str, Any]:

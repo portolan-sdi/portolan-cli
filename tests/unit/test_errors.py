@@ -79,6 +79,29 @@ class TestPortolanError:
         assert error.foo == "bar"
         assert error.count == 42
 
+    @pytest.mark.unit
+    def test_error_context_cannot_clobber_reserved_attrs(self) -> None:
+        """Context keys cannot overwrite reserved attributes like code."""
+        # Try to pass reserved names as context - they should be ignored
+        # Note: 'message' is a positional arg, so we can't pass it as kwarg
+        error = PortolanError(
+            "Original message",
+            code="EVIL-CODE",  # Should be ignored (reserved)
+            context={"evil": True},  # Should be ignored (reserved)
+            safe_key="this should work",  # Should work
+        )
+
+        # Reserved attributes should be preserved
+        assert error.code == "PRTLN-000"  # Default, not overwritten
+        assert error.message == "Original message"  # Not overwritten
+
+        # Context dict contains what was passed, but reserved keys weren't set as attrs
+        assert "code" in error.context
+        assert error.context["code"] == "EVIL-CODE"
+
+        # Safe keys should work
+        assert error.safe_key == "this should work"
+
 
 class TestCatalogErrors:
     """Tests for catalog-related error classes."""

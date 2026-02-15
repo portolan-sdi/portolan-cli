@@ -78,6 +78,10 @@ class SpatialExtent:
             if south < -90 or south > 90 or north < -90 or north > 90:
                 raise ValueError(f"latitude must be in [-90, 90], got south={south}, north={north}")
 
+            # Validate south <= north (latitude ordering must be correct)
+            if south > north:
+                raise ValueError(f"south must be <= north, got south={south}, north={north}")
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
         return {"bbox": self.bbox}

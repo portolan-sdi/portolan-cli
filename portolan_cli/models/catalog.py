@@ -129,6 +129,10 @@ class CatalogModel:
 
         Returns:
             CatalogModel instance.
+
+        Note:
+            The `type` and `stac_version` fields from input data are applied
+            after construction to override defaults when present.
         """
         created = None
         if data.get("created"):
@@ -140,7 +144,7 @@ class CatalogModel:
 
         links = [Link.from_dict(link) for link in data.get("links", [])]
 
-        return cls(
+        catalog = cls(
             id=data["id"],
             description=data["description"],
             title=data.get("title"),
@@ -148,3 +152,12 @@ class CatalogModel:
             updated=updated,
             links=links,
         )
+
+        # Apply type and stac_version from input dict if present
+        # These are init=False fields, so we set them after construction
+        if "type" in data:
+            object.__setattr__(catalog, "type", data["type"])
+        if "stac_version" in data:
+            object.__setattr__(catalog, "stac_version", data["stac_version"])
+
+        return catalog

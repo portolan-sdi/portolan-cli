@@ -316,12 +316,29 @@ class TestVersionSerialization:
         assert len(restored.changes) == len(original.changes)
 
 
+def _parse_semver(version: str) -> tuple[int, int, int]:
+    """Parse a semantic version string into tuple for comparison.
+
+    Args:
+        version: Semver string like "1.2.3"
+
+    Returns:
+        Tuple of (major, minor, patch) integers.
+    """
+    parts = version.split(".")
+    return (int(parts[0]), int(parts[1]), int(parts[2]))
+
+
 class TestVersionComparison:
     """Tests for version comparison and ordering."""
 
     @pytest.mark.unit
-    def test_versions_can_be_compared(self) -> None:
-        """Versions should support comparison operations."""
+    def test_versions_can_be_compared_semantically(self) -> None:
+        """Versions should support semantic comparison (not lexicographic).
+
+        Lexicographic comparison fails for multi-digit versions:
+        "2.0.0" < "10.0.0" is True semantically, but False lexicographically.
+        """
         now = datetime.now(timezone.utc)
 
         v1 = VersionModel(
@@ -340,6 +357,32 @@ class TestVersionComparison:
             assets={},
             changes=[],
         )
+        v10 = VersionModel(
+            version="10.0.0",
+            created=now,
+            breaking=True,
+            schema=SchemaFingerprint(type="geoparquet", fingerprint={}),
+            assets={},
+            changes=[],
+        )
 
-        # Version comparison should work
-        assert v1.version < v2.version
+        # Use semantic version comparison (tuple-based)
+        assert _parse_semver(v1.version) < _parse_semver(v2.version)
+        assert _parse_semver(v2.version) < _parse_semver(v10.version)
+
+        # Verify lexicographic comparison would fail for multi-digit versions
+        # (this documents why we need semantic comparison)
+        assert v2.version > v10.version  # Lexicographic: "2" > "1" - WRONG!
+        assert _parse_semver(v2.version) < _parse_semver(v10.version)  # Semantic: correct
+
+    @pytest.mark.unit
+    def test_semver_patch_comparison(self) -> None:
+        """Patch version comparison works correctly."""
+        assert _parse_semver("1.0.0") < _parse_semver("1.0.1")
+        assert _parse_semver("1.0.9") < _parse_semver("1.0.10")
+
+    @pytest.mark.unit
+    def test_semver_minor_comparison(self) -> None:
+        """Minor version comparison works correctly."""
+        assert _parse_semver("1.0.0") < _parse_semver("1.1.0")
+        assert _parse_semver("1.9.0") < _parse_semver("1.10.0")

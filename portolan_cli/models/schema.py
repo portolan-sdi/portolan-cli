@@ -129,13 +129,15 @@ class SchemaModel:
     Attributes:
         schema_version: Schema format version (semver).
         format: Data format ("geoparquet" or "cog").
-        columns: Column definitions (list of ColumnSchema or dicts).
+        columns: Column definitions (list of ColumnSchema, BandSchema, or dicts).
+        crs: Coordinate reference system (EPSG code or WKT) for the schema.
         statistics: Optional column statistics.
     """
 
     schema_version: str
     format: str
-    columns: list[ColumnSchema | dict[str, Any]]
+    columns: list[ColumnSchema | BandSchema | dict[str, Any]]
+    crs: str | None = None
     statistics: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -151,12 +153,12 @@ class SchemaModel:
         """Convert to JSON-serializable dict."""
         columns_data = []
         for col in self.columns:
-            if isinstance(col, ColumnSchema):
+            if isinstance(col, (ColumnSchema, BandSchema)):
                 columns_data.append(col.to_dict())
             elif isinstance(col, dict):
                 columns_data.append(col)
             else:
-                # Handle BandSchema or other types
+                # Handle other types with to_dict method
                 columns_data.append(col.to_dict() if hasattr(col, "to_dict") else col)
 
         result: dict[str, Any] = {
@@ -164,6 +166,8 @@ class SchemaModel:
             "format": self.format,
             "columns": columns_data,
         }
+        if self.crs is not None:
+            result["crs"] = self.crs
         if self.statistics is not None:
             result["statistics"] = self.statistics
         return result
@@ -171,18 +175,22 @@ class SchemaModel:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SchemaModel:
         """Create SchemaModel from dict."""
-        columns: list[ColumnSchema | dict[str, Any]] = []
+        columns: list[ColumnSchema | BandSchema | dict[str, Any]] = []
         for col_data in data.get("columns", []):
-            # Try to parse as ColumnSchema if it has required fields
+            # Try to parse as ColumnSchema if it has GeoParquet column fields
             if "name" in col_data and "type" in col_data and "nullable" in col_data:
                 columns.append(ColumnSchema.from_dict(col_data))
+            # Try to parse as BandSchema if it has COG band fields
+            elif "name" in col_data and "data_type" in col_data:
+                columns.append(BandSchema.from_dict(col_data))
             else:
-                # Keep as dict for other formats (e.g., COG bands)
+                # Keep as dict for unknown formats
                 columns.append(col_data)
 
         return cls(
             schema_version=data["schema_version"],
             format=data["format"],
             columns=columns,
+            crs=data.get("crs"),
             statistics=data.get("statistics"),
         )

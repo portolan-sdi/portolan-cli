@@ -48,8 +48,11 @@ def create_collection(
     if not data_path.exists():
         raise FileNotFoundError(f"Data file not found: {data_path}")
 
+    # Capture single timestamp for consistency across all fields
+    now = datetime.now(timezone.utc)
+
     # Extract metadata based on file type
-    extent = _extract_extent_from_file(data_path)
+    extent = _extract_extent_from_file(data_path, timestamp=now)
 
     # Create collection with extracted metadata
     collection = CollectionModel(
@@ -58,18 +61,24 @@ def create_collection(
         extent=extent,
         title=title,
         license=license,
-        created=datetime.now(timezone.utc),
-        updated=datetime.now(timezone.utc),
+        created=now,
+        updated=now,
     )
 
     return collection
 
 
-def _extract_extent_from_file(path: Path) -> ExtentModel:
+def _extract_extent_from_file(
+    path: Path,
+    *,
+    timestamp: datetime | None = None,
+) -> ExtentModel:
     """Extract spatial and temporal extent from a data file.
 
     Args:
         path: Path to data file.
+        timestamp: Optional timestamp to use for temporal interval start.
+            If None, uses current UTC time.
 
     Returns:
         ExtentModel with spatial bbox.
@@ -93,10 +102,13 @@ def _extract_extent_from_file(path: Path) -> ExtentModel:
         # Default to global extent
         bbox = [[-180.0, -90.0, 180.0, 90.0]]
 
+    # Use provided timestamp or current time
+    interval_start = (timestamp or datetime.now(timezone.utc)).isoformat()
+
     # Create extent with spatial bbox and open temporal interval
     return ExtentModel(
         spatial=SpatialExtent(bbox=bbox),
-        temporal=TemporalExtent(interval=[[datetime.now(timezone.utc).isoformat(), None]]),
+        temporal=TemporalExtent(interval=[[interval_start, None]]),
     )
 
 
