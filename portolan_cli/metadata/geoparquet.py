@@ -9,9 +9,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, overload
 
 import pyarrow.parquet as pq
+
+from portolan_cli.models.schema import ColumnSchema, SchemaModel
 
 
 @dataclass
@@ -163,3 +165,101 @@ def _extract_geometry_type(column_meta: dict[str, Any]) -> str | None:
 
     # Fallback to geometry_type field
     return column_meta.get("geometry_type")
+
+
+# Overloaded signatures for extract_schema_from_geoparquet
+@overload
+def extract_schema_from_geoparquet(
+    path: Path,
+    *,
+    return_warnings: Literal[False] = False,
+) -> SchemaModel: ...
+
+
+@overload
+def extract_schema_from_geoparquet(
+    path: Path,
+    *,
+    return_warnings: Literal[True],
+) -> tuple[SchemaModel, list[str]]: ...
+
+
+def extract_schema_from_geoparquet(
+    path: Path,
+    *,
+    return_warnings: bool = False,
+) -> SchemaModel | tuple[SchemaModel, list[str]]:
+    """Extract SchemaModel from a GeoParquet file.
+
+    Extracts column metadata including types, nullability, and geometry info.
+    Returns a SchemaModel compatible with the Portolan metadata model.
+
+    Args:
+        path: Path to GeoParquet file.
+        return_warnings: If True, return (SchemaModel, warnings) tuple.
+
+    Returns:
+        SchemaModel with column definitions, or (SchemaModel, warnings) tuple
+        if return_warnings is True.
+
+    Raises:
+        FileNotFoundError: If file doesn't exist.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    warnings: list[str] = []
+
+    # Open parquet file (metadata only)
+    pf = pq.ParquetFile(path)
+    metadata = pf.schema_arrow.metadata or {}
+
+    # Parse GeoParquet geo metadata
+    geo_metadata = _parse_geo_metadata(metadata)
+
+    # Get geometry column name
+    geometry_column = geo_metadata.get("primary_column", "geometry")
+    geo_columns = geo_metadata.get("columns", {})
+
+    # Build ColumnSchema for each field
+    columns: list[ColumnSchema] = []
+    for field in pf.schema_arrow:
+        # Check if this is a geometry column
+        column_meta = geo_columns.get(field.name, {})
+        geometry_type = _extract_geometry_type(column_meta)
+        crs_raw = _extract_crs(column_meta)
+        # Normalize CRS to string for ColumnSchema
+        crs_str: str | None = None
+        if isinstance(crs_raw, str):
+            crs_str = crs_raw
+        elif isinstance(crs_raw, dict):
+            # Convert dict to string representation
+            import json
+
+            crs_str = json.dumps(crs_raw)
+
+        # Track missing CRS warning for geometry columns
+        if field.name == geometry_column and crs_str is None:
+            warnings.append(
+                f"Geometry column '{field.name}' has no CRS defined. "
+                "Consider adding CRS metadata for proper coordinate reference."
+            )
+
+        column = ColumnSchema(
+            name=field.name,
+            type=str(field.type),
+            nullable=field.nullable,
+            geometry_type=geometry_type,
+            crs=crs_str,
+        )
+        columns.append(column)
+
+    schema = SchemaModel(
+        schema_version="1.0.0",
+        format="geoparquet",
+        columns=list(columns),
+    )
+
+    if return_warnings:
+        return schema, warnings
+    return schema

@@ -39,14 +39,19 @@ class ErrorDetail:
     Attributes:
         type: Error class name (e.g., "CatalogExistsError", "FileNotFoundError")
         message: Human-readable error description
+        code: Optional structured error code (e.g., "PRTLN-CAT001")
     """
 
     type: str
     message: str
+    code: str | None = None
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {"type": self.type, "message": self.message}
+        result: dict[str, Any] = {"type": self.type, "message": self.message}
+        if self.code is not None:
+            result["code"] = self.code
+        return result
 
 
 @dataclass
