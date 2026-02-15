@@ -50,6 +50,17 @@ class TestBreakingChangeDataclass:
         )
         assert str(change) == "Band 'band_3' removed"
 
+    @pytest.mark.unit
+    def test_format_changed_str(self) -> None:
+        """BreakingChange str for format change."""
+        change = BreakingChange(
+            change_type="format_changed",
+            element="format",
+            old_value="geoparquet",
+            new_value="cog",
+        )
+        assert str(change) == "Format changed: geoparquet -> cog"
+
 
 class TestDetectGeoparquetBreakingChanges:
     """Tests for breaking change detection in GeoParquet schemas."""

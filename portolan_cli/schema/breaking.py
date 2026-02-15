@@ -48,6 +48,7 @@ def _nodata_equals(a: float | int | None, b: float | int | None) -> bool:
 
 # Message templates for breaking change types
 _CHANGE_MESSAGES: dict[str, str] = {
+    "format_changed": "Format changed: {old} -> {new}",
     "column_removed": "Column '{element}' removed",
     "band_removed": "Band '{element}' removed",
     "type_changed": "Column '{element}' type changed: {old} -> {new}",
