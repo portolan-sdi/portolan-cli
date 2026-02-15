@@ -24,7 +24,7 @@ def export_schema_json(schema: SchemaModel, path: Path) -> Path:
     Returns:
         Path to written file.
     """
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(schema.to_dict(), f, indent=2)
     return path
 
@@ -42,7 +42,7 @@ def _write_sidecar_meta(schema: SchemaModel, path: Path) -> Path:
         "crs": schema.crs,
         "statistics": schema.statistics,
     }
-    with open(meta_path, "w") as f:
+    with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
     return meta_path
 
@@ -78,7 +78,7 @@ def export_schema_csv(schema: SchemaModel, path: Path) -> Path:
     else:  # COG
         fieldnames = ["name", "data_type", "nodata", "description", "unit"]
 
-    with open(path, "w", newline="") as f:
+    with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for col in schema.columns:

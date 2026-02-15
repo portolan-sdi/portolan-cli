@@ -113,8 +113,13 @@ def import_schema_csv(
                     nodata = row.get("nodata")
                     nodata_val: float | int | None = None
                     if nodata and nodata.strip():
+                        nodata_str = nodata.strip()
                         try:
-                            nodata_val = float(nodata)
+                            # Preserve integer type if no decimal point
+                            if "." not in nodata_str and "e" not in nodata_str.lower():
+                                nodata_val = int(nodata_str)
+                            else:
+                                nodata_val = float(nodata_str)
                         except ValueError:
                             pass
                     columns.append(
@@ -182,30 +187,33 @@ def import_schema_parquet(
 
     columns: list[ColumnSchema | BandSchema | dict[str, Any]] = []
 
-    for row in rows:
-        if actual_format == "geoparquet":
-            columns.append(
-                ColumnSchema(
-                    name=row["name"],
-                    type=row["type"],
-                    nullable=row.get("nullable", True),
-                    geometry_type=row.get("geometry_type"),
-                    crs=row.get("crs"),
-                    description=row.get("description"),
-                    unit=row.get("unit"),
-                    semantic_type=row.get("semantic_type"),
+    for row_idx, row in enumerate(rows):
+        try:
+            if actual_format == "geoparquet":
+                columns.append(
+                    ColumnSchema(
+                        name=row["name"],
+                        type=row["type"],
+                        nullable=row.get("nullable", True),
+                        geometry_type=row.get("geometry_type"),
+                        crs=row.get("crs"),
+                        description=row.get("description"),
+                        unit=row.get("unit"),
+                        semantic_type=row.get("semantic_type"),
+                    )
                 )
-            )
-        else:  # COG
-            columns.append(
-                BandSchema(
-                    name=row["name"],
-                    data_type=row["data_type"],
-                    nodata=row.get("nodata"),
-                    description=row.get("description"),
-                    unit=row.get("unit"),
+            else:  # COG
+                columns.append(
+                    BandSchema(
+                        name=row["name"],
+                        data_type=row["data_type"],
+                        nodata=row.get("nodata"),
+                        description=row.get("description"),
+                        unit=row.get("unit"),
+                    )
                 )
-            )
+        except KeyError as e:
+            raise ValueError(f"Parquet row {row_idx} missing required column: {e.args[0]}") from e
 
     return SchemaModel(
         schema_version=actual_version,

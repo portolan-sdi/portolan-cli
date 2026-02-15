@@ -129,7 +129,7 @@ def write_collection_json(collection: CollectionModel, path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / "collection.json"
 
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(collection.to_dict(), f, indent=2)
 
     return output_path
@@ -148,7 +148,7 @@ def write_schema_json(schema: SchemaModel, path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     output_path = path / "schema.json"
 
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(schema.to_dict(), f, indent=2)
 
     return output_path
