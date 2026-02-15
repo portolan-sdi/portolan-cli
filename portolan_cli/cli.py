@@ -12,7 +12,7 @@ from typing import Any
 
 import click
 
-from portolan_cli.catalog import Catalog, CatalogExistsError
+from portolan_cli.catalog import CatalogExistsError
 from portolan_cli.dataset import (
     add_dataset,
     get_dataset_info,
@@ -94,30 +94,64 @@ def cli(ctx: click.Context, output_format: str) -> None:
 
 @cli.command()
 @click.argument("path", type=click.Path(path_type=Path), default=".")
+@click.option(
+    "--auto",
+    is_flag=True,
+    default=False,
+    help="Skip interactive prompts and use auto-extracted/default values.",
+)
 @click.pass_context
-def init(ctx: click.Context, path: Path) -> None:
+def init(ctx: click.Context, path: Path, auto: bool) -> None:
     """Initialize a new Portolan catalog.
 
     Creates a .portolan directory with a STAC catalog.json file.
+    Auto-extracts the catalog ID from the directory name and generates timestamps.
 
     PATH is the directory where the catalog should be created (default: current directory).
+
+    Use --auto to skip all prompts and use default values. Warnings will be emitted
+    for missing best-practice fields (title, description).
     """
+    from portolan_cli.catalog import create_catalog, write_catalog_json
+    from portolan_cli.errors import CatalogAlreadyExistsError
+
     use_json = should_output_json(ctx)
 
     try:
-        Catalog.init(path)
+        # Use the new CatalogModel-based creation
+        result = create_catalog(path, auto=auto, return_warnings=True)
+        catalog, warnings = result
+        write_catalog_json(catalog, path)
+
         if use_json:
             envelope = success_envelope(
                 "init",
                 {
                     "path": str(path.resolve()),
                     "catalog_file": ".portolan/catalog.json",
+                    "catalog_id": catalog.id,
+                    "warnings": warnings,
                 },
             )
             output_json_envelope(envelope)
         else:
             success(f"Initialized Portolan catalog in {path.resolve()}")
+            info(f"Catalog ID: {catalog.id}")
+            for w in warnings:
+                warn(w)
+
+    except CatalogAlreadyExistsError as err:
+        if use_json:
+            envelope = error_envelope(
+                "init",
+                [ErrorDetail(type="CatalogAlreadyExistsError", message=str(err), code=err.code)],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Catalog already exists at {path.resolve()}")
+        raise SystemExit(1) from err
     except CatalogExistsError as err:
+        # Legacy error handling for backward compatibility
         if use_json:
             envelope = error_envelope(
                 "init",
