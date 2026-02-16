@@ -193,7 +193,10 @@ class TestCatalogExistsRule:
 
 
 class TestCatalogJsonValidRule:
-    """Tests for CatalogJsonValidRule."""
+    """Tests for CatalogJsonValidRule.
+
+    In v2 structure, catalog.json is at root level, not inside .portolan.
+    """
 
     @pytest.fixture
     def catalog_dir(self, tmp_path: Path) -> Path:
@@ -204,8 +207,9 @@ class TestCatalogJsonValidRule:
 
     @pytest.mark.unit
     def test_passes_when_catalog_json_valid(self, tmp_path: Path, catalog_dir: Path) -> None:
-        """Rule passes when catalog.json exists and is valid JSON."""
-        catalog_file = catalog_dir / "catalog.json"
+        """Rule passes when catalog.json exists at root and is valid JSON."""
+        # v2: catalog.json at root, not in .portolan
+        catalog_file = tmp_path / "catalog.json"
         catalog_file.write_text('{"type": "Catalog"}')
 
         rule = CatalogJsonValidRule()
@@ -216,7 +220,7 @@ class TestCatalogJsonValidRule:
     @pytest.mark.unit
     def test_fails_when_catalog_json_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Rule fails when catalog.json is missing."""
-        # catalog_dir exists but catalog.json doesn't
+        # catalog_dir exists but catalog.json doesn't at root
         _ = catalog_dir  # Ensure fixture runs
 
         rule = CatalogJsonValidRule()
@@ -228,7 +232,8 @@ class TestCatalogJsonValidRule:
     @pytest.mark.unit
     def test_fails_when_catalog_json_invalid(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Rule fails when catalog.json is not valid JSON."""
-        catalog_file = catalog_dir / "catalog.json"
+        # v2: catalog.json at root
+        catalog_file = tmp_path / "catalog.json"
         catalog_file.write_text("not valid json {{{")
 
         rule = CatalogJsonValidRule()
@@ -240,7 +245,8 @@ class TestCatalogJsonValidRule:
     @pytest.mark.unit
     def test_fails_when_catalog_json_empty(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Rule fails when catalog.json is empty."""
-        catalog_file = catalog_dir / "catalog.json"
+        # v2: catalog.json at root
+        catalog_file = tmp_path / "catalog.json"
         catalog_file.write_text("")
 
         rule = CatalogJsonValidRule()
@@ -266,8 +272,8 @@ class TestCatalogJsonValidRule:
         assert result.fix_hint is not None
 
     @pytest.mark.unit
-    def test_fails_gracefully_when_portolan_dir_missing(self, tmp_path: Path) -> None:
-        """Rule fails cleanly when .portolan doesn't exist."""
+    def test_fails_gracefully_when_catalog_missing(self, tmp_path: Path) -> None:
+        """Rule fails cleanly when catalog.json doesn't exist."""
         rule = CatalogJsonValidRule()
         result = rule.check(tmp_path)
 
@@ -276,7 +282,10 @@ class TestCatalogJsonValidRule:
 
 
 class TestStacFieldsRule:
-    """Tests for StacFieldsRule."""
+    """Tests for StacFieldsRule.
+
+    In v2 structure, catalog.json is at root level, not inside .portolan.
+    """
 
     @pytest.fixture
     def catalog_dir(self, tmp_path: Path) -> Path:
@@ -285,18 +294,19 @@ class TestStacFieldsRule:
         portolan_dir.mkdir()
         return portolan_dir
 
-    def _write_catalog(self, catalog_dir: Path, data: dict) -> None:
-        """Helper to write catalog.json."""
+    def _write_catalog(self, root_path: Path, data: dict) -> None:
+        """Helper to write catalog.json at root level."""
         import json
 
-        catalog_file = catalog_dir / "catalog.json"
+        # v2: catalog.json at root, not in .portolan
+        catalog_file = root_path / "catalog.json"
         catalog_file.write_text(json.dumps(data))
 
     @pytest.mark.unit
     def test_passes_with_all_required_fields(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Rule passes when all required STAC fields are present."""
         self._write_catalog(
-            catalog_dir,
+            tmp_path,
             {
                 "type": "Catalog",
                 "stac_version": "1.0.0",
@@ -315,7 +325,7 @@ class TestStacFieldsRule:
     def test_fails_when_type_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Rule fails when 'type' field is missing."""
         self._write_catalog(
-            catalog_dir,
+            tmp_path,
             {
                 "stac_version": "1.0.0",
                 "id": "my-catalog",
@@ -334,7 +344,7 @@ class TestStacFieldsRule:
     def test_fails_when_type_wrong(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Rule fails when 'type' is not 'Catalog'."""
         self._write_catalog(
-            catalog_dir,
+            tmp_path,
             {
                 "type": "Collection",  # Wrong type
                 "stac_version": "1.0.0",
@@ -354,7 +364,7 @@ class TestStacFieldsRule:
     def test_fails_when_stac_version_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Rule fails when 'stac_version' field is missing."""
         self._write_catalog(
-            catalog_dir,
+            tmp_path,
             {
                 "type": "Catalog",
                 "id": "my-catalog",
@@ -373,7 +383,7 @@ class TestStacFieldsRule:
     def test_fails_when_id_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Rule fails when 'id' field is missing."""
         self._write_catalog(
-            catalog_dir,
+            tmp_path,
             {
                 "type": "Catalog",
                 "stac_version": "1.0.0",
@@ -392,7 +402,7 @@ class TestStacFieldsRule:
     def test_fails_when_description_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Rule fails when 'description' field is missing."""
         self._write_catalog(
-            catalog_dir,
+            tmp_path,
             {
                 "type": "Catalog",
                 "stac_version": "1.0.0",
@@ -411,7 +421,7 @@ class TestStacFieldsRule:
     def test_fails_when_links_missing(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Rule fails when 'links' field is missing."""
         self._write_catalog(
-            catalog_dir,
+            tmp_path,
             {
                 "type": "Catalog",
                 "stac_version": "1.0.0",
@@ -435,7 +445,7 @@ class TestStacFieldsRule:
     @pytest.mark.unit
     def test_provides_fix_hint(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Failure includes hint for --fix."""
-        self._write_catalog(catalog_dir, {"type": "Catalog"})
+        self._write_catalog(tmp_path, {"type": "Catalog"})
 
         rule = StacFieldsRule()
         result = rule.check(tmp_path)
@@ -446,7 +456,7 @@ class TestStacFieldsRule:
     @pytest.mark.unit
     def test_reports_all_missing_fields(self, tmp_path: Path, catalog_dir: Path) -> None:
         """Failure message lists all missing fields, not just first."""
-        self._write_catalog(catalog_dir, {"type": "Catalog"})
+        self._write_catalog(tmp_path, {"type": "Catalog"})
 
         rule = StacFieldsRule()
         result = rule.check(tmp_path)
@@ -473,7 +483,8 @@ class TestStacFieldsRule:
         self, tmp_path: Path, catalog_dir: Path
     ) -> None:
         """Rule fails cleanly when catalog.json is not valid JSON."""
-        catalog_file = catalog_dir / "catalog.json"
+        # v2: catalog.json at root
+        catalog_file = tmp_path / "catalog.json"
         catalog_file.write_text("not json")
 
         rule = StacFieldsRule()
@@ -491,9 +502,8 @@ class TestCatalogJsonValidRuleOSError:
         import os
         import sys
 
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        catalog_file = portolan_dir / "catalog.json"
+        # v2: catalog.json at root
+        catalog_file = tmp_path / "catalog.json"
         catalog_file.write_text('{"type": "Catalog"}')
 
         # Make file unreadable (Unix only)

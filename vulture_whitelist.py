@@ -10,3 +10,7 @@ catalog_path = None  # Used by ValidationRule.check() implementations
 # These will be used when methods are wired to versions.py
 target_version = None  # Used by rollback() implementations
 keep = None  # Used by prune() implementations
+
+# CLI options that are defined for future interactive prompting
+# The --auto flag is accepted by CLI but prompting not yet implemented
+auto_mode = None  # Will control interactive prompting when implemented

@@ -83,6 +83,25 @@ class CatalogNotFoundError(CatalogError):
         super().__init__(f"No catalog found at {path}", path=path)
 
 
+class UnmanagedStacCatalogError(CatalogError):
+    """Raised when an existing STAC catalog is found but not managed by Portolan.
+
+    Error code: PRTLN-CAT003
+
+    This occurs when a directory has a catalog.json file but is not managed
+    by Portolan (missing .portolan/config.json and .portolan/state.json).
+    Use `portolan adopt` to bring an existing STAC catalog under management.
+    """
+
+    code = "PRTLN-CAT003"
+
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            f"Existing STAC catalog found at {path}, use 'portolan adopt' to manage it",
+            path=path,
+        )
+
+
 # Collection Errors (PRTLN-COL*)
 class CollectionError(PortolanError):
     """Base class for collection-related errors."""

@@ -248,35 +248,34 @@ class TestAutoFlag:
     """Tests for --auto flag behavior."""
 
     @pytest.mark.unit
-    def test_auto_mode_skips_prompts(self, tmp_path: Path) -> None:
-        """In auto mode, no prompts should be issued."""
+    def test_create_catalog_without_prompts(self, tmp_path: Path) -> None:
+        """create_catalog should work without user input (library function)."""
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        # auto=True should work without user input
-        catalog = create_catalog(catalog_dir, auto=True)
+        catalog = create_catalog(catalog_dir)
 
         assert catalog is not None
         assert catalog.id == "test"
 
     @pytest.mark.unit
-    def test_auto_mode_returns_warnings(self, tmp_path: Path) -> None:
-        """Auto mode should return warnings for missing best-practice fields."""
+    def test_create_catalog_returns_warnings(self, tmp_path: Path) -> None:
+        """create_catalog should return warnings for missing best-practice fields."""
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        catalog, warnings = create_catalog(catalog_dir, auto=True, return_warnings=True)
+        catalog, warnings = create_catalog(catalog_dir, return_warnings=True)
 
-        # Should warn about missing title/description
+        # Should warn about missing title
         assert any("title" in w.lower() for w in warnings)
 
     @pytest.mark.unit
-    def test_auto_mode_sets_default_description(self, tmp_path: Path) -> None:
-        """Auto mode should set a default description."""
+    def test_create_catalog_sets_default_description(self, tmp_path: Path) -> None:
+        """create_catalog should set a default description when not provided."""
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        catalog = create_catalog(catalog_dir, auto=True)
+        catalog = create_catalog(catalog_dir)
 
         assert catalog.description is not None
         assert len(catalog.description) > 0

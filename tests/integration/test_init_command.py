@@ -4,7 +4,7 @@ User Story 1: Initialize Catalog with Auto-Extracted Metadata
 
 Tests cover:
 - Full workflow: `portolan init --auto`
-- catalog.json structure verification
+- catalog.json structure verification (now at ROOT level)
 - Warning messages for missing fields
 - Error handling for existing catalog
 """
@@ -30,21 +30,20 @@ class TestInitCommandAutoMode:
 
     @pytest.mark.integration
     def test_init_auto_creates_catalog_json(self, runner: CliRunner, tmp_path: Path) -> None:
-        """portolan init --auto should create catalog.json with auto-extracted fields."""
+        """portolan init --auto should create catalog.json at ROOT with auto-extracted fields."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 0
-            catalog_file = Path(".portolan/catalog.json")
+            # New structure: catalog.json at root
+            catalog_file = Path("catalog.json")
             assert catalog_file.exists()
 
             data = json.loads(catalog_file.read_text())
             assert data["type"] == "Catalog"
-            assert data["stac_version"] == "1.0.0"
+            assert data["stac_version"] in ("1.0.0", "1.1.0")  # pystac default
             assert "id" in data
             assert "description" in data
-            assert "created" in data
-            assert "updated" in data
 
     @pytest.mark.integration
     def test_init_auto_extracts_id_from_directory(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -55,7 +54,7 @@ class TestInitCommandAutoMode:
         result = runner.invoke(cli, ["init", "--auto", str(catalog_dir)])
 
         assert result.exit_code == 0
-        catalog_file = catalog_dir / ".portolan" / "catalog.json"
+        catalog_file = catalog_dir / "catalog.json"
         data = json.loads(catalog_file.read_text())
 
         # ID should be derived from directory name
@@ -83,23 +82,16 @@ class TestInitCommandAutoMode:
             assert result.exit_code == 0
 
     @pytest.mark.integration
-    def test_init_auto_catalog_timestamps_iso8601(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Timestamps in catalog.json should be ISO 8601 format."""
-        from datetime import datetime
-
+    def test_init_creates_all_management_files(self, runner: CliRunner, tmp_path: Path) -> None:
+        """portolan init --auto should create all management files in .portolan."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 0
-            catalog_file = Path(".portolan/catalog.json")
-            data = json.loads(catalog_file.read_text())
-
-            # Should parse without error
-            created = datetime.fromisoformat(data["created"])
-            updated = datetime.fromisoformat(data["updated"])
-
-            # updated should equal created on fresh init
-            assert created == updated
+            # Verify all management files exist
+            assert Path(".portolan/config.json").exists()
+            assert Path(".portolan/state.json").exists()
+            assert Path(".portolan/versions.json").exists()
 
 
 class TestInitCommandErrors:
@@ -111,21 +103,42 @@ class TestInitCommandErrors:
         return CliRunner()
 
     @pytest.mark.integration
-    def test_init_fails_if_catalog_exists(self, runner: CliRunner, tmp_path: Path) -> None:
-        """portolan init should fail with exit code 1 if catalog exists."""
+    def test_init_fails_if_managed_catalog_exists(self, runner: CliRunner, tmp_path: Path) -> None:
+        """portolan init should fail with exit code 1 if MANAGED catalog exists."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            Path(".portolan").mkdir()
+            # Create managed catalog (both config and state required)
+            portolan = Path(".portolan")
+            portolan.mkdir()
+            (portolan / "config.json").write_text("{}")
+            (portolan / "state.json").write_text("{}")
 
             result = runner.invoke(cli, ["init"])
 
             assert result.exit_code == 1
-            assert "already exists" in result.output.lower()
+            assert "already" in result.output.lower()
+
+    @pytest.mark.integration
+    def test_init_fails_if_unmanaged_stac_exists(self, runner: CliRunner, tmp_path: Path) -> None:
+        """portolan init should fail if unmanaged STAC catalog exists."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Create unmanaged STAC catalog
+            Path("catalog.json").write_text('{"type": "Catalog"}')
+
+            result = runner.invoke(cli, ["init"])
+
+            assert result.exit_code == 1
+            output_lower = result.output.lower()
+            assert "stac" in output_lower or "catalog" in output_lower
 
     @pytest.mark.integration
     def test_init_error_has_structured_code(self, runner: CliRunner, tmp_path: Path) -> None:
         """Error should include PRTLN-CAT001 code in JSON output."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            Path(".portolan").mkdir()
+            # Create managed catalog
+            portolan = Path(".portolan")
+            portolan.mkdir()
+            (portolan / "config.json").write_text("{}")
+            (portolan / "state.json").write_text("{}")
 
             result = runner.invoke(cli, ["--format", "json", "init"])
 
@@ -133,7 +146,7 @@ class TestInitCommandErrors:
             data = json.loads(result.output)
             assert data["success"] is False
             # Error code should be present
-            assert "PRTLN-CAT001" in result.output or "CatalogExistsError" in result.output
+            assert "PRTLN-CAT001" in result.output or "CatalogAlreadyExistsError" in result.output
 
 
 class TestInitCommandJsonOutput:
@@ -160,7 +173,11 @@ class TestInitCommandJsonOutput:
     def test_init_json_output_error(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan --format json init should output JSON error envelope."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            Path(".portolan").mkdir()
+            # Create managed catalog
+            portolan = Path(".portolan")
+            portolan.mkdir()
+            (portolan / "config.json").write_text("{}")
+            (portolan / "state.json").write_text("{}")
 
             result = runner.invoke(cli, ["--format", "json", "init"])
 

@@ -98,6 +98,8 @@ class CatalogJsonValidRule(ValidationRule):
 
     This rule does NOT check STAC schema compliance - only that the
     file exists and can be parsed as JSON.
+
+    Note: In v2 structure, catalog.json is at root level, not inside .portolan.
     """
 
     name = "catalog_json_valid"
@@ -105,8 +107,8 @@ class CatalogJsonValidRule(ValidationRule):
     description = "Verify catalog.json exists and is valid JSON"
 
     def check(self, catalog_path: Path) -> ValidationResult:
-        """Check for valid catalog.json."""
-        catalog_file = catalog_path / ".portolan" / "catalog.json"
+        """Check for valid catalog.json at root level."""
+        catalog_file = catalog_path / "catalog.json"
 
         if not catalog_file.exists():
             return self._fail(
@@ -145,6 +147,8 @@ class StacFieldsRule(ValidationRule):
     - id: Unique identifier
     - description: Human-readable description
     - links: Array of Link objects
+
+    Note: In v2 structure, catalog.json is at root level, not inside .portolan.
     """
 
     name = "stac_fields"
@@ -154,8 +158,8 @@ class StacFieldsRule(ValidationRule):
     REQUIRED_FIELDS = ("type", "stac_version", "id", "description", "links")
 
     def check(self, catalog_path: Path) -> ValidationResult:
-        """Check for required STAC fields."""
-        catalog_file = catalog_path / ".portolan" / "catalog.json"
+        """Check for required STAC fields in root catalog.json."""
+        catalog_file = catalog_path / "catalog.json"
 
         # Try to load catalog.json
         try:
