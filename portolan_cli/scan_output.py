@@ -793,7 +793,6 @@ def format_compact_output(result: ScanResult) -> str | None:
         Formatted string, or None if no issues (silent success).
     """
     lines: list[str] = []
-    grouped = _group_issues_by_type(result.issues)
 
     # Handle errors (blocking issues)
     error_issues = [i for i in result.issues if i.severity == Severity.ERROR]
@@ -815,13 +814,6 @@ def format_compact_output(result: ScanResult) -> str | None:
                 _format_issue_group_compact(issue_type, issues, result.root, is_error=False)
             )
 
-    # Handle FileGDB as special case (it's INFO level but should show as warning)
-    filegdb_issues = grouped.get(IssueType.FILEGDB_DETECTED, [])
-    if filegdb_issues:
-        if lines:
-            lines.append("")
-        lines.extend(_format_filegdb_compact(filegdb_issues, result.root))
-
     # Success: minimal pass message
     if not lines:
         if not result.ready:
@@ -829,6 +821,30 @@ def format_compact_output(result: ScanResult) -> str | None:
         return "\u2713 Check passed with no warnings or errors"
 
     return "\n".join(lines)
+
+
+def _format_simple_issue_list(
+    marker: str,
+    header: str,
+    issues: list[ScanIssue],
+    root: Path,
+    max_items: int = 5,
+) -> list[str]:
+    """Format a simple list of issues with header and truncation.
+
+    Helper to reduce complexity of _format_issue_group_compact.
+    """
+    lines: list[str] = [header]
+    count = len(issues)
+
+    for issue in issues[:max_items]:
+        rel_path = _get_relative_path(issue.path, root)
+        lines.append(f"  {rel_path}")
+
+    if count > max_items:
+        lines.append(f"  ... and {count - max_items} more")
+
+    return lines
 
 
 def _format_issue_group_compact(
@@ -849,90 +865,61 @@ def _format_issue_group_compact(
     Returns:
         List of formatted lines.
     """
-    lines: list[str] = []
     marker = "\u2717" if is_error else "\u26a0"  # ✗ or ⚠
     count = len(issues)
 
+    # Dispatch to type-specific formatters
     if issue_type == IssueType.MULTIPLE_PRIMARIES:
-        # Special handling: show directory and count
-        lines.append(
-            f"{marker} {count} {'directory' if count == 1 else 'directories'} exceed 1 geo-asset limit"
+        return _format_multiple_primaries_compact(marker, issues, root)
+
+    if issue_type == IssueType.INCOMPLETE_SHAPEFILE:
+        header = f"{marker} {count} incomplete shapefile{'s' if count != 1 else ''}"
+        return _format_simple_issue_list(marker, header, issues, root, max_items=10)
+
+    if issue_type == IssueType.ZERO_BYTE_FILE:
+        header = f"{marker} {count} empty file{'s' if count != 1 else ''}"
+        return _format_simple_issue_list(marker, header, issues, root)
+
+    if issue_type == IssueType.BROKEN_SYMLINK:
+        header = f"{marker} {count} broken symlink{'s' if count != 1 else ''}"
+        return _format_simple_issue_list(marker, header, issues, root)
+
+    if issue_type == IssueType.FILEGDB_DETECTED:
+        header = (
+            f"{marker} {count} FileGDB {'directory' if count == 1 else 'directories'} "
+            "(will be converted during sync)"
         )
-        lines.append("")
-        for issue in issues:
-            rel_path = _get_relative_path(issue.path, root)
-            asset_count = _extract_asset_count(issue.message)
-            count_str = f"{asset_count} geo-assets" if asset_count else "multiple geo-assets"
-            # Pad directory name for alignment
-            lines.append(f"  {rel_path + '/':<35} {count_str}")
-        lines.append("")
-        lines.append("\u2192 Manually reorganize so each directory has 1 geo-asset")
+        return _format_simple_issue_list(marker, header, issues, root)
 
-    elif issue_type == IssueType.INCOMPLETE_SHAPEFILE:
-        lines.append(f"{marker} {count} incomplete shapefile{'s' if count != 1 else ''}")
-        for issue in issues:
-            rel_path = _get_relative_path(issue.path, root)
-            lines.append(f"  {rel_path}")
-
-    elif issue_type == IssueType.ZERO_BYTE_FILE:
-        lines.append(f"{marker} {count} empty file{'s' if count != 1 else ''}")
-        for issue in issues[:5]:  # Limit to 5
-            rel_path = _get_relative_path(issue.path, root)
-            lines.append(f"  {rel_path}")
-        if count > 5:
-            lines.append(f"  ... and {count - 5} more")
-
-    elif issue_type == IssueType.BROKEN_SYMLINK:
-        lines.append(f"{marker} {count} broken symlink{'s' if count != 1 else ''}")
-        for issue in issues[:5]:
-            rel_path = _get_relative_path(issue.path, root)
-            lines.append(f"  {rel_path}")
-        if count > 5:
-            lines.append(f"  ... and {count - 5} more")
-
-    else:
-        # Generic fallback
-        lines.append(
-            f"{marker} {count} {issue_type.value.replace('_', ' ')} issue{'s' if count != 1 else ''}"
-        )
-        for issue in issues[:3]:
-            rel_path = _get_relative_path(issue.path, root)
-            lines.append(f"  {rel_path}")
-        if count > 3:
-            lines.append(f"  ... and {count - 3} more")
-
-    return lines
+    # Generic fallback
+    header = (
+        f"{marker} {count} {issue_type.value.replace('_', ' ')} issue{'s' if count != 1 else ''}"
+    )
+    return _format_simple_issue_list(marker, header, issues, root, max_items=3)
 
 
-def _format_filegdb_compact(issues: list[ScanIssue], root: Path) -> list[str]:
-    """Format FileGDB issues compactly, grouped by parent directory.
-
-    Args:
-        issues: List of FileGDB detected issues.
-        root: Root path for relative paths.
-
-    Returns:
-        List of formatted lines.
-    """
+def _format_multiple_primaries_compact(
+    marker: str,
+    issues: list[ScanIssue],
+    root: Path,
+) -> list[str]:
+    """Format MULTIPLE_PRIMARIES issues with directory alignment."""
     lines: list[str] = []
     count = len(issues)
 
     lines.append(
-        f"\u26a0 {count} FileGDB {'directory' if count == 1 else 'directories'} (will be converted during sync)"
+        f"{marker} {count} {'directory' if count == 1 else 'directories'} exceed 1 geo-asset limit"
     )
     lines.append("")
 
-    # Group by parent directory
-    parent_counts: dict[str, int] = defaultdict(int)
     for issue in issues:
         rel_path = _get_relative_path(issue.path, root)
-        parent = str(Path(rel_path).parent)
-        if parent == ".":
-            parent = "(root)"
-        parent_counts[parent] += 1
+        asset_count = _extract_asset_count(issue.message)
+        count_str = f"{asset_count} geo-assets" if asset_count else "multiple geo-assets"
+        lines.append(f"  {rel_path + '/':<35} {count_str}")
 
-    for parent, gdb_count in sorted(parent_counts.items()):
-        lines.append(f"  {parent + '/':<20} {gdb_count} .gdb")
+    lines.append("")
+    lines.append("\u2192 Manually reorganize so each directory has 1 geo-asset")
 
     return lines
 

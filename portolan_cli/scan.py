@@ -684,9 +684,9 @@ def _handle_filegdb_directory(ctx: _ScanContext, path: Path, root: Path) -> None
             path=path,
             relative_path=_get_relative_path(path, root),
             issue_type=IssueType.FILEGDB_DETECTED,
-            severity=Severity.INFO,
-            message="FileGDB directory detected (ESRI File Geodatabase)",
-            suggestion="Use 'portolan import' with FileGDB support or convert to GeoParquet",
+            severity=Severity.WARNING,
+            message="FileGDB directory detected (will be converted during sync)",
+            suggestion="FileGDB will be converted to GeoParquet during sync",
         )
     )
 
@@ -1000,9 +1000,9 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
                 path=path,
                 relative_path=_get_relative_path(path, ctx.root),
                 issue_type=IssueType.FILEGDB_DETECTED,
-                severity=Severity.INFO,
-                message="FileGDB archive detected (.gdb.zip)",
-                suggestion="Extract archive to get .gdb directory, or use tools that support .gdb.zip",
+                severity=Severity.WARNING,
+                message="FileGDB archive detected (.gdb.zip, will be converted during sync)",
+                suggestion="FileGDB archives will be extracted and converted to GeoParquet during sync",
             )
         )
         return

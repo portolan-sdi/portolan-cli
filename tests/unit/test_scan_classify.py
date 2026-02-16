@@ -612,3 +612,123 @@ class TestClassifyParquetIntegration:
         assert len(result.skipped) == 1
         # Verify the scan completed without errors
         assert result.error_count == 0
+
+
+@pytest.mark.unit
+class TestIsStacJson:
+    """Tests for _is_stac_json function edge cases.
+
+    The function detects STAC metadata in arbitrary .json files using:
+    - Size limit (skip files > 1MB)
+    - Partial read optimization (check first 4KB chunk)
+    - Full JSON parse with stac_version field check
+    """
+
+    def test_valid_stac_item_detected(self, tmp_path: Path) -> None:
+        """Valid STAC Item is detected."""
+        import json
+
+        from portolan_cli.scan_classify import _is_stac_json
+
+        stac_item = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "test-item",
+            "geometry": None,
+            "properties": {"datetime": None},
+            "links": [],
+            "assets": {},
+        }
+        test_path = tmp_path / "item.json"
+        test_path.write_text(json.dumps(stac_item))
+
+        assert _is_stac_json(test_path) is True
+
+    def test_large_file_skipped(self, tmp_path: Path) -> None:
+        """Files larger than 1MB are skipped (performance optimization)."""
+        from portolan_cli.scan_classify import _is_stac_json
+
+        # Create a file > 1MB with valid STAC-like content
+        large_content = '{"stac_version": "1.0.0", "padding": "' + "x" * 1_100_000 + '"}'
+        test_path = tmp_path / "large.json"
+        test_path.write_text(large_content)
+
+        # Should return False without fully parsing
+        assert _is_stac_json(test_path) is False
+
+    def test_malformed_json_returns_false(self, tmp_path: Path) -> None:
+        """Malformed JSON returns False without raising."""
+        from portolan_cli.scan_classify import _is_stac_json
+
+        test_path = tmp_path / "broken.json"
+        test_path.write_text('{"stac_version": "1.0.0", broken syntax')
+
+        assert _is_stac_json(test_path) is False
+
+    def test_json_array_returns_false(self, tmp_path: Path) -> None:
+        """JSON arrays (not objects) return False."""
+        from portolan_cli.scan_classify import _is_stac_json
+
+        test_path = tmp_path / "array.json"
+        test_path.write_text('[{"stac_version": "1.0.0"}]')
+
+        # Arrays don't have stac_version at top level
+        assert _is_stac_json(test_path) is False
+
+    def test_non_utf8_returns_false(self, tmp_path: Path) -> None:
+        """Non-UTF-8 files return False without raising."""
+        from portolan_cli.scan_classify import _is_stac_json
+
+        test_path = tmp_path / "binary.json"
+        # Write invalid UTF-8 bytes
+        test_path.write_bytes(b'\xff\xfe{"stac_version": "1.0.0"}')
+
+        assert _is_stac_json(test_path) is False
+
+    def test_no_stac_version_returns_false(self, tmp_path: Path) -> None:
+        """JSON without stac_version field returns False."""
+        import json
+
+        from portolan_cli.scan_classify import _is_stac_json
+
+        regular_json = {"type": "Feature", "properties": {}}
+        test_path = tmp_path / "geojson-like.json"
+        test_path.write_text(json.dumps(regular_json))
+
+        assert _is_stac_json(test_path) is False
+
+    def test_stac_version_in_first_chunk(self, tmp_path: Path) -> None:
+        """STAC with stac_version early in file is detected."""
+        import json
+
+        from portolan_cli.scan_classify import _is_stac_json
+
+        # stac_version appears in first 4KB
+        stac_catalog = {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": "test",
+            "description": "Test catalog",
+            "links": [],
+        }
+        test_path = tmp_path / "catalog.json"
+        test_path.write_text(json.dumps(stac_catalog))
+
+        assert _is_stac_json(test_path) is True
+
+    def test_empty_file_returns_false(self, tmp_path: Path) -> None:
+        """Empty files return False."""
+        from portolan_cli.scan_classify import _is_stac_json
+
+        test_path = tmp_path / "empty.json"
+        test_path.write_text("")
+
+        assert _is_stac_json(test_path) is False
+
+    def test_nonexistent_file_returns_false(self, tmp_path: Path) -> None:
+        """Nonexistent files return False without raising."""
+        from portolan_cli.scan_classify import _is_stac_json
+
+        nonexistent = tmp_path / "does_not_exist.json"
+
+        assert _is_stac_json(nonexistent) is False

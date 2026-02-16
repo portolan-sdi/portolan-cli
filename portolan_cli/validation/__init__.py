@@ -1,5 +1,13 @@
 """Validation framework for Portolan catalogs.
 
+.. deprecated::
+    This module is deprecated per ADR-0017. Catalog validation will be
+    redesigned when the `sync` command is implemented. The `.portolan/`
+    convention is being replaced with standard STAC catalog layout.
+
+    The module remains for backward compatibility but is not used by
+    the current CLI. It may be removed in a future version.
+
 This module provides the public API for validating catalogs:
 - check(): Run validation rules against a catalog
 - ValidationReport: Aggregate validation results

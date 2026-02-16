@@ -60,6 +60,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0014](context/shared/adr/0014-accept-non-cloud-native-formats.md) | Accept non-cloud-native formats with warnings |
 | [0015](context/shared/adr/0015-two-tier-versioning-architecture.md) | Two-tier versioning: simple MVP + [portolake](https://github.com/portolan-sdi/portolake) plugin for enterprise |
 | [0016](context/shared/adr/0016-scan-before-import.md) | Scan-before-import: separate validation from import (like ruff check/fix) |
+| [0017](context/shared/adr/0017-unified-check-command.md) | Unified `check` command: auto-detect catalog vs structure mode (supersedes 0016) |
 
 ## Common Commands
 

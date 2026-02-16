@@ -477,6 +477,10 @@ def check(
             manual_only=manual_only,
         )
 
+    # Exit code 1 if blocking errors found (per ADR-0017)
+    if result.has_errors:
+        raise SystemExit(1)
+
 
 def _print_scan_header(result: ScanResult) -> None:
     """Print scan header with file counts."""

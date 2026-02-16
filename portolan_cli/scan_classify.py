@@ -214,12 +214,21 @@ def _is_in_junk_dir(path: Path) -> bool:
     return False
 
 
+# Maximum file size to check for STAC content (1 MB)
+_STAC_MAX_FILE_SIZE = 1_000_000
+
+# Chunk size for partial read optimization
+_STAC_CHUNK_SIZE = 4096
+
+
 def _is_stac_json(path: Path) -> bool:
     """Check if a .json file contains STAC metadata.
 
     STAC Items and Collections have arbitrary filenames (e.g., ABW.json,
     census_2024.json) but contain a "stac_version" field. This function
-    reads the first part of the file to check for STAC markers.
+    uses optimizations to avoid reading large files:
+    - Skip files > 1MB (STAC items are typically small)
+    - Read first 4KB chunk to check for "stac_version" before full parse
 
     Args:
         path: Path to a .json file.
@@ -230,7 +239,21 @@ def _is_stac_json(path: Path) -> bool:
     import json
 
     try:
-        # Read the file (STAC items are typically small)
+        # Skip large files - STAC metadata is typically small
+        file_size = path.stat().st_size
+        if file_size > _STAC_MAX_FILE_SIZE:
+            return False
+
+        # Quick check: read first chunk and look for stac_version marker
+        with path.open(encoding="utf-8") as f:
+            chunk = f.read(_STAC_CHUNK_SIZE)
+
+        # If marker not in first chunk, likely not STAC
+        # (stac_version appears early in valid STAC JSON)
+        if '"stac_version"' not in chunk:
+            return False
+
+        # Full parse to confirm - read entire file
         content = path.read_text(encoding="utf-8")
         data = json.loads(content)
 
@@ -238,8 +261,8 @@ def _is_stac_json(path: Path) -> bool:
         if isinstance(data, dict) and "stac_version" in data:
             return True
 
-    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-        # Not valid JSON or can't read - not STAC
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, PermissionError):
+        # Not valid JSON, can't read, or permission denied - not STAC
         pass
 
     return False

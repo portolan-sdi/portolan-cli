@@ -96,13 +96,14 @@ class TestScanJsonOutput:
     def test_scan_json_produces_valid_envelope(
         self, runner: CliRunner, scan_fixtures_dir: Path
     ) -> None:
-        """--format=json scan produces valid JSON envelope."""
+        """--format=json check produces valid JSON envelope."""
         # clean_flat has multiple geo-assets in one dir, which is an error
         result = runner.invoke(
             cli, ["--format=json", "check", str(scan_fixtures_dir / "clean_flat")]
         )
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present
+        assert result.exit_code == 1
 
         # Output should be valid JSON
         data = json.loads(result.output)
@@ -118,7 +119,8 @@ class TestScanJsonOutput:
 
     @pytest.mark.integration
     def test_scan_json_has_scan_data(self, runner: CliRunner, scan_fixtures_dir: Path) -> None:
-        """--format=json scan includes scan-specific data."""
+        """--format=json check includes scan-specific data."""
+        # clean_flat has multiple geo-assets, which is an error
         result = runner.invoke(
             cli, ["--format=json", "check", str(scan_fixtures_dir / "clean_flat")]
         )
@@ -132,20 +134,20 @@ class TestScanJsonOutput:
     def test_scan_json_error_has_errors_array(
         self, runner: CliRunner, scan_fixtures_dir: Path
     ) -> None:
-        """--format=json scan with issues includes data with issues."""
+        """--format=json check with errors includes errors array."""
         result = runner.invoke(
             cli, ["--format=json", "check", str(scan_fixtures_dir / "incomplete_shapefile")]
         )
 
-        # Scan is informational — always exit 0 on success
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present
+        assert result.exit_code == 1
 
         data = json.loads(result.output)
 
-        # Issues found: success=false in envelope, but exit code still 0
-        # Note: The scan issues are reported in data, not top-level errors
-        # The envelope errors are for CLI-level errors (like FileNotFoundError)
-        assert "success" in data
+        # Errors present: success=false and errors array populated
+        assert data["success"] is False
+        assert "errors" in data
+        assert len(data["errors"]) > 0
         assert "data" in data
 
 
@@ -352,10 +354,11 @@ class TestBackwardCompatibility:
 
     @pytest.mark.integration
     def test_scan_json_flag_still_works(self, runner: CliRunner, scan_fixtures_dir: Path) -> None:
-        """scan --json (per-command flag) produces envelope output."""
+        """check --json (per-command flag) produces envelope output."""
         result = runner.invoke(cli, ["check", str(scan_fixtures_dir / "clean_flat"), "--json"])
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present (multiple primaries)
+        assert result.exit_code == 1
 
         # Should be valid JSON with envelope
         data = json.loads(result.output)
@@ -433,7 +436,8 @@ class TestBackwardCompatibility:
             ["--format=json", "check", str(scan_fixtures_dir / "clean_flat"), "--json"],
         )
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present
+        assert result.exit_code == 1
 
         # Should still produce valid JSON
         data = json.loads(result.output)
@@ -453,17 +457,18 @@ class TestTextOutputDefault:
     def test_scan_without_format_produces_text(
         self, runner: CliRunner, scan_fixtures_dir: Path
     ) -> None:
-        """scan without --format produces human-readable text."""
+        """check without --format produces human-readable text."""
         result = runner.invoke(cli, ["check", str(scan_fixtures_dir / "clean_flat")])
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present (multiple primaries)
+        assert result.exit_code == 1
 
         # Should NOT be valid JSON
         with pytest.raises(json.JSONDecodeError):
             json.loads(result.output)
 
         # Should have human-readable output (compact format)
-        # This fixture has multiple geo-assets, so expect warning or pass
+        # This fixture has multiple geo-assets, so expect error text
         assert len(result.output) > 0
 
     @pytest.mark.integration
