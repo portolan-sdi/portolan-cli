@@ -363,6 +363,167 @@ class TestAutoFlag:
         assert len(catalog.description) > 0
 
 
+class TestInitCatalogFilesystemErrors:
+    """Tests for CatalogInitError when filesystem operations fail."""
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_root_mkdir_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when root directory creation fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        # Patch Path.mkdir to fail
+        original_mkdir = Path.mkdir
+
+        def failing_mkdir(self, *args, **kwargs):
+            if "nonexistent-parent" in str(self):
+                raise OSError("Permission denied")
+            return original_mkdir(self, *args, **kwargs)
+
+        with patch.object(Path, "mkdir", failing_mkdir):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(tmp_path / "nonexistent-parent" / "catalog")
+            assert "Cannot create directory" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_portolan_mkdir_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when .portolan directory creation fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_mkdir = Path.mkdir
+
+        def failing_mkdir(self, *args, **kwargs):
+            if ".portolan" in str(self):
+                raise OSError("Disk full")
+            return original_mkdir(self, *args, **kwargs)
+
+        with patch.object(Path, "mkdir", failing_mkdir):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot create .portolan directory" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_config_write_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when config.json write fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_write_text = Path.write_text
+
+        def failing_write_text(self, *args, **kwargs):
+            if "config.json" in str(self):
+                raise OSError("Disk full")
+            return original_write_text(self, *args, **kwargs)
+
+        with patch.object(Path, "write_text", failing_write_text):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot write config.json" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_state_write_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when state.json write fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_write_text = Path.write_text
+
+        def failing_write_text(self, *args, **kwargs):
+            if "state.json" in str(self):
+                raise OSError("Disk full")
+            return original_write_text(self, *args, **kwargs)
+
+        with patch.object(Path, "write_text", failing_write_text):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot write state.json" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_versions_write_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when versions.json write fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_write_text = Path.write_text
+
+        def failing_write_text(self, *args, **kwargs):
+            if "versions.json" in str(self):
+                raise OSError("Disk full")
+            return original_write_text(self, *args, **kwargs)
+
+        with patch.object(Path, "write_text", failing_write_text):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot write versions.json" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_catalog_save_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when pystac catalog save fails."""
+        from unittest.mock import patch
+
+        import pystac
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        def failing_save(self, *args, **kwargs):
+            raise OSError("Cannot write catalog")
+
+        with patch.object(pystac.Catalog, "save", failing_save):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot write catalog.json" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_self_link_update_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when adding self link fails."""
+        import json
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_write_text = Path.write_text
+
+        def failing_write_text(self, content, *args, **kwargs):
+            # Only fail on the self-link update (when content contains "self" link)
+            if "catalog.json" in str(self):
+                try:
+                    data = json.loads(content)
+                    if any(link.get("rel") == "self" for link in data.get("links", [])):
+                        raise OSError("Cannot update catalog")
+                except json.JSONDecodeError:
+                    pass
+            return original_write_text(self, content, *args, **kwargs)
+
+        with patch.object(Path, "write_text", failing_write_text):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot update catalog.json with self link" in exc_info.value.message
+
+
 class TestCatalogRoundtrip:
     """Tests for saving and loading catalog."""
 

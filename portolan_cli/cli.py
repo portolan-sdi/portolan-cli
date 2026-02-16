@@ -12,7 +12,6 @@ from typing import Any
 
 import click
 
-from portolan_cli.catalog import CatalogExistsError
 from portolan_cli.dataset import (
     add_dataset,
     get_dataset_info,
@@ -210,17 +209,6 @@ def init(
         else:
             error(f"Existing STAC catalog found at {path.resolve()}")
             info("Use 'portolan adopt' to bring it under Portolan management (not yet implemented)")
-        raise SystemExit(1) from err
-    except CatalogExistsError as err:
-        # Legacy error handling for backward compatibility
-        if use_json:
-            envelope = error_envelope(
-                "init",
-                [ErrorDetail(type="CatalogExistsError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Catalog already exists at {path.resolve()}")
         raise SystemExit(1) from err
 
 
