@@ -523,6 +523,28 @@ class TestInitCatalogFilesystemErrors:
                 init_catalog(catalog_dir)
             assert "Cannot update catalog.json with self link" in exc_info.value.message
 
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_catalog_json_decode_error(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when catalog.json is corrupted."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_read_text = Path.read_text
+
+        def corrupted_read_text(self, *args, **kwargs):
+            if "catalog.json" in str(self):
+                return "not valid json {"
+            return original_read_text(self, *args, **kwargs)
+
+        with patch.object(Path, "read_text", corrupted_read_text):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot parse catalog.json" in exc_info.value.message
+
 
 class TestCatalogRoundtrip:
     """Tests for saving and loading catalog."""

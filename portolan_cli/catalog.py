@@ -321,8 +321,10 @@ def init_catalog(
         warnings.append("Missing title (recommended for discoverability)")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # WRITE ORDER: .portolan files FIRST, catalog.json LAST
-    # This ensures failed runs stay in FRESH state (retry-safe).
+    # WRITE ORDER: state.json LAST to ensure atomic MANAGED transition
+    # detect_state() checks for BOTH config.json AND state.json to determine
+    # MANAGED state. Writing state.json last ensures that if init fails
+    # partway through, the directory stays in FRESH state (retry-safe).
     # ─────────────────────────────────────────────────────────────────────────
 
     # Step 1: Create .portolan directory
@@ -332,19 +334,13 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot create .portolan directory: {e}") from e
 
-    # Step 2: config.json - empty for now
+    # Step 2: config.json - empty for now (first sentinel, not enough for MANAGED)
     try:
         (portolan_dir / "config.json").write_text("{}\n")
     except OSError as e:
         raise CatalogInitError(f"Cannot write config.json: {e}") from e
 
-    # Step 3: state.json - empty for now
-    try:
-        (portolan_dir / "state.json").write_text("{}\n")
-    except OSError as e:
-        raise CatalogInitError(f"Cannot write state.json: {e}") from e
-
-    # Step 4: versions.json - minimal catalog-level versioning
+    # Step 3: versions.json - minimal catalog-level versioning
     # TODO: Catalog-level versions.json structure differs from ADR-0005's
     # collection-level spec. Consider creating ADR-0018 to document this.
     now = datetime.now(timezone.utc)
@@ -359,7 +355,7 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write versions.json: {e}") from e
 
-    # Step 5: Create STAC catalog using pystac (LAST - marks completion)
+    # Step 4: Create STAC catalog using pystac
     catalog = pystac.Catalog(
         id=catalog_id,
         description=description,
@@ -373,11 +369,12 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write catalog.json: {e}") from e
 
-    # Add self link (STAC best practice)
+    # Step 5: Add self link (STAC best practice)
     # pystac SELF_CONTAINED doesn't add self link, so we add it manually
     try:
         data = json.loads(catalog_file.read_text())
-        data["links"].append(
+        # Use setdefault for defensive coding (pystac should always create links)
+        data.setdefault("links", []).append(
             {
                 "rel": "self",
                 "href": "./catalog.json",
@@ -385,8 +382,18 @@ def init_catalog(
             }
         )
         catalog_file.write_text(json.dumps(data, indent=2))
+    except json.JSONDecodeError as e:
+        raise CatalogInitError(f"Cannot parse catalog.json: {e}") from e
     except OSError as e:
         raise CatalogInitError(f"Cannot update catalog.json with self link: {e}") from e
+
+    # Step 6: state.json - LAST (second sentinel, flips to MANAGED state)
+    # This MUST be the final write. Once state.json exists alongside config.json,
+    # detect_state() will report MANAGED. All other files must be in place first.
+    try:
+        (portolan_dir / "state.json").write_text("{}\n")
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write state.json: {e}") from e
 
     return catalog_file, warnings
 
