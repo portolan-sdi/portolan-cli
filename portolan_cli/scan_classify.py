@@ -28,6 +28,9 @@ from pathlib import Path
 # =============================================================================
 
 # Primary geospatial formats (GEO_ASSET)
+# Note: .parquet is included as a potential geo asset. The scan module
+# inspects Parquet files for GeoParquet metadata to distinguish geospatial
+# from tabular data. Classification by extension is the first pass.
 GEO_ASSET_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".geojson",
@@ -37,22 +40,26 @@ GEO_ASSET_EXTENSIONS: frozenset[str] = frozenset(
         ".tif",
         ".tiff",
         ".jp2",
+        ".parquet",
     }
 )
 
 # Shapefile sidecars (KNOWN_SIDECAR)
-# Note: .aux.xml removed - Path.suffix returns ".xml" not ".aux.xml",
-# so .xml already catches these files
+# Note: .aux.xml files have Path.suffix = ".xml", so .xml catches them.
+# We also include .aux for raster auxiliary files (e.g., .tif.aux).
 SIDECAR_EXTENSIONS: frozenset[str] = frozenset(
     {
-        ".dbf",
-        ".shx",
-        ".prj",
-        ".cpg",
-        ".sbn",
-        ".sbx",
-        ".ovr",
-        ".xml",
+        # Shapefile sidecars
+        ".dbf",  # Attribute table
+        ".shx",  # Spatial index
+        ".prj",  # Projection/CRS
+        ".cpg",  # Code page specification
+        ".sbn",  # Spatial binary index (ArcGIS)
+        ".sbx",  # Spatial binary index (ArcGIS)
+        # Raster sidecars
+        ".ovr",  # Overview/pyramid
+        ".aux",  # Auxiliary metadata (GDAL)
+        ".xml",  # Metadata (covers .aux.xml, .tif.xml, etc.)
     }
 )
 
@@ -207,6 +214,60 @@ def _is_in_junk_dir(path: Path) -> bool:
     return False
 
 
+# Maximum file size to check for STAC content (1 MB)
+_STAC_MAX_FILE_SIZE = 1_000_000
+
+# Chunk size for partial read optimization
+_STAC_CHUNK_SIZE = 4096
+
+
+def _is_stac_json(path: Path) -> bool:
+    """Check if a .json file contains STAC metadata.
+
+    STAC Items and Collections have arbitrary filenames (e.g., ABW.json,
+    census_2024.json) but contain a "stac_version" field. This function
+    uses optimizations to avoid reading large files:
+    - Skip files > 1MB (STAC items are typically small)
+    - Read first 4KB chunk to check for "stac_version" before full parse
+
+    Args:
+        path: Path to a .json file.
+
+    Returns:
+        True if the file appears to be STAC metadata.
+    """
+    import json
+
+    try:
+        # Skip large files - STAC metadata is typically small
+        file_size = path.stat().st_size
+        if file_size > _STAC_MAX_FILE_SIZE:
+            return False
+
+        # Quick check: read first chunk and look for stac_version marker
+        with path.open(encoding="utf-8") as f:
+            chunk = f.read(_STAC_CHUNK_SIZE)
+
+        # If marker not in first chunk, likely not STAC
+        # (stac_version appears early in valid STAC JSON)
+        if '"stac_version"' not in chunk:
+            return False
+
+        # Full parse to confirm - read entire file
+        content = path.read_text(encoding="utf-8")
+        data = json.loads(content)
+
+        # STAC Items, Collections, and Catalogs all have "stac_version"
+        if isinstance(data, dict) and "stac_version" in data:
+            return True
+
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError, PermissionError):
+        # Not valid JSON, can't read, or permission denied - not STAC
+        pass
+
+    return False
+
+
 def classify_file(
     path: Path,
     size_bytes: int | None = None,
@@ -307,6 +368,15 @@ def classify_file(
                 FileCategory.UNKNOWN,
                 SkipReasonType.UNKNOWN_FORMAT,
                 "Large image file - unknown if geospatial raster",
+            )
+
+    # Check .json files for STAC content (Items, Collections with arbitrary names)
+    if ext == ".json":
+        if _is_stac_json(path):
+            return (
+                FileCategory.STAC_METADATA,
+                SkipReasonType.METADATA_FILE,
+                f"{path.name} is STAC metadata",
             )
 
     # Unknown extension

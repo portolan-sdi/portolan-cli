@@ -96,12 +96,14 @@ class TestScanJsonOutput:
     def test_scan_json_produces_valid_envelope(
         self, runner: CliRunner, scan_fixtures_dir: Path
     ) -> None:
-        """--format=json scan produces valid JSON envelope."""
+        """--format=json check produces valid JSON envelope."""
+        # clean_flat has multiple geo-assets in one dir, which is an error
         result = runner.invoke(
-            cli, ["--format=json", "scan", str(scan_fixtures_dir / "clean_flat")]
+            cli, ["--format=json", "check", str(scan_fixtures_dir / "clean_flat")]
         )
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present
+        assert result.exit_code == 1
 
         # Output should be valid JSON
         data = json.loads(result.output)
@@ -111,15 +113,16 @@ class TestScanJsonOutput:
         assert "command" in data
         assert "data" in data
 
-        # Values should be correct
-        assert data["success"] is True
-        assert data["command"] == "scan"
+        # Multiple geo-assets in one dir is an error, so success=False
+        assert data["success"] is False
+        assert data["command"] == "check"
 
     @pytest.mark.integration
     def test_scan_json_has_scan_data(self, runner: CliRunner, scan_fixtures_dir: Path) -> None:
-        """--format=json scan includes scan-specific data."""
+        """--format=json check includes scan-specific data."""
+        # clean_flat has multiple geo-assets, which is an error
         result = runner.invoke(
-            cli, ["--format=json", "scan", str(scan_fixtures_dir / "clean_flat")]
+            cli, ["--format=json", "check", str(scan_fixtures_dir / "clean_flat")]
         )
 
         data = json.loads(result.output)
@@ -131,20 +134,20 @@ class TestScanJsonOutput:
     def test_scan_json_error_has_errors_array(
         self, runner: CliRunner, scan_fixtures_dir: Path
     ) -> None:
-        """--format=json scan with issues includes data with issues."""
+        """--format=json check with errors includes errors array."""
         result = runner.invoke(
-            cli, ["--format=json", "scan", str(scan_fixtures_dir / "incomplete_shapefile")]
+            cli, ["--format=json", "check", str(scan_fixtures_dir / "incomplete_shapefile")]
         )
 
-        # Scan is informational — always exit 0 on success
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present
+        assert result.exit_code == 1
 
         data = json.loads(result.output)
 
-        # Issues found: success=false in envelope, but exit code still 0
-        # Note: The scan issues are reported in data, not top-level errors
-        # The envelope errors are for CLI-level errors (like FileNotFoundError)
-        assert "success" in data
+        # Errors present: success=false and errors array populated
+        assert data["success"] is False
+        assert "errors" in data
+        assert len(data["errors"]) > 0
         assert "data" in data
 
 
@@ -202,15 +205,18 @@ class TestCheckJsonOutput:
         assert "data" in data
 
     @pytest.mark.integration
-    def test_check_json_failure_produces_envelope(self, runner: CliRunner, tmp_path: Path) -> None:
-        """--format=json check on invalid catalog produces error envelope."""
+    def test_check_json_empty_dir_produces_envelope(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """--format=json check on empty directory produces success envelope."""
         result = runner.invoke(cli, ["--format=json", "check", str(tmp_path)])
 
-        assert result.exit_code == 1
+        # Empty directory is valid (just no geo-assets)
+        assert result.exit_code == 0
 
         data = json.loads(result.output)
 
-        assert data["success"] is False
+        assert data["success"] is True
         assert data["command"] == "check"
 
 
@@ -272,7 +278,7 @@ class TestErrorScenariosJsonOutput:
         """--format=json scan on nonexistent path produces JSON error envelope."""
         nonexistent = tmp_path / "does_not_exist"
 
-        result = runner.invoke(cli, ["--format=json", "scan", str(nonexistent)])
+        result = runner.invoke(cli, ["--format=json", "check", str(nonexistent)])
 
         # Should exit 1 (our error handling) and produce valid JSON
         assert result.exit_code == 1
@@ -280,7 +286,7 @@ class TestErrorScenariosJsonOutput:
         # Output must be valid JSON with error envelope
         data = json.loads(result.output)
         assert data["success"] is False
-        assert data["command"] == "scan"
+        assert data["command"] == "check"
         assert "errors" in data
         assert len(data["errors"]) > 0
         assert data["errors"][0]["type"] == "PathNotFoundError"
@@ -312,7 +318,7 @@ class TestErrorScenariosJsonOutput:
         test_file = tmp_path / "test.txt"
         test_file.write_text("not a directory")
 
-        result = runner.invoke(cli, ["--format=json", "scan", str(test_file)])
+        result = runner.invoke(cli, ["--format=json", "check", str(test_file)])
 
         # Should exit 1 (our error handling) and produce valid JSON
         assert result.exit_code == 1
@@ -320,19 +326,18 @@ class TestErrorScenariosJsonOutput:
         # Output must be valid JSON with error envelope
         data = json.loads(result.output)
         assert data["success"] is False
-        assert data["command"] == "scan"
+        assert data["command"] == "check"
         assert "errors" in data
         assert len(data["errors"]) > 0
         assert data["errors"][0]["type"] == "NotADirectoryError"
 
     @pytest.mark.integration
-    def test_all_errors_go_to_stdout_not_stderr(self, runner: CliRunner, tmp_path: Path) -> None:
-        """With --format=json, all output goes to stdout, not stderr."""
+    def test_all_output_goes_to_stdout_with_json(self, runner: CliRunner, tmp_path: Path) -> None:
+        """With --format=json, all output goes to stdout."""
         result = runner.invoke(cli, ["--format=json", "check", str(tmp_path)])
 
-        # stderr should be empty or minimal
-        # In Click's CliRunner, output is stdout, errors are caught
-        assert result.exit_code == 1
+        # Empty directory is valid, so exit code 0
+        assert result.exit_code == 0
 
         # stdout should contain valid JSON
         data = json.loads(result.output)
@@ -349,10 +354,11 @@ class TestBackwardCompatibility:
 
     @pytest.mark.integration
     def test_scan_json_flag_still_works(self, runner: CliRunner, scan_fixtures_dir: Path) -> None:
-        """scan --json (per-command flag) produces envelope output."""
-        result = runner.invoke(cli, ["scan", str(scan_fixtures_dir / "clean_flat"), "--json"])
+        """check --json (per-command flag) produces envelope output."""
+        result = runner.invoke(cli, ["check", str(scan_fixtures_dir / "clean_flat"), "--json"])
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present (multiple primaries)
+        assert result.exit_code == 1
 
         # Should be valid JSON with envelope
         data = json.loads(result.output)
@@ -401,11 +407,13 @@ class TestBackwardCompatibility:
         """--format=json scan matches scan --json output structure."""
         # Run with global flag
         result_global = runner.invoke(
-            cli, ["--format=json", "scan", str(scan_fixtures_dir / "clean_flat")]
+            cli, ["--format=json", "check", str(scan_fixtures_dir / "clean_flat")]
         )
 
         # Run with per-command flag
-        result_local = runner.invoke(cli, ["scan", str(scan_fixtures_dir / "clean_flat"), "--json"])
+        result_local = runner.invoke(
+            cli, ["check", str(scan_fixtures_dir / "clean_flat"), "--json"]
+        )
 
         assert result_global.exit_code == result_local.exit_code
 
@@ -422,16 +430,19 @@ class TestBackwardCompatibility:
         self, runner: CliRunner, scan_fixtures_dir: Path
     ) -> None:
         """Using both --format=json and --json together works without conflict."""
+        # clean_flat has multiple geo-assets in one dir, which is now an error
         result = runner.invoke(
             cli,
-            ["--format=json", "scan", str(scan_fixtures_dir / "clean_flat"), "--json"],
+            ["--format=json", "check", str(scan_fixtures_dir / "clean_flat"), "--json"],
         )
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present
+        assert result.exit_code == 1
 
         # Should still produce valid JSON
         data = json.loads(result.output)
-        assert data["success"] is True
+        # Multiple geo-assets in one dir is an error
+        assert data["success"] is False
 
 
 # =============================================================================
@@ -446,24 +457,26 @@ class TestTextOutputDefault:
     def test_scan_without_format_produces_text(
         self, runner: CliRunner, scan_fixtures_dir: Path
     ) -> None:
-        """scan without --format produces human-readable text."""
-        result = runner.invoke(cli, ["scan", str(scan_fixtures_dir / "clean_flat")])
+        """check without --format produces human-readable text."""
+        result = runner.invoke(cli, ["check", str(scan_fixtures_dir / "clean_flat")])
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present (multiple primaries)
+        assert result.exit_code == 1
 
         # Should NOT be valid JSON
         with pytest.raises(json.JSONDecodeError):
             json.loads(result.output)
 
-        # Should have human-readable elements
-        assert "files" in result.output.lower() or "ready" in result.output.lower()
+        # Should have human-readable output (compact format)
+        # This fixture has multiple geo-assets, so expect error text
+        assert len(result.output) > 0
 
     @pytest.mark.integration
     def test_format_text_matches_default(self, runner: CliRunner, scan_fixtures_dir: Path) -> None:
         """--format=text produces same output as no flag."""
-        result_default = runner.invoke(cli, ["scan", str(scan_fixtures_dir / "clean_flat")])
+        result_default = runner.invoke(cli, ["check", str(scan_fixtures_dir / "clean_flat")])
         result_text = runner.invoke(
-            cli, ["--format=text", "scan", str(scan_fixtures_dir / "clean_flat")]
+            cli, ["--format=text", "check", str(scan_fixtures_dir / "clean_flat")]
         )
 
         assert result_default.exit_code == result_text.exit_code
@@ -486,9 +499,10 @@ class TestTextOutputDefault:
         assert result_text.exit_code == result_json.exit_code == 0
 
     @pytest.mark.integration
-    def test_exit_codes_unchanged_on_error(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Exit codes match between formats for error cases."""
+    def test_exit_codes_unchanged_for_empty_dir(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Exit codes match between formats for empty directory (success case)."""
         result_text = runner.invoke(cli, ["check", str(tmp_path)])
         result_json = runner.invoke(cli, ["--format=json", "check", str(tmp_path)])
 
-        assert result_text.exit_code == result_json.exit_code == 1
+        # Empty directory is valid (just has no geo-assets)
+        assert result_text.exit_code == result_json.exit_code == 0

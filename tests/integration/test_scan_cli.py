@@ -40,34 +40,37 @@ class TestScanCLI:
     """Integration tests for `portolan scan` command."""
 
     def test_scan_basic_output(self, runner: CliRunner, fixtures_dir: Path) -> None:
-        """portolan scan shows human-readable summary."""
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "clean_flat")])
+        """portolan check shows human-readable summary."""
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "clean_flat")])
 
-        # Should exit with 0 (warnings don't cause failure, only errors)
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present (multiple primaries is an error)
+        assert result.exit_code == 1
         # Should show geo-asset count
         assert "3 geo-asset" in result.output.lower()
 
     def test_scan_nonexistent_path_exits_with_error(self, runner: CliRunner) -> None:
         """portolan scan on nonexistent path exits with error."""
-        result = runner.invoke(cli, ["scan", "/nonexistent/path/that/does/not/exist"])
+        result = runner.invoke(cli, ["check", "/nonexistent/path/that/does/not/exist"])
 
         # Exit code 1 for path not found (handled in our code for JSON envelope support)
         assert result.exit_code == 1
         assert "not exist" in result.output.lower() or "error" in result.output.lower()
 
     def test_scan_json_output(self, runner: CliRunner, fixtures_dir: Path) -> None:
-        """portolan scan --json outputs valid JSON with envelope structure."""
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "clean_flat"), "--json"])
+        """portolan check --json outputs valid JSON with envelope structure."""
+        # clean_flat has multiple geo-assets in one dir, which is now an error
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "clean_flat"), "--json"])
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present
+        assert result.exit_code == 1
 
         # Parse the JSON output - now has envelope structure
         envelope = json.loads(result.output)
 
         # Verify envelope structure
-        assert envelope["success"] is True
-        assert envelope["command"] == "scan"
+        # Multiple geo-assets in one dir is an error, so success=False
+        assert envelope["success"] is False
+        assert envelope["command"] == "check"
         assert "data" in envelope
 
         # Verify required fields per FR-019 inside data
@@ -76,17 +79,18 @@ class TestScanCLI:
         assert "issues" in data
         assert "summary" in data
 
-    def test_scan_detects_issues_exits_zero(self, runner: CliRunner, fixtures_dir: Path) -> None:
-        """portolan scan exits with code 0 even when issues found (informational)."""
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "incomplete_shapefile")])
+    def test_scan_detects_errors_exits_one(self, runner: CliRunner, fixtures_dir: Path) -> None:
+        """portolan check exits with code 1 when errors found."""
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "incomplete_shapefile")])
 
-        # Scan is informational — always exit 0 on success
-        assert result.exit_code == 0
-        assert "error" in result.output.lower() or "missing" in result.output.lower()
+        # Per ADR-0017: exit code 1 when errors present
+        assert result.exit_code == 1
+        # Compact output shows "incomplete shapefile" error
+        assert "incomplete" in result.output.lower() or "shapefile" in result.output.lower()
 
     def test_scan_no_recursive_flag(self, runner: CliRunner, fixtures_dir: Path) -> None:
         """portolan scan --no-recursive limits to immediate directory."""
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "nested"), "--no-recursive"])
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "nested"), "--no-recursive"])
 
         # The nested fixture has all files in subdirectories
         # --no-recursive should find no geo-assets at root level
@@ -95,7 +99,7 @@ class TestScanCLI:
 
     def test_scan_max_depth_flag(self, runner: CliRunner, fixtures_dir: Path) -> None:
         """portolan scan --max-depth limits recursion depth."""
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "nested"), "--max-depth", "1"])
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "nested"), "--max-depth", "1"])
 
         assert result.exit_code == 0
         # With max-depth=1, we can see census/ and imagery/ but not their contents
@@ -109,16 +113,18 @@ class TestScanCLI:
         hidden_file.write_text('{"type": "FeatureCollection", "features": []}')
 
         # Without flag
-        result_without = runner.invoke(cli, ["scan", str(tmp_path)])
+        result_without = runner.invoke(cli, ["check", str(tmp_path)])
         # With flag
-        result_with = runner.invoke(cli, ["scan", str(tmp_path), "--include-hidden"])
+        result_with = runner.invoke(cli, ["check", str(tmp_path), "--include-hidden"])
 
         assert result_without.exit_code == 0
         assert result_with.exit_code == 0
 
         # Parse JSON to compare file counts (now with envelope structure)
-        result_json_without = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
-        result_json_with = runner.invoke(cli, ["scan", str(tmp_path), "--include-hidden", "--json"])
+        result_json_without = runner.invoke(cli, ["check", str(tmp_path), "--json"])
+        result_json_with = runner.invoke(
+            cli, ["check", str(tmp_path), "--include-hidden", "--json"]
+        )
 
         envelope_without = json.loads(result_json_without.output)
         envelope_with = json.loads(result_json_with.output)
@@ -141,9 +147,9 @@ class TestScanCLI:
         link.symlink_to(target)
 
         # Without flag (default: skip symlinks)
-        result_without = runner.invoke(cli, ["scan", str(subdir), "--json"])
+        result_without = runner.invoke(cli, ["check", str(subdir), "--json"])
         # With flag
-        result_with = runner.invoke(cli, ["scan", str(subdir), "--follow-symlinks", "--json"])
+        result_with = runner.invoke(cli, ["check", str(subdir), "--follow-symlinks", "--json"])
 
         envelope_without = json.loads(result_without.output)
         envelope_with = json.loads(result_with.output)
@@ -157,18 +163,18 @@ class TestScanCLI:
         assert len(data_with.get("ready", [])) == 1
 
     def test_scan_issues_shown_in_output(self, runner: CliRunner, fixtures_dir: Path) -> None:
-        """portolan scan shows issues in human-readable output."""
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "invalid_chars")])
+        """portolan check shows issues in human-readable output."""
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "invalid_chars")])
 
-        # Should show warning about invalid characters
-        assert result.exit_code == 0  # Warnings don't cause failure
-        assert "warning" in result.output.lower() or "invalid" in result.output.lower()
+        # Per ADR-0017: exit code 1 when errors present (invalid chars is an error)
+        assert result.exit_code == 1
+        assert "invalid" in result.output.lower() or "error" in result.output.lower()
 
     def test_scan_json_issues_have_required_fields(
         self, runner: CliRunner, fixtures_dir: Path
     ) -> None:
         """portolan scan --json issues include path, type, severity, message."""
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "invalid_chars"), "--json"])
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "invalid_chars"), "--json"])
 
         envelope = json.loads(result.output)
         data = envelope["data"]
@@ -199,14 +205,14 @@ class TestScanFullWorkflow:
 
     def test_scan_nested_directory_full_report(self, runner: CliRunner, fixtures_dir: Path) -> None:
         """Scan nested directory and verify complete report structure."""
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "nested"), "--json"])
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "nested"), "--json"])
 
         assert result.exit_code == 0
         envelope = json.loads(result.output)
 
         # Should have envelope structure
         assert envelope["success"] is True
-        assert envelope["command"] == "scan"
+        assert envelope["command"] == "check"
         assert "data" in envelope
 
         data = envelope["data"]
@@ -233,16 +239,16 @@ class TestScanFullWorkflow:
         # 3. Valid file for comparison
         (tmp_path / "valid.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--json"])
 
-        # Scan is informational — always exit 0 on success
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present
+        assert result.exit_code == 1
 
         envelope = json.loads(result.output)
 
-        # JSON envelope still indicates issues found (success=False)
+        # JSON envelope indicates issues found (success=False)
         assert envelope["success"] is False
-        assert envelope["command"] == "scan"
+        assert envelope["command"] == "check"
 
         data = envelope["data"]
 
@@ -253,7 +259,7 @@ class TestScanFullWorkflow:
 
     def test_scan_help_shows_all_flags(self, runner: CliRunner) -> None:
         """Verify all scan flags appear in help text."""
-        result = runner.invoke(cli, ["scan", "--help"])
+        result = runner.invoke(cli, ["check", "--help"])
 
         assert result.exit_code == 0
         # Check all flags are documented
@@ -266,7 +272,7 @@ class TestScanFullWorkflow:
 
     def test_scan_empty_directory(self, runner: CliRunner, tmp_path: Path) -> None:
         """Scan empty directory returns gracefully."""
-        result = runner.invoke(cli, ["scan", str(tmp_path)])
+        result = runner.invoke(cli, ["check", str(tmp_path)])
 
         assert result.exit_code == 0
         assert "no geo-assets" in result.output.lower()
@@ -275,14 +281,14 @@ class TestScanFullWorkflow:
         self, runner: CliRunner, fixtures_dir: Path
     ) -> None:
         """JSON output includes classification summary."""
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "unsupported"), "--json"])
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "unsupported"), "--json"])
 
         assert result.exit_code == 0
         envelope = json.loads(result.output)
 
         # Should have envelope structure
         assert envelope["success"] is True
-        assert envelope["command"] == "scan"
+        assert envelope["command"] == "check"
 
         data = envelope["data"]
 
@@ -297,29 +303,34 @@ class TestScanOutputTruncation:
 
     def test_scan_default_truncates_many_issues(self, runner: CliRunner, tmp_path: Path) -> None:
         """By default, scan truncates output when many issues exist."""
-        # Create 15 files with invalid characters to generate many warnings
+        # Create 15 files with invalid characters in separate directories
+        # (to avoid MULTIPLE_PRIMARIES error)
         for i in range(15):
-            (tmp_path / f"file with spaces {i}.geojson").write_text(
+            subdir = tmp_path / f"dir_{i}"
+            subdir.mkdir()
+            (subdir / "file with spaces.geojson").write_text(
                 '{"type": "FeatureCollection", "features": []}'
             )
 
-        result = runner.invoke(cli, ["scan", str(tmp_path)])
+        result = runner.invoke(cli, ["check", str(tmp_path)])
 
-        # Should show truncation message
+        # Should show truncation message (warnings only, no errors)
         assert result.exit_code == 0
         assert "truncated" in result.output.lower() or "more" in result.output.lower()
 
     def test_scan_all_shows_all_issues(self, runner: CliRunner, tmp_path: Path) -> None:
         """--all flag shows all issues without truncation."""
-        # Create 15 files with invalid characters
+        # Create 15 files with invalid characters in separate directories
         for i in range(15):
-            (tmp_path / f"file with spaces {i}.geojson").write_text(
+            subdir = tmp_path / f"dir_{i}"
+            subdir.mkdir()
+            (subdir / "file with spaces.geojson").write_text(
                 '{"type": "FeatureCollection", "features": []}'
             )
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--all"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--all"])
 
-        # Should NOT show truncation message
+        # Should NOT show truncation message (warnings only, no errors)
         assert result.exit_code == 0
         assert "more" not in result.output.lower() or "use --all" not in result.output
         # Should show all 15 invalid character warnings (message uses "problematic")
@@ -327,22 +338,24 @@ class TestScanOutputTruncation:
 
     def test_scan_json_never_truncates(self, runner: CliRunner, tmp_path: Path) -> None:
         """JSON output never truncates regardless of --all flag."""
-        # Create 15 files with invalid characters
+        # Create 15 files with invalid characters in separate directories
         for i in range(15):
-            (tmp_path / f"file with spaces {i}.geojson").write_text(
+            subdir = tmp_path / f"dir_{i}"
+            subdir.mkdir()
+            (subdir / "file with spaces.geojson").write_text(
                 '{"type": "FeatureCollection", "features": []}'
             )
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--json"])
 
         envelope = json.loads(result.output)
         data = envelope["data"]
-        # Should have all 15+ issues (15 invalid chars + multiple primaries)
+        # Should have all 15 issues (15 invalid chars warnings)
         assert len(data.get("issues", [])) >= 15
 
     def test_scan_few_issues_no_truncation(self, runner: CliRunner, fixtures_dir: Path) -> None:
         """Small number of issues are not truncated."""
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "invalid_chars")])
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "invalid_chars")])
 
         # Should NOT show truncation message for small issue count
         assert "truncated" not in result.output.lower()
@@ -358,44 +371,47 @@ class TestScanEnhancedOutput:
     """Integration tests for enhanced scan output features."""
 
     def test_scan_shows_next_steps(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Scan output includes actionable next steps."""
+        """Scan verbose output includes actionable next steps."""
         # Create a file with invalid characters (fixable with --fix)
         (tmp_path / "file with spaces.geojson").write_text(
             '{"type": "FeatureCollection", "features": []}'
         )
 
-        result = runner.invoke(cli, ["scan", str(tmp_path)])
+        # Use --verbose to get detailed output with next steps
+        result = runner.invoke(cli, ["check", str(tmp_path), "--verbose"])
 
         assert result.exit_code == 0
-        # Should show next steps section
+        # Should show next steps section in verbose mode
         assert "next step" in result.output.lower()
 
     def test_scan_shows_fixability_labels(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Scan output shows fixability labels for issues."""
+        """Scan verbose output shows fixability labels for issues."""
         # Create a file with invalid characters (--fix label)
         (tmp_path / "file with spaces.geojson").write_text(
             '{"type": "FeatureCollection", "features": []}'
         )
 
-        result = runner.invoke(cli, ["scan", str(tmp_path)])
+        # Use --verbose to get detailed output with fixability labels
+        result = runner.invoke(cli, ["check", str(tmp_path), "--verbose"])
 
         assert result.exit_code == 0
-        # Should show --fix label for fixable issues
+        # Should show --fix label for fixable issues in verbose mode
         assert "[--fix]" in result.output
 
     def test_scan_shows_supporting_files_by_category(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Scan output shows supporting files (non-geo-assets) by category."""
+        """Scan verbose output shows supporting files by category."""
         # Create a geo-asset and supporting files
         (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
         (tmp_path / "readme.md").write_text("# Documentation")
         (tmp_path / "style.json").write_text("{}")
 
-        result = runner.invoke(cli, ["scan", str(tmp_path)])
+        # Use --verbose to get detailed output with supporting files
+        result = runner.invoke(cli, ["check", str(tmp_path), "--verbose"])
 
         assert result.exit_code == 0
-        # Should show supporting files grouped by category
+        # Should show supporting files grouped by category in verbose mode
         # Categories: style, documentation
         assert "style" in result.output.lower()
         assert "documentation" in result.output.lower()
@@ -407,7 +423,7 @@ class TestScanEnhancedOutput:
         collection.mkdir()
         (collection / "census.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--tree"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--tree"])
 
         assert result.exit_code == 0
         # Should show tree characters
@@ -419,7 +435,7 @@ class TestScanEnhancedOutput:
         (tmp_path / "valid.geojson").write_text('{"type": "FeatureCollection", "features": []}')
         (tmp_path / "readme.md").write_text("# Documentation")
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--tree"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--tree"])
 
         assert result.exit_code == 0
         # Should show geo-asset marker
@@ -427,22 +443,16 @@ class TestScanEnhancedOutput:
 
     def test_scan_suggests_collections(self, runner: CliRunner, tmp_path: Path) -> None:
         """Scan with collection inference shows suggestions."""
-        # Create files with pattern that can be grouped
-        (tmp_path / "flood_rp10.geojson").write_text(
-            '{"type": "FeatureCollection", "features": []}'
-        )
-        (tmp_path / "flood_rp50.geojson").write_text(
-            '{"type": "FeatureCollection", "features": []}'
-        )
-        (tmp_path / "flood_rp100.geojson").write_text(
-            '{"type": "FeatureCollection", "features": []}'
-        )
+        # Create files with pattern that can be grouped (in separate dirs to avoid errors)
+        for name in ["flood_rp10", "flood_rp50", "flood_rp100"]:
+            subdir = tmp_path / name
+            subdir.mkdir()
+            (subdir / f"{name}.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--suggest-collections"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--suggest-collections"])
 
         assert result.exit_code == 0
         # Should show suggested collections (if inference is wired up)
-        # Note: This may show "multiple primaries" warning since all are in same dir
 
     def test_scan_ready_message(self, runner: CliRunner, tmp_path: Path) -> None:
         """When no issues, shows structure valid message."""
@@ -451,15 +461,18 @@ class TestScanEnhancedOutput:
         collection.mkdir()
         (collection / "census.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path)])
+        result = runner.invoke(cli, ["check", str(tmp_path)])
 
         assert result.exit_code == 0
-        # Should indicate structure is valid
-        assert "ready" in result.output.lower() or "valid" in result.output.lower()
+        # Compact output shows pass message
+        assert (
+            "check passed" in result.output.lower()
+            or "no warnings or errors" in result.output.lower()
+        )
 
     def test_scan_help_shows_new_flags(self, runner: CliRunner) -> None:
         """Help text shows new flags."""
-        result = runner.invoke(cli, ["scan", "--help"])
+        result = runner.invoke(cli, ["check", "--help"])
 
         assert result.exit_code == 0
         # Should document new flags
@@ -482,7 +495,7 @@ class TestScanErrorHandling:
         file_path = tmp_path / "not_a_directory.geojson"
         file_path.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(file_path)])
+        result = runner.invoke(cli, ["check", str(file_path)])
 
         # Should exit with error code (either 1 for NotADirectoryError or 2 for Click validation)
         assert result.exit_code != 0
@@ -491,15 +504,17 @@ class TestScanErrorHandling:
 
     def test_scan_issue_truncation_shows_count(self, runner: CliRunner, tmp_path: Path) -> None:
         """When issues are truncated, shows count of hidden issues."""
-        # Create more than 10 files with invalid characters to trigger truncation
+        # Create more than 10 files with invalid characters in separate dirs
         for i in range(15):
-            (tmp_path / f"file with spaces {i}.geojson").write_text(
+            subdir = tmp_path / f"dir_{i}"
+            subdir.mkdir()
+            (subdir / "file with spaces.geojson").write_text(
                 '{"type": "FeatureCollection", "features": []}'
             )
 
-        result = runner.invoke(cli, ["scan", str(tmp_path)])
+        result = runner.invoke(cli, ["check", str(tmp_path)])
 
-        # Should show truncation message with count
+        # Should show truncation message with count (warnings only, no errors)
         assert result.exit_code == 0
         # Look for "more" in output (truncation indicator)
         assert "more" in result.output.lower()
@@ -508,8 +523,8 @@ class TestScanErrorHandling:
         self, runner: CliRunner, fixtures_dir: Path
     ) -> None:
         """Issue groups with zero count are not printed."""
-        # Use clean_flat fixture which has no errors
-        result = runner.invoke(cli, ["scan", str(fixtures_dir / "clean_flat")])
+        # Use nested fixture which has no errors
+        result = runner.invoke(cli, ["check", str(fixtures_dir / "nested")])
 
         # Should exit with 0 (no errors)
         assert result.exit_code == 0
@@ -517,15 +532,16 @@ class TestScanErrorHandling:
         assert "0 error" not in result.output.lower()
 
     def test_scan_issue_with_suggestion_shows_hint(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Issues with suggestions show hint in output."""
+        """Issues with suggestions show hint in verbose output."""
         # Create incomplete shapefile - has suggestion to add missing files
         shp_file = tmp_path / "data.shp"
         shp_file.write_bytes(b"\x00\x00\x27\x0a")  # Shapefile magic bytes
 
-        result = runner.invoke(cli, ["scan", str(tmp_path)])
+        # Use --verbose to get hints in output
+        result = runner.invoke(cli, ["check", str(tmp_path), "--verbose"])
 
-        # Should show hint/suggestion
-        assert result.exit_code == 0  # Scan is informational
+        # Per ADR-0017: exit code 1 when errors present (incomplete shapefile)
+        assert result.exit_code == 1
         assert "hint" in result.output.lower() or "add" in result.output.lower()
 
 
@@ -543,7 +559,7 @@ class TestScanManualFlag:
         geo_file = tmp_path / "data.geojson"
         geo_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--manual"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--manual"])
 
         # Should not fail with "no such option" error
         assert "no such option" not in result.output.lower()
@@ -555,7 +571,7 @@ class TestScanManualFlag:
         (tmp_path / "a.geojson").write_text('{"type": "FeatureCollection", "features": []}')
         (tmp_path / "b.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--manual"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--manual"])
 
         # Should mention manual resolution needed
         assert "manual" in result.output.lower() or "require" in result.output.lower()
@@ -566,7 +582,7 @@ class TestScanManualFlag:
         (tmp_path / "a.geojson").write_text('{"type": "FeatureCollection", "features": []}')
         (tmp_path / "b.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--manual"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--manual"])
 
         # Should NOT show the ready count
         assert "geo-asset" not in result.output.lower()
@@ -578,7 +594,7 @@ class TestScanManualFlag:
         subdir.mkdir()
         (subdir / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--manual"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--manual"])
 
         # Should show success message
         assert "no files require manual resolution" in result.output.lower()
@@ -592,7 +608,7 @@ class TestScanManualFlag:
         bad_file = subdir / "file with spaces.geojson"
         bad_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--manual"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--manual"])
 
         # Should NOT show the fixable issue
         assert "--fix" not in result.output
@@ -611,7 +627,7 @@ class TestScanFixFlag:
 
     def test_fix_flag_help_exists(self, runner: CliRunner) -> None:
         """The --fix flag is documented in help."""
-        result = runner.invoke(cli, ["scan", "--help"])
+        result = runner.invoke(cli, ["check", "--help"])
 
         assert "--fix" in result.output
         assert "--dry-run" in result.output
@@ -621,7 +637,7 @@ class TestScanFixFlag:
         bad_file = tmp_path / "file with spaces.geojson"
         bad_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix", "--dry-run"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix", "--dry-run"])
 
         assert result.exit_code == 0
         # Should show dry run message
@@ -637,7 +653,7 @@ class TestScanFixFlag:
         bad_file = tmp_path / "file with spaces.geojson"
         bad_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix"])
 
         assert result.exit_code == 0
         # Should show success message
@@ -651,7 +667,7 @@ class TestScanFixFlag:
         bad_file = tmp_path / "CON.geojson"
         bad_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix"])
 
         assert result.exit_code == 0
         # Should rename to _CON.geojson
@@ -661,6 +677,7 @@ class TestScanFixFlag:
     def test_fix_renames_shapefile_sidecars(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix renames shapefile sidecars along with primary file."""
         # Create shapefile with sidecars (use non-ASCII to trigger rename)
+        # Note: incomplete shapefile (missing .dbf) causes an error, but fix still runs
         shp_file = tmp_path / "données.shp"
         dbf_file = tmp_path / "données.dbf"
         shx_file = tmp_path / "données.shx"
@@ -668,9 +685,10 @@ class TestScanFixFlag:
         dbf_file.touch()
         shx_file.touch()
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix"])
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present (invalid chars is auto-fixed but still exits 1)
+        assert result.exit_code == 1
         # All files should be renamed
         assert not shp_file.exists()
         assert not dbf_file.exists()
@@ -685,7 +703,7 @@ class TestScanFixFlag:
         valid_file = tmp_path / "valid.geojson"
         valid_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix"])
 
         assert result.exit_code == 0
         # Should show "no issues to fix"
@@ -696,7 +714,7 @@ class TestScanFixFlag:
         bad_file = tmp_path / "file with spaces.geojson"
         bad_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix", "--json"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix", "--json"])
 
         assert result.exit_code == 0
         envelope = json.loads(result.output)
@@ -708,15 +726,18 @@ class TestScanFixFlag:
 
     def test_fix_collision_detection(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix detects collisions and doesn't overwrite existing files."""
-        # Create both source and would-be target
-        source = tmp_path / "file with spaces.geojson"
-        target = tmp_path / "file_with_spaces.geojson"
+        # Create both source and would-be target (in separate dirs to avoid multiple primaries error)
+        subdir = tmp_path / "data"
+        subdir.mkdir()
+        source = subdir / "file with spaces.geojson"
+        target = subdir / "file_with_spaces.geojson"
         source.write_text('{"type": "source"}')
         target.write_text('{"type": "target"}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix"])
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present (multiple primaries)
+        assert result.exit_code == 1
         # Source should still exist (collision prevented rename)
         assert source.exists()
         # Target should be unchanged
@@ -729,7 +750,7 @@ class TestScanFixFlag:
         bad_file = tmp_path / "données.geojson"
         bad_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix"])
 
         assert result.exit_code == 0
         # Should rename to donnees.geojson
@@ -741,7 +762,7 @@ class TestScanFixFlag:
         valid_file = tmp_path / "valid.geojson"
         valid_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--dry-run"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--dry-run"])
 
         assert result.exit_code == 0
         # Should warn about --dry-run having no effect
@@ -754,7 +775,7 @@ class TestScanFixFlag:
         bad_file = tmp_path / "file with spaces.geojson"
         bad_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix", "--dry-run", "--json"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix", "--dry-run", "--json"])
 
         assert result.exit_code == 0
         envelope = json.loads(result.output)
@@ -772,12 +793,13 @@ class TestScanFixFlag:
         """--fix with multiple fixable files shows correct count."""
         import re
 
-        # Create multiple files with invalid chars
-        (tmp_path / "file one.geojson").write_text('{"type": "FeatureCollection"}')
-        (tmp_path / "file two.geojson").write_text('{"type": "FeatureCollection"}')
-        (tmp_path / "file three.geojson").write_text('{"type": "FeatureCollection"}')
+        # Create multiple files with invalid chars in separate directories
+        for name in ["file one", "file two", "file three"]:
+            subdir = tmp_path / (name.replace(" ", "_") + "_dir")
+            subdir.mkdir()
+            (subdir / f"{name}.geojson").write_text('{"type": "FeatureCollection"}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix"])
 
         assert result.exit_code == 0
         # Should show count of applied fixes with action word
@@ -789,15 +811,16 @@ class TestScanFixFlag:
 
     def test_fix_with_collision_shows_failed_count(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix shows count of fixes that couldn't be applied."""
-        # Create source with invalid chars and conflicting target
+        # Create source with invalid chars and conflicting target (in same dir = error)
         source = tmp_path / "file one.geojson"
         target = tmp_path / "file_one.geojson"
         source.write_text('{"type": "source"}')
         target.write_text('{"type": "target"}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix"])
 
-        assert result.exit_code == 0
+        # Per ADR-0017: exit code 1 when errors present (multiple primaries)
+        assert result.exit_code == 1
         # Should show that fix could not be applied
         assert "could not" in result.output.lower() or "collision" in result.output.lower()
 
@@ -808,7 +831,7 @@ class TestScanFixFlag:
         bad_file = tmp_path / "données.geojson"
         bad_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix", "--dry-run"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix", "--dry-run"])
 
         assert result.exit_code == 0
         # Should show preview
@@ -821,7 +844,7 @@ class TestScanFixFlag:
         valid_file = tmp_path / "valid.geojson"
         valid_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        result = runner.invoke(cli, ["scan", str(tmp_path), "--fix", "--dry-run"])
+        result = runner.invoke(cli, ["check", str(tmp_path), "--fix", "--dry-run"])
 
         assert result.exit_code == 0
         # Should show "no issues to fix"

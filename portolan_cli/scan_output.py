@@ -726,12 +726,219 @@ def _format_manual_only(result: ScanResult) -> str:
     return "\n".join(lines)
 
 
+# =============================================================================
+# Compact Output (Default)
+# =============================================================================
+
+
+def _group_issues_by_type(
+    issues: list[ScanIssue],
+) -> dict[IssueType, list[ScanIssue]]:
+    """Group issues by their type for aggregation."""
+    grouped: dict[IssueType, list[ScanIssue]] = defaultdict(list)
+    for issue in issues:
+        grouped[issue.issue_type].append(issue)
+    return dict(grouped)
+
+
+def _group_by_parent_dir(issues: list[ScanIssue], root: Path) -> dict[str, int]:
+    """Group issues by parent directory with counts.
+
+    Args:
+        issues: List of issues to group.
+        root: Root path for relative path calculation.
+
+    Returns:
+        Dict mapping parent directory to count of issues.
+    """
+    parent_counts: dict[str, int] = defaultdict(int)
+    for issue in issues:
+        try:
+            rel_path = issue.path.relative_to(root)
+            # Get first directory component, or "." for root
+            parent = str(rel_path.parts[0]) if rel_path.parts else "."
+            parent_counts[parent] += 1
+        except ValueError:
+            parent_counts["."] += 1
+    return dict(parent_counts)
+
+
+def _extract_asset_count(message: str) -> int | None:
+    """Extract asset count from 'Directory has N primary assets' message."""
+    if "primary assets" in message:
+        parts = message.split()
+        for i, part in enumerate(parts):
+            if part == "has" and i + 1 < len(parts):
+                try:
+                    return int(parts[i + 1])
+                except ValueError:
+                    pass
+    return None
+
+
+def format_compact_output(result: ScanResult) -> str | None:
+    """Format ultra-compact output for check command.
+
+    Design principles:
+    - Silent on success (returns None)
+    - Errors first, then warnings
+    - Aggregate issues by type, not per-file
+    - One hint per issue type, not repeated
+    - No file listings (counts only)
+
+    Args:
+        result: The scan result to format.
+
+    Returns:
+        Formatted string, or None if no issues (silent success).
+    """
+    lines: list[str] = []
+
+    # Handle errors (blocking issues)
+    error_issues = [i for i in result.issues if i.severity == Severity.ERROR]
+    if error_issues:
+        error_grouped = _group_issues_by_type(error_issues)
+        for issue_type, issues in error_grouped.items():
+            lines.extend(
+                _format_issue_group_compact(issue_type, issues, result.root, is_error=True)
+            )
+
+    # Handle warnings (non-blocking)
+    warning_issues = [i for i in result.issues if i.severity == Severity.WARNING]
+    if warning_issues:
+        if lines:
+            lines.append("")  # Separator between errors and warnings
+        warning_grouped = _group_issues_by_type(warning_issues)
+        for issue_type, issues in warning_grouped.items():
+            lines.extend(
+                _format_issue_group_compact(issue_type, issues, result.root, is_error=False)
+            )
+
+    # Success: minimal pass message
+    if not lines:
+        if not result.ready:
+            return "\u2713 No geo-assets found"
+        return "\u2713 Check passed with no warnings or errors"
+
+    return "\n".join(lines)
+
+
+def _format_simple_issue_list(
+    marker: str,
+    header: str,
+    issues: list[ScanIssue],
+    root: Path,
+    max_items: int = 5,
+) -> list[str]:
+    """Format a simple list of issues with header and truncation.
+
+    Helper to reduce complexity of _format_issue_group_compact.
+    """
+    lines: list[str] = [header]
+    count = len(issues)
+
+    for issue in issues[:max_items]:
+        rel_path = _get_relative_path(issue.path, root)
+        lines.append(f"  {rel_path}")
+
+    if count > max_items:
+        lines.append(f"  ... and {count - max_items} more")
+
+    return lines
+
+
+def _format_issue_group_compact(
+    issue_type: IssueType,
+    issues: list[ScanIssue],
+    root: Path,
+    *,
+    is_error: bool,
+) -> list[str]:
+    """Format a group of same-type issues compactly.
+
+    Args:
+        issue_type: The type of issues in this group.
+        issues: List of issues of this type.
+        root: Root path for relative paths.
+        is_error: Whether these are errors (✗) or warnings (⚠).
+
+    Returns:
+        List of formatted lines.
+    """
+    marker = "\u2717" if is_error else "\u26a0"  # ✗ or ⚠
+    count = len(issues)
+
+    # Dispatch to type-specific formatters
+    if issue_type == IssueType.MULTIPLE_PRIMARIES:
+        return _format_multiple_primaries_compact(marker, issues, root)
+
+    if issue_type == IssueType.INCOMPLETE_SHAPEFILE:
+        header = f"{marker} {count} incomplete shapefile{'s' if count != 1 else ''}"
+        return _format_simple_issue_list(marker, header, issues, root, max_items=10)
+
+    if issue_type == IssueType.ZERO_BYTE_FILE:
+        header = f"{marker} {count} empty file{'s' if count != 1 else ''}"
+        return _format_simple_issue_list(marker, header, issues, root)
+
+    if issue_type == IssueType.BROKEN_SYMLINK:
+        header = f"{marker} {count} broken symlink{'s' if count != 1 else ''}"
+        return _format_simple_issue_list(marker, header, issues, root)
+
+    if issue_type == IssueType.FILEGDB_DETECTED:
+        header = (
+            f"{marker} {count} FileGDB {'directory' if count == 1 else 'directories'} "
+            "(will be converted during sync)"
+        )
+        return _format_simple_issue_list(marker, header, issues, root)
+
+    # Generic fallback
+    header = (
+        f"{marker} {count} {issue_type.value.replace('_', ' ')} issue{'s' if count != 1 else ''}"
+    )
+    return _format_simple_issue_list(marker, header, issues, root, max_items=3)
+
+
+def _format_multiple_primaries_compact(
+    marker: str,
+    issues: list[ScanIssue],
+    root: Path,
+) -> list[str]:
+    """Format MULTIPLE_PRIMARIES issues with directory alignment."""
+    lines: list[str] = []
+    count = len(issues)
+
+    lines.append(
+        f"{marker} {count} {'directory' if count == 1 else 'directories'} exceed 1 geo-asset limit"
+    )
+    lines.append("")
+
+    for issue in issues:
+        rel_path = _get_relative_path(issue.path, root)
+        asset_count = _extract_asset_count(issue.message)
+        count_str = f"{asset_count} geo-assets" if asset_count else "multiple geo-assets"
+        lines.append(f"  {rel_path + '/':<35} {count_str}")
+
+    lines.append("")
+    lines.append("\u2192 Manually reorganize so each directory has 1 geo-asset")
+
+    return lines
+
+
+def _get_relative_path(path: Path, root: Path) -> str:
+    """Get relative path as string, or absolute if not relative to root."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def format_scan_output(
     result: ScanResult,
     show_tree: bool = False,
     show_missing: bool = True,
     manual_only: bool = False,
-) -> str:
+    compact: bool = False,
+) -> str | None:
     """Format complete scan output for terminal display.
 
     Args:
@@ -739,10 +946,15 @@ def format_scan_output(
         show_tree: If True, include tree view.
         show_missing: If True, show expected but missing files in tree.
         manual_only: If True, show only issues requiring manual resolution.
+        compact: If True, use ultra-compact format (silent on success).
 
     Returns:
-        Complete formatted output string.
+        Complete formatted output string, or None if compact mode with no issues.
     """
+    # Handle compact mode (new default for check command)
+    if compact:
+        return format_compact_output(result)
+
     # Handle manual-only mode
     if manual_only:
         return _format_manual_only(result)
