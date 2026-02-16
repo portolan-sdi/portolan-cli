@@ -197,6 +197,13 @@ class TestDetectStateUnmanagedStac:
         assert state == CatalogState.UNMANAGED_STAC
 
 
+def is_case_sensitive_fs(tmp_path: Path) -> bool:
+    """Detect if filesystem is case-sensitive."""
+    test_file = tmp_path / "CaseSensitivityTest"
+    test_file.touch()
+    return not (tmp_path / "casesensitivitytest").exists()
+
+
 class TestDetectStateEdgeCases:
     """Edge case tests for detect_state()."""
 
@@ -231,8 +238,16 @@ class TestDetectStateEdgeCases:
 
     @pytest.mark.unit
     def test_detect_state_case_sensitive_filenames(self, tmp_path: Path) -> None:
-        """File detection should be case-sensitive (catalog.json != Catalog.json)."""
-        # Wrong case - should not be detected
+        """File detection should be case-sensitive (catalog.json != Catalog.json).
+
+        This test only runs on case-sensitive filesystems (e.g., Linux ext4).
+        On case-insensitive filesystems (e.g., macOS APFS, Windows NTFS),
+        Catalog.json and catalog.json refer to the same file.
+        """
+        if not is_case_sensitive_fs(tmp_path):
+            pytest.skip("Filesystem is case-insensitive")
+
+        # Wrong case - should not be detected on case-sensitive FS
         (tmp_path / "Catalog.json").write_text('{"type": "Catalog"}')
 
         state = detect_state(tmp_path)

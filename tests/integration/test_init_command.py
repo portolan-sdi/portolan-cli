@@ -112,7 +112,8 @@ class TestInitCommandErrors:
             (portolan / "config.json").write_text("{}")
             (portolan / "state.json").write_text("{}")
 
-            result = runner.invoke(cli, ["init"])
+            # Use --auto to skip interactive prompts and test error path
+            result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 1
             assert "already" in result.output.lower()
@@ -124,7 +125,8 @@ class TestInitCommandErrors:
             # Create unmanaged STAC catalog
             Path("catalog.json").write_text('{"type": "Catalog"}')
 
-            result = runner.invoke(cli, ["init"])
+            # Use --auto to skip interactive prompts and test error path
+            result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 1
             output_lower = result.output.lower()

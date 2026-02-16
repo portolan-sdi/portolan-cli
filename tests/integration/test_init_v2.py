@@ -107,7 +107,9 @@ class TestCatalogJsonValidity:
             # pystac should be able to read it
             catalog = pystac.Catalog.from_file("catalog.json")
             assert catalog is not None
-            assert catalog.STAC_OBJECT_TYPE == pystac.STACObjectType.CATALOG
+            # Validate it's actually a Catalog instance (runtime check)
+            assert isinstance(catalog, pystac.Catalog)
+            assert catalog.to_dict()["type"] == "Catalog"
 
     @pytest.mark.integration
     def test_catalog_json_has_required_stac_fields(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -154,7 +156,8 @@ class TestInitErrorCases:
             (portolan / "config.json").write_text("{}")
             (portolan / "state.json").write_text("{}")
 
-            result = runner.invoke(cli, ["init"])
+            # Use --auto to skip interactive prompts and test error path
+            result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 1
             assert "already" in result.output.lower()
@@ -173,7 +176,8 @@ class TestInitErrorCases:
             }
             Path("catalog.json").write_text(json.dumps(catalog_data))
 
-            result = runner.invoke(cli, ["init"])
+            # Use --auto to skip interactive prompts and test error path
+            result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 1
             output_lower = result.output.lower()

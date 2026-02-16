@@ -17,8 +17,61 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.catalog import create_catalog
+from portolan_cli.catalog import _sanitize_id, create_catalog
 from portolan_cli.errors import CatalogAlreadyExistsError
+
+
+class TestSanitizeIdEdgeCases:
+    """Edge case tests for _sanitize_id function."""
+
+    @pytest.mark.unit
+    def test_empty_string_returns_default(self) -> None:
+        """Empty string input should return 'catalog' default."""
+        assert _sanitize_id("") == "catalog"
+
+    @pytest.mark.unit
+    def test_only_invalid_chars_returns_default(self) -> None:
+        """String with only invalid characters should return 'catalog' default."""
+        assert _sanitize_id("!!!@@@###") == "catalog"
+        assert _sanitize_id("...") == "catalog"
+        assert _sanitize_id("   ") == "catalog"
+
+    @pytest.mark.unit
+    def test_unicode_characters_sanitized(self) -> None:
+        """Unicode characters should be converted to hyphens."""
+        result = _sanitize_id("données")
+        import re
+
+        assert re.match(r"^[a-zA-Z0-9_-]+$", result)
+        # The accented characters should be replaced
+        assert "é" not in result
+        assert "ée" not in result
+
+    @pytest.mark.unit
+    def test_leading_trailing_hyphens_removed(self) -> None:
+        """Leading and trailing hyphens should be stripped."""
+        assert _sanitize_id("-test-") == "test"
+        assert _sanitize_id("---test---") == "test"
+
+    @pytest.mark.unit
+    def test_multiple_hyphens_collapsed(self) -> None:
+        """Multiple consecutive hyphens should be collapsed to one."""
+        result = _sanitize_id("my---data---catalog")
+        assert "---" not in result
+        assert result == "my-data-catalog"
+
+    @pytest.mark.unit
+    def test_spaces_converted_to_hyphens(self) -> None:
+        """Spaces should be converted to hyphens."""
+        result = _sanitize_id("my data catalog")
+        assert " " not in result
+        assert result == "my-data-catalog"
+
+    @pytest.mark.unit
+    def test_valid_characters_preserved(self) -> None:
+        """Valid alphanumeric, hyphens, underscores should be preserved."""
+        assert _sanitize_id("valid_id-123") == "valid_id-123"
+        assert _sanitize_id("Test_Catalog-2024") == "Test_Catalog-2024"
 
 
 class TestCreateCatalogAutoExtraction:
@@ -51,6 +104,35 @@ class TestCreateCatalogAutoExtraction:
         import re
 
         assert re.match(r"^[a-zA-Z0-9_-]+$", catalog.id)
+
+    @pytest.mark.unit
+    def test_id_sanitized_for_unicode_characters(self, tmp_path: Path) -> None:
+        """Directory names with unicode characters should be sanitized."""
+        # Unicode characters should be converted to hyphens
+        catalog_dir = tmp_path / "données-géographiques"
+        catalog_dir.mkdir()
+
+        catalog = create_catalog(catalog_dir)
+
+        import re
+
+        assert re.match(r"^[a-zA-Z0-9_-]+$", catalog.id)
+        assert "é" not in catalog.id
+
+    @pytest.mark.unit
+    def test_id_sanitized_for_very_long_directory_name(self, tmp_path: Path) -> None:
+        """Very long directory names should be sanitized gracefully."""
+        # Long names should still produce a valid ID
+        long_name = "a" * 200
+        catalog_dir = tmp_path / long_name
+        catalog_dir.mkdir()
+
+        catalog = create_catalog(catalog_dir)
+
+        import re
+
+        assert re.match(r"^[a-zA-Z0-9_-]+$", catalog.id)
+        assert len(catalog.id) > 0
 
     @pytest.mark.unit
     def test_created_timestamp_auto_generated(self, tmp_path: Path) -> None:

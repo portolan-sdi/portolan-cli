@@ -71,7 +71,7 @@ def detect_state(path: Path) -> CatalogState:
         >>> detect_state(Path("/empty/dir"))
         CatalogState.FRESH
 
-        >>> detect_state(Path("/with/.portolan/config.json/and/state.json"))
+        >>> detect_state(Path("/my-catalog"))  # where .portolan/config.json and state.json exist
         CatalogState.MANAGED
 
         >>> detect_state(Path("/with/only/catalog.json"))
@@ -252,6 +252,14 @@ def read_catalog_json(path: Path) -> CatalogModel:
     return CatalogModel.from_dict(data)
 
 
+class CatalogInitError(Exception):
+    """Raised when catalog initialization fails due to filesystem errors."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)
+
+
 def init_catalog(
     path: Path,
     *,
@@ -260,11 +268,14 @@ def init_catalog(
 ) -> tuple[Path, list[str]]:
     """Initialize a new Portolan catalog with the v2 file structure.
 
-    Creates:
-    - catalog.json at ROOT level (valid STAC catalog via pystac)
-    - .portolan/config.json (empty {} for now)
-    - .portolan/state.json (empty {} for now)
-    - .portolan/versions.json (minimal catalog-level versioning)
+    Creates (in order for partial failure recovery):
+    1. .portolan/ directory
+    2. .portolan/config.json (empty {} for now)
+    3. .portolan/state.json (empty {} for now)
+    4. .portolan/versions.json (minimal catalog-level versioning)
+    5. catalog.json at ROOT level (valid STAC catalog via pystac) - LAST
+
+    Write order ensures failed runs stay in FRESH state (retry-safe).
 
     Args:
         path: Directory path for the catalog. Will be created if doesn't exist.
@@ -277,6 +288,7 @@ def init_catalog(
     Raises:
         CatalogAlreadyExistsError: If directory is in MANAGED state.
         UnmanagedStacCatalogError: If directory is in UNMANAGED_STAC state.
+        CatalogInitError: If filesystem operations fail.
     """
     import pystac
 
@@ -284,7 +296,10 @@ def init_catalog(
 
     # Ensure path exists
     path = Path(path)
-    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise CatalogInitError(f"Cannot create directory: {e}") from e
 
     # Check state and raise appropriate errors
     state = detect_state(path)
@@ -305,29 +320,33 @@ def init_catalog(
     if title is None:
         warnings.append("Missing title (recommended for discoverability)")
 
-    # Create STAC catalog using pystac
-    catalog = pystac.Catalog(
-        id=catalog_id,
-        description=description,
-        title=title,
-    )
+    # ─────────────────────────────────────────────────────────────────────────
+    # WRITE ORDER: .portolan files FIRST, catalog.json LAST
+    # This ensures failed runs stay in FRESH state (retry-safe).
+    # ─────────────────────────────────────────────────────────────────────────
 
-    # Write catalog.json at root level
-    catalog_file = path / "catalog.json"
-    catalog.normalize_hrefs(str(path))
-    catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
-
-    # Create .portolan directory and management files
+    # Step 1: Create .portolan directory
     portolan_dir = path / ".portolan"
-    portolan_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        portolan_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise CatalogInitError(f"Cannot create .portolan directory: {e}") from e
 
-    # config.json - empty for now
-    (portolan_dir / "config.json").write_text("{}\n")
+    # Step 2: config.json - empty for now
+    try:
+        (portolan_dir / "config.json").write_text("{}\n")
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write config.json: {e}") from e
 
-    # state.json - empty for now
-    (portolan_dir / "state.json").write_text("{}\n")
+    # Step 3: state.json - empty for now
+    try:
+        (portolan_dir / "state.json").write_text("{}\n")
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write state.json: {e}") from e
 
-    # versions.json - minimal catalog-level versioning
+    # Step 4: versions.json - minimal catalog-level versioning
+    # TODO: Catalog-level versions.json structure differs from ADR-0005's
+    # collection-level spec. Consider creating ADR-0018 to document this.
     now = datetime.now(timezone.utc)
     versions_data = {
         "schema_version": "1.0.0",
@@ -335,7 +354,39 @@ def init_catalog(
         "created": now.isoformat(),
         "collections": {},
     }
-    (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2) + "\n")
+    try:
+        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2) + "\n")
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write versions.json: {e}") from e
+
+    # Step 5: Create STAC catalog using pystac (LAST - marks completion)
+    catalog = pystac.Catalog(
+        id=catalog_id,
+        description=description,
+        title=title,
+    )
+
+    catalog_file = path / "catalog.json"
+    catalog.normalize_hrefs(str(path))
+    try:
+        catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write catalog.json: {e}") from e
+
+    # Add self link (STAC best practice)
+    # pystac SELF_CONTAINED doesn't add self link, so we add it manually
+    try:
+        data = json.loads(catalog_file.read_text())
+        data["links"].append(
+            {
+                "rel": "self",
+                "href": "./catalog.json",
+                "type": "application/json",
+            }
+        )
+        catalog_file.write_text(json.dumps(data, indent=2))
+    except OSError as e:
+        raise CatalogInitError(f"Cannot update catalog.json with self link: {e}") from e
 
     return catalog_file, warnings
 
@@ -345,6 +396,9 @@ class Catalog:
 
     The Catalog class provides the Python API for all catalog operations.
     The CLI commands are thin wrappers around these methods.
+
+    Note: This is the legacy v1 API. New code should use init_catalog()
+    which creates the v2 file structure with catalog.json at root level.
 
     Attributes:
         root: The root directory containing the .portolan folder.
@@ -369,14 +423,14 @@ class Catalog:
 
     @property
     def catalog_file(self) -> Path:
-        """Path to the catalog.json file."""
-        return self.portolan_path / self.CATALOG_FILE
+        """Path to the catalog.json file (at root, not inside .portolan)."""
+        return self.root / self.CATALOG_FILE
 
     @classmethod
     def init(cls, root: Path) -> Self:
         """Initialize a new Portolan catalog.
 
-        Creates the .portolan directory and a minimal STAC catalog.json file.
+        Creates the catalog using the v2 file structure via init_catalog().
 
         Args:
             root: The directory where the catalog should be created.
@@ -392,19 +446,7 @@ class Catalog:
         if portolan_path.exists():
             raise CatalogExistsError(portolan_path)
 
-        # Create the .portolan directory
-        portolan_path.mkdir(parents=True)
-
-        # Create minimal STAC catalog
-        catalog_data = {
-            "type": "Catalog",
-            "stac_version": cls.STAC_VERSION,
-            "id": "portolan-catalog",
-            "description": "A Portolan-managed STAC catalog",
-            "links": [],
-        }
-
-        catalog_file = portolan_path / cls.CATALOG_FILE
-        catalog_file.write_text(json.dumps(catalog_data, indent=2))
+        # Use init_catalog for v2 file structure
+        init_catalog(root)
 
         return cls(root)

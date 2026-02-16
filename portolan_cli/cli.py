@@ -145,9 +145,22 @@ def init(
 
     use_json = should_output_json(ctx)
 
-    # TODO: When auto_mode is False, prompt interactively for title/description
-    # For now, we always use the provided values (or defaults)
-    _ = auto_mode  # Silence vulture until interactive prompting is implemented
+    # Interactive prompting (unless --auto or JSON mode)
+    if not auto_mode and not use_json:
+        if title is None:
+            title_input = click.prompt(
+                "Catalog title (optional, press Enter to skip)",
+                default="",
+                show_default=False,
+            )
+            if title_input:
+                title = title_input
+
+        if description is None:
+            description = click.prompt(
+                "Catalog description",
+                default="A Portolan-managed STAC catalog",
+            )
 
     try:
         catalog_file, warnings = init_catalog(
