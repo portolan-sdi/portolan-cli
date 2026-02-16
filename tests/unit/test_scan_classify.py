@@ -371,3 +371,244 @@ class TestClassifyFileSupportingFormats:
 
         assert category == FileCategory.TABULAR_DATA
         assert skip_type == SkipReasonType.NOT_GEOSPATIAL
+
+
+@pytest.mark.unit
+class TestShapefileSidecarClassification:
+    """Tests for shapefile sidecar classification (US5).
+
+    All shapefile sidecars (.dbf, .shx, .prj, .cpg, .sbn, .sbx) should be
+    classified as KNOWN_SIDECAR. Raster sidecars (.ovr, .aux, .xml) should
+    also be recognized.
+    """
+
+    def test_dbf_classified_as_sidecar(self, tmp_path: Path) -> None:
+        """.dbf files are classified as KNOWN_SIDECAR."""
+        test_path = tmp_path / "data.dbf"
+        test_path.write_bytes(b"\x00" * 100)
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.KNOWN_SIDECAR
+        assert skip_type == SkipReasonType.SIDECAR_FILE
+
+    def test_shx_classified_as_sidecar(self, tmp_path: Path) -> None:
+        """.shx files are classified as KNOWN_SIDECAR."""
+        test_path = tmp_path / "data.shx"
+        test_path.write_bytes(b"\x00" * 100)
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.KNOWN_SIDECAR
+
+    def test_prj_classified_as_sidecar(self, tmp_path: Path) -> None:
+        """.prj files are classified as KNOWN_SIDECAR."""
+        test_path = tmp_path / "data.prj"
+        test_path.write_text("GEOGCS[...]")
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.KNOWN_SIDECAR
+
+    def test_cpg_classified_as_sidecar(self, tmp_path: Path) -> None:
+        """.cpg files are classified as KNOWN_SIDECAR."""
+        test_path = tmp_path / "data.cpg"
+        test_path.write_text("UTF-8")
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.KNOWN_SIDECAR
+
+    def test_ovr_classified_as_sidecar(self, tmp_path: Path) -> None:
+        """.ovr files (raster overviews) are classified as KNOWN_SIDECAR."""
+        test_path = tmp_path / "raster.tif.ovr"
+        test_path.write_bytes(b"\x00" * 100)
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.KNOWN_SIDECAR
+
+    def test_aux_classified_as_sidecar(self, tmp_path: Path) -> None:
+        """.aux files (raster auxiliary) are classified as KNOWN_SIDECAR."""
+        test_path = tmp_path / "raster.tif.aux"
+        test_path.write_bytes(b"\x00" * 100)
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.KNOWN_SIDECAR
+
+    def test_xml_classified_as_sidecar(self, tmp_path: Path) -> None:
+        """.xml files (metadata) are classified as KNOWN_SIDECAR.
+
+        This covers .aux.xml files since Path.suffix returns '.xml'.
+        """
+        test_path = tmp_path / "raster.tif.aux.xml"
+        test_path.write_text("<metadata></metadata>")
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.KNOWN_SIDECAR
+
+
+@pytest.mark.unit
+class TestStacItemClassification:
+    """Tests for STAC Item .json file classification.
+
+    STAC Item files have arbitrary names (e.g., ABW.json, census_2024.json)
+    but contain STAC metadata with "stac_version" field. These should be
+    classified as STAC_METADATA, not UNKNOWN.
+    """
+
+    def test_stac_item_classified_as_stac_metadata(self, tmp_path: Path) -> None:
+        """STAC Item .json files are classified as STAC_METADATA."""
+        import json
+
+        stac_item = {
+            "type": "Feature",
+            "stac_version": "1.1.0",
+            "stac_extensions": [],
+            "id": "ABW",
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "properties": {"datetime": "2024-01-01T00:00:00Z"},
+            "links": [],
+            "assets": {},
+        }
+        test_path = tmp_path / "ABW.json"
+        test_path.write_text(json.dumps(stac_item))
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.STAC_METADATA
+        assert skip_type == SkipReasonType.METADATA_FILE
+
+    def test_stac_collection_classified_as_stac_metadata(self, tmp_path: Path) -> None:
+        """STAC Collection .json files are classified as STAC_METADATA."""
+        import json
+
+        stac_collection = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "my-collection",
+            "description": "A collection",
+            "license": "MIT",
+            "links": [],
+            "extent": {
+                "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                "temporal": {"interval": [["2020-01-01T00:00:00Z", None]]},
+            },
+        }
+        test_path = tmp_path / "my_collection.json"
+        test_path.write_text(json.dumps(stac_collection))
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.STAC_METADATA
+
+    def test_non_stac_json_classified_as_unknown(self, tmp_path: Path) -> None:
+        """Non-STAC .json files are classified as UNKNOWN."""
+        import json
+
+        random_json = {"foo": "bar", "numbers": [1, 2, 3]}
+        test_path = tmp_path / "config.json"
+        test_path.write_text(json.dumps(random_json))
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.UNKNOWN
+
+    def test_invalid_json_classified_as_unknown(self, tmp_path: Path) -> None:
+        """Invalid JSON files are classified as UNKNOWN."""
+        test_path = tmp_path / "broken.json"
+        test_path.write_text("{ not valid json }")
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.UNKNOWN
+
+    def test_geojson_not_affected_by_stac_check(self, tmp_path: Path) -> None:
+        """GeoJSON files are still classified as GEO_ASSET, not STAC."""
+        import json
+
+        geojson = {"type": "FeatureCollection", "features": []}
+        test_path = tmp_path / "data.geojson"
+        test_path.write_text(json.dumps(geojson))
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        # GeoJSON should be GEO_ASSET (by extension), not STAC
+        assert category == FileCategory.GEO_ASSET
+
+
+@pytest.mark.unit
+class TestClassifyParquetFiles:
+    """Tests for .parquet file classification (US7 - Issue #74).
+
+    .parquet files are recognized by extension, then inspected for GeoParquet
+    metadata. This classification happens at the classify_file level, not just
+    during scan.
+    """
+
+    def test_parquet_extension_recognized(self, tmp_path: Path) -> None:
+        """.parquet extension is in GEO_ASSET_EXTENSIONS.
+
+        Per Issue #74, .parquet files should be recognized by extension first,
+        then inspected for geo metadata during scan.
+        """
+        from portolan_cli.scan_classify import GEO_ASSET_EXTENSIONS
+
+        assert ".parquet" in GEO_ASSET_EXTENSIONS
+
+    def test_parquet_file_classified_as_geo_asset(self, tmp_path: Path) -> None:
+        """.parquet files are classified as GEO_ASSET by extension.
+
+        The actual GeoParquet vs tabular distinction happens during scan,
+        but classify_file() should recognize .parquet as a potential geo asset.
+        """
+        test_path = tmp_path / "data.parquet"
+        test_path.write_bytes(b"PAR1" + b"\x00" * 100)  # Minimal parquet-like header
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.GEO_ASSET
+        assert skip_type is None
+        assert skip_msg is None
+
+    def test_parquet_uppercase_extension_classified(self, tmp_path: Path) -> None:
+        """.PARQUET (uppercase) is also recognized."""
+        test_path = tmp_path / "data.PARQUET"
+        test_path.write_bytes(b"PAR1" + b"\x00" * 100)
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.GEO_ASSET
+
+
+@pytest.mark.unit
+class TestClassifyParquetIntegration:
+    """Integration tests for .parquet handling in scan (US7 - Issue #74).
+
+    These tests verify the full scan flow for parquet files, including
+    GeoParquet metadata inspection and corrupted file handling.
+    """
+
+    def test_corrupted_parquet_handled_gracefully(self, tmp_path: Path) -> None:
+        """Corrupted .parquet files don't crash scan.
+
+        When _is_geoparquet() fails to read a parquet file, it should
+        return False (not geo), and the file should be skipped gracefully.
+        """
+        from portolan_cli.scan import scan_directory
+
+        # Create a corrupted/invalid parquet file
+        corrupted = tmp_path / "corrupted.parquet"
+        corrupted.write_bytes(b"NOT_A_PARQUET_FILE" * 100)
+
+        result = scan_directory(tmp_path)
+
+        # Should not crash
+        # Corrupted file should be skipped (not in ready)
+        assert len(result.ready) == 0
+        # Should be in skipped with tabular classification (can't determine if geo)
+        assert len(result.skipped) == 1
+        # Verify the scan completed without errors
+        assert result.error_count == 0

@@ -635,6 +635,62 @@ def _check_broken_symlink(
     return False
 
 
+def _is_filegdb_directory(path: Path) -> bool:
+    """Check if a directory is a FileGDB (.gdb directory).
+
+    FileGDB (File Geodatabase) is ESRI's directory-based geospatial format.
+    It contains internal structure files (.gdbtable, .gdbtablx, etc.) that
+    should not be scanned individually.
+
+    Args:
+        path: Directory path to check.
+
+    Returns:
+        True if this is a FileGDB directory (ends with .gdb).
+    """
+    return path.suffix.lower() == ".gdb"
+
+
+def _is_filegdb_zip(path: Path) -> bool:
+    """Check if a file is a FileGDB zip archive (.gdb.zip).
+
+    FileGDB archives are sometimes distributed as .gdb.zip files.
+    These should be detected and handled appropriately.
+
+    Args:
+        path: File path to check.
+
+    Returns:
+        True if this is a FileGDB zip archive (ends with .gdb.zip).
+    """
+    # Check for compound extension .gdb.zip
+    name_lower = path.name.lower()
+    return name_lower.endswith(".gdb.zip")
+
+
+def _handle_filegdb_directory(ctx: _ScanContext, path: Path, root: Path) -> None:
+    """Handle a FileGDB directory by emitting an INFO issue.
+
+    FileGDB directories are detected as special format containers.
+    We don't walk into them - the .gdb directory itself is the asset.
+
+    Args:
+        ctx: Scan context.
+        path: Path to the .gdb directory.
+        root: Root directory being scanned.
+    """
+    ctx.issues.append(
+        ScanIssue(
+            path=path,
+            relative_path=_get_relative_path(path, root),
+            issue_type=IssueType.FILEGDB_DETECTED,
+            severity=Severity.INFO,
+            message="FileGDB directory detected (ESRI File Geodatabase)",
+            suggestion="Use 'portolan import' with FileGDB support or convert to GeoParquet",
+        )
+    )
+
+
 def _check_orphan_sidecars(ctx: _ScanContext) -> None:
     """Check for sidecar files without a corresponding primary (.shp) file.
 
@@ -719,9 +775,9 @@ def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
                     path=dir_path,
                     relative_path=_get_relative_path(dir_path, ctx.root),
                     issue_type=IssueType.MULTIPLE_PRIMARIES,
-                    severity=Severity.WARNING,
+                    severity=Severity.ERROR,
                     message=f"Directory has {len(primaries)} primary assets: {names}",
-                    suggestion="Split into separate directories or use --bundle flag during import",
+                    suggestion="Manually reorganize so each directory has 1 geo-asset",
                 )
             )
 
@@ -894,6 +950,11 @@ def _discover_files(
                     continue
 
             if is_dir:
+                # Check if this is a FileGDB directory (special handling)
+                if _is_filegdb_directory(path):
+                    # Don't walk into .gdb directories - treat as single asset
+                    _handle_filegdb_directory(ctx, path, root)
+                    continue
                 # Queue directory for later processing
                 dirs_to_process.append(path)
             elif is_file:
@@ -930,6 +991,20 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
 
     # Check for zero-byte file first
     if _check_zero_byte_file(ctx, path, size):
+        return
+
+    # Check for FileGDB zip archives (compound extension .gdb.zip)
+    if _is_filegdb_zip(path):
+        ctx.issues.append(
+            ScanIssue(
+                path=path,
+                relative_path=_get_relative_path(path, ctx.root),
+                issue_type=IssueType.FILEGDB_DETECTED,
+                severity=Severity.INFO,
+                message="FileGDB archive detected (.gdb.zip)",
+                suggestion="Extract archive to get .gdb directory, or use tools that support .gdb.zip",
+            )
+        )
         return
 
     # Check for long path

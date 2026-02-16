@@ -40,8 +40,6 @@ from portolan_cli.scan_output import (
     group_skipped_files,
     render_tree_view,
 )
-from portolan_cli.validation import Severity
-from portolan_cli.validation import check as validate_catalog
 
 
 def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:
@@ -73,6 +71,94 @@ def output_json_envelope(envelope: Any) -> None:
         envelope: OutputEnvelope instance to output.
     """
     click.echo(envelope.to_json())
+
+
+def _handle_check_path_error(
+    path: Path,
+    error_type: str,
+    message: str,
+    use_json: bool,
+) -> None:
+    """Handle path validation errors for check command.
+
+    Args:
+        path: The path that failed validation.
+        error_type: Error type string (e.g., "PathNotFoundError").
+        message: Human-readable error message.
+        use_json: Whether to output JSON envelope.
+
+    Raises:
+        SystemExit: Always raises SystemExit(1) after outputting error.
+    """
+    if use_json:
+        envelope = error_envelope(
+            "check",
+            [ErrorDetail(type=error_type, message=message)],
+        )
+        output_json_envelope(envelope)
+    else:
+        error(message)
+    raise SystemExit(1)
+
+
+def _output_check_json(result: ScanResult) -> None:
+    """Output check result as JSON envelope.
+
+    Args:
+        result: The scan result to output.
+    """
+    data = result.to_dict()
+    data["summary"] = {
+        "ready_count": len(result.ready),
+        "error_count": result.error_count,
+        "warning_count": result.warning_count,
+        "skipped_count": len(result.skipped),
+    }
+
+    if result.has_errors:
+        errors = [
+            ErrorDetail(type=issue.issue_type.value, message=issue.message)
+            for issue in result.issues
+            if issue.severity == ScanSeverity.ERROR
+        ]
+        envelope = error_envelope("check", errors, data=data)
+    else:
+        envelope = success_envelope("check", data)
+
+    output_json_envelope(envelope)
+
+
+def _output_check_text(
+    result: ScanResult,
+    *,
+    verbose: bool,
+    show_all: bool,
+    show_tree: bool,
+    manual_only: bool,
+) -> None:
+    """Output check result as human-readable text.
+
+    Args:
+        result: The scan result to output.
+        verbose: Show detailed output.
+        show_all: Show all issues without truncation.
+        show_tree: Show directory tree view.
+        manual_only: Show only manual-resolution issues.
+    """
+    if manual_only:
+        from portolan_cli.scan_output import format_scan_output
+
+        output = format_scan_output(result, manual_only=True)
+        click.echo(output)
+    elif verbose or show_tree or show_all:
+        _print_scan_summary_enhanced(result, show_all=show_all, show_tree=show_tree)
+    else:
+        # Default: compact output
+        from portolan_cli.scan_output import format_scan_output
+
+        output = format_scan_output(result, compact=True)
+        if output:
+            click.echo(output)
 
 
 @click.group()
@@ -163,99 +249,6 @@ def init(ctx: click.Context, path: Path, auto: bool) -> None:
         raise SystemExit(1) from err
 
 
-def _output_check_json(report: Any) -> None:
-    """Output check results as JSON envelope."""
-    data = report.to_dict()
-    data["summary"] = {
-        "total": len(report.results),
-        "passed": sum(1 for r in report.results if r.passed),
-        "errors": len(report.errors),
-        "warnings": len(report.warnings),
-    }
-
-    if report.passed:
-        envelope = success_envelope("check", data)
-    else:
-        errors = [ErrorDetail(type="ValidationError", message=r.message) for r in report.errors]
-        envelope = error_envelope("check", errors, data=data)
-
-    output_json_envelope(envelope)
-
-
-def _print_validation_result(result: Any) -> None:
-    """Print a single validation result with appropriate formatting."""
-    msg = f"{result.rule_name}: {result.message}"
-    if result.passed:
-        success(msg)
-    elif result.severity == Severity.ERROR:
-        error(msg)
-    elif result.severity == Severity.WARNING:
-        warn(msg)
-    else:
-        info(msg)
-
-    if not result.passed and result.fix_hint:
-        detail(f"  Hint: {result.fix_hint}")
-
-
-def _print_check_summary(report: Any) -> None:
-    """Print check summary message."""
-    if report.passed:
-        success("All validation checks passed")
-        return
-
-    error_count = len(report.errors)
-    warning_count = len(report.warnings)
-    parts = []
-    if error_count:
-        parts.append(f"{error_count} error{'s' if error_count != 1 else ''}")
-    if warning_count:
-        parts.append(f"{warning_count} warning{'s' if warning_count != 1 else ''}")
-    error(f"Validation failed: {', '.join(parts)}")
-
-
-@cli.command()
-@click.argument("path", type=click.Path(path_type=Path), default=".")
-@click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
-@click.option("--verbose", "-v", is_flag=True, help="Show all validation rules, not just failures")
-@click.pass_context
-def check(ctx: click.Context, path: Path, json_output: bool, verbose: bool) -> None:
-    """Validate a Portolan catalog.
-
-    Runs validation rules against the catalog and reports any issues.
-
-    PATH is the directory containing the .portolan catalog (default: current directory).
-    """
-    use_json = should_output_json(ctx, json_output)
-
-    # Validate path exists (handle in code for JSON envelope support)
-    if not path.exists():
-        if use_json:
-            envelope = error_envelope(
-                "check",
-                [ErrorDetail(type="PathNotFoundError", message=f"Path does not exist: {path}")],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Path does not exist: {path}")
-        raise SystemExit(1)
-
-    report = validate_catalog(path)
-
-    if use_json:
-        _output_check_json(report)
-    else:
-        # Human-readable output
-        for result in report.results:
-            if verbose or not result.passed:
-                _print_validation_result(result)
-        _print_check_summary(report)
-
-    # Exit code: 1 if any errors (not warnings)
-    if report.errors:
-        raise SystemExit(1)
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Scan command
 # ─────────────────────────────────────────────────────────────────────────────
@@ -337,6 +330,12 @@ def _handle_fix_mode(
     help="Follow symbolic links (may cause loops)",
 )
 @click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    help="Show detailed output (asset counts, format breakdown, all issues)",
+)
+@click.option(
     "--all",
     "show_all",
     is_flag=True,
@@ -371,7 +370,7 @@ def _handle_fix_mode(
     help="Preview fixes without applying them (use with --fix)",
 )
 @click.pass_context
-def scan(
+def check(
     ctx: click.Context,
     path: Path,
     json_output: bool,
@@ -379,6 +378,7 @@ def scan(
     max_depth: int | None,
     include_hidden: bool,
     follow_symlinks: bool,
+    verbose: bool,
     show_all: bool,
     show_tree: bool,
     suggest_collections: bool,
@@ -386,12 +386,12 @@ def scan(
     fix: bool,
     dry_run: bool,
 ) -> None:
-    """Scan a directory for geospatial files and potential issues.
+    """Check a directory for geospatial files and potential issues.
 
     Discovers files by extension, validates shapefile completeness,
     and reports issues that may cause problems during import.
 
-    PATH is the directory to scan.
+    PATH is the directory to check.
 
     \b
     Fix Mode:
@@ -404,50 +404,31 @@ def scan(
 
     Examples:
 
-        portolan scan /data/geospatial
+        portolan check /data/geospatial
 
-        portolan scan . --json
+        portolan check . --json
 
-        portolan scan /large/tree --max-depth=2
+        portolan check /large/tree --max-depth=2
 
-        portolan scan /data --no-recursive
+        portolan check /data --no-recursive
 
-        portolan scan /data --fix --dry-run
+        portolan check /data --fix --dry-run
 
-        portolan scan /data --fix
+        portolan check /data --fix
     """
+
     use_json = should_output_json(ctx, json_output)
 
-    # Validate path exists and is a directory (handle in code for JSON envelope support)
+    # Validate path exists and is a directory
     if not path.exists():
-        if use_json:
-            envelope = error_envelope(
-                "scan",
-                [
-                    ErrorDetail(
-                        type="PathNotFoundError", message=f"Directory does not exist: {path}"
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Directory does not exist: {path}")
-        raise SystemExit(1)
+        _handle_check_path_error(
+            path, "PathNotFoundError", f"Directory does not exist: {path}", use_json
+        )
 
     if not path.is_dir():
-        if use_json:
-            envelope = error_envelope(
-                "scan",
-                [
-                    ErrorDetail(
-                        type="NotADirectoryError", message=f"Path is not a directory: {path}"
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Path is not a directory: {path}")
-        raise SystemExit(1)
+        _handle_check_path_error(
+            path, "NotADirectoryError", f"Path is not a directory: {path}", use_json
+        )
 
     # Build options from CLI flags
     options = ScanOptions(
@@ -462,25 +443,9 @@ def scan(
     try:
         result = scan_directory(path, options)
     except FileNotFoundError as err:
-        if use_json:
-            envelope = error_envelope(
-                "scan",
-                [ErrorDetail(type="FileNotFoundError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
-        raise SystemExit(1) from err
+        _handle_check_path_error(path, "FileNotFoundError", str(err), use_json)
     except NotADirectoryError as err:
-        if use_json:
-            envelope = error_envelope(
-                "scan",
-                [ErrorDetail(type="NotADirectoryError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
-        raise SystemExit(1) from err
+        _handle_check_path_error(path, "NotADirectoryError", str(err), use_json)
 
     # Run collection inference if requested
     if suggest_collections and result.ready:
@@ -500,39 +465,17 @@ def scan(
         result.proposed_fixes = proposed
         result.applied_fixes = applied
 
+    # Output results
     if use_json:
-        # JSON output with envelope
-        data = result.to_dict()
-        data["summary"] = {
-            "ready_count": len(result.ready),
-            "error_count": result.error_count,
-            "warning_count": result.warning_count,
-            "skipped_count": len(result.skipped),
-        }
-
-        if result.has_errors:
-            # Still return data, but mark as not successful
-            errors = [
-                ErrorDetail(type=issue.issue_type.value, message=issue.message)
-                for issue in result.issues
-                if issue.severity == ScanSeverity.ERROR
-            ]
-            envelope = error_envelope("scan", errors, data=data)
-        else:
-            envelope = success_envelope("scan", data)
-
-        output_json_envelope(envelope)
-    elif manual_only:
-        # Show only issues requiring manual resolution
-        from portolan_cli.scan_output import format_scan_output
-
-        output = format_scan_output(result, manual_only=True)
-        click.echo(output)
+        _output_check_json(result)
     else:
-        # Human-readable output per FR-018
-        _print_scan_summary_enhanced(result, show_all=show_all, show_tree=show_tree)
-
-    # Scan is informational — always exit 0 on success
+        _output_check_text(
+            result,
+            verbose=verbose,
+            show_all=show_all,
+            show_tree=show_tree,
+            manual_only=manual_only,
+        )
 
 
 def _print_scan_header(result: ScanResult) -> None:

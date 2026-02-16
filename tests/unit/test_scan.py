@@ -756,17 +756,17 @@ class TestBasicScan:
         """scan_directory on clean_flat fixture returns 3 ready files.
 
         Note: The fixture contains 3 files in one directory, which correctly
-        triggers a "multiple primaries" warning per FR-014. This is expected
-        behavior, not an error in the scan.
+        triggers a "multiple primaries" ERROR per ADR-0017. Multiple geo-assets
+        per directory is a blocking error requiring manual reorganization.
         """
         from portolan_cli.scan import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "clean_flat")
 
         assert len(result.ready) == 3
-        assert result.error_count == 0
-        # Multiple primaries warning is expected: 3 files in same directory
-        assert result.warning_count == 1
+        # Multiple primaries is now an ERROR (blocking), not a warning
+        assert result.error_count == 1
+        assert result.warning_count == 0
         assert any(i.issue_type == IssueType.MULTIPLE_PRIMARIES for i in result.issues)
 
     def test_scan_unsupported_returns_correct_counts(self, fixtures_dir: Path) -> None:
@@ -866,7 +866,8 @@ class TestIssueDetection:
 
         multi_issues = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
         assert len(multi_issues) >= 1
-        assert multi_issues[0].severity == Severity.WARNING
+        # Multiple primaries is a blocking ERROR per ADR-0017
+        assert multi_issues[0].severity == Severity.ERROR
 
     def test_detect_long_path(self, tmp_path: Path) -> None:
         """scan_directory detects very long paths (200+ chars)."""
@@ -971,7 +972,8 @@ class TestStructureValidation:
 
         multi_issues = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
         assert len(multi_issues) >= 1
-        assert multi_issues[0].severity == Severity.WARNING
+        # Multiple primaries is a blocking ERROR per ADR-0017
+        assert multi_issues[0].severity == Severity.ERROR
         # Message should indicate the count
         assert "3" in multi_issues[0].message
 
@@ -1412,6 +1414,80 @@ class TestOverviewFormats:
         # No "multiple primaries" warning
         multi_issues = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
         assert len(multi_issues) == 0
+
+
+# =============================================================================
+# FileGDB Directory Detection (US4)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestFileGDBHandling:
+    """Tests for FileGDB directory handling (US4).
+
+    FileGDB (.gdb directories) are ESRI's file geodatabase format.
+    They contain internal structure files that should not be scanned individually.
+    The scan should:
+    1. Detect .gdb directories as a single geospatial asset
+    2. NOT walk into .gdb directories to enumerate internal files
+    3. Report FILEGDB_DETECTED as an INFO issue for format awareness
+    """
+
+    def test_gdb_directory_not_walked_into(self, fixtures_dir: Path) -> None:
+        """.gdb directories should be detected but not walked into.
+
+        The internal .gdbtable, .gdbtablx, etc. files should NOT appear
+        in the ready or skipped lists.
+        """
+        from portolan_cli.scan import scan_directory
+
+        result = scan_directory(fixtures_dir / "filegdb")
+
+        # Should NOT have any internal GDB files in ready or skipped
+        all_paths = [f.path for f in result.ready] + [s.path for s in result.skipped]
+        internal_files = [p for p in all_paths if ".gdbtable" in p.suffix or "gdbtablx" in p.suffix]
+
+        assert len(internal_files) == 0, f"Found internal GDB files: {internal_files}"
+
+    def test_gdb_directory_detected_as_filegdb(self, fixtures_dir: Path) -> None:
+        """.gdb directories should emit FILEGDB_DETECTED info issue."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        result = scan_directory(fixtures_dir / "filegdb")
+
+        filegdb_issues = [i for i in result.issues if i.issue_type == IssueType.FILEGDB_DETECTED]
+        # Should have 2 issues: one for sample.gdb directory, one for sample.gdb.zip
+        assert len(filegdb_issues) == 2
+        # Verify the directory is detected
+        dir_issues = [i for i in filegdb_issues if str(i.path).endswith("sample.gdb")]
+        assert len(dir_issues) == 1
+
+    def test_gdb_zip_archive_recognized(self, fixtures_dir: Path) -> None:
+        """.gdb.zip archives should also be detected as FileGDB.
+
+        The scan should recognize compound extensions like `.gdb.zip` as
+        archived FileGDB containers and handle them appropriately.
+        """
+        from portolan_cli.scan import IssueType, scan_directory
+
+        result = scan_directory(fixtures_dir / "filegdb")
+
+        # The .gdb.zip file should emit a FILEGDB_DETECTED issue or be handled
+        # Check if there's a FILEGDB_DETECTED for the zip file
+        filegdb_zip_issues = [
+            i
+            for i in result.issues
+            if i.issue_type == IssueType.FILEGDB_DETECTED and "sample.gdb.zip" in str(i.path)
+        ]
+
+        # Either it's detected as FileGDB OR it's skipped with a known category
+        # (not UNKNOWN). For now, detecting it is sufficient.
+        # If not detected, check that any skip is not categorized as "unknown"
+        if not filegdb_zip_issues:
+            unknown_skipped = [s for s in result.skipped if "sample.gdb.zip" in str(s.path)]
+            for s in unknown_skipped:
+                # If it's unknown, we need to add support for it
+                assert s.category.value != "unknown", f"FileGDB zip should be recognized: {s}"
 
 
 # =============================================================================
