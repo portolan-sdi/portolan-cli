@@ -12,7 +12,6 @@ from typing import Any
 
 import click
 
-from portolan_cli.catalog import CatalogExistsError
 from portolan_cli.dataset import (
     add_dataset,
     get_dataset_info,
@@ -96,47 +95,97 @@ def cli(ctx: click.Context, output_format: str) -> None:
 @click.argument("path", type=click.Path(path_type=Path), default=".")
 @click.option(
     "--auto",
+    "auto_mode",  # Rename to avoid vulture unused variable warning
     is_flag=True,
     default=False,
     help="Skip interactive prompts and use auto-extracted/default values.",
 )
+@click.option(
+    "--title",
+    "-t",
+    type=str,
+    default=None,
+    help="Human-readable title for the catalog.",
+)
+@click.option(
+    "--description",
+    "-d",
+    type=str,
+    default=None,
+    help="Description of the catalog.",
+)
 @click.pass_context
-def init(ctx: click.Context, path: Path, auto: bool) -> None:
+def init(
+    ctx: click.Context, path: Path, auto_mode: bool, title: str | None, description: str | None
+) -> None:
     """Initialize a new Portolan catalog.
 
-    Creates a .portolan directory with a STAC catalog.json file.
-    Auto-extracts the catalog ID from the directory name and generates timestamps.
+    Creates a catalog.json at the root level and a .portolan directory with
+    management files (config.json, state.json, versions.json).
+
+    Auto-extracts the catalog ID from the directory name.
 
     PATH is the directory where the catalog should be created (default: current directory).
 
-    Use --auto to skip all prompts and use default values. Warnings will be emitted
-    for missing best-practice fields (title, description).
+    Use --auto to skip all prompts and use default values. Use --title and
+    --description to set catalog metadata directly.
+
+    \b
+    Examples:
+        portolan init                       # Initialize in current directory
+        portolan init --auto                # Skip prompts, use defaults
+        portolan init --title "My Catalog"  # Set title
+        portolan init /path/to/data --auto  # Initialize in specific directory
     """
-    from portolan_cli.catalog import create_catalog, write_catalog_json
-    from portolan_cli.errors import CatalogAlreadyExistsError
+    import json
+
+    from portolan_cli.catalog import init_catalog
+    from portolan_cli.errors import CatalogAlreadyExistsError, UnmanagedStacCatalogError
 
     use_json = should_output_json(ctx)
 
+    # Interactive prompting (unless --auto or JSON mode)
+    if not auto_mode and not use_json:
+        if title is None:
+            title_input = click.prompt(
+                "Catalog title (optional, press Enter to skip)",
+                default="",
+                show_default=False,
+            )
+            if title_input:
+                title = title_input
+
+        if description is None:
+            description = click.prompt(
+                "Catalog description",
+                default="A Portolan-managed STAC catalog",
+            )
+
     try:
-        # Use the new CatalogModel-based creation
-        result = create_catalog(path, auto=auto, return_warnings=True)
-        catalog, warnings = result
-        write_catalog_json(catalog, path)
+        catalog_file, warnings = init_catalog(
+            path,
+            title=title,
+            description=description,
+        )
+
+        # Read back catalog ID for display
+        catalog_data = json.loads(catalog_file.read_text())
+        catalog_id = catalog_data.get("id", "unknown")
 
         if use_json:
             envelope = success_envelope(
                 "init",
                 {
                     "path": str(path.resolve()),
-                    "catalog_file": ".portolan/catalog.json",
-                    "catalog_id": catalog.id,
+                    "catalog_file": "catalog.json",
+                    "catalog_id": catalog_id,
                     "warnings": warnings,
                 },
             )
             output_json_envelope(envelope)
         else:
             success(f"Initialized Portolan catalog in {path.resolve()}")
-            info(f"Catalog ID: {catalog.id}")
+            info(f"Catalog ID: {catalog_id}")
             for w in warnings:
                 warn(w)
 
@@ -148,18 +197,18 @@ def init(ctx: click.Context, path: Path, auto: bool) -> None:
             )
             output_json_envelope(envelope)
         else:
-            error(f"Catalog already exists at {path.resolve()}")
+            error(f"Already a Portolan catalog at {path.resolve()}")
         raise SystemExit(1) from err
-    except CatalogExistsError as err:
-        # Legacy error handling for backward compatibility
+    except UnmanagedStacCatalogError as err:
         if use_json:
             envelope = error_envelope(
                 "init",
-                [ErrorDetail(type="CatalogExistsError", message=str(err))],
+                [ErrorDetail(type="UnmanagedStacCatalogError", message=str(err), code=err.code)],
             )
             output_json_envelope(envelope)
         else:
-            error(f"Catalog already exists at {path.resolve()}")
+            error(f"Existing STAC catalog found at {path.resolve()}")
+            info("Use 'portolan adopt' to bring it under Portolan management (not yet implemented)")
         raise SystemExit(1) from err
 
 

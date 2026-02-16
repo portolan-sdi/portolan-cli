@@ -15,10 +15,9 @@ class TestCheck:
 
     @pytest.fixture
     def valid_catalog(self, tmp_path: Path) -> Path:
-        """Create a valid Portolan catalog."""
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        catalog_file = portolan_dir / "catalog.json"
+        """Create a valid MANAGED Portolan catalog with v2 structure."""
+        # v2: catalog.json at root
+        catalog_file = tmp_path / "catalog.json"
         catalog_file.write_text(
             json.dumps(
                 {
@@ -30,6 +29,11 @@ class TestCheck:
                 }
             )
         )
+        # .portolan with management files (required for MANAGED state)
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.json").write_text("{}")
+        (portolan_dir / "state.json").write_text("{}")
         return tmp_path
 
     @pytest.mark.unit
@@ -63,10 +67,11 @@ class TestCheck:
     @pytest.mark.unit
     def test_check_fails_when_stac_fields_missing(self, tmp_path: Path) -> None:
         """check() fails when required STAC fields are missing."""
+        # v2: catalog.json at root
+        catalog_file = tmp_path / "catalog.json"
+        catalog_file.write_text('{"type": "Catalog"}')
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        catalog_file = portolan_dir / "catalog.json"
-        catalog_file.write_text('{"type": "Catalog"}')
 
         report = check(tmp_path)
         assert report.passed is False

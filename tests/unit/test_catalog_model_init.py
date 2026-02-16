@@ -14,11 +14,65 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from portolan_cli.catalog import create_catalog
+from portolan_cli.catalog import _sanitize_id, create_catalog
 from portolan_cli.errors import CatalogAlreadyExistsError
+
+
+class TestSanitizeIdEdgeCases:
+    """Edge case tests for _sanitize_id function."""
+
+    @pytest.mark.unit
+    def test_empty_string_returns_default(self) -> None:
+        """Empty string input should return 'catalog' default."""
+        assert _sanitize_id("") == "catalog"
+
+    @pytest.mark.unit
+    def test_only_invalid_chars_returns_default(self) -> None:
+        """String with only invalid characters should return 'catalog' default."""
+        assert _sanitize_id("!!!@@@###") == "catalog"
+        assert _sanitize_id("...") == "catalog"
+        assert _sanitize_id("   ") == "catalog"
+
+    @pytest.mark.unit
+    def test_unicode_characters_sanitized(self) -> None:
+        """Unicode characters should be converted to hyphens."""
+        result = _sanitize_id("données")
+        import re
+
+        assert re.match(r"^[a-zA-Z0-9_-]+$", result)
+        # The accented characters should be replaced
+        assert "é" not in result
+        assert "ée" not in result
+
+    @pytest.mark.unit
+    def test_leading_trailing_hyphens_removed(self) -> None:
+        """Leading and trailing hyphens should be stripped."""
+        assert _sanitize_id("-test-") == "test"
+        assert _sanitize_id("---test---") == "test"
+
+    @pytest.mark.unit
+    def test_multiple_hyphens_collapsed(self) -> None:
+        """Multiple consecutive hyphens should be collapsed to one."""
+        result = _sanitize_id("my---data---catalog")
+        assert "---" not in result
+        assert result == "my-data-catalog"
+
+    @pytest.mark.unit
+    def test_spaces_converted_to_hyphens(self) -> None:
+        """Spaces should be converted to hyphens."""
+        result = _sanitize_id("my data catalog")
+        assert " " not in result
+        assert result == "my-data-catalog"
+
+    @pytest.mark.unit
+    def test_valid_characters_preserved(self) -> None:
+        """Valid alphanumeric, hyphens, underscores should be preserved."""
+        assert _sanitize_id("valid_id-123") == "valid_id-123"
+        assert _sanitize_id("Test_Catalog-2024") == "Test_Catalog-2024"
 
 
 class TestCreateCatalogAutoExtraction:
@@ -51,6 +105,35 @@ class TestCreateCatalogAutoExtraction:
         import re
 
         assert re.match(r"^[a-zA-Z0-9_-]+$", catalog.id)
+
+    @pytest.mark.unit
+    def test_id_sanitized_for_unicode_characters(self, tmp_path: Path) -> None:
+        """Directory names with unicode characters should be sanitized."""
+        # Unicode characters should be converted to hyphens
+        catalog_dir = tmp_path / "données-géographiques"
+        catalog_dir.mkdir()
+
+        catalog = create_catalog(catalog_dir)
+
+        import re
+
+        assert re.match(r"^[a-zA-Z0-9_-]+$", catalog.id)
+        assert "é" not in catalog.id
+
+    @pytest.mark.unit
+    def test_id_sanitized_for_very_long_directory_name(self, tmp_path: Path) -> None:
+        """Very long directory names should be sanitized gracefully."""
+        # Long names should still produce a valid ID
+        long_name = "a" * 200
+        catalog_dir = tmp_path / long_name
+        catalog_dir.mkdir()
+
+        catalog = create_catalog(catalog_dir)
+
+        import re
+
+        assert re.match(r"^[a-zA-Z0-9_-]+$", catalog.id)
+        assert len(catalog.id) > 0
 
     @pytest.mark.unit
     def test_created_timestamp_auto_generated(self, tmp_path: Path) -> None:
@@ -248,38 +331,219 @@ class TestAutoFlag:
     """Tests for --auto flag behavior."""
 
     @pytest.mark.unit
-    def test_auto_mode_skips_prompts(self, tmp_path: Path) -> None:
-        """In auto mode, no prompts should be issued."""
+    def test_create_catalog_without_prompts(self, tmp_path: Path) -> None:
+        """create_catalog should work without user input (library function)."""
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        # auto=True should work without user input
-        catalog = create_catalog(catalog_dir, auto=True)
+        catalog = create_catalog(catalog_dir)
 
         assert catalog is not None
         assert catalog.id == "test"
 
     @pytest.mark.unit
-    def test_auto_mode_returns_warnings(self, tmp_path: Path) -> None:
-        """Auto mode should return warnings for missing best-practice fields."""
+    def test_create_catalog_returns_warnings(self, tmp_path: Path) -> None:
+        """create_catalog should return warnings for missing best-practice fields."""
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        catalog, warnings = create_catalog(catalog_dir, auto=True, return_warnings=True)
+        catalog, warnings = create_catalog(catalog_dir, return_warnings=True)
 
-        # Should warn about missing title/description
+        # Should warn about missing title
         assert any("title" in w.lower() for w in warnings)
 
     @pytest.mark.unit
-    def test_auto_mode_sets_default_description(self, tmp_path: Path) -> None:
-        """Auto mode should set a default description."""
+    def test_create_catalog_sets_default_description(self, tmp_path: Path) -> None:
+        """create_catalog should set a default description when not provided."""
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        catalog = create_catalog(catalog_dir, auto=True)
+        catalog = create_catalog(catalog_dir)
 
         assert catalog.description is not None
         assert len(catalog.description) > 0
+
+
+class TestInitCatalogFilesystemErrors:
+    """Tests for CatalogInitError when filesystem operations fail."""
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_root_mkdir_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when root directory creation fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        # Patch Path.mkdir to fail
+        original_mkdir = Path.mkdir
+
+        def failing_mkdir(self: Path, *args: Any, **kwargs: Any) -> None:
+            if "nonexistent-parent" in str(self):
+                raise OSError("Permission denied")
+            return original_mkdir(self, *args, **kwargs)
+
+        with patch.object(Path, "mkdir", failing_mkdir):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(tmp_path / "nonexistent-parent" / "catalog")
+            assert "Cannot create directory" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_portolan_mkdir_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when .portolan directory creation fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_mkdir = Path.mkdir
+
+        def failing_mkdir(self: Path, *args: Any, **kwargs: Any) -> None:
+            if ".portolan" in str(self):
+                raise OSError("Disk full")
+            return original_mkdir(self, *args, **kwargs)
+
+        with patch.object(Path, "mkdir", failing_mkdir):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot create .portolan directory" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_config_write_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when config.json write fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_write_text = Path.write_text
+
+        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
+            if "config.json" in str(self):
+                raise OSError("Disk full")
+            return original_write_text(self, *args, **kwargs)
+
+        with patch.object(Path, "write_text", failing_write_text):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot write config.json" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_state_write_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when state.json write fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_write_text = Path.write_text
+
+        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
+            if "state.json" in str(self):
+                raise OSError("Disk full")
+            return original_write_text(self, *args, **kwargs)
+
+        with patch.object(Path, "write_text", failing_write_text):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot write state.json" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_versions_write_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when versions.json write fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_write_text = Path.write_text
+
+        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
+            if "versions.json" in str(self):
+                raise OSError("Disk full")
+            return original_write_text(self, *args, **kwargs)
+
+        with patch.object(Path, "write_text", failing_write_text):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot write versions.json" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_catalog_save_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when pystac catalog save fails."""
+        from unittest.mock import patch
+
+        import pystac
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        def failing_save(self: pystac.Catalog, *args: Any, **kwargs: Any) -> None:
+            raise OSError("Cannot write catalog")
+
+        with patch.object(pystac.Catalog, "save", failing_save):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot write catalog.json" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_self_link_update_failure(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when adding self link fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_write_text = Path.write_text
+
+        def failing_write_text(self: Path, content: str, *args: Any, **kwargs: Any) -> int:
+            # Only fail on the self-link update (when content contains "self" link)
+            if "catalog.json" in str(self):
+                try:
+                    data = json.loads(content)
+                    if any(link.get("rel") == "self" for link in data.get("links", [])):
+                        raise OSError("Cannot update catalog")
+                except json.JSONDecodeError:
+                    pass
+            return original_write_text(self, content, *args, **kwargs)
+
+        with patch.object(Path, "write_text", failing_write_text):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot update catalog.json with self link" in exc_info.value.message
+
+    @pytest.mark.unit
+    def test_init_catalog_raises_on_catalog_json_decode_error(self, tmp_path: Path) -> None:
+        """CatalogInitError raised when catalog.json is corrupted."""
+        from unittest.mock import patch
+
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        original_read_text = Path.read_text
+
+        def corrupted_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+            if "catalog.json" in str(self):
+                return "not valid json {"
+            return original_read_text(self, *args, **kwargs)
+
+        with patch.object(Path, "read_text", corrupted_read_text):
+            with pytest.raises(CatalogInitError) as exc_info:
+                init_catalog(catalog_dir)
+            assert "Cannot parse catalog.json" in exc_info.value.message
 
 
 class TestCatalogRoundtrip:

@@ -23,10 +23,11 @@ class TestCatalogInit:
 
     @pytest.mark.unit
     def test_init_creates_catalog_json(self, tmp_path: Path) -> None:
-        """init() should create a catalog.json file with valid STAC structure."""
+        """init() should create a catalog.json file at root level (v2 structure)."""
         Catalog.init(tmp_path)
 
-        catalog_file = tmp_path / ".portolan" / "catalog.json"
+        # v2 structure: catalog.json at root, not inside .portolan
+        catalog_file = tmp_path / "catalog.json"
         assert catalog_file.exists()
 
     @pytest.mark.unit
@@ -36,12 +37,14 @@ class TestCatalogInit:
 
         Catalog.init(tmp_path)
 
-        catalog_file = tmp_path / ".portolan" / "catalog.json"
+        # v2 structure: catalog.json at root
+        catalog_file = tmp_path / "catalog.json"
         catalog = json.loads(catalog_file.read_text())
 
         # Required STAC Catalog fields per spec
         assert catalog["type"] == "Catalog"
-        assert catalog["stac_version"] == "1.0.0"
+        # pystac uses its default STAC version (1.1.0 as of 2024)
+        assert catalog["stac_version"] in ("1.0.0", "1.1.0")
         assert "id" in catalog
         assert "description" in catalog
         assert "links" in catalog
@@ -103,8 +106,9 @@ class TestCatalogInit:
 
     @pytest.mark.unit
     def test_catalog_catalog_file_property(self, tmp_path: Path) -> None:
-        """Catalog.catalog_file returns path to catalog.json."""
+        """Catalog.catalog_file returns path to catalog.json at root (v2 structure)."""
         catalog = Catalog.init(tmp_path)
 
-        assert catalog.catalog_file == tmp_path / ".portolan" / "catalog.json"
+        # v2 structure: catalog.json at root, not inside .portolan
+        assert catalog.catalog_file == tmp_path / "catalog.json"
         assert catalog.catalog_file.exists()

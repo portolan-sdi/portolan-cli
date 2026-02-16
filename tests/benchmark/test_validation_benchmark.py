@@ -15,10 +15,28 @@ from portolan_cli.validation import check
 
 @pytest.fixture
 def valid_catalog(tmp_path: Path) -> Path:
-    """Create a valid Portolan catalog for benchmarking."""
+    """Create a valid Portolan catalog for benchmarking.
+
+    Uses v2 file structure: catalog.json at root, .portolan/ for management files.
+    """
+    # v2 structure: .portolan directory with config, state, and versions
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
-    catalog_file = portolan_dir / "catalog.json"
+    (portolan_dir / "config.json").write_text("{}")
+    (portolan_dir / "versions.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0.0",
+                "catalog_id": "benchmark-catalog",
+                "created": "2024-01-01T00:00:00+00:00",
+                "collections": {},
+            }
+        )
+    )
+    (portolan_dir / "state.json").write_text("{}")
+
+    # v2 structure: catalog.json at ROOT level
+    catalog_file = tmp_path / "catalog.json"
     catalog_file.write_text(
         json.dumps(
             {

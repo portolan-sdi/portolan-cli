@@ -23,10 +23,15 @@ def runner() -> CliRunner:
 
 @pytest.fixture
 def valid_catalog(tmp_path: Path) -> Path:
-    """Create a valid Portolan catalog for testing."""
-    portolan_dir = tmp_path / ".portolan"
-    portolan_dir.mkdir()
-    catalog_file = portolan_dir / "catalog.json"
+    """Create a valid MANAGED Portolan catalog for testing.
+
+    Creates the v2 structure with:
+    - catalog.json at root
+    - .portolan/config.json (required for MANAGED state)
+    - .portolan/state.json (required for MANAGED state)
+    """
+    # Root catalog.json
+    catalog_file = tmp_path / "catalog.json"
     catalog_file.write_text(
         json.dumps(
             {
@@ -38,6 +43,11 @@ def valid_catalog(tmp_path: Path) -> Path:
             }
         )
     )
+    # .portolan directory with management files
+    portolan_dir = tmp_path / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.json").write_text("{}")
+    (portolan_dir / "state.json").write_text("{}")
     return tmp_path
 
 
