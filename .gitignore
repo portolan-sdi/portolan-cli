@@ -191,6 +191,10 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# grepai (semantic code search)
+# The index is machine-local and regenerated via: grepai init && grepai watch
+.grepai/
+
 # PyPI configuration file
 .pypirc
 

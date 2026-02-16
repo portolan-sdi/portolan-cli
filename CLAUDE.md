@@ -342,6 +342,7 @@ detail("Processing chunk 3/10...")         # Dimmed text
 |------|---------|---------------|
 | context7 | Up-to-date library docs (official API) | — |
 | gitingest | Source code exploration (implementation details) | `https://github.com/cyclotruc/gitingest` |
+| grepai | Semantic code search (find code by meaning) | `https://yoanbernabeu.github.io/grepai/` |
 | distill | Token-efficient operations | `context/shared/documentation/distill-mcp.md` |
 | worktrunk | Worktree management | — |
 
