@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -376,7 +377,7 @@ class TestInitCatalogFilesystemErrors:
         # Patch Path.mkdir to fail
         original_mkdir = Path.mkdir
 
-        def failing_mkdir(self, *args, **kwargs):
+        def failing_mkdir(self: Path, *args: Any, **kwargs: Any) -> None:
             if "nonexistent-parent" in str(self):
                 raise OSError("Permission denied")
             return original_mkdir(self, *args, **kwargs)
@@ -398,7 +399,7 @@ class TestInitCatalogFilesystemErrors:
 
         original_mkdir = Path.mkdir
 
-        def failing_mkdir(self, *args, **kwargs):
+        def failing_mkdir(self: Path, *args: Any, **kwargs: Any) -> None:
             if ".portolan" in str(self):
                 raise OSError("Disk full")
             return original_mkdir(self, *args, **kwargs)
@@ -420,7 +421,7 @@ class TestInitCatalogFilesystemErrors:
 
         original_write_text = Path.write_text
 
-        def failing_write_text(self, *args, **kwargs):
+        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
             if "config.json" in str(self):
                 raise OSError("Disk full")
             return original_write_text(self, *args, **kwargs)
@@ -442,7 +443,7 @@ class TestInitCatalogFilesystemErrors:
 
         original_write_text = Path.write_text
 
-        def failing_write_text(self, *args, **kwargs):
+        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
             if "state.json" in str(self):
                 raise OSError("Disk full")
             return original_write_text(self, *args, **kwargs)
@@ -464,7 +465,7 @@ class TestInitCatalogFilesystemErrors:
 
         original_write_text = Path.write_text
 
-        def failing_write_text(self, *args, **kwargs):
+        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
             if "versions.json" in str(self):
                 raise OSError("Disk full")
             return original_write_text(self, *args, **kwargs)
@@ -486,7 +487,7 @@ class TestInitCatalogFilesystemErrors:
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        def failing_save(self, *args, **kwargs):
+        def failing_save(self: pystac.Catalog, *args: Any, **kwargs: Any) -> None:
             raise OSError("Cannot write catalog")
 
         with patch.object(pystac.Catalog, "save", failing_save):
@@ -497,7 +498,6 @@ class TestInitCatalogFilesystemErrors:
     @pytest.mark.unit
     def test_init_catalog_raises_on_self_link_update_failure(self, tmp_path: Path) -> None:
         """CatalogInitError raised when adding self link fails."""
-        import json
         from unittest.mock import patch
 
         from portolan_cli.catalog import CatalogInitError, init_catalog
@@ -507,7 +507,7 @@ class TestInitCatalogFilesystemErrors:
 
         original_write_text = Path.write_text
 
-        def failing_write_text(self, content, *args, **kwargs):
+        def failing_write_text(self: Path, content: str, *args: Any, **kwargs: Any) -> int:
             # Only fail on the self-link update (when content contains "self" link)
             if "catalog.json" in str(self):
                 try:
@@ -535,7 +535,7 @@ class TestInitCatalogFilesystemErrors:
 
         original_read_text = Path.read_text
 
-        def corrupted_read_text(self, *args, **kwargs):
+        def corrupted_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
             if "catalog.json" in str(self):
                 return "not valid json {"
             return original_read_text(self, *args, **kwargs)
