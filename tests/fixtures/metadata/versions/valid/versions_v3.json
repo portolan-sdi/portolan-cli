@@ -1,0 +1,65 @@
+{
+  "spec_version": "1.0.0",
+  "current_version": "1.2.0",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "created": "2026-01-15T10:30:00Z",
+      "breaking": false,
+      "assets": {
+        "parcels.parquet": {
+          "sha256": "abc123def456789012345678901234567890123456789012345678901234abcd",
+          "size_bytes": 1048576,
+          "href": "parcels.parquet",
+          "source_path": "parcels.geojson",
+          "source_mtime": 1705312200.0
+        }
+      },
+      "changes": ["parcels.parquet"]
+    },
+    {
+      "version": "1.1.0",
+      "created": "2026-02-01T14:00:00Z",
+      "breaking": false,
+      "assets": {
+        "parcels.parquet": {
+          "sha256": "def456789012345678901234567890123456789012345678901234abcdef12",
+          "size_bytes": 1150000,
+          "href": "parcels.parquet",
+          "source_path": "parcels.geojson",
+          "source_mtime": 1706788800.0
+        },
+        "buildings.parquet": {
+          "sha256": "789012345678901234567890123456789012345678901234abcdef1234567890",
+          "size_bytes": 524288,
+          "href": "buildings.parquet",
+          "source_path": "buildings.geojson",
+          "source_mtime": 1706788800.0
+        }
+      },
+      "changes": ["parcels.parquet", "buildings.parquet"]
+    },
+    {
+      "version": "1.2.0",
+      "created": "2026-02-15T09:15:00Z",
+      "breaking": false,
+      "assets": {
+        "parcels.parquet": {
+          "sha256": "def456789012345678901234567890123456789012345678901234abcdef12",
+          "size_bytes": 1150000,
+          "href": "parcels.parquet",
+          "source_path": "parcels.geojson",
+          "source_mtime": 1706788800.0
+        },
+        "buildings.parquet": {
+          "sha256": "890123456789012345678901234567890123456789012345abcdef123456789a",
+          "size_bytes": 550000,
+          "href": "buildings.parquet",
+          "source_path": "buildings.geojson",
+          "source_mtime": 1708002900.0
+        }
+      },
+      "changes": ["buildings.parquet"]
+    }
+  ]
+}

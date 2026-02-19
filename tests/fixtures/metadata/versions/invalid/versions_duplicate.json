@@ -1,0 +1,33 @@
+{
+  "_comment": "INVALID: Duplicate version '1.0.0' in versions array",
+  "spec_version": "1.0.0",
+  "current_version": "1.0.0",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "created": "2026-01-15T10:30:00Z",
+      "breaking": false,
+      "assets": {
+        "data.parquet": {
+          "sha256": "abc123def456789012345678901234567890123456789012345678901234abcd",
+          "size_bytes": 1048576,
+          "href": "data.parquet"
+        }
+      },
+      "changes": ["data.parquet"]
+    },
+    {
+      "version": "1.0.0",
+      "created": "2026-01-16T10:30:00Z",
+      "breaking": false,
+      "assets": {
+        "data.parquet": {
+          "sha256": "def456789012345678901234567890123456789012345678901234abcdef1234",
+          "size_bytes": 2097152,
+          "href": "data.parquet"
+        }
+      },
+      "changes": ["data.parquet"]
+    }
+  ]
+}
