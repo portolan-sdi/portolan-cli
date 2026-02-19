@@ -277,6 +277,7 @@ def check(
             path=path,
             dry_run=dry_run,
             use_json=use_json,
+            verbose=verbose,
         )
         return
 
@@ -307,6 +308,7 @@ def _run_check_fix(
     path: Path,
     dry_run: bool,
     use_json: bool,
+    verbose: bool = False,
 ) -> None:
     """Run check --fix workflow to convert files to cloud-native formats.
 
@@ -314,6 +316,7 @@ def _run_check_fix(
         path: Directory to check and optionally fix.
         dry_run: If True, preview without making changes.
         use_json: If True, output JSON envelope.
+        verbose: If True, show detailed output for each file.
     """
     from portolan_cli.check import check_directory as check_dir_fn
     from portolan_cli.convert import ConversionStatus
@@ -341,7 +344,7 @@ def _run_check_fix(
         if dry_run:
             _print_check_fix_preview(report)
         else:
-            _print_check_fix_results(report)
+            _print_check_fix_results(report, verbose=verbose)
 
     # Exit code based on conversion results
     if report.conversion_report is not None and report.conversion_report.failed > 0:
@@ -363,8 +366,13 @@ def _print_check_fix_preview(report: Any) -> None:
         detail(f"  {f.relative_path} ({f.display_name}) -> {f.target_format}")
 
 
-def _print_check_fix_results(report: Any) -> None:
-    """Print conversion results."""
+def _print_check_fix_results(report: Any, *, verbose: bool = False) -> None:
+    """Print conversion results.
+
+    Args:
+        report: CheckReport with conversion results.
+        verbose: If True, show details for all files including skipped.
+    """
     from portolan_cli.convert import ConversionStatus
 
     conv = report.conversion_report
@@ -385,12 +393,14 @@ def _print_check_fix_results(report: Any) -> None:
     if conv.invalid > 0:
         warn(f"  {conv.invalid} file(s) invalid after conversion")
 
-    # Show details for failures
+    # Show details for failures (always) and successes/skipped (if verbose)
     for r in conv.results:
         if r.status == ConversionStatus.FAILED:
             error(f"  {r.source.name}: {r.error}")
         elif r.status == ConversionStatus.SUCCESS:
             detail(f"  {r.source.name} -> {r.output.name if r.output else 'N/A'}")
+        elif verbose and r.status == ConversionStatus.SKIPPED:
+            detail(f"  {r.source.name} (skipped - already cloud-native)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

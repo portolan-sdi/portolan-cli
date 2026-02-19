@@ -416,11 +416,15 @@ class TestConversionErrors:
 
     @pytest.mark.unit
     def test_conversion_failed_error_has_original_error(self) -> None:
-        """ConversionFailedError stores original_error in context."""
+        """ConversionFailedError stores original_error info in context."""
         original_error = ValueError("Something went wrong")
         error = ConversionFailedError("/path/to/file.shp", original_error)
 
-        assert error.original_error == original_error
+        # Serializable representation in context
+        assert error.original_error_type == "ValueError"
+        assert error.original_error_message == "Something went wrong"
+        # Original exception preserved for programmatic access
+        assert error.original_exception == original_error
 
     @pytest.mark.unit
     def test_conversion_failed_error_message(self) -> None:

@@ -300,6 +300,8 @@ def _convert_raster(source: Path, output_dir: Path) -> Path:
     Returns:
         Path to the output COG file.
     """
+    import tempfile
+
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
 
@@ -308,15 +310,37 @@ def _convert_raster(source: Path, output_dir: Path) -> Path:
     # Use DEFLATE profile with our opinionated defaults
     profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
 
-    # Apply predictor and tile settings
-    # Note: rio-cogeo defaults to 512x512 tiles
-    cog_translate(
-        str(source),
-        str(output_path),
-        profile,
-        quiet=True,
-        overview_resampling="nearest",
+    # Set predictor=2 for horizontal differencing compression
+    profile["predictor"] = 2
+
+    # Write to temp file first to avoid corrupting source if output_path == source
+    # Use same directory as output for atomic rename across filesystems
+    temp_fd, temp_path_str = tempfile.mkstemp(
+        suffix=".tif", prefix=".portolan_cog_", dir=output_dir
     )
+    temp_path = Path(temp_path_str)
+
+    try:
+        # Close the file descriptor - rio-cogeo will open it
+        import os
+
+        os.close(temp_fd)
+
+        cog_translate(
+            str(source),
+            str(temp_path),
+            profile,
+            quiet=True,
+            overview_resampling="nearest",
+        )
+
+        # Atomic replace
+        temp_path.replace(output_path)
+    except Exception:
+        # Clean up temp file on error
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
 
     return output_path
 
@@ -343,6 +367,7 @@ def convert_directory(
     output_dir: Path | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
     recursive: bool = True,
+    file_paths: list[Path] | None = None,
 ) -> ConversionReport:
     """Convert all geospatial files in a directory to cloud-native formats.
 
@@ -356,6 +381,9 @@ def convert_directory(
         on_progress: Optional callback invoked after each file is processed.
             Receives the ConversionResult for streaming progress updates.
         recursive: If True (default), process subdirectories recursively.
+        file_paths: Optional list of specific files to convert. If provided,
+            skips directory scanning and converts only these files. Useful
+            when the caller has already scanned and filtered the files.
 
     Returns:
         ConversionReport with results for all processed files.
@@ -370,19 +398,20 @@ def convert_directory(
     if not path.is_dir():
         raise NotADirectoryError(f"Path is not a directory: {path}")
 
-    # Find all geospatial files
-    files: list[Path] = []
-    if recursive:
-        for item in path.rglob("*"):
-            if item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
-                files.append(item)
+    # Use provided file list or scan for geospatial files
+    if file_paths is not None:
+        files = sorted(file_paths)
     else:
-        for item in path.iterdir():
-            if item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
-                files.append(item)
-
-    # Sort for deterministic order
-    files.sort()
+        files = []
+        if recursive:
+            for item in path.rglob("*"):
+                if item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
+                    files.append(item)
+        else:
+            for item in path.iterdir():
+                if item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
+                    files.append(item)
+        files.sort()
 
     # Process each file
     results: list[ConversionResult] = []

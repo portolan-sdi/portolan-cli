@@ -1097,9 +1097,18 @@ class TestConvertFileEdgeCases:
     def test_permission_error_handling(self, tmp_path: Path) -> None:
         """Permission error during conversion returns FAILED with clear message.
 
-        Note: This test may behave differently on Windows or if run as root.
+        Note: This test is skipped on Windows (permission model differs) and
+        when running as root (root can write anywhere).
         """
         import os
+
+        # Skip on Windows - different permission model
+        if sys.platform == "win32":
+            pytest.skip("Windows has different permission handling")
+
+        # Skip if running as root - root can write to read-only dirs
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            pytest.skip("Running as root - cannot test permission errors")
 
         from portolan_cli.convert import ConversionStatus, convert_file
 

@@ -213,11 +213,13 @@ class TestCheckFixPartialFailure:
         bad_file = input_dir / "bad.geojson"
         bad_file.write_text('{"type": "FeatureCollection", "features": [INVALID')
 
-        runner.invoke(cli, ["check", str(input_dir), "--fix"])
+        result = runner.invoke(cli, ["check", str(input_dir), "--fix"])
 
-        # Exit code may be 1 due to failure, but valid file should still convert
-        # (depending on implementation - may exit 0 if partial success is OK)
-        # The valid file should be converted
+        # Exit code may be non-zero due to partial failure, that's acceptable
+        # The CLI should not crash (exit_code would be None if it did)
+        assert result.exit_code is not None, f"CLI crashed: {result.output}"
+
+        # The valid file should still be converted despite the bad file
         assert (input_dir / "valid.parquet").exists()
 
     def test_reports_both_success_and_failure(

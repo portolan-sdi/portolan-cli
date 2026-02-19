@@ -39,9 +39,9 @@ class TestConvertWorkflowIntegration:
         assert result.output.suffix == ".parquet"
 
         # Verify output is valid GeoParquet
-        from portolan_cli.scan import _is_geoparquet
+        from portolan_cli.scan import is_geoparquet
 
-        assert _is_geoparquet(result.output)
+        assert is_geoparquet(result.output)
 
     def test_convert_non_cog_to_cog(
         self,

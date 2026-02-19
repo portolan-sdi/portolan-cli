@@ -302,11 +302,15 @@ class ConversionFailedError(ConversionError):
     code = "PRTLN-CNV002"
 
     def __init__(self, path: str, original_error: Exception) -> None:
+        # Store serializable representations for to_dict()/JSON
         super().__init__(
             f"Conversion failed for {path}: {original_error}",
             path=path,
-            original_error=original_error,
+            original_error_type=type(original_error).__name__,
+            original_error_message=str(original_error),
         )
+        # Keep original exception for programmatic access (not serialized)
+        self.original_exception = original_error
 
 
 class ValidationFailedError(ConversionError):

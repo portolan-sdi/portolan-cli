@@ -23,7 +23,7 @@ from portolan_cli.convert import (
     convert_directory,
 )
 from portolan_cli.formats import CloudNativeStatus, get_cloud_native_status
-from portolan_cli.scan import PARQUET_EXTENSION, _is_geoparquet
+from portolan_cli.scan import PARQUET_EXTENSION, is_geoparquet
 
 logger = logging.getLogger(__name__)
 
@@ -163,10 +163,12 @@ def check_directory(
 
     # Handle fix mode
     if fix and not dry_run:
-        # Convert all convertible files
+        # Pass the already-discovered file list to avoid re-scanning
+        # This ensures ConversionReport aligns with file_statuses
         conversion_report = convert_directory(
             path,
             on_progress=on_progress,
+            file_paths=[f.path for f in file_statuses],
         )
         report.conversion_report = conversion_report
     elif fix and dry_run:
@@ -194,7 +196,7 @@ def _scan_for_files(path: Path) -> list[Path]:
         if ext in CHECK_EXTENSIONS:
             # For parquet, check if it's GeoParquet
             if ext == PARQUET_EXTENSION:
-                if not _is_geoparquet(item):
+                if not is_geoparquet(item):
                     continue
             files.append(item)
     files.sort()
