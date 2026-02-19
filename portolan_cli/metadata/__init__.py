@@ -25,6 +25,9 @@ Update functions:
 - update_collection_extent(): Recalculate extent from child items
 - update_versions_tracking(): Update source_mtime in versions.json
 
+Fix functions:
+- fix_metadata(): Apply fixes for all issues in a MetadataReport
+
 Check data structures:
 - MetadataStatus: Enum for file metadata states (MISSING, FRESH, STALE, BREAKING)
 - FileMetadataState: Holds current vs stored metadata for comparison
@@ -47,6 +50,12 @@ from portolan_cli.metadata.detection import (
     get_current_metadata,
     get_stored_metadata,
     is_stale,
+)
+from portolan_cli.metadata.fix import (
+    FixAction,
+    FixReport,
+    FixResult,
+    fix_metadata,
 )
 from portolan_cli.metadata.geoparquet import (
     GeoParquetMetadata,
@@ -86,6 +95,11 @@ __all__ = [
     "get_current_metadata",
     "get_stored_metadata",
     "is_stale",
+    # Fix functions
+    "FixAction",
+    "FixReport",
+    "FixResult",
+    "fix_metadata",
     # Validation
     "ValidationMessage",
     "ValidationResult",
