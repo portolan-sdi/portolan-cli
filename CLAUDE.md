@@ -100,14 +100,21 @@ portolan-cli/
 │   ├── network/           # Tests requiring network (mocked locally)
 │   ├── benchmark/         # Performance measurements
 │   └── snapshot/          # Snapshot tests
-├── docs/                  # Documentation (mkdocs)
-├── context/               # AI development context
+├── docs/                  # PUBLIC documentation (mkdocs) - tutorials, user guides
+├── context/               # AI/INTERNAL development context
 │   └── shared/            # Plans, research, reports
 │       ├── adr/           # Architectural decisions
 │       ├── documentation/ # CI, tooling docs
+│       ├── plans/         # Architecture plans and design docs
 │       └── known-issues/  # Tracked issues
 └── .github/workflows/     # CI/CD pipelines
 ```
+
+**IMPORTANT: docs/ vs context/ distinction:**
+- **`docs/`** — Public-facing, human-readable documentation (tutorials, visual guides, user-oriented). Built with mkdocs and published.
+- **`context/`** — Internal, AI-oriented context (architectural plans, design docs, ADRs, research). Dense, structured, co-located with development. NOT published.
+
+Do NOT put architectural plans or design documents in `docs/`. Those belong in `context/shared/plans/`.
 
 ## Before Writing Code
 

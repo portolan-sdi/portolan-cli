@@ -20,6 +20,9 @@ from portolan_cli.errors import (
     # Collection errors
     CollectionError,
     CollectionNotFoundError,
+    # Conversion errors
+    ConversionError,
+    ConversionFailedError,
     InvalidBboxError,
     InvalidVersionError,
     ItemAlreadyExistsError,
@@ -33,8 +36,10 @@ from portolan_cli.errors import (
     SchemaError,
     SchemaExtractionError,
     SchemaTypeConflictError,
+    UnsupportedFormatError,
     # Validation errors
     ValidationError,
+    ValidationFailedError,
     # Version errors
     VersionError,
     VersionNotFoundError,
@@ -281,10 +286,10 @@ class TestErrorCodeFormat:
 
     @pytest.mark.unit
     def test_all_error_codes_match_pattern(self) -> None:
-        """All error codes must match PRTLN-{CAT|COL|SCH|ITM|VER|VAL}NNN pattern."""
+        """All error codes must match PRTLN-{CAT|COL|SCH|ITM|VER|VAL|CNV}NNN pattern."""
         import re
 
-        pattern = re.compile(r"^PRTLN-(CAT|COL|SCH|ITM|VER|VAL)\d{3}$")
+        pattern = re.compile(r"^PRTLN-(CAT|COL|SCH|ITM|VER|VAL|CNV)\d{3}$")
 
         errors = [
             CatalogAlreadyExistsError("/test"),
@@ -300,6 +305,10 @@ class TestErrorCodeFormat:
             InvalidVersionError("bad"),
             MissingGeometryError("/test"),
             InvalidBboxError("reason"),
+            # Conversion errors
+            UnsupportedFormatError("/test", "netcdf"),
+            ConversionFailedError("/test", ValueError("test")),
+            ValidationFailedError("/test", ["error1"]),
         ]
 
         for error in errors:
@@ -322,7 +331,140 @@ class TestErrorCodeFormat:
             InvalidVersionError("bad"),
             MissingGeometryError("/test"),
             InvalidBboxError("reason"),
+            # Conversion errors
+            UnsupportedFormatError("/test", "netcdf"),
+            ConversionFailedError("/test", ValueError("test")),
+            ValidationFailedError("/test", ["error1"]),
         ]
 
         codes = [e.code for e in errors]
         assert len(codes) == len(set(codes)), "Error codes are not unique"
+
+
+class TestConversionErrors:
+    """Tests for conversion-related error classes.
+
+    Conversion errors use the PRTLN-CNV prefix:
+    - PRTLN-CNV000: ConversionError (base)
+    - PRTLN-CNV001: UnsupportedFormatError
+    - PRTLN-CNV002: ConversionFailedError
+    - PRTLN-CNV003: ValidationFailedError
+    """
+
+    @pytest.mark.unit
+    def test_conversion_error_base_code(self) -> None:
+        """ConversionError has PRTLN-CNV prefix."""
+        error = ConversionError("Generic conversion error")
+        assert error.code.startswith("PRTLN-CNV")
+
+    @pytest.mark.unit
+    def test_conversion_error_is_portolan_error(self) -> None:
+        """ConversionError inherits from PortolanError."""
+        error = ConversionError("Test error")
+        assert isinstance(error, PortolanError)
+
+    @pytest.mark.unit
+    def test_conversion_error_base_has_default_code(self) -> None:
+        """ConversionError base class has PRTLN-CNV000 code."""
+        error = ConversionError("Generic conversion error")
+        assert error.code == "PRTLN-CNV000"
+
+    @pytest.mark.unit
+    def test_unsupported_format_error_code(self) -> None:
+        """UnsupportedFormatError has PRTLN-CNV001 code."""
+        error = UnsupportedFormatError("/path/to/file.netcdf", "netcdf")
+
+        assert error.code == "PRTLN-CNV001"
+
+    @pytest.mark.unit
+    def test_unsupported_format_error_has_path(self) -> None:
+        """UnsupportedFormatError stores path in context."""
+        error = UnsupportedFormatError("/path/to/file.hdf5", "hdf5")
+
+        assert error.path == "/path/to/file.hdf5"
+
+    @pytest.mark.unit
+    def test_unsupported_format_error_has_format_type(self) -> None:
+        """UnsupportedFormatError stores format_type in context."""
+        error = UnsupportedFormatError("/path/to/file.las", "las")
+
+        assert error.format_type == "las"
+
+    @pytest.mark.unit
+    def test_unsupported_format_error_message(self) -> None:
+        """UnsupportedFormatError has descriptive message."""
+        error = UnsupportedFormatError("/path/to/file.netcdf", "netcdf")
+
+        assert "/path/to/file.netcdf" in str(error)
+        assert "netcdf" in str(error)
+
+    @pytest.mark.unit
+    def test_conversion_failed_error_code(self) -> None:
+        """ConversionFailedError has PRTLN-CNV002 code."""
+        original_error = ValueError("Something went wrong")
+        error = ConversionFailedError("/path/to/file.shp", original_error)
+
+        assert error.code == "PRTLN-CNV002"
+
+    @pytest.mark.unit
+    def test_conversion_failed_error_has_path(self) -> None:
+        """ConversionFailedError stores path in context."""
+        original_error = ValueError("Something went wrong")
+        error = ConversionFailedError("/path/to/file.shp", original_error)
+
+        assert error.path == "/path/to/file.shp"
+
+    @pytest.mark.unit
+    def test_conversion_failed_error_has_original_error(self) -> None:
+        """ConversionFailedError stores original_error info in context."""
+        original_error = ValueError("Something went wrong")
+        error = ConversionFailedError("/path/to/file.shp", original_error)
+
+        # Serializable representation in context
+        assert error.original_error_type == "ValueError"
+        assert error.original_error_message == "Something went wrong"
+        # Original exception preserved for programmatic access
+        assert error.original_exception == original_error
+
+    @pytest.mark.unit
+    def test_conversion_failed_error_message(self) -> None:
+        """ConversionFailedError has descriptive message."""
+        original_error = ValueError("Something went wrong")
+        error = ConversionFailedError("/path/to/file.shp", original_error)
+
+        assert "/path/to/file.shp" in str(error)
+        assert "Something went wrong" in str(error)
+
+    @pytest.mark.unit
+    def test_validation_failed_error_code(self) -> None:
+        """ValidationFailedError has PRTLN-CNV003 code."""
+        validation_errors = ["Missing bbox metadata", "Invalid geometry type"]
+        error = ValidationFailedError("/path/to/output.parquet", validation_errors)
+
+        assert error.code == "PRTLN-CNV003"
+
+    @pytest.mark.unit
+    def test_validation_failed_error_has_path(self) -> None:
+        """ValidationFailedError stores path in context."""
+        validation_errors = ["Missing bbox metadata"]
+        error = ValidationFailedError("/path/to/output.parquet", validation_errors)
+
+        assert error.path == "/path/to/output.parquet"
+
+    @pytest.mark.unit
+    def test_validation_failed_error_has_validation_errors(self) -> None:
+        """ValidationFailedError stores validation_errors in context."""
+        validation_errors = ["Missing bbox metadata", "Invalid geometry type"]
+        error = ValidationFailedError("/path/to/output.parquet", validation_errors)
+
+        assert error.validation_errors == validation_errors
+
+    @pytest.mark.unit
+    def test_validation_failed_error_message(self) -> None:
+        """ValidationFailedError has descriptive message."""
+        validation_errors = ["Missing bbox metadata", "Invalid geometry type"]
+        error = ValidationFailedError("/path/to/output.parquet", validation_errors)
+
+        assert "/path/to/output.parquet" in str(error)
+        # Message should mention validation failure
+        assert "validation" in str(error).lower() or "failed" in str(error).lower()

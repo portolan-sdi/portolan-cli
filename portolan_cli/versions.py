@@ -42,11 +42,17 @@ class Asset:
         sha256: SHA-256 checksum of the file content.
         size_bytes: File size in bytes.
         href: Relative or absolute path/URL to the asset.
+        source_path: Optional relative path to the original source file
+            (e.g., the GeoJSON that was converted to this GeoParquet).
+        source_mtime: Optional Unix timestamp of the source file when
+            conversion occurred. Used to detect when source has changed.
     """
 
     sha256: str
     size_bytes: int
     href: str
+    source_path: str | None = None
+    source_mtime: float | None = None
 
 
 @dataclass(frozen=True)
@@ -134,6 +140,9 @@ def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
                     sha256=asset_data["sha256"],
                     size_bytes=asset_data["size_bytes"],
                     href=asset_data["href"],
+                    # Optional source tracking fields with defaults
+                    source_path=asset_data.get("source_path"),
+                    source_mtime=asset_data.get("source_mtime"),
                 )
                 for name, asset_data in v["assets"].items()
             }
@@ -170,6 +179,30 @@ def write_versions(path: Path, versions_file: VersionsFile) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
+def _serialize_asset(asset: Asset) -> dict[str, Any]:
+    """Serialize an Asset to a JSON-compatible dictionary.
+
+    Only includes source_path and source_mtime when they are not None.
+
+    Args:
+        asset: The Asset to serialize.
+
+    Returns:
+        Dictionary suitable for JSON serialization.
+    """
+    data: dict[str, Any] = {
+        "sha256": asset.sha256,
+        "size_bytes": asset.size_bytes,
+        "href": asset.href,
+    }
+    # Only include source tracking fields when present
+    if asset.source_path is not None:
+        data["source_path"] = asset.source_path
+    if asset.source_mtime is not None:
+        data["source_mtime"] = asset.source_mtime
+    return data
+
+
 def _serialize_versions_file(versions_file: VersionsFile) -> dict[str, Any]:
     """Serialize a VersionsFile to a JSON-compatible dictionary.
 
@@ -187,14 +220,7 @@ def _serialize_versions_file(versions_file: VersionsFile) -> dict[str, Any]:
                 "version": v.version,
                 "created": v.created.isoformat().replace("+00:00", "Z"),
                 "breaking": v.breaking,
-                "assets": {
-                    name: {
-                        "sha256": asset.sha256,
-                        "size_bytes": asset.size_bytes,
-                        "href": asset.href,
-                    }
-                    for name, asset in v.assets.items()
-                },
+                "assets": {name: _serialize_asset(asset) for name, asset in v.assets.items()},
                 "changes": v.changes,
             }
             for v in versions_file.versions

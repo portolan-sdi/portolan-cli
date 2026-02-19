@@ -442,7 +442,7 @@ def _make_skipped_file(
     )
 
 
-def _is_geoparquet(path: Path) -> bool:
+def is_geoparquet(path: Path) -> bool:
     """Check if a Parquet file is GeoParquet by inspecting metadata.
 
     GeoParquet files have a 'geo' key in their schema metadata containing
@@ -957,7 +957,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
 
     # Handle .parquet specially - must check if it's GeoParquet
     if ext == PARQUET_EXTENSION:
-        if not _is_geoparquet(path):
+        if not is_geoparquet(path):
             # Regular Parquet (tabular data), not a geospatial asset
             # Create SkippedFile directly since classify_file can't detect non-geo parquet
             ctx.skipped.append(

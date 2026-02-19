@@ -267,14 +267,41 @@ def _print_check_summary(report: Any) -> None:
 @click.argument("path", type=click.Path(path_type=Path), default=".")
 @click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
 @click.option("--verbose", "-v", is_flag=True, help="Show all validation rules, not just failures")
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="Convert non-cloud-native files to cloud-native formats (GeoParquet, COG)",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview what would be converted (use with --fix)",
+)
 @click.pass_context
-def check(ctx: click.Context, path: Path, json_output: bool, verbose: bool) -> None:
-    """Validate a Portolan catalog.
+def check(
+    ctx: click.Context,
+    path: Path,
+    json_output: bool,
+    verbose: bool,
+    fix: bool,
+    dry_run: bool,
+) -> None:
+    """Validate a Portolan catalog or check files for cloud-native status.
 
     Runs validation rules against the catalog and reports any issues.
+    With --fix, converts non-cloud-native files to GeoParquet (vectors) or COG (rasters).
 
-    PATH is the directory containing the .portolan catalog (default: current directory).
+    PATH is the directory to check (default: current directory).
+
+    Examples:
+
+        portolan check                    # Validate catalog
+
+        portolan check /data --fix        # Convert files to cloud-native
+
+        portolan check /data --fix --dry-run  # Preview conversions
     """
+
     use_json = should_output_json(ctx, json_output)
 
     # Validate path exists (handle in code for JSON envelope support)
@@ -289,6 +316,21 @@ def check(ctx: click.Context, path: Path, json_output: bool, verbose: bool) -> N
             error(f"Path does not exist: {path}")
         raise SystemExit(1)
 
+    # Warn if --dry-run is used without --fix
+    if dry_run and not fix:
+        warn("--dry-run has no effect without --fix")
+
+    # If --fix is used, run conversion workflow
+    if fix:
+        _run_check_fix(
+            path=path,
+            dry_run=dry_run,
+            use_json=use_json,
+            verbose=verbose,
+        )
+        return
+
+    # Otherwise, run catalog validation (original behavior)
     report = validate_catalog(path)
 
     if use_json:
@@ -303,6 +345,111 @@ def check(ctx: click.Context, path: Path, json_output: bool, verbose: bool) -> N
     # Exit code: 1 if any errors (not warnings)
     if report.errors:
         raise SystemExit(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Check --fix helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _run_check_fix(
+    *,
+    path: Path,
+    dry_run: bool,
+    use_json: bool,
+    verbose: bool = False,
+) -> None:
+    """Run check --fix workflow to convert files to cloud-native formats.
+
+    Args:
+        path: Directory to check and optionally fix.
+        dry_run: If True, preview without making changes.
+        use_json: If True, output JSON envelope.
+        verbose: If True, show detailed output for each file.
+    """
+    from portolan_cli.check import check_directory as check_dir_fn
+    from portolan_cli.convert import ConversionStatus
+
+    # Run check with fix
+    report = check_dir_fn(path, fix=True, dry_run=dry_run)
+
+    if use_json:
+        # JSON output
+        if report.conversion_report is not None and report.conversion_report.failed > 0:
+            errors = [
+                ErrorDetail(
+                    type="ConversionFailed",
+                    message=r.error or "Unknown error",
+                )
+                for r in report.conversion_report.results
+                if r.status == ConversionStatus.FAILED
+            ]
+            envelope = error_envelope("check", errors, data=report.to_dict())
+        else:
+            envelope = success_envelope("check", report.to_dict())
+        output_json_envelope(envelope)
+    else:
+        # Human-readable output
+        if dry_run:
+            _print_check_fix_preview(report)
+        else:
+            _print_check_fix_results(report, verbose=verbose)
+
+    # Exit code based on conversion results
+    if report.conversion_report is not None and report.conversion_report.failed > 0:
+        raise SystemExit(1)
+
+
+def _print_check_fix_preview(report: Any) -> None:
+    """Print preview of what would be converted."""
+    from portolan_cli.formats import CloudNativeStatus
+
+    convertible = [f for f in report.files if f.status == CloudNativeStatus.CONVERTIBLE]
+
+    if not convertible:
+        info("No files need conversion")
+        return
+
+    info(f"Dry run: {len(convertible)} file(s) would be converted")
+    for f in convertible:
+        detail(f"  {f.relative_path} ({f.display_name}) -> {f.target_format}")
+
+
+def _print_check_fix_results(report: Any, *, verbose: bool = False) -> None:
+    """Print conversion results.
+
+    Args:
+        report: CheckReport with conversion results.
+        verbose: If True, show details for all files including skipped.
+    """
+    from portolan_cli.convert import ConversionStatus
+
+    conv = report.conversion_report
+    if conv is None:
+        return
+
+    if conv.total == 0:
+        info("No files to convert")
+        return
+
+    # Summary
+    if conv.succeeded > 0:
+        success(f"Converted {conv.succeeded} file(s)")
+    if conv.skipped > 0:
+        detail(f"  {conv.skipped} file(s) skipped (already cloud-native)")
+    if conv.failed > 0:
+        error(f"  {conv.failed} file(s) failed")
+    if conv.invalid > 0:
+        warn(f"  {conv.invalid} file(s) invalid after conversion")
+
+    # Show details for failures (always) and successes/skipped (if verbose)
+    for r in conv.results:
+        if r.status == ConversionStatus.FAILED:
+            error(f"  {r.source.name}: {r.error}")
+        elif r.status == ConversionStatus.SUCCESS:
+            detail(f"  {r.source.name} -> {r.output.name if r.output else 'N/A'}")
+        elif verbose and r.status == ConversionStatus.SKIPPED:
+            detail(f"  {r.source.name} (skipped - already cloud-native)")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
