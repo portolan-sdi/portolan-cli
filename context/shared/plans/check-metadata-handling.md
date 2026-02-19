@@ -841,6 +841,98 @@ What we're building handles:
 
 ---
 
+## Test Fixtures (from Issue #29)
+
+This implementation requires test fixtures for versions.json and STAC metadata. Style.json fixtures are out of scope (separate styling epic).
+
+### versions.json Fixtures
+
+Location: `tests/fixtures/metadata/versions/`
+
+| Fixture | Purpose | Test Scenario |
+|---------|---------|---------------|
+| `valid/versions_v1.json` | Single version, clean state | Fresh catalog, no history |
+| `valid/versions_v3.json` | Multiple versions with history | Version traversal, history queries |
+| `valid/versions_breaking.json` | Has breaking change flag | Breaking change detection |
+| `valid/versions_partial_sync.json` | Mixed sync state | Partial sync scenarios |
+| `invalid/versions_bad_checksum.json` | Checksum mismatch | Integrity validation |
+| `invalid/versions_missing_current.json` | current_version → non-existent | Reference validation |
+| `invalid/versions_duplicate.json` | Duplicate version entries | Uniqueness validation |
+
+**Generation approach:**
+- Use existing `VersionModel`, `AssetVersion`, `SchemaFingerprint` dataclasses
+- Generate valid fixtures programmatically via `to_dict()`
+- Hand-corrupt for invalid fixtures with comments explaining corruption
+
+### STAC Fixtures
+
+Location: `tests/fixtures/metadata/stac/`
+
+| Fixture | Purpose | Test Scenario |
+|---------|---------|---------------|
+| `valid/catalog_minimal.json` | Minimal valid catalog | Basic parsing |
+| `valid/catalog_full.json` | Full catalog with extensions | Extension handling |
+| `valid/collection_vector.json` | Vector data collection | GeoParquet metadata |
+| `valid/collection_raster.json` | Raster data collection | COG metadata |
+| `valid/item_geoparquet.json` | GeoParquet item with assets | Asset linking |
+| `valid/item_cog.json` | COG item with assets | Raster item handling |
+| `invalid/catalog_missing_id.json` | Missing required `id` field | Required field validation |
+| `invalid/collection_bad_extent.json` | Malformed extent | Extent validation |
+| `invalid/item_no_geometry.json` | Missing geometry | Geometry validation |
+| `invalid/item_wrong_type.json` | `type` not "Feature" | Type validation |
+
+**Generation approach:**
+- Use existing `CatalogModel`, `CollectionModel`, `ItemModel` dataclasses
+- Use `pystac` for validation (ensures spec compliance)
+- Run `stac-validator` on all STAC fixtures before committing
+
+### Fixture Generation Script
+
+Extend `tests/fixtures/generate.py` with:
+
+```python
+def generate_versions_fixtures():
+    """Generate versions.json test fixtures."""
+    # Valid fixtures
+    generate_versions_v1()      # Single version
+    generate_versions_v3()      # Multiple versions
+    generate_versions_breaking() # Breaking change
+    generate_versions_partial()  # Mixed sync
+
+    # Invalid fixtures (hand-corrupted)
+    generate_versions_invalid()
+
+def generate_stac_fixtures():
+    """Generate STAC test fixtures."""
+    # Valid fixtures using our models
+    generate_catalog_minimal()
+    generate_catalog_full()
+    generate_collection_vector()
+    generate_collection_raster()
+    generate_item_geoparquet()
+    generate_item_cog()
+
+    # Invalid fixtures
+    generate_stac_invalid()
+
+    # Validate with stac-validator
+    validate_stac_fixtures()
+```
+
+### Fixture-Test Mapping
+
+| Phase | Task | Required Fixtures |
+|-------|------|-------------------|
+| 2.1 | `get_stored_metadata()` | STAC items, versions.json |
+| 2.3 | `is_stale()` | versions.json with mtime |
+| 3.1 | `check_file_metadata()` | STAC items (valid + invalid) |
+| 3.3 | `validate_collection_extent()` | Collections + items |
+| 3.4 | `validate_catalog_links()` | Catalog with links |
+| 4.1 | `update_item_metadata()` | Existing items |
+| 4.2 | `create_missing_item()` | No fixture (creates new) |
+
+---
+
 ## Summary
 
 ### What We're Building
@@ -881,3 +973,63 @@ An internal `metadata` module (analogous to `convert`) that:
 - Validation: `check_file_metadata()`, `check_directory_metadata()`
 - Update: `update_item_metadata()`, `update_collection_extent()`
 - Integration: `fix_metadata()`, wiring into `check` command
+
+---
+
+## Parallel Implementation Strategy
+
+### Worktree Structure
+
+```
+portolan-cli/                    # Main branch (feature/check-metadata-scope)
+├── .worktrees/
+│   ├── phase1-structures/       # Phase 1: Data structures + versions.json fixtures
+│   ├── phase2a-detection/       # Phase 2a: Detection functions
+│   ├── phase2b-stac-validation/ # Phase 2b: STAC fixtures + validation
+│   └── phase2c-update/          # Phase 2c: Update functions
+```
+
+### Execution Order
+
+```mermaid
+gantt
+    title Parallel Implementation Timeline
+    dateFormat HH:mm
+    axisFormat %H:%M
+
+    section Phase 1 (Sequential)
+    Data structures + versions.json fixtures :p1, 00:00, 30m
+
+    section Phase 2 (Parallel)
+    Detection functions (2.1-2.4, 3.1) :p2a, after p1, 45m
+    STAC fixtures + validation (3.2-3.4) :p2b, after p1, 45m
+    Update functions (4.1-4.4) :p2c, after p1, 45m
+
+    section Phase 3 (Sequential)
+    Merge + Integration (5.1-5.4) :p3, after p2a p2b p2c, 30m
+```
+
+### Branch Dependencies
+
+| Worktree | Branch | Depends On | Deliverables |
+|----------|--------|------------|--------------|
+| phase1-structures | `feature/check-metadata-structures` | main | `MetadataStatus`, `FileMetadataState`, `MetadataCheckResult`, `MetadataReport`, versions.json fixtures |
+| phase2a-detection | `feature/check-metadata-detection` | phase1 | `get_stored_metadata()`, `get_current_metadata()`, `is_stale()`, `detect_changes()`, `check_file_metadata()` |
+| phase2b-stac-validation | `feature/check-metadata-stac` | phase1 | STAC fixtures, `check_directory_metadata()`, `validate_collection_extent()`, `validate_catalog_links()` |
+| phase2c-update | `feature/check-metadata-update` | phase1 | `update_item_metadata()`, `create_missing_item()`, `update_collection_extent()`, `update_versions_tracking()` |
+
+### Merge Strategy
+
+1. **Phase 1 completes** → Merge to `feature/check-metadata-scope`
+2. **Phase 2a/2b/2c complete in parallel** → Each merges to `feature/check-metadata-scope`
+3. **Resolve conflicts** → Phase 2 branches may touch same files (resolve on merge)
+4. **Phase 3 integration** → Final wiring on `feature/check-metadata-scope`
+
+### TDD Workflow Per Worktree
+
+Each agent follows strict TDD:
+1. Write test specs in `tests/specs/` (human-readable)
+2. Write failing tests in `tests/unit/`
+3. Implement minimal code to pass
+4. Add edge case tests
+5. Run full test suite before merge
