@@ -7,6 +7,7 @@ All errors follow the format PRTLN-{category}{number}:
 - PRTLN-ITM*: Item errors
 - PRTLN-VER*: Version errors
 - PRTLN-VAL*: Validation errors
+- PRTLN-CNV*: Conversion errors
 """
 
 from __future__ import annotations
@@ -267,3 +268,62 @@ class InvalidBboxError(ValidationError):
 
     def __init__(self, reason: str) -> None:
         super().__init__(f"Invalid bounding box: {reason}", reason=reason)
+
+
+# Conversion Errors (PRTLN-CNV*)
+class ConversionError(PortolanError):
+    """Base class for conversion-related errors."""
+
+    code = "PRTLN-CNV000"
+
+
+class UnsupportedFormatError(ConversionError):
+    """Raised when a file format is not supported for conversion.
+
+    Error code: PRTLN-CNV001
+    """
+
+    code = "PRTLN-CNV001"
+
+    def __init__(self, path: str, format_type: str) -> None:
+        super().__init__(
+            f"Unsupported format '{format_type}' for file {path}",
+            path=path,
+            format_type=format_type,
+        )
+
+
+class ConversionFailedError(ConversionError):
+    """Raised when file conversion fails due to an error.
+
+    Error code: PRTLN-CNV002
+    """
+
+    code = "PRTLN-CNV002"
+
+    def __init__(self, path: str, original_error: Exception) -> None:
+        super().__init__(
+            f"Conversion failed for {path}: {original_error}",
+            path=path,
+            original_error=original_error,
+        )
+
+
+class ValidationFailedError(ConversionError):
+    """Raised when converted output fails validation.
+
+    Error code: PRTLN-CNV003
+    """
+
+    code = "PRTLN-CNV003"
+
+    def __init__(self, path: str, validation_errors: list[str]) -> None:
+        error_count = len(validation_errors)
+        errors_summary = "; ".join(validation_errors[:3])
+        if error_count > 3:
+            errors_summary += f"... and {error_count - 3} more"
+        super().__init__(
+            f"Validation failed for {path}: {errors_summary}",
+            path=path,
+            validation_errors=validation_errors,
+        )
