@@ -1,0 +1,16 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "bad-extent-collection",
+  "description": "Collection with malformed extent (missing required fields)",
+  "license": "proprietary",
+  "extent": {
+    "spatial": {
+      "bbox": "not-an-array"
+    },
+    "temporal": {
+      "interval": "also-not-an-array"
+    }
+  },
+  "links": []
+}

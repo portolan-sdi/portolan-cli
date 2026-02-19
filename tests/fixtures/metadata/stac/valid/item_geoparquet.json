@@ -1,0 +1,52 @@
+{
+  "type": "Feature",
+  "stac_version": "1.0.0",
+  "id": "parcels-2026q1",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [[
+      [-122.52, 37.7],
+      [-122.35, 37.7],
+      [-122.35, 37.82],
+      [-122.52, 37.82],
+      [-122.52, 37.7]
+    ]]
+  },
+  "bbox": [-122.52, 37.7, -122.35, 37.82],
+  "properties": {
+    "datetime": "2026-01-15T00:00:00Z",
+    "created": "2026-01-20T10:30:00Z",
+    "updated": "2026-01-20T10:30:00Z"
+  },
+  "collection": "sf-parcels",
+  "assets": {
+    "data": {
+      "href": "./parcels-2026q1.parquet",
+      "type": "application/x-parquet",
+      "title": "Parcel Data",
+      "roles": ["data"]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./parcels-2026q1.json",
+      "type": "application/geo+json"
+    },
+    {
+      "rel": "parent",
+      "href": "./collection.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "collection",
+      "href": "./collection.json",
+      "type": "application/json"
+    }
+  ]
+}

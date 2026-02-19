@@ -1,0 +1,21 @@
+{
+  "type": "FeatureCollection",
+  "stac_version": "1.0.0",
+  "id": "wrong-type-item",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [-122.4, 37.8]
+  },
+  "bbox": [-122.41, 37.79, -122.39, 37.81],
+  "properties": {
+    "datetime": "2026-01-15T00:00:00Z"
+  },
+  "collection": "test-collection",
+  "assets": {
+    "data": {
+      "href": "./data.parquet",
+      "type": "application/x-parquet"
+    }
+  },
+  "links": []
+}

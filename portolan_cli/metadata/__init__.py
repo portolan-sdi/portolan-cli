@@ -47,6 +47,13 @@ from portolan_cli.metadata.models import (
     MetadataReport,
     MetadataStatus,
 )
+from portolan_cli.metadata.validation import (
+    ValidationMessage,
+    ValidationResult,
+    check_directory_metadata,
+    validate_catalog_links,
+    validate_collection_extent,
+)
 
 __all__ = [
     # Extraction
@@ -67,4 +74,10 @@ __all__ = [
     "MetadataCheckResult",
     "MetadataReport",
     "MetadataStatus",
+    # Validation
+    "ValidationMessage",
+    "ValidationResult",
+    "check_directory_metadata",
+    "validate_catalog_links",
+    "validate_collection_extent",
 ]

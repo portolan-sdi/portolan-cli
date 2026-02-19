@@ -1,0 +1,41 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "sf-imagery",
+  "title": "San Francisco Aerial Imagery",
+  "description": "Ortho-rectified aerial imagery for San Francisco, stored as COG",
+  "license": "PDDL-1.0",
+  "extent": {
+    "spatial": {
+      "bbox": [[-122.52, 37.7, -122.35, 37.82]]
+    },
+    "temporal": {
+      "interval": [["2025-06-15T00:00:00Z", "2025-08-20T00:00:00Z"]]
+    }
+  },
+  "summaries": {
+    "gsd": [0.3],
+    "eo:bands": [
+      {"name": "red", "common_name": "red"},
+      {"name": "green", "common_name": "green"},
+      {"name": "blue", "common_name": "blue"}
+    ]
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./collection.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    }
+  ]
+}
