@@ -2,7 +2,7 @@
 
 ## Current Focus
 
-> **Phase 3: Architecture Dialogue** -- Adversarial review
+> **Phase 3: Architecture Dialogue** -- COMPLETE. Ready for task decomposition.
 
 ---
 
@@ -73,13 +73,18 @@ graph TD
     B -->|No| C{Format type?}
     B -->|Yes| D{Optimized?}
     C -->|Vector| E[geoparquet-io convert]
-    C -->|Raster| F[rio-cogeo convert]
-    D -->|No| G[geoparquet-io check --fix / rio-cogeo]
-    D -->|Yes| H[Skip - already good]
-    E --> I[Output]
-    F --> I
-    G --> I
+    C -->|Raster| F[rio-cogeo create]
+    D -->|No vector| G[geoparquet-io check --fix]
+    D -->|No raster| H[rio-cogeo create to temp + replace]
+    D -->|Yes| I[Skip - already good]
+    E --> J[Validate output]
+    F --> J
+    G --> J
+    H --> J
+    J --> K[Update versions.json]
 ```
+
+**Note on rio-cogeo:** Unlike geoparquet-io, rio-cogeo has **no `--fix` or in-place optimization mode**. It only has `create` (make new COG) and `validate` (check existing). To "fix" a suboptimal COG, we must create a new file and replace the original. See [rio-cogeo CLI docs](https://cogeotiff.github.io/rio-cogeo/CLI/).
 
 ## Task Decomposition
 
@@ -101,10 +106,10 @@ graph TD
 ### What Needs to Be Built
 
 ```mermaid
-graph LR
-    A[1. ConversionResult] --> B[2. Refactor convert_file]
-    B --> C[3. ConversionReport]
-    C --> D[4. convert_directory]
+graph TD
+    A[1. ConversionResult dataclass] --> B[2. Refactor convert_file]
+    B --> C[3. ConversionReport dataclass]
+    C --> D[4. convert_directory with callback]
     D --> E[5. versions.json source tracking]
     E --> F[6. Wire into init workflow]
 ```
@@ -203,13 +208,14 @@ Syncing to s3://my-bucket/...
 
 | Scenario | Expected Behavior | Notes |
 |----------|-------------------|-------|
-| Conversion fails midway | Keep original, delete partial output | Never leave user with neither |
+| Conversion fails midway | Keep original, flag output as INVALID | Never delete - let user inspect and decide |
 | One file in batch fails | Continue with others, report summary at end | "3/4 succeeded, 1 failed: parcels.shp" |
 | Re-run after partial failure | Skip already-converted files | Idempotent - only process what's needed |
 | Shapefile with missing sidecars | Warn, attempt conversion anyway | geoparquet-io may handle it |
 | Already cloud-native | Skip, no-op | Don't re-convert GeoParquet to GeoParquet |
 | Output file already exists | Skip if optimized, re-optimize if not | Portolan is opinionated - enforce standards |
-| Cloud-native but not optimized | Re-optimize in-place | Use `geoparquet-io check --fix` for vectors |
+| Cloud-native but not optimized (vector) | Re-optimize in-place | Use `geoparquet-io check --fix` |
+| Cloud-native but not optimized (raster) | Re-create COG, replace original | rio-cogeo has no `--fix`; must create new file |
 | Permission error | FAIL LOUDLY | Don't silently skip — error with clear message |
 | Format edge cases | Delegate to upstream | geoparquet-io/rio-cogeo handle projections, multi-geometry, etc. |
 
@@ -234,16 +240,89 @@ Syncing to s3://my-bucket/...
 
 ## Open Questions
 
-- What triggers this? (CLI command, part of another workflow?)
-- What is the unit of work? (single file, directory, batch?)
-- What constitutes success? (file exists, validates, metadata extracted?)
-- What is the failure mode? (rollback, skip, retry?)
-- Who is the primary user? (developer, CI, analyst?)
+~~All resolved - see Resolved Assumptions table above.~~
 
 ## Parking Lot
 
-- **COG optimization settings:** Need to research defaults for compression, tile size, overview resampling. Ask Chris. Does rio-cogeo have a `--fix` equivalent for partial COGs?
-- **GeoParquet optimization settings:** SOLVED - delegate to `geoparquet-io check --fix`. gpio is opinionated by default.
-- **Source sync detection:** Tiered approach — MVP uses mtime only; later add heuristic (bbox/feature count) then hash if needed. On change detected: warn user, offer re-convert. Cloud-native file remains ground truth.
-- **rio-cogeo OOM risk:** geoparquet-io uses DuckDB streaming (safe). Need to verify rio-cogeo handles large rasters without OOM.
-- **Partial write corruption:** How to handle? Write to temp file, then atomic rename? Needs investigation.
+~~All items resolved.~~
+
+## Resolved Technical Decisions
+
+### COG Optimization Settings
+
+**Single opinionated default** (no per-data-type profiles):
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| Compression | DEFLATE | Universal compatibility, lossless, works everywhere |
+| Predictor | 2 (horizontal differencing) | Improves compression for all data types |
+| Tile size | 512x512 | Matches rio-cogeo default; fewer tiles = fewer HTTP requests |
+| Overview resampling | nearest | Safe for all data types (categorical, imagery, elevation) |
+
+**Power users:** For fine-tuned control (WEBP for imagery, LERC for elevation), use `rio_cogeo.cog_translate()` directly. Portolan is for batch workflows, not per-file optimization.
+
+**Sources:**
+- [Cloud Native Geo Guide](https://guide.cloudnativegeo.org/cloud-optimized-geotiffs/cogs-details.html)
+- [Koko Alberti's compression guide](https://kokoalberti.com/articles/geotiff-compression-optimization-guide/)
+- Vincent Sarago's COG analysis (rio-cogeo author)
+
+### GeoParquet Optimization Settings
+
+**Delegate to geoparquet-io** - it's opinionated by default (bbox columns, Hilbert sort, etc.).
+
+### Partial Write / Corruption Handling
+
+**Strategy: Post-hoc validation, flag invalid files**
+
+| Step | Action |
+|------|--------|
+| 1. Convert | Let rio-cogeo/geoparquet-io write directly (no wrapper) |
+| 2. Validate | Run `cog_validate()` for COGs, check parquet footer for GeoParquet |
+| 3. On failure | **Flag as INVALID** in ConversionReport - do NOT delete |
+| 4. User decides | Manual inspection, retry, or use upstream tools |
+
+**Why not atomic write wrappers:**
+- Wrapping doesn't prevent corruption *during* the library's write
+- Adds I/O overhead (write twice for large files)
+- Post-hoc validation catches corruption from any cause (crashes, disk errors, OOM)
+
+**Atomic writes for metadata only:** versions.json, catalog.json use temp+rename pattern (small files we control).
+
+### ConversionStatus Values
+
+```python
+class ConversionStatus(Enum):
+    SUCCESS = "success"    # Converted and validated
+    SKIPPED = "skipped"    # Already cloud-native
+    FAILED = "failed"      # Conversion threw exception
+    INVALID = "invalid"    # Converted but failed validation (file kept for inspection)
+```
+
+### rio-cogeo Memory Handling
+
+**Delegate to rio-cogeo's auto in-memory threshold** (~120M pixels / ~360MB for RGB uint8).
+
+- Below threshold: in-memory processing (faster)
+- Above threshold: temp file on disk (safer)
+- Environment variable `IN_MEMORY_THRESHOLD` available for override
+- Document `--no-in-memory` equivalent for very large rasters if needed
+
+### rio-cogeo Has No `--fix` Mode
+
+**Confirmed via [rio-cogeo documentation](https://cogeotiff.github.io/rio-cogeo/CLI/):**
+
+| Command | Purpose |
+|---------|---------|
+| `rio cogeo create` | Create new COG from any GeoTIFF |
+| `rio cogeo validate` | Check if file is valid COG |
+| `rio cogeo info` | Show raster metadata |
+
+**No `--fix` or optimize command exists.** To "fix" a suboptimal COG:
+
+1. Run `rio cogeo create existing.tif temp_optimized.tif`
+2. Validate the output
+3. Replace original with optimized version
+
+This differs from geoparquet-io which has `check --fix` for in-place optimization.
+
+**Implication for Portolan:** Raster optimization always requires creating a temporary file and replacing the original. This is fine - rio-cogeo already uses temp files internally during `cog_translate()`.
