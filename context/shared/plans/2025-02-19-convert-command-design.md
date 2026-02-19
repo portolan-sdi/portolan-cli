@@ -88,7 +88,126 @@ graph TD
 
 ## Task Decomposition
 
-[Granular pieces that emerge from discussion -- NOT auto-generated]
+### Phase 1: Core Data Structures
+
+| ID | Task | Files | Dependencies | Acceptance Criteria |
+|----|------|-------|--------------|---------------------|
+| 1.1 | **Test spec**: ConversionStatus enum values and behavior | `tests/specs/convert_status.md` | None | Spec defines all 4 states (SUCCESS, SKIPPED, FAILED, INVALID) with examples |
+| 1.2 | **Test**: ConversionStatus enum | `tests/unit/test_convert.py` | 1.1 | Tests for enum values, string representation, comparison |
+| 1.3 | **Implement**: ConversionStatus enum | `portolan_cli/convert.py` | 1.2 | Enum passes all tests |
+| 1.4 | **Test**: ConversionResult dataclass | `tests/unit/test_convert.py` | 1.3 | Tests for creation, fields (source, output, format_from, format_to, status, error, duration_ms) |
+| 1.5 | **Implement**: ConversionResult dataclass | `portolan_cli/convert.py` | 1.4 | Dataclass passes all tests, includes `to_dict()` for JSON serialization |
+
+### Phase 2: Single-File Conversion API
+
+| ID | Task | Files | Dependencies | Acceptance Criteria |
+|----|------|-------|--------------|---------------------|
+| 2.1 | **Test spec**: convert_file() behavior for all scenarios | `tests/specs/convert_file.md` | 1.5 | Spec covers: vector conversion, raster conversion, already cloud-native (skip), unsupported format, conversion failure, validation failure |
+| 2.2 | **Test**: convert_file() with cloud-native input (skip case) | `tests/unit/test_convert.py` | 2.1 | Returns SKIPPED status, no file operations |
+| 2.3 | **Test**: convert_file() with vector input | `tests/unit/test_convert.py` | 2.1 | Wraps existing `convert_vector()`, returns SUCCESS, output path correct |
+| 2.4 | **Test**: convert_file() with raster input | `tests/unit/test_convert.py` | 2.1 | Wraps existing `convert_raster()`, returns SUCCESS, uses COG defaults from plan |
+| 2.5 | **Test**: convert_file() handles conversion exception | `tests/unit/test_convert.py` | 2.1 | Returns FAILED status, error message captured, original file preserved |
+| 2.6 | **Test**: convert_file() handles validation failure | `tests/unit/test_convert.py` | 2.1 | Returns INVALID status, output file preserved for inspection |
+| 2.7 | **Implement**: convert_file() function | `portolan_cli/convert.py` | 2.2-2.6 | All tests pass; uses `get_cloud_native_status()` from formats.py; wraps `convert_vector()`/`convert_raster()` from dataset.py |
+| 2.8 | **Refactor**: Update convert_raster() with plan's COG defaults | `portolan_cli/dataset.py` | 2.7 | DEFLATE compression, predictor=2, 512x512 tiles, nearest resampling |
+
+### Phase 3: Batch Conversion with Callbacks
+
+| ID | Task | Files | Dependencies | Acceptance Criteria |
+|----|------|-------|--------------|---------------------|
+| 3.1 | **Test spec**: ConversionReport and convert_directory() | `tests/specs/convert_directory.md` | 2.7 | Spec covers: report aggregation, callback invocation, partial failure handling, idempotent re-runs |
+| 3.2 | **Test**: ConversionReport dataclass | `tests/unit/test_convert.py` | 3.1 | Tests for `succeeded`, `failed`, `skipped`, `invalid` counts; `to_dict()` |
+| 3.3 | **Implement**: ConversionReport dataclass | `portolan_cli/convert.py` | 3.2 | Aggregates list of ConversionResult, exposes counts |
+| 3.4 | **Test**: convert_directory() basic functionality | `tests/unit/test_convert.py` | 3.3 | Converts multiple files, returns ConversionReport |
+| 3.5 | **Test**: convert_directory() callback invocation | `tests/unit/test_convert.py` | 3.4 | Callback called for each file with ConversionResult |
+| 3.6 | **Test**: convert_directory() continues after failure | `tests/unit/test_convert.py` | 3.4 | One file fails, others still processed |
+| 3.7 | **Test**: convert_directory() skips already-converted | `tests/unit/test_convert.py` | 3.4 | Re-run on same directory skips cloud-native files |
+| 3.8 | **Implement**: convert_directory() function | `portolan_cli/convert.py` | 3.4-3.7 | All tests pass; signature: `convert_directory(path, on_progress=None) -> ConversionReport` |
+
+### Phase 4: Conversion Error Types
+
+| ID | Task | Files | Dependencies | Acceptance Criteria |
+|----|------|-------|--------------|---------------------|
+| 4.1 | **Test**: ConversionError base class | `tests/unit/test_errors.py` | None | Follows PortolanError pattern with PRTLN-CNV* code |
+| 4.2 | **Test**: UnsupportedFormatError (PRTLN-CNV001) | `tests/unit/test_errors.py` | 4.1 | Has path, format_type context |
+| 4.3 | **Test**: ConversionFailedError (PRTLN-CNV002) | `tests/unit/test_errors.py` | 4.1 | Has path, original_error context |
+| 4.4 | **Test**: ValidationFailedError (PRTLN-CNV003) | `tests/unit/test_errors.py` | 4.1 | Has path, validation_errors context |
+| 4.5 | **Implement**: Conversion error types | `portolan_cli/errors.py` | 4.1-4.4 | All error types follow PortolanError pattern |
+| 4.6 | **Refactor**: convert_file() to use new error types | `portolan_cli/convert.py` | 4.5, 2.7 | Raises/catches specific error types |
+
+### Phase 5: Source Tracking in versions.json
+
+| ID | Task | Files | Dependencies | Acceptance Criteria |
+|----|------|-------|--------------|---------------------|
+| 5.1 | **Test spec**: Source tracking fields | `tests/specs/versions_source_tracking.md` | None | Spec defines `source_path`, `source_mtime` fields on Asset |
+| 5.2 | **Test**: Asset with source tracking fields | `tests/unit/test_versions.py` | 5.1 | Asset accepts optional `source_path`, `source_mtime` |
+| 5.3 | **Implement**: Add source tracking to Asset dataclass | `portolan_cli/versions.py` | 5.2 | Optional fields: `source_path: str | None`, `source_mtime: float | None` |
+| 5.4 | **Test**: _serialize_versions_file includes source fields | `tests/unit/test_versions.py` | 5.3 | JSON output includes source fields when present |
+| 5.5 | **Test**: _parse_versions_file handles source fields | `tests/unit/test_versions.py` | 5.3 | Reads source fields from JSON, defaults to None |
+| 5.6 | **Implement**: Update serialize/parse for source tracking | `portolan_cli/versions.py` | 5.4-5.5 | Backward compatible: old versions.json still works |
+
+### Phase 6: Integration with check --fix Workflow
+
+| ID | Task | Files | Dependencies | Acceptance Criteria |
+|----|------|-------|--------------|---------------------|
+| 6.1 | **Test spec**: check --fix integration | `tests/specs/check_fix_integration.md` | 3.8, 5.6 | Spec covers: scan → convert → validate → update versions.json |
+| 6.2 | **Test**: check command detects convertible files | `tests/integration/test_check_command.py` | 6.1 | Uses scan result, identifies CONVERTIBLE files |
+| 6.3 | **Test**: check --fix converts and validates | `tests/integration/test_check_command.py` | 6.2 | Calls convert_directory(), validates outputs |
+| 6.4 | **Test**: check --fix updates versions.json | `tests/integration/test_check_command.py` | 6.3 | Assets have source tracking fields |
+| 6.5 | **Test**: check --fix with --dry-run | `tests/integration/test_check_command.py` | 6.3 | Shows what would happen, no file changes |
+| 6.6 | **Test**: check --fix with partial failure | `tests/integration/test_check_command.py` | 6.3 | Reports summary, continues after failures |
+| 6.7 | **Implement**: check command with --fix flag | `portolan_cli/cli.py`, `portolan_cli/check.py` | 6.2-6.6 | Wires convert_directory() into check workflow |
+| 6.8 | **Implement**: Progress output via callback | `portolan_cli/cli.py` | 6.7 | Uses `click.progressbar()` in CLI layer |
+
+### Phase 7: Edge Cases and Hardening
+
+| ID | Task | Files | Dependencies | Acceptance Criteria |
+|----|------|-------|--------------|---------------------|
+| 7.1 | **Test**: Shapefile with missing sidecars | `tests/unit/test_convert.py` | 2.7 | Warns, attempts conversion (delegates to geoparquet-io) |
+| 7.2 | **Test**: Permission error during conversion | `tests/unit/test_convert.py` | 2.7 | Returns FAILED with clear error message |
+| 7.3 | **Test**: Output file already exists (cloud-native) | `tests/unit/test_convert.py` | 2.7 | Skips if optimized |
+| 7.4 | **Test**: Output file already exists (not optimized) | `tests/unit/test_convert.py` | 2.7 | Re-optimizes vector with geoparquet-io; re-creates raster COG |
+| 7.5 | **Test**: Raster "fix" (non-COG to COG replacement) | `tests/unit/test_convert.py` | 2.7 | Creates temp file, validates, replaces original |
+| 7.6 | **Test**: Source file changed (mtime detection) | `tests/unit/test_convert.py` | 5.6 | Warns user when source mtime differs from recorded |
+| 7.7 | **Integration test**: Full convert workflow with real files | `tests/integration/test_convert_workflow.py` | All above | Uses `tests/fixtures/` data, end-to-end conversion |
+
+### Implementation Order (Recommended)
+
+```
+Phase 1 (Core) ──────────────────────────────────────────────▶
+    │
+    ▼
+Phase 2 (Single File) ──────────────────────────────────────▶
+    │
+    ├── Phase 4 (Errors) ──────────────▶
+    │
+    ▼
+Phase 3 (Batch) ────────────────────────────────────────────▶
+    │
+    ▼
+Phase 5 (Source Tracking) ──────────────────────────────────▶
+    │
+    ▼
+Phase 6 (Integration) ──────────────────────────────────────▶
+    │
+    ▼
+Phase 7 (Edge Cases) ───────────────────────────────────────▶
+```
+
+**Estimated effort:** 3-4 sessions (each phase ~30-60 min)
+
+**Key files created:**
+- `portolan_cli/convert.py` (new) - Core conversion API
+- `portolan_cli/check.py` (new) - Check command implementation
+- `tests/specs/convert_*.md` (new) - Test specifications
+- `tests/unit/test_convert.py` (new) - Unit tests
+- `tests/integration/test_convert_workflow.py` (new) - Integration tests
+
+**Key files modified:**
+- `portolan_cli/errors.py` - Add PRTLN-CNV* error types
+- `portolan_cli/versions.py` - Add source tracking fields
+- `portolan_cli/dataset.py` - Update COG defaults
+- `portolan_cli/cli.py` - Wire check --fix command
 
 ## Dependency Order
 
