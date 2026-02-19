@@ -461,7 +461,7 @@ class TestCheckDirectoryMetadata:
 class TestValidationIntegration:
     """Integration tests combining multiple validation functions."""
 
-    @pytest.mark.unit
+    @pytest.mark.integration
     def test_full_catalog_validation(self, tmp_path: Path) -> None:
         """Full validation of a complete STAC catalog structure."""
         # Create a complete valid STAC catalog structure

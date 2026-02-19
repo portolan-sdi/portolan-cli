@@ -41,7 +41,7 @@ class StoredMetadata:
     """
 
     item_id: str
-    bbox: list[float]
+    bbox: list[float] | None
     source_mtime: float | None
     sha256: str | None
     feature_count: int | None
@@ -81,14 +81,8 @@ def get_stored_metadata(
     if item_data.get("type") != "Feature":
         return None
 
-    # Extract bbox from item
+    # Extract bbox from item (None if not explicitly provided)
     bbox = item_data.get("bbox")
-    if bbox is None:
-        # Try to get from geometry
-        geometry = item_data.get("geometry")
-        if geometry:
-            # Could compute bbox from geometry, but for now require explicit bbox
-            pass
 
     # Default values for optional fields
     source_mtime: float | None = None
@@ -131,7 +125,7 @@ def get_stored_metadata(
 
     return StoredMetadata(
         item_id=item_data.get("id", file_path.stem),
-        bbox=bbox if bbox else [],
+        bbox=bbox,  # None if not explicitly provided (avoid spurious heuristics_changed)
         source_mtime=source_mtime,
         sha256=sha256,
         feature_count=feature_count,
@@ -353,7 +347,7 @@ def check_file_metadata(
         current_mtime=current.current_mtime,
         stored_mtime=stored.source_mtime,
         current_bbox=current.current_bbox,
-        stored_bbox=stored.bbox if stored.bbox else None,
+        stored_bbox=stored.bbox,
         current_feature_count=current.current_feature_count,
         stored_feature_count=stored.feature_count,
         current_schema_fingerprint=current.current_schema_fingerprint,

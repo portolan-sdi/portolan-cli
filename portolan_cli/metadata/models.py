@@ -135,6 +135,10 @@ class FileMetadataState:
         if self.stored_bbox is None or self.stored_feature_count is None:
             return True
 
+        # If current extraction failed (None), don't flag as changed to avoid spurious detections
+        if self.current_bbox is None or self.current_feature_count is None:
+            return False
+
         # Compare bbox with tolerance for floating-point precision
         if not _bboxes_equal(self.current_bbox, self.stored_bbox):
             return True

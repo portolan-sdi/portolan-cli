@@ -124,7 +124,8 @@ class TestFileMetadataState:
 
         d = state.to_dict()
 
-        assert d["file_path"] == "/path/to/data.parquet"
+        # Use Path for cross-platform comparison (Windows uses backslashes)
+        assert d["file_path"] == str(Path("/path/to/data.parquet"))
         assert d["current_mtime"] == 1234567890.0
         assert d["stored_mtime"] == 1234567880.0
         assert d["current_feature_count"] == 1000
@@ -303,7 +304,8 @@ class TestMetadataCheckResult:
 
         d = result.to_dict()
 
-        assert d["file_path"] == "/path/to/data.parquet"
+        # Use Path for cross-platform comparison (Windows uses backslashes)
+        assert d["file_path"] == str(Path("/path/to/data.parquet"))
         assert d["status"] == "stale"  # Enum value as string
         assert d["message"] == "File has been modified"
         assert d["changes"] == ["mtime", "bbox"]

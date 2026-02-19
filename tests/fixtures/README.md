@@ -35,16 +35,29 @@ fixtures/
 │       ├── not_georeferenced.tif  # Regular TIFF, no CRS
 │       └── truncated.tif          # Corrupted file
 ├── metadata/
-│   └── versions/        # versions.json fixtures for check metadata
+│   ├── versions/        # versions.json fixtures for check metadata
+│   │   ├── valid/
+│   │   │   ├── versions_v1.json         # Single version, clean state
+│   │   │   ├── versions_v3.json         # Multiple versions with history
+│   │   │   ├── versions_breaking.json   # Has breaking change flag
+│   │   │   └── versions_partial_sync.json  # Mixed sync state
+│   │   └── invalid/
+│   │       ├── versions_bad_checksum.json    # Checksum too short
+│   │       ├── versions_missing_current.json # current_version not found
+│   │       └── versions_duplicate.json       # Duplicate version entries
+│   └── stac/            # STAC catalog/collection/item fixtures
 │       ├── valid/
-│       │   ├── versions_v1.json         # Single version, clean state
-│       │   ├── versions_v3.json         # Multiple versions with history
-│       │   ├── versions_breaking.json   # Has breaking change flag
-│       │   └── versions_partial_sync.json  # Mixed sync state
+│       │   ├── catalog_minimal.json     # Minimal valid STAC catalog
+│       │   ├── catalog_full.json        # Full catalog with all optional fields
+│       │   ├── collection_vector.json   # Vector data collection
+│       │   ├── collection_raster.json   # Raster data collection
+│       │   ├── item_geoparquet.json     # GeoParquet STAC item
+│       │   └── item_cog.json            # COG STAC item with Projection extension
 │       └── invalid/
-│           ├── versions_bad_checksum.json    # Checksum too short
-│           ├── versions_missing_current.json # current_version not found
-│           └── versions_duplicate.json       # Duplicate version entries
+│           ├── catalog_missing_id.json  # Missing required 'id' field
+│           ├── item_no_geometry.json    # Item missing geometry
+│           ├── item_wrong_type.json     # Wrong 'type' value
+│           └── collection_bad_extent.json  # Malformed extent
 └── edge/                # Edge cases
     ├── unicode_properties.geojson    # Non-ASCII property names/values
     ├── special_filename spaces.geojson  # Spaces in filename
