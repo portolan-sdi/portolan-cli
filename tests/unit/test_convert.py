@@ -1262,6 +1262,10 @@ class TestConvertDirectoryEdgeCases:
         assert report.total == 1
 
     @pytest.mark.unit
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
+    )
     def test_mixed_valid_and_invalid_files(
         self,
         valid_points_geojson: Path,
