@@ -256,3 +256,91 @@ class PMTilesRecommendedRule(ValidationRule):
             )
 
         return self._pass(f"All {len(parquet_files)} GeoParquet datasets have PMTiles derivatives")
+
+
+class MetadataFreshRule(ValidationRule):
+    """Check that all geo-asset files have fresh STAC metadata.
+
+    This rule scans for GeoParquet and COG files in collections
+    and verifies their STAC item metadata is up-to-date using
+    MTIME + heuristic change detection.
+
+    Reports:
+    - MISSING: Files without any STAC metadata (ERROR)
+    - STALE: Files where content has changed since last metadata generation (WARNING)
+    - BREAKING: Files with breaking schema changes (ERROR)
+    """
+
+    name = "metadata_fresh"
+    severity = Severity.WARNING  # Default to WARNING, but MISSING/BREAKING are ERROR
+    description = "Verify all geo-assets have fresh STAC metadata"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Check metadata freshness for all geo-assets in catalog.
+
+        Args:
+            catalog_path: Path to the directory containing .portolan.
+
+        Returns:
+            ValidationResult indicating overall metadata health.
+        """
+        from portolan_cli.metadata.detection import check_file_metadata
+        from portolan_cli.metadata.models import MetadataCheckResult, MetadataReport
+
+        # Find all collections in the catalog
+        portolan_dir = catalog_path / ".portolan"
+        if not portolan_dir.exists():
+            return self._pass("No .portolan directory found")
+
+        collections_dir = portolan_dir / "collections"
+        if not collections_dir.exists():
+            return self._pass("No collections directory found")
+
+        # Scan for geo-asset files in collections
+        check_results: list[MetadataCheckResult] = []
+        extensions = {".parquet", ".tif", ".tiff"}
+
+        for collection_dir in collections_dir.iterdir():
+            if not collection_dir.is_dir():
+                continue
+            # Find geo-asset files in this collection
+            for file_path in collection_dir.rglob("*"):
+                if file_path.suffix.lower() in extensions:
+                    try:
+                        result = check_file_metadata(file_path, collection_dir)
+                        check_results.append(result)
+                    except (FileNotFoundError, ValueError):
+                        # Skip files we can't check
+                        continue
+
+        if not check_results:
+            return self._pass("No geo-asset files found in collections")
+
+        # Build summary report
+        report = MetadataReport(results=check_results)
+
+        if report.passed:
+            return self._pass(f"All {report.total_count} geo-assets have fresh metadata")
+
+        # Build detailed message about issues
+        issues = []
+        if report.missing_count > 0:
+            issues.append(f"{report.missing_count} missing")
+        if report.stale_count > 0:
+            issues.append(f"{report.stale_count} stale")
+        if report.breaking_count > 0:
+            issues.append(f"{report.breaking_count} breaking")
+
+        message = f"Metadata issues found: {', '.join(issues)}"
+
+        # Determine severity based on issue types
+        # MISSING and BREAKING are errors, STALE is warning
+        has_errors = report.missing_count > 0 or report.breaking_count > 0
+
+        return ValidationResult(
+            rule_name=self.name,
+            passed=False,
+            severity=Severity.ERROR if has_errors else Severity.WARNING,
+            message=message,
+            fix_hint="Run 'portolan check --fix-metadata' to update STAC metadata",
+        )

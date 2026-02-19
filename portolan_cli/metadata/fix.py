@@ -183,8 +183,14 @@ def _fix_single_file(
             item_path = file_path.with_suffix(".json")
             update_item_metadata(item_path, file_path)
 
-            # Also update versions.json tracking
-            update_versions_tracking(file_path, directory)
+            # Also update versions.json tracking if it exists
+            versions_path = directory / "versions.json"
+            if versions_path.exists():
+                try:
+                    update_versions_tracking(file_path, versions_path)
+                except (KeyError, FileNotFoundError):
+                    # Asset not in versions.json yet - skip tracking update
+                    pass
 
             action_desc = "Updated STAC item"
             if status == MetadataStatus.BREAKING:

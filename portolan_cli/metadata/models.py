@@ -11,10 +11,37 @@ These structures follow the pattern established in validation/results.py.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+# Tolerance for floating-point bbox comparisons (approx 0.1mm at equator)
+BBOX_TOLERANCE = 1e-9
+
+
+def _bboxes_equal(
+    bbox1: list[float] | None,
+    bbox2: list[float] | None,
+    tolerance: float = BBOX_TOLERANCE,
+) -> bool:
+    """Compare two bounding boxes with floating-point tolerance.
+
+    Args:
+        bbox1: First bounding box [west, south, east, north], or None.
+        bbox2: Second bounding box [west, south, east, north], or None.
+        tolerance: Maximum allowed difference for each coordinate.
+
+    Returns:
+        True if bboxes are equal within tolerance, False otherwise.
+        Returns False if either bbox is None or lengths differ.
+    """
+    if bbox1 is None or bbox2 is None:
+        return False
+    if len(bbox1) != len(bbox2):
+        return False
+    return all(math.isclose(a, b, abs_tol=tolerance) for a, b in zip(bbox1, bbox2, strict=True))
 
 
 class MetadataStatus(Enum):
@@ -98,7 +125,8 @@ class FileMetadataState:
         """Check if quick heuristics (bbox, feature count) have changed.
 
         This is a fast check that catches most real data changes without
-        full content hashing.
+        full content hashing. Uses tolerance-based comparison for floats
+        to avoid false positives from floating-point precision issues.
 
         Returns:
             True if bbox or feature count differs, or if no stored values exist.
@@ -107,8 +135,8 @@ class FileMetadataState:
         if self.stored_bbox is None or self.stored_feature_count is None:
             return True
 
-        # Compare bbox
-        if self.current_bbox != self.stored_bbox:
+        # Compare bbox with tolerance for floating-point precision
+        if not _bboxes_equal(self.current_bbox, self.stored_bbox):
             return True
 
         # Compare feature count

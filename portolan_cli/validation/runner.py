@@ -9,18 +9,20 @@ from portolan_cli.validation.results import ValidationReport, ValidationResult
 from portolan_cli.validation.rules import (
     CatalogExistsRule,
     CatalogJsonValidRule,
+    MetadataFreshRule,
     PMTilesRecommendedRule,
     StacFieldsRule,
     ValidationRule,
 )
 
-# Default rules for v0.4 (catalog structure only)
+# Default rules for v0.4 (catalog structure + metadata freshness)
 # Immutable tuple to prevent accidental mutation
 DEFAULT_RULES: tuple[ValidationRule, ...] = (
     CatalogExistsRule(),
     CatalogJsonValidRule(),
     StacFieldsRule(),
     PMTilesRecommendedRule(),
+    MetadataFreshRule(),
 )
 
 

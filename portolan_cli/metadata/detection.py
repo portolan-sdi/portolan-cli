@@ -103,11 +103,22 @@ def get_stored_metadata(
             with open(versions_path) as f:
                 versions_data = json.load(f)
 
-            # Find asset entry in latest version
+            # Find asset entry in current version (use current_version field)
             versions = versions_data.get("versions", [])
-            if versions:
-                latest = versions[0]  # Assuming newest first
-                assets = latest.get("assets", {})
+            current_version_id = versions_data.get("current_version")
+
+            # Find the version matching current_version, fallback to last in list
+            current_version = None
+            if current_version_id:
+                for v in versions:
+                    if v.get("version") == current_version_id:
+                        current_version = v
+                        break
+            if current_version is None and versions:
+                current_version = versions[-1]  # Fallback: last is most recent
+
+            if current_version:
+                assets = current_version.get("assets", {})
                 asset_key = file_path.name
                 if asset_key in assets:
                     asset_data = assets[asset_key]
@@ -205,8 +216,9 @@ def compute_schema_fingerprint(file_path: Path) -> str:
     if suffix == ".parquet":
         import pyarrow.parquet as pq
 
-        table = pq.read_table(file_path)
-        schema_str = str(table.schema)
+        # Use ParquetFile to read only schema, not the full table (O(1) vs O(n))
+        pf = pq.ParquetFile(file_path)
+        schema_str = str(pf.schema_arrow)
         return hashlib.sha256(schema_str.encode()).hexdigest()[:16]
 
     elif suffix in (".tif", ".tiff"):
