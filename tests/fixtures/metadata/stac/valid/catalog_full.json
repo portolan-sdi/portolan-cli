@@ -1,0 +1,33 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.0.0",
+  "id": "sf-open-data",
+  "title": "San Francisco Open Data Catalog",
+  "description": "Comprehensive geospatial data catalog for San Francisco",
+  "created": "2026-01-01T00:00:00Z",
+  "updated": "2026-02-15T12:00:00Z",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "child",
+      "href": "./parcels/collection.json",
+      "type": "application/json",
+      "title": "SF Parcels"
+    },
+    {
+      "rel": "child",
+      "href": "./buildings/collection.json",
+      "type": "application/json",
+      "title": "SF Buildings"
+    }
+  ]
+}

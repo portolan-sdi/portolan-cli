@@ -1,0 +1,18 @@
+{
+  "type": "Feature",
+  "stac_version": "1.0.0",
+  "id": "no-geometry-item",
+  "geometry": null,
+  "bbox": null,
+  "properties": {
+    "datetime": "2026-01-15T00:00:00Z"
+  },
+  "collection": "test-collection",
+  "assets": {
+    "data": {
+      "href": "./data.parquet",
+      "type": "application/x-parquet"
+    }
+  },
+  "links": []
+}
