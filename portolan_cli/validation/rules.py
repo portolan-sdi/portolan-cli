@@ -310,9 +310,17 @@ class MetadataFreshRule(ValidationRule):
                         result = check_file_metadata(file_path, collection_dir)
                         check_results.append(result)
                     except (FileNotFoundError, ValueError, OSError):
-                        # Skip files we can't check (including corrupt COGs that
-                        # raise rasterio errors, which inherit from OSError)
+                        # Skip files we can't check:
+                        # - FileNotFoundError: broken symlinks
+                        # - ValueError: unsupported format
+                        # - OSError: corrupt COGs (rasterio errors inherit from OSError)
                         continue
+                    except Exception as e:
+                        # Also catch pyarrow errors (ArrowInvalid, ArrowIOError, etc.)
+                        # which don't have a consistent base class
+                        if "arrow" in type(e).__module__.lower():
+                            continue
+                        raise  # Re-raise unexpected errors
 
         if not check_results:
             return self._pass("No geo-asset files found in collections")

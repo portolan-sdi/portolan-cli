@@ -715,7 +715,7 @@ class TestMetadataFreshRule:
         """Return the path to the test fixtures directory."""
         return Path(__file__).parent.parent / "fixtures"
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_has_metadata_fresh_name(self) -> None:
         """Rule has correct name."""
         from portolan_cli.validation.rules import MetadataFreshRule
@@ -723,7 +723,7 @@ class TestMetadataFreshRule:
         rule = MetadataFreshRule()
         assert rule.name == "metadata_fresh"
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_has_warning_severity_default(self) -> None:
         """Rule defaults to WARNING severity (STALE case)."""
         from portolan_cli.validation.rules import MetadataFreshRule
@@ -731,7 +731,7 @@ class TestMetadataFreshRule:
         rule = MetadataFreshRule()
         assert rule.severity == Severity.WARNING
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_passes_when_no_portolan_dir(self, tmp_path: Path) -> None:
         """Rule passes when .portolan directory doesn't exist."""
         from portolan_cli.validation.rules import MetadataFreshRule
@@ -742,7 +742,7 @@ class TestMetadataFreshRule:
         assert result.passed is True
         assert ".portolan" in result.message.lower()
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_passes_when_no_collections_dir(self, tmp_path: Path) -> None:
         """Rule passes when collections directory doesn't exist."""
         from portolan_cli.validation.rules import MetadataFreshRule
@@ -756,7 +756,7 @@ class TestMetadataFreshRule:
         assert result.passed is True
         assert "collections" in result.message.lower()
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_passes_when_no_geo_assets_found(self, tmp_path: Path) -> None:
         """Rule passes when no geo-asset files are found in collections."""
         from portolan_cli.validation.rules import MetadataFreshRule
@@ -774,7 +774,7 @@ class TestMetadataFreshRule:
         assert result.passed is True
         assert "no geo-asset" in result.message.lower()
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_skips_non_directory_items(self, tmp_path: Path) -> None:
         """Rule skips files in collections directory (only processes directories)."""
         from portolan_cli.validation.rules import MetadataFreshRule
@@ -1009,10 +1009,9 @@ class TestMetadataFreshRule:
         assert result.fix_hint is not None
         assert "fix-metadata" in result.fix_hint.lower()
 
-    @pytest.mark.integration
+    @pytest.mark.unit
     def test_handles_file_not_found_gracefully(self, tmp_path: Path) -> None:
         """Rule skips files that raise FileNotFoundError during check."""
-
         from portolan_cli.validation.rules import MetadataFreshRule
 
         # Create catalog structure
@@ -1024,8 +1023,12 @@ class TestMetadataFreshRule:
         collection.mkdir()
 
         # Create a symlink to a non-existent file
+        # Skip on Windows if symlink creation fails (requires admin privileges)
         symlink = collection / "broken.parquet"
-        symlink.symlink_to("/nonexistent/file.parquet")
+        try:
+            symlink.symlink_to("/nonexistent/file.parquet")
+        except OSError:
+            pytest.skip("Symlink creation not supported on this platform")
 
         rule = MetadataFreshRule()
         result = rule.check(tmp_path)
