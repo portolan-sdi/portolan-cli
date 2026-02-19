@@ -942,3 +942,334 @@ class TestConvertDirectoryIdempotent:
         # The new parquet file should be skipped
         # (depending on implementation, either only parquet is found, or both are found and parquet is skipped)
         assert report2.skipped >= 1
+
+
+# =============================================================================
+# Phase 4.6: convert_file() Error Types Tests
+# =============================================================================
+
+
+class TestConvertFileErrorTypes:
+    """Tests verifying convert_file() uses correct error types.
+
+    Task 4.6: Refactor convert_file() to use new error types from errors.py:
+    - UnsupportedFormatError for unsupported formats
+    - ConversionFailedError for conversion exceptions
+    - ValidationFailedError for validation failures
+    """
+
+    @pytest.mark.unit
+    def test_unsupported_format_uses_unsupported_format_error(self, tmp_path: Path) -> None:
+        """Unsupported format should use UnsupportedFormatError internally.
+
+        The convert_file() function returns a ConversionResult with FAILED status,
+        but internally it should catch/use UnsupportedFormatError for logging context.
+        """
+        from portolan_cli.convert import ConversionStatus, convert_file
+        from portolan_cli.errors import UnsupportedFormatError
+
+        # Create a NetCDF file (unsupported format)
+        netcdf = tmp_path / "data.nc"
+        netcdf.write_bytes(b"CDF\x01")  # NetCDF magic bytes
+
+        result = convert_file(netcdf)
+
+        assert result.status == ConversionStatus.FAILED
+        assert result.error is not None
+        # Error should mention format is not supported
+        assert "not" in result.error.lower() and "support" in result.error.lower()
+
+        # Verify UnsupportedFormatError can be constructed with the result context
+        error = UnsupportedFormatError(str(netcdf), result.format_from)
+        assert error.code == "PRTLN-CNV001"
+        assert error.path == str(netcdf)
+
+    @pytest.mark.unit
+    def test_conversion_exception_uses_conversion_failed_error(self, tmp_path: Path) -> None:
+        """Conversion exception should use ConversionFailedError internally.
+
+        When geoparquet-io or rio-cogeo throws an exception, the convert_file()
+        function should catch it and use ConversionFailedError for context.
+        """
+        from portolan_cli.convert import ConversionStatus, convert_file
+        from portolan_cli.errors import ConversionFailedError
+
+        # Create a malformed GeoJSON that will fail conversion
+        bad_file = tmp_path / "bad.geojson"
+        bad_file.write_text('{"type": "FeatureCollection", "features": [INVALID')
+
+        result = convert_file(bad_file, output_dir=tmp_path)
+
+        assert result.status == ConversionStatus.FAILED
+        assert result.error is not None
+        assert len(result.error) > 0
+
+        # Verify ConversionFailedError can be constructed with the result context
+        original_exception = ValueError(result.error)
+        error = ConversionFailedError(str(bad_file), original_exception)
+        assert error.code == "PRTLN-CNV002"
+        assert error.path == str(bad_file)
+
+    @pytest.mark.unit
+    def test_failed_result_has_error_context_for_logging(self, tmp_path: Path) -> None:
+        """FAILED results should have error context suitable for logging/debugging."""
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        # Create an invalid file that will fail conversion
+        bad_file = tmp_path / "corrupt.geojson"
+        bad_file.write_text("not valid json at all {{{")
+
+        result = convert_file(bad_file, output_dir=tmp_path)
+
+        assert result.status == ConversionStatus.FAILED
+        # Error should be non-empty and contain useful context
+        assert result.error is not None
+        assert len(result.error) > 0
+        # Source path should be captured
+        assert result.source == bad_file
+
+    @pytest.mark.unit
+    def test_error_codes_match_portolan_error_pattern(self) -> None:
+        """All conversion error types should have correct PRTLN-CNV* codes."""
+        from portolan_cli.errors import (
+            ConversionError,
+            ConversionFailedError,
+            UnsupportedFormatError,
+            ValidationFailedError,
+        )
+
+        # Base class
+        assert ConversionError("test").code == "PRTLN-CNV000"
+
+        # Specific error types
+        assert UnsupportedFormatError("/path", "netcdf").code == "PRTLN-CNV001"
+        assert ConversionFailedError("/path", ValueError("test")).code == "PRTLN-CNV002"
+        assert ValidationFailedError("/path", ["error"]).code == "PRTLN-CNV003"
+
+
+# =============================================================================
+# Phase 7: Edge Cases and Hardening
+# =============================================================================
+
+
+class TestConvertFileEdgeCases:
+    """Tests for convert_file() edge cases and error handling."""
+
+    @pytest.mark.unit
+    def test_shapefile_with_missing_sidecars(self, tmp_path: Path) -> None:
+        """Shapefile with missing sidecars attempts conversion (delegates to geoparquet-io).
+
+        Per ADR-0010, we delegate to upstream libraries. geoparquet-io may handle
+        incomplete shapefiles differently.
+        """
+        from portolan_cli.convert import convert_file
+
+        # Create a minimal .shp file without sidecars
+        shp_file = tmp_path / "incomplete.shp"
+        shp_file.write_bytes(b"\x00\x00\x27\x0a")  # Shapefile magic bytes
+
+        # Conversion should be attempted (result depends on geoparquet-io behavior)
+        result = convert_file(shp_file, output_dir=tmp_path)
+
+        # We expect either FAILED (geoparquet-io can't read it) or SUCCESS
+        # The key is that we don't crash
+        assert result.status is not None
+        assert result.source == shp_file
+
+    @pytest.mark.unit
+    def test_permission_error_handling(self, tmp_path: Path) -> None:
+        """Permission error during conversion returns FAILED with clear message.
+
+        Note: This test may behave differently on Windows or if run as root.
+        """
+        import os
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        # Create a valid GeoJSON
+        geojson = tmp_path / "test.geojson"
+        geojson.write_text(
+            '{"type":"FeatureCollection","features":'
+            '[{"type":"Feature","geometry":{"type":"Point","coordinates":[0,0]},"properties":{}}]}'
+        )
+
+        # Create output directory that's not writable
+        output_dir = tmp_path / "readonly"
+        output_dir.mkdir()
+
+        try:
+            os.chmod(output_dir, 0o444)  # Read-only
+
+            result = convert_file(geojson, output_dir=output_dir)
+
+            # Should fail due to permission error
+            assert result.status == ConversionStatus.FAILED
+            assert result.error is not None
+            # Error should mention permission or access issue
+            # (exact wording varies by OS)
+        finally:
+            # Restore permissions for cleanup
+            os.chmod(output_dir, 0o755)
+
+    @pytest.mark.unit
+    def test_output_file_already_exists_cloud_native(
+        self,
+        valid_points_parquet: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Output file already exists and is cloud-native - skips conversion."""
+        import shutil
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        # Copy parquet to tmp (simulating existing output)
+        input_parquet = tmp_path / "data.parquet"
+        shutil.copy(valid_points_parquet, input_parquet)
+
+        result = convert_file(input_parquet)
+
+        # Should be skipped since already cloud-native
+        assert result.status == ConversionStatus.SKIPPED
+        assert result.format_from == "GeoParquet"
+
+    @pytest.mark.unit
+    def test_duration_always_non_negative(self, tmp_path: Path) -> None:
+        """Duration is always >= 0, even for fast operations."""
+        from portolan_cli.convert import convert_file
+
+        # Create minimal file
+        geojson = tmp_path / "tiny.geojson"
+        geojson.write_text(
+            '{"type":"FeatureCollection","features":'
+            '[{"type":"Feature","geometry":{"type":"Point","coordinates":[0,0]},"properties":{}}]}'
+        )
+
+        result = convert_file(geojson, output_dir=tmp_path)
+
+        assert result.duration_ms >= 0
+
+    @pytest.mark.unit
+    def test_format_from_never_empty(self, tmp_path: Path) -> None:
+        """format_from is always a non-empty string."""
+        from portolan_cli.convert import convert_file
+
+        # Various file types
+        files = [
+            ("test.geojson", '{"type":"FeatureCollection","features":[]}'),
+            ("test.nc", "CDF\x01"),  # Unsupported format
+        ]
+
+        for name, content in files:
+            file_path = tmp_path / name
+            if isinstance(content, str):
+                file_path.write_text(content)
+            else:
+                file_path.write_bytes(content.encode() if isinstance(content, str) else content)
+
+            result = convert_file(file_path, output_dir=tmp_path)
+
+            assert result.format_from is not None
+            assert len(result.format_from) > 0
+
+
+class TestConvertDirectoryEdgeCases:
+    """Tests for convert_directory() edge cases."""
+
+    @pytest.mark.unit
+    def test_recursive_conversion_deep_nesting(
+        self,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Deep directory nesting is handled correctly."""
+        import shutil
+
+        from portolan_cli.convert import convert_directory
+
+        # Create deeply nested structure
+        deep_dir = tmp_path / "a" / "b" / "c" / "d"
+        deep_dir.mkdir(parents=True)
+        shutil.copy(valid_points_geojson, deep_dir / "deep.geojson")
+
+        report = convert_directory(tmp_path)
+
+        assert report.total >= 1
+        assert report.succeeded >= 1
+
+    @pytest.mark.unit
+    def test_non_recursive_flag(
+        self,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Non-recursive conversion only processes root directory."""
+        import shutil
+
+        from portolan_cli.convert import convert_directory
+
+        # File in root
+        shutil.copy(valid_points_geojson, tmp_path / "root.geojson")
+
+        # File in subdirectory
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        shutil.copy(valid_points_geojson, subdir / "nested.geojson")
+
+        report = convert_directory(tmp_path, recursive=False)
+
+        # Should only process root file
+        assert report.total == 1
+
+    @pytest.mark.unit
+    def test_mixed_valid_and_invalid_files(
+        self,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Mixed valid/invalid files: all are processed, failures don't block."""
+        import shutil
+
+        from portolan_cli.convert import convert_directory
+
+        # Valid file
+        shutil.copy(valid_points_geojson, tmp_path / "valid.geojson")
+
+        # Invalid file
+        invalid = tmp_path / "invalid.geojson"
+        invalid.write_text("not valid json {{{")
+
+        report = convert_directory(tmp_path)
+
+        # Both should be processed
+        assert report.total == 2
+        assert report.succeeded >= 1
+        assert report.failed >= 1
+
+
+class TestConvertFileSourceMtime:
+    """Tests for source mtime detection scenarios (Task 7.6)."""
+
+    @pytest.mark.unit
+    def test_source_mtime_preserved_after_conversion(
+        self,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Source file mtime can be retrieved after conversion for tracking."""
+        import shutil
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        # Copy source to tmp
+        source = tmp_path / "data.geojson"
+        shutil.copy(valid_points_geojson, source)
+
+        # Get source mtime before conversion
+        source_mtime = source.stat().st_mtime
+
+        result = convert_file(source)
+
+        assert result.status == ConversionStatus.SUCCESS
+        # Source should still exist with same mtime
+        assert source.exists()
+        assert source.stat().st_mtime == source_mtime

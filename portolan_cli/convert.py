@@ -21,6 +21,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.errors import (
+    ConversionFailedError,
+    UnsupportedFormatError,
+)
 from portolan_cli.formats import (
     CloudNativeStatus,
     FormatType,
@@ -186,6 +190,13 @@ def convert_file(
     # Handle unsupported formats
     if format_info.status == CloudNativeStatus.UNSUPPORTED:
         duration_ms = int((time.perf_counter() - start_time) * 1000)
+        # Use structured error for logging context
+        format_error = UnsupportedFormatError(str(source), format_info.display_name)
+        logger.warning(
+            "Unsupported format: %s [%s]",
+            source,
+            format_error.code,
+        )
         return ConversionResult(
             source=source,
             output=None,
@@ -234,7 +245,14 @@ def convert_file(
 
     except Exception as e:
         duration_ms = int((time.perf_counter() - start_time) * 1000)
-        logger.exception("Conversion failed for %s", source)
+        # Use structured error for logging context
+        conversion_error = ConversionFailedError(str(source), e)
+        logger.exception(
+            "Conversion failed for %s [%s]: %s",
+            source,
+            conversion_error.code,
+            e,
+        )
         return ConversionResult(
             source=source,
             output=None,
