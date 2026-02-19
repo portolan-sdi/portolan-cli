@@ -309,8 +309,9 @@ class MetadataFreshRule(ValidationRule):
                     try:
                         result = check_file_metadata(file_path, collection_dir)
                         check_results.append(result)
-                    except (FileNotFoundError, ValueError):
-                        # Skip files we can't check
+                    except (FileNotFoundError, ValueError, OSError):
+                        # Skip files we can't check (including corrupt COGs that
+                        # raise rasterio errors, which inherit from OSError)
                         continue
 
         if not check_results:

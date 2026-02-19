@@ -14,8 +14,6 @@ from pathlib import Path
 import pytest
 
 from portolan_cli.metadata.models import MetadataReport
-
-# Import validation functions (to be implemented)
 from portolan_cli.metadata.validation import (
     check_directory_metadata,
     validate_catalog_links,

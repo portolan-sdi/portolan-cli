@@ -159,7 +159,13 @@ def _fix_single_file(
     status = check_result.status
 
     if dry_run:
-        action = FixAction.CREATED if status == MetadataStatus.MISSING else FixAction.UPDATED
+        # Determine action the same way as real execution for consistency
+        if status == MetadataStatus.MISSING:
+            action = FixAction.CREATED
+        elif status in (MetadataStatus.STALE, MetadataStatus.BREAKING):
+            action = FixAction.UPDATED
+        else:
+            action = FixAction.SKIPPED
         return FixResult(
             file_path=file_path,
             action=action,

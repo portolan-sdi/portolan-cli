@@ -793,9 +793,7 @@ class TestMetadataFreshRule:
         assert result.passed is True
 
     @pytest.mark.integration
-    def test_detects_missing_metadata(
-        self, tmp_path: Path, fixtures_dir: Path
-    ) -> None:
+    def test_detects_missing_metadata(self, tmp_path: Path, fixtures_dir: Path) -> None:
         """Rule detects geo-assets without STAC metadata (MISSING status)."""
         import shutil
 
@@ -1014,7 +1012,6 @@ class TestMetadataFreshRule:
     @pytest.mark.integration
     def test_handles_file_not_found_gracefully(self, tmp_path: Path) -> None:
         """Rule skips files that raise FileNotFoundError during check."""
-        import os
 
         from portolan_cli.validation.rules import MetadataFreshRule
 

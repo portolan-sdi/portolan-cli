@@ -15,9 +15,13 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portolan_cli.metadata.cog import extract_cog_metadata
 from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+
+if TYPE_CHECKING:
+    from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.models import (
     FileMetadataState,
     MetadataCheckResult,
@@ -185,7 +189,10 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
             stored_bbox=None,
             current_feature_count=pixel_count,
             stored_feature_count=None,
-            current_schema_fingerprint=compute_schema_fingerprint(file_path),
+            # Pass pre-extracted metadata to avoid re-reading the COG
+            current_schema_fingerprint=compute_schema_fingerprint(
+                file_path, cog_metadata=cog_metadata
+            ),
             stored_schema_fingerprint=None,
         )
 
@@ -193,7 +200,10 @@ def get_current_metadata(file_path: Path) -> FileMetadataState:
         raise ValueError(f"Unsupported format: {suffix}")
 
 
-def compute_schema_fingerprint(file_path: Path) -> str:
+def compute_schema_fingerprint(
+    file_path: Path,
+    cog_metadata: COGMetadata | None = None,
+) -> str:
     """Generate a hash fingerprint of the file schema.
 
     For GeoParquet: hash of column names and types.
@@ -201,6 +211,7 @@ def compute_schema_fingerprint(file_path: Path) -> str:
 
     Args:
         file_path: Path to the geo-asset file.
+        cog_metadata: Optional pre-extracted COG metadata to avoid re-extraction.
 
     Returns:
         Hexadecimal hash string representing the schema.
@@ -216,11 +227,13 @@ def compute_schema_fingerprint(file_path: Path) -> str:
         return hashlib.sha256(schema_str.encode()).hexdigest()[:16]
 
     elif suffix in (".tif", ".tiff"):
-        metadata = extract_cog_metadata(file_path)
+        # Use provided metadata if available, otherwise extract
+        if cog_metadata is None:
+            cog_metadata = extract_cog_metadata(file_path)
         schema_parts = [
-            str(metadata.band_count),
-            metadata.dtype or "",
-            metadata.crs or "",
+            str(cog_metadata.band_count),
+            cog_metadata.dtype or "",
+            cog_metadata.crs or "",
         ]
         schema_str = "|".join(schema_parts)
         return hashlib.sha256(schema_str.encode()).hexdigest()[:16]
@@ -286,10 +299,12 @@ def detect_changes(state: FileMetadataState) -> list[str]:
     if state.mtime_changed:
         changes.append("mtime")
 
-    # Check bbox
+    # Check bbox with tolerance-aware comparison
+    from portolan_cli.metadata.models import BBOX_TOLERANCE, _bboxes_equal
+
     if state.stored_bbox is None and state.current_bbox is not None:
         changes.append("bbox")
-    elif state.current_bbox != state.stored_bbox:
+    elif not _bboxes_equal(state.stored_bbox, state.current_bbox, BBOX_TOLERANCE):
         changes.append("bbox")
 
     # Check feature count
