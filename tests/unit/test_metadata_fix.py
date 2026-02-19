@@ -41,9 +41,9 @@ class TestFixMetadataFunction:
         tmp_path: Path,
     ) -> None:
         """fix_metadata creates STAC items for files with MISSING status."""
-        from portolan_cli.metadata.fix import fix_metadata
-
         import shutil
+
+        from portolan_cli.metadata.fix import fix_metadata
 
         # Set up collection directory with parquet file but no metadata
         collection_dir = tmp_path / "test-collection"
@@ -80,9 +80,9 @@ class TestFixMetadataFunction:
         tmp_path: Path,
     ) -> None:
         """fix_metadata skips files with FRESH status."""
-        from portolan_cli.metadata.fix import fix_metadata
-
         import shutil
+
+        from portolan_cli.metadata.fix import fix_metadata
 
         collection_dir = tmp_path / "test-collection"
         collection_dir.mkdir()
@@ -110,7 +110,7 @@ class TestFixReport:
     @pytest.mark.unit
     def test_fix_report_counts(self) -> None:
         """FixReport correctly counts successes and failures."""
-        from portolan_cli.metadata.fix import FixReport, FixResult, FixAction
+        from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 
         report = FixReport(
             results=[
@@ -138,7 +138,7 @@ class TestFixReport:
     @pytest.mark.unit
     def test_fix_report_to_dict(self) -> None:
         """FixReport.to_dict() returns JSON-serializable output."""
-        from portolan_cli.metadata.fix import FixReport, FixResult, FixAction
+        from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
 
         report = FixReport(
             results=[
