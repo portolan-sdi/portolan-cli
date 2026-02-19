@@ -60,6 +60,10 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0014](context/shared/adr/0014-accept-non-cloud-native-formats.md) | Accept non-cloud-native formats with warnings |
 | [0015](context/shared/adr/0015-two-tier-versioning-architecture.md) | Two-tier versioning: simple MVP + [portolake](https://github.com/portolan-sdi/portolake) plugin for enterprise |
 | [0016](context/shared/adr/0016-scan-before-import.md) | Scan-before-import: separate validation from import (like ruff check/fix) |
+| [0017](context/shared/adr/0017-mtime-heuristics-change-detection.md) | MTIME + heuristics for change detection (fast gate, O(1) metadata check) |
+| [0018](context/shared/adr/0018-metadata-generation-tiers.md) | Metadata generation tiers: auto-extractable → derivable → defaults → human-enrichable |
+| [0019](context/shared/adr/0019-cog-optimization-defaults.md) | COG defaults: DEFLATE, predictor=2, 512×512 tiles, nearest resampling |
+| [0020](context/shared/adr/0020-conversion-output-location.md) | Conversion output: side-by-side for vectors, in-place for rasters |
 
 ## Common Commands
 
