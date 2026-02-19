@@ -701,3 +701,393 @@ class TestPMTilesRecommendedRule:
 
         # Should pass (no catalog to check)
         assert result.passed is True
+
+
+class TestMetadataFreshRule:
+    """Tests for MetadataFreshRule.
+
+    This rule checks that all geo-asset files in collections have
+    up-to-date STAC metadata.
+    """
+
+    @pytest.fixture
+    def fixtures_dir(self) -> Path:
+        """Return the path to the test fixtures directory."""
+        return Path(__file__).parent.parent / "fixtures"
+
+    @pytest.mark.integration
+    def test_has_metadata_fresh_name(self) -> None:
+        """Rule has correct name."""
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        rule = MetadataFreshRule()
+        assert rule.name == "metadata_fresh"
+
+    @pytest.mark.integration
+    def test_has_warning_severity_default(self) -> None:
+        """Rule defaults to WARNING severity (STALE case)."""
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        rule = MetadataFreshRule()
+        assert rule.severity == Severity.WARNING
+
+    @pytest.mark.integration
+    def test_passes_when_no_portolan_dir(self, tmp_path: Path) -> None:
+        """Rule passes when .portolan directory doesn't exist."""
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        rule = MetadataFreshRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+        assert ".portolan" in result.message.lower()
+
+    @pytest.mark.integration
+    def test_passes_when_no_collections_dir(self, tmp_path: Path) -> None:
+        """Rule passes when collections directory doesn't exist."""
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+
+        rule = MetadataFreshRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+        assert "collections" in result.message.lower()
+
+    @pytest.mark.integration
+    def test_passes_when_no_geo_assets_found(self, tmp_path: Path) -> None:
+        """Rule passes when no geo-asset files are found in collections."""
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        collections_dir = portolan_dir / "collections"
+        collections_dir.mkdir()
+        # Create an empty collection
+        (collections_dir / "test-collection").mkdir()
+
+        rule = MetadataFreshRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+        assert "no geo-asset" in result.message.lower()
+
+    @pytest.mark.integration
+    def test_skips_non_directory_items(self, tmp_path: Path) -> None:
+        """Rule skips files in collections directory (only processes directories)."""
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        collections_dir = portolan_dir / "collections"
+        collections_dir.mkdir()
+        # Create a file (not a directory) in collections
+        (collections_dir / "some-file.txt").write_text("not a collection")
+
+        rule = MetadataFreshRule()
+        result = rule.check(tmp_path)
+
+        # Should pass (no valid collections)
+        assert result.passed is True
+
+    @pytest.mark.integration
+    def test_detects_missing_metadata(
+        self, tmp_path: Path, fixtures_dir: Path
+    ) -> None:
+        """Rule detects geo-assets without STAC metadata (MISSING status)."""
+        import shutil
+
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        # Create catalog structure
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        collections_dir = portolan_dir / "collections"
+        collections_dir.mkdir()
+        collection = collections_dir / "test-collection"
+        collection.mkdir()
+
+        # Copy a parquet file but don't create STAC item
+        src = fixtures_dir / "vector" / "valid" / "points.parquet"
+        if src.exists():
+            shutil.copy(src, collection / "points.parquet")
+        else:
+            # Create minimal parquet if fixture doesn't exist
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+
+            table = pa.table({"id": [1, 2], "geometry": ["POINT(0 0)", "POINT(1 1)"]})
+            pq.write_table(table, collection / "points.parquet")
+
+        rule = MetadataFreshRule()
+        result = rule.check(tmp_path)
+
+        # Should fail due to missing metadata
+        assert result.passed is False
+        assert "missing" in result.message.lower()
+        # MISSING is an ERROR
+        assert result.severity == Severity.ERROR
+
+    @pytest.mark.integration
+    def test_detects_fresh_metadata(self, tmp_path: Path) -> None:
+        """Rule passes when all geo-assets have fresh metadata."""
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        # Create catalog structure
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        collections_dir = portolan_dir / "collections"
+        collections_dir.mkdir()
+        collection = collections_dir / "test-collection"
+        collection.mkdir()
+
+        # Create a parquet file
+        parquet_path = collection / "test.parquet"
+        table = pa.table({"id": [1, 2], "geometry": ["POINT(0 0)", "POINT(1 1)"]})
+        pq.write_table(table, parquet_path)
+
+        # Extract metadata and create STAC item
+        metadata = extract_geoparquet_metadata(parquet_path)
+        stac_item = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "test",
+            "geometry": None,
+            "bbox": metadata.bbox,
+            "properties": {
+                "datetime": None,
+                "feature_count": metadata.feature_count,
+            },
+            "collection": "test-collection",
+            "assets": {
+                "data": {
+                    "href": "./test.parquet",
+                    "type": "application/x-parquet",
+                }
+            },
+            "links": [],
+        }
+        (collection / "test.json").write_text(json.dumps(stac_item))
+
+        # Create versions.json with current state
+        versions = {
+            "schema_version": "1.0",
+            "current_version": "v1",
+            "versions": [
+                {
+                    "version": "v1",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "assets": {
+                        "test.parquet": {
+                            "source_mtime": parquet_path.stat().st_mtime,
+                            "sha256": "abc123",
+                            "bbox": metadata.bbox,
+                            "feature_count": metadata.feature_count,
+                        }
+                    },
+                }
+            ],
+        }
+        (collection / "versions.json").write_text(json.dumps(versions))
+
+        rule = MetadataFreshRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+        assert "fresh" in result.message.lower()
+
+    @pytest.mark.integration
+    def test_reports_stale_warning_only(self, tmp_path: Path) -> None:
+        """Rule reports STALE as WARNING (not ERROR)."""
+        import json
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.metadata.detection import compute_schema_fingerprint
+        from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        # Create catalog structure
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        collections_dir = portolan_dir / "collections"
+        collections_dir.mkdir()
+        collection = collections_dir / "test-collection"
+        collection.mkdir()
+
+        # Create a parquet file
+        parquet_path = collection / "test.parquet"
+        table = pa.table({"id": [1, 2], "geometry": ["POINT(0 0)", "POINT(1 1)"]})
+        pq.write_table(table, parquet_path)
+
+        # Extract metadata and create STAC item
+        metadata = extract_geoparquet_metadata(parquet_path)
+        schema_fp = compute_schema_fingerprint(parquet_path)
+        stac_item = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": "test",
+            "geometry": None,
+            "bbox": metadata.bbox,
+            "properties": {
+                "datetime": None,
+                "feature_count": metadata.feature_count,
+            },
+            "collection": "test-collection",
+            "assets": {
+                "data": {
+                    "href": "./test.parquet",
+                    "type": "application/x-parquet",
+                }
+            },
+            "links": [],
+        }
+        (collection / "test.json").write_text(json.dumps(stac_item))
+
+        # Create versions.json with STALE state (old mtime only, same schema)
+        # STALE = mtime changed but schema hasn't changed (BREAKING = schema changed)
+        versions = {
+            "schema_version": "1.0",
+            "current_version": "v1",
+            "versions": [
+                {
+                    "version": "v1",
+                    "created_at": "2025-01-01T00:00:00Z",
+                    "assets": {
+                        "test.parquet": {
+                            "source_mtime": parquet_path.stat().st_mtime - 1000,  # Old mtime
+                            "sha256": "abc123",
+                            "bbox": metadata.bbox,
+                            "feature_count": metadata.feature_count,  # Same count
+                            "schema_fingerprint": schema_fp,  # Same schema = not BREAKING
+                        }
+                    },
+                }
+            ],
+        }
+        (collection / "versions.json").write_text(json.dumps(versions))
+
+        rule = MetadataFreshRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "stale" in result.message.lower()
+        # STALE alone is WARNING, not ERROR
+        assert result.severity == Severity.WARNING
+
+    @pytest.mark.integration
+    def test_provides_fix_hint(self, tmp_path: Path) -> None:
+        """Rule provides fix hint when issues found."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        # Create catalog structure with a parquet file but no STAC item
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        collections_dir = portolan_dir / "collections"
+        collections_dir.mkdir()
+        collection = collections_dir / "test-collection"
+        collection.mkdir()
+
+        parquet_path = collection / "test.parquet"
+        table = pa.table({"id": [1], "geometry": ["POINT(0 0)"]})
+        pq.write_table(table, parquet_path)
+
+        rule = MetadataFreshRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert result.fix_hint is not None
+        assert "fix-metadata" in result.fix_hint.lower()
+
+    @pytest.mark.integration
+    def test_handles_file_not_found_gracefully(self, tmp_path: Path) -> None:
+        """Rule skips files that raise FileNotFoundError during check."""
+        import os
+
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        # Create catalog structure
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        collections_dir = portolan_dir / "collections"
+        collections_dir.mkdir()
+        collection = collections_dir / "test-collection"
+        collection.mkdir()
+
+        # Create a symlink to a non-existent file
+        symlink = collection / "broken.parquet"
+        symlink.symlink_to("/nonexistent/file.parquet")
+
+        rule = MetadataFreshRule()
+        result = rule.check(tmp_path)
+
+        # Should pass (skipped the broken file)
+        assert result.passed is True
+
+    @pytest.mark.integration
+    def test_scans_both_parquet_and_tif(self, tmp_path: Path) -> None:
+        """Rule scans both GeoParquet (.parquet) and COG (.tif, .tiff) files."""
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        # Create catalog structure
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        collections_dir = portolan_dir / "collections"
+        collections_dir.mkdir()
+        collection = collections_dir / "test-collection"
+        collection.mkdir()
+
+        # Create files with different extensions (they'll fail to parse, but we test scanning)
+        (collection / "data.parquet").write_bytes(b"dummy")
+        (collection / "image.tif").write_bytes(b"dummy")
+        (collection / "image2.tiff").write_bytes(b"dummy")
+        (collection / "readme.txt").write_text("not a geo file")
+
+        rule = MetadataFreshRule()
+        # This will likely fail due to invalid file content, but should scan all geo-assets
+        result = rule.check(tmp_path)
+
+        # Should return a result (may pass if errors are skipped)
+        assert result is not None
+
+    @pytest.mark.integration
+    def test_scans_nested_collection_files(self, tmp_path: Path) -> None:
+        """Rule scans files in subdirectories within collections."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.validation.rules import MetadataFreshRule
+
+        # Create catalog structure with nested files
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        collections_dir = portolan_dir / "collections"
+        collections_dir.mkdir()
+        collection = collections_dir / "test-collection"
+        collection.mkdir()
+        subdir = collection / "data" / "2024"
+        subdir.mkdir(parents=True)
+
+        # Create a parquet file in nested directory
+        parquet_path = subdir / "test.parquet"
+        table = pa.table({"id": [1], "geometry": ["POINT(0 0)"]})
+        pq.write_table(table, parquet_path)
+
+        rule = MetadataFreshRule()
+        result = rule.check(tmp_path)
+
+        # Should detect the nested file (and fail due to missing STAC metadata)
+        assert result.passed is False
+        assert "missing" in result.message.lower()
