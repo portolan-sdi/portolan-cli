@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -188,6 +189,10 @@ class TestCheckFixDryRun:
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
+)
 class TestCheckFixPartialFailure:
     """Tests for check --fix handling partial failures."""
 

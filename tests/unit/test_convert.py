@@ -6,6 +6,7 @@ ConversionReport, and convert_directory() functions.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -435,6 +436,10 @@ class TestConvertFileException:
             convert_file(missing)
 
     @pytest.mark.unit
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
+    )
     def test_conversion_exception_returns_failed(self, tmp_path: Path) -> None:
         """Exception during conversion returns FAILED status."""
         from portolan_cli.convert import ConversionStatus, convert_file
@@ -859,6 +864,10 @@ class TestConvertDirectoryFailureHandling:
     """Tests for convert_directory() failure handling."""
 
     @pytest.mark.unit
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
+    )
     def test_continues_after_failure(
         self,
         valid_points_geojson: Path,
@@ -985,6 +994,10 @@ class TestConvertFileErrorTypes:
         assert error.path == str(netcdf)
 
     @pytest.mark.unit
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
+    )
     def test_conversion_exception_uses_conversion_failed_error(self, tmp_path: Path) -> None:
         """Conversion exception should use ConversionFailedError internally.
 
@@ -1011,6 +1024,10 @@ class TestConvertFileErrorTypes:
         assert error.path == str(bad_file)
 
     @pytest.mark.unit
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
+    )
     def test_failed_result_has_error_context_for_logging(self, tmp_path: Path) -> None:
         """FAILED results should have error context suitable for logging/debugging."""
         from portolan_cli.convert import ConversionStatus, convert_file
