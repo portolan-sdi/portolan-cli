@@ -227,6 +227,14 @@ def convert_vector(source: Path, dest_dir: Path) -> Path:
 def convert_raster(source: Path, dest_dir: Path) -> Path:
     """Convert raster file to COG.
 
+    Uses Portolan's opinionated COG defaults (see convert command design):
+    - DEFLATE compression (universal compatibility, lossless)
+    - Predictor=2 (horizontal differencing, improves compression)
+    - 512x512 tiles (matches rio-cogeo default, fewer HTTP requests)
+    - Nearest resampling (safe for all data types: categorical, imagery, elevation)
+
+    For fine-tuned control, power users should use rio_cogeo.cog_translate() directly.
+
     Args:
         source: Source raster file.
         dest_dir: Destination directory.
@@ -246,9 +254,20 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
         # TODO: Add proper COG validation
         pass
 
-    # Convert using rio-cogeo
+    # Convert using rio-cogeo with Portolan's opinionated defaults
     profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
-    cog_translate(str(source), str(output_path), profile, quiet=True)
+
+    # Apply predictor=2 for better compression
+    # Note: profile is a copy of the deflate profile dict
+    profile["predictor"] = 2
+
+    cog_translate(
+        str(source),
+        str(output_path),
+        profile,
+        quiet=True,
+        overview_resampling="nearest",  # Safe for all data types
+    )
 
     return output_path
 
