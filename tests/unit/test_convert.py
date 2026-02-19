@@ -48,11 +48,18 @@ class TestConversionStatus:
         assert ConversionStatus.INVALID.value == "invalid"
 
     @pytest.mark.unit
-    def test_exactly_four_values(self) -> None:
-        """There are exactly 4 status values."""
+    def test_unsupported_value(self) -> None:
+        """UNSUPPORTED status value is 'unsupported'."""
         from portolan_cli.convert import ConversionStatus
 
-        assert len(ConversionStatus) == 4
+        assert ConversionStatus.UNSUPPORTED.value == "unsupported"
+
+    @pytest.mark.unit
+    def test_exactly_five_values(self) -> None:
+        """There are exactly 5 status values."""
+        from portolan_cli.convert import ConversionStatus
+
+        assert len(ConversionStatus) == 5
 
     @pytest.mark.unit
     def test_all_values_distinct(self) -> None:
@@ -467,8 +474,8 @@ class TestConvertFileException:
         assert result.output is None
 
     @pytest.mark.unit
-    def test_unsupported_format_returns_failed(self, tmp_path: Path) -> None:
-        """Unsupported format returns FAILED status."""
+    def test_unsupported_format_returns_unsupported(self, tmp_path: Path) -> None:
+        """Unsupported format returns UNSUPPORTED status (not FAILED)."""
         from portolan_cli.convert import ConversionStatus, convert_file
 
         # Create a NetCDF file (unsupported)
@@ -477,10 +484,10 @@ class TestConvertFileException:
 
         result = convert_file(netcdf)
 
-        assert result.status == ConversionStatus.FAILED
-        assert result.error is not None
-        # Error message should indicate format is not supported
-        assert "not" in result.error.lower() and "support" in result.error.lower()
+        # UNSUPPORTED is distinct from FAILED - not an error, just not convertible
+        assert result.status == ConversionStatus.UNSUPPORTED
+        # No error message for unsupported (it's not an error condition)
+        assert result.error is None
 
 
 class TestConvertFileValidation:
@@ -528,6 +535,7 @@ class TestConversionReport:
         assert report.failed == 0
         assert report.skipped == 0
         assert report.invalid == 0
+        assert report.unsupported == 0
         assert report.total == 0
 
     @pytest.mark.unit
@@ -585,6 +593,15 @@ class TestConversionReport:
                 error=None,
                 duration_ms=80,
             ),
+            ConversionResult(
+                source=Path("/a/unsupported.nc"),
+                output=None,
+                format_from="NetCDF",
+                format_to=None,
+                status=ConversionStatus.UNSUPPORTED,
+                error=None,
+                duration_ms=1,
+            ),
         ]
 
         report = ConversionReport(results=results)
@@ -593,7 +610,8 @@ class TestConversionReport:
         assert report.failed == 1
         assert report.skipped == 1
         assert report.invalid == 1
-        assert report.total == 5
+        assert report.unsupported == 1
+        assert report.total == 6
 
     @pytest.mark.unit
     def test_total_equals_len_results(self) -> None:
@@ -690,6 +708,7 @@ class TestConversionReport:
         assert d["summary"]["skipped"] == 1
         assert d["summary"]["failed"] == 0
         assert d["summary"]["invalid"] == 0
+        assert d["summary"]["unsupported"] == 0
         assert d["summary"]["total"] == 2
 
         assert "results" in d
@@ -699,7 +718,7 @@ class TestConversionReport:
 
     @pytest.mark.unit
     def test_counts_invariant(self) -> None:
-        """succeeded + failed + skipped + invalid == total."""
+        """succeeded + failed + skipped + invalid + unsupported == total."""
         from portolan_cli.convert import (
             ConversionReport,
             ConversionResult,
@@ -710,7 +729,9 @@ class TestConversionReport:
         results = [
             ConversionResult(
                 source=Path(f"/a/{i}.shp"),
-                output=Path(f"/a/{i}.parquet") if status != ConversionStatus.FAILED else None,
+                output=Path(f"/a/{i}.parquet")
+                if status not in (ConversionStatus.FAILED, ConversionStatus.UNSUPPORTED)
+                else None,
                 format_from="SHP",
                 format_to="GeoParquet",
                 status=status,
@@ -726,6 +747,7 @@ class TestConversionReport:
                     ConversionStatus.SKIPPED,
                     ConversionStatus.FAILED,
                     ConversionStatus.INVALID,
+                    ConversionStatus.UNSUPPORTED,
                 ]
             )
         ]
@@ -733,7 +755,10 @@ class TestConversionReport:
         report = ConversionReport(results=results)
 
         # Invariant: all counts sum to total
-        assert report.succeeded + report.failed + report.skipped + report.invalid == report.total
+        assert (
+            report.succeeded + report.failed + report.skipped + report.invalid + report.unsupported
+            == report.total
+        )
 
 
 # =============================================================================
@@ -979,11 +1004,12 @@ class TestConvertFileErrorTypes:
     """
 
     @pytest.mark.unit
-    def test_unsupported_format_uses_unsupported_format_error(self, tmp_path: Path) -> None:
-        """Unsupported format should use UnsupportedFormatError internally.
+    def test_unsupported_format_returns_unsupported_status(self, tmp_path: Path) -> None:
+        """Unsupported format returns UNSUPPORTED status (not FAILED).
 
-        The convert_file() function returns a ConversionResult with FAILED status,
-        but internally it should catch/use UnsupportedFormatError for logging context.
+        The convert_file() function returns UNSUPPORTED for formats that aren't
+        convertible (like NetCDF). This is distinct from FAILED which indicates
+        a conversion error.
         """
         from portolan_cli.convert import ConversionStatus, convert_file
         from portolan_cli.errors import UnsupportedFormatError
@@ -994,12 +1020,11 @@ class TestConvertFileErrorTypes:
 
         result = convert_file(netcdf)
 
-        assert result.status == ConversionStatus.FAILED
-        assert result.error is not None
-        # Error should mention format is not supported
-        assert "not" in result.error.lower() and "support" in result.error.lower()
+        # UNSUPPORTED is a distinct status - not an error condition
+        assert result.status == ConversionStatus.UNSUPPORTED
+        assert result.error is None  # No error for unsupported (it's expected)
 
-        # Verify UnsupportedFormatError can be constructed with the result context
+        # Verify UnsupportedFormatError can still be constructed for logging if needed
         error = UnsupportedFormatError(str(netcdf), result.format_from)
         assert error.code == "PRTLN-CNV001"
         assert error.path == str(netcdf)

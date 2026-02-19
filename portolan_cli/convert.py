@@ -23,7 +23,6 @@ from typing import Any
 
 from portolan_cli.errors import (
     ConversionFailedError,
-    UnsupportedFormatError,
 )
 from portolan_cli.formats import (
     CloudNativeStatus,
@@ -43,12 +42,14 @@ class ConversionStatus(Enum):
         SKIPPED: File was already cloud-native, no conversion needed.
         FAILED: Conversion threw an exception (original file preserved).
         INVALID: Conversion completed but validation failed (output kept for inspection).
+        UNSUPPORTED: Format is not supported for conversion (not an error).
     """
 
     SUCCESS = "success"
     SKIPPED = "skipped"
     FAILED = "failed"
     INVALID = "invalid"
+    UNSUPPORTED = "unsupported"
 
 
 @dataclass
@@ -124,6 +125,11 @@ class ConversionReport:
         return sum(1 for r in self.results if r.status == ConversionStatus.INVALID)
 
     @property
+    def unsupported(self) -> int:
+        """Count of files with unsupported formats (not convertible)."""
+        return sum(1 for r in self.results if r.status == ConversionStatus.UNSUPPORTED)
+
+    @property
     def total(self) -> int:
         """Total number of files processed."""
         return len(self.results)
@@ -140,6 +146,7 @@ class ConversionReport:
                 "failed": self.failed,
                 "skipped": self.skipped,
                 "invalid": self.invalid,
+                "unsupported": self.unsupported,
                 "total": self.total,
             },
             "results": [r.to_dict() for r in self.results],
@@ -187,24 +194,21 @@ def convert_file(
             duration_ms=duration_ms,
         )
 
-    # Handle unsupported formats
+    # Handle unsupported formats (not an error, just not convertible)
     if format_info.status == CloudNativeStatus.UNSUPPORTED:
         duration_ms = int((time.perf_counter() - start_time) * 1000)
-        # Use structured error for logging context
-        format_error = UnsupportedFormatError(str(source), format_info.display_name)
-        logger.warning(
-            "Unsupported format: %s [%s]",
+        logger.info(
+            "Unsupported format, skipping: %s (%s)",
             source,
-            format_error.code,
+            format_info.display_name,
         )
         return ConversionResult(
             source=source,
             output=None,
             format_from=format_info.display_name,
             format_to=None,
-            status=ConversionStatus.FAILED,
-            error=format_info.error_message
-            or f"Format {format_info.display_name} is not supported",
+            status=ConversionStatus.UNSUPPORTED,
+            error=None,  # Not an error - just unsupported
             duration_ms=duration_ms,
         )
 
@@ -217,9 +221,13 @@ def convert_file(
         if format_type == FormatType.VECTOR:
             output_path = _convert_vector(source, out_dir)
             target_format = "GeoParquet"
+            # Validate output is valid GeoParquet
+            validation_error = _validate_geoparquet(output_path)
         elif format_type == FormatType.RASTER:
             output_path = _convert_raster(source, out_dir)
             target_format = "COG"
+            # Validate output is valid COG
+            validation_error = _validate_cog(output_path)
         else:
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             return ConversionResult(
@@ -233,6 +241,24 @@ def convert_file(
             )
 
         duration_ms = int((time.perf_counter() - start_time) * 1000)
+
+        # Check validation result
+        if validation_error is not None:
+            logger.warning(
+                "Conversion completed but validation failed for %s: %s",
+                output_path,
+                validation_error,
+            )
+            return ConversionResult(
+                source=source,
+                output=output_path,  # Keep output for inspection
+                format_from=format_info.display_name,
+                format_to=target_format,
+                status=ConversionStatus.INVALID,
+                error=validation_error,
+                duration_ms=duration_ms,
+            )
+
         return ConversionResult(
             source=source,
             output=output_path,
@@ -299,6 +325,10 @@ def _convert_raster(source: Path, output_dir: Path) -> Path:
 
     Returns:
         Path to the output COG file.
+
+    Note:
+        If output_dir is the same directory as source, the original file
+        will be replaced with the COG. This is by design for raster conversion.
     """
     import tempfile
 
@@ -306,6 +336,13 @@ def _convert_raster(source: Path, output_dir: Path) -> Path:
     from rio_cogeo.profiles import cog_profiles
 
     output_path = output_dir / f"{source.stem}.tif"
+
+    # Warn if we're about to overwrite the source file
+    if output_path.resolve() == source.resolve():
+        logger.info(
+            "Source file will be replaced with COG (in-place conversion): %s",
+            source,
+        )
 
     # Use DEFLATE profile with our opinionated defaults
     profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
@@ -343,6 +380,49 @@ def _convert_raster(source: Path, output_dir: Path) -> Path:
         raise
 
     return output_path
+
+
+def _validate_geoparquet(path: Path) -> str | None:
+    """Validate that the output file is valid GeoParquet.
+
+    Args:
+        path: Path to the parquet file to validate.
+
+    Returns:
+        Error message if validation failed, None if valid.
+    """
+    try:
+        from portolan_cli.formats import is_geoparquet
+
+        if not is_geoparquet(path):
+            return "Output file is not valid GeoParquet (missing geo metadata)"
+        return None
+    except Exception as e:
+        return f"Failed to validate GeoParquet: {e}"
+
+
+def _validate_cog(path: Path) -> str | None:
+    """Validate that the output file is a valid COG.
+
+    Args:
+        path: Path to the TIFF file to validate.
+
+    Returns:
+        Error message if validation failed, None if valid.
+    """
+    try:
+        from rio_cogeo.cogeo import cog_validate
+
+        is_valid, errors, _warnings = cog_validate(str(path))
+        if not is_valid:
+            return f"Output file is not valid COG: {'; '.join(errors)}"
+        return None
+    except ImportError:
+        # If rio-cogeo isn't available, skip validation
+        logger.debug("rio-cogeo not available for COG validation, skipping")
+        return None
+    except Exception as e:
+        return f"Failed to validate COG: {e}"
 
 
 # Extensions we recognize as geospatial for batch conversion

@@ -20,6 +20,7 @@ from portolan_cli.convert import (
     GEOSPATIAL_EXTENSIONS,
     ConversionReport,
     ConversionResult,
+    ConversionStatus,
     convert_directory,
 )
 from portolan_cli.formats import CloudNativeStatus, get_cloud_native_status
@@ -163,18 +164,34 @@ def check_directory(
 
     # Handle fix mode
     if fix and not dry_run:
-        # Pass the already-discovered file list to avoid re-scanning
-        # This ensures ConversionReport aligns with file_statuses
+        # Only convert files that are CONVERTIBLE (not cloud-native, not unsupported)
+        convertible_files = [
+            f.path for f in file_statuses if f.status == CloudNativeStatus.CONVERTIBLE
+        ]
         conversion_report = convert_directory(
             path,
             on_progress=on_progress,
-            file_paths=[f.path for f in file_statuses],
+            file_paths=convertible_files,
         )
         report.conversion_report = conversion_report
     elif fix and dry_run:
-        # Preview mode - create empty conversion report
-        # The caller should show what would be converted based on file_statuses
-        report.conversion_report = ConversionReport(results=[])
+        # Preview mode - create results showing what would be converted
+        preview_results = [
+            ConversionResult(
+                source=f.path,
+                output=f.path.parent / f"{f.path.stem}.parquet"
+                if f.target_format == "GeoParquet"
+                else f.path.parent / f"{f.path.stem}.tif",
+                format_from=f.display_name,
+                format_to=f.target_format,
+                status=ConversionStatus.SUCCESS,  # Predicted outcome
+                error=None,
+                duration_ms=0,
+            )
+            for f in file_statuses
+            if f.status == CloudNativeStatus.CONVERTIBLE
+        ]
+        report.conversion_report = ConversionReport(results=preview_results)
 
     return report
 
