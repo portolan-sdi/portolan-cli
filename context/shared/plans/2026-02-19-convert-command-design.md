@@ -2,7 +2,7 @@
 
 ## Current Focus
 
-> **Phase 3: Architecture Dialogue** -- COMPLETE. Ready for task decomposition.
+> **IMPLEMENTED** — All phases complete. See PR `feat(convert): implement check --fix conversion workflow`.
 
 ---
 
