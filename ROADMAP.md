@@ -30,21 +30,27 @@ Push catalogs to object storage. Portolan owns the bucket contents.
 
 | Capability | Description |
 |------------|-------------|
-| `portolan remote add/list` | Configure S3, GCS, Azure backends |
-| `portolan sync` | Push `.portolan/` to remote |
+| `portolan push` | Diff local vs remote → upload changed files → update versions.json |
+| `portolan pull` | Diff remote vs local → download changed files → update local state |
+| `portolan sync` | Orchestrate full workflow: init → scan → check --fix → push/pull |
 | `versions.json` | Version history, checksums, sync state |
 
-### Epic: Validation & Repair
+**Note:** Upload primitives (S3/GCS/Azure via obstore) are implemented in [PR #46](https://github.com/portolan-sdi/portolan-cli/pull/46).
 
-Ensure catalogs meet the Portolan spec. Detect and fix drift.
+### Epic: Scan & Validation
+
+Discover files and ensure catalogs meet the Portolan spec.
 
 | Capability | Description |
 |------------|-------------|
-| `portolan check` | Validate local catalog against spec |
+| `portolan scan` | Discover geospatial files, detect issues (naming, completeness), suggest fixes ✓ |
+| `portolan scan --fix` | Auto-rename files with invalid characters, reserved names, long paths ✓ |
+| `portolan check` | Validate local catalog against spec ✓ |
+| `portolan check --fix` | Convert non-cloud-native files to GeoParquet/COG ✓ |
 | `portolan check --remote` | Detect drift (external edits to bucket) |
 | `portolan repair` | Re-sync remote from local truth |
 | `portolan prune` | Clean up old versions |
-| Actionable output | Specific guidance, not just pass/fail |
+| Actionable output | Specific guidance, not just pass/fail ✓ |
 
 ### Epic: Styling & Thumbnails
 
@@ -109,9 +115,9 @@ Phase 1 is broken into incremental releases. Each builds on the previous—later
 |---------|-------|--------------|
 | **v0.2** | Catalog init | `portolan init` — create `.portolan/` structure ✓ |
 | **v0.3** | Format conversion | Wrap [geoparquet-io](https://github.com/geoparquet/geoparquet-io) + [rio-cogeo](https://github.com/cogeotiff/rio-cogeo), format detection ✓ |
-| **v0.4** | Metadata + validation | Extract metadata (extent, schema, CRS), validation rules, `portolan check` for local catalogs ✓ |
-| **v0.5** | Dataset CRUD | `dataset add` (orchestrates conversion + validation), `dataset list`, `dataset info`, `dataset remove` |
-| **v0.6** | Remote sync | `remote add`, `sync` (single-user), drift detection, `--dry-run` and `--verbose` flags |
+| **v0.4** | Scan + validation | `portolan scan` (discover files, detect issues), `portolan check` (validate catalog), `check --fix` (convert to cloud-native) ✓ |
+| **v0.5** | Dataset CRUD | `dataset add/list/info/remove` — orchestrate conversion + validation + catalog updates |
+| **v0.6** | Remote sync | `push` (diff + upload), `pull` (diff + download), `sync` (orchestrate init→scan→check→push) |
 | **v0.7** | Versioning | Schema fingerprints, `rollback`, `--breaking` flag, version numbering ([#14](https://github.com/portolan-sdi/portolan-cli/issues/14)) |
 | **v0.8** | Maintenance | `prune` with safety mechanisms ([#15](https://github.com/portolan-sdi/portolan-cli/issues/15)), `repair`|
 

@@ -39,24 +39,36 @@ Future format support is added via plugins (PMTiles, COPC, 3D Tiles, Iceberg). S
 
 ## CLI Commands
 
-Twelve commands covering the full lifecycle from files to live catalog:
+Commands covering the full lifecycle from files to live catalog:
 
 ```
-portolan init                          # Create .portolan/ catalog structure
+# Catalog setup
+portolan init                          # Create catalog.json + .portolan/ structure ✓
+
+# Discovery & validation
+portolan scan <path>                   # Discover geospatial files, detect issues ✓
+portolan scan --fix --dry-run          # Preview safe renames (invalid chars, reserved names) ✓
+portolan check                         # Validate local catalog against spec ✓
+portolan check --fix --dry-run         # Preview cloud-native conversions ✓
+
+# Dataset management
 portolan dataset add <file_or_dir>     # Convert, enrich, stage (interactive or --auto)
 portolan dataset remove <name_or_dir>  # Remove dataset(s) from catalog
 portolan dataset list                  # Show catalog contents
 portolan dataset info <name>           # Metadata, extent, schema summary
 
-portolan remote add <name> <url>       # Configure storage backend
-portolan remote list                   # Show configured remotes
-portolan sync                          # Push .portolan/ to remote
+# Remote sync (planned)
+portolan push                          # Diff local vs remote → upload changed files
+portolan pull                          # Diff remote vs local → download changed files
+portolan sync                          # Orchestrate: init → scan → check --fix → push
 
-portolan check                         # Validate local catalog against spec
+# Maintenance (planned)
 portolan check --remote                # Detect drift between local and remote
 portolan repair                        # Re-sync remote from local truth
 portolan prune                         # Delete old version files from remote
 ```
+
+**Status:** ✓ = implemented, planned = in roadmap
 
 ### `dataset add` Workflow
 
@@ -115,18 +127,32 @@ Portolan owns the bucket contents. Users configure access; Portolan manages ever
 - Old versions archived to `/v{version}/` paths
 - `portolan prune` cleans up old versions (with safety mechanisms)
 
-## Validation
+## Discovery & Validation
 
-`portolan check` validates the catalog against the Portolan spec with a clear distinction between must-have (errors) and should-have (warnings):
+### `portolan scan`
 
-- Every dataset has valid STAC metadata
+Discovers geospatial files and detects issues before import:
+
+- File discovery by extension (.parquet, .shp, .tif, .gpkg, etc.)
+- Shapefile completeness validation (.shp/.shx/.dbf/.prj)
+- Filename issues (invalid characters, Windows reserved names, long paths)
+- Multiple primary assets in same directory (manual grouping decisions)
+- Collection structure suggestions based on filename patterns
+
+With `--fix`: auto-renames files with safe transformations (spaces → underscores, etc.)
+
+### `portolan check`
+
+Validates the catalog against the Portolan spec with a clear distinction between must-have (errors) and should-have (warnings):
+
+- Catalog structure (.portolan/ exists, catalog.json valid)
+- STAC fields present and valid
+- Cloud-native format compliance
 - Checksums in `versions.json` match actual files
-- Thumbnails exist
-- READMEs exist
-- Descriptions are non-empty
+- Thumbnails and READMEs exist
 - Style files are valid MapLibre JSON
-- CRS is set
-- Spec version is declared
+
+With `--fix`: converts non-cloud-native files to GeoParquet (vectors) or COG (rasters).
 
 Output is actionable: not just "invalid" but specific guidance on what to fix.
 
