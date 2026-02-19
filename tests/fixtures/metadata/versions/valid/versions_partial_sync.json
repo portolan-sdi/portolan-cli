@@ -1,0 +1,65 @@
+{
+  "spec_version": "1.0.0",
+  "current_version": "1.1.0",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "created": "2026-01-15T10:30:00Z",
+      "breaking": false,
+      "assets": {
+        "roads.parquet": {
+          "sha256": "111111111111111111111111111111111111111111111111111111111111111a",
+          "size_bytes": 5242880,
+          "href": "roads.parquet",
+          "source_path": "roads.shp",
+          "source_mtime": 1705312200.0
+        },
+        "rivers.parquet": {
+          "sha256": "222222222222222222222222222222222222222222222222222222222222222b",
+          "size_bytes": 1048576,
+          "href": "rivers.parquet",
+          "source_path": "rivers.shp",
+          "source_mtime": 1705312200.0
+        },
+        "lakes.parquet": {
+          "sha256": "333333333333333333333333333333333333333333333333333333333333333c",
+          "size_bytes": 524288,
+          "href": "lakes.parquet",
+          "source_path": "lakes.shp",
+          "source_mtime": 1705312200.0
+        }
+      },
+      "changes": ["roads.parquet", "rivers.parquet", "lakes.parquet"]
+    },
+    {
+      "version": "1.1.0",
+      "created": "2026-02-18T11:00:00Z",
+      "breaking": false,
+      "assets": {
+        "roads.parquet": {
+          "sha256": "444444444444444444444444444444444444444444444444444444444444444d",
+          "size_bytes": 5500000,
+          "href": "roads.parquet",
+          "source_path": "roads.shp",
+          "source_mtime": 1708254000.0
+        },
+        "rivers.parquet": {
+          "sha256": "222222222222222222222222222222222222222222222222222222222222222b",
+          "size_bytes": 1048576,
+          "href": "rivers.parquet",
+          "source_path": "rivers.shp",
+          "source_mtime": 1705312200.0
+        },
+        "lakes.parquet": {
+          "sha256": "333333333333333333333333333333333333333333333333333333333333333c",
+          "size_bytes": 524288,
+          "href": "lakes.parquet",
+          "source_path": "lakes.shp",
+          "source_mtime": 1705312200.0
+        }
+      },
+      "changes": ["roads.parquet"],
+      "message": "Updated roads data from 2026 survey"
+    }
+  ]
+}

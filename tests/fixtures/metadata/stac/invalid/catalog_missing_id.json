@@ -1,0 +1,12 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.0.0",
+  "description": "Catalog missing required 'id' field",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json"
+    }
+  ]
+}

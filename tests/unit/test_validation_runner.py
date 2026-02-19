@@ -89,6 +89,6 @@ class TestCheck:
         # No .portolan dir = first rule fails
         report = check(tmp_path)
 
-        # Should have run all 4 default rules even though the first one failed
+        # Should have run all 5 default rules even though the first one failed
         # This verifies the runner doesn't short-circuit on failure
-        assert len(report.results) == 4
+        assert len(report.results) == 5

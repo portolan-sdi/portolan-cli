@@ -1,0 +1,20 @@
+{
+  "_comment": "INVALID: sha256 is not 64 hex characters (too short)",
+  "spec_version": "1.0.0",
+  "current_version": "1.0.0",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "created": "2026-01-15T10:30:00Z",
+      "breaking": false,
+      "assets": {
+        "data.parquet": {
+          "sha256": "abc123",
+          "size_bytes": 1048576,
+          "href": "data.parquet"
+        }
+      },
+      "changes": ["data.parquet"]
+    }
+  ]
+}

@@ -34,6 +34,30 @@ fixtures/
 │   └── invalid/         # Invalid inputs for error handling tests
 │       ├── not_georeferenced.tif  # Regular TIFF, no CRS
 │       └── truncated.tif          # Corrupted file
+├── metadata/
+│   ├── versions/        # versions.json fixtures for check metadata
+│   │   ├── valid/
+│   │   │   ├── versions_v1.json         # Single version, clean state
+│   │   │   ├── versions_v3.json         # Multiple versions with history
+│   │   │   ├── versions_breaking.json   # Has breaking change flag
+│   │   │   └── versions_partial_sync.json  # Mixed sync state
+│   │   └── invalid/
+│   │       ├── versions_bad_checksum.json    # Checksum too short
+│   │       ├── versions_missing_current.json # current_version not found
+│   │       └── versions_duplicate.json       # Duplicate version entries
+│   └── stac/            # STAC catalog/collection/item fixtures
+│       ├── valid/
+│       │   ├── catalog_minimal.json     # Minimal valid STAC catalog
+│       │   ├── catalog_full.json        # Full catalog with all optional fields
+│       │   ├── collection_vector.json   # Vector data collection
+│       │   ├── collection_raster.json   # Raster data collection
+│       │   ├── item_geoparquet.json     # GeoParquet STAC item
+│       │   └── item_cog.json            # COG STAC item with Projection extension
+│       └── invalid/
+│           ├── catalog_missing_id.json  # Missing required 'id' field
+│           ├── item_no_geometry.json    # Item missing geometry
+│           ├── item_wrong_type.json     # Wrong 'type' value
+│           └── collection_bad_extent.json  # Malformed extent
 └── edge/                # Edge cases
     ├── unicode_properties.geojson    # Non-ASCII property names/values
     ├── special_filename spaces.geojson  # Spaces in filename
@@ -93,6 +117,27 @@ Each invalid fixture tests a specific failure mode:
 | `unicode_properties.geojson` | Non-ASCII characters | Encoding handling |
 | `special_filename spaces.geojson` | Spaces in name | Path escaping |
 | `antimeridian.geojson` | Crosses +-180 longitude | Bbox computation |
+
+### Metadata Fixtures (versions.json)
+
+These fixtures test the `check` command's metadata validation and the versions.json format.
+
+**Valid fixtures:**
+
+| File | Scenario | Purpose |
+|------|----------|---------|
+| `versions_v1.json` | Single version | Fresh catalog, no history |
+| `versions_v3.json` | Multiple versions | Version traversal, history queries |
+| `versions_breaking.json` | Breaking change | `breaking: true` detection |
+| `versions_partial_sync.json` | Mixed sync state | Some assets changed, others unchanged |
+
+**Invalid fixtures:**
+
+| File | Issue | Purpose |
+|------|-------|---------|
+| `versions_bad_checksum.json` | SHA256 too short (6 chars) | Checksum length validation |
+| `versions_missing_current.json` | `current_version` not in versions array | Reference integrity |
+| `versions_duplicate.json` | Same version appears twice | Uniqueness constraint |
 
 ## Adding New Fixtures
 

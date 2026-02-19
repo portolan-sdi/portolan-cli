@@ -622,6 +622,317 @@ def generate_raster_fixtures() -> None:
     print(f"Generated {truncated_path}")
 
 
+def generate_versions_fixtures() -> None:
+    """Generate versions.json test fixtures.
+
+    Creates valid and invalid fixtures for testing the versions module
+    and metadata check functionality.
+    """
+    valid_dir = FIXTURES_DIR / "metadata" / "versions" / "valid"
+    invalid_dir = FIXTURES_DIR / "metadata" / "versions" / "invalid"
+    valid_dir.mkdir(parents=True, exist_ok=True)
+    invalid_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- Valid: versions_v1.json (single version, clean state) ---
+    versions_v1 = {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:30:00Z",
+                "breaking": False,
+                "assets": {
+                    "parcels.parquet": {
+                        "sha256": "abc123def456789012345678901234567890123456789012345678901234abcd",
+                        "size_bytes": 1048576,
+                        "href": "parcels.parquet",
+                        "source_path": "parcels.geojson",
+                        "source_mtime": 1705312200.0,
+                    }
+                },
+                "changes": ["parcels.parquet"],
+            }
+        ],
+    }
+    (valid_dir / "versions_v1.json").write_text(json.dumps(versions_v1, indent=2) + "\n")
+    print(f"Generated {valid_dir / 'versions_v1.json'}")
+
+    # --- Valid: versions_v3.json (multiple versions with history) ---
+    versions_v3 = {
+        "spec_version": "1.0.0",
+        "current_version": "1.2.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:30:00Z",
+                "breaking": False,
+                "assets": {
+                    "parcels.parquet": {
+                        "sha256": "abc123def456789012345678901234567890123456789012345678901234abcd",
+                        "size_bytes": 1048576,
+                        "href": "parcels.parquet",
+                        "source_path": "parcels.geojson",
+                        "source_mtime": 1705312200.0,
+                    }
+                },
+                "changes": ["parcels.parquet"],
+            },
+            {
+                "version": "1.1.0",
+                "created": "2026-02-01T14:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "parcels.parquet": {
+                        "sha256": "def456789012345678901234567890123456789012345678901234abcdef12",
+                        "size_bytes": 1150000,
+                        "href": "parcels.parquet",
+                        "source_path": "parcels.geojson",
+                        "source_mtime": 1706788800.0,
+                    },
+                    "buildings.parquet": {
+                        "sha256": "789012345678901234567890123456789012345678901234abcdef1234567890",
+                        "size_bytes": 524288,
+                        "href": "buildings.parquet",
+                        "source_path": "buildings.geojson",
+                        "source_mtime": 1706788800.0,
+                    },
+                },
+                "changes": ["parcels.parquet", "buildings.parquet"],
+            },
+            {
+                "version": "1.2.0",
+                "created": "2026-02-15T09:15:00Z",
+                "breaking": False,
+                "assets": {
+                    "parcels.parquet": {
+                        "sha256": "def456789012345678901234567890123456789012345678901234abcdef12",
+                        "size_bytes": 1150000,
+                        "href": "parcels.parquet",
+                        "source_path": "parcels.geojson",
+                        "source_mtime": 1706788800.0,
+                    },
+                    "buildings.parquet": {
+                        "sha256": "890123456789012345678901234567890123456789012345abcdef123456789a",
+                        "size_bytes": 550000,
+                        "href": "buildings.parquet",
+                        "source_path": "buildings.geojson",
+                        "source_mtime": 1708002900.0,
+                    },
+                },
+                "changes": ["buildings.parquet"],
+            },
+        ],
+    }
+    (valid_dir / "versions_v3.json").write_text(json.dumps(versions_v3, indent=2) + "\n")
+    print(f"Generated {valid_dir / 'versions_v3.json'}")
+
+    # --- Valid: versions_breaking.json (has breaking change flag) ---
+    versions_breaking = {
+        "spec_version": "1.0.0",
+        "current_version": "2.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:30:00Z",
+                "breaking": False,
+                "assets": {
+                    "census.parquet": {
+                        "sha256": "abc123def456789012345678901234567890123456789012345678901234abcd",
+                        "size_bytes": 2097152,
+                        "href": "census.parquet",
+                        "source_path": "census.csv",
+                        "source_mtime": 1705312200.0,
+                    }
+                },
+                "changes": ["census.parquet"],
+            },
+            {
+                "version": "2.0.0",
+                "created": "2026-02-10T16:45:00Z",
+                "breaking": True,
+                "assets": {
+                    "census.parquet": {
+                        "sha256": "fedcba987654321098765432109876543210987654321098765432109876fedc",
+                        "size_bytes": 1800000,
+                        "href": "census.parquet",
+                        "source_path": "census_v2.csv",
+                        "source_mtime": 1707583500.0,
+                    }
+                },
+                "changes": ["census.parquet"],
+                "message": "BREAKING: Removed 'legacy_id' column, changed 'population' from string to integer",
+            },
+        ],
+    }
+    (valid_dir / "versions_breaking.json").write_text(
+        json.dumps(versions_breaking, indent=2) + "\n"
+    )
+    print(f"Generated {valid_dir / 'versions_breaking.json'}")
+
+    # --- Valid: versions_partial_sync.json (mixed sync state) ---
+    versions_partial = {
+        "spec_version": "1.0.0",
+        "current_version": "1.1.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:30:00Z",
+                "breaking": False,
+                "assets": {
+                    "roads.parquet": {
+                        "sha256": "111111111111111111111111111111111111111111111111111111111111111a",
+                        "size_bytes": 5242880,
+                        "href": "roads.parquet",
+                        "source_path": "roads.shp",
+                        "source_mtime": 1705312200.0,
+                    },
+                    "rivers.parquet": {
+                        "sha256": "222222222222222222222222222222222222222222222222222222222222222b",
+                        "size_bytes": 1048576,
+                        "href": "rivers.parquet",
+                        "source_path": "rivers.shp",
+                        "source_mtime": 1705312200.0,
+                    },
+                    "lakes.parquet": {
+                        "sha256": "333333333333333333333333333333333333333333333333333333333333333c",
+                        "size_bytes": 524288,
+                        "href": "lakes.parquet",
+                        "source_path": "lakes.shp",
+                        "source_mtime": 1705312200.0,
+                    },
+                },
+                "changes": ["roads.parquet", "rivers.parquet", "lakes.parquet"],
+            },
+            {
+                "version": "1.1.0",
+                "created": "2026-02-18T11:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "roads.parquet": {
+                        "sha256": "444444444444444444444444444444444444444444444444444444444444444d",
+                        "size_bytes": 5500000,
+                        "href": "roads.parquet",
+                        "source_path": "roads.shp",
+                        "source_mtime": 1708254000.0,
+                    },
+                    "rivers.parquet": {
+                        "sha256": "222222222222222222222222222222222222222222222222222222222222222b",
+                        "size_bytes": 1048576,
+                        "href": "rivers.parquet",
+                        "source_path": "rivers.shp",
+                        "source_mtime": 1705312200.0,
+                    },
+                    "lakes.parquet": {
+                        "sha256": "333333333333333333333333333333333333333333333333333333333333333c",
+                        "size_bytes": 524288,
+                        "href": "lakes.parquet",
+                        "source_path": "lakes.shp",
+                        "source_mtime": 1705312200.0,
+                    },
+                },
+                "changes": ["roads.parquet"],
+                "message": "Updated roads data from 2026 survey",
+            },
+        ],
+    }
+    (valid_dir / "versions_partial_sync.json").write_text(
+        json.dumps(versions_partial, indent=2) + "\n"
+    )
+    print(f"Generated {valid_dir / 'versions_partial_sync.json'}")
+
+    # --- Invalid: versions_bad_checksum.json ---
+    versions_bad_checksum = {
+        "_comment": "INVALID: sha256 is not 64 hex characters (too short)",
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:30:00Z",
+                "breaking": False,
+                "assets": {
+                    "data.parquet": {
+                        "sha256": "abc123",  # Too short!
+                        "size_bytes": 1048576,
+                        "href": "data.parquet",
+                    }
+                },
+                "changes": ["data.parquet"],
+            }
+        ],
+    }
+    (invalid_dir / "versions_bad_checksum.json").write_text(
+        json.dumps(versions_bad_checksum, indent=2) + "\n"
+    )
+    print(f"Generated {invalid_dir / 'versions_bad_checksum.json'}")
+
+    # --- Invalid: versions_missing_current.json ---
+    versions_missing_current = {
+        "_comment": "INVALID: current_version points to non-existent version '2.0.0'",
+        "spec_version": "1.0.0",
+        "current_version": "2.0.0",  # Does not exist!
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:30:00Z",
+                "breaking": False,
+                "assets": {
+                    "data.parquet": {
+                        "sha256": "abc123def456789012345678901234567890123456789012345678901234abcd",
+                        "size_bytes": 1048576,
+                        "href": "data.parquet",
+                    }
+                },
+                "changes": ["data.parquet"],
+            }
+        ],
+    }
+    (invalid_dir / "versions_missing_current.json").write_text(
+        json.dumps(versions_missing_current, indent=2) + "\n"
+    )
+    print(f"Generated {invalid_dir / 'versions_missing_current.json'}")
+
+    # --- Invalid: versions_duplicate.json ---
+    versions_duplicate = {
+        "_comment": "INVALID: Duplicate version '1.0.0' in versions array",
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:30:00Z",
+                "breaking": False,
+                "assets": {
+                    "data.parquet": {
+                        "sha256": "abc123def456789012345678901234567890123456789012345678901234abcd",
+                        "size_bytes": 1048576,
+                        "href": "data.parquet",
+                    }
+                },
+                "changes": ["data.parquet"],
+            },
+            {
+                "version": "1.0.0",  # Duplicate!
+                "created": "2026-01-16T10:30:00Z",
+                "breaking": False,
+                "assets": {
+                    "data.parquet": {
+                        "sha256": "def456789012345678901234567890123456789012345678901234abcdef1234",
+                        "size_bytes": 2097152,
+                        "href": "data.parquet",
+                    }
+                },
+                "changes": ["data.parquet"],
+            },
+        ],
+    }
+    (invalid_dir / "versions_duplicate.json").write_text(
+        json.dumps(versions_duplicate, indent=2) + "\n"
+    )
+    print(f"Generated {invalid_dir / 'versions_duplicate.json'}")
+
+
 def main() -> None:
     """Generate all fixtures."""
     print("Generating test fixtures...")
@@ -638,6 +949,9 @@ def main() -> None:
 
     print("\n--- Raster fixtures (COG) ---")
     generate_raster_fixtures()
+
+    print("\n--- Metadata fixtures (versions.json) ---")
+    generate_versions_fixtures()
 
     # Note: Shapefile fixtures deferred - GeoJSON/GeoParquet sufficient for now
     # See issue #30 for real-world data fixtures including Shapefiles

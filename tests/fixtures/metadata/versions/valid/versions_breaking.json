@@ -1,0 +1,37 @@
+{
+  "spec_version": "1.0.0",
+  "current_version": "2.0.0",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "created": "2026-01-15T10:30:00Z",
+      "breaking": false,
+      "assets": {
+        "census.parquet": {
+          "sha256": "abc123def456789012345678901234567890123456789012345678901234abcd",
+          "size_bytes": 2097152,
+          "href": "census.parquet",
+          "source_path": "census.csv",
+          "source_mtime": 1705312200.0
+        }
+      },
+      "changes": ["census.parquet"]
+    },
+    {
+      "version": "2.0.0",
+      "created": "2026-02-10T16:45:00Z",
+      "breaking": true,
+      "assets": {
+        "census.parquet": {
+          "sha256": "fedcba987654321098765432109876543210987654321098765432109876fedc",
+          "size_bytes": 1800000,
+          "href": "census.parquet",
+          "source_path": "census_v2.csv",
+          "source_mtime": 1707583500.0
+        }
+      },
+      "changes": ["census.parquet"],
+      "message": "BREAKING: Removed 'legacy_id' column, changed 'population' from string to integer"
+    }
+  ]
+}

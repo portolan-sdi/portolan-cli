@@ -1,0 +1,61 @@
+{
+  "type": "Feature",
+  "stac_version": "1.0.0",
+  "stac_extensions": [
+    "https://stac-extensions.github.io/projection/v1.1.0/schema.json"
+  ],
+  "id": "imagery-20250715",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [[
+      [-122.45, 37.75],
+      [-122.40, 37.75],
+      [-122.40, 37.80],
+      [-122.45, 37.80],
+      [-122.45, 37.75]
+    ]]
+  },
+  "bbox": [-122.45, 37.75, -122.40, 37.80],
+  "properties": {
+    "datetime": "2025-07-15T14:30:00Z",
+    "gsd": 0.3,
+    "proj:epsg": 4326
+  },
+  "collection": "sf-imagery",
+  "assets": {
+    "visual": {
+      "href": "./imagery-20250715.tif",
+      "type": "image/tiff; application=geotiff; profile=cloud-optimized",
+      "title": "RGB Visual",
+      "roles": ["visual", "data"]
+    },
+    "thumbnail": {
+      "href": "./imagery-20250715-thumb.png",
+      "type": "image/png",
+      "title": "Thumbnail",
+      "roles": ["thumbnail"]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./imagery-20250715.json",
+      "type": "application/geo+json"
+    },
+    {
+      "rel": "parent",
+      "href": "./collection.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "collection",
+      "href": "./collection.json",
+      "type": "application/json"
+    }
+  ]
+}

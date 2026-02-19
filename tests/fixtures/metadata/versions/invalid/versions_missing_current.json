@@ -1,0 +1,20 @@
+{
+  "_comment": "INVALID: current_version points to non-existent version '2.0.0'",
+  "spec_version": "1.0.0",
+  "current_version": "2.0.0",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "created": "2026-01-15T10:30:00Z",
+      "breaking": false,
+      "assets": {
+        "data.parquet": {
+          "sha256": "abc123def456789012345678901234567890123456789012345678901234abcd",
+          "size_bytes": 1048576,
+          "href": "data.parquet"
+        }
+      },
+      "changes": ["data.parquet"]
+    }
+  ]
+}
