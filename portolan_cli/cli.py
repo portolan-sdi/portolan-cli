@@ -1295,3 +1295,134 @@ def dataset_remove(
         else:
             error(str(err))
         raise SystemExit(1) from err
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Push command
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.command()
+@click.argument("destination")
+@click.option(
+    "--collection",
+    "-c",
+    required=True,
+    help="Collection to push (required).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite remote even if it has diverged.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be pushed without uploading.",
+)
+@click.option(
+    "--profile",
+    help="AWS profile name (for S3 destinations).",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=".",
+    help="Path to catalog root (default: current directory).",
+)
+@click.pass_context
+def push(
+    ctx: click.Context,
+    destination: str,
+    collection: str,
+    force: bool,
+    dry_run: bool,
+    profile: str | None,
+    catalog_path: Path,
+) -> None:
+    """Push local catalog changes to cloud object storage.
+
+    Syncs a collection's versions to a remote destination (S3, GCS, Azure).
+    Uses optimistic locking to detect concurrent modifications.
+
+    DESTINATION is the object store URL (e.g., s3://mybucket/my-catalog).
+
+    \b
+    Examples:
+        portolan push s3://mybucket/catalog --collection demographics
+        portolan push gs://mybucket/catalog -c imagery --dry-run
+        portolan push s3://mybucket/catalog -c data --force --profile prod
+    """
+    from portolan_cli.push import PushConflictError
+    from portolan_cli.push import push as push_fn
+
+    use_json = should_output_json(ctx)
+
+    try:
+        result = push_fn(
+            catalog_root=catalog_path,
+            collection=collection,
+            destination=destination,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+        )
+
+        if use_json:
+            envelope = success_envelope(
+                "push",
+                {
+                    "files_uploaded": result.files_uploaded,
+                    "versions_pushed": result.versions_pushed,
+                    "conflicts": result.conflicts,
+                    "errors": result.errors,
+                },
+            )
+            output_json_envelope(envelope)
+        else:
+            if result.success:
+                if result.versions_pushed > 0:
+                    success(
+                        f"Pushed {result.versions_pushed} version(s), {result.files_uploaded} file(s)"
+                    )
+                else:
+                    info("Nothing to push - local and remote are in sync")
+            else:
+                for err_msg in result.errors:
+                    error(err_msg)
+                raise SystemExit(1)
+
+    except PushConflictError as err:
+        if use_json:
+            envelope = error_envelope(
+                "push",
+                [ErrorDetail(type="PushConflictError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Push conflict: {err}")
+            info("Use --force to overwrite, or pull remote changes first")
+        raise SystemExit(1) from err
+
+    except FileNotFoundError as err:
+        if use_json:
+            envelope = error_envelope(
+                "push",
+                [ErrorDetail(type="FileNotFoundError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(err))
+        raise SystemExit(1) from err
+
+    except ValueError as err:
+        if use_json:
+            envelope = error_envelope(
+                "push",
+                [ErrorDetail(type="ValueError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(err))
+        raise SystemExit(1) from err
