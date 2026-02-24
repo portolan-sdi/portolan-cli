@@ -56,7 +56,7 @@ from __future__ import annotations
 
 import fnmatch
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -70,7 +70,7 @@ from obstore.store import (
     S3Store,
 )
 
-from portolan_cli.output import detail, error, info, success
+from portolan_cli.output import detail, error, info, success, warn
 from portolan_cli.upload import (
     _setup_store_and_kwargs,
     parse_object_store_url,
@@ -78,6 +78,24 @@ from portolan_cli.upload import (
 
 # Type alias for all supported object stores (same as upload.py)
 ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
+
+
+# =============================================================================
+# Exceptions
+# =============================================================================
+
+
+class DownloadIntegrityError(Exception):
+    """Raised when downloaded file fails integrity verification."""
+
+    pass
+
+
+class PathTraversalError(ValueError):
+    """Raised when a remote key contains path traversal attempt."""
+
+    pass
+
 
 # =============================================================================
 # Data Classes
@@ -93,14 +111,46 @@ class DownloadResult:
         files_downloaded: Number of files successfully downloaded.
         files_failed: Number of files that failed to download.
         total_bytes: Total bytes downloaded (only successful files).
-        errors: List of (remote_path, exception) tuples for failed downloads.
+        errors: List of (local_path, exception) tuples for failed downloads.
+                Uses Path type for consistency with UploadResult.
     """
 
     success: bool
     files_downloaded: int
     files_failed: int
     total_bytes: int
-    errors: list[tuple[str, Exception]] = field(default_factory=list)
+    errors: list[tuple[Path, Exception]] = field(default_factory=list)
+
+
+# =============================================================================
+# Security Validation
+# =============================================================================
+
+
+def _validate_local_path(local_path: Path, destination: Path) -> None:
+    """Validate that local path is within destination directory.
+
+    Protects against path traversal attacks where remote keys contain '..'
+    sequences that could escape the destination directory.
+
+    Args:
+        local_path: The computed local file path
+        destination: The intended destination directory
+
+    Raises:
+        PathTraversalError: If local_path escapes destination directory
+    """
+    # Resolve both paths to absolute paths (resolves symlinks and ..)
+    resolved_local = local_path.resolve()
+    resolved_dest = destination.resolve()
+
+    # Check if local path is within destination
+    try:
+        resolved_local.relative_to(resolved_dest)
+    except ValueError as err:
+        raise PathTraversalError(
+            f"Path traversal detected: {local_path} escapes destination {destination}"
+        ) from err
 
 
 # =============================================================================
@@ -160,7 +210,7 @@ def _download_one_file(
     remote_key: str,
     local_path: Path,
     file_size: int,
-) -> tuple[str, Exception | None, int]:
+) -> tuple[Path, Exception | None, int]:
     """Download a single file and return result tuple for parallel processing.
 
     Args:
@@ -170,7 +220,8 @@ def _download_one_file(
         file_size: Expected file size in bytes
 
     Returns:
-        Tuple of (remote_key, error_or_none, bytes_downloaded)
+        Tuple of (local_path, error_or_none, bytes_downloaded)
+        Uses Path for consistency with UploadResult.
     """
     try:
         size_mb = file_size / (1024 * 1024)
@@ -182,20 +233,38 @@ def _download_one_file(
         # Ensure parent directory exists
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Stream download to file
-        response = obs.get(store, remote_key)
-        with open(local_path, "wb") as f:
-            for chunk in response:
-                f.write(chunk)
+        # Stream download to file with cleanup on failure
+        try:
+            response = obs.get(store, remote_key)
+            with open(local_path, "wb") as f:
+                for chunk in response:
+                    f.write(chunk)
+        except Exception:
+            # Clean up partial file on any download failure
+            if local_path.exists():
+                local_path.unlink()
+            raise
+
+        # Verify file integrity - actual size must match expected
+        actual_size = local_path.stat().st_size
+        if file_size > 0 and actual_size != file_size:
+            # Clean up corrupted file
+            local_path.unlink()
+            raise DownloadIntegrityError(
+                f"Size mismatch: expected {file_size} bytes, got {actual_size} bytes"
+            )
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
         success(f"{filename} ({speed_mbps:.2f} MB/s)")
-        return remote_key, None, file_size
+        return local_path, None, actual_size
     except Exception as e:
+        # Clean up partial file if it exists (for any uncaught exceptions)
+        if local_path.exists():
+            local_path.unlink()
         error(f"{local_path.name}: {e}")
-        return remote_key, e, 0
+        return local_path, e, 0
 
 
 def download_file(
@@ -204,6 +273,7 @@ def download_file(
     *,
     profile: str | None = None,
     dry_run: bool = False,
+    overwrite: bool = True,
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
     s3_use_ssl: bool = True,
@@ -216,6 +286,7 @@ def download_file(
         destination: Local file path or directory
         profile: AWS profile name (for S3 only)
         dry_run: If True, show what would be downloaded without actually downloading
+        overwrite: If False, skip existing files (default: True)
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
@@ -224,15 +295,35 @@ def download_file(
     Returns:
         DownloadResult with download statistics
 
+    Raises:
+        ValueError: If source or destination is empty/invalid
+
     Example:
         >>> result = download_file("s3://bucket/data.parquet", Path("data.parquet"))
         >>> if result.success:
         ...     print(f"Downloaded {result.files_downloaded} file(s)")
     """
+    # Input validation
+    if not source or not source.strip():
+        raise ValueError("source URL cannot be empty")
+    if not str(destination):
+        raise ValueError("destination path cannot be empty")
+
     bucket_url, prefix = parse_object_store_url(source)
     local_path = _get_local_path_for_file(
         prefix, destination, destination.is_dir() if destination.exists() else False
     )
+
+    # Overwrite protection
+    if not overwrite and local_path.exists():
+        detail(f"Skipping existing file: {local_path}")
+        return DownloadResult(
+            success=True,
+            files_downloaded=0,
+            files_failed=0,
+            total_bytes=0,
+            errors=[],
+        )
 
     if dry_run:
         info(f"[DRY RUN] Would download: {prefix} -> {local_path}")
@@ -261,10 +352,25 @@ def download_file(
 
         info(f"Downloading {local_path.name} ({size_mb:.2f} MB) <- {prefix}")
 
-        # Stream download to file
-        with open(local_path, "wb") as f:
-            for chunk in response:
-                f.write(chunk)
+        # Stream download to file with cleanup on failure
+        try:
+            with open(local_path, "wb") as f:
+                for chunk in response:
+                    f.write(chunk)
+        except Exception:
+            # Clean up partial file on any download failure
+            if local_path.exists():
+                local_path.unlink()
+            raise
+
+        # Verify file integrity - actual size must match expected
+        actual_size = local_path.stat().st_size
+        if file_size > 0 and actual_size != file_size:
+            # Clean up corrupted file
+            local_path.unlink()
+            raise DownloadIntegrityError(
+                f"Size mismatch: expected {file_size} bytes, got {actual_size} bytes"
+            )
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
@@ -275,17 +381,23 @@ def download_file(
             success=True,
             files_downloaded=1,
             files_failed=0,
-            total_bytes=file_size,
+            total_bytes=actual_size,
             errors=[],
         )
     except Exception as e:
+        # Clean up partial file if it exists (may have already been deleted)
+        try:
+            if local_path.exists():
+                local_path.unlink()
+        except OSError:
+            pass  # Already deleted or permission issue
         error(f"Download failed: {e}")
         return DownloadResult(
             success=False,
             files_downloaded=0,
             files_failed=1,
             total_bytes=0,
-            errors=[(prefix, e)],
+            errors=[(local_path, e)],
         )
 
 
@@ -340,7 +452,8 @@ def _execute_parallel_downloads(
     destination: Path,
     max_files: int,
     fail_fast: bool,
-) -> list[tuple[str, Exception | None, int]]:
+    overwrite: bool = True,
+) -> list[tuple[Path, Exception | None, int]]:
     """Execute parallel downloads using ThreadPoolExecutor.
 
     Args:
@@ -350,33 +463,92 @@ def _execute_parallel_downloads(
         destination: Local destination directory
         max_files: Max concurrent file downloads
         fail_fast: Stop on first error if True
+        overwrite: If False, skip existing files
 
     Returns:
-        List of (remote_key, error_or_none, bytes_downloaded) tuples
+        List of (local_path, error_or_none, bytes_downloaded) tuples
     """
-    results: list[tuple[str, Exception | None, int]] = []
+    results: list[tuple[Path, Exception | None, int]] = []
 
-    with ThreadPoolExecutor(max_workers=max_files) as executor:
-        future_to_file = {}
-        for file_meta in files:
-            remote_key = str(file_meta["path"])
-            file_size = int(file_meta["size"])
-            local_path = _build_local_path(remote_key, prefix, destination)
+    # Pre-filter files: validate paths and check for existing files
+    files_to_download: list[tuple[str, int, Path]] = []
+    for file_meta in files:
+        remote_key = str(file_meta["path"])
+        file_size = int(file_meta["size"])
+        local_path = _build_local_path(remote_key, prefix, destination)
 
-            future = executor.submit(_download_one_file, store, remote_key, local_path, file_size)
-            future_to_file[future] = remote_key
+        # Path traversal protection
+        try:
+            _validate_local_path(local_path, destination)
+        except PathTraversalError as e:
+            warn(f"Skipping {remote_key}: {e}")
+            results.append((local_path, e, 0))
+            continue
 
-        for future in as_completed(future_to_file):
-            result = future.result()
-            results.append(result)
-            if fail_fast and result[1] is not None:
-                # Cancel remaining futures on first error.
-                # Note: future.cancel() only prevents futures that haven't started yet;
-                # already-running tasks will complete. This is a Python ThreadPoolExecutor
-                # limitation and is acceptable behavior for our use case.
-                for pending_future in future_to_file:
-                    pending_future.cancel()
-                break
+        # Overwrite protection
+        if not overwrite and local_path.exists():
+            detail(f"Skipping existing: {local_path.name}")
+            continue
+
+        files_to_download.append((remote_key, file_size, local_path))
+
+    if not files_to_download:
+        return results
+
+    # Type alias for download result future
+    DownloadResultFuture = Future[tuple[Path, Exception | None, int]]
+
+    if fail_fast:
+        # For fail_fast mode, submit futures incrementally to ensure we can stop
+        # after the first error without starting additional tasks.
+        with ThreadPoolExecutor(max_workers=max_files) as executor:
+            pending: dict[DownloadResultFuture, str] = {}
+            files_iter = iter(files_to_download)
+
+            # Submit initial batch up to max_files
+            for remote_key, file_size, local_path in files_iter:
+                future: DownloadResultFuture = executor.submit(
+                    _download_one_file, store, remote_key, local_path, file_size
+                )
+                pending[future] = remote_key
+                if len(pending) >= max_files:
+                    break
+
+            while pending:
+                # Wait for next completed future
+                done: DownloadResultFuture = next(iter(as_completed(pending)))
+                result = done.result()
+                results.append(result)
+                del pending[done]
+
+                # Stop on first error
+                if result[1] is not None:
+                    for pending_future in pending:
+                        pending_future.cancel()
+                    break
+
+                # Submit next file if available
+                try:
+                    remote_key, file_size, local_path = next(files_iter)
+                    new_future: DownloadResultFuture = executor.submit(
+                        _download_one_file, store, remote_key, local_path, file_size
+                    )
+                    pending[new_future] = remote_key
+                except StopIteration:
+                    pass
+    else:
+        # For non-fail_fast mode, submit all futures upfront for maximum parallelism
+        with ThreadPoolExecutor(max_workers=max_files) as executor:
+            future_to_file = {
+                executor.submit(
+                    _download_one_file, store, remote_key, local_path, file_size
+                ): remote_key
+                for remote_key, file_size, local_path in files_to_download
+            }
+
+            for future in as_completed(future_to_file):
+                result = future.result()
+                results.append(result)
 
     return results
 
@@ -391,6 +563,7 @@ def download_directory(
     chunk_concurrency: int = 12,
     fail_fast: bool = False,
     dry_run: bool = False,
+    overwrite: bool = True,
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
     s3_use_ssl: bool = True,
@@ -406,12 +579,16 @@ def download_directory(
         chunk_concurrency: Max concurrent chunks per file (default: 12)
         fail_fast: If True, stop on first error; otherwise continue and report at end
         dry_run: If True, show what would be downloaded without actually downloading
+        overwrite: If False, skip existing files (default: True)
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
 
     Returns:
         DownloadResult with download statistics
+
+    Raises:
+        ValueError: If destination is an existing file (not a directory)
 
     Example:
         >>> result = download_directory(
@@ -421,11 +598,20 @@ def download_directory(
         ... )
         >>> print(f"Downloaded {result.files_downloaded} files")
     """
+    # Input validation - destination must be a directory
+    if destination.exists() and destination.is_file():
+        raise ValueError(f"Destination must be a directory, not a file: {destination}")
+
     bucket_url, prefix = parse_object_store_url(source)
 
     store, kwargs = _setup_store_and_kwargs(
         bucket_url, profile, chunk_concurrency, s3_endpoint, s3_region, s3_use_ssl
     )
+
+    # Note: chunk_concurrency is stored in kwargs['max_concurrency'] but obstore.get
+    # doesn't support max_concurrency parameter. The kwargs are kept for potential
+    # future use with obstore enhancements.
+    _ = kwargs  # Mark as intentionally unused for now
 
     # List remote files
     files = _list_remote_files(store, prefix, pattern)
@@ -454,7 +640,9 @@ def download_directory(
     # Ensure max_files is at least 1 to avoid ThreadPoolExecutor ValueError
     max_files = max(1, max_files)
 
-    results = _execute_parallel_downloads(store, files, prefix, destination, max_files, fail_fast)
+    results = _execute_parallel_downloads(
+        store, files, prefix, destination, max_files, fail_fast, overwrite
+    )
 
     # Calculate results
     errors = [(path, err) for path, err, _ in results if err is not None]

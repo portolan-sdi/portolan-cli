@@ -116,7 +116,10 @@ class TestDownloadResult:
             files_downloaded=3,
             files_failed=2,
             total_bytes=500 * 1024,
-            errors=[("path/to/file1.parquet", error), ("path/to/file2.parquet", error)],
+            errors=[
+                (Path("path/to/file1.parquet"), error),
+                (Path("path/to/file2.parquet"), error),
+            ],
         )
 
         assert result.success is False
@@ -153,6 +156,7 @@ class TestDownloadFile:
         from portolan_cli.download import download_file
 
         dest_file = temp_download_dir / "data.parquet"
+        test_data = b"test data content"
 
         with patch("portolan_cli.download.obs") as mock_obs:
             with patch("portolan_cli.download.S3Store") as mock_s3_store:
@@ -160,9 +164,10 @@ class TestDownloadFile:
                 mock_s3_store.return_value = mock_store
 
                 # Mock get to return a response with metadata and bytes
+                # Size MUST match actual data length for integrity verification
                 mock_response = MagicMock()
-                mock_response.meta = {"size": 1024}
-                mock_response.__iter__ = lambda self: iter([b"test data"])
+                mock_response.meta = {"size": len(test_data)}
+                mock_response.__iter__ = lambda self: iter([test_data])
                 mock_obs.get.return_value = mock_response
 
                 with patch.dict(
@@ -177,6 +182,7 @@ class TestDownloadFile:
                 assert result.success is True
                 assert result.files_downloaded == 1
                 assert result.files_failed == 0
+                assert result.total_bytes == len(test_data)
                 mock_obs.get.assert_called_once()
 
     @pytest.mark.unit
@@ -204,6 +210,7 @@ class TestDownloadFile:
 
         # Destination in non-existent subdirectory
         dest_file = tmp_path / "nested" / "deep" / "data.parquet"
+        test_data = b"test data"
 
         with patch("portolan_cli.download.obs") as mock_obs:
             with patch("portolan_cli.download.S3Store") as mock_s3_store:
@@ -211,8 +218,8 @@ class TestDownloadFile:
                 mock_s3_store.return_value = mock_store
 
                 mock_response = MagicMock()
-                mock_response.meta = {"size": 100}
-                mock_response.__iter__ = lambda self: iter([b"data"])
+                mock_response.meta = {"size": len(test_data)}
+                mock_response.__iter__ = lambda self: iter([test_data])
                 mock_obs.get.return_value = mock_response
 
                 with patch.dict(
@@ -260,22 +267,24 @@ class TestDownloadFile:
         from portolan_cli.download import download_file
 
         dest_file = temp_download_dir / "data.parquet"
+        test_data = b"gcs data content"
 
         with patch("portolan_cli.download.obs") as mock_obs:
-            mock_response = MagicMock()
-            mock_response.meta = {"size": 512}
-            mock_response.__iter__ = lambda self: iter([b"gcs data"])
-            mock_obs.get.return_value = mock_response
-            mock_obs.store.from_url.return_value = MagicMock()
+            with patch("portolan_cli.upload.obs") as mock_upload_obs:
+                mock_response = MagicMock()
+                mock_response.meta = {"size": len(test_data)}
+                mock_response.__iter__ = lambda self: iter([test_data])
+                mock_obs.get.return_value = mock_response
+                mock_upload_obs.store.from_url.return_value = MagicMock()
 
-            # GCS uses ADC - mock the exists check
-            with patch.object(Path, "exists", return_value=True):
-                result = download_file(
-                    source="gs://mybucket/data.parquet",
-                    destination=dest_file,
-                )
+                # GCS uses ADC - mock the exists check for credentials
+                with patch.object(Path, "exists", side_effect=lambda: True):
+                    result = download_file(
+                        source="gs://mybucket/data.parquet",
+                        destination=dest_file,
+                    )
 
-            assert result.success is True
+                assert result.success is True
 
     @pytest.mark.unit
     def test_download_file_azure(self, temp_download_dir: Path) -> None:
@@ -283,13 +292,14 @@ class TestDownloadFile:
         from portolan_cli.download import download_file
 
         dest_file = temp_download_dir / "data.parquet"
+        test_data = b"azure data content"
 
         # Need to patch both download.obs AND upload.obs since _setup_store_and_kwargs is in upload
         with patch("portolan_cli.download.obs") as mock_obs:
             with patch("portolan_cli.upload.obs") as mock_upload_obs:
                 mock_response = MagicMock()
-                mock_response.meta = {"size": 256}
-                mock_response.__iter__ = lambda self: iter([b"azure data"])
+                mock_response.meta = {"size": len(test_data)}
+                mock_response.__iter__ = lambda self: iter([test_data])
                 mock_obs.get.return_value = mock_response
 
                 # Mock the store creation in upload module
@@ -318,24 +328,28 @@ class TestDownloadDirectory:
         """Directory download should download all files."""
         from portolan_cli.download import download_directory
 
+        # Use consistent size for test data
+        test_data = b"file content"
+        file_size = len(test_data)
+
         with patch("portolan_cli.download.obs") as mock_obs:
             with patch("portolan_cli.download.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
-                # Mock list to return file metadata
+                # Mock list to return file metadata - sizes must match test_data
                 mock_obs.list.return_value = [
                     [
-                        {"path": "data/file1.parquet", "size": 100},
-                        {"path": "data/file2.parquet", "size": 200},
-                        {"path": "data/subdir/file3.parquet", "size": 150},
+                        {"path": "data/file1.parquet", "size": file_size},
+                        {"path": "data/file2.parquet", "size": file_size},
+                        {"path": "data/subdir/file3.parquet", "size": file_size},
                     ]
                 ]
 
-                # Mock get for each file
+                # Mock get for each file - content must match size
                 mock_response = MagicMock()
-                mock_response.meta = {"size": 100}
-                mock_response.__iter__ = lambda self: iter([b"data"])
+                mock_response.meta = {"size": file_size}
+                mock_response.__iter__ = lambda self: iter([test_data])
                 mock_obs.get.return_value = mock_response
 
                 with patch.dict(
@@ -356,24 +370,27 @@ class TestDownloadDirectory:
         """Directory download with pattern should filter files."""
         from portolan_cli.download import download_directory
 
+        test_data = b"parquet content"
+        file_size = len(test_data)
+
         with patch("portolan_cli.download.obs") as mock_obs:
             with patch("portolan_cli.download.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
-                # Mock list to return mixed file types
+                # Mock list to return mixed file types (only parquet will be downloaded)
                 mock_obs.list.return_value = [
                     [
-                        {"path": "data/file1.parquet", "size": 100},
-                        {"path": "data/file2.parquet", "size": 200},
+                        {"path": "data/file1.parquet", "size": file_size},
+                        {"path": "data/file2.parquet", "size": file_size},
                         {"path": "data/readme.md", "size": 50},
                         {"path": "data/config.json", "size": 30},
                     ]
                 ]
 
                 mock_response = MagicMock()
-                mock_response.meta = {"size": 100}
-                mock_response.__iter__ = lambda self: iter([b"data"])
+                mock_response.meta = {"size": file_size}
+                mock_response.__iter__ = lambda self: iter([test_data])
                 mock_obs.get.return_value = mock_response
 
                 with patch.dict(
@@ -517,12 +534,15 @@ class TestDownloadDirectory:
         """Directory download should preserve relative path structure."""
         from portolan_cli.download import download_directory
 
+        test_data = b"file content data"
+        file_size = len(test_data)
+
         def capture_download(store: object, key: str) -> MagicMock:
             # Track what paths would be downloaded
             _ = store  # Mark as used (vulture)
             mock_response = MagicMock()
-            mock_response.meta = {"size": 100}
-            mock_response.__iter__ = lambda self: iter([b"data"])
+            mock_response.meta = {"size": file_size}
+            mock_response.__iter__ = lambda self: iter([test_data])
             return mock_response
 
         with patch("portolan_cli.download.obs") as mock_obs:
@@ -530,12 +550,12 @@ class TestDownloadDirectory:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
-                # Mock list with nested structure
+                # Mock list with nested structure - sizes must match test_data
                 mock_obs.list.return_value = [
                     [
-                        {"path": "data/file1.parquet", "size": 100},
-                        {"path": "data/nested/file2.parquet", "size": 200},
-                        {"path": "data/nested/deep/file3.parquet", "size": 300},
+                        {"path": "data/file1.parquet", "size": file_size},
+                        {"path": "data/nested/file2.parquet", "size": file_size},
+                        {"path": "data/nested/deep/file3.parquet", "size": file_size},
                     ]
                 ]
                 mock_obs.get.side_effect = capture_download
@@ -568,6 +588,7 @@ class TestCustomS3Endpoint:
         from portolan_cli.download import download_file
 
         dest_file = temp_download_dir / "data.parquet"
+        test_data = b"endpoint data"
 
         # Patch S3Store in upload module where _setup_store_and_kwargs lives
         with patch("portolan_cli.download.obs") as mock_obs:
@@ -576,8 +597,8 @@ class TestCustomS3Endpoint:
                 mock_s3_store.return_value = mock_store
 
                 mock_response = MagicMock()
-                mock_response.meta = {"size": 100}
-                mock_response.__iter__ = lambda self: iter([b"data"])
+                mock_response.meta = {"size": len(test_data)}
+                mock_response.__iter__ = lambda self: iter([test_data])
                 mock_obs.get.return_value = mock_response
 
                 with patch.dict(
@@ -604,6 +625,7 @@ class TestCustomS3Endpoint:
         from portolan_cli.download import download_file
 
         dest_file = temp_download_dir / "data.parquet"
+        test_data = b"http data"
 
         # Patch S3Store in upload module where _setup_store_and_kwargs lives
         with patch("portolan_cli.download.obs") as mock_obs:
@@ -612,8 +634,8 @@ class TestCustomS3Endpoint:
                 mock_s3_store.return_value = mock_store
 
                 mock_response = MagicMock()
-                mock_response.meta = {"size": 100}
-                mock_response.__iter__ = lambda self: iter([b"data"])
+                mock_response.meta = {"size": len(test_data)}
+                mock_response.__iter__ = lambda self: iter([test_data])
                 mock_obs.get.return_value = mock_response
 
                 with patch.dict(
@@ -652,11 +674,12 @@ class TestStreamingDownload:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
-                # Mock get to return chunks
-                mock_response = MagicMock()
-                mock_response.meta = {"size": 1024 * 1024}  # 1MB
-                # Simulate chunked response
+                # Mock get to return chunks - size must match total chunk data
                 chunks = [b"chunk1" * 100, b"chunk2" * 100, b"chunk3" * 100]
+                total_size = sum(len(c) for c in chunks)
+
+                mock_response = MagicMock()
+                mock_response.meta = {"size": total_size}
                 mock_response.__iter__ = lambda self: iter(chunks)
                 mock_obs.get.return_value = mock_response
 
@@ -672,6 +695,7 @@ class TestStreamingDownload:
                 assert result.success is True
                 # File should exist and contain all chunks
                 assert dest_file.exists()
+                assert dest_file.stat().st_size == total_size
 
 
 # =============================================================================
@@ -723,3 +747,443 @@ class TestUploadModuleReuse:
 
             assert store is not None
             assert "max_concurrency" in kwargs
+
+
+# =============================================================================
+# File Integrity and Cleanup Tests (Issues #1, #2, #9)
+# =============================================================================
+
+
+class TestFileIntegrity:
+    """Tests for file integrity verification and cleanup."""
+
+    @pytest.mark.unit
+    def test_download_verifies_file_size_matches_metadata(self, temp_download_dir: Path) -> None:
+        """Downloaded file size should match expected size from metadata."""
+        from portolan_cli.download import download_file
+
+        dest_file = temp_download_dir / "data.parquet"
+        expected_content = b"test data content"
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+
+                mock_response = MagicMock()
+                mock_response.meta = {"size": len(expected_content)}
+                mock_response.__iter__ = lambda self: iter([expected_content])
+                mock_obs.get.return_value = mock_response
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    result = download_file(
+                        source="s3://mybucket/data.parquet",
+                        destination=dest_file,
+                    )
+
+                assert result.success is True
+                # Verify actual file size matches what we downloaded
+                assert dest_file.stat().st_size == len(expected_content)
+                # Verify total_bytes reflects actual downloaded size
+                assert result.total_bytes == len(expected_content)
+
+    @pytest.mark.unit
+    def test_download_detects_size_mismatch(self, temp_download_dir: Path) -> None:
+        """Download should fail when actual size doesn't match expected size."""
+        from portolan_cli.download import download_file
+
+        dest_file = temp_download_dir / "data.parquet"
+        actual_content = b"short"  # 5 bytes
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+
+                mock_response = MagicMock()
+                # Metadata says 1000 bytes, but we only deliver 5
+                mock_response.meta = {"size": 1000}
+                mock_response.__iter__ = lambda self: iter([actual_content])
+                mock_obs.get.return_value = mock_response
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    result = download_file(
+                        source="s3://mybucket/data.parquet",
+                        destination=dest_file,
+                    )
+
+                # Should detect the size mismatch and report failure
+                assert result.success is False
+                assert result.files_failed == 1
+                assert len(result.errors) == 1
+                # Partial file should be cleaned up
+                assert not dest_file.exists()
+
+    @pytest.mark.unit
+    def test_download_cleans_up_partial_file_on_failure(self, temp_download_dir: Path) -> None:
+        """Partial files should be deleted when download fails mid-stream."""
+        from portolan_cli.download import download_file
+
+        dest_file = temp_download_dir / "data.parquet"
+
+        def fail_mid_stream() -> None:
+            # First chunk succeeds, second raises
+            yield b"first chunk"
+            raise OSError("Connection lost")
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+
+                mock_response = MagicMock()
+                mock_response.meta = {"size": 1000}
+                mock_response.__iter__ = lambda self: fail_mid_stream()
+                mock_obs.get.return_value = mock_response
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    result = download_file(
+                        source="s3://mybucket/data.parquet",
+                        destination=dest_file,
+                    )
+
+                assert result.success is False
+                # Critical: partial file should not exist
+                assert not dest_file.exists()
+
+    @pytest.mark.unit
+    def test_download_one_file_cleans_up_on_failure(self, temp_download_dir: Path) -> None:
+        """_download_one_file should clean up partial file on failure."""
+        from portolan_cli.download import _download_one_file
+
+        local_path = temp_download_dir / "data.parquet"
+        mock_store = MagicMock()
+
+        def fail_mid_stream() -> None:
+            yield b"partial data"
+            raise OSError("Network error")
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            mock_response = MagicMock()
+            mock_response.__iter__ = lambda self: fail_mid_stream()
+            mock_obs.get.return_value = mock_response
+
+            remote_key, error, bytes_downloaded = _download_one_file(
+                mock_store, "path/to/file.parquet", local_path, 1000
+            )
+
+            assert error is not None
+            assert bytes_downloaded == 0
+            # Partial file should be cleaned up
+            assert not local_path.exists()
+
+
+# =============================================================================
+# Overwrite Protection Tests (Issue #3)
+# =============================================================================
+
+
+class TestOverwriteProtection:
+    """Tests for overwrite protection."""
+
+    @pytest.mark.unit
+    def test_download_file_skips_existing_by_default(self, temp_download_dir: Path) -> None:
+        """download_file should skip existing files when overwrite=False."""
+        from portolan_cli.download import download_file
+
+        dest_file = temp_download_dir / "existing.parquet"
+        dest_file.write_bytes(b"original content")
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            result = download_file(
+                source="s3://mybucket/existing.parquet",
+                destination=dest_file,
+                overwrite=False,
+            )
+
+        # Should skip without downloading
+        assert result.success is True
+        assert result.files_downloaded == 0
+        mock_obs.get.assert_not_called()
+        # Original content preserved
+        assert dest_file.read_bytes() == b"original content"
+
+    @pytest.mark.unit
+    def test_download_file_overwrites_when_specified(self, temp_download_dir: Path) -> None:
+        """download_file should overwrite existing files when overwrite=True."""
+        from portolan_cli.download import download_file
+
+        dest_file = temp_download_dir / "existing.parquet"
+        dest_file.write_bytes(b"original content")
+        new_content = b"new content"
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+
+                mock_response = MagicMock()
+                mock_response.meta = {"size": len(new_content)}
+                mock_response.__iter__ = lambda self: iter([new_content])
+                mock_obs.get.return_value = mock_response
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    result = download_file(
+                        source="s3://mybucket/existing.parquet",
+                        destination=dest_file,
+                        overwrite=True,
+                    )
+
+        assert result.success is True
+        assert result.files_downloaded == 1
+        # Content should be replaced
+        assert dest_file.read_bytes() == new_content
+
+    @pytest.mark.unit
+    def test_download_directory_skips_existing_files(self, temp_download_dir: Path) -> None:
+        """download_directory should skip existing files when overwrite=False."""
+        from portolan_cli.download import download_directory
+
+        # Create an existing file
+        existing_file = temp_download_dir / "file1.parquet"
+        existing_file.write_bytes(b"original")
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+
+                mock_obs.list.return_value = [
+                    [
+                        {"path": "data/file1.parquet", "size": 100},  # exists
+                        {"path": "data/file2.parquet", "size": 200},  # new
+                    ]
+                ]
+
+                mock_response = MagicMock()
+                mock_response.meta = {"size": 200}
+                new_content = b"n" * 200
+                mock_response.__iter__ = lambda self: iter([new_content])
+                mock_obs.get.return_value = mock_response
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    result = download_directory(
+                        source="s3://mybucket/data/",
+                        destination=temp_download_dir,
+                        overwrite=False,
+                    )
+
+                # Should download only the new file
+                assert result.files_downloaded == 1
+                # Original content preserved
+                assert existing_file.read_bytes() == b"original"
+
+
+# =============================================================================
+# Path Traversal Security Tests (Issue #6)
+# =============================================================================
+
+
+class TestPathTraversalProtection:
+    """Tests for path traversal vulnerability protection."""
+
+    @pytest.mark.unit
+    def test_rejects_path_traversal_with_dotdot(self, temp_download_dir: Path) -> None:
+        """Should reject remote keys containing '..' that escape destination."""
+        from portolan_cli.download import (
+            PathTraversalError,
+            _build_local_path,
+            _validate_local_path,
+        )
+
+        destination = temp_download_dir / "safe_dir"
+        destination.mkdir()
+
+        # These keys START with the prefix, so after prefix removal
+        # they will contain path traversal components
+        malicious_keys = [
+            "data/../../../etc/passwd",  # After removing "data/": "../../../etc/passwd"
+            "data/subdir/../../../../../../etc/passwd",  # Escapes after prefix removal
+        ]
+
+        for key in malicious_keys:
+            local_path = _build_local_path(key, "data/", destination)
+            with pytest.raises(PathTraversalError, match="traversal"):
+                _validate_local_path(local_path, destination)
+
+    @pytest.mark.unit
+    def test_allows_safe_paths(self, temp_download_dir: Path) -> None:
+        """Should allow safe paths that stay within destination."""
+        from portolan_cli.download import _build_local_path, _validate_local_path
+
+        destination = temp_download_dir / "safe_dir"
+        destination.mkdir()
+
+        # These should be allowed
+        safe_keys = [
+            "data/file.parquet",
+            "data/subdir/file.parquet",
+        ]
+
+        for key in safe_keys:
+            local_path = _build_local_path(key, "data/", destination)
+            # Should not raise
+            _validate_local_path(local_path, destination)
+            # Resolved path should be within destination
+            assert local_path.resolve().is_relative_to(destination.resolve())
+
+    @pytest.mark.unit
+    def test_download_directory_rejects_traversal(self, temp_download_dir: Path) -> None:
+        """download_directory should skip files with path traversal attempts."""
+        from portolan_cli.download import download_directory
+
+        test_data = b"safe file content"
+        file_size = len(test_data)
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+
+                # Include a malicious path - safe files have matching size
+                mock_obs.list.return_value = [
+                    [
+                        {"path": "data/file1.parquet", "size": file_size},
+                        {"path": "data/../../../etc/passwd", "size": 50},
+                        {"path": "data/file2.parquet", "size": file_size},
+                    ]
+                ]
+
+                mock_response = MagicMock()
+                mock_response.meta = {"size": file_size}
+                mock_response.__iter__ = lambda self: iter([test_data])
+                mock_obs.get.return_value = mock_response
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    result = download_directory(
+                        source="s3://mybucket/data/",
+                        destination=temp_download_dir,
+                    )
+
+                # Should download only the safe files (2 out of 3)
+                assert result.files_downloaded == 2
+                # Should record the traversal attempt as error
+                assert result.files_failed == 1
+
+
+# =============================================================================
+# Input Validation Tests (Issue #8)
+# =============================================================================
+
+
+class TestInputValidation:
+    """Tests for input validation."""
+
+    @pytest.mark.unit
+    def test_download_file_rejects_empty_destination(self, tmp_path: Path) -> None:
+        """download_file should reject empty source URL."""
+        from portolan_cli.download import download_file
+
+        # Note: Path("") is valid (it represents "."), so we test source validation
+        # instead, which explicitly checks for empty strings
+        with pytest.raises(ValueError, match="source"):
+            download_file(
+                source="",  # Empty source
+                destination=tmp_path / "data.parquet",
+            )
+
+    @pytest.mark.unit
+    def test_download_file_rejects_empty_source(self, temp_download_dir: Path) -> None:
+        """download_file should reject empty source URL."""
+        from portolan_cli.download import download_file
+
+        with pytest.raises(ValueError, match="source"):
+            download_file(
+                source="",
+                destination=temp_download_dir / "data.parquet",
+            )
+
+    @pytest.mark.unit
+    def test_download_directory_rejects_file_destination(self, temp_download_dir: Path) -> None:
+        """download_directory should reject file as destination."""
+        from portolan_cli.download import download_directory
+
+        # Create a file where directory is expected
+        file_dest = temp_download_dir / "not_a_dir.txt"
+        file_dest.write_text("I am a file")
+
+        with pytest.raises(ValueError, match="directory"):
+            download_directory(
+                source="s3://mybucket/data/",
+                destination=file_dest,
+            )
+
+
+# =============================================================================
+# Error Type Consistency Tests (Issue #7)
+# =============================================================================
+
+
+class TestErrorTypeConsistency:
+    """Tests for consistent error types with upload module."""
+
+    @pytest.mark.unit
+    def test_download_result_uses_path_for_errors(self) -> None:
+        """DownloadResult.errors should use Path type like UploadResult."""
+        from portolan_cli.download import DownloadResult
+
+        error = OSError("Network error")
+        result = DownloadResult(
+            success=False,
+            files_downloaded=0,
+            files_failed=1,
+            total_bytes=0,
+            errors=[(Path("path/to/file.parquet"), error)],
+        )
+
+        # Error tuple should contain Path, not str
+        assert isinstance(result.errors[0][0], Path)
+
+    @pytest.mark.unit
+    def test_download_file_returns_path_in_errors(self, temp_download_dir: Path) -> None:
+        """download_file should return Path in error tuples."""
+        from portolan_cli.download import download_file
+
+        dest_file = temp_download_dir / "data.parquet"
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+                mock_obs.get.side_effect = OSError("Network error")
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    result = download_file(
+                        source="s3://mybucket/data.parquet",
+                        destination=dest_file,
+                    )
+
+                assert len(result.errors) == 1
+                # First element should be Path, not str
+                assert isinstance(result.errors[0][0], Path)
