@@ -86,7 +86,9 @@ class UploadResult:
         success: True if all files were uploaded successfully.
         files_uploaded: Number of files successfully uploaded.
         files_failed: Number of files that failed to upload.
-        total_bytes: Total bytes uploaded (only successful files).
+        total_bytes: Total bytes uploaded (only successful files). Note: for
+            very large uploads (> 9 PB), this may overflow on 32-bit systems.
+            Use 64-bit Python for large data transfers.
         errors: List of (file_path, exception) tuples for failed uploads.
     """
 
@@ -120,24 +122,33 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
         Tuple of (bucket_url, prefix)
 
     Raises:
-        ValueError: If URL scheme is not supported
+        ValueError: If URL scheme is not supported or bucket/container is empty
+
+    Note:
+        For Azure, only the `az://account/container/path` format is supported.
+        Other Azure URL formats (https://account.blob.core.windows.net/container)
+        are not currently supported.
     """
     if url.startswith("s3://"):
         parts = url[5:].split("/", 1)
         bucket = parts[0]
+        if not bucket:
+            raise ValueError(f"Empty bucket name in S3 URL: {url}")
         prefix = parts[1] if len(parts) > 1 else ""
         return f"s3://{bucket}", prefix
 
     elif url.startswith("gs://"):
         parts = url[5:].split("/", 1)
         bucket = parts[0]
+        if not bucket:
+            raise ValueError(f"Empty bucket name in GCS URL: {url}")
         prefix = parts[1] if len(parts) > 1 else ""
         return f"gs://{bucket}", prefix
 
     elif url.startswith("az://"):
         # Azure: az://account/container/path
         parts = url[5:].split("/", 2)
-        if len(parts) < 2:
+        if len(parts) < 2 or not parts[0] or not parts[1]:
             raise ValueError(f"Invalid Azure URL: {url}. Expected az://account/container/path")
         account, container = parts[0], parts[1]
         prefix = parts[2] if len(parts) > 2 else ""
@@ -287,8 +298,10 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
     hints.append("  export AWS_SECRET_ACCESS_KEY=your_secret_key")
     hints.append("  export AWS_REGION=us-west-2  # required for most buckets")
     hints.append("")
-    hints.append("Option 2: Use --profile flag with AWS credentials file")
-    hints.append("  portolan sync --profile myprofile")
+    hints.append("Option 2: Configure AWS credentials file (~/.aws/credentials)")
+    hints.append("  [myprofile]")
+    hints.append("  aws_access_key_id = YOUR_ACCESS_KEY")
+    hints.append("  aws_secret_access_key = YOUR_SECRET_KEY")
     hints.append("")
     hints.append("Option 3: Configure AWS CLI")
     hints.append("  aws configure")
@@ -336,6 +349,8 @@ def _check_gcs_credentials() -> tuple[bool, str]:
     hints.append("")
     hints.append("Option 3: Use application default credentials")
     hints.append("  gcloud auth application-default login")
+    hints.append("")
+    hints.append("Note: Some buckets may also require GOOGLE_CLOUD_PROJECT to be set.")
 
     return False, "\n".join(hints)
 
@@ -434,10 +449,15 @@ def _setup_store_and_kwargs(
     Returns:
         Tuple of (store, kwargs) where kwargs are passed to obs.put
 
-    Note: For S3, credentials are loaded from (in order):
-    1. --profile flag (reads ~/.aws/credentials)
-    2. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-    3. Default profile in ~/.aws/credentials (automatic fallback)
+    Note:
+        For S3, credentials are loaded from (in order):
+        1. --profile flag (reads ~/.aws/credentials)
+        2. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+        3. Default profile in ~/.aws/credentials (automatic fallback)
+
+        The returned ObjectStore does not require explicit cleanup. obstore
+        manages HTTP connection pooling internally and connections are released
+        when the store object is garbage collected.
     """
     if bucket_url.startswith("s3://"):
         bucket = bucket_url.replace("s3://", "").split("/")[0]
@@ -498,6 +518,30 @@ def _setup_store_and_kwargs(
 
 
 # =============================================================================
+# Display Helpers
+# =============================================================================
+
+
+def _format_upload_speed(size_mb: float, elapsed_seconds: float) -> str:
+    """Format upload speed for display.
+
+    Handles edge cases like very fast uploads (< 1ms) to avoid showing
+    misleading "0.00 MB/s" or division by zero.
+
+    Args:
+        size_mb: Size in megabytes
+        elapsed_seconds: Time elapsed in seconds
+
+    Returns:
+        Formatted speed string (e.g., "12.34 MB/s" or "< 1ms")
+    """
+    if elapsed_seconds <= 0.001:
+        return "< 1ms"
+    speed_mbps = size_mb / elapsed_seconds
+    return f"{speed_mbps:.2f} MB/s"
+
+
+# =============================================================================
 # Target Key Building
 # =============================================================================
 
@@ -512,7 +556,28 @@ def _build_target_key(file_path: Path, source: Path, prefix: str) -> str:
 
     Returns:
         Target key for the object store (always uses forward slashes)
+
+    Raises:
+        ValueError: If the resolved file path escapes the source directory
+            (e.g., via symlink path traversal)
+
+    Note:
+        This function validates that the file's resolved (real) path is within
+        the source directory to prevent symlink-based path traversal attacks.
     """
+    # Resolve both paths to check for symlink-based path traversal
+    resolved_file = file_path.resolve()
+    resolved_source = source.resolve()
+
+    # Verify the file is actually within the source directory
+    try:
+        resolved_file.relative_to(resolved_source)
+    except ValueError as err:
+        raise ValueError(
+            f"Path traversal detected: {file_path} resolves to {resolved_file} "
+            f"which is outside source directory {resolved_source}"
+        ) from err
+
     rel_path = file_path.relative_to(source)
     # Always use POSIX separators for object store keys (forward slashes)
     rel_posix = rel_path.as_posix()
@@ -563,6 +628,12 @@ def _upload_one_file(
 
     Returns:
         Tuple of (file_path, error_or_none, bytes_uploaded)
+
+    Note:
+        The underlying obstore library does not support upload timeouts.
+        Uploads may hang indefinitely on network issues. Consider implementing
+        application-level timeouts if needed (e.g., using threading.Timer or
+        signal-based timeout wrappers).
     """
     try:
         target_key = _build_target_key(file_path, source, prefix)
@@ -575,9 +646,9 @@ def _upload_one_file(
         obs.put(store, target_key, file_path, max_concurrency=kwargs.get("max_concurrency", 12))
 
         elapsed = time.time() - start_time
-        speed_mbps = size_mb / elapsed if elapsed > 0 else 0
+        speed_display = _format_upload_speed(size_mb, elapsed)
 
-        success(f"{file_path.name} ({speed_mbps:.2f} MB/s)")
+        success(f"{file_path.name} ({speed_display})")
         return file_path, None, file_size
     except Exception as e:
         error(f"{file_path.name}: {e}")
@@ -650,9 +721,9 @@ def upload_file(
         obs.put(store, target_key, source, max_concurrency=kwargs.get("max_concurrency", 12))
 
         elapsed = time.time() - start_time
-        speed_mbps = size_mb / elapsed if elapsed > 0 else 0
+        speed_display = _format_upload_speed(size_mb, elapsed)
 
-        success(f"Upload complete ({speed_mbps:.2f} MB/s)")
+        success(f"Upload complete ({speed_display})")
 
         return UploadResult(
             success=True,
@@ -681,6 +752,16 @@ def _find_files_to_upload(source: Path, pattern: str | None) -> list[Path]:
 
     Returns:
         List of file paths to upload
+
+    Note:
+        This function uses Path.rglob() which follows symlinks by default.
+        Symlinked files will be uploaded, and symlinked directories will be
+        traversed. Be aware that:
+        1. Symlinks pointing outside the source directory will be followed
+        2. Circular symlinks may cause infinite loops (handled by the OS)
+        3. The uploaded content will be the target of the symlink, not the link itself
+
+        If you need to exclude symlinks, filter the result with `f.is_symlink()`.
     """
     if pattern:
         files = list(source.rglob(pattern))
@@ -718,11 +799,21 @@ def _execute_parallel_uploads(
         source: Source directory for relative path calculation
         prefix: Prefix for target keys
         max_files: Max concurrent file uploads
-        fail_fast: Stop on first error if True
+        fail_fast: Stop on first error if True (best-effort stopping - see note)
         kwargs: Additional args for obs.put
 
     Returns:
         List of (file_path, error_or_none, bytes_uploaded) tuples
+
+    Note:
+        fail_fast mode uses **best-effort stopping**. When an error occurs:
+        1. No new uploads are started
+        2. Already-running uploads continue to completion (cannot be interrupted)
+
+        This is a limitation of Python's ThreadPoolExecutor - Future.cancel()
+        only prevents tasks that haven't started yet. For true cancellation,
+        consider using asyncio with cancellation tokens, or accept that a few
+        in-flight uploads may complete after the first error is detected.
     """
     results: list[tuple[Path, Exception | None, int]] = []
 
