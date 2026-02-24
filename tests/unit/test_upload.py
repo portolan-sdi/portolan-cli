@@ -466,6 +466,34 @@ class TestUploadFile:
                 assert "minio.example.com:9000" in call_kwargs["endpoint"]
 
     @pytest.mark.unit
+    def test_upload_file_strips_existing_scheme_from_endpoint(self, temp_file: Path) -> None:
+        """S3 endpoint with existing scheme should not double-prepend protocol."""
+        from portolan_cli.upload import upload_file
+
+        with patch("portolan_cli.upload.obs"):
+            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    # Pass endpoint with scheme already included
+                    upload_file(
+                        source=temp_file,
+                        destination="s3://mybucket/data.parquet",
+                        s3_endpoint="https://minio.example.com:9000",
+                        s3_region="us-east-1",
+                    )
+
+                # Verify the endpoint doesn't have double protocol (https://https://)
+                call_kwargs = mock_s3_store.call_args[1]
+                endpoint = call_kwargs["endpoint"]
+                assert endpoint == "https://minio.example.com:9000"
+                assert "https://https://" not in endpoint
+
+    @pytest.mark.unit
     def test_upload_file_preserves_target_key(self, temp_file: Path) -> None:
         """Upload should use exact destination key when not ending with /."""
         from portolan_cli.upload import upload_file
@@ -631,8 +659,10 @@ class TestUploadDirectory:
 
                 assert result.success is False
                 assert result.files_failed >= 1
-                # With max_files=1 and fail_fast=True, should stop after first failure
-                assert mock_obs.put.call_count >= 1
+                # With max_files=1 and fail_fast=True, should stop before processing all files
+                # The fixture creates 4 files, so we verify we stopped early
+                total_files = 4
+                assert mock_obs.put.call_count < total_files
 
     @pytest.mark.unit
     def test_upload_directory_fail_fast_false(self, temp_dir_with_files: Path) -> None:
