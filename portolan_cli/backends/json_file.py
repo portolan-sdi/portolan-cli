@@ -79,6 +79,9 @@ class JsonFileBackend:
             raise ValueError("Collection name cannot be empty")
         # Normalize path to prevent directory traversal (MAJOR #8)
         safe_collection = Path(collection).name
+        # Explicitly reject traversal attempts that survive Path.name
+        if safe_collection in ("", ".", ".."):
+            raise ValueError(f"Invalid collection name: {collection!r}")
         return self._catalog_root / ".portolan" / "collections" / safe_collection / "versions.json"
 
     def get_current_version(self, collection: str) -> Version:
@@ -197,9 +200,7 @@ class JsonFileBackend:
 
         return updated.versions[-1]
 
-    def _compute_next_version(
-        self, versions_file: VersionsFile, breaking: bool
-    ) -> str:
+    def _compute_next_version(self, versions_file: VersionsFile, breaking: bool) -> str:
         """Compute the next semantic version.
 
         Args:

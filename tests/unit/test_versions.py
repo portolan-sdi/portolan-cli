@@ -101,7 +101,7 @@ class TestReadVersions:
     @pytest.mark.unit
     def test_read_empty_versions_file(self, tmp_path: Path) -> None:
         """read_versions handles a versions file with no versions."""
-        versions_data = {
+        versions_data: dict[str, object] = {
             "spec_version": "1.0.0",
             "current_version": None,
             "versions": [],
@@ -845,9 +845,7 @@ class TestSchemaFingerprintSerialization:
 
         schema = SchemaInfo(
             type="geoparquet",
-            fingerprint={
-                "columns": [{"name": "geometry", "type": "geometry"}]
-            },
+            fingerprint={"columns": [{"name": "geometry", "type": "geometry"}]},
         )
         asset = Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
         version = Version(
@@ -966,9 +964,7 @@ class TestSchemaFingerprintParsing:
                     "changes": ["data.parquet"],
                     "schema": {
                         "type": "geoparquet",
-                        "fingerprint": {
-                            "columns": [{"name": "geometry", "type": "geometry"}]
-                        },
+                        "fingerprint": {"columns": [{"name": "geometry", "type": "geometry"}]},
                     },
                 }
             ],
@@ -1051,9 +1047,7 @@ class TestAddVersionWithSchema:
         from portolan_cli.versions import SchemaInfo
 
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
-        assets = {
-            "data.parquet": Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        }
+        assets = {"data.parquet": Asset(sha256="abc123", size_bytes=1024, href="data.parquet")}
         schema = SchemaInfo(
             type="geoparquet",
             fingerprint={"columns": [{"name": "geometry", "type": "geometry"}]},
@@ -1074,9 +1068,7 @@ class TestAddVersionWithSchema:
     def test_add_version_accepts_message(self) -> None:
         """add_version accepts optional message parameter (MAJOR #6)."""
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
-        assets = {
-            "data.parquet": Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        }
+        assets = {"data.parquet": Asset(sha256="abc123", size_bytes=1024, href="data.parquet")}
 
         updated = add_version(
             vf,
@@ -1261,18 +1253,32 @@ class TestEdgeCases:
         assert "数据.parquet" in loaded.versions[0].assets
 
     @pytest.mark.unit
-    def test_empty_collection_name_rejected(self) -> None:
-        """Empty collection name should be validated."""
-        # This is a protocol-level concern tested in backend tests
-        pass  # Backend tests cover this
+    def test_empty_collection_name_rejected(self, tmp_path: Path) -> None:
+        """Empty collection name should be validated by JsonFileBackend."""
+        from portolan_cli.backends.json_file import JsonFileBackend
+
+        backend = JsonFileBackend(catalog_root=tmp_path)
+
+        # Empty string should raise ValueError
+        with pytest.raises(ValueError, match="[Ee]mpty|[Ii]nvalid"):
+            backend.get_current_version("")
+
+        # Whitespace-only should raise ValueError
+        with pytest.raises(ValueError, match="[Ee]mpty|[Ii]nvalid"):
+            backend.get_current_version("   ")
+
+        # Path traversal attempts should raise ValueError
+        with pytest.raises(ValueError, match="[Ii]nvalid"):
+            backend.get_current_version("..")
+
+        with pytest.raises(ValueError, match="[Ii]nvalid"):
+            backend.get_current_version(".")
 
     @pytest.mark.unit
     def test_first_publish_with_breaking_true(self) -> None:
         """First version can be marked as breaking (unusual but valid)."""
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
-        assets = {
-            "data.parquet": Asset(sha256="abc123", size_bytes=1024, href="data.parquet")
-        }
+        assets = {"data.parquet": Asset(sha256="abc123", size_bytes=1024, href="data.parquet")}
 
         updated = add_version(vf, version="1.0.0", assets=assets, breaking=True)
 

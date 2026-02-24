@@ -136,7 +136,7 @@ def read_versions(path: Path) -> VersionsFile:
         raise FileNotFoundError(f"versions.json not found: {path}")
 
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON in versions.json: {e}") from e
 
