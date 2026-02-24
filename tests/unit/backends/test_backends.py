@@ -301,8 +301,8 @@ class TestJsonFileBackendIntegration:
     @pytest.mark.integration
     def test_get_current_version_returns_latest(self, tmp_path: Any) -> None:
         """get_current_version returns the most recent version."""
-        from pathlib import Path
         import json
+        from pathlib import Path
 
         catalog_root = Path(tmp_path)
         collection_dir = catalog_root / ".portolan" / "collections" / "test"
@@ -339,8 +339,8 @@ class TestJsonFileBackendIntegration:
     @pytest.mark.integration
     def test_get_current_version_raises_for_no_versions(self, tmp_path: Any) -> None:
         """get_current_version raises FileNotFoundError when no versions exist."""
-        from pathlib import Path
         import json
+        from pathlib import Path
 
         catalog_root = Path(tmp_path)
         collection_dir = catalog_root / ".portolan" / "collections" / "test"
@@ -371,8 +371,8 @@ class TestJsonFileBackendIntegration:
     @pytest.mark.integration
     def test_publish_creates_first_version(self, tmp_path: Any) -> None:
         """publish creates versions.json and first version."""
-        from pathlib import Path
         import json
+        from pathlib import Path
 
         catalog_root = Path(tmp_path)
         collection_dir = catalog_root / ".portolan" / "collections" / "test"
@@ -408,8 +408,8 @@ class TestJsonFileBackendIntegration:
     @pytest.mark.integration
     def test_publish_increments_minor_version(self, tmp_path: Any) -> None:
         """publish increments minor version for non-breaking changes."""
-        from pathlib import Path
         import json
+        from pathlib import Path
 
         catalog_root = Path(tmp_path)
         collection_dir = catalog_root / ".portolan" / "collections" / "test"
@@ -451,8 +451,8 @@ class TestJsonFileBackendIntegration:
     @pytest.mark.integration
     def test_publish_increments_major_version_for_breaking(self, tmp_path: Any) -> None:
         """publish increments major version for breaking changes."""
-        from pathlib import Path
         import json
+        from pathlib import Path
 
         catalog_root = Path(tmp_path)
         collection_dir = catalog_root / ".portolan" / "collections" / "test"
@@ -494,8 +494,8 @@ class TestJsonFileBackendIntegration:
     @pytest.mark.integration
     def test_check_drift_returns_report(self, tmp_path: Any) -> None:
         """check_drift returns a DriftReport."""
-        from pathlib import Path
         import json
+        from pathlib import Path
 
         catalog_root = Path(tmp_path)
         collection_dir = catalog_root / ".portolan" / "collections" / "test"
