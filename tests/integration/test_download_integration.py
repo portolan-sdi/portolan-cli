@@ -261,13 +261,13 @@ class TestErrorHandling:
             files_downloaded=1,
             files_failed=2,
             total_bytes=100,
-            errors=[("file1.parquet", error1), ("file2.parquet", error2)],
+            errors=[(Path("file1.parquet"), error1), (Path("file2.parquet"), error2)],
         )
 
         assert result.success is False
         assert result.files_failed == 2
         assert len(result.errors) == 2
-        assert result.errors[0][0] == "file1.parquet"
+        assert result.errors[0][0] == Path("file1.parquet")
         assert isinstance(result.errors[0][1], OSError)
 
     @pytest.mark.integration

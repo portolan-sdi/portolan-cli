@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
 
 # =============================================================================
@@ -832,7 +832,7 @@ class TestFileIntegrity:
 
         dest_file = temp_download_dir / "data.parquet"
 
-        def fail_mid_stream() -> None:
+        def fail_mid_stream() -> Generator[bytes, None, None]:
             # First chunk succeeds, second raises
             yield b"first chunk"
             raise OSError("Connection lost")
@@ -868,7 +868,7 @@ class TestFileIntegrity:
         local_path = temp_download_dir / "data.parquet"
         mock_store = MagicMock()
 
-        def fail_mid_stream() -> None:
+        def fail_mid_stream() -> Generator[bytes, None, None]:
             yield b"partial data"
             raise OSError("Network error")
 
