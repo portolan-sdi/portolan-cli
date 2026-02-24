@@ -54,7 +54,7 @@ import configparser
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -477,8 +477,14 @@ def _setup_store_and_kwargs(
             store_kwargs["secret_access_key"] = secret_key
 
         if s3_endpoint:
+            # Strip existing scheme if present to avoid double-protocol
+            endpoint = s3_endpoint
+            if endpoint.startswith("https://"):
+                endpoint = endpoint[8:]
+            elif endpoint.startswith("http://"):
+                endpoint = endpoint[7:]
             protocol = "https" if s3_use_ssl else "http"
-            store_kwargs["endpoint"] = f"{protocol}://{s3_endpoint}"
+            store_kwargs["endpoint"] = f"{protocol}://{endpoint}"
             if not region:
                 store_kwargs["region"] = "us-east-1"  # Default for custom endpoints
 
@@ -719,22 +725,59 @@ def _execute_parallel_uploads(
         List of (file_path, error_or_none, bytes_uploaded) tuples
     """
     results: list[tuple[Path, Exception | None, int]] = []
-    with ThreadPoolExecutor(max_workers=max_files) as executor:
-        future_to_file = {
-            executor.submit(_upload_one_file, store, f, source, prefix, **kwargs): f for f in files
-        }
 
-        for future in as_completed(future_to_file):
-            result = future.result()
-            results.append(result)
-            if fail_fast and result[1] is not None:
-                # Cancel remaining futures on first error.
-                # Note: future.cancel() only prevents futures that haven't started yet;
-                # already-running tasks will complete. This is a Python ThreadPoolExecutor
-                # limitation and is acceptable behavior for our use case.
-                for pending_future in future_to_file:
-                    pending_future.cancel()
-                break
+    # Type alias for upload result future
+    UploadResultFuture = Future[tuple[Path, Exception | None, int]]
+
+    if fail_fast:
+        # For fail_fast mode, submit futures incrementally to ensure we can stop
+        # after the first error without starting additional tasks.
+        with ThreadPoolExecutor(max_workers=max_files) as executor:
+            pending: dict[UploadResultFuture, Path] = {}
+            files_iter = iter(files)
+
+            # Submit initial batch up to max_files
+            for f in files_iter:
+                future: UploadResultFuture = executor.submit(
+                    _upload_one_file, store, f, source, prefix, **kwargs
+                )
+                pending[future] = f
+                if len(pending) >= max_files:
+                    break
+
+            while pending:
+                # Wait for next completed future
+                done: UploadResultFuture = next(iter(as_completed(pending)))
+                result = done.result()
+                results.append(result)
+                del pending[done]
+
+                # Stop on first error
+                if result[1] is not None:
+                    for pending_future in pending:
+                        pending_future.cancel()
+                    break
+
+                # Submit next file if available
+                try:
+                    next_file = next(files_iter)
+                    new_future: UploadResultFuture = executor.submit(
+                        _upload_one_file, store, next_file, source, prefix, **kwargs
+                    )
+                    pending[new_future] = next_file
+                except StopIteration:
+                    pass
+    else:
+        # For non-fail_fast mode, submit all futures upfront for maximum parallelism
+        with ThreadPoolExecutor(max_workers=max_files) as executor:
+            future_to_file = {
+                executor.submit(_upload_one_file, store, f, source, prefix, **kwargs): f
+                for f in files
+            }
+
+            for future in as_completed(future_to_file):
+                result = future.result()
+                results.append(result)
 
     return results
 
