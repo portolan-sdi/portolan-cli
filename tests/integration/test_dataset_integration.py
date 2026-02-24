@@ -155,6 +155,37 @@ class TestComputeChecksum:
 
         assert checksum1 != checksum2
 
+    @pytest.mark.integration
+    def test_checksum_rejects_symlink_to_directory(self, tmp_path: Path) -> None:
+        """compute_checksum rejects symlinks pointing to directories (MAJOR #5)."""
+        target_dir = tmp_path / "target_dir"
+        target_dir.mkdir()
+        symlink = tmp_path / "symlink_to_dir"
+        symlink.symlink_to(target_dir)
+
+        with pytest.raises(ValueError, match="Not a regular file"):
+            compute_checksum(symlink)
+
+    @pytest.mark.integration
+    def test_checksum_follows_symlink_to_file(self, tmp_path: Path) -> None:
+        """compute_checksum follows symlinks to regular files (valid case)."""
+        target_file = tmp_path / "real_file.txt"
+        target_file.write_text("test content")
+        symlink = tmp_path / "symlink_to_file"
+        symlink.symlink_to(target_file)
+
+        # Should work - symlinks to files are valid
+        checksum = compute_checksum(symlink)
+        assert len(checksum) == 64
+
+    @pytest.mark.integration
+    def test_checksum_rejects_nonexistent_file(self, tmp_path: Path) -> None:
+        """compute_checksum raises FileNotFoundError for missing files."""
+        nonexistent = tmp_path / "does_not_exist.txt"
+
+        with pytest.raises(FileNotFoundError):
+            compute_checksum(nonexistent)
+
 
 class TestAddDatasetIntegration:
     """Integration tests for full add_dataset workflow."""

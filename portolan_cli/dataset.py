@@ -273,16 +273,31 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
 
 
 def compute_checksum(path: Path) -> str:
-    """Compute SHA-256 checksum of a file.
+    """Compute SHA-256 checksum of a file securely.
+
+    Security: Validates the resolved path is a regular file to prevent
+    symlink attacks (MAJOR #5 - symlink security vulnerability).
 
     Args:
         path: Path to the file.
 
     Returns:
         Hex-encoded SHA-256 checksum.
+
+    Raises:
+        ValueError: If path is not a regular file (e.g., symlink to directory,
+            device file, or other non-regular file).
+        FileNotFoundError: If path does not exist.
     """
+    # Resolve symlinks and check it's a regular file (MAJOR #5)
+    resolved = path.resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+    if not resolved.is_file():
+        raise ValueError(f"Not a regular file: {path} (resolves to {resolved})")
+
     sha256 = hashlib.sha256()
-    with open(path, "rb") as f:
+    with open(resolved, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
             sha256.update(chunk)
     return sha256.hexdigest()

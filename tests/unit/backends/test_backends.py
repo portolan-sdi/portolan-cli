@@ -244,7 +244,7 @@ class TestGetBackendErrorHandling:
 
 
 class TestJsonFileBackend:
-    """Tests for the JsonFileBackend stub implementation."""
+    """Tests for the JsonFileBackend implementation."""
 
     @pytest.mark.unit
     def test_json_file_backend_instantiates(self) -> None:
@@ -259,49 +259,293 @@ class TestJsonFileBackend:
         assert isinstance(backend, VersioningBackend)
 
     @pytest.mark.unit
-    def test_get_current_version_raises_not_implemented(self) -> None:
-        """JsonFileBackend.get_current_version raises NotImplementedError (stub)."""
-        backend = JsonFileBackend()
-        with pytest.raises(NotImplementedError, match="Wire to versions.py"):
-            backend.get_current_version("test_collection")
+    def test_json_file_backend_accepts_catalog_root(self, tmp_path: Any) -> None:
+        """JsonFileBackend accepts catalog_root parameter."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+        assert backend._catalog_root == Path(tmp_path)
 
     @pytest.mark.unit
-    def test_list_versions_raises_not_implemented(self) -> None:
-        """JsonFileBackend.list_versions raises NotImplementedError (stub)."""
+    def test_empty_collection_name_rejected(self) -> None:
+        """Empty collection name raises ValueError."""
         backend = JsonFileBackend()
-        with pytest.raises(NotImplementedError, match="Wire to versions.py"):
-            backend.list_versions("test_collection")
+        with pytest.raises(ValueError, match="Collection name cannot be empty"):
+            backend._versions_path("")
 
     @pytest.mark.unit
-    def test_publish_raises_not_implemented(self) -> None:
-        """JsonFileBackend.publish raises NotImplementedError (stub)."""
+    def test_whitespace_collection_name_rejected(self) -> None:
+        """Whitespace-only collection name raises ValueError."""
         backend = JsonFileBackend()
-        with pytest.raises(NotImplementedError, match="Wire to versions.py"):
-            backend.publish(
-                collection="test",
-                assets={},
-                schema={},
-                breaking=False,
-                message="test",
-            )
+        with pytest.raises(ValueError, match="Collection name cannot be empty"):
+            backend._versions_path("   ")
 
     @pytest.mark.unit
-    def test_rollback_raises_not_implemented(self) -> None:
-        """JsonFileBackend.rollback raises NotImplementedError (stub)."""
+    def test_rollback_raises_not_implemented_with_clear_message(self) -> None:
+        """JsonFileBackend.rollback raises NotImplementedError with explanation."""
         backend = JsonFileBackend()
-        with pytest.raises(NotImplementedError, match="Wire to versions.py"):
+        with pytest.raises(NotImplementedError, match="portolake plugin"):
             backend.rollback("test_collection", "1.0.0")
 
     @pytest.mark.unit
-    def test_prune_raises_not_implemented(self) -> None:
-        """JsonFileBackend.prune raises NotImplementedError (stub)."""
+    def test_prune_raises_not_implemented_with_clear_message(self) -> None:
+        """JsonFileBackend.prune raises NotImplementedError with explanation."""
         backend = JsonFileBackend()
-        with pytest.raises(NotImplementedError, match="Wire to versions.py"):
+        with pytest.raises(NotImplementedError, match="portolake plugin"):
             backend.prune("test_collection", keep=5, dry_run=True)
 
-    @pytest.mark.unit
-    def test_check_drift_raises_not_implemented(self) -> None:
-        """JsonFileBackend.check_drift raises NotImplementedError (stub)."""
-        backend = JsonFileBackend()
-        with pytest.raises(NotImplementedError, match="Wire to versions.py"):
-            backend.check_drift("test_collection")
+
+class TestJsonFileBackendIntegration:
+    """Integration tests for JsonFileBackend with filesystem."""
+
+    @pytest.mark.integration
+    def test_get_current_version_returns_latest(self, tmp_path: Any) -> None:
+        """get_current_version returns the most recent version."""
+        from pathlib import Path
+        import json
+
+        catalog_root = Path(tmp_path)
+        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir.mkdir(parents=True)
+
+        # Create versions.json with two versions
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.1.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-01T00:00:00Z",
+                    "breaking": False,
+                    "assets": {},
+                    "changes": [],
+                },
+                {
+                    "version": "1.1.0",
+                    "created": "2024-01-02T00:00:00Z",
+                    "breaking": False,
+                    "assets": {},
+                    "changes": [],
+                },
+            ],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(versions_data))
+
+        backend = JsonFileBackend(catalog_root=catalog_root)
+        version = backend.get_current_version("test")
+
+        assert version.version == "1.1.0"
+
+    @pytest.mark.integration
+    def test_get_current_version_raises_for_no_versions(self, tmp_path: Any) -> None:
+        """get_current_version raises FileNotFoundError when no versions exist."""
+        from pathlib import Path
+        import json
+
+        catalog_root = Path(tmp_path)
+        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir.mkdir(parents=True)
+
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": None,
+            "versions": [],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(versions_data))
+
+        backend = JsonFileBackend(catalog_root=catalog_root)
+
+        with pytest.raises(FileNotFoundError, match="No versions found"):
+            backend.get_current_version("test")
+
+    @pytest.mark.integration
+    def test_list_versions_returns_empty_for_missing_file(self, tmp_path: Any) -> None:
+        """list_versions returns empty list when versions.json doesn't exist."""
+        from pathlib import Path
+
+        backend = JsonFileBackend(catalog_root=Path(tmp_path))
+        versions = backend.list_versions("nonexistent")
+
+        assert versions == []
+
+    @pytest.mark.integration
+    def test_publish_creates_first_version(self, tmp_path: Any) -> None:
+        """publish creates versions.json and first version."""
+        from pathlib import Path
+        import json
+
+        catalog_root = Path(tmp_path)
+        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir.mkdir(parents=True)
+
+        backend = JsonFileBackend(catalog_root=catalog_root)
+        schema: SchemaFingerprint = {
+            "columns": ["geometry", "name"],
+            "types": {"geometry": "geometry", "name": "string"},
+            "hash": "geoparquet",
+        }
+
+        version = backend.publish(
+            collection="test",
+            assets={},
+            schema=schema,
+            breaking=False,
+            message="Initial import",
+        )
+
+        assert version.version == "1.0.0"
+        assert version.message == "Initial import"
+        assert version.schema is not None
+
+        # Verify file was created
+        versions_path = collection_dir / "versions.json"
+        assert versions_path.exists()
+        data = json.loads(versions_path.read_text())
+        assert data["current_version"] == "1.0.0"
+        assert data["versions"][0]["message"] == "Initial import"
+        assert "schema" in data["versions"][0]
+
+    @pytest.mark.integration
+    def test_publish_increments_minor_version(self, tmp_path: Any) -> None:
+        """publish increments minor version for non-breaking changes."""
+        from pathlib import Path
+        import json
+
+        catalog_root = Path(tmp_path)
+        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir.mkdir(parents=True)
+
+        # Create initial version
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-01T00:00:00Z",
+                    "breaking": False,
+                    "assets": {},
+                    "changes": [],
+                }
+            ],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(versions_data))
+
+        backend = JsonFileBackend(catalog_root=catalog_root)
+        schema: SchemaFingerprint = {
+            "columns": [],
+            "types": {},
+            "hash": "geoparquet",
+        }
+
+        version = backend.publish(
+            collection="test",
+            assets={},
+            schema=schema,
+            breaking=False,
+            message="Update",
+        )
+
+        assert version.version == "1.1.0"
+
+    @pytest.mark.integration
+    def test_publish_increments_major_version_for_breaking(self, tmp_path: Any) -> None:
+        """publish increments major version for breaking changes."""
+        from pathlib import Path
+        import json
+
+        catalog_root = Path(tmp_path)
+        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir.mkdir(parents=True)
+
+        # Create initial version
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.2.3",
+            "versions": [
+                {
+                    "version": "1.2.3",
+                    "created": "2024-01-01T00:00:00Z",
+                    "breaking": False,
+                    "assets": {},
+                    "changes": [],
+                }
+            ],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(versions_data))
+
+        backend = JsonFileBackend(catalog_root=catalog_root)
+        schema: SchemaFingerprint = {
+            "columns": [],
+            "types": {},
+            "hash": "geoparquet",
+        }
+
+        version = backend.publish(
+            collection="test",
+            assets={},
+            schema=schema,
+            breaking=True,
+            message="Breaking change",
+        )
+
+        assert version.version == "2.0.0"
+
+    @pytest.mark.integration
+    def test_check_drift_returns_report(self, tmp_path: Any) -> None:
+        """check_drift returns a DriftReport."""
+        from pathlib import Path
+        import json
+
+        catalog_root = Path(tmp_path)
+        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir.mkdir(parents=True)
+
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-01T00:00:00Z",
+                    "breaking": False,
+                    "assets": {},
+                    "changes": [],
+                }
+            ],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(versions_data))
+
+        backend = JsonFileBackend(catalog_root=catalog_root)
+        report = backend.check_drift("test")
+
+        assert report["has_drift"] is False
+        assert report["local_version"] == "1.0.0"
+
+    @pytest.mark.integration
+    def test_first_publish_with_breaking_true(self, tmp_path: Any) -> None:
+        """First publish can have breaking=True (unusual but valid)."""
+        from pathlib import Path
+
+        catalog_root = Path(tmp_path)
+        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir.mkdir(parents=True)
+
+        backend = JsonFileBackend(catalog_root=catalog_root)
+        schema: SchemaFingerprint = {
+            "columns": [],
+            "types": {},
+            "hash": "geoparquet",
+        }
+
+        version = backend.publish(
+            collection="test",
+            assets={},
+            schema=schema,
+            breaking=True,  # Breaking on first version
+            message="Initial breaking release",
+        )
+
+        # First version is always 1.0.0 regardless of breaking flag
+        assert version.version == "1.0.0"
+        assert version.breaking is True
