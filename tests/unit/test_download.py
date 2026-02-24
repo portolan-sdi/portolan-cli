@@ -1203,9 +1203,7 @@ class TestDryRunCoverage:
         from portolan_cli.download import download_directory
 
         # Create mock for listing 15+ files - must be list of list (generator behavior)
-        mock_files = [
-            [{"path": f"data/file{i}.parquet", "size": 100} for i in range(15)]
-        ]
+        mock_files = [[{"path": f"data/file{i}.parquet", "size": 100} for i in range(15)]]
 
         with patch("portolan_cli.download.obs") as mock_obs:
             with patch("portolan_cli.download.S3Store") as mock_s3_store:
@@ -1231,17 +1229,13 @@ class TestFailFastSubmitNextFile:
     """Tests for fail_fast branch where next file is submitted."""
 
     @pytest.mark.unit
-    def test_download_directory_fail_fast_submits_next(
-        self, temp_download_dir: Path
-    ) -> None:
+    def test_download_directory_fail_fast_submits_next(self, temp_download_dir: Path) -> None:
         """fail_fast mode should submit next file after one completes."""
         from portolan_cli.download import download_directory
 
         # Create 5 files, max_files=2 to force incremental submission
         # Must be list of list (generator behavior)
-        mock_files = [
-            [{"path": f"data/file{i}.parquet", "size": 100} for i in range(5)]
-        ]
+        mock_files = [[{"path": f"data/file{i}.parquet", "size": 100} for i in range(5)]]
 
         def mock_get(store: object, key: str) -> MagicMock:
             response = MagicMock()
@@ -1275,9 +1269,7 @@ class TestExceptionCleanupInDownloadFile:
     """Tests for exception handler cleanup paths."""
 
     @pytest.mark.unit
-    def test_download_file_cleans_up_on_unexpected_error(
-        self, temp_download_dir: Path
-    ) -> None:
+    def test_download_file_cleans_up_on_unexpected_error(self, temp_download_dir: Path) -> None:
         """download_file should clean up partial file on unexpected exception."""
         from portolan_cli.download import download_file
 
@@ -1309,9 +1301,7 @@ class TestExceptionCleanupInDownloadFile:
                 assert not dest_file.exists()
 
     @pytest.mark.unit
-    def test_download_file_handles_cleanup_oserror(
-        self, temp_download_dir: Path
-    ) -> None:
+    def test_download_file_handles_cleanup_oserror(self, temp_download_dir: Path) -> None:
         """download_file should handle OSError during cleanup gracefully."""
         from portolan_cli.download import download_file
 
