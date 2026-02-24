@@ -14,3 +14,7 @@ keep = None  # Used by prune() implementations
 # CLI options that are defined for future interactive prompting
 # The --auto flag is accepted by CLI but prompting not yet implemented
 auto_mode = None  # Will control interactive prompting when implemented
+
+# Note: Test fixture parameters are now marked as used in-line with
+# assertions or assignment to _ to satisfy vulture. The blanket exclusion
+# of test_upload.py has been removed from pyproject.toml.

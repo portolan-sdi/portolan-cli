@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "click>=8.3.1",
     "geoparquet-io>=0.3.0",
+    "obstore>=0.8.2",  # Cloud object storage (S3, GCS, Azure) via Rust bindings
     "pyarrow>=12.0.0,<22.0.0",  # v22+ has ABI incompatibility with abseil on some systems
     "pystac>=1.10.0",  # STAC catalog/collection/item creation
     "rio-cogeo>=5.0.0",  # COG creation/validation (includes rasterio)

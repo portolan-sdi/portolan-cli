@@ -2434,6 +2434,7 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "geoparquet-io" },
+    { name = "obstore" },
     { name = "pyarrow" },
     { name = "pystac" },
     { name = "rio-cogeo", version = "6.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -2481,6 +2482,7 @@ requires-dist = [
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=1.0.0" },
     { name = "mutmut", marker = "extra == 'dev'", specifier = ">=3.4.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.19.1" },
+    { name = "obstore", specifier = ">=0.8.2" },
     { name = "pip-audit", marker = "extra == 'dev'", specifier = ">=2.10.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.5.1" },
     { name = "pyarrow", specifier = ">=12.0.0,<22.0.0" },
