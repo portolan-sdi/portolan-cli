@@ -1187,3 +1187,156 @@ class TestErrorTypeConsistency:
                 assert len(result.errors) == 1
                 # First element should be Path, not str
                 assert isinstance(result.errors[0][0], Path)
+
+
+# =============================================================================
+# Additional Coverage Tests
+# =============================================================================
+
+
+class TestDryRunCoverage:
+    """Tests to improve dry-run path coverage."""
+
+    @pytest.mark.unit
+    def test_download_directory_dry_run_many_files(self, temp_download_dir: Path) -> None:
+        """Dry run with > 10 files should show '... and N more' message."""
+        from portolan_cli.download import download_directory
+
+        # Create mock for listing 15+ files - must be list of list (generator behavior)
+        mock_files = [
+            [{"path": f"data/file{i}.parquet", "size": 100} for i in range(15)]
+        ]
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+                mock_obs.list.return_value = mock_files
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    result = download_directory(
+                        source="s3://mybucket/data/",
+                        destination=temp_download_dir,
+                        dry_run=True,
+                    )
+
+                assert result.success is True
+                assert result.files_downloaded == 0  # Dry run doesn't download
+
+
+class TestFailFastSubmitNextFile:
+    """Tests for fail_fast branch where next file is submitted."""
+
+    @pytest.mark.unit
+    def test_download_directory_fail_fast_submits_next(
+        self, temp_download_dir: Path
+    ) -> None:
+        """fail_fast mode should submit next file after one completes."""
+        from portolan_cli.download import download_directory
+
+        # Create 5 files, max_files=2 to force incremental submission
+        # Must be list of list (generator behavior)
+        mock_files = [
+            [{"path": f"data/file{i}.parquet", "size": 100} for i in range(5)]
+        ]
+
+        def mock_get(store: object, key: str) -> MagicMock:
+            response = MagicMock()
+            response.meta = {"size": 100}
+            response.__iter__ = lambda self: iter([b"x" * 100])
+            return response
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+                mock_obs.list.return_value = mock_files
+                mock_obs.get.side_effect = mock_get
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    result = download_directory(
+                        source="s3://mybucket/data/",
+                        destination=temp_download_dir,
+                        fail_fast=True,
+                        max_files=2,  # Force incremental submission
+                    )
+
+                assert result.success is True
+                assert result.files_downloaded == 5
+
+
+class TestExceptionCleanupInDownloadFile:
+    """Tests for exception handler cleanup paths."""
+
+    @pytest.mark.unit
+    def test_download_file_cleans_up_on_unexpected_error(
+        self, temp_download_dir: Path
+    ) -> None:
+        """download_file should clean up partial file on unexpected exception."""
+        from portolan_cli.download import download_file
+
+        dest_file = temp_download_dir / "data.parquet"
+
+        def mock_get(store: object, key: str) -> MagicMock:
+            # Create partial file then raise
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            dest_file.write_bytes(b"partial")
+            raise RuntimeError("Unexpected error during download")
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+                mock_obs.get.side_effect = mock_get
+
+                with patch.dict(
+                    os.environ,
+                    {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                ):
+                    result = download_file(
+                        source="s3://mybucket/data.parquet",
+                        destination=dest_file,
+                    )
+
+                assert result.success is False
+                # Partial file should be cleaned up
+                assert not dest_file.exists()
+
+    @pytest.mark.unit
+    def test_download_file_handles_cleanup_oserror(
+        self, temp_download_dir: Path
+    ) -> None:
+        """download_file should handle OSError during cleanup gracefully."""
+        from portolan_cli.download import download_file
+
+        dest_file = temp_download_dir / "data.parquet"
+
+        def mock_get(store: object, key: str) -> MagicMock:
+            raise RuntimeError("Download error")
+
+        with patch("portolan_cli.download.obs") as mock_obs:
+            with patch("portolan_cli.download.S3Store") as mock_s3_store:
+                mock_store = MagicMock()
+                mock_s3_store.return_value = mock_store
+                mock_obs.get.side_effect = mock_get
+
+                # Mock Path.exists to return True, unlink to raise OSError
+                with patch.object(Path, "exists", return_value=True):
+                    with patch.object(Path, "unlink", side_effect=OSError("Permission denied")):
+                        with patch.dict(
+                            os.environ,
+                            {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},
+                        ):
+                            result = download_file(
+                                source="s3://mybucket/data.parquet",
+                                destination=dest_file,
+                            )
+
+                        assert result.success is False
+                        # Should not raise, just continue with error result
