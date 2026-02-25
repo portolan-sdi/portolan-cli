@@ -501,6 +501,9 @@ def push(
     if not catalog_root.exists():
         raise FileNotFoundError(f"Catalog root not found: {catalog_root}")
 
+    # Resolve catalog_root to absolute path for consistent path operations
+    catalog_root = catalog_root.resolve()
+
     # Read local versions
     local_data = _read_local_versions(catalog_root, collection)
     local_versions = [v.get("version") for v in local_data.get("versions", [])]
