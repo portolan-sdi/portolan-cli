@@ -593,3 +593,184 @@ class TestPullMalformedDataErrors:
 
         # Should exit with error for invalid URL scheme
         assert result.exit_code != 0
+
+
+# =============================================================================
+# Pull CLI Error Branch Tests
+# =============================================================================
+
+
+class TestPullCLIErrorBranches:
+    """Tests for CLI error handling branches in pull command."""
+
+    @pytest.mark.integration
+    def test_pull_cli_json_failure_without_uncommitted(
+        self, cli_runner: CliRunner, local_catalog: Path
+    ) -> None:
+        """Pull CLI should output generic error in JSON when no uncommitted changes."""
+        from portolan_cli.cli import cli
+        from portolan_cli.pull import PullResult
+
+        with patch("portolan_cli.pull.pull") as mock_pull:
+            mock_pull.return_value = PullResult(
+                success=False,
+                files_downloaded=0,
+                files_skipped=0,
+                local_version="1.0.0",
+                remote_version="1.1.0",
+                uncommitted_changes=[],  # No uncommitted changes - generic failure
+            )
+
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "--format",
+                    "json",
+                    "pull",
+                    "s3://bucket/catalog",
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(local_catalog),
+                ],
+            )
+
+        assert result.exit_code == 1
+        output = json.loads(result.output)
+        assert output["success"] is False
+        assert "errors" in output
+        # Should have a generic "PullError" type
+        assert any("PullError" in err["type"] for err in output["errors"])
+
+    @pytest.mark.integration
+    def test_pull_cli_dry_run_human_output(
+        self, cli_runner: CliRunner, local_catalog: Path
+    ) -> None:
+        """Pull CLI should show dry-run message in human output."""
+        from portolan_cli.cli import cli
+        from portolan_cli.pull import PullResult
+
+        with patch("portolan_cli.pull.pull") as mock_pull:
+            mock_pull.return_value = PullResult(
+                success=True,
+                files_downloaded=3,
+                files_skipped=0,
+                local_version="1.0.0",
+                remote_version="1.1.0",
+            )
+
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "pull",
+                    "s3://bucket/catalog",
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(local_catalog),
+                    "--dry-run",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert "dry run" in result.output.lower()
+
+    @pytest.mark.integration
+    def test_pull_cli_human_failure_no_uncommitted(
+        self, cli_runner: CliRunner, local_catalog: Path
+    ) -> None:
+        """Pull CLI should show generic error message when failure without uncommitted."""
+        from portolan_cli.cli import cli
+        from portolan_cli.pull import PullResult
+
+        with patch("portolan_cli.pull.pull") as mock_pull:
+            mock_pull.return_value = PullResult(
+                success=False,
+                files_downloaded=0,
+                files_skipped=0,
+                local_version="1.0.0",
+                remote_version="1.1.0",
+                uncommitted_changes=[],  # No uncommitted - generic failure
+            )
+
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "pull",
+                    "s3://bucket/catalog",
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(local_catalog),
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "failed" in result.output.lower()
+
+    @pytest.mark.integration
+    def test_pull_cli_human_uncommitted_shows_files(
+        self, cli_runner: CliRunner, local_catalog: Path
+    ) -> None:
+        """Pull CLI should list uncommitted files in human output."""
+        from portolan_cli.cli import cli
+        from portolan_cli.pull import PullResult
+
+        with patch("portolan_cli.pull.pull") as mock_pull:
+            mock_pull.return_value = PullResult(
+                success=False,
+                files_downloaded=0,
+                files_skipped=0,
+                local_version="1.0.0",
+                remote_version="1.1.0",
+                uncommitted_changes=["data.parquet", "other.parquet"],
+            )
+
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "pull",
+                    "s3://bucket/catalog",
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(local_catalog),
+                ],
+            )
+
+        assert result.exit_code == 1
+        # Should show advice about --force
+        assert "force" in result.output.lower()
+
+    @pytest.mark.integration
+    def test_pull_cli_success_human_shows_version_transition(
+        self, cli_runner: CliRunner, local_catalog: Path
+    ) -> None:
+        """Pull CLI success should show version transition in human output."""
+        from portolan_cli.cli import cli
+        from portolan_cli.pull import PullResult
+
+        with patch("portolan_cli.pull.pull") as mock_pull:
+            mock_pull.return_value = PullResult(
+                success=True,
+                files_downloaded=2,
+                files_skipped=0,
+                local_version="1.0.0",
+                remote_version="1.1.0",
+            )
+
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "pull",
+                    "s3://bucket/catalog",
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(local_catalog),
+                ],
+            )
+
+        assert result.exit_code == 0
+        # Should mention versions
+        assert "1.0.0" in result.output or "1.1.0" in result.output

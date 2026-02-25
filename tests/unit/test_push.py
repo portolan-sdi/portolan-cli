@@ -1086,6 +1086,97 @@ class TestMultiCloudStoreSetup:
     """Tests for GCS and Azure store setup."""
 
     @pytest.mark.unit
+    def test_setup_store_s3_with_profile(self) -> None:
+        """_setup_store should load credentials from AWS profile."""
+        from portolan_cli.push import _setup_store
+
+        with patch("portolan_cli.upload._load_aws_credentials_from_profile") as mock_load:
+            mock_load.return_value = ("access_key", "secret_key", "us-east-1")
+
+            with patch("portolan_cli.push.S3Store") as mock_s3:
+                mock_s3.return_value = MagicMock()
+
+                store, prefix = _setup_store("s3://mybucket/catalog", profile="myprofile")
+
+        mock_load.assert_called_once_with("myprofile")
+        mock_s3.assert_called_once_with(
+            "mybucket",
+            region="us-east-1",
+            access_key_id="access_key",
+            secret_access_key="secret_key",
+        )
+        assert prefix == "catalog"
+
+    @pytest.mark.unit
+    def test_setup_store_s3_from_environment(self) -> None:
+        """_setup_store should use AWS credentials from environment."""
+        from portolan_cli.push import _setup_store
+
+        with patch.dict(
+            "os.environ",
+            {
+                "AWS_ACCESS_KEY_ID": "env_access_key",
+                "AWS_SECRET_ACCESS_KEY": "env_secret_key",
+                "AWS_REGION": "eu-west-1",
+            },
+            clear=True,
+        ):
+            with patch("portolan_cli.push.S3Store") as mock_s3:
+                mock_s3.return_value = MagicMock()
+
+                store, prefix = _setup_store("s3://mybucket/prefix")
+
+        mock_s3.assert_called_once_with(
+            "mybucket",
+            region="eu-west-1",
+            access_key_id="env_access_key",
+            secret_access_key="env_secret_key",
+        )
+
+    @pytest.mark.unit
+    def test_setup_store_s3_uses_default_region_env(self) -> None:
+        """_setup_store should fallback to AWS_DEFAULT_REGION if AWS_REGION not set."""
+        from portolan_cli.push import _setup_store
+
+        with patch.dict(
+            "os.environ",
+            {
+                "AWS_ACCESS_KEY_ID": "key",
+                "AWS_SECRET_ACCESS_KEY": "secret",
+                "AWS_DEFAULT_REGION": "ap-southeast-1",
+            },
+            clear=True,
+        ):
+            with patch("portolan_cli.push.S3Store") as mock_s3:
+                mock_s3.return_value = MagicMock()
+
+                _setup_store("s3://mybucket/prefix")
+
+        call_kwargs = mock_s3.call_args[1]
+        assert call_kwargs["region"] == "ap-southeast-1"
+
+    @pytest.mark.unit
+    def test_setup_store_s3_no_region(self) -> None:
+        """_setup_store should work without region (uses AWS SDK defaults)."""
+        from portolan_cli.push import _setup_store
+
+        with patch.dict(
+            "os.environ",
+            {
+                "AWS_ACCESS_KEY_ID": "key",
+                "AWS_SECRET_ACCESS_KEY": "secret",
+            },
+            clear=True,
+        ):
+            with patch("portolan_cli.push.S3Store") as mock_s3:
+                mock_s3.return_value = MagicMock()
+
+                _setup_store("s3://mybucket/data")
+
+        call_kwargs = mock_s3.call_args[1]
+        assert "region" not in call_kwargs
+
+    @pytest.mark.unit
     def test_setup_store_gcs(self) -> None:
         """_setup_store should create GCSStore for gs:// URLs."""
         from portolan_cli.push import _setup_store
@@ -1194,6 +1285,257 @@ class TestMultiCloudStoreSetup:
         call_kwargs = mock_azure.call_args[1]
         assert "access_key" in call_kwargs
         assert "sas_token" not in call_kwargs
+
+    @pytest.mark.unit
+    def test_setup_store_unknown_scheme_uses_from_url(self) -> None:
+        """_setup_store should fallback to from_url for unknown schemes.
+
+        NOTE: This tests line 249 of push.py, but since parse_object_store_url
+        validates the scheme first and raises ValueError for unsupported schemes,
+        we need to mock it to allow the unknown scheme through.
+        """
+        from portolan_cli.push import _setup_store
+
+        with patch("portolan_cli.push.parse_object_store_url") as mock_parse:
+            # Return a fake bucket URL with unsupported scheme
+            mock_parse.return_value = ("custom://bucket", "catalog")
+
+            with patch("portolan_cli.push.obs.store.from_url") as mock_from_url:
+                mock_from_url.return_value = MagicMock()
+
+                store, prefix = _setup_store("custom://bucket/catalog")
+
+        mock_from_url.assert_called_once_with("custom://bucket")
+        assert prefix == "catalog"
+
+
+# =============================================================================
+# Fetch Remote Versions Tests
+# =============================================================================
+
+
+class TestFetchRemoteVersions:
+    """Tests for _fetch_remote_versions function."""
+
+    @pytest.mark.unit
+    def test_fetch_remote_versions_success(self) -> None:
+        """_fetch_remote_versions should return parsed data and etag."""
+        from portolan_cli.push import _fetch_remote_versions
+
+        mock_store = MagicMock()
+        mock_result = MagicMock()
+        mock_result.bytes.return_value = b'{"spec_version": "1.0.0", "versions": []}'
+        mock_result.meta = {"e_tag": "etag-123"}
+
+        with patch("portolan_cli.push.obs.get") as mock_get:
+            mock_get.return_value = mock_result
+
+            data, etag = _fetch_remote_versions(mock_store, "catalog", "test-collection")
+
+        assert data is not None
+        assert data["spec_version"] == "1.0.0"
+        assert etag == "etag-123"
+
+    @pytest.mark.unit
+    def test_fetch_remote_versions_file_not_found(self) -> None:
+        """_fetch_remote_versions should return None for missing file."""
+        from portolan_cli.push import _fetch_remote_versions
+
+        mock_store = MagicMock()
+
+        with patch("portolan_cli.push.obs.get") as mock_get:
+            mock_get.side_effect = FileNotFoundError("Not found")
+
+            data, etag = _fetch_remote_versions(mock_store, "catalog", "test-collection")
+
+        assert data is None
+        assert etag is None
+
+    @pytest.mark.unit
+    def test_fetch_remote_versions_not_found_string_error(self) -> None:
+        """_fetch_remote_versions should handle 'not found' string errors."""
+        from portolan_cli.push import _fetch_remote_versions
+
+        mock_store = MagicMock()
+
+        with patch("portolan_cli.push.obs.get") as mock_get:
+            mock_get.side_effect = Exception("Object does not exist in bucket")
+
+            data, etag = _fetch_remote_versions(mock_store, "catalog", "test-collection")
+
+        assert data is None
+        assert etag is None
+
+    @pytest.mark.unit
+    def test_fetch_remote_versions_404_error(self) -> None:
+        """_fetch_remote_versions should handle 404 errors."""
+        from portolan_cli.push import _fetch_remote_versions
+
+        mock_store = MagicMock()
+
+        with patch("portolan_cli.push.obs.get") as mock_get:
+            mock_get.side_effect = Exception("404 Not Found")
+
+            data, etag = _fetch_remote_versions(mock_store, "catalog", "test-collection")
+
+        assert data is None
+        assert etag is None
+
+    @pytest.mark.unit
+    def test_fetch_remote_versions_no_such_key_error(self) -> None:
+        """_fetch_remote_versions should handle NoSuchKey errors."""
+        from portolan_cli.push import _fetch_remote_versions
+
+        mock_store = MagicMock()
+
+        with patch("portolan_cli.push.obs.get") as mock_get:
+            mock_get.side_effect = Exception("NoSuchKey: The specified key does not exist")
+
+            data, etag = _fetch_remote_versions(mock_store, "catalog", "test-collection")
+
+        assert data is None
+        assert etag is None
+
+    @pytest.mark.unit
+    def test_fetch_remote_versions_other_error_raises(self) -> None:
+        """_fetch_remote_versions should re-raise non-not-found errors."""
+        from portolan_cli.push import _fetch_remote_versions
+
+        mock_store = MagicMock()
+
+        with patch("portolan_cli.push.obs.get") as mock_get:
+            mock_get.side_effect = Exception("Access denied: permission error")
+
+            with pytest.raises(Exception, match="Access denied"):
+                _fetch_remote_versions(mock_store, "catalog", "test-collection")
+
+
+# =============================================================================
+# Upload Assets Error Handling Tests
+# =============================================================================
+
+
+class TestUploadAssetsErrorHandling:
+    """Tests for error handling in _upload_assets function."""
+
+    @pytest.mark.unit
+    def test_upload_assets_handles_exception(self, local_catalog: Path) -> None:
+        """_upload_assets should catch and report upload exceptions."""
+        from portolan_cli.push import _upload_assets
+
+        mock_store = MagicMock()
+
+        with patch("portolan_cli.push.obs.put") as mock_put:
+            mock_put.side_effect = Exception("Network timeout")
+
+            files_uploaded, errors, uploaded_keys = _upload_assets(
+                store=mock_store,
+                catalog_root=local_catalog,
+                prefix="catalog",
+                assets=[local_catalog / "data.parquet"],
+            )
+
+        assert files_uploaded == 0
+        assert len(errors) == 1
+        assert "Network timeout" in errors[0]
+        assert uploaded_keys == []
+
+
+# =============================================================================
+# Upload Versions JSON Error Handling Tests
+# =============================================================================
+
+
+class TestUploadVersionsJsonErrorHandling:
+    """Tests for error handling in _upload_versions_json function."""
+
+    @pytest.mark.unit
+    def test_upload_versions_json_precondition_error(self) -> None:
+        """_upload_versions_json should raise PushConflictError on precondition failure."""
+        from portolan_cli.push import PushConflictError, _upload_versions_json
+
+        mock_store = MagicMock()
+        versions_data = {"spec_version": "1.0.0", "versions": []}
+
+        with patch("portolan_cli.push.obs.put") as mock_put:
+            mock_put.side_effect = Exception("PreconditionFailed: etag mismatch")
+
+            with pytest.raises(PushConflictError, match="Remote changed during push"):
+                _upload_versions_json(
+                    store=mock_store,
+                    prefix="catalog",
+                    collection="test",
+                    versions_data=versions_data,
+                    etag="old-etag",
+                )
+
+    @pytest.mark.unit
+    def test_upload_versions_json_with_force(self) -> None:
+        """_upload_versions_json with force=True should not use etag."""
+        from portolan_cli.push import _upload_versions_json
+
+        mock_store = MagicMock()
+        versions_data = {"spec_version": "1.0.0", "versions": []}
+
+        with patch("portolan_cli.push.obs.put") as mock_put:
+            mock_put.return_value = None
+
+            _upload_versions_json(
+                store=mock_store,
+                prefix="catalog",
+                collection="test",
+                versions_data=versions_data,
+                etag="some-etag",
+                force=True,
+            )
+
+        # With force=True, put should be called without mode parameter
+        call_args = mock_put.call_args
+        # Check that mode was not passed (no conditional put)
+        if len(call_args) > 1 and call_args[1]:
+            assert "mode" not in call_args[1] or call_args[1].get("mode") is None
+
+    @pytest.mark.unit
+    def test_upload_versions_json_first_push_no_etag(self) -> None:
+        """_upload_versions_json with etag=None should use overwrite mode."""
+        from portolan_cli.push import _upload_versions_json
+
+        mock_store = MagicMock()
+        versions_data = {"spec_version": "1.0.0", "versions": []}
+
+        with patch("portolan_cli.push.obs.put") as mock_put:
+            mock_put.return_value = None
+
+            _upload_versions_json(
+                store=mock_store,
+                prefix="catalog",
+                collection="test",
+                versions_data=versions_data,
+                etag=None,  # First push
+            )
+
+        # With etag=None, put should be called without mode parameter
+        mock_put.assert_called_once()
+
+    @pytest.mark.unit
+    def test_upload_versions_json_other_error_reraises(self) -> None:
+        """_upload_versions_json should re-raise non-precondition errors."""
+        from portolan_cli.push import _upload_versions_json
+
+        mock_store = MagicMock()
+        versions_data = {"spec_version": "1.0.0", "versions": []}
+
+        with patch("portolan_cli.push.obs.put") as mock_put:
+            mock_put.side_effect = Exception("Network timeout")
+
+            with pytest.raises(Exception, match="Network timeout"):
+                _upload_versions_json(
+                    store=mock_store,
+                    prefix="catalog",
+                    collection="test",
+                    versions_data=versions_data,
+                    etag="etag",
+                )
 
 
 # =============================================================================

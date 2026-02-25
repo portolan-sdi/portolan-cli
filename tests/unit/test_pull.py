@@ -298,6 +298,253 @@ class TestUncommittedChangeDetection:
         assert changes == []
 
     @pytest.mark.unit
+    def test_mtime_fast_path_skips_checksum(self, tmp_path: Path) -> None:
+        """Should skip checksum when mtime and size match (ADR-0017 fast path)."""
+        from portolan_cli.pull import detect_uncommitted_changes
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+
+        portolan_dir = catalog_root / ".portolan" / "collections" / "test"
+        portolan_dir.mkdir(parents=True)
+
+        # Create file first to get its mtime
+        data_file = catalog_root / "data.parquet"
+        data_file.write_bytes(b"x" * 1000)
+        stat = data_file.stat()
+
+        # Create versions.json with matching mtime and size
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-15T10:00:00Z",
+                    "breaking": False,
+                    "message": "Test",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": "abc123",
+                            "size_bytes": 1000,
+                            "href": "data.parquet",
+                            "mtime": stat.st_mtime,
+                        }
+                    },
+                    "changes": ["data.parquet"],
+                }
+            ],
+        }
+        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+
+        with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+            changes = detect_uncommitted_changes(
+                catalog_root=catalog_root,
+                collection="test",
+            )
+
+        # Checksum should NOT be computed when mtime matches (fast path)
+        mock_checksum.assert_not_called()
+        assert changes == []
+
+    @pytest.mark.unit
+    def test_mtime_mismatch_triggers_checksum(self, tmp_path: Path) -> None:
+        """Should compute checksum when mtime differs from recorded value."""
+        from portolan_cli.pull import detect_uncommitted_changes
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+
+        portolan_dir = catalog_root / ".portolan" / "collections" / "test"
+        portolan_dir.mkdir(parents=True)
+
+        # Create file
+        data_file = catalog_root / "data.parquet"
+        data_file.write_bytes(b"x" * 1000)
+
+        # Create versions.json with different mtime
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-15T10:00:00Z",
+                    "breaking": False,
+                    "message": "Test",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": "abc123",
+                            "size_bytes": 1000,
+                            "href": "data.parquet",
+                            "mtime": 0.0,  # Different mtime
+                        }
+                    },
+                    "changes": ["data.parquet"],
+                }
+            ],
+        }
+        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+
+        with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+            mock_checksum.return_value = "abc123"  # Same checksum
+
+            changes = detect_uncommitted_changes(
+                catalog_root=catalog_root,
+                collection="test",
+            )
+
+        # Checksum SHOULD be computed when mtime differs
+        mock_checksum.assert_called_once()
+        assert changes == []
+
+    @pytest.mark.unit
+    def test_size_mismatch_triggers_checksum(self, tmp_path: Path) -> None:
+        """Should compute checksum when size differs from recorded value."""
+        from portolan_cli.pull import detect_uncommitted_changes
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+
+        portolan_dir = catalog_root / ".portolan" / "collections" / "test"
+        portolan_dir.mkdir(parents=True)
+
+        # Create file
+        data_file = catalog_root / "data.parquet"
+        data_file.write_bytes(b"x" * 1000)
+        stat = data_file.stat()
+
+        # Create versions.json with matching mtime but different size
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-15T10:00:00Z",
+                    "breaking": False,
+                    "message": "Test",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": "abc123",
+                            "size_bytes": 500,  # Different size
+                            "href": "data.parquet",
+                            "mtime": stat.st_mtime,
+                        }
+                    },
+                    "changes": ["data.parquet"],
+                }
+            ],
+        }
+        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+
+        with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+            mock_checksum.return_value = "different_checksum"
+
+            changes = detect_uncommitted_changes(
+                catalog_root=catalog_root,
+                collection="test",
+            )
+
+        # Checksum SHOULD be computed when size differs
+        mock_checksum.assert_called_once()
+        assert "data.parquet" in changes
+
+    @pytest.mark.unit
+    def test_no_mtime_recorded_falls_to_checksum(self, tmp_path: Path) -> None:
+        """Should compute checksum when mtime is not recorded in versions.json."""
+        from portolan_cli.pull import detect_uncommitted_changes
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+
+        portolan_dir = catalog_root / ".portolan" / "collections" / "test"
+        portolan_dir.mkdir(parents=True)
+
+        # Create file
+        data_file = catalog_root / "data.parquet"
+        data_file.write_bytes(b"x" * 1000)
+
+        # Create versions.json WITHOUT mtime
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-15T10:00:00Z",
+                    "breaking": False,
+                    "message": "Test",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": "abc123",
+                            "size_bytes": 1000,
+                            "href": "data.parquet",
+                            # No mtime field
+                        }
+                    },
+                    "changes": ["data.parquet"],
+                }
+            ],
+        }
+        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+
+        with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+            mock_checksum.return_value = "abc123"  # Matches
+
+            changes = detect_uncommitted_changes(
+                catalog_root=catalog_root,
+                collection="test",
+            )
+
+        # Checksum SHOULD be computed when no mtime recorded
+        mock_checksum.assert_called_once()
+        assert changes == []
+
+    @pytest.mark.unit
+    def test_returns_empty_for_no_versions_file(self, tmp_path: Path) -> None:
+        """Should return empty list when versions.json doesn't exist."""
+        from portolan_cli.pull import detect_uncommitted_changes
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+
+        # No .portolan directory
+
+        changes = detect_uncommitted_changes(
+            catalog_root=catalog_root,
+            collection="test",
+        )
+
+        assert changes == []
+
+    @pytest.mark.unit
+    def test_returns_empty_for_empty_versions(self, tmp_path: Path) -> None:
+        """Should return empty list when versions.json has no versions."""
+        from portolan_cli.pull import detect_uncommitted_changes
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+
+        portolan_dir = catalog_root / ".portolan" / "collections" / "test"
+        portolan_dir.mkdir(parents=True)
+
+        # Create versions.json with empty versions list
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": None,
+            "versions": [],
+        }
+        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+
+        changes = detect_uncommitted_changes(
+            catalog_root=catalog_root,
+            collection="test",
+        )
+
+        assert changes == []
+
+    @pytest.mark.unit
     def test_detect_missing_file(self, catalog_with_versions: Path) -> None:
         """Should detect when expected file is missing."""
         from portolan_cli.pull import detect_uncommitted_changes
@@ -1065,6 +1312,330 @@ class TestProgressReporting:
 # =============================================================================
 # Error Path Tests with Malformed Data
 # =============================================================================
+
+
+# =============================================================================
+# Sync State Conflict Tests
+# =============================================================================
+
+
+class TestSyncStateConflicts:
+    """Tests for _check_sync_state_conflicts function."""
+
+    @pytest.mark.unit
+    def test_check_sync_state_returns_none_when_force(self) -> None:
+        """_check_sync_state_conflicts should return None when force=True."""
+        from portolan_cli.pull import VersionDiff, _check_sync_state_conflicts
+
+        diff = VersionDiff(
+            local_version="1.1.0",
+            remote_version="1.0.0",
+            is_behind=False,
+            files_to_download=[],
+            is_local_ahead=True,
+            local_only_versions=["1.1.0"],
+        )
+
+        result = _check_sync_state_conflicts(diff, force=True)
+
+        assert result is None
+
+    @pytest.mark.unit
+    def test_check_sync_state_fails_when_local_ahead(self) -> None:
+        """_check_sync_state_conflicts should fail when local is ahead of remote."""
+        from portolan_cli.pull import VersionDiff, _check_sync_state_conflicts
+
+        diff = VersionDiff(
+            local_version="1.1.0",
+            remote_version="1.0.0",
+            is_behind=False,
+            files_to_download=[],
+            is_local_ahead=True,
+            local_only_versions=["1.1.0"],
+        )
+
+        result = _check_sync_state_conflicts(diff, force=False)
+
+        assert result is not None
+        assert result.success is False
+        assert "1.1.0" in result.uncommitted_changes
+
+    @pytest.mark.unit
+    def test_check_sync_state_fails_when_diverged(self) -> None:
+        """_check_sync_state_conflicts should fail when local and remote diverged."""
+        from portolan_cli.pull import VersionDiff, _check_sync_state_conflicts
+
+        diff = VersionDiff(
+            local_version="1.1.0",
+            remote_version="1.0.1",
+            is_behind=False,
+            files_to_download=[],
+            is_diverged=True,
+            local_only_versions=["1.1.0"],
+            remote_only_versions=["1.0.1"],
+        )
+
+        result = _check_sync_state_conflicts(diff, force=False)
+
+        assert result is not None
+        assert result.success is False
+
+    @pytest.mark.unit
+    def test_check_sync_state_returns_none_when_ok(self) -> None:
+        """_check_sync_state_conflicts should return None when no conflicts."""
+        from portolan_cli.pull import VersionDiff, _check_sync_state_conflicts
+
+        diff = VersionDiff(
+            local_version="1.0.0",
+            remote_version="1.1.0",
+            is_behind=True,
+            files_to_download=["data.parquet"],
+            is_local_ahead=False,
+            is_diverged=False,
+        )
+
+        result = _check_sync_state_conflicts(diff, force=False)
+
+        assert result is None
+
+
+# =============================================================================
+# Uncommitted Conflicts Tests
+# =============================================================================
+
+
+class TestUncommittedConflicts:
+    """Tests for _check_uncommitted_conflicts function."""
+
+    @pytest.mark.unit
+    def test_check_uncommitted_returns_none_when_force(
+        self, catalog_with_versions: Path
+    ) -> None:
+        """_check_uncommitted_conflicts should return None when force=True."""
+        from portolan_cli.pull import VersionDiff, _check_uncommitted_conflicts
+
+        diff = VersionDiff(
+            local_version="1.0.0",
+            remote_version="1.1.0",
+            is_behind=True,
+            files_to_download=["data.parquet"],
+        )
+
+        # Modify local file
+        data_file = catalog_with_versions / "data.parquet"
+        data_file.write_bytes(b"modified content")
+
+        result = _check_uncommitted_conflicts(
+            catalog_with_versions, "test-collection", diff, force=True
+        )
+
+        assert result is None
+
+    @pytest.mark.unit
+    def test_check_uncommitted_fails_when_conflicts(
+        self, catalog_with_versions: Path
+    ) -> None:
+        """_check_uncommitted_conflicts should fail when files would be overwritten."""
+        from portolan_cli.pull import VersionDiff, _check_uncommitted_conflicts
+
+        diff = VersionDiff(
+            local_version="1.0.0",
+            remote_version="1.1.0",
+            is_behind=True,
+            files_to_download=["data.parquet"],
+        )
+
+        # Modify local file
+        data_file = catalog_with_versions / "data.parquet"
+        data_file.write_bytes(b"modified content that differs")
+
+        result = _check_uncommitted_conflicts(
+            catalog_with_versions, "test-collection", diff, force=False
+        )
+
+        assert result is not None
+        assert result.success is False
+        assert "data.parquet" in result.uncommitted_changes
+
+    @pytest.mark.unit
+    def test_check_uncommitted_succeeds_when_no_overlap(
+        self, catalog_with_versions: Path
+    ) -> None:
+        """_check_uncommitted_conflicts should succeed when modified files won't be downloaded."""
+        from portolan_cli.pull import VersionDiff, _check_uncommitted_conflicts
+
+        diff = VersionDiff(
+            local_version="1.0.0",
+            remote_version="1.1.0",
+            is_behind=True,
+            files_to_download=["other.parquet"],  # Different file
+        )
+
+        # Modify local file that's NOT in files_to_download
+        data_file = catalog_with_versions / "data.parquet"
+        data_file.write_bytes(b"modified content")
+
+        with patch("portolan_cli.pull.detect_uncommitted_changes") as mock_detect:
+            mock_detect.return_value = ["data.parquet"]
+
+            result = _check_uncommitted_conflicts(
+                catalog_with_versions, "test-collection", diff, force=False
+            )
+
+        # No overlap between uncommitted changes and files to download
+        assert result is None
+
+
+# =============================================================================
+# Download Assets Tests
+# =============================================================================
+
+
+class TestDownloadAssetsErrorHandling:
+    """Tests for error handling in _download_assets function."""
+
+    @pytest.mark.unit
+    def test_download_assets_skips_missing_asset_metadata(self, tmp_path: Path) -> None:
+        """_download_assets should skip files without asset metadata."""
+        from portolan_cli.pull import _download_assets
+
+        local_root = tmp_path / "catalog"
+        local_root.mkdir()
+
+        remote_assets = {
+            "existing.parquet": {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "existing.parquet",
+            }
+            # "missing.parquet" is not in remote_assets
+        }
+
+        with patch("portolan_cli.pull.download_file") as mock_download:
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_download.return_value = mock_result
+
+            downloaded, failed = _download_assets(
+                remote_url="s3://bucket/catalog",
+                local_root=local_root,
+                files_to_download=["existing.parquet", "missing.parquet"],
+                remote_assets=remote_assets,
+            )
+
+        # Only existing.parquet should be attempted
+        assert mock_download.call_count == 1
+        assert downloaded == 1
+        assert failed == 0
+
+    @pytest.mark.unit
+    def test_download_assets_counts_failures(self, tmp_path: Path) -> None:
+        """_download_assets should count failed downloads."""
+        from portolan_cli.pull import _download_assets
+
+        local_root = tmp_path / "catalog"
+        local_root.mkdir()
+
+        remote_assets = {
+            "data.parquet": {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "data.parquet",
+            }
+        }
+
+        with patch("portolan_cli.pull.download_file") as mock_download:
+            mock_result = MagicMock()
+            mock_result.success = False
+            mock_download.return_value = mock_result
+
+            downloaded, failed = _download_assets(
+                remote_url="s3://bucket/catalog",
+                local_root=local_root,
+                files_to_download=["data.parquet"],
+                remote_assets=remote_assets,
+            )
+
+        assert downloaded == 0
+        assert failed == 1
+
+
+# =============================================================================
+# Path Validation Tests (Additional)
+# =============================================================================
+
+
+class TestValidateSafePathEdgeCases:
+    """Additional edge case tests for _validate_safe_path."""
+
+    @pytest.mark.unit
+    def test_validate_safe_path_windows_absolute_drive(self, tmp_path: Path) -> None:
+        """_validate_safe_path should reject Windows absolute paths."""
+        from portolan_cli.pull import _validate_safe_path
+
+        with pytest.raises(ValueError, match="[Aa]bsolute|escapes"):
+            _validate_safe_path(tmp_path, "C:\\Windows\\System32")
+
+    @pytest.mark.unit
+    def test_validate_safe_path_normalized_traversal(self, tmp_path: Path) -> None:
+        """_validate_safe_path should reject normalized traversal attempts."""
+        from portolan_cli.pull import _validate_safe_path
+
+        # Try to escape using multiple traversal sequences
+        with pytest.raises(ValueError, match="path traversal|escapes"):
+            _validate_safe_path(tmp_path, "subdir/../../etc/passwd")
+
+
+# =============================================================================
+# Fetch Remote Versions Error Handling
+# =============================================================================
+
+
+class TestFetchRemoteVersionsErrors:
+    """Tests for error handling in _fetch_remote_versions."""
+
+    @pytest.mark.unit
+    def test_fetch_remote_versions_download_error(self) -> None:
+        """_fetch_remote_versions should raise PullError on download failure."""
+        from portolan_cli.pull import PullError, _fetch_remote_versions
+
+        with patch("portolan_cli.pull.download_file") as mock_download:
+            mock_result = MagicMock()
+            mock_result.success = False
+            mock_result.errors = [("file", Exception("Network error"))]
+            mock_download.return_value = mock_result
+
+            with pytest.raises(PullError, match="versions.json"):
+                _fetch_remote_versions(
+                    remote_url="s3://bucket/catalog",
+                    collection="test",
+                )
+
+
+# =============================================================================
+# Pull Function Error Handling
+# =============================================================================
+
+
+class TestPullFunctionErrors:
+    """Tests for error handling in main pull function."""
+
+    @pytest.mark.unit
+    def test_pull_returns_failure_on_fetch_error(self, catalog_with_versions: Path) -> None:
+        """Pull should return failure result when remote fetch fails."""
+        from portolan_cli.pull import PullError, pull
+
+        with patch("portolan_cli.pull._fetch_remote_versions") as mock_fetch:
+            mock_fetch.side_effect = PullError("Network timeout")
+
+            result = pull(
+                remote_url="s3://bucket/catalog",
+                local_root=catalog_with_versions,
+                collection="test-collection",
+            )
+
+        assert result.success is False
+        assert result.remote_version is None
 
 
 class TestMalformedDataHandling:

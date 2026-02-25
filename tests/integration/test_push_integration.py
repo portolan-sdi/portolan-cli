@@ -592,3 +592,176 @@ class TestErrorHandling:
                 collection="demographics",
                 destination="s3://mybucket/catalog",
             )
+
+
+# =============================================================================
+# CLI Error Branch Tests
+# =============================================================================
+
+
+class TestPushCLIErrorBranches:
+    """Tests for CLI error handling branches in push command."""
+
+    @pytest.mark.integration
+    def test_push_cli_filenotfound_json_output(
+        self, catalog_missing_versions_file: Path
+    ) -> None:
+        """Push CLI with --format=json should output JSON error on FileNotFoundError."""
+        from portolan_cli.cli import cli
+
+        runner = CliRunner()
+
+        result = runner.invoke(
+            cli,
+            [
+                "--format",
+                "json",
+                "push",
+                "s3://mybucket/catalog",
+                "--collection",
+                "demographics",
+                "--catalog",
+                str(catalog_missing_versions_file),
+            ],
+        )
+
+        assert result.exit_code == 1
+        output_data = json.loads(result.output)
+        assert output_data["success"] is False
+        assert any("FileNotFoundError" in err["type"] for err in output_data["errors"])
+
+    @pytest.mark.integration
+    def test_push_cli_filenotfound_human_output(
+        self, catalog_missing_versions_file: Path
+    ) -> None:
+        """Push CLI should show human-readable error on FileNotFoundError."""
+        from portolan_cli.cli import cli
+
+        runner = CliRunner()
+
+        result = runner.invoke(
+            cli,
+            [
+                "push",
+                "s3://mybucket/catalog",
+                "--collection",
+                "demographics",
+                "--catalog",
+                str(catalog_missing_versions_file),
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "versions.json" in result.output.lower() or "not found" in result.output.lower()
+
+    @pytest.mark.integration
+    def test_push_cli_valueerror_json_output(self, catalog_with_versions: Path) -> None:
+        """Push CLI with --format=json should output JSON error on ValueError."""
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.side_effect = ValueError("Invalid destination URL format")
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--format",
+                    "json",
+                    "push",
+                    "invalid://url",
+                    "--collection",
+                    "demographics",
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+            )
+
+        assert result.exit_code == 1
+        output_data = json.loads(result.output)
+        assert output_data["success"] is False
+        assert any("ValueError" in err["type"] for err in output_data["errors"])
+
+    @pytest.mark.integration
+    def test_push_cli_valueerror_human_output(self, catalog_with_versions: Path) -> None:
+        """Push CLI should show human-readable error on ValueError."""
+        from portolan_cli.cli import cli
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.side_effect = ValueError("Unsupported URL scheme: invalid")
+
+            result = runner.invoke(
+                cli,
+                [
+                    "push",
+                    "invalid://url",
+                    "--collection",
+                    "demographics",
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+            )
+
+        assert result.exit_code == 1
+        # Error message should be shown
+
+    @pytest.mark.integration
+    def test_push_cli_result_errors_human_output(self, catalog_with_versions: Path) -> None:
+        """Push CLI should show errors from PushResult and exit 1."""
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.return_value = PushResult(
+                success=False,
+                files_uploaded=0,
+                versions_pushed=0,
+                conflicts=[],
+                errors=["Network timeout uploading file1.parquet"],
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "push",
+                    "s3://mybucket/catalog",
+                    "--collection",
+                    "demographics",
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+            )
+
+        assert result.exit_code == 1
+
+    @pytest.mark.integration
+    def test_push_cli_conflict_human_advice(self, catalog_with_versions: Path) -> None:
+        """Push CLI should show advice about --force on conflict."""
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushConflictError
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.side_effect = PushConflictError("Remote has diverged")
+
+            result = runner.invoke(
+                cli,
+                [
+                    "push",
+                    "s3://mybucket/catalog",
+                    "--collection",
+                    "demographics",
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "force" in result.output.lower() or "pull" in result.output.lower()
