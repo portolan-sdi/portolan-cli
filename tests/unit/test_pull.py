@@ -682,3 +682,224 @@ class TestErrorHandling:
                 )
 
         assert result.success is True
+
+
+# =============================================================================
+# Security Tests - Path Traversal
+# =============================================================================
+
+
+class TestPathTraversalProtection:
+    """Tests for path traversal protection in pull operations."""
+
+    @pytest.mark.unit
+    def test_download_assets_rejects_path_traversal(self, tmp_path: Path) -> None:
+        """Should reject hrefs containing path traversal sequences."""
+        from portolan_cli.pull import _download_assets
+
+        local_root = tmp_path / "catalog"
+        local_root.mkdir()
+
+        # Malicious href with path traversal
+        remote_assets = {
+            "evil.parquet": {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "../../../etc/passwd",  # Path traversal attack
+            }
+        }
+
+        with pytest.raises(ValueError, match="path traversal"):
+            _download_assets(
+                remote_url="s3://bucket/catalog",
+                local_root=local_root,
+                files_to_download=["evil.parquet"],
+                remote_assets=remote_assets,
+            )
+
+    @pytest.mark.unit
+    def test_download_assets_rejects_absolute_paths(self, tmp_path: Path) -> None:
+        """Should reject absolute hrefs that could write outside catalog."""
+        from portolan_cli.pull import _download_assets
+
+        local_root = tmp_path / "catalog"
+        local_root.mkdir()
+
+        # Absolute path href
+        remote_assets = {
+            "evil.parquet": {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "/etc/passwd",  # Absolute path attack
+            }
+        }
+
+        with pytest.raises(ValueError, match="[Aa]bsolute|escapes"):
+            _download_assets(
+                remote_url="s3://bucket/catalog",
+                local_root=local_root,
+                files_to_download=["evil.parquet"],
+                remote_assets=remote_assets,
+            )
+
+    @pytest.mark.unit
+    def test_download_assets_accepts_safe_relative_paths(self, tmp_path: Path) -> None:
+        """Should accept valid relative paths within catalog."""
+        from portolan_cli.pull import _download_assets
+
+        local_root = tmp_path / "catalog"
+        local_root.mkdir()
+
+        remote_assets = {
+            "data.parquet": {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "data/subdir/file.parquet",  # Valid nested path
+            }
+        }
+
+        with patch("portolan_cli.pull.download_file") as mock_download:
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_download.return_value = mock_result
+
+            # Should not raise
+            downloaded, failed = _download_assets(
+                remote_url="s3://bucket/catalog",
+                local_root=local_root,
+                files_to_download=["data.parquet"],
+                remote_assets=remote_assets,
+            )
+
+        assert failed == 0
+
+
+# =============================================================================
+# Data Integrity Tests - Local Ahead Detection
+# =============================================================================
+
+
+class TestLocalAheadDetection:
+    """Tests for detecting when local is ahead of remote (data loss prevention)."""
+
+    @pytest.mark.unit
+    def test_diff_versions_detects_local_ahead(self) -> None:
+        """Should detect when local has versions not in remote."""
+        from portolan_cli.pull import diff_versions
+        from portolan_cli.versions import Asset, Version, VersionsFile
+
+        # Local has v1.0.0 and v1.1.0
+        local_versions = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.1.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    breaking=False,
+                    assets={
+                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
+                    },
+                    changes=["data.parquet"],
+                ),
+                Version(
+                    version="1.1.0",
+                    created=datetime(2024, 1, 20, tzinfo=timezone.utc),
+                    breaking=False,
+                    assets={
+                        "data.parquet": Asset(sha256="def456", size_bytes=2000, href="data.parquet")
+                    },
+                    changes=["data.parquet"],
+                ),
+            ],
+        )
+
+        # Remote only has v1.0.0
+        remote_versions = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.0.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    breaking=False,
+                    assets={
+                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
+                    },
+                    changes=["data.parquet"],
+                ),
+            ],
+        )
+
+        diff = diff_versions(local_versions, remote_versions)
+
+        # Local is ahead - should NOT download (would lose local changes)
+        assert diff.is_local_ahead is True
+        assert diff.is_behind is False
+
+    @pytest.mark.unit
+    def test_diff_versions_detects_diverged(self) -> None:
+        """Should detect when local and remote have diverged."""
+        from portolan_cli.pull import diff_versions
+        from portolan_cli.versions import Asset, Version, VersionsFile
+
+        # Local has v1.0.0 and v1.1.0-local
+        local_versions = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.1.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    breaking=False,
+                    assets={
+                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
+                    },
+                    changes=["data.parquet"],
+                ),
+                Version(
+                    version="1.1.0",
+                    created=datetime(2024, 1, 20, tzinfo=timezone.utc),
+                    breaking=False,
+                    assets={
+                        "data.parquet": Asset(
+                            sha256="local456", size_bytes=2000, href="data.parquet"
+                        )
+                    },
+                    changes=["data.parquet"],
+                ),
+            ],
+        )
+
+        # Remote has v1.0.0 and v1.0.1-remote (different branch)
+        remote_versions = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.0.1",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime(2024, 1, 15, tzinfo=timezone.utc),
+                    breaking=False,
+                    assets={
+                        "data.parquet": Asset(sha256="abc123", size_bytes=1000, href="data.parquet")
+                    },
+                    changes=["data.parquet"],
+                ),
+                Version(
+                    version="1.0.1",
+                    created=datetime(2024, 1, 18, tzinfo=timezone.utc),
+                    breaking=False,
+                    assets={
+                        "data.parquet": Asset(
+                            sha256="remote789", size_bytes=1500, href="data.parquet"
+                        )
+                    },
+                    changes=["data.parquet"],
+                ),
+            ],
+        )
+
+        diff = diff_versions(local_versions, remote_versions)
+
+        # Both have unique versions - diverged
+        assert diff.is_diverged is True

@@ -85,9 +85,13 @@ class VersionDiff:
     Attributes:
         local_version: Current local version string.
         remote_version: Current remote version string.
-        is_behind: True if local is behind remote.
+        is_behind: True if local is behind remote (remote has newer versions).
+        is_local_ahead: True if local has versions remote doesn't have.
+        is_diverged: True if both local and remote have unique versions.
         files_to_download: List of file names that need downloading.
         remote_assets: Dict mapping filename to remote asset metadata.
+        local_only_versions: Versions that exist only locally (unpushed).
+        remote_only_versions: Versions that exist only remotely.
     """
 
     local_version: str | None
@@ -95,6 +99,10 @@ class VersionDiff:
     is_behind: bool
     files_to_download: list[str]
     remote_assets: dict[str, dict[str, str | int]] = field(default_factory=dict)
+    is_local_ahead: bool = False
+    is_diverged: bool = False
+    local_only_versions: list[str] = field(default_factory=list)
+    remote_only_versions: list[str] = field(default_factory=list)
 
 
 # =============================================================================
@@ -110,6 +118,10 @@ def detect_uncommitted_changes(
 
     This is like `git status` - it compares the actual local files against
     what the local versions.json says they should be.
+
+    Uses mtime + size as a fast-path heuristic per ADR-0017:
+    - If mtime and size match, skip the expensive checksum computation.
+    - Only compute checksum when mtime/size suggest a change.
 
     Args:
         catalog_root: Root directory of the catalog.
@@ -145,7 +157,16 @@ def detect_uncommitted_changes(
             uncommitted.append(asset_name)
             continue
 
-        # Compare checksum
+        # Fast path: check mtime and size first (ADR-0017)
+        # Only works if we have recorded mtime; otherwise fall through to checksum
+        stat = local_path.stat()
+        if asset.mtime is not None:
+            # Compare with small tolerance for floating point mtime
+            if abs(stat.st_mtime - asset.mtime) < 0.001 and stat.st_size == asset.size_bytes:
+                # Fast path: mtime and size match, file unchanged
+                continue
+
+        # Slow path: compute checksum (either mtime not recorded or mtime/size changed)
         actual_checksum = compute_checksum(local_path)
         if actual_checksum != asset.sha256:
             uncommitted.append(asset_name)
@@ -164,24 +185,41 @@ def diff_versions(
 ) -> VersionDiff:
     """Diff local and remote versions to determine what needs downloading.
 
+    Detects three sync states:
+    - Remote ahead: Remote has versions local doesn't (safe to pull).
+    - Local ahead: Local has versions remote doesn't (would lose unpushed work).
+    - Diverged: Both have unique versions (conflict, need manual resolution).
+
     Args:
         local_versions: Local versions.json content.
         remote_versions: Remote versions.json content.
 
     Returns:
-        VersionDiff with files that need downloading.
+        VersionDiff with files that need downloading and sync state flags.
     """
     local_version = local_versions.current_version
     remote_version = remote_versions.current_version
 
-    # If versions match, nothing to do
-    if local_version == remote_version:
+    # Build version sets for comparison
+    local_version_strs = {v.version for v in local_versions.versions}
+    remote_version_strs = {v.version for v in remote_versions.versions}
+
+    local_only = local_version_strs - remote_version_strs
+    remote_only = remote_version_strs - local_version_strs
+
+    # If versions match completely, nothing to do
+    if local_version == remote_version and not local_only and not remote_only:
         return VersionDiff(
             local_version=local_version,
             remote_version=remote_version,
             is_behind=False,
             files_to_download=[],
         )
+
+    # Determine sync state
+    is_local_ahead = bool(local_only) and not remote_only
+    is_diverged = bool(local_only) and bool(remote_only)
+    is_behind = bool(remote_only) and not local_only
 
     # Get remote's current assets
     remote_assets: dict[str, dict[str, str | int]] = {}
@@ -214,9 +252,13 @@ def diff_versions(
     return VersionDiff(
         local_version=local_version,
         remote_version=remote_version,
-        is_behind=True,
+        is_behind=is_behind,
         files_to_download=files_to_download,
         remote_assets=remote_assets,
+        is_local_ahead=is_local_ahead,
+        is_diverged=is_diverged,
+        local_only_versions=sorted(local_only),
+        remote_only_versions=sorted(remote_only),
     )
 
 
@@ -271,6 +313,45 @@ def _fetch_remote_versions(
             tmp_path.unlink()
 
 
+def _validate_safe_path(local_root: Path, href: str) -> Path:
+    """Validate that href resolves to a path within local_root.
+
+    Security: Prevents path traversal attacks via malicious hrefs like "../../../etc/passwd".
+
+    Args:
+        local_root: The catalog root directory (trust boundary).
+        href: The href from remote asset metadata.
+
+    Returns:
+        The validated resolved path.
+
+    Raises:
+        ValueError: If href contains path traversal or escapes local_root.
+    """
+    import os
+
+    # Reject absolute paths
+    if href.startswith("/") or (len(href) > 1 and href[1] == ":"):  # Unix or Windows abs
+        raise ValueError(f"Absolute href not allowed: {href}")
+
+    # Normalize and check for path traversal sequences
+    safe_href = Path(href).as_posix().lstrip("/")
+    if ".." in safe_href.split("/"):
+        raise ValueError(f"Invalid href with path traversal: {href}")
+
+    # Resolve and verify containment
+    resolved_path = (local_root / safe_href).resolve()
+    root_resolved = local_root.resolve()
+
+    # Check that resolved path is within root (or IS root for edge cases)
+    if not (
+        str(resolved_path).startswith(str(root_resolved) + os.sep) or resolved_path == root_resolved
+    ):
+        raise ValueError(f"href escapes catalog root: {href}")
+
+    return resolved_path
+
+
 def _download_assets(
     remote_url: str,
     local_root: Path,
@@ -291,6 +372,9 @@ def _download_assets(
 
     Returns:
         Tuple of (files_downloaded, files_failed).
+
+    Raises:
+        ValueError: If any href contains path traversal or escapes catalog root.
     """
     downloaded = 0
     failed = 0
@@ -302,8 +386,11 @@ def _download_assets(
 
         # Build URLs
         href = str(asset["href"])
+
+        # Security: Validate path before any filesystem operations
+        local_path = _validate_safe_path(local_root, href)
+
         remote_asset_url = f"{remote_url.rstrip('/')}/{href}"
-        local_path = local_root / href
 
         if dry_run:
             info(f"[DRY RUN] Would download: {filename}")
@@ -325,6 +412,99 @@ def _download_assets(
             failed += 1
 
     return downloaded, failed
+
+
+# =============================================================================
+# Pre-Pull Validation
+# =============================================================================
+
+
+def _check_sync_state_conflicts(
+    diff: VersionDiff,
+    force: bool,
+) -> PullResult | None:
+    """Check for local-ahead or diverged states that would cause data loss.
+
+    Args:
+        diff: Version diff between local and remote.
+        force: If True, skip conflict checks.
+
+    Returns:
+        PullResult with failure if conflicts found, None if OK to proceed.
+    """
+    if force:
+        return None
+
+    if diff.is_local_ahead:
+        warn("Local has unpushed versions that would be lost:")
+        for v in diff.local_only_versions:
+            detail(f"  {v}")
+        warn("Push your changes first, or use --force to discard them")
+        return PullResult(
+            success=False,
+            files_downloaded=0,
+            files_skipped=0,
+            local_version=diff.local_version,
+            remote_version=diff.remote_version,
+            uncommitted_changes=diff.local_only_versions,
+        )
+
+    if diff.is_diverged:
+        warn("Local and remote have diverged:")
+        warn(f"  Local-only versions: {diff.local_only_versions}")
+        warn(f"  Remote-only versions: {diff.remote_only_versions}")
+        warn("Resolve by pushing --force or pulling --force (will lose data)")
+        return PullResult(
+            success=False,
+            files_downloaded=0,
+            files_skipped=0,
+            local_version=diff.local_version,
+            remote_version=diff.remote_version,
+            uncommitted_changes=diff.local_only_versions,
+        )
+
+    return None
+
+
+def _check_uncommitted_conflicts(
+    local_root: Path,
+    collection: str,
+    diff: VersionDiff,
+    force: bool,
+) -> PullResult | None:
+    """Check for uncommitted local changes that would be overwritten.
+
+    Args:
+        local_root: Local catalog root directory.
+        collection: Collection name.
+        diff: Version diff with files to download.
+        force: If True, skip conflict checks.
+
+    Returns:
+        PullResult with failure if conflicts found, None if OK to proceed.
+    """
+    if force:
+        return None
+
+    uncommitted = detect_uncommitted_changes(local_root, collection)
+    conflicts = [f for f in uncommitted if f in diff.files_to_download]
+
+    if conflicts:
+        warn("Uncommitted local changes would be overwritten:")
+        for filename in conflicts:
+            detail(f"  {filename}")
+        warn("Use --force to discard local changes")
+
+        return PullResult(
+            success=False,
+            files_downloaded=0,
+            files_skipped=0,
+            local_version=diff.local_version,
+            remote_version=diff.remote_version,
+            uncommitted_changes=conflicts,
+        )
+
+    return None
 
 
 # =============================================================================
@@ -399,8 +579,8 @@ def pull(
     # Diff versions
     diff = diff_versions(local_versions, remote_versions)
 
-    # Check if up to date
-    if not diff.is_behind:
+    # Check if up to date (no changes either way)
+    if not diff.is_behind and not diff.is_local_ahead and not diff.is_diverged:
         info("Already up to date")
         return PullResult(
             success=True,
@@ -411,27 +591,15 @@ def pull(
             up_to_date=True,
         )
 
-    # Check for uncommitted changes (unless --force)
-    uncommitted: list[str] = []
-    if not force:
-        uncommitted = detect_uncommitted_changes(local_root, collection)
-        # Only care about uncommitted changes to files that would be overwritten
-        conflicts = [f for f in uncommitted if f in diff.files_to_download]
+    # Data loss prevention: Check for local-ahead or diverged states
+    sync_conflict = _check_sync_state_conflicts(diff, force)
+    if sync_conflict is not None:
+        return sync_conflict
 
-        if conflicts:
-            warn("Uncommitted local changes would be overwritten:")
-            for filename in conflicts:
-                detail(f"  {filename}")
-            warn("Use --force to discard local changes")
-
-            return PullResult(
-                success=False,
-                files_downloaded=0,
-                files_skipped=0,
-                local_version=diff.local_version,
-                remote_version=diff.remote_version,
-                uncommitted_changes=conflicts,
-            )
+    # Check for uncommitted changes that would be overwritten
+    uncommitted_conflict = _check_uncommitted_conflicts(local_root, collection, diff, force)
+    if uncommitted_conflict is not None:
+        return uncommitted_conflict
 
     # Report what will be downloaded
     info(f"Pulling {len(diff.files_to_download)} file(s) from {remote_url}")

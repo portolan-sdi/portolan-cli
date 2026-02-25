@@ -95,8 +95,14 @@ class VersionDiff:
 # =============================================================================
 
 
-def diff_versions(local_versions: list[str], remote_versions: list[str]) -> VersionDiff:
-    """Compute diff between local and remote version lists.
+def diff_version_lists(local_versions: list[str], remote_versions: list[str]) -> VersionDiff:
+    """Compute diff between local and remote version string lists.
+
+    This is a simple set-based diff for push operations, comparing version
+    strings to determine what needs to be pushed.
+
+    Note: pull.py has a separate diff_versions() that works with VersionsFile
+    objects and computes files to download.
 
     Args:
         local_versions: List of version strings from local versions.json.
@@ -210,7 +216,10 @@ def _fetch_remote_versions(
     prefix: str,
     collection: str,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Fetch remote versions.json and its etag.
+    """Fetch remote versions.json and its etag atomically.
+
+    Uses a single get() call to avoid TOCTOU race conditions where the file
+    could change between head() and get() calls.
 
     Args:
         store: Object store instance.
@@ -223,19 +232,26 @@ def _fetch_remote_versions(
     key = f"{prefix}/.portolan/collections/{collection}/versions.json".lstrip("/")
 
     try:
-        # Get metadata first to get etag
-        meta = obs.head(store, key)
-        etag = meta.get("e_tag")
-
-        # Then get content
+        # Single atomic get() - includes metadata with e_tag
         result = obs.get(store, key)
         content_bytes: bytes = bytes(result.bytes())
-        versions_data: dict[str, Any] = json.loads(content_bytes)
 
+        # Extract etag from result metadata (avoids TOCTOU race)
+        etag = result.meta.get("e_tag") if result.meta else None
+
+        versions_data: dict[str, Any] = json.loads(content_bytes)
         return versions_data, etag
+
+    except FileNotFoundError:
+        return None, None
     except Exception as e:
-        # Check if it's a "not found" error
-        if "NotFound" in str(type(e).__name__) or "404" in str(e) or "NoSuchKey" in str(e):
+        # Check if it's a "not found" error (various cloud providers report differently)
+        error_str = str(e).lower()
+        error_type = type(e).__name__.lower()
+        if any(
+            x in error_str or x in error_type
+            for x in ["notfound", "404", "nosuchkey", "does not exist"]
+        ):
             return None, None
         raise
 
@@ -259,12 +275,16 @@ def _get_assets_to_upload(
 
     Returns:
         List of absolute paths to asset files.
+
+    Raises:
+        FileNotFoundError: If a referenced asset file doesn't exist.
     """
     assets_to_upload: list[Path] = []
     seen_hrefs: set[str] = set()
 
     for version_entry in versions_data.get("versions", []):
-        if version_entry.get("version") not in versions_to_push:
+        version_str = version_entry.get("version")
+        if version_str not in versions_to_push:
             continue
 
         for asset_name, asset_data in version_entry.get("assets", {}).items():
@@ -277,8 +297,11 @@ def _get_assets_to_upload(
 
             # Resolve path relative to catalog root
             asset_path = catalog_root / href
-            if asset_path.exists():
-                assets_to_upload.append(asset_path.resolve())
+            if not asset_path.exists():
+                raise FileNotFoundError(
+                    f"Asset referenced in version {version_str} not found: {href}"
+                )
+            assets_to_upload.append(asset_path.resolve())
 
     return assets_to_upload
 
@@ -429,7 +452,7 @@ def push(
         detail(f"Remote version: {remote_data.get('current_version')}")
 
     # Diff versions
-    diff = diff_versions(local_versions, remote_versions)
+    diff = diff_version_lists(local_versions, remote_versions)
 
     # Check for conflicts
     if diff.has_conflict and not force:
@@ -444,7 +467,8 @@ def push(
             raise PushConflictError(conflict_msg)
 
     # Nothing to push?
-    if not diff.local_only:
+    # With --force, we still push if remote has versions we don't have (to overwrite remote state)
+    if not diff.local_only and not (force and diff.remote_only):
         info("Nothing to push - local and remote are in sync")
         return PushResult(
             success=True,

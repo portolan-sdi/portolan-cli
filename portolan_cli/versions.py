@@ -72,6 +72,8 @@ class Asset:
             (e.g., the GeoJSON that was converted to this GeoParquet).
         source_mtime: Optional Unix timestamp of the source file when
             conversion occurred. Used to detect when source has changed.
+        mtime: Optional Unix timestamp of the asset file itself.
+            Used for fast-path change detection per ADR-0017.
     """
 
     sha256: str
@@ -79,6 +81,7 @@ class Asset:
     href: str
     source_path: str | None = None
     source_mtime: float | None = None
+    mtime: float | None = None
 
 
 @dataclass(frozen=True)
@@ -173,6 +176,8 @@ def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
                     # Optional source tracking fields with defaults
                     source_path=asset_data.get("source_path"),
                     source_mtime=asset_data.get("source_mtime"),
+                    # Optional asset mtime for ADR-0017 fast-path
+                    mtime=asset_data.get("mtime"),
                 )
                 for name, asset_data in v["assets"].items()
             }
@@ -247,7 +252,7 @@ def write_versions(path: Path, versions_file: VersionsFile) -> None:
 def _serialize_asset(asset: Asset) -> dict[str, Any]:
     """Serialize an Asset to a JSON-compatible dictionary.
 
-    Only includes source_path and source_mtime when they are not None.
+    Only includes optional fields (source_path, source_mtime, mtime) when not None.
 
     Args:
         asset: The Asset to serialize.
@@ -260,11 +265,13 @@ def _serialize_asset(asset: Asset) -> dict[str, Any]:
         "size_bytes": asset.size_bytes,
         "href": asset.href,
     }
-    # Only include source tracking fields when present
+    # Only include optional fields when present
     if asset.source_path is not None:
         data["source_path"] = asset.source_path
     if asset.source_mtime is not None:
         data["source_mtime"] = asset.source_mtime
+    if asset.mtime is not None:
+        data["mtime"] = asset.mtime
     return data
 
 

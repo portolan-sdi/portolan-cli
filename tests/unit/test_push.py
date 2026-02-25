@@ -215,18 +215,18 @@ class TestPushResult:
 # =============================================================================
 
 
-class TestDiffVersions:
-    """Tests for diff_versions function."""
+class TestDiffVersionLists:
+    """Tests for diff_version_lists function."""
 
     @pytest.mark.unit
     def test_diff_local_only_changes(self) -> None:
         """Diff should detect versions that exist only locally."""
-        from portolan_cli.push import diff_versions
+        from portolan_cli.push import diff_version_lists
 
         local_versions = ["1.0.0", "1.1.0"]
         remote_versions = ["1.0.0"]
 
-        diff = diff_versions(local_versions, remote_versions)
+        diff = diff_version_lists(local_versions, remote_versions)
 
         assert diff.local_only == ["1.1.0"]
         assert diff.remote_only == []
@@ -235,12 +235,12 @@ class TestDiffVersions:
     @pytest.mark.unit
     def test_diff_remote_only_changes(self) -> None:
         """Diff should detect versions that exist only remotely (conflict)."""
-        from portolan_cli.push import diff_versions
+        from portolan_cli.push import diff_version_lists
 
         local_versions = ["1.0.0"]
         remote_versions = ["1.0.0", "1.0.1"]
 
-        diff = diff_versions(local_versions, remote_versions)
+        diff = diff_version_lists(local_versions, remote_versions)
 
         assert diff.local_only == []
         assert diff.remote_only == ["1.0.1"]
@@ -249,12 +249,12 @@ class TestDiffVersions:
     @pytest.mark.unit
     def test_diff_both_diverged(self) -> None:
         """Diff should detect when both local and remote have unique versions."""
-        from portolan_cli.push import diff_versions
+        from portolan_cli.push import diff_version_lists
 
         local_versions = ["1.0.0", "1.1.0"]
         remote_versions = ["1.0.0", "1.0.1"]
 
-        diff = diff_versions(local_versions, remote_versions)
+        diff = diff_version_lists(local_versions, remote_versions)
 
         assert diff.local_only == ["1.1.0"]
         assert diff.remote_only == ["1.0.1"]
@@ -263,12 +263,12 @@ class TestDiffVersions:
     @pytest.mark.unit
     def test_diff_empty_remote(self) -> None:
         """Diff should handle empty remote (first push)."""
-        from portolan_cli.push import diff_versions
+        from portolan_cli.push import diff_version_lists
 
         local_versions = ["1.0.0", "1.1.0"]
         remote_versions: list[str] = []
 
-        diff = diff_versions(local_versions, remote_versions)
+        diff = diff_version_lists(local_versions, remote_versions)
 
         assert diff.local_only == ["1.0.0", "1.1.0"]
         assert diff.remote_only == []
@@ -277,12 +277,12 @@ class TestDiffVersions:
     @pytest.mark.unit
     def test_diff_identical(self) -> None:
         """Diff should detect when local and remote are identical."""
-        from portolan_cli.push import diff_versions
+        from portolan_cli.push import diff_version_lists
 
         local_versions = ["1.0.0", "1.1.0"]
         remote_versions = ["1.0.0", "1.1.0"]
 
-        diff = diff_versions(local_versions, remote_versions)
+        diff = diff_version_lists(local_versions, remote_versions)
 
         assert diff.local_only == []
         assert diff.remote_only == []
@@ -644,3 +644,165 @@ class TestStoreSetup:
                 # Verify profile was passed
                 call_kwargs = mock_setup.call_args[1]
                 assert call_kwargs.get("profile") == "myprofile"
+
+
+# =============================================================================
+# Missing Asset Detection Tests
+# =============================================================================
+
+
+class TestMissingAssetDetection:
+    """Tests for missing asset detection in push operations."""
+
+    @pytest.mark.unit
+    def test_get_assets_to_upload_raises_on_missing_file(self, local_catalog: Path) -> None:
+        """Should raise FileNotFoundError when referenced asset doesn't exist."""
+        from portolan_cli.push import _get_assets_to_upload
+
+        versions_data = {
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "assets": {
+                        "missing.parquet": {
+                            "sha256": "abc123",
+                            "size_bytes": 1000,
+                            "href": "missing.parquet",  # This file doesn't exist
+                        }
+                    },
+                }
+            ]
+        }
+
+        with pytest.raises(FileNotFoundError, match="missing.parquet"):
+            _get_assets_to_upload(
+                catalog_root=local_catalog,
+                versions_data=versions_data,
+                versions_to_push=["1.0.0"],
+            )
+
+
+# =============================================================================
+# Force Flag Tests
+# =============================================================================
+
+
+class TestForceFlag:
+    """Tests for --force flag behavior in push operations."""
+
+    @pytest.mark.unit
+    def test_push_force_with_remote_only_versions_and_local_changes(
+        self, local_catalog: Path
+    ) -> None:
+        """Force push should proceed when both local and remote have unique versions.
+
+        Scenario: Remote has v1.0.0 and v1.0.1, local has v1.0.0 and v1.1.0.
+        With --force, push should proceed (local has changes to push).
+        """
+        from portolan_cli.push import push
+
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            # Remote has v1.0.1 that local doesn't have
+            mock_fetch.return_value = (
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.1",
+                    "versions": [
+                        {"version": "1.0.0", "created": "2024-01-01T00:00:00Z"},
+                        {"version": "1.0.1", "created": "2024-01-10T00:00:00Z"},  # remote-only
+                    ],
+                },
+                "etag-123",
+            )
+
+            with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
+                mock_upload_assets.return_value = (1, [])
+
+                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                    mock_upload_versions.return_value = None
+
+                    result = push(
+                        catalog_root=local_catalog,
+                        collection="test",
+                        destination="s3://mybucket/catalog",
+                        force=True,
+                    )
+
+        # With --force, should have uploaded
+        assert result.success is True
+        mock_upload_assets.assert_called_once()
+        mock_upload_versions.assert_called_once()
+
+    @pytest.mark.unit
+    def test_push_force_overwrites_when_no_local_only(self, tmp_path: Path) -> None:
+        """Force push should proceed even when local has NO unique versions.
+
+        Bug scenario: Local only has v1.0.0, remote has v1.0.0 and v1.0.1.
+        Without --force: conflict error (correct).
+        With --force: should overwrite remote with local state (NOT return "nothing to push").
+
+        This tests the fix for the --force early return bug.
+        """
+        from portolan_cli.push import push
+
+        # Create local catalog with ONLY v1.0.0
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        versions_dir = catalog_dir / ".portolan" / "collections" / "test"
+        versions_dir.mkdir(parents=True)
+
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-01T00:00:00Z",
+                    "breaking": False,
+                    "message": "Initial version",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": "abc123",
+                            "size_bytes": 1024,
+                            "href": "data.parquet",
+                        }
+                    },
+                    "changes": ["data.parquet"],
+                },
+            ],
+        }
+        (versions_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+        (catalog_dir / "data.parquet").write_bytes(b"x" * 1024)
+
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            # Remote has v1.0.0 AND v1.0.1 - local is missing v1.0.1
+            mock_fetch.return_value = (
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.1",
+                    "versions": [
+                        {"version": "1.0.0", "created": "2024-01-01T00:00:00Z"},
+                        {"version": "1.0.1", "created": "2024-01-10T00:00:00Z"},  # remote-only
+                    ],
+                },
+                "etag-123",
+            )
+
+            with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
+                mock_upload_assets.return_value = (0, [])  # No assets to upload
+
+                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                    mock_upload_versions.return_value = None
+
+                    result = push(
+                        catalog_root=catalog_dir,
+                        collection="test",
+                        destination="s3://mybucket/catalog",
+                        force=True,
+                    )
+
+        # With --force, should still upload versions.json to overwrite remote
+        # even though local has no NEW versions (local_only is empty)
+        assert result.success is True
+        # versions.json MUST be uploaded to force-overwrite remote state
+        mock_upload_versions.assert_called_once()
