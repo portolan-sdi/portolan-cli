@@ -1158,6 +1158,7 @@ class TestMalformedDataHandling:
         malformed_json = '{"spec_version": "1.0.0"}'  # Missing current_version and versions
 
         with patch("portolan_cli.pull.download_file") as mock_download:
+
             def write_malformed(source: str, destination: Path, **kwargs) -> MagicMock:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(malformed_json)

@@ -474,7 +474,9 @@ class TestPullMalformedDataErrors:
 
     @pytest.mark.integration
     def test_pull_malformed_remote_response(
-        self, cli_runner: CliRunner, local_catalog: Path, malformed_remote_versions_data: dict[str, Any]
+        self,
+        cli_runner: CliRunner,
+        local_catalog: Path,
     ) -> None:
         """portolan pull should fail gracefully with malformed remote data."""
         from portolan_cli.cli import cli
@@ -482,7 +484,9 @@ class TestPullMalformedDataErrors:
 
         with patch("portolan_cli.pull.pull") as mock_pull:
             # Simulate that pull raises an error due to malformed data
-            mock_pull.side_effect = PullError("Invalid remote versions.json: missing field 'current_version'")
+            mock_pull.side_effect = PullError(
+                "Invalid remote versions.json: missing field 'current_version'"
+            )
 
             result = cli_runner.invoke(
                 cli,
@@ -534,6 +538,38 @@ class TestPullMalformedDataErrors:
         # Should either succeed (treating malformed as empty) or fail gracefully
         # The important thing is it doesn't crash unexpectedly
         assert result.exit_code in [0, 1]
+
+    @pytest.mark.integration
+    def test_pull_with_malformed_remote_data_structure(
+        self,
+        cli_runner: CliRunner,
+        local_catalog: Path,
+        malformed_remote_versions_data: dict[str, Any],
+    ) -> None:
+        """portolan pull should handle malformed remote versions.json structure."""
+        from portolan_cli.cli import cli
+
+        # Verify the fixture has the expected malformed structure
+        assert "current_version" not in malformed_remote_versions_data
+
+        with patch("portolan_cli.pull.pull") as mock_pull:
+            # Simulate parsing error from malformed remote data
+            mock_pull.side_effect = KeyError("current_version")
+
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "pull",
+                    "s3://bucket/catalog",
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(local_catalog),
+                ],
+            )
+
+        # Should fail gracefully
+        assert result.exit_code != 0
 
     @pytest.mark.integration
     def test_pull_invalid_url_scheme(self, cli_runner: CliRunner, local_catalog: Path) -> None:

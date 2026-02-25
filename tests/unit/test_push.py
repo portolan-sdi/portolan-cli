@@ -1205,9 +1205,7 @@ class TestMalformedDataHandling:
     """Tests for error handling with malformed versions.json data."""
 
     @pytest.mark.unit
-    def test_read_local_versions_invalid_json(
-        self, local_catalog_invalid_json: Path
-    ) -> None:
+    def test_read_local_versions_invalid_json(self, local_catalog_invalid_json: Path) -> None:
         """_read_local_versions should raise ValueError on invalid JSON."""
         from portolan_cli.push import _read_local_versions
 
@@ -1218,9 +1216,7 @@ class TestMalformedDataHandling:
             )
 
     @pytest.mark.unit
-    def test_read_local_versions_missing_keys(
-        self, local_catalog_malformed: Path
-    ) -> None:
+    def test_read_local_versions_missing_keys(self, local_catalog_malformed: Path) -> None:
         """_read_local_versions should return data but push should fail on missing keys."""
         from portolan_cli.push import _read_local_versions
 
