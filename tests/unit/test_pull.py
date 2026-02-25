@@ -1408,9 +1408,7 @@ class TestUncommittedConflicts:
     """Tests for _check_uncommitted_conflicts function."""
 
     @pytest.mark.unit
-    def test_check_uncommitted_returns_none_when_force(
-        self, catalog_with_versions: Path
-    ) -> None:
+    def test_check_uncommitted_returns_none_when_force(self, catalog_with_versions: Path) -> None:
         """_check_uncommitted_conflicts should return None when force=True."""
         from portolan_cli.pull import VersionDiff, _check_uncommitted_conflicts
 
@@ -1432,9 +1430,7 @@ class TestUncommittedConflicts:
         assert result is None
 
     @pytest.mark.unit
-    def test_check_uncommitted_fails_when_conflicts(
-        self, catalog_with_versions: Path
-    ) -> None:
+    def test_check_uncommitted_fails_when_conflicts(self, catalog_with_versions: Path) -> None:
         """_check_uncommitted_conflicts should fail when files would be overwritten."""
         from portolan_cli.pull import VersionDiff, _check_uncommitted_conflicts
 
@@ -1458,9 +1454,7 @@ class TestUncommittedConflicts:
         assert "data.parquet" in result.uncommitted_changes
 
     @pytest.mark.unit
-    def test_check_uncommitted_succeeds_when_no_overlap(
-        self, catalog_with_versions: Path
-    ) -> None:
+    def test_check_uncommitted_succeeds_when_no_overlap(self, catalog_with_versions: Path) -> None:
         """_check_uncommitted_conflicts should succeed when modified files won't be downloaded."""
         from portolan_cli.pull import VersionDiff, _check_uncommitted_conflicts
 

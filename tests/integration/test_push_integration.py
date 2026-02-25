@@ -603,9 +603,7 @@ class TestPushCLIErrorBranches:
     """Tests for CLI error handling branches in push command."""
 
     @pytest.mark.integration
-    def test_push_cli_filenotfound_json_output(
-        self, catalog_missing_versions_file: Path
-    ) -> None:
+    def test_push_cli_filenotfound_json_output(self, catalog_missing_versions_file: Path) -> None:
         """Push CLI with --format=json should output JSON error on FileNotFoundError."""
         from portolan_cli.cli import cli
 
@@ -631,9 +629,7 @@ class TestPushCLIErrorBranches:
         assert any("FileNotFoundError" in err["type"] for err in output_data["errors"])
 
     @pytest.mark.integration
-    def test_push_cli_filenotfound_human_output(
-        self, catalog_missing_versions_file: Path
-    ) -> None:
+    def test_push_cli_filenotfound_human_output(self, catalog_missing_versions_file: Path) -> None:
         """Push CLI should show human-readable error on FileNotFoundError."""
         from portolan_cli.cli import cli
 
@@ -658,7 +654,6 @@ class TestPushCLIErrorBranches:
     def test_push_cli_valueerror_json_output(self, catalog_with_versions: Path) -> None:
         """Push CLI with --format=json should output JSON error on ValueError."""
         from portolan_cli.cli import cli
-        from portolan_cli.push import PushResult
 
         runner = CliRunner()
 
