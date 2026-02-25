@@ -30,12 +30,11 @@ Push catalogs to object storage. Portolan owns the bucket contents.
 
 | Capability | Description |
 |------------|-------------|
-| `portolan push` | Diff local vs remote → upload changed files → update versions.json |
-| `portolan pull` | Diff remote vs local → download changed files → update local state |
-| `portolan sync` | Orchestrate full workflow: init → scan → check --fix → push/pull |
-| `versions.json` | Version history, checksums, sync state |
-
-**Note:** Upload primitives (S3/GCS/Azure via obstore) are implemented in [PR #46](https://github.com/portolan-sdi/portolan-cli/pull/46).
+| `portolan push` | Diff local vs remote → upload changed files → update versions.json ✓ |
+| `portolan pull` | Diff remote vs local → download changed files → update local state ✓ |
+| `portolan sync` | Orchestrate full workflow: pull → init → scan → check → push ✓ |
+| `portolan clone` | Pull a remote catalog to a new local directory ✓ |
+| `versions.json` | Version history, checksums, sync state ✓ |
 
 ### Epic: Scan & Validation
 
@@ -116,8 +115,8 @@ Phase 1 is broken into incremental releases. Each builds on the previous—later
 | **v0.2** | Catalog init | `portolan init` — create `.portolan/` structure ✓ |
 | **v0.3** | Format conversion | Wrap [geoparquet-io](https://github.com/geoparquet/geoparquet-io) + [rio-cogeo](https://github.com/cogeotiff/rio-cogeo), format detection ✓ |
 | **v0.4** | Scan + validation | `portolan scan` (discover files, detect issues), `portolan check` (validate catalog), `check --fix` (convert to cloud-native) ✓ |
-| **v0.5** | Dataset CRUD | `dataset add/list/info/remove` — orchestrate conversion + validation + catalog updates |
-| **v0.6** | Remote sync | `push` (diff + upload), `pull` (diff + download), `sync` (orchestrate init→scan→check→push) |
+| **v0.5** | Dataset CRUD | `dataset add/list/info/remove` — orchestrate conversion + validation + catalog updates ✓ |
+| **v0.6** | Remote sync | `push`, `pull`, `sync`, `clone` — upload/download primitives + orchestration ✓ |
 | **v0.7** | Versioning | Schema fingerprints, `rollback`, `--breaking` flag, version numbering ([#14](https://github.com/portolan-sdi/portolan-cli/issues/14)) |
 | **v0.8** | Maintenance | `prune` with safety mechanisms ([#15](https://github.com/portolan-sdi/portolan-cli/issues/15)), `repair`|
 

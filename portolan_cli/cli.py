@@ -6,6 +6,7 @@ All business logic lives in the library; the CLI handles user interaction.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -1545,6 +1546,218 @@ def pull_command(
                 warn("Use --force to discard local changes")
             else:
                 error("Pull failed")
+
+    if not result.success:
+        raise SystemExit(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sync command
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.command()
+@click.argument("destination")
+@click.option(
+    "--collection",
+    "-c",
+    required=True,
+    help="Collection to sync (required).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite conflicts on both pull and push.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would happen without making changes.",
+)
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="Convert non-cloud-native formats during check.",
+)
+@click.option(
+    "--profile",
+    help="AWS profile name (for S3 destinations).",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=".",
+    help="Path to catalog root (default: current directory).",
+)
+@click.pass_context
+def sync(
+    ctx: click.Context,
+    destination: str,
+    collection: str,
+    force: bool,
+    dry_run: bool,
+    fix: bool,
+    profile: str | None,
+    catalog_path: Path,
+) -> None:
+    """Sync local catalog with remote storage (pull + push).
+
+    Orchestrates a full sync workflow: Pull -> Init -> Scan -> Check -> Push.
+    This is the recommended way to keep a local catalog in sync with remote.
+
+    DESTINATION is the object store URL (e.g., s3://mybucket/my-catalog).
+
+    \b
+    Examples:
+        portolan sync s3://mybucket/catalog --collection demographics
+        portolan sync s3://mybucket/catalog -c imagery --dry-run
+        portolan sync s3://mybucket/catalog -c data --fix --force
+        portolan sync s3://mybucket/catalog -c data --profile prod
+    """
+    from portolan_cli.sync import sync as sync_fn
+
+    use_json = should_output_json(ctx)
+
+    result = sync_fn(
+        catalog_root=catalog_path,
+        collection=collection,
+        destination=destination,
+        force=force,
+        dry_run=dry_run,
+        fix=fix,
+        profile=profile,
+    )
+
+    if use_json:
+        data: dict[str, Any] = {
+            "init_performed": result.init_performed,
+            "errors": result.errors,
+        }
+
+        # Include pull results if available
+        if result.pull_result is not None:
+            data["pull"] = {
+                "files_downloaded": result.pull_result.files_downloaded,
+                "files_skipped": result.pull_result.files_skipped,
+                "up_to_date": result.pull_result.up_to_date,
+                "local_version": result.pull_result.local_version,
+                "remote_version": result.pull_result.remote_version,
+            }
+
+        # Include push results if available
+        if result.push_result is not None:
+            data["push"] = {
+                "files_uploaded": result.push_result.files_uploaded,
+                "versions_pushed": result.push_result.versions_pushed,
+                "conflicts": result.push_result.conflicts,
+            }
+
+        if result.success:
+            envelope = success_envelope("sync", data)
+        else:
+            errors = [ErrorDetail(type="SyncError", message=err_msg) for err_msg in result.errors]
+            envelope = error_envelope("sync", errors, data=data)
+
+        output_json_envelope(envelope)
+    else:
+        # Human-readable output is already printed by sync()
+        # Just handle the final status
+        if result.success:
+            if dry_run:
+                info("[DRY RUN] Sync completed successfully")
+            else:
+                success("Sync completed successfully")
+        else:
+            # Errors already logged by sync() - just emit final status
+            error("Sync failed")
+
+    if not result.success:
+        raise SystemExit(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Clone command
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.command()
+@click.argument("remote_url")
+@click.argument(
+    "local_path",
+    type=click.Path(path_type=Path),
+)
+@click.option(
+    "--collection",
+    "-c",
+    required=True,
+    help="Collection to clone (required).",
+)
+@click.option(
+    "--profile",
+    help="AWS profile name (for S3 sources).",
+)
+@click.pass_context
+def clone(
+    ctx: click.Context,
+    remote_url: str,
+    local_path: Path,
+    collection: str,
+    profile: str | None,
+) -> None:
+    """Clone a remote catalog to a local directory.
+
+    This is essentially "pull to an empty directory" with guardrails.
+    Creates the target directory and pulls the specified collection.
+
+    REMOTE_URL is the object store URL (e.g., s3://mybucket/my-catalog).
+    LOCAL_PATH is the directory to clone into (will be created).
+
+    \b
+    Examples:
+        portolan clone s3://mybucket/catalog ./local --collection demographics
+        portolan clone s3://mybucket/catalog ./data -c imagery --profile prod
+    """
+    from portolan_cli.sync import clone as clone_fn
+
+    use_json = should_output_json(ctx)
+
+    result = clone_fn(
+        remote_url=remote_url,
+        local_path=local_path,
+        collection=collection,
+        profile=profile,
+    )
+
+    if use_json:
+        data: dict[str, Any] = {
+            "local_path": str(result.local_path),
+        }
+
+        if result.pull_result is not None:
+            data["pull"] = {
+                "files_downloaded": result.pull_result.files_downloaded,
+                "remote_version": result.pull_result.remote_version,
+            }
+
+        if result.success:
+            envelope = success_envelope("clone", data)
+        else:
+            errors = [
+                ErrorDetail(type="CloneError", message=err, code="CLONE_FAILED")
+                for err in result.errors
+            ]
+            envelope = error_envelope("clone", errors)
+
+        click.echo(json.dumps(envelope, indent=2))
+    else:
+        if result.success:
+            success(f"Clone completed: {result.local_path}")
+        else:
+            if result.errors:
+                for err_msg in result.errors:
+                    error(err_msg)
+            error("Clone failed")
 
     if not result.success:
         raise SystemExit(1)
