@@ -378,8 +378,9 @@ def _download_assets(
     """
     downloaded = 0
     failed = 0
+    total = len(files_to_download)
 
-    for filename in files_to_download:
+    for i, filename in enumerate(files_to_download, 1):
         asset = remote_assets.get(filename)
         if not asset:
             continue
@@ -393,8 +394,11 @@ def _download_assets(
         remote_asset_url = f"{remote_url.rstrip('/')}/{href}"
 
         if dry_run:
-            info(f"[DRY RUN] Would download: {filename}")
+            info(f"[DRY RUN] Would download ({i}/{total}): {filename}")
             continue
+
+        # Progress reporting for large downloads
+        info(f"Downloading ({i}/{total}): {filename}")
 
         # Ensure parent directory exists
         local_path.parent.mkdir(parents=True, exist_ok=True)

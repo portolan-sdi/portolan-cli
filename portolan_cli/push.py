@@ -169,14 +169,22 @@ def _setup_store(
 ) -> tuple[ObjectStore, str]:
     """Setup object store and extract prefix from destination URL.
 
+    Supports:
+    - S3 (s3://): Uses AWS credentials from profile or environment
+    - GCS (gs://): Uses GOOGLE_APPLICATION_CREDENTIALS or service account path
+    - Azure (az://): Uses AZURE_STORAGE_ACCOUNT + key/SAS token
+
     Args:
-        destination: Object store URL (e.g., s3://bucket/prefix).
+        destination: Object store URL (e.g., s3://bucket/prefix, gs://bucket/prefix,
+            az://container/prefix).
         profile: AWS profile name (for S3 only).
 
     Returns:
         Tuple of (store, prefix).
     """
     import os
+
+    from obstore.store import AzureStore, GCSStore
 
     bucket_url, prefix = parse_object_store_url(destination)
 
@@ -205,7 +213,39 @@ def _setup_store(
             store_kwargs["secret_access_key"] = secret_key
 
         store: ObjectStore = S3Store(bucket, **store_kwargs)  # type: ignore[arg-type]
+
+    elif bucket_url.startswith("gs://"):
+        bucket = bucket_url.replace("gs://", "")
+
+        # GCS credentials from environment
+        service_account_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+
+        gcs_kwargs: dict[str, str] = {}
+        if service_account_path:
+            gcs_kwargs["service_account_path"] = service_account_path
+
+        store = GCSStore(bucket, **gcs_kwargs)  # type: ignore[arg-type]
+
+    elif bucket_url.startswith("az://"):
+        container = bucket_url.replace("az://", "")
+
+        # Azure credentials from environment
+        account = os.environ.get("AZURE_STORAGE_ACCOUNT")
+        access_key_azure = os.environ.get("AZURE_STORAGE_KEY")
+        sas_token = os.environ.get("AZURE_STORAGE_SAS_TOKEN")
+
+        azure_kwargs: dict[str, str] = {}
+        if account:
+            azure_kwargs["account"] = account
+        if access_key_azure:
+            azure_kwargs["access_key"] = access_key_azure
+        elif sas_token:
+            azure_kwargs["sas_token"] = sas_token
+
+        store = AzureStore(container, **azure_kwargs)  # type: ignore[arg-type]
+
     else:
+        # Fallback to generic URL parsing (for local/memory stores or unknown schemes)
         store = obs.store.from_url(bucket_url)
 
     return store, prefix
@@ -313,7 +353,7 @@ def _upload_assets(
     assets: list[Path],
     *,
     dry_run: bool = False,
-) -> tuple[int, list[str]]:
+) -> tuple[int, list[str], list[str]]:
     """Upload asset files to object storage.
 
     Args:
@@ -324,30 +364,58 @@ def _upload_assets(
         dry_run: If True, don't actually upload.
 
     Returns:
-        Tuple of (files_uploaded, errors).
+        Tuple of (files_uploaded, errors, uploaded_keys).
+        uploaded_keys contains the object keys that were successfully uploaded,
+        useful for rollback on subsequent failures.
     """
     files_uploaded = 0
     errors: list[str] = []
+    uploaded_keys: list[str] = []
+    total = len(assets)
 
-    for asset_path in assets:
+    for i, asset_path in enumerate(assets, 1):
         try:
             # Calculate relative path from catalog root
             rel_path = asset_path.relative_to(catalog_root)
             target_key = f"{prefix}/{rel_path}".lstrip("/")
 
             if dry_run:
-                info(f"[DRY RUN] Would upload: {rel_path} -> {target_key}")
+                info(f"[DRY RUN] Would upload ({i}/{total}): {rel_path} -> {target_key}")
             else:
-                info(f"Uploading: {rel_path}")
+                info(f"Uploading ({i}/{total}): {rel_path}")
                 obs.put(store, target_key, asset_path)
                 files_uploaded += 1
+                uploaded_keys.append(target_key)
                 success(f"Uploaded: {rel_path}")
         except Exception as e:
             error_msg = f"Failed to upload {asset_path}: {e}"
             errors.append(error_msg)
             error(error_msg)
 
-    return files_uploaded, errors
+    return files_uploaded, errors, uploaded_keys
+
+
+def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
+    """Clean up (delete) uploaded assets after a failed push.
+
+    This is called when asset uploads succeed but versions.json upload fails,
+    preventing orphaned assets in the bucket.
+
+    Args:
+        store: Object store instance.
+        uploaded_keys: List of object keys to delete.
+    """
+    if not uploaded_keys:
+        return
+
+    warn(f"Rolling back {len(uploaded_keys)} uploaded asset(s)...")
+    for key in uploaded_keys:
+        try:
+            obs.delete(store, key)
+            detail(f"Deleted: {key}")
+        except Exception as e:
+            # Log but don't fail - best effort cleanup
+            warn(f"Failed to delete {key} during rollback: {e}")
 
 
 def _upload_versions_json(
@@ -497,12 +565,14 @@ def push(
 
     # Upload assets first (manifest-last pattern)
     info(f"Uploading {len(assets)} asset(s)...")
-    files_uploaded, upload_errors = _upload_assets(
+    files_uploaded, upload_errors, uploaded_keys = _upload_assets(
         store, catalog_root, prefix, assets, dry_run=dry_run
     )
 
     if upload_errors:
         error("Asset upload failed, aborting push")
+        # Clean up any assets that were uploaded before the failure
+        _cleanup_uploaded_assets(store, uploaded_keys)
         return PushResult(
             success=False,
             files_uploaded=files_uploaded,
@@ -517,7 +587,20 @@ def push(
         _upload_versions_json(store, prefix, collection, local_data, etag, force=force)
         success(f"Pushed {len(diff.local_only)} version(s): {diff.local_only}")
     except PushConflictError as e:
+        # Clean up uploaded assets on versions.json failure (orphan prevention)
+        _cleanup_uploaded_assets(store, uploaded_keys)
         raise PushConflictError("Remote changed during push, re-run push to try again") from e
+    except Exception as e:
+        # Clean up uploaded assets on any versions.json upload failure
+        _cleanup_uploaded_assets(store, uploaded_keys)
+        error(f"Failed to upload versions.json: {e}")
+        return PushResult(
+            success=False,
+            files_uploaded=files_uploaded,
+            versions_pushed=0,
+            conflicts=[],
+            errors=[f"Failed to upload versions.json: {e}"],
+        )
 
     return PushResult(
         success=True,

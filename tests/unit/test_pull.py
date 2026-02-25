@@ -903,3 +903,77 @@ class TestLocalAheadDetection:
 
         # Both have unique versions - diverged
         assert diff.is_diverged is True
+
+
+# =============================================================================
+# Progress Reporting Tests
+# =============================================================================
+
+
+class TestProgressReporting:
+    """Tests for progress reporting during downloads."""
+
+    @pytest.mark.unit
+    def test_download_assets_shows_progress(self, tmp_path: Path, capsys) -> None:
+        """_download_assets should show (1/N) style progress."""
+        from portolan_cli.pull import _download_assets
+
+        local_root = tmp_path / "catalog"
+        local_root.mkdir()
+
+        remote_assets = {
+            "file1.parquet": {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "file1.parquet",
+            },
+            "file2.parquet": {
+                "sha256": "def456",
+                "size_bytes": 2000,
+                "href": "file2.parquet",
+            },
+        }
+
+        with patch("portolan_cli.pull.download_file") as mock_download:
+            mock_result = MagicMock()
+            mock_result.success = True
+            mock_download.return_value = mock_result
+
+            _download_assets(
+                remote_url="s3://bucket/catalog",
+                local_root=local_root,
+                files_to_download=["file1.parquet", "file2.parquet"],
+                remote_assets=remote_assets,
+            )
+
+        captured = capsys.readouterr()
+        assert "(1/2)" in captured.out
+        assert "(2/2)" in captured.out
+
+    @pytest.mark.unit
+    def test_download_assets_dry_run_shows_progress(self, tmp_path: Path, capsys) -> None:
+        """Dry-run should also show progress indicators."""
+        from portolan_cli.pull import _download_assets
+
+        local_root = tmp_path / "catalog"
+        local_root.mkdir()
+
+        remote_assets = {
+            "data.parquet": {
+                "sha256": "abc123",
+                "size_bytes": 1000,
+                "href": "data.parquet",
+            },
+        }
+
+        _download_assets(
+            remote_url="s3://bucket/catalog",
+            local_root=local_root,
+            files_to_download=["data.parquet"],
+            remote_assets=remote_assets,
+            dry_run=True,
+        )
+
+        captured = capsys.readouterr()
+        assert "(1/1)" in captured.out
+        assert "DRY RUN" in captured.out

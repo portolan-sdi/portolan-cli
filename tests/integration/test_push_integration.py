@@ -130,12 +130,12 @@ class TestVersionDiffingIntegration:
     @pytest.mark.integration
     def test_diff_with_real_version_lists(self) -> None:
         """Diff should work with realistic version lists."""
-        from portolan_cli.push import diff_versions
+        from portolan_cli.push import diff_version_lists
 
         local = ["1.0.0", "1.1.0", "1.2.0", "2.0.0"]
         remote = ["1.0.0", "1.1.0"]
 
-        diff = diff_versions(local, remote)
+        diff = diff_version_lists(local, remote)
 
         assert diff.local_only == ["1.2.0", "2.0.0"]
         assert diff.remote_only == []
@@ -145,12 +145,12 @@ class TestVersionDiffingIntegration:
     @pytest.mark.integration
     def test_diff_preserves_version_order(self) -> None:
         """Diff should preserve version order in results."""
-        from portolan_cli.push import diff_versions
+        from portolan_cli.push import diff_version_lists
 
         local = ["1.0.0", "1.1.0", "1.2.0"]
         remote = ["1.0.0"]
 
-        diff = diff_versions(local, remote)
+        diff = diff_version_lists(local, remote)
 
         # Local-only should be in original order
         assert diff.local_only == ["1.1.0", "1.2.0"]

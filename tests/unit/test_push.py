@@ -413,7 +413,7 @@ class TestPush:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
                 with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
                     mock_upload_versions.return_value = None
@@ -436,7 +436,7 @@ class TestPush:
             mock_fetch.return_value = (None, None)  # No remote versions.json
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
                 with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
                     mock_upload_versions.return_value = None
@@ -497,7 +497,7 @@ class TestEtagOptimisticLocking:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
                 with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
                     mock_upload_versions.return_value = None
@@ -530,7 +530,7 @@ class TestEtagOptimisticLocking:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
                 with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
                     # Simulate PushConflictError from etag mismatch
@@ -538,12 +538,13 @@ class TestEtagOptimisticLocking:
                         "Remote changed during push, re-run push to try again"
                     )
 
-                    with pytest.raises(PushConflictError) as exc_info:
-                        push(
-                            catalog_root=local_catalog,
-                            collection="test",
-                            destination="s3://mybucket/catalog",
-                        )
+                    with patch("portolan_cli.push._cleanup_uploaded_assets"):
+                        with pytest.raises(PushConflictError) as exc_info:
+                            push(
+                                catalog_root=local_catalog,
+                                collection="test",
+                                destination="s3://mybucket/catalog",
+                            )
 
                     assert "Remote changed during push" in str(exc_info.value)
 
@@ -565,7 +566,7 @@ class TestManifestLastOrdering:
 
         def track_assets(*args, **kwargs):
             call_order.append("assets")
-            return (1, [])
+            return (1, [], ["catalog/data.parquet"])
 
         def track_versions(*args, **kwargs):
             call_order.append("versions")
@@ -595,14 +596,15 @@ class TestManifestLastOrdering:
             mock_fetch.return_value = (None, None)
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (0, ["Failed to upload data.parquet"])
+                mock_upload_assets.return_value = (0, ["Failed to upload data.parquet"], [])
 
                 with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
-                    result = push(
-                        catalog_root=local_catalog,
-                        collection="test",
-                        destination="s3://mybucket/catalog",
-                    )
+                    with patch("portolan_cli.push._cleanup_uploaded_assets"):
+                        result = push(
+                            catalog_root=local_catalog,
+                            collection="test",
+                            destination="s3://mybucket/catalog",
+                        )
 
                     mock_upload_versions.assert_not_called()
 
@@ -631,7 +633,7 @@ class TestStoreSetup:
                 mock_setup.return_value = (mock_store, "prefix")
 
                 with patch("portolan_cli.push._upload_assets") as mock_upload:
-                    mock_upload.return_value = (1, [])
+                    mock_upload.return_value = (1, [], ["catalog/data.parquet"])
 
                     with patch("portolan_cli.push._upload_versions_json"):
                         push(
@@ -716,7 +718,7 @@ class TestForceFlag:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
                 with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
                     mock_upload_versions.return_value = None
@@ -789,7 +791,7 @@ class TestForceFlag:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (0, [])  # No assets to upload
+                mock_upload_assets.return_value = (0, [], [])  # No assets to upload
 
                 with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
                     mock_upload_versions.return_value = None
@@ -806,3 +808,306 @@ class TestForceFlag:
         assert result.success is True
         # versions.json MUST be uploaded to force-overwrite remote state
         mock_upload_versions.assert_called_once()
+
+
+# =============================================================================
+# Orphan Cleanup Tests
+# =============================================================================
+
+
+class TestOrphanCleanup:
+    """Tests for orphan cleanup when push fails after asset upload."""
+
+    @pytest.mark.unit
+    def test_upload_assets_returns_uploaded_keys(self, local_catalog: Path) -> None:
+        """_upload_assets should return list of uploaded object keys."""
+        from portolan_cli.push import _upload_assets
+
+        with patch("portolan_cli.push.obs.put") as mock_put:
+            mock_put.return_value = None
+
+            mock_store = MagicMock()
+            assets = [local_catalog / "data.parquet"]
+
+            files_uploaded, errors, uploaded_keys = _upload_assets(
+                store=mock_store,
+                catalog_root=local_catalog,
+                prefix="catalog",
+                assets=assets,
+            )
+
+        assert files_uploaded == 1
+        assert errors == []
+        assert len(uploaded_keys) == 1
+        assert "data.parquet" in uploaded_keys[0]
+
+    @pytest.mark.unit
+    def test_cleanup_deletes_uploaded_assets(self) -> None:
+        """_cleanup_uploaded_assets should delete all uploaded keys."""
+        from portolan_cli.push import _cleanup_uploaded_assets
+
+        with patch("portolan_cli.push.obs.delete") as mock_delete:
+            mock_store = MagicMock()
+            uploaded_keys = ["catalog/file1.parquet", "catalog/file2.parquet"]
+
+            _cleanup_uploaded_assets(mock_store, uploaded_keys)
+
+        assert mock_delete.call_count == 2
+        mock_delete.assert_any_call(mock_store, "catalog/file1.parquet")
+        mock_delete.assert_any_call(mock_store, "catalog/file2.parquet")
+
+    @pytest.mark.unit
+    def test_cleanup_handles_empty_list(self) -> None:
+        """_cleanup_uploaded_assets should handle empty key list gracefully."""
+        from portolan_cli.push import _cleanup_uploaded_assets
+
+        with patch("portolan_cli.push.obs.delete") as mock_delete:
+            mock_store = MagicMock()
+            _cleanup_uploaded_assets(mock_store, [])
+
+        mock_delete.assert_not_called()
+
+    @pytest.mark.unit
+    def test_cleanup_continues_on_delete_failure(self) -> None:
+        """_cleanup_uploaded_assets should continue if individual deletes fail."""
+        from portolan_cli.push import _cleanup_uploaded_assets
+
+        with patch("portolan_cli.push.obs.delete") as mock_delete:
+            # First delete fails, second succeeds
+            mock_delete.side_effect = [Exception("Network error"), None]
+
+            mock_store = MagicMock()
+            uploaded_keys = ["key1", "key2"]
+
+            # Should not raise
+            _cleanup_uploaded_assets(mock_store, uploaded_keys)
+
+        assert mock_delete.call_count == 2
+
+    @pytest.mark.unit
+    def test_push_cleans_up_on_versions_json_failure(self, local_catalog: Path) -> None:
+        """Push should clean up uploaded assets if versions.json upload fails."""
+        from portolan_cli.push import push
+
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            mock_fetch.return_value = (None, None)
+
+            with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
+
+                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                    mock_upload_versions.side_effect = Exception("Network timeout")
+
+                    with patch("portolan_cli.push._cleanup_uploaded_assets") as mock_cleanup:
+                        result = push(
+                            catalog_root=local_catalog,
+                            collection="test",
+                            destination="s3://mybucket/catalog",
+                        )
+
+        # Cleanup should have been called with the uploaded keys
+        mock_cleanup.assert_called_once()
+        cleanup_keys = mock_cleanup.call_args[0][1]
+        assert "catalog/data.parquet" in cleanup_keys
+        assert result.success is False
+
+    @pytest.mark.unit
+    def test_push_cleans_up_on_etag_conflict(self, local_catalog: Path) -> None:
+        """Push should clean up uploaded assets on etag mismatch."""
+        from portolan_cli.push import PushConflictError, push
+
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            mock_fetch.return_value = (
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [{"version": "1.0.0", "created": "2024-01-01T00:00:00Z"}],
+                },
+                "etag-123",
+            )
+
+            with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
+
+                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                    mock_upload_versions.side_effect = PushConflictError("Etag mismatch")
+
+                    with patch("portolan_cli.push._cleanup_uploaded_assets") as mock_cleanup:
+                        with pytest.raises(PushConflictError):
+                            push(
+                                catalog_root=local_catalog,
+                                collection="test",
+                                destination="s3://mybucket/catalog",
+                            )
+
+        mock_cleanup.assert_called_once()
+
+
+# =============================================================================
+# Progress Reporting Tests
+# =============================================================================
+
+
+class TestProgressReporting:
+    """Tests for progress reporting during uploads."""
+
+    @pytest.mark.unit
+    def test_upload_assets_shows_progress(self, local_catalog: Path, capsys) -> None:
+        """_upload_assets should show (1/N) style progress."""
+        from portolan_cli.push import _upload_assets
+
+        with patch("portolan_cli.push.obs.put") as mock_put:
+            mock_put.return_value = None
+
+            mock_store = MagicMock()
+            assets = [local_catalog / "data.parquet"]
+
+            _upload_assets(
+                store=mock_store,
+                catalog_root=local_catalog,
+                prefix="catalog",
+                assets=assets,
+            )
+
+        # Check that progress indicator was shown
+        captured = capsys.readouterr()
+        assert "(1/1)" in captured.out
+
+    @pytest.mark.unit
+    def test_upload_assets_dry_run_shows_progress(self, local_catalog: Path, capsys) -> None:
+        """Dry-run should also show progress indicators."""
+        from portolan_cli.push import _upload_assets
+
+        mock_store = MagicMock()
+        assets = [local_catalog / "data.parquet"]
+
+        _upload_assets(
+            store=mock_store,
+            catalog_root=local_catalog,
+            prefix="catalog",
+            assets=assets,
+            dry_run=True,
+        )
+
+        captured = capsys.readouterr()
+        assert "(1/1)" in captured.out
+        assert "DRY RUN" in captured.out
+
+
+# =============================================================================
+# Multi-Cloud Store Setup Tests
+# =============================================================================
+
+
+class TestMultiCloudStoreSetup:
+    """Tests for GCS and Azure store setup."""
+
+    @pytest.mark.unit
+    def test_setup_store_gcs(self) -> None:
+        """_setup_store should create GCSStore for gs:// URLs."""
+        from portolan_cli.push import _setup_store
+
+        with patch.dict(
+            "os.environ",
+            {"GOOGLE_APPLICATION_CREDENTIALS": "/path/to/service-account.json"},
+        ):
+            with patch("obstore.store.GCSStore") as mock_gcs:
+                mock_gcs.return_value = MagicMock()
+
+                store, prefix = _setup_store("gs://mybucket/catalog")
+
+        mock_gcs.assert_called_once_with(
+            "mybucket",
+            service_account_path="/path/to/service-account.json",
+        )
+        assert prefix == "catalog"
+
+    @pytest.mark.unit
+    def test_setup_store_gcs_no_credentials(self) -> None:
+        """_setup_store should work for GCS without explicit credentials."""
+        from portolan_cli.push import _setup_store
+
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("obstore.store.GCSStore") as mock_gcs:
+                mock_gcs.return_value = MagicMock()
+
+                store, prefix = _setup_store("gs://mybucket/prefix")
+
+        # Called without service_account_path (uses default credentials)
+        mock_gcs.assert_called_once_with("mybucket")
+
+    @pytest.mark.unit
+    def test_setup_store_azure_with_key(self) -> None:
+        """_setup_store should create AzureStore with access key."""
+        from portolan_cli.push import _setup_store
+
+        # Azure URL format is az://account/container/path
+        # The bucket_url after parse is az://account/container
+        with patch.dict(
+            "os.environ",
+            {
+                "AZURE_STORAGE_ACCOUNT": "mystorageaccount",
+                "AZURE_STORAGE_KEY": "myaccesskey",
+            },
+        ):
+            with patch("obstore.store.AzureStore") as mock_azure:
+                mock_azure.return_value = MagicMock()
+
+                store, prefix = _setup_store("az://account/mycontainer/catalog")
+
+        # Container includes account/container from URL parsing
+        mock_azure.assert_called_once_with(
+            "account/mycontainer",
+            account="mystorageaccount",
+            access_key="myaccesskey",
+        )
+        assert prefix == "catalog"
+
+    @pytest.mark.unit
+    def test_setup_store_azure_with_sas_token(self) -> None:
+        """_setup_store should create AzureStore with SAS token when no key."""
+        from portolan_cli.push import _setup_store
+
+        # Azure URL format is az://account/container/path
+        with patch.dict(
+            "os.environ",
+            {
+                "AZURE_STORAGE_ACCOUNT": "mystorageaccount",
+                "AZURE_STORAGE_SAS_TOKEN": "sv=2021-12-02&...",
+            },
+            clear=True,
+        ):
+            with patch("obstore.store.AzureStore") as mock_azure:
+                mock_azure.return_value = MagicMock()
+
+                store, prefix = _setup_store("az://account/mycontainer/data")
+
+        mock_azure.assert_called_once_with(
+            "account/mycontainer",
+            account="mystorageaccount",
+            sas_token="sv=2021-12-02&...",
+        )
+        assert prefix == "data"
+
+    @pytest.mark.unit
+    def test_setup_store_azure_key_takes_precedence(self) -> None:
+        """_setup_store should prefer access_key over sas_token."""
+        from portolan_cli.push import _setup_store
+
+        with patch.dict(
+            "os.environ",
+            {
+                "AZURE_STORAGE_ACCOUNT": "account",
+                "AZURE_STORAGE_KEY": "key",
+                "AZURE_STORAGE_SAS_TOKEN": "sas",
+            },
+        ):
+            with patch("obstore.store.AzureStore") as mock_azure:
+                mock_azure.return_value = MagicMock()
+
+                _setup_store("az://container/prefix")
+
+        # Should use access_key, not sas_token
+        call_kwargs = mock_azure.call_args[1]
+        assert "access_key" in call_kwargs
+        assert "sas_token" not in call_kwargs
