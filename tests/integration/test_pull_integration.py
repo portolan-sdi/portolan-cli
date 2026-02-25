@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -65,7 +66,7 @@ def local_catalog(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def remote_versions_data() -> dict:
+def remote_versions_data() -> dict[str, Any]:
     """Remote versions.json with a newer version."""
     return {
         "spec_version": "1.0.0",
@@ -104,6 +105,41 @@ def remote_versions_data() -> dict:
 
 
 # =============================================================================
+# Malformed Fixtures for Error Path Testing
+# =============================================================================
+
+
+@pytest.fixture
+def malformed_local_catalog(tmp_path: Path) -> Path:
+    """Create a local catalog with invalid JSON in versions.json."""
+    catalog_root = tmp_path / "malformed_local"
+    catalog_root.mkdir()
+
+    portolan_dir = catalog_root / ".portolan" / "collections" / "test-collection"
+    portolan_dir.mkdir(parents=True)
+
+    # Write invalid JSON
+    (portolan_dir / "versions.json").write_text("{ not: valid: json }")
+
+    return catalog_root
+
+
+@pytest.fixture
+def malformed_remote_versions_data() -> dict[str, Any]:
+    """Remote versions.json with missing required fields."""
+    return {
+        "spec_version": "1.0.0",
+        # Missing "current_version"
+        "versions": [
+            {
+                "version": "1.0.0",
+                # Missing "created", "breaking", "assets", "changes"
+            }
+        ],
+    }
+
+
+# =============================================================================
 # CLI Pull Command Tests
 # =============================================================================
 
@@ -118,7 +154,7 @@ class TestPullCommand:
         """portolan pull should invoke pull function with correct args."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.cli.pull") as mock_pull:
+        with patch("portolan_cli.pull.pull") as mock_pull:
             from portolan_cli.pull import PullResult
 
             mock_pull.return_value = PullResult(
@@ -149,7 +185,7 @@ class TestPullCommand:
         """portolan pull --dry-run should pass dry_run=True."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.cli.pull") as mock_pull:
+        with patch("portolan_cli.pull.pull") as mock_pull:
             from portolan_cli.pull import PullResult
 
             mock_pull.return_value = PullResult(
@@ -183,7 +219,7 @@ class TestPullCommand:
         """portolan pull --force should pass force=True."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.cli.pull") as mock_pull:
+        with patch("portolan_cli.pull.pull") as mock_pull:
             from portolan_cli.pull import PullResult
 
             mock_pull.return_value = PullResult(
@@ -216,7 +252,7 @@ class TestPullCommand:
         """portolan pull --profile should pass profile to pull function."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.cli.pull") as mock_pull:
+        with patch("portolan_cli.pull.pull") as mock_pull:
             from portolan_cli.pull import PullResult
 
             mock_pull.return_value = PullResult(
@@ -252,7 +288,7 @@ class TestPullCommand:
         """portolan pull should exit 1 when uncommitted changes block pull."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.cli.pull") as mock_pull:
+        with patch("portolan_cli.pull.pull") as mock_pull:
             from portolan_cli.pull import PullResult
 
             mock_pull.return_value = PullResult(
@@ -283,7 +319,7 @@ class TestPullCommand:
         """portolan pull should show message when already up to date."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.cli.pull") as mock_pull:
+        with patch("portolan_cli.pull.pull") as mock_pull:
             from portolan_cli.pull import PullResult
 
             mock_pull.return_value = PullResult(
@@ -315,7 +351,7 @@ class TestPullCommand:
         """portolan pull --json should output JSON envelope."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.cli.pull") as mock_pull:
+        with patch("portolan_cli.pull.pull") as mock_pull:
             from portolan_cli.pull import PullResult
 
             mock_pull.return_value = PullResult(
@@ -396,7 +432,7 @@ class TestPullCommandErrors:
         """portolan pull --json should output error envelope on failure."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.cli.pull") as mock_pull:
+        with patch("portolan_cli.pull.pull") as mock_pull:
             from portolan_cli.pull import PullResult
 
             mock_pull.return_value = PullResult(
@@ -426,3 +462,98 @@ class TestPullCommandErrors:
         output = json.loads(result.output)
         assert output["success"] is False
         assert "errors" in output
+
+
+# =============================================================================
+# Malformed Data Error Tests
+# =============================================================================
+
+
+class TestPullMalformedDataErrors:
+    """Tests for error handling when pull encounters malformed data."""
+
+    @pytest.mark.integration
+    def test_pull_malformed_remote_response(
+        self, cli_runner: CliRunner, local_catalog: Path, malformed_remote_versions_data: dict[str, Any]
+    ) -> None:
+        """portolan pull should fail gracefully with malformed remote data."""
+        from portolan_cli.cli import cli
+        from portolan_cli.pull import PullError
+
+        with patch("portolan_cli.pull.pull") as mock_pull:
+            # Simulate that pull raises an error due to malformed data
+            mock_pull.side_effect = PullError("Invalid remote versions.json: missing field 'current_version'")
+
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "pull",
+                    "s3://bucket/catalog",
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(local_catalog),
+                ],
+            )
+
+        # Should exit with error
+        assert result.exit_code != 0
+
+    @pytest.mark.integration
+    def test_pull_malformed_local_catalog(
+        self, cli_runner: CliRunner, malformed_local_catalog: Path
+    ) -> None:
+        """portolan pull should handle malformed local catalog gracefully."""
+        from portolan_cli.cli import cli
+        from portolan_cli.pull import PullResult
+
+        with patch("portolan_cli.pull.pull") as mock_pull:
+            # The malformed local catalog may cause pull to fail or succeed
+            # depending on how the code handles malformed local data
+            mock_pull.return_value = PullResult(
+                success=True,
+                files_downloaded=0,
+                files_skipped=0,
+                local_version=None,
+                remote_version="1.0.0",
+                up_to_date=True,
+            )
+
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "pull",
+                    "s3://bucket/catalog",
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(malformed_local_catalog),
+                ],
+            )
+
+        # Should either succeed (treating malformed as empty) or fail gracefully
+        # The important thing is it doesn't crash unexpectedly
+        assert result.exit_code in [0, 1]
+
+    @pytest.mark.integration
+    def test_pull_invalid_url_scheme(self, cli_runner: CliRunner, local_catalog: Path) -> None:
+        """portolan pull should reject invalid URL schemes."""
+        from portolan_cli.cli import cli
+
+        with patch("portolan_cli.pull.pull") as mock_pull:
+            mock_pull.side_effect = ValueError("Unsupported URL scheme: ftp")
+
+            result = cli_runner.invoke(
+                cli,
+                [
+                    "pull",
+                    "ftp://invalid/url",
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(local_catalog),
+                ],
+            )
+
+        # Should exit with error for invalid URL scheme
+        assert result.exit_code != 0

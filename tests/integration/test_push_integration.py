@@ -86,6 +86,61 @@ def catalog_with_versions(tmp_path: Path) -> Path:
     return catalog_dir
 
 
+@pytest.fixture
+def catalog_with_versions_malformed(tmp_path: Path) -> Path:
+    """Create a catalog with invalid JSON in versions.json."""
+    catalog_dir = tmp_path / "catalog_malformed"
+    catalog_dir.mkdir()
+
+    # Create catalog.json
+    catalog_data = {
+        "type": "Catalog",
+        "id": "test-catalog",
+        "stac_version": "1.0.0",
+        "links": [],
+    }
+    (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+    # Create .portolan directory structure
+    portolan_dir = catalog_dir / ".portolan"
+    portolan_dir.mkdir()
+
+    # Create collection with invalid JSON in versions.json
+    collection_dir = portolan_dir / "collections" / "demographics"
+    collection_dir.mkdir(parents=True)
+
+    # Write invalid JSON
+    (collection_dir / "versions.json").write_text("{ this is not valid json }")
+
+    return catalog_dir
+
+
+@pytest.fixture
+def catalog_missing_versions_file(tmp_path: Path) -> Path:
+    """Create a catalog without versions.json file."""
+    catalog_dir = tmp_path / "catalog_no_versions"
+    catalog_dir.mkdir()
+
+    # Create catalog.json
+    catalog_data = {
+        "type": "Catalog",
+        "id": "test-catalog",
+        "stac_version": "1.0.0",
+        "links": [],
+    }
+    (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+    # Create .portolan directory but no versions.json
+    portolan_dir = catalog_dir / ".portolan"
+    portolan_dir.mkdir()
+
+    collection_dir = portolan_dir / "collections" / "demographics"
+    collection_dir.mkdir(parents=True)
+    # Intentionally NOT creating versions.json
+
+    return catalog_dir
+
+
 # =============================================================================
 # Local Versions Reading Tests
 # =============================================================================
@@ -510,6 +565,30 @@ class TestErrorHandling:
         with pytest.raises(FileNotFoundError):
             push(
                 catalog_root=nonexistent,
+                collection="demographics",
+                destination="s3://mybucket/catalog",
+            )
+
+    @pytest.mark.integration
+    def test_push_with_invalid_json(self, catalog_with_versions_malformed: Path) -> None:
+        """Push should fail with clear error on invalid JSON in versions.json."""
+        from portolan_cli.push import push
+
+        with pytest.raises(ValueError, match="Invalid JSON"):
+            push(
+                catalog_root=catalog_with_versions_malformed,
+                collection="demographics",
+                destination="s3://mybucket/catalog",
+            )
+
+    @pytest.mark.integration
+    def test_push_with_missing_versions_file(self, catalog_missing_versions_file: Path) -> None:
+        """Push should fail with clear error when versions.json doesn't exist."""
+        from portolan_cli.push import push
+
+        with pytest.raises(FileNotFoundError, match="versions.json"):
+            push(
+                catalog_root=catalog_missing_versions_file,
                 collection="demographics",
                 destination="s3://mybucket/catalog",
             )

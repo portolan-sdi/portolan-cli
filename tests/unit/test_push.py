@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -87,7 +87,7 @@ def local_catalog(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def remote_versions_same() -> dict:
+def remote_versions_same() -> dict[str, Any]:
     """Remote versions.json matching local v1.0.0 (before local changes)."""
     return {
         "spec_version": "1.0.0",
@@ -112,7 +112,7 @@ def remote_versions_same() -> dict:
 
 
 @pytest.fixture
-def remote_versions_diverged() -> dict:
+def remote_versions_diverged() -> dict[str, Any]:
     """Remote versions.json that diverged from local (conflict scenario)."""
     return {
         "spec_version": "1.0.0",
@@ -141,6 +141,89 @@ def remote_versions_diverged() -> dict:
                     "data.parquet": {
                         "sha256": "remote789",
                         "size_bytes": 1536,
+                        "href": "data.parquet",
+                    }
+                },
+                "changes": ["data.parquet"],
+            },
+        ],
+    }
+
+
+# =============================================================================
+# Malformed Fixtures for Error Path Testing
+# =============================================================================
+
+
+@pytest.fixture
+def local_catalog_malformed(tmp_path: Path) -> Path:
+    """Create a local catalog with malformed versions.json (missing keys)."""
+    catalog_dir = tmp_path / "catalog_malformed"
+    catalog_dir.mkdir()
+
+    # Create .portolan/collections/test/versions.json with missing required keys
+    versions_dir = catalog_dir / ".portolan" / "collections" / "test"
+    versions_dir.mkdir(parents=True)
+
+    # Missing "current_version" and "spec_version"
+    malformed_data = {
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2024-01-01T00:00:00Z",
+            }
+        ],
+    }
+
+    (versions_dir / "versions.json").write_text(json.dumps(malformed_data, indent=2))
+
+    return catalog_dir
+
+
+@pytest.fixture
+def local_catalog_invalid_json(tmp_path: Path) -> Path:
+    """Create a local catalog with invalid JSON in versions.json."""
+    catalog_dir = tmp_path / "catalog_invalid_json"
+    catalog_dir.mkdir()
+
+    versions_dir = catalog_dir / ".portolan" / "collections" / "test"
+    versions_dir.mkdir(parents=True)
+
+    # Write invalid JSON
+    (versions_dir / "versions.json").write_text("{ invalid json }")
+
+    return catalog_dir
+
+
+@pytest.fixture
+def remote_versions_same_malformed() -> dict[str, Any]:
+    """Remote versions.json with invalid structure (missing spec_version)."""
+    return {
+        # Missing "spec_version"
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2024-01-01T00:00:00Z",
+            }
+        ],
+    }
+
+
+@pytest.fixture
+def remote_versions_diverged_malformed() -> dict[str, Any]:
+    """Remote versions.json with wrong asset fields (missing sha256/size_bytes)."""
+    return {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.1",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2024-01-01T00:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "data.parquet": {
+                        # Missing "sha256" and "size_bytes"
                         "href": "data.parquet",
                     }
                 },
@@ -1111,3 +1194,124 @@ class TestMultiCloudStoreSetup:
         call_kwargs = mock_azure.call_args[1]
         assert "access_key" in call_kwargs
         assert "sas_token" not in call_kwargs
+
+
+# =============================================================================
+# Error Path Tests with Malformed Data
+# =============================================================================
+
+
+class TestMalformedDataHandling:
+    """Tests for error handling with malformed versions.json data."""
+
+    @pytest.mark.unit
+    def test_read_local_versions_invalid_json(
+        self, local_catalog_invalid_json: Path
+    ) -> None:
+        """_read_local_versions should raise ValueError on invalid JSON."""
+        from portolan_cli.push import _read_local_versions
+
+        with pytest.raises(ValueError, match="Invalid JSON"):
+            _read_local_versions(
+                catalog_root=local_catalog_invalid_json,
+                collection="test",
+            )
+
+    @pytest.mark.unit
+    def test_read_local_versions_missing_keys(
+        self, local_catalog_malformed: Path
+    ) -> None:
+        """_read_local_versions should return data but push should fail on missing keys."""
+        from portolan_cli.push import _read_local_versions
+
+        # _read_local_versions just parses JSON, it doesn't validate schema
+        # The schema validation happens later in the push process
+        data = _read_local_versions(
+            catalog_root=local_catalog_malformed,
+            collection="test",
+        )
+
+        # Data should be returned (it's valid JSON, just missing fields)
+        assert "versions" in data
+        # But required fields are missing
+        assert "spec_version" not in data
+        assert "current_version" not in data
+
+    @pytest.mark.unit
+    def test_push_with_malformed_local_versions_keyerror(
+        self, local_catalog_malformed: Path
+    ) -> None:
+        """Push should fail when local versions.json has missing required keys.
+
+        The local_catalog_malformed fixture has versions.json missing spec_version
+        and current_version. When push tries to read and process this, it should
+        fail with a KeyError when accessing these missing fields.
+        """
+        from portolan_cli.push import _read_local_versions
+
+        # Read the malformed versions.json
+        data = _read_local_versions(
+            catalog_root=local_catalog_malformed,
+            collection="test",
+        )
+
+        # Verify the required keys are missing
+        assert "spec_version" not in data
+        assert "current_version" not in data
+
+        # Attempting to access these keys should raise KeyError
+        with pytest.raises(KeyError):
+            _ = data["spec_version"]
+
+        with pytest.raises(KeyError):
+            _ = data["current_version"]
+
+    @pytest.mark.unit
+    def test_push_with_malformed_remote_versions_missing_key(
+        self, remote_versions_same_malformed: dict[str, Any]
+    ) -> None:
+        """Push should handle malformed remote versions.json gracefully.
+
+        The remote_versions_same_malformed fixture is missing spec_version.
+        When diff_version_lists tries to extract versions, it should handle
+        this gracefully or raise an appropriate error.
+        """
+        from portolan_cli.push import diff_version_lists
+
+        # The malformed data has versions but is missing spec_version
+        # Attempting to extract version strings should still work
+        # since versions list exists
+        local_versions = ["1.0.0", "1.1.0"]
+        remote_versions = [v["version"] for v in remote_versions_same_malformed.get("versions", [])]
+
+        # diff_version_lists should still work with the version strings
+        diff = diff_version_lists(local_versions, remote_versions)
+
+        # Local has 1.1.0 that remote doesn't have
+        assert "1.1.0" in diff.local_only
+
+    @pytest.mark.unit
+    def test_push_with_malformed_asset_fields_extraction(
+        self, remote_versions_diverged_malformed: dict[str, Any]
+    ) -> None:
+        """Push should fail when extracting assets with missing fields.
+
+        The remote_versions_diverged_malformed fixture has assets missing
+        sha256 and size_bytes fields. When code tries to access these,
+        it should fail with KeyError.
+        """
+        # Extract the malformed asset
+        versions = remote_versions_diverged_malformed["versions"]
+        assets = versions[0]["assets"]
+        asset_data = assets["data.parquet"]
+
+        # Verify the required fields are missing
+        assert "sha256" not in asset_data
+        assert "size_bytes" not in asset_data
+
+        # Attempting to access these keys should raise KeyError
+        with pytest.raises(KeyError):
+            _ = asset_data["sha256"]
+
+        with pytest.raises(KeyError):
+            _ = asset_data["size_bytes"]

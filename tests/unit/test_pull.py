@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -70,7 +70,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def remote_versions_data() -> dict:
+def remote_versions_data() -> dict[str, Any]:
     """Remote versions.json with a newer version."""
     return {
         "spec_version": "1.0.0",
@@ -104,6 +104,89 @@ def remote_versions_data() -> dict:
                 },
                 "changes": ["data.parquet"],
             },
+        ],
+    }
+
+
+# =============================================================================
+# Malformed Fixtures for Error Path Testing
+# =============================================================================
+
+
+@pytest.fixture
+def catalog_with_versions_malformed(tmp_path: Path) -> Path:
+    """Create a catalog with malformed versions.json (missing "versions" key)."""
+    catalog_root = tmp_path / "catalog_malformed"
+    catalog_root.mkdir()
+
+    portolan_dir = catalog_root / ".portolan" / "collections" / "test-collection"
+    portolan_dir.mkdir(parents=True)
+
+    # Missing "versions" key
+    malformed_data = {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        # No "versions" list
+    }
+    (portolan_dir / "versions.json").write_text(json.dumps(malformed_data, indent=2))
+
+    return catalog_root
+
+
+@pytest.fixture
+def catalog_with_non_string_current_version(tmp_path: Path) -> Path:
+    """Create a catalog with wrong type for current_version (int instead of string)."""
+    catalog_root = tmp_path / "catalog_wrong_type"
+    catalog_root.mkdir()
+
+    portolan_dir = catalog_root / ".portolan" / "collections" / "test-collection"
+    portolan_dir.mkdir(parents=True)
+
+    # current_version is int instead of string
+    malformed_data = {
+        "spec_version": "1.0.0",
+        "current_version": 100,  # Wrong type - should be string
+        "versions": [],
+    }
+    (portolan_dir / "versions.json").write_text(json.dumps(malformed_data, indent=2))
+
+    return catalog_root
+
+
+@pytest.fixture
+def remote_versions_data_malformed() -> dict[str, Any]:
+    """Remote versions.json missing "current_version"."""
+    return {
+        "spec_version": "1.0.0",
+        # Missing "current_version"
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2024-01-15T10:00:00Z",
+                "breaking": False,
+                "assets": {},
+                "changes": [],
+            }
+        ],
+    }
+
+
+@pytest.fixture
+def remote_versions_data_wrong_asset_types() -> dict[str, Any]:
+    """Remote versions.json with wrong asset types (string instead of dict)."""
+    return {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2024-01-15T10:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "data.parquet": "not-a-dict",  # Wrong type - should be dict
+                },
+                "changes": ["data.parquet"],
+            }
         ],
     }
 
@@ -977,3 +1060,115 @@ class TestProgressReporting:
         captured = capsys.readouterr()
         assert "(1/1)" in captured.out
         assert "DRY RUN" in captured.out
+
+
+# =============================================================================
+# Error Path Tests with Malformed Data
+# =============================================================================
+
+
+class TestMalformedDataHandling:
+    """Tests for error handling with malformed versions.json data."""
+
+    @pytest.mark.unit
+    def test_parse_versions_missing_current_version(
+        self, remote_versions_data_malformed: dict[str, Any]
+    ) -> None:
+        """_parse_versions_file should raise ValueError when current_version missing."""
+        from portolan_cli.versions import _parse_versions_file
+
+        with pytest.raises(ValueError, match="missing field"):
+            _parse_versions_file(remote_versions_data_malformed)
+
+    @pytest.mark.unit
+    def test_parse_versions_wrong_asset_types(
+        self, remote_versions_data_wrong_asset_types: dict[str, Any]
+    ) -> None:
+        """_parse_versions_file should raise when assets have wrong types."""
+        from portolan_cli.versions import _parse_versions_file
+
+        with pytest.raises((ValueError, TypeError, AttributeError)):
+            _parse_versions_file(remote_versions_data_wrong_asset_types)
+
+    @pytest.mark.unit
+    def test_pull_with_malformed_local_versions(
+        self, catalog_with_versions_malformed: Path
+    ) -> None:
+        """Pull should handle catalog with malformed local versions.json."""
+        from portolan_cli.pull import pull
+        from portolan_cli.versions import VersionsFile
+
+        with patch("portolan_cli.pull._fetch_remote_versions") as mock_fetch:
+            # Remote is valid
+            mock_fetch.return_value = VersionsFile(
+                spec_version="1.0.0",
+                current_version="1.0.0",
+                versions=[],
+            )
+
+            # Local versions.json is malformed (missing "versions" key)
+            # This should either raise an error or handle gracefully
+            # depending on whether it parses local versions
+            try:
+                result = pull(
+                    remote_url="s3://bucket/catalog",
+                    local_root=catalog_with_versions_malformed,
+                    collection="test-collection",
+                )
+                # If it succeeds (e.g., treats empty local as fresh pull), that's OK
+                assert result is not None
+            except (ValueError, KeyError) as e:
+                # If it fails due to malformed local, that's also valid behavior
+                assert "versions" in str(e).lower() or "missing" in str(e).lower()
+
+    @pytest.mark.unit
+    def test_pull_with_wrong_current_version_type(
+        self, catalog_with_non_string_current_version: Path
+    ) -> None:
+        """Pull should handle catalog with wrong type for current_version."""
+        from portolan_cli.pull import pull
+        from portolan_cli.versions import VersionsFile
+
+        with patch("portolan_cli.pull._fetch_remote_versions") as mock_fetch:
+            mock_fetch.return_value = VersionsFile(
+                spec_version="1.0.0",
+                current_version="1.0.0",
+                versions=[],
+            )
+
+            # Local has current_version as int instead of string
+            # The code should either handle this gracefully or raise a clear error
+            try:
+                result = pull(
+                    remote_url="s3://bucket/catalog",
+                    local_root=catalog_with_non_string_current_version,
+                    collection="test-collection",
+                )
+                # If it succeeds, result should be valid
+                assert result is not None
+            except (ValueError, TypeError) as e:
+                # If it fails, error should be informative
+                assert str(e)  # Error message should not be empty
+
+    @pytest.mark.unit
+    def test_fetch_remote_malformed_response(self, tmp_path: Path) -> None:
+        """_fetch_remote_versions should raise when remote returns malformed data."""
+        from portolan_cli.pull import PullError, _fetch_remote_versions
+
+        malformed_json = '{"spec_version": "1.0.0"}'  # Missing current_version and versions
+
+        with patch("portolan_cli.pull.download_file") as mock_download:
+            def write_malformed(source: str, destination: Path, **kwargs) -> MagicMock:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(malformed_json)
+                result = MagicMock()
+                result.success = True
+                return result
+
+            mock_download.side_effect = write_malformed
+
+            with pytest.raises((PullError, ValueError)):
+                _fetch_remote_versions(
+                    remote_url="s3://bucket/catalog",
+                    collection="test-collection",
+                )

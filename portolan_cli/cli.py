@@ -20,7 +20,6 @@ from portolan_cli.dataset import (
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.output import detail, error, info, success, warn
-from portolan_cli.pull import pull
 from portolan_cli.scan import (
     ScanIssue,
     ScanOptions,
@@ -1490,9 +1489,11 @@ def pull_command(
         portolan pull s3://bucket/catalog -c data --force
         portolan pull s3://bucket/catalog -c data --profile myprofile
     """
+    from portolan_cli.pull import pull as pull_fn
+
     use_json = should_output_json(ctx)
 
-    result = pull(
+    result = pull_fn(
         remote_url=remote_url,
         local_root=catalog_path,
         collection=collection,
