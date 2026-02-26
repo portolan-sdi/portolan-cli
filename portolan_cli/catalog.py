@@ -1,13 +1,13 @@
 """Catalog management for Portolan.
 
-The Catalog class is the primary interface for working with Portolan catalogs.
-It wraps all catalog operations as methods, following ADR-0007 (CLI wraps API).
+Primary API (v2, per ADR-0023):
+- init_catalog(): Initialize catalog with STAC catalog.json at root level
+- detect_state(): Detect catalog state (MANAGED, UNMANAGED_STAC, FRESH)
 
-This module also provides library functions for catalog creation:
+Legacy API (v1, unused — candidates for removal):
 - create_catalog(): Create a CatalogModel with auto-extracted fields
 - write_catalog_json(): Serialize CatalogModel to .portolan/catalog.json
 - read_catalog_json(): Load CatalogModel from .portolan/catalog.json
-- detect_state(): Detect the catalog state of a directory (MANAGED, UNMANAGED_STAC, FRESH)
 """
 
 from __future__ import annotations
