@@ -311,13 +311,16 @@ class TestCheckFixUnsupportedFiles:
         envelope = json.loads(result.output)
         data = envelope["data"]
 
-        # Only the GeoJSON should be in the report - .nc is ignored
-        assert data["summary"]["total"] == 1
-        assert data["summary"]["convertible"] == 1
+        # With --fix, format data is nested under "conversion" key
+        conversion_data = data.get("conversion", data)
 
-        # Conversion should only process the GeoJSON
-        if "conversion" in data:
-            conversion = data["conversion"]
+        # Only the GeoJSON should be in the report - .nc is ignored
+        assert conversion_data["summary"]["total"] == 1
+        assert conversion_data["summary"]["convertible"] == 1
+
+        # Conversion results should show only the GeoJSON was converted
+        if "conversion" in conversion_data:
+            conversion = conversion_data["conversion"]
             # No failures
             assert conversion["summary"]["failed"] == 0
             # Only the GeoJSON was converted
@@ -375,3 +378,315 @@ class TestCheckOutput:
         assert "success" in envelope
         assert envelope["command"] == "check"
         assert "data" in envelope
+
+
+# =============================================================================
+# Issue #99: --metadata and --geo-assets Flags
+# =============================================================================
+
+
+@pytest.fixture
+def catalog_with_files(
+    runner: CliRunner,
+    valid_points_geojson: Path,
+    valid_points_parquet: Path,
+    tmp_path: Path,
+) -> Path:
+    """Create a Portolan catalog with both GeoJSON and GeoParquet files.
+
+    This creates a fully initialized catalog for testing metadata validation
+    alongside geo-assets checking.
+    """
+    import shutil
+
+    # Create the data directory
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    # Copy test files
+    shutil.copy(valid_points_geojson, data_dir / "points.geojson")
+    shutil.copy(valid_points_parquet, data_dir / "buildings.parquet")
+
+    # Initialize the catalog (creates .portolan/ and catalog.json)
+    # Use --auto for non-interactive mode
+    result = runner.invoke(cli, ["init", "--auto", str(tmp_path)])
+    assert result.exit_code == 0, f"Init failed: {result.output}"
+
+    return tmp_path
+
+
+@pytest.mark.integration
+class TestCheckMetadataFlag:
+    """Integration tests for --metadata flag."""
+
+    def test_metadata_validates_catalog_structure(
+        self,
+        runner: CliRunner,
+        catalog_with_files: Path,
+    ) -> None:
+        """'portolan check --metadata' validates STAC catalog structure."""
+        result = runner.invoke(cli, ["check", str(catalog_with_files), "--metadata"])
+
+        # Should succeed (catalog is valid)
+        assert result.exit_code == 0
+        # Output should show validation passed
+        assert "pass" in result.output.lower() or "✓" in result.output
+
+    def test_metadata_fails_for_missing_catalog(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """'portolan check --metadata' fails when catalog is missing."""
+        # Create a data directory without initializing a catalog
+        (tmp_path / "data").mkdir()
+
+        result = runner.invoke(cli, ["check", str(tmp_path), "--metadata"])
+
+        # Should fail
+        assert result.exit_code == 1
+        # Should mention catalog or .portolan
+        assert "catalog" in result.output.lower() or ".portolan" in result.output
+
+    def test_metadata_json_output(
+        self,
+        runner: CliRunner,
+        catalog_with_files: Path,
+    ) -> None:
+        """'portolan check --metadata --json' outputs JSON with mode indicator."""
+        result = runner.invoke(cli, ["check", str(catalog_with_files), "--metadata", "--json"])
+
+        assert result.exit_code == 0
+
+        envelope = json.loads(result.output)
+        assert envelope["success"] is True
+        assert envelope["command"] == "check"
+        # Should indicate metadata mode
+        assert envelope["data"]["mode"] == "metadata"
+
+
+@pytest.mark.integration
+class TestCheckGeoAssetsFlag:
+    """Integration tests for --geo-assets flag."""
+
+    def test_geo_assets_without_fix_reports_status(
+        self,
+        runner: CliRunner,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """'portolan check --geo-assets' reports file format status."""
+        import shutil
+
+        # Create a directory with a convertible file
+        input_dir = tmp_path / "data"
+        input_dir.mkdir()
+        shutil.copy(valid_points_geojson, input_dir / "points.geojson")
+
+        result = runner.invoke(cli, ["check", str(input_dir), "--geo-assets"])
+
+        # Should succeed
+        assert result.exit_code == 0
+        # Output should mention the file or format status
+        output_lower = result.output.lower()
+        assert (
+            "conversion" in output_lower
+            or "cloud" in output_lower
+            or "geojson" in output_lower
+            or "format" in output_lower
+        )
+
+    def test_geo_assets_skips_metadata_validation(
+        self,
+        runner: CliRunner,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """'portolan check --geo-assets' succeeds without a catalog."""
+        import shutil
+
+        # Create a directory WITHOUT a catalog (no .portolan)
+        input_dir = tmp_path / "data"
+        input_dir.mkdir()
+        shutil.copy(valid_points_geojson, input_dir / "points.geojson")
+
+        result = runner.invoke(cli, ["check", str(input_dir), "--geo-assets"])
+
+        # Should succeed - metadata validation is skipped
+        assert result.exit_code == 0
+        # Should show geo-assets check results
+        assert "conversion" in result.output.lower() or "file" in result.output.lower()
+
+    def test_geo_assets_with_fix_converts_files(
+        self,
+        runner: CliRunner,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """'portolan check --geo-assets --fix' converts non-cloud-native files."""
+        import shutil
+
+        # Create a directory with a convertible file
+        input_dir = tmp_path / "data"
+        input_dir.mkdir()
+        shutil.copy(valid_points_geojson, input_dir / "points.geojson")
+
+        result = runner.invoke(cli, ["check", str(input_dir), "--geo-assets", "--fix"])
+
+        # Should succeed
+        assert result.exit_code == 0
+        # Output file should be created
+        assert (input_dir / "points.parquet").exists()
+
+    def test_geo_assets_json_output(
+        self,
+        runner: CliRunner,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """'portolan check --geo-assets --json' outputs JSON with mode indicator."""
+        import shutil
+
+        # Create a directory with a convertible file
+        input_dir = tmp_path / "data"
+        input_dir.mkdir()
+        shutil.copy(valid_points_geojson, input_dir / "points.geojson")
+
+        result = runner.invoke(cli, ["check", str(input_dir), "--geo-assets", "--json"])
+
+        assert result.exit_code == 0
+
+        envelope = json.loads(result.output)
+        assert envelope["success"] is True
+        assert envelope["command"] == "check"
+        # Should indicate geo-assets mode
+        assert envelope["data"]["mode"] == "geo-assets"
+
+
+@pytest.mark.integration
+class TestCheckBothFlags:
+    """Integration tests for --metadata --geo-assets combined."""
+
+    def test_both_flags_run_both_validations(
+        self,
+        runner: CliRunner,
+        catalog_with_files: Path,
+    ) -> None:
+        """'portolan check --metadata --geo-assets' runs both validations."""
+        result = runner.invoke(
+            cli, ["check", str(catalog_with_files), "--metadata", "--geo-assets"]
+        )
+
+        # Should succeed (valid catalog and valid format files)
+        assert result.exit_code == 0
+        # Output should show both validation types
+        output_lower = result.output.lower()
+        assert "metadata" in output_lower or "catalog" in output_lower
+        assert "format" in output_lower or "cloud" in output_lower or "file" in output_lower
+
+    def test_both_flags_with_fix_converts_and_validates(
+        self,
+        runner: CliRunner,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """'portolan check --metadata --geo-assets --fix' validates and converts."""
+        import shutil
+
+        # Initialize a catalog (use --auto for non-interactive mode)
+        result = runner.invoke(cli, ["init", "--auto", str(tmp_path)])
+        assert result.exit_code == 0
+
+        # Add a convertible file
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        shutil.copy(valid_points_geojson, data_dir / "points.geojson")
+
+        result = runner.invoke(
+            cli,
+            ["check", str(tmp_path), "--metadata", "--geo-assets", "--fix"],
+        )
+
+        # Should succeed
+        assert result.exit_code == 0
+        # Output file should be created
+        assert (data_dir / "points.parquet").exists()
+
+    def test_both_flags_json_output(
+        self,
+        runner: CliRunner,
+        catalog_with_files: Path,
+    ) -> None:
+        """'portolan check --metadata --geo-assets --json' outputs combined JSON."""
+        result = runner.invoke(
+            cli,
+            ["check", str(catalog_with_files), "--metadata", "--geo-assets", "--json"],
+        )
+
+        assert result.exit_code == 0
+
+        envelope = json.loads(result.output)
+        assert envelope["success"] is True
+        assert envelope["command"] == "check"
+        # Should indicate all/both mode
+        assert envelope["data"]["mode"] == "all"
+        # Should have both metadata and geo-assets data
+        assert "metadata" in envelope["data"] or "geo_assets" in envelope["data"]
+
+    def test_metadata_error_fails_combined_check(
+        self,
+        runner: CliRunner,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """'portolan check --metadata --geo-assets' fails if metadata invalid."""
+        import shutil
+
+        # Create directory with valid format file but NO catalog
+        input_dir = tmp_path / "data"
+        input_dir.mkdir()
+        shutil.copy(valid_points_geojson, input_dir / "points.geojson")
+
+        result = runner.invoke(cli, ["check", str(tmp_path), "--metadata", "--geo-assets"])
+
+        # Should fail due to missing catalog
+        assert result.exit_code == 1
+
+
+@pytest.mark.integration
+class TestCheckBackwardCompatibility:
+    """Integration tests verifying backward-compatible default behavior."""
+
+    def test_check_without_flags_runs_metadata_only(
+        self,
+        runner: CliRunner,
+        catalog_with_files: Path,
+    ) -> None:
+        """'portolan check' (no flags) validates metadata only."""
+        result = runner.invoke(cli, ["check", str(catalog_with_files)])
+
+        # Should succeed
+        assert result.exit_code == 0
+        # Should show validation results
+        assert "pass" in result.output.lower() or "✓" in result.output
+
+    def test_check_fix_without_flags_runs_format_only(
+        self,
+        runner: CliRunner,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """'portolan check --fix' (no filter flags) converts files only."""
+        import shutil
+
+        # Create directory without catalog (would fail metadata validation)
+        input_dir = tmp_path / "data"
+        input_dir.mkdir()
+        shutil.copy(valid_points_geojson, input_dir / "points.geojson")
+
+        result = runner.invoke(cli, ["check", str(input_dir), "--fix"])
+
+        # Should succeed - only format conversion, no metadata validation
+        assert result.exit_code == 0
+        # Output file should be created
+        assert (input_dir / "points.parquet").exists()
