@@ -43,53 +43,57 @@ Commands covering the full lifecycle from files to live catalog:
 
 ```
 # Catalog setup
-portolan init                          # Create catalog.json + .portolan/ structure
+portolan init [PATH]                   # Create catalog.json + .portolan/ structure
+portolan init --auto                   # Non-interactive, use defaults
 
 # Discovery & validation
 portolan scan <path>                   # Discover geospatial files, detect issues
 portolan scan --fix --dry-run          # Preview safe renames (invalid chars, reserved names)
-portolan check                         # Validate local catalog against spec
+portolan check                         # Validate local catalog (metadata + geo-assets)
 portolan check --fix --dry-run         # Preview cloud-native conversions
+portolan check --metadata              # Validate STAC metadata only
+portolan check --geo-assets            # Check cloud-native compliance only
 
-# Dataset management
-portolan dataset add <file_or_dir>     # Convert, enrich, stage (interactive or --auto)
-portolan dataset remove <name_or_dir>  # Remove dataset(s) from catalog
+# Dataset management (git-style top-level commands)
+portolan add <path>                    # Track files (collection inferred from directory)
+portolan rm <path>                     # Untrack and delete (requires --force)
+portolan rm --keep <path>              # Untrack without deleting
 portolan dataset list                  # Show catalog contents
 portolan dataset info <name>           # Metadata, extent, schema summary
 
-# Remote sync
-portolan push                          # Diff local vs remote → upload changed files
-portolan pull                          # Diff remote vs local → download changed files
-portolan sync                          # Orchestrate: init → scan → check --fix → push
+# Remote sync (all require --collection/-c flag)
+portolan push <url> -c <collection>    # Upload collection to remote
+portolan pull <url> -c <collection>    # Download collection from remote
+portolan sync <url> -c <collection>    # Orchestrate: pull → check --fix → push
+portolan clone <url> <path> -c <coll>  # Clone remote collection to new directory
 
-# Maintenance
-portolan check --remote                # Detect drift between local and remote
-portolan repair                        # Re-sync remote from local truth
-portolan prune                         # Delete old version files from remote
+# Configuration
+portolan config set <key> <value>      # Set config (e.g., remote URL)
+portolan config get <key>              # Get config value
+portolan config list                   # List all settings
+portolan config unset <key>            # Remove setting
 ```
 
-### `dataset add` Workflow
+### `portolan add` Workflow
 
-This is the primary command. It accepts a single file or a directory and runs an interactive workflow:
+The `add` command tracks files in the catalog with automatic collection inference:
 
-1. Detect input format, dispatch to appropriate converter (geoparquet-io or rio-cogeo)
-2. Convert to cloud-native format if needed
-3. Extract metadata (spatial extent, schema, CRS)
-4. Interactive style definition — show columns, suggest smart defaults, user confirms/adjusts → write `style.json`
-5. Generate thumbnail from the style definition
-6. Generate STAC collection/item with metadata
-7. Update `versions.json` with checksums
-8. Generate README from metadata
-9. Stage files to the catalog structure (STAC at root per ADR-0023)
+1. Detect input format
+2. Extract metadata (spatial extent, schema, CRS)
+3. Infer collection from directory structure (first path component)
+4. Generate STAC collection/item with metadata
+5. Update `versions.json` with checksums
+6. Stage files to the catalog structure (STAC at root per ADR-0023)
+
+The command is designed for simplicity — it just tracks files. Metadata enrichment (titles, descriptions, style generation) is a separate workflow (see issue #108).
 
 Flags:
-- `--auto` / `--non-interactive` — skip interactive prompts, use smart defaults (also the agentic path)
-- `--no-convert` — stage a pre-converted file without running conversion
-- `--title`, `--description`, `--license` — metadata overrides
+- `--verbose` — show detailed output including skipped files
+- `--portolan-dir` — override catalog root detection
 
 ### Directory Handling
 
-`dataset add` and `dataset remove` both accept directories for batch operations. Open question: when adding a directory, the CLI needs to distinguish between a directory of files that form a single dataset (e.g., `radios.parquet` + `census-data.parquet` + `metadata.parquet` as one collection) versus a directory of independent files that should each become separate datasets.
+`portolan add` and `portolan rm` both accept directories for batch operations. Files are processed individually, with each becoming a separate item in the inferred collection.
 
 ## Catalog Structure
 
@@ -98,27 +102,26 @@ Per **ADR-0023**: STAC files live at root level, only internal state goes in `.p
 ```
 ./                            # Catalog root
 ├── catalog.json              # STAC root catalog
-├── versions.json             # Catalog-level versioning (optional)
 ├── .portolan/                # Internal state only
-│   ├── config.json           # Catalog configuration
-│   └── state.json            # Local sync state
+│   ├── config.json           # Managed state sentinel (empty)
+│   ├── config.yaml           # User configuration (remote URL, etc.)
+│   ├── state.json            # Local sync state
+│   └── versions.json         # Catalog-level versioning
 ├── <collection>/             # Collection at root level
 │   ├── collection.json       # STAC collection
 │   ├── versions.json         # Version manifest with checksums
-│   ├── style.json            # MapLibre style definition
-│   ├── thumbnail.png         # Auto-generated preview
-│   ├── README.md             # Dataset README
 │   ├── <item>/               # Item directory
 │   │   ├── item.json         # STAC item
 │   │   └── <data files>      # Cloud-native formats
 ```
 
+**Planned additions:** `style.json` (MapLibre styles), `thumbnail.png` (previews), `README.md` (auto-generated docs) — see issue #108.
+
 ## Remote Ownership
 
 Portolan owns the bucket contents. Users configure access; Portolan manages everything inside. Manual edits are unsupported and flagged as drift. See **ADR-0006** for the full ownership model.
 
-- `portolan check --remote` — detect drift (files added, deleted, or modified outside Portolan)
-- `portolan repair` — re-sync remote from local truth
+Currently, `push --force` can overwrite remote state. Future commands for drift detection and repair are planned.
 
 **Future:** Multi-tenant access control and visibility are planned but not yet scoped. See [Roadmap: Access Control & Visibility](../ROADMAP.md#tbd-access-control--visibility).
 
@@ -128,7 +131,7 @@ Portolan owns the bucket contents. Users configure access; Portolan manages ever
 
 - Current version files live at dataset root
 - Old versions archived to `/v{version}/` paths
-- `portolan prune` cleans up old versions (with safety mechanisms)
+- Version pruning is planned (see ROADMAP v0.8)
 
 ## Discovery & Validation
 
@@ -151,11 +154,12 @@ Validates the catalog against the Portolan spec with a clear distinction between
 - Catalog structure (.portolan/ exists, catalog.json valid)
 - STAC fields present and valid
 - Cloud-native format compliance
-- Checksums in `versions.json` match actual files
-- Thumbnails and READMEs exist
-- Style files are valid MapLibre JSON
 
-With `--fix`: converts non-cloud-native files to GeoParquet (vectors) or COG (rasters).
+Flags:
+- `--metadata` — validate STAC metadata only (links, schema, required fields)
+- `--geo-assets` — check geospatial assets only (cloud-native status)
+- `--fix` — convert non-cloud-native files to GeoParquet (vectors) or COG (rasters)
+- `--dry-run` — preview what would be converted
 
 Output is actionable: not just "invalid" but specific guidance on what to fix.
 
@@ -164,19 +168,21 @@ Output is actionable: not just "invalid" but specific guidance on what to fix.
 Every Portolan operation is available as both a CLI command and a Python function. The CLI is a thin wrapper around the Python API — all logic lives in the library layer. See **ADR-0007** for the architecture.
 
 ```python
-# Python API
-from portolan import Catalog
+# Python API (module-level functions)
+from portolan_cli.catalog import init_catalog
+from portolan_cli.dataset import add_dataset
+from portolan_cli.push import push
 
-catalog = Catalog.init("./my-catalog")
-catalog.add("census.parquet", title="Census 2022", auto=True)
-catalog.sync()
+init_catalog(Path("./my-catalog"))
+add_dataset(Path("./my-catalog"), Path("demographics/census.parquet"))
+push(Path("./my-catalog"), "s3://bucket/catalog", collection="demographics")
 ```
 
 ```bash
 # CLI equivalent
 portolan init
-portolan dataset add census.parquet --title "Census 2022" --auto
-portolan sync
+portolan add demographics/census.parquet
+portolan push s3://bucket/catalog --collection demographics
 ```
 
 ## Data Consumption
@@ -194,8 +200,8 @@ Portolan publishes catalogs; consuming them is up to the user's toolchain. GeoPa
 
 Portolan is AI-native but does not assume AI access. Many target users face cost, capacity, or security constraints that preclude AI use.
 
-- **Without AI:** Full functionality via CLI and Python API. Interactive prompts with smart defaults handle styling, metadata, and validation.
-- **With AI:** A `SKILLS.md` file ships with portolan, designed for users who want to pair the tool with an LLM. It documents the catalog structure, common workflows, and the Python API in a format optimized for LLM context windows.
+- **Without AI:** Full functionality via CLI and Python API. Smart defaults handle validation and format conversion.
+- **With AI:** A `SKILLS.md` file is planned (see issue #109) to document the catalog structure, common workflows, and the Python API in a format optimized for LLM context windows.
 
 AI is an accelerator, not a dependency.
 

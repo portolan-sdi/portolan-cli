@@ -30,21 +30,19 @@ portolan scan demographics/
 # Add a dataset (collection is inferred from the directory name)
 portolan add demographics/census.parquet
 
-# Configure remote storage
-portolan config set remote s3://my-bucket/catalog
-
-# Push to remote
-portolan push
+# Push collection to remote storage
+portolan push s3://my-bucket/catalog --collection demographics
 ```
 
 Other common commands:
 
 ```bash
-portolan check demographics/census.parquet  # Validate a file
+portolan check                              # Validate catalog
+portolan check --fix                        # Convert to cloud-native formats
 portolan rm --keep demographics/old.parquet # Untrack without deleting
-portolan pull                                # Pull changes from remote
-portolan sync                                # Push + pull in one step
-portolan config get remote                  # Show current remote
+portolan pull s3://my-bucket/catalog -c demographics  # Pull from remote
+portolan sync s3://my-bucket/catalog -c demographics  # Pull + push
+portolan config set remote s3://my-bucket/catalog     # Save remote URL
 portolan config list                        # List all config settings
 ```
 
