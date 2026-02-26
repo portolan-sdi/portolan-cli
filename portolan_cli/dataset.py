@@ -90,7 +90,7 @@ def add_dataset(
 
     STAC structure (per ADR-0023):
     - Collection: {catalog_root}/{collection_id}/collection.json
-    - Item: {catalog_root}/{collection_id}/{item_id}/item.json
+    - Item: {catalog_root}/{collection_id}/{item_id}/{item_id}.json
     - Versions: {catalog_root}/{collection_id}/versions.json
 
     Args:
