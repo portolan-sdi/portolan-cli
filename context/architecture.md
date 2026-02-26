@@ -97,23 +97,25 @@ Flags:
 
 ## Catalog Structure
 
-Per **ADR-0023**: STAC files live at root level, only internal state goes in `.portolan/`.
+Per **ADR-0023**: STAC files and `versions.json` live at root level. Only internal tooling state goes in `.portolan/`.
 
 ```
 ./                            # Catalog root
 ├── catalog.json              # STAC root catalog
+├── versions.json             # Catalog-level versioning (discoverable)
 ├── .portolan/                # Internal state only
 │   ├── config.json           # Managed state sentinel (empty)
 │   ├── config.yaml           # User configuration (remote URL, etc.)
-│   ├── state.json            # Local sync state
-│   └── versions.json         # Catalog-level versioning
+│   └── state.json            # Local sync state
 ├── <collection>/             # Collection at root level
 │   ├── collection.json       # STAC collection
-│   ├── versions.json         # Version manifest with checksums
-│   ├── <item>/               # Item directory
-│   │   ├── item.json         # STAC item
-│   │   └── <data files>      # Cloud-native formats
+│   ├── versions.json         # Collection-level versioning (discoverable)
+│   └── <item>/               # Item directory
+│       ├── item.json         # STAC item
+│       └── <data files>      # Cloud-native formats
 ```
+
+**Note:** `versions.json` is user-visible metadata (version history, checksums), not internal state. It lives alongside STAC files so consumers can discover it.
 
 **Planned additions:** `style.json` (MapLibre styles), `thumbnail.png` (previews), `README.md` (auto-generated docs) — see issue #108.
 
