@@ -57,10 +57,10 @@ class TestAddIntegration:
         test_file = collection_dir / "census.geojson"
         shutil.copy(valid_points_geojson, test_file)
 
-        # Act - use --catalog on the add subcommand to specify catalog root
+        # Act - use --portolan-dir on the add subcommand to specify catalog root
         result = runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
             catch_exceptions=False,
         )
 
@@ -89,7 +89,7 @@ class TestAddIntegration:
         # Act
         result = runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(collection_dir)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)],
             catch_exceptions=False,
         )
 
@@ -114,7 +114,7 @@ class TestAddIntegration:
         # First add
         result1 = runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
             catch_exceptions=False,
         )
         assert result1.exit_code == 0
@@ -122,7 +122,7 @@ class TestAddIntegration:
         # Second add - should be silent or show "unchanged"
         result2 = runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
             catch_exceptions=False,
         )
         assert result2.exit_code == 0
@@ -141,14 +141,14 @@ class TestAddIntegration:
         # First add
         runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
             catch_exceptions=False,
         )
 
         # Second add with --verbose
         result = runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), "--verbose", str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), "--verbose", str(test_file)],
             catch_exceptions=False,
         )
 
@@ -178,7 +178,7 @@ class TestAddIntegration:
         # Act
         result = runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(shp_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(shp_file)],
             catch_exceptions=False,
         )
 
@@ -203,7 +203,7 @@ class TestAddIntegration:
         # Act
         result = runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
             catch_exceptions=False,
         )
 
@@ -232,7 +232,7 @@ class TestRmIntegration:
         # Add the file
         add_result = runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
             catch_exceptions=False,
         )
         assert add_result.exit_code == 0
@@ -249,7 +249,7 @@ class TestRmIntegration:
         target = converted_file if converted_file.exists() else test_file
         result = runner.invoke(
             cli,
-            ["rm", "--catalog", str(initialized_catalog), str(target)],
+            ["rm", "--portolan-dir", str(initialized_catalog), str(target)],
             catch_exceptions=False,
         )
 
@@ -271,14 +271,14 @@ class TestRmIntegration:
 
         runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
             catch_exceptions=False,
         )
 
         # Act: rm without any input (no confirmation needed)
         result = runner.invoke(
             cli,
-            ["rm", "--catalog", str(initialized_catalog), str(test_file)],
+            ["rm", "--portolan-dir", str(initialized_catalog), str(test_file)],
             input=None,  # No input - should still work
             catch_exceptions=False,
         )
@@ -299,7 +299,7 @@ class TestRmIntegration:
 
         runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
             catch_exceptions=False,
         )
 
@@ -310,7 +310,7 @@ class TestRmIntegration:
         target = parquet_files[0] if parquet_files else test_file
         result = runner.invoke(
             cli,
-            ["rm", "--catalog", str(initialized_catalog), "--keep", str(target)],
+            ["rm", "--portolan-dir", str(initialized_catalog), "--keep", str(target)],
             catch_exceptions=False,
         )
 
@@ -332,14 +332,14 @@ class TestRmIntegration:
 
         runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(collection_dir)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)],
             catch_exceptions=False,
         )
 
         # Act
         result = runner.invoke(
             cli,
-            ["rm", "--catalog", str(initialized_catalog), str(collection_dir)],
+            ["rm", "--portolan-dir", str(initialized_catalog), str(collection_dir)],
             catch_exceptions=False,
         )
 
@@ -364,7 +364,7 @@ class TestAddRmRoundtrip:
         # Add
         result1 = runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
             catch_exceptions=False,
         )
         assert result1.exit_code == 0
@@ -372,7 +372,7 @@ class TestAddRmRoundtrip:
         # Remove with --keep (so we can re-add)
         result2 = runner.invoke(
             cli,
-            ["rm", "--catalog", str(initialized_catalog), "--keep", str(test_file)],
+            ["rm", "--portolan-dir", str(initialized_catalog), "--keep", str(test_file)],
             catch_exceptions=False,
         )
         assert result2.exit_code == 0
@@ -380,7 +380,7 @@ class TestAddRmRoundtrip:
         # Add again
         result3 = runner.invoke(
             cli,
-            ["add", "--catalog", str(initialized_catalog), str(test_file)],
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
             catch_exceptions=False,
         )
         assert result3.exit_code == 0

@@ -1062,11 +1062,11 @@ def _output_add_results(
     help="Show detailed output including skipped unchanged files.",
 )
 @click.option(
-    "--catalog",
+    "--portolan-dir",
     "catalog_path",
     type=click.Path(path_type=Path),
     default=None,
-    help="Path to catalog root (default: auto-detect by walking up from cwd).",
+    help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
 def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | None) -> None:
@@ -1077,7 +1077,7 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
     the path relative to the catalog root.
 
     Works like git: run from anywhere inside a catalog and it auto-detects
-    the catalog root. Use --catalog to override.
+    the catalog root. Use --portolan-dir to override.
 
     \b
     Examples:
@@ -1148,11 +1148,11 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
     help="Untrack file but preserve it on disk.",
 )
 @click.option(
-    "--catalog",
+    "--portolan-dir",
     "catalog_path",
     type=click.Path(path_type=Path),
     default=None,
-    help="Path to catalog root (default: auto-detect by walking up from cwd).",
+    help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
 def rm_cmd(ctx: click.Context, path: Path, keep: bool, catalog_path: Path | None) -> None:
@@ -1162,7 +1162,7 @@ def rm_cmd(ctx: click.Context, path: Path, keep: bool, catalog_path: Path | None
     (git-style behavior, no confirmation prompt).
 
     Works like git: run from anywhere inside a catalog and it auto-detects
-    the catalog root. Use --catalog to override.
+    the catalog root. Use --portolan-dir to override.
 
     Use --keep to untrack the file but preserve it on disk.
 
