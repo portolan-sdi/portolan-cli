@@ -108,9 +108,13 @@ class TestAddDirectory:
 
     @pytest.fixture
     def initialized_catalog(self, tmp_path: Path) -> Path:
-        """Create an initialized Portolan catalog."""
-        portolan_dir = tmp_path / "catalog" / ".portolan"
-        portolan_dir.mkdir(parents=True)
+        """Create an initialized Portolan catalog (per ADR-0023)."""
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir(parents=True)
+        # Create .portolan for internal state
+        portolan_dir = catalog_root / ".portolan"
+        portolan_dir.mkdir()
+        # catalog.json at root level (per ADR-0023)
         catalog_data = {
             "type": "Catalog",
             "stac_version": "1.0.0",
@@ -118,8 +122,8 @@ class TestAddDirectory:
             "description": "Test catalog",
             "links": [],
         }
-        (portolan_dir / "catalog.json").write_text(json.dumps(catalog_data))
-        return tmp_path / "catalog"
+        (catalog_root / "catalog.json").write_text(json.dumps(catalog_data))
+        return catalog_root
 
     @pytest.mark.unit
     def test_add_directory_single_file(self, initialized_catalog: Path, tmp_path: Path) -> None:
@@ -129,7 +133,7 @@ class TestAddDirectory:
         (data_dir / "only.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
         # Create output file
-        output_dir = initialized_catalog / ".portolan" / "collections" / "col" / "only"
+        output_dir = initialized_catalog / "col" / "only"
         output_dir.mkdir(parents=True)
         (output_dir / "only.parquet").write_bytes(b"fake")
 
@@ -169,7 +173,7 @@ class TestAddDirectory:
 
         # Create output files
         for name in ["a", "b"]:
-            output_dir = initialized_catalog / ".portolan" / "collections" / "col" / name
+            output_dir = initialized_catalog / "col" / name
             output_dir.mkdir(parents=True)
             ext = "parquet" if name == "a" else "tif"
             (output_dir / f"{name}.{ext}").write_bytes(b"fake")
@@ -190,10 +194,10 @@ class TestAddDirectory:
 
             mock_detect.side_effect = detect_side_effect
             mock_convert_v.return_value = (
-                initialized_catalog / ".portolan" / "collections" / "col" / "a" / "a.parquet"
+                initialized_catalog / "col" / "a" / "a.parquet"
             )
             mock_convert_r.return_value = (
-                initialized_catalog / ".portolan" / "collections" / "col" / "b" / "b.tif"
+                initialized_catalog / "col" / "b" / "b.tif"
             )
             mock_meta_v.return_value = MagicMock(
                 bbox=(0, 0, 1, 1),
@@ -234,7 +238,7 @@ class TestAddDirectory:
 
         # Create output files
         for name in ["top", "deep"]:
-            output_dir = initialized_catalog / ".portolan" / "collections" / "col" / name
+            output_dir = initialized_catalog / "col" / name
             output_dir.mkdir(parents=True)
             (output_dir / f"{name}.parquet").write_bytes(b"fake")
 

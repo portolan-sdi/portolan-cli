@@ -25,10 +25,12 @@ from portolan_cli.formats import FormatType
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
-    """Create an initialized Portolan catalog structure."""
+    """Create an initialized Portolan catalog structure (per ADR-0023)."""
+    # Create .portolan for internal state
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
 
+    # catalog.json at root level (per ADR-0023)
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",
@@ -36,7 +38,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
         "description": "A Portolan-managed STAC catalog",
         "links": [],
     }
-    (portolan_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+    (tmp_path / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
     return tmp_path
 
@@ -209,8 +211,8 @@ class TestAddDatasetIntegration:
         # Bbox should be valid (not Null Island)
         assert result.bbox != [0, 0, 0, 0]
 
-        # Verify STAC structure was created
-        collection_dir = initialized_catalog / ".portolan" / "collections" / "test-vectors"
+        # Verify STAC structure was created (at root level per ADR-0023)
+        collection_dir = initialized_catalog / "test-vectors"
         assert collection_dir.exists()
         assert (collection_dir / "collection.json").exists()
         assert (collection_dir / "versions.json").exists()
@@ -235,8 +237,8 @@ class TestAddDatasetIntegration:
         assert result.format_type == FormatType.RASTER
         assert len(result.bbox) == 4
 
-        # Verify STAC structure
-        collection_dir = initialized_catalog / ".portolan" / "collections" / "imagery"
+        # Verify STAC structure (at root level per ADR-0023)
+        collection_dir = initialized_catalog / "imagery"
         assert (collection_dir / "collection.json").exists()
 
     @pytest.mark.integration

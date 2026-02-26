@@ -133,7 +133,8 @@ def detect_uncommitted_changes(
     Raises:
         FileNotFoundError: If versions.json doesn't exist.
     """
-    versions_path = catalog_root / ".portolan" / "collections" / collection / "versions.json"
+    # versions.json at collection root (per ADR-0023)
+    versions_path = catalog_root / collection / "versions.json"
 
     try:
         versions_file = read_versions(versions_path)
@@ -285,9 +286,9 @@ def _fetch_remote_versions(
     Raises:
         PullError: If fetch fails.
     """
-    # Build remote versions.json path
+    # Build remote versions.json path (per ADR-0023)
     remote_versions_url = (
-        f"{remote_url.rstrip('/')}/.portolan/collections/{collection}/versions.json"
+        f"{remote_url.rstrip('/')}/{collection}/versions.json"
     )
 
     # Download to temp file
@@ -554,8 +555,8 @@ def pull(
     except ValueError as e:
         raise ValueError(f"Invalid remote URL: {e}") from e
 
-    # Path to local versions.json
-    versions_path = local_root / ".portolan" / "collections" / collection / "versions.json"
+    # Path to local versions.json (per ADR-0023)
+    versions_path = local_root / collection / "versions.json"
 
     # Load local versions (may not exist yet)
     try:

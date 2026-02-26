@@ -732,41 +732,52 @@ class TestMetadataFreshRule:
         assert rule.severity == Severity.WARNING
 
     @pytest.mark.unit
-    def test_passes_when_no_portolan_dir(self, tmp_path: Path) -> None:
-        """Rule passes when .portolan directory doesn't exist."""
+    def test_passes_when_no_catalog_json(self, tmp_path: Path) -> None:
+        """Rule passes when catalog.json doesn't exist (per ADR-0023)."""
         from portolan_cli.validation.rules import MetadataFreshRule
 
         rule = MetadataFreshRule()
         result = rule.check(tmp_path)
 
         assert result.passed is True
-        assert ".portolan" in result.message.lower()
+        assert "catalog.json" in result.message.lower()
 
     @pytest.mark.unit
-    def test_passes_when_no_collections_dir(self, tmp_path: Path) -> None:
-        """Rule passes when collections directory doesn't exist."""
+    def test_passes_when_no_collections_exist(self, tmp_path: Path) -> None:
+        """Rule passes when no collections with collection.json exist (per ADR-0023)."""
+        import json
+
         from portolan_cli.validation.rules import MetadataFreshRule
 
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
+        # Create catalog.json at root (per ADR-0023)
+        catalog_data = {"type": "Catalog", "stac_version": "1.0.0", "id": "test", "links": []}
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+        # Create .portolan for internal state
+        (tmp_path / ".portolan").mkdir()
 
         rule = MetadataFreshRule()
         result = rule.check(tmp_path)
 
         assert result.passed is True
-        assert "collections" in result.message.lower()
+        assert "no geo-asset" in result.message.lower()
 
     @pytest.mark.unit
     def test_passes_when_no_geo_assets_found(self, tmp_path: Path) -> None:
         """Rule passes when no geo-asset files are found in collections."""
+        import json
+
         from portolan_cli.validation.rules import MetadataFreshRule
 
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        collections_dir = portolan_dir / "collections"
-        collections_dir.mkdir()
-        # Create an empty collection
-        (collections_dir / "test-collection").mkdir()
+        # Create catalog.json at root (per ADR-0023)
+        catalog_data = {"type": "Catalog", "stac_version": "1.0.0", "id": "test", "links": []}
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+        # Create .portolan for internal state
+        (tmp_path / ".portolan").mkdir()
+        # Create collection with collection.json but no geo assets
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        (collection_dir / "collection.json").write_text(json.dumps(collection_data))
 
         rule = MetadataFreshRule()
         result = rule.check(tmp_path)
@@ -776,15 +787,18 @@ class TestMetadataFreshRule:
 
     @pytest.mark.unit
     def test_skips_non_directory_items(self, tmp_path: Path) -> None:
-        """Rule skips files in collections directory (only processes directories)."""
+        """Rule skips files in catalog root (only processes directories with collection.json)."""
+        import json
+
         from portolan_cli.validation.rules import MetadataFreshRule
 
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        collections_dir = portolan_dir / "collections"
-        collections_dir.mkdir()
-        # Create a file (not a directory) in collections
-        (collections_dir / "some-file.txt").write_text("not a collection")
+        # Create catalog.json at root (per ADR-0023)
+        catalog_data = {"type": "Catalog", "stac_version": "1.0.0", "id": "test", "links": []}
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+        # Create .portolan for internal state
+        (tmp_path / ".portolan").mkdir()
+        # Create a file (not a directory with collection.json) at root
+        (tmp_path / "some-file.txt").write_text("not a collection")
 
         rule = MetadataFreshRule()
         result = rule.check(tmp_path)
@@ -795,17 +809,21 @@ class TestMetadataFreshRule:
     @pytest.mark.integration
     def test_detects_missing_metadata(self, tmp_path: Path, fixtures_dir: Path) -> None:
         """Rule detects geo-assets without STAC metadata (MISSING status)."""
+        import json
         import shutil
 
         from portolan_cli.validation.rules import MetadataFreshRule
 
-        # Create catalog structure
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        collections_dir = portolan_dir / "collections"
-        collections_dir.mkdir()
-        collection = collections_dir / "test-collection"
+        # Create catalog.json at root (per ADR-0023)
+        catalog_data = {"type": "Catalog", "stac_version": "1.0.0", "id": "test", "links": []}
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+        # Create .portolan for internal state
+        (tmp_path / ".portolan").mkdir()
+        # Create collection at root with collection.json
+        collection = tmp_path / "test-collection"
         collection.mkdir()
+        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        (collection / "collection.json").write_text(json.dumps(collection_data))
 
         # Copy a parquet file but don't create STAC item
         src = fixtures_dir / "vector" / "valid" / "points.parquet"
@@ -839,13 +857,16 @@ class TestMetadataFreshRule:
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
         from portolan_cli.validation.rules import MetadataFreshRule
 
-        # Create catalog structure
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        collections_dir = portolan_dir / "collections"
-        collections_dir.mkdir()
-        collection = collections_dir / "test-collection"
+        # Create catalog.json at root (per ADR-0023)
+        catalog_data = {"type": "Catalog", "stac_version": "1.0.0", "id": "test", "links": []}
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+        # Create .portolan for internal state
+        (tmp_path / ".portolan").mkdir()
+        # Create collection at root with collection.json
+        collection = tmp_path / "test-collection"
         collection.mkdir()
+        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        (collection / "collection.json").write_text(json.dumps(collection_data))
 
         # Create a parquet file
         parquet_path = collection / "test.parquet"
@@ -914,13 +935,16 @@ class TestMetadataFreshRule:
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
         from portolan_cli.validation.rules import MetadataFreshRule
 
-        # Create catalog structure
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        collections_dir = portolan_dir / "collections"
-        collections_dir.mkdir()
-        collection = collections_dir / "test-collection"
+        # Create catalog.json at root (per ADR-0023)
+        catalog_data = {"type": "Catalog", "stac_version": "1.0.0", "id": "test", "links": []}
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+        # Create .portolan for internal state
+        (tmp_path / ".portolan").mkdir()
+        # Create collection at root with collection.json
+        collection = tmp_path / "test-collection"
         collection.mkdir()
+        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        (collection / "collection.json").write_text(json.dumps(collection_data))
 
         # Create a parquet file
         parquet_path = collection / "test.parquet"
@@ -985,18 +1009,23 @@ class TestMetadataFreshRule:
     @pytest.mark.integration
     def test_provides_fix_hint(self, tmp_path: Path) -> None:
         """Rule provides fix hint when issues found."""
+        import json
+
         import pyarrow as pa
         import pyarrow.parquet as pq
 
         from portolan_cli.validation.rules import MetadataFreshRule
 
-        # Create catalog structure with a parquet file but no STAC item
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        collections_dir = portolan_dir / "collections"
-        collections_dir.mkdir()
-        collection = collections_dir / "test-collection"
+        # Create catalog.json at root (per ADR-0023)
+        catalog_data = {"type": "Catalog", "stac_version": "1.0.0", "id": "test", "links": []}
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+        # Create .portolan for internal state
+        (tmp_path / ".portolan").mkdir()
+        # Create collection at root with collection.json but no STAC item
+        collection = tmp_path / "test-collection"
         collection.mkdir()
+        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        (collection / "collection.json").write_text(json.dumps(collection_data))
 
         parquet_path = collection / "test.parquet"
         table = pa.table({"id": [1], "geometry": ["POINT(0 0)"]})
@@ -1065,18 +1094,23 @@ class TestMetadataFreshRule:
     @pytest.mark.integration
     def test_scans_nested_collection_files(self, tmp_path: Path) -> None:
         """Rule scans files in subdirectories within collections."""
+        import json
+
         import pyarrow as pa
         import pyarrow.parquet as pq
 
         from portolan_cli.validation.rules import MetadataFreshRule
 
-        # Create catalog structure with nested files
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-        collections_dir = portolan_dir / "collections"
-        collections_dir.mkdir()
-        collection = collections_dir / "test-collection"
+        # Create catalog.json at root (per ADR-0023)
+        catalog_data = {"type": "Catalog", "stac_version": "1.0.0", "id": "test", "links": []}
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+        # Create .portolan for internal state
+        (tmp_path / ".portolan").mkdir()
+        # Create collection at root with collection.json
+        collection = tmp_path / "test-collection"
         collection.mkdir()
+        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        (collection / "collection.json").write_text(json.dumps(collection_data))
         subdir = collection / "data" / "2024"
         subdir.mkdir(parents=True)
 

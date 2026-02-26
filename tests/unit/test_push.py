@@ -39,8 +39,8 @@ def local_catalog(tmp_path: Path) -> Path:
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
-    # Create .portolan/collections/test/versions.json
-    versions_dir = catalog_dir / ".portolan" / "collections" / "test"
+    # Create test/versions.json (per ADR-0023)
+    versions_dir = catalog_dir / "test"
     versions_dir.mkdir(parents=True)
 
     versions_data = {
@@ -161,8 +161,8 @@ def local_catalog_malformed(tmp_path: Path) -> Path:
     catalog_dir = tmp_path / "catalog_malformed"
     catalog_dir.mkdir()
 
-    # Create .portolan/collections/test/versions.json with missing required keys
-    versions_dir = catalog_dir / ".portolan" / "collections" / "test"
+    # Create test/versions.json (per ADR-0023) with missing required keys
+    versions_dir = catalog_dir / "test"
     versions_dir.mkdir(parents=True)
 
     # Missing "current_version" and "spec_version"
@@ -186,7 +186,7 @@ def local_catalog_invalid_json(tmp_path: Path) -> Path:
     catalog_dir = tmp_path / "catalog_invalid_json"
     catalog_dir.mkdir()
 
-    versions_dir = catalog_dir / ".portolan" / "collections" / "test"
+    versions_dir = catalog_dir / "test"
     versions_dir.mkdir(parents=True)
 
     # Write invalid JSON
@@ -539,7 +539,7 @@ class TestPush:
         from portolan_cli.push import push
 
         # Read local versions to create matching remote
-        versions_path = local_catalog / ".portolan" / "collections" / "test" / "versions.json"
+        versions_path = local_catalog / "test" / "versions.json"
         local_data = json.loads(versions_path.read_text())
 
         with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
@@ -833,7 +833,7 @@ class TestForceFlag:
         # Create local catalog with ONLY v1.0.0
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
-        versions_dir = catalog_dir / ".portolan" / "collections" / "test"
+        versions_dir = catalog_dir / "test"
         versions_dir.mkdir(parents=True)
 
         versions_data = {

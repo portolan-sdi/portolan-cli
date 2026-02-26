@@ -87,11 +87,15 @@ def add_dataset(
     3. Extracts metadata
     4. Creates/updates STAC collection and item
     5. Updates versions.json
-    6. Stages files to .portolan/
+
+    STAC structure (per ADR-0023):
+    - Collection: {catalog_root}/{collection_id}/collection.json
+    - Item: {catalog_root}/{collection_id}/{item_id}/item.json
+    - Versions: {catalog_root}/{collection_id}/versions.json
 
     Args:
         path: Path to the source file.
-        catalog_root: Root directory containing .portolan/.
+        catalog_root: Root directory of the catalog.
         collection_id: Collection to add the dataset to.
         title: Optional display title for the dataset.
         description: Optional description.
@@ -113,9 +117,8 @@ def add_dataset(
     if item_id is None:
         item_id = path.stem
 
-    # Set up paths
-    portolan_dir = catalog_root / ".portolan"
-    collection_dir = portolan_dir / "collections" / collection_id
+    # Set up paths (STAC at root, per ADR-0023)
+    collection_dir = catalog_root / collection_id
     item_dir = collection_dir / item_id
 
     # Ensure directories exist
@@ -165,7 +168,7 @@ def add_dataset(
 
     # Step 6: Load or create collection
     collection = _get_or_create_collection(
-        portolan_dir=portolan_dir,
+        catalog_root=catalog_root,
         collection_id=collection_id,
         initial_bbox=bbox,
     )
@@ -178,7 +181,7 @@ def add_dataset(
     collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
 
     # Step 8: Update catalog to link to collection (if new)
-    _update_catalog_links(portolan_dir, collection_id)
+    _update_catalog_links(catalog_root, collection_id)
 
     # Step 9: Update versions.json
     _update_versions(
@@ -304,21 +307,22 @@ def compute_checksum(path: Path) -> str:
 
 
 def _get_or_create_collection(
-    portolan_dir: Path,
+    catalog_root: Path,
     collection_id: str,
     initial_bbox: list[float],
 ) -> pystac.Collection:
     """Load existing collection or create new one.
 
     Args:
-        portolan_dir: Path to .portolan directory.
+        catalog_root: Root directory of the catalog.
         collection_id: Collection identifier.
         initial_bbox: Initial bounding box for new collections.
 
     Returns:
         pystac.Collection object.
     """
-    collection_path = portolan_dir / "collections" / collection_id / "collection.json"
+    # STAC at root level (per ADR-0023)
+    collection_path = catalog_root / collection_id / "collection.json"
 
     if collection_path.exists():
         return pystac.Collection.from_file(str(collection_path))
@@ -331,35 +335,37 @@ def _get_or_create_collection(
     )
 
 
-def _update_catalog_links(portolan_dir: Path, collection_id: str) -> None:
+def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
     """Ensure catalog has link to collection.
 
     Args:
-        portolan_dir: Path to .portolan directory.
+        catalog_root: Root directory of the catalog.
         collection_id: Collection identifier.
     """
-    catalog_path = portolan_dir / "catalog.json"
+    # Catalog at root level (per ADR-0023)
+    catalog_path = catalog_root / "catalog.json"
     catalog = load_catalog(catalog_path)
 
     # Normalize hrefs to ensure consistent comparison
-    catalog.normalize_hrefs(str(portolan_dir))
+    catalog.normalize_hrefs(str(catalog_root))
 
     # Extract collection IDs from existing child links
-    # Links may be in various formats: "./collections/{id}/collection.json" or absolute paths
+    # Links are in format: "./{collection_id}/collection.json"
     existing_collection_ids: set[str] = set()
     for link in catalog.links:
         if link.rel != "child":
             continue
         href = link.href or ""
-        # Extract collection ID from href pattern: .../collections/{id}/collection.json
-        if "/collections/" in href and href.endswith("/collection.json"):
-            # Parse: anything/collections/{collection_id}/collection.json
-            parts = href.split("/collections/")[-1]
-            coll_id = parts.split("/")[0]
-            existing_collection_ids.add(coll_id)
+        # Extract collection ID from href pattern: ./{collection_id}/collection.json
+        if href.endswith("/collection.json"):
+            # Parse: ./{collection_id}/collection.json or {collection_id}/collection.json
+            parts = href.replace("./", "").split("/")
+            if len(parts) >= 2:
+                coll_id = parts[0]
+                existing_collection_ids.add(coll_id)
 
     if collection_id not in existing_collection_ids:
-        collection_href = f"./collections/{collection_id}/collection.json"
+        collection_href = f"./{collection_id}/collection.json"
         catalog.add_link(pystac.Link(rel="child", target=collection_href))
         # Re-save catalog
         catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
@@ -424,27 +430,27 @@ def list_datasets(
     """List datasets in a Portolan catalog.
 
     Args:
-        catalog_root: Root directory containing .portolan/.
+        catalog_root: Root directory of the catalog.
         collection_id: Optional collection to filter by.
 
     Returns:
         List of DatasetInfo objects.
     """
-    portolan_dir = catalog_root / ".portolan"
-    catalog_path = portolan_dir / "catalog.json"
+    # Catalog at root level (per ADR-0023)
+    catalog_path = catalog_root / "catalog.json"
 
     if not catalog_path.exists():
         return []
 
     datasets: list[DatasetInfo] = []
 
-    # Scan collections
-    collections_dir = portolan_dir / "collections"
-    if not collections_dir.exists():
-        return []
-
-    for col_dir in collections_dir.iterdir():
+    # Scan root-level directories for collections (per ADR-0023)
+    for col_dir in catalog_root.iterdir():
         if not col_dir.is_dir():
+            continue
+
+        # Skip .portolan and hidden directories
+        if col_dir.name.startswith("."):
             continue
 
         col_id = col_dir.name
@@ -509,7 +515,7 @@ def get_dataset_info(
     """Get information about a specific dataset.
 
     Args:
-        catalog_root: Root directory containing .portolan/.
+        catalog_root: Root directory of the catalog.
         dataset_id: Dataset identifier in format "collection/item".
 
     Returns:
@@ -523,8 +529,8 @@ def get_dataset_info(
 
     collection_id, item_id = dataset_id.split("/", 1)
 
-    portolan_dir = catalog_root / ".portolan"
-    item_path = portolan_dir / "collections" / collection_id / item_id / f"{item_id}.json"
+    # STAC at root level (per ADR-0023)
+    item_path = catalog_root / collection_id / item_id / f"{item_id}.json"
 
     if not item_path.exists():
         raise KeyError(f"Dataset not found: {dataset_id}")
@@ -562,19 +568,18 @@ def remove_dataset(
     """Remove a dataset from a Portolan catalog.
 
     Args:
-        catalog_root: Root directory containing .portolan/.
+        catalog_root: Root directory of the catalog.
         dataset_id: Dataset identifier in format "collection/item" or just "collection".
         remove_collection: If True, remove entire collection.
 
     Raises:
         KeyError: If the dataset doesn't exist.
     """
-    portolan_dir = catalog_root / ".portolan"
-
+    # STAC at root level (per ADR-0023)
     if remove_collection or "/" not in dataset_id:
         # Remove entire collection
         collection_id = dataset_id.split("/")[0]
-        collection_dir = portolan_dir / "collections" / collection_id
+        collection_dir = catalog_root / collection_id
 
         if not collection_dir.exists():
             raise KeyError(f"Dataset not found: {dataset_id}")
@@ -583,7 +588,7 @@ def remove_dataset(
         shutil.rmtree(collection_dir)
 
         # Update catalog links
-        catalog_path = portolan_dir / "catalog.json"
+        catalog_path = catalog_root / "catalog.json"
         if catalog_path.exists():
             catalog_data = json.loads(catalog_path.read_text())
             catalog_data["links"] = [
@@ -595,7 +600,7 @@ def remove_dataset(
     else:
         # Remove single item
         collection_id, item_id = dataset_id.split("/", 1)
-        item_dir = portolan_dir / "collections" / collection_id / item_id
+        item_dir = catalog_root / collection_id / item_id
 
         if not item_dir.exists():
             raise KeyError(f"Dataset not found: {dataset_id}")
@@ -604,7 +609,7 @@ def remove_dataset(
         shutil.rmtree(item_dir)
 
         # Update collection links
-        collection_path = portolan_dir / "collections" / collection_id / "collection.json"
+        collection_path = catalog_root / collection_id / "collection.json"
         if collection_path.exists():
             collection_data = json.loads(collection_path.read_text())
             collection_data["links"] = [

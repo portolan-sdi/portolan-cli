@@ -82,7 +82,8 @@ class JsonFileBackend:
         # Explicitly reject traversal attempts that survive Path.name
         if safe_collection in ("", ".", ".."):
             raise ValueError(f"Invalid collection name: {collection!r}")
-        return self._catalog_root / ".portolan" / "collections" / safe_collection / "versions.json"
+        # versions.json at collection root (per ADR-0023)
+        return self._catalog_root / safe_collection / "versions.json"
 
     def get_current_version(self, collection: str) -> Version:
         """Get the current (latest) version of a collection.

@@ -29,10 +29,12 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
-    """Create an initialized Portolan catalog structure."""
+    """Create an initialized Portolan catalog structure (per ADR-0023)."""
+    # Create .portolan for internal state
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
 
+    # catalog.json at root level (per ADR-0023)
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",
@@ -40,7 +42,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
         "description": "A Portolan-managed STAC catalog",
         "links": [],
     }
-    (portolan_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+    (tmp_path / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
     return tmp_path
 
@@ -100,7 +102,7 @@ class TestAddDataset:
         geojson_path.write_text(json.dumps(geojson_data))
 
         # Create the output file that convert_vector would create
-        output_dir = initialized_catalog / ".portolan" / "collections" / "test-collection" / "data"
+        output_dir = initialized_catalog / "test-collection" / "data"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file = output_dir / "data.parquet"
         output_file.write_bytes(b"fake parquet data")
@@ -140,7 +142,7 @@ class TestAddDataset:
         tiff_path.write_bytes(b"fake tiff data")
 
         # Create the output file that convert_raster would create
-        output_dir = initialized_catalog / ".portolan" / "collections" / "imagery" / "data"
+        output_dir = initialized_catalog / "imagery" / "data"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file = output_dir / "data.tif"
         output_file.write_bytes(b"fake cog data")
@@ -199,7 +201,7 @@ class TestAddDataset:
         geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
 
         # Create the output file
-        output_dir = initialized_catalog / ".portolan" / "collections" / "test" / "data"
+        output_dir = initialized_catalog / "test" / "data"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file = output_dir / "data.parquet"
         output_file.write_bytes(b"fake data")
@@ -241,7 +243,7 @@ class TestAddDataset:
         geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
 
         # Create the output file
-        output_dir = initialized_catalog / ".portolan" / "collections" / "new-collection" / "data"
+        output_dir = initialized_catalog / "new-collection" / "data"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file = output_dir / "data.parquet"
         output_file.write_bytes(b"fake data")
@@ -270,7 +272,7 @@ class TestAddDataset:
             )
 
             # Collection should have been created
-            collection_dir = initialized_catalog / ".portolan" / "collections" / "new-collection"
+            collection_dir = initialized_catalog / "new-collection"
             assert collection_dir.exists(), "Collection directory should exist"
             assert result.collection_id == "new-collection", (
                 "Result should have correct collection_id"
@@ -293,22 +295,25 @@ class TestListDatasets:
         assert datasets == []
 
     @pytest.mark.unit
-    def test_list_skips_non_directory_in_collections(self, initialized_catalog: Path) -> None:
-        """list_datasets skips files in collections directory."""
-        portolan_dir = initialized_catalog / ".portolan"
-        collections_dir = portolan_dir / "collections"
-        collections_dir.mkdir()
-        # Create a file (not directory) in collections
-        (collections_dir / "not-a-collection.txt").write_text("not a dir")
+    def test_list_skips_non_directory_at_root(self, initialized_catalog: Path) -> None:
+        """list_datasets skips files at root level (not directories).
+
+        Per ADR-0023: Collections are directories at root level.
+        """
+        # Create a file (not directory) at root
+        (initialized_catalog / "not-a-collection.txt").write_text("not a dir")
 
         datasets = list_datasets(initialized_catalog)
         assert datasets == []
 
     @pytest.mark.unit
     def test_list_skips_collection_without_json(self, initialized_catalog: Path) -> None:
-        """list_datasets skips collection directories without collection.json."""
-        portolan_dir = initialized_catalog / ".portolan"
-        col_dir = portolan_dir / "collections" / "incomplete"
+        """list_datasets skips directories without collection.json.
+
+        Per ADR-0023: Collections live at root level, identified by collection.json.
+        """
+        # Create directory at root without collection.json
+        col_dir = initialized_catalog / "incomplete"
         col_dir.mkdir(parents=True)
         # No collection.json created
 
@@ -317,9 +322,12 @@ class TestListDatasets:
 
     @pytest.mark.unit
     def test_list_skips_missing_item_files(self, initialized_catalog: Path) -> None:
-        """list_datasets skips items where item.json doesn't exist."""
-        portolan_dir = initialized_catalog / ".portolan"
-        col_dir = portolan_dir / "collections" / "col"
+        """list_datasets skips items where item.json doesn't exist.
+
+        Per ADR-0023: Collections live at root level.
+        """
+        # Create collection at root (per ADR-0023)
+        col_dir = initialized_catalog / "col"
         col_dir.mkdir(parents=True)
 
         # Collection references an item that doesn't exist
@@ -342,9 +350,12 @@ class TestListDatasets:
 
     @pytest.mark.unit
     def test_list_detects_raster_format(self, initialized_catalog: Path) -> None:
-        """list_datasets correctly identifies raster format from .tif assets."""
-        portolan_dir = initialized_catalog / ".portolan"
-        col_dir = portolan_dir / "collections" / "imagery"
+        """list_datasets correctly identifies raster format from .tif assets.
+
+        Per ADR-0023: Collections live at root level, not inside .portolan/.
+        """
+        # Create collection directory at root (per ADR-0023)
+        col_dir = initialized_catalog / "imagery"
         col_dir.mkdir(parents=True)
 
         collection_data = {
@@ -385,10 +396,12 @@ class TestListDatasets:
 
     @pytest.mark.unit
     def test_list_all_datasets(self, initialized_catalog: Path) -> None:
-        """list_datasets returns all datasets across collections."""
-        # Create mock collection structure
-        portolan_dir = initialized_catalog / ".portolan"
-        col1_dir = portolan_dir / "collections" / "col1"
+        """list_datasets returns all datasets across collections.
+
+        Per ADR-0023: Collections live at root level, not inside .portolan/.
+        """
+        # Create collection directory at root (per ADR-0023)
+        col1_dir = initialized_catalog / "col1"
         col1_dir.mkdir(parents=True)
 
         # Create a minimal collection.json
@@ -424,10 +437,10 @@ class TestListDatasets:
         }
         (item_dir / "item1.json").write_text(json.dumps(item_data))
 
-        # Update catalog to link to collection
-        catalog_data = json.loads((portolan_dir / "catalog.json").read_text())
-        catalog_data["links"].append({"rel": "child", "href": "./collections/col1/collection.json"})
-        (portolan_dir / "catalog.json").write_text(json.dumps(catalog_data))
+        # Update catalog to link to collection (catalog.json is at root per ADR-0023)
+        catalog_data = json.loads((initialized_catalog / "catalog.json").read_text())
+        catalog_data["links"].append({"rel": "child", "href": "./col1/collection.json"})
+        (initialized_catalog / "catalog.json").write_text(json.dumps(catalog_data))
 
         datasets = list_datasets(initialized_catalog)
 
@@ -437,12 +450,13 @@ class TestListDatasets:
 
     @pytest.mark.unit
     def test_list_datasets_filter_by_collection(self, initialized_catalog: Path) -> None:
-        """list_datasets filters by collection when specified."""
-        # Create two collections
-        portolan_dir = initialized_catalog / ".portolan"
+        """list_datasets filters by collection when specified.
 
+        Per ADR-0023: Collections live at root level.
+        """
+        # Create two collections at root (per ADR-0023)
         for col_id in ["col1", "col2"]:
-            col_dir = portolan_dir / "collections" / col_id
+            col_dir = initialized_catalog / col_id
             col_dir.mkdir(parents=True)
             collection_data = {
                 "type": "Collection",
@@ -475,13 +489,13 @@ class TestListDatasets:
             }
             (item_dir / f"item-{col_id}.json").write_text(json.dumps(item_data))
 
-        # Update catalog links
-        catalog_data = json.loads((portolan_dir / "catalog.json").read_text())
+        # Update catalog links (catalog.json is at root per ADR-0023)
+        catalog_data = json.loads((initialized_catalog / "catalog.json").read_text())
         catalog_data["links"] = [
-            {"rel": "child", "href": "./collections/col1/collection.json"},
-            {"rel": "child", "href": "./collections/col2/collection.json"},
+            {"rel": "child", "href": "./col1/collection.json"},
+            {"rel": "child", "href": "./col2/collection.json"},
         ]
-        (portolan_dir / "catalog.json").write_text(json.dumps(catalog_data))
+        (initialized_catalog / "catalog.json").write_text(json.dumps(catalog_data))
 
         # Filter by col1
         datasets = list_datasets(initialized_catalog, collection_id="col1")
@@ -495,10 +509,12 @@ class TestGetDatasetInfo:
 
     @pytest.mark.unit
     def test_get_dataset_info_existing(self, initialized_catalog: Path) -> None:
-        """get_dataset_info returns info for existing dataset."""
-        # Create collection and item
-        portolan_dir = initialized_catalog / ".portolan"
-        col_dir = portolan_dir / "collections" / "test-col"
+        """get_dataset_info returns info for existing dataset.
+
+        Per ADR-0023: Collections live at root level.
+        """
+        # Create collection at root (per ADR-0023)
+        col_dir = initialized_catalog / "test-col"
         col_dir.mkdir(parents=True)
 
         collection_data = {
@@ -552,10 +568,12 @@ class TestRemoveDataset:
 
     @pytest.mark.unit
     def test_remove_dataset_single_item(self, initialized_catalog: Path) -> None:
-        """remove_dataset removes a single item from collection."""
-        # Create collection with one item
-        portolan_dir = initialized_catalog / ".portolan"
-        col_dir = portolan_dir / "collections" / "test-col"
+        """remove_dataset removes a single item from collection.
+
+        Per ADR-0023: Collections live at root level.
+        """
+        # Create collection at root (per ADR-0023)
+        col_dir = initialized_catalog / "test-col"
         col_dir.mkdir(parents=True)
 
         collection_data = {
@@ -603,9 +621,12 @@ class TestRemoveDataset:
 
     @pytest.mark.unit
     def test_remove_entire_collection(self, initialized_catalog: Path) -> None:
-        """remove_dataset can remove entire collection."""
-        portolan_dir = initialized_catalog / ".portolan"
-        col_dir = portolan_dir / "collections" / "to-remove-col"
+        """remove_dataset can remove entire collection.
+
+        Per ADR-0023: Collections live at root level.
+        """
+        # Create collection at root (per ADR-0023)
+        col_dir = initialized_catalog / "to-remove-col"
         col_dir.mkdir(parents=True)
 
         collection_data = {
@@ -622,12 +643,12 @@ class TestRemoveDataset:
         }
         (col_dir / "collection.json").write_text(json.dumps(collection_data))
 
-        # Update catalog to link to collection
-        catalog_data = json.loads((portolan_dir / "catalog.json").read_text())
+        # Update catalog to link to collection (catalog.json is at root per ADR-0023)
+        catalog_data = json.loads((initialized_catalog / "catalog.json").read_text())
         catalog_data["links"].append(
-            {"rel": "child", "href": "./collections/to-remove-col/collection.json"}
+            {"rel": "child", "href": "./to-remove-col/collection.json"}
         )
-        (portolan_dir / "catalog.json").write_text(json.dumps(catalog_data))
+        (initialized_catalog / "catalog.json").write_text(json.dumps(catalog_data))
 
         remove_dataset(initialized_catalog, "to-remove-col", remove_collection=True)
 
@@ -646,7 +667,7 @@ class TestAddDatasetMissingBbox:
         geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
 
         # Create the output file
-        output_dir = initialized_catalog / ".portolan" / "collections" / "test" / "data"
+        output_dir = initialized_catalog / "test" / "data"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_file = output_dir / "data.parquet"
         output_file.write_bytes(b"fake data")

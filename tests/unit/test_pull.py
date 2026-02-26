@@ -31,15 +31,33 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def catalog_with_versions(tmp_path: Path) -> Path:
-    """Create a catalog with a versions.json file."""
+    """Create a catalog with a versions.json file.
+
+    Per ADR-0023: Collections and versions.json live at root level.
+    """
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
 
-    # Create .portolan directory structure
-    portolan_dir = catalog_root / ".portolan" / "collections" / "test-collection"
+    # Create catalog.json at root (per ADR-0023)
+    catalog_data = {
+        "type": "Catalog",
+        "id": "test-catalog",
+        "stac_version": "1.0.0",
+        "description": "Test catalog",
+        "links": [],
+    }
+    (catalog_root / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+    # Create .portolan directory for internal state
+    portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir(parents=True)
 
-    # Create versions.json
+    # Create collection directory at root (per ADR-0023)
+    collection_dir = catalog_root / "test-collection"
+    collection_dir.mkdir(parents=True)
+
+    # Create versions.json in collection directory (per ADR-0023)
+    # Note: href is relative to catalog_root, not collection_dir
     versions_data = {
         "spec_version": "1.0.0",
         "current_version": "1.0.0",
@@ -53,17 +71,17 @@ def catalog_with_versions(tmp_path: Path) -> Path:
                     "data.parquet": {
                         "sha256": "abc123",
                         "size_bytes": 1000,
-                        "href": "data.parquet",
+                        "href": "test-collection/data.parquet",
                     }
                 },
                 "changes": ["data.parquet"],
             }
         ],
     }
-    (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+    (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
-    # Create the actual data file
-    data_file = catalog_root / "data.parquet"
+    # Create the actual data file in collection
+    data_file = collection_dir / "data.parquet"
     data_file.write_bytes(b"x" * 1000)
 
     return catalog_root
@@ -71,7 +89,10 @@ def catalog_with_versions(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def remote_versions_data() -> dict[str, Any]:
-    """Remote versions.json with a newer version."""
+    """Remote versions.json with a newer version.
+
+    Note: hrefs are relative to catalog_root, not collection directory.
+    """
     return {
         "spec_version": "1.0.0",
         "current_version": "1.1.0",
@@ -85,7 +106,7 @@ def remote_versions_data() -> dict[str, Any]:
                     "data.parquet": {
                         "sha256": "abc123",
                         "size_bytes": 1000,
-                        "href": "data.parquet",
+                        "href": "test-collection/data.parquet",
                     }
                 },
                 "changes": ["data.parquet"],
@@ -99,7 +120,7 @@ def remote_versions_data() -> dict[str, Any]:
                     "data.parquet": {
                         "sha256": "def456",
                         "size_bytes": 2000,
-                        "href": "data.parquet",
+                        "href": "test-collection/data.parquet",
                     }
                 },
                 "changes": ["data.parquet"],
@@ -119,7 +140,7 @@ def catalog_with_versions_malformed(tmp_path: Path) -> Path:
     catalog_root = tmp_path / "catalog_malformed"
     catalog_root.mkdir()
 
-    portolan_dir = catalog_root / ".portolan" / "collections" / "test-collection"
+    portolan_dir = catalog_root / "test-collection"
     portolan_dir.mkdir(parents=True)
 
     # Missing "versions" key
@@ -139,7 +160,7 @@ def catalog_with_non_string_current_version(tmp_path: Path) -> Path:
     catalog_root = tmp_path / "catalog_wrong_type"
     catalog_root.mkdir()
 
-    portolan_dir = catalog_root / ".portolan" / "collections" / "test-collection"
+    portolan_dir = catalog_root / "test-collection"
     portolan_dir.mkdir(parents=True)
 
     # current_version is int instead of string
@@ -270,7 +291,7 @@ class TestUncommittedChangeDetection:
         from portolan_cli.pull import detect_uncommitted_changes
 
         # Modify the local file (different content = different checksum)
-        data_file = catalog_with_versions / "data.parquet"
+        data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.write_bytes(b"modified content")
 
         changes = detect_uncommitted_changes(
@@ -305,7 +326,7 @@ class TestUncommittedChangeDetection:
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
 
-        portolan_dir = catalog_root / ".portolan" / "collections" / "test"
+        portolan_dir = catalog_root / "test"
         portolan_dir.mkdir(parents=True)
 
         # Create file first to get its mtime
@@ -355,7 +376,7 @@ class TestUncommittedChangeDetection:
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
 
-        portolan_dir = catalog_root / ".portolan" / "collections" / "test"
+        portolan_dir = catalog_root / "test"
         portolan_dir.mkdir(parents=True)
 
         # Create file
@@ -406,7 +427,7 @@ class TestUncommittedChangeDetection:
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
 
-        portolan_dir = catalog_root / ".portolan" / "collections" / "test"
+        portolan_dir = catalog_root / "test"
         portolan_dir.mkdir(parents=True)
 
         # Create file
@@ -458,7 +479,7 @@ class TestUncommittedChangeDetection:
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
 
-        portolan_dir = catalog_root / ".portolan" / "collections" / "test"
+        portolan_dir = catalog_root / "test"
         portolan_dir.mkdir(parents=True)
 
         # Create file
@@ -526,7 +547,7 @@ class TestUncommittedChangeDetection:
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
 
-        portolan_dir = catalog_root / ".portolan" / "collections" / "test"
+        portolan_dir = catalog_root / "test"
         portolan_dir.mkdir(parents=True)
 
         # Create versions.json with empty versions list
@@ -550,7 +571,7 @@ class TestUncommittedChangeDetection:
         from portolan_cli.pull import detect_uncommitted_changes
 
         # Delete the data file
-        data_file = catalog_with_versions / "data.parquet"
+        data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.unlink()
 
         changes = detect_uncommitted_changes(
@@ -727,7 +748,7 @@ class TestPullOperation:
         from portolan_cli.pull import pull
 
         # Modify local file to create uncommitted change
-        data_file = catalog_with_versions / "data.parquet"
+        data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.write_bytes(b"modified content - uncommitted")
 
         with patch("portolan_cli.pull._fetch_remote_versions") as mock_fetch:
@@ -753,7 +774,7 @@ class TestPullOperation:
         from portolan_cli.pull import pull
 
         # Modify local file
-        data_file = catalog_with_versions / "data.parquet"
+        data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.write_bytes(b"modified content - will be overwritten")
 
         with patch("portolan_cli.pull._fetch_remote_versions") as mock_fetch:
@@ -809,7 +830,7 @@ class TestPullOperation:
         """Pull should indicate when already up to date."""
         from portolan_cli.pull import pull
 
-        # Use same version as local
+        # Use same version as local (href is relative to catalog_root)
         same_versions_data = {
             "spec_version": "1.0.0",
             "current_version": "1.0.0",
@@ -823,7 +844,7 @@ class TestPullOperation:
                         "data.parquet": {
                             "sha256": "abc123",
                             "size_bytes": 1000,
-                            "href": "data.parquet",
+                            "href": "test-collection/data.parquet",
                         }
                     },
                     "changes": ["data.parquet"],
@@ -872,11 +893,9 @@ class TestPullOperation:
 
         assert result.success is True
 
-        # Verify local versions.json was updated
+        # Verify local versions.json was updated (per ADR-0023: at collection root)
         versions_path = (
             catalog_with_versions
-            / ".portolan"
-            / "collections"
             / "test-collection"
             / "versions.json"
         )
@@ -1420,7 +1439,7 @@ class TestUncommittedConflicts:
         )
 
         # Modify local file
-        data_file = catalog_with_versions / "data.parquet"
+        data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.write_bytes(b"modified content")
 
         result = _check_uncommitted_conflicts(
@@ -1442,7 +1461,7 @@ class TestUncommittedConflicts:
         )
 
         # Modify local file
-        data_file = catalog_with_versions / "data.parquet"
+        data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.write_bytes(b"modified content that differs")
 
         result = _check_uncommitted_conflicts(
@@ -1466,7 +1485,7 @@ class TestUncommittedConflicts:
         )
 
         # Modify local file that's NOT in files_to_download
-        data_file = catalog_with_versions / "data.parquet"
+        data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.write_bytes(b"modified content")
 
         with patch("portolan_cli.pull.detect_uncommitted_changes") as mock_detect:
