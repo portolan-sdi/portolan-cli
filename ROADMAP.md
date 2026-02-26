@@ -19,9 +19,9 @@ Convert files to cloud-native formats, manage metadata, organize into a local ca
 | Capability | Description |
 |------------|-------------|
 | `portolan init` | Create `catalog.json` (root) + `.portolan/` for internal state |
-| `portolan dataset add` | Detect format → convert (GeoParquet/COG) → extract metadata → stage |
-| `portolan dataset remove` | Remove datasets from catalog |
-| `portolan dataset list/info` | Catalog exploration |
+| `portolan add <path>` | Detect format → convert (GeoParquet/COG) → extract metadata → stage |
+| `portolan rm <path>` | Remove datasets from catalog |
+| `portolan status` | Show catalog state and tracked files ([#98](https://github.com/portolan-sdi/portolan-cli/issues/98)) |
 | Interactive + `--auto` | Works for humans and agents |
 
 ### Epic: Cloud Sync
@@ -68,7 +68,7 @@ Generate vector tile overviews from GeoParquet datasets using [gpio-pmtiles](htt
 | Capability | Description |
 |------------|-------------|
 | PMTiles as derivative | Generated from GeoParquet for web display |
-| Automatic on `dataset add` | Optional; controlled by flag or config |
+| Automatic on `portolan add` | Optional; controlled by flag or config |
 | Stored alongside source | Part of the dataset, not a separate dataset |
 
 **Note:** PMTiles are a *view* of the data for rendering, not the source of truth. GeoParquet remains the canonical format. (PMTiles *could* be added as standalone datasets, but the primary use case is as overviews.)
@@ -94,7 +94,7 @@ All functionality is implemented as a Python library; CLI wraps it.
 | `Catalog` class | `init()`, `add()`, `sync()`, `check()` |
 | Built simultaneously | API *is* the implementation; CLI is the interface |
 | Agent-friendly | Clear errors, predictable outputs |
-| `SKILLS.md` | LLM-optimized documentation |
+| `SKILLS.md` | LLM-optimized documentation ([#109](https://github.com/portolan-sdi/portolan-cli/issues/109) — not yet created) |
 
 ### Spec Evolution (Phase 1)
 
@@ -115,7 +115,7 @@ Phase 1 is broken into incremental releases. Each builds on the previous—later
 | **v0.2** | Catalog init | `portolan init` — create `.portolan/` structure ✓ |
 | **v0.3** | Format conversion | Wrap [geoparquet-io](https://github.com/geoparquet/geoparquet-io) + [rio-cogeo](https://github.com/cogeotiff/rio-cogeo), format detection ✓ |
 | **v0.4** | Scan + validation | `portolan scan` (discover files, detect issues), `portolan check` (validate catalog), `check --fix` (convert to cloud-native) ✓ |
-| **v0.5** | Dataset CRUD | `dataset add/list/info/remove` — orchestrate conversion + validation + catalog updates ✓ |
+| **v0.5** | Dataset CRUD | `portolan add/rm` — orchestrate conversion + validation + catalog updates ✓ |
 | **v0.6** | Remote sync | `push`, `pull`, `sync`, `clone` — upload/download primitives + orchestration ✓ |
 | **v0.7** | Versioning | Schema fingerprints, `rollback`, `--breaking` flag, version numbering ([#14](https://github.com/portolan-sdi/portolan-cli/issues/14)) |
 | **v0.8** | Maintenance | `prune` with safety mechanisms ([#15](https://github.com/portolan-sdi/portolan-cli/issues/15)), `repair`|
@@ -219,10 +219,10 @@ Multi-tenant access control for teams sharing a Portolan catalog. Timing and sco
 
 ```bash
 # Add a public dataset
-portolan dataset add satellite.parquet --visibility public
+portolan add satellite.parquet --visibility public
 
 # Add a private dataset for a tenant
-portolan dataset add confidential.parquet --visibility private --tenant acme
+portolan add confidential.parquet --visibility private --tenant acme
 
 # User management (if Portolan handles it)
 portolan user add analyst

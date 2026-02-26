@@ -131,11 +131,11 @@ See the [Contributing Guide](contributing.md) for full setup.
 # Initialize a catalog
 portolan init
 
-# Add a dataset
-portolan dataset add census.parquet --title "Census 2022" --auto
+# Track a dataset
+portolan add census.parquet --title "Census 2022" --auto
 
 # Configure remote storage
-portolan remote add prod s3://my-bucket/catalog
+portolan config set remote s3://my-bucket/catalog
 
 # Sync to remote
 portolan sync
