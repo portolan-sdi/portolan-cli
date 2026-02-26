@@ -834,13 +834,20 @@ def is_current(
         if asset is None:
             return False
 
+    # Get file stats once (used for both mtime and size checks)
+    file_stat = path.stat()
+
     # Fast path: check mtime (2s tolerance for NFS/CIFS compatibility)
     if asset.mtime is not None:
-        current_mtime = path.stat().st_mtime
-        if abs(current_mtime - asset.mtime) < MTIME_TOLERANCE_SECONDS:
+        if abs(file_stat.st_mtime - asset.mtime) < MTIME_TOLERANCE_SECONDS:
             return True
 
-    # Slow path: compare sha256
+    # Medium path: size check before expensive SHA256
+    # If size differs, file definitely changed - skip checksum
+    if asset.size_bytes is not None and file_stat.st_size != asset.size_bytes:
+        return False
+
+    # Slow path: compare sha256 (only if mtime changed but size matches)
     current_checksum = compute_checksum(path)
     return current_checksum == asset.sha256
 
@@ -882,6 +889,11 @@ def add_files(
             files = [path] + get_sidecars(path)
 
         for file_path in files:
+            # Resolve symlinks to track the real file
+            # This ensures we track actual data, not ephemeral links
+            if file_path.is_symlink():
+                file_path = file_path.resolve()
+
             if file_path in processed_paths:
                 continue
             processed_paths.add(file_path)
@@ -917,31 +929,41 @@ def add_files(
 
 
 def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path]:
-    """Iterate over all files in a directory (including sidecars).
+    """Iterate over geospatial files in a directory (including their sidecars).
 
-    Unlike iter_geospatial_files, this returns ALL files in the directory,
-    which is needed for directory add (per issue #97 design).
+    Returns geospatial files and their associated sidecars (e.g., .dbf/.shx for shapefiles).
+    Filters by GEOSPATIAL_EXTENSIONS while iterating for efficiency.
 
     Args:
         path: Directory to scan.
         recursive: If True, scan subdirectories recursively.
 
     Returns:
-        List of all file paths in the directory.
+        List of geospatial file paths and their sidecars.
     """
     if not path.is_dir():
         return []
 
     files: list[Path] = []
+    seen: set[Path] = set()
 
-    if recursive:
-        for item in path.rglob("*"):
-            if item.is_file():
+    iterator = path.rglob("*") if recursive else path.iterdir()
+
+    for item in iterator:
+        if not item.is_file():
+            continue
+
+        # Only process geospatial files (not sidecars directly)
+        if item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
+            if item not in seen:
                 files.append(item)
-    else:
-        for item in path.iterdir():
-            if item.is_file():
-                files.append(item)
+                seen.add(item)
+
+            # Also include any sidecars for this file
+            for sidecar in get_sidecars(item):
+                if sidecar not in seen:
+                    files.append(sidecar)
+                    seen.add(sidecar)
 
     return sorted(files)
 
@@ -988,6 +1010,13 @@ def remove_files(
                 skipped.append(file_path)
                 continue
 
+            # Refuse to delete symlinks - they might point outside the catalog
+            # and deleting them could have unintended consequences. Users should
+            # resolve symlinks manually or use --keep to just untrack.
+            if file_path.is_symlink() and not keep:
+                skipped.append(file_path)
+                continue
+
             # Determine collection ID
             try:
                 coll_id = resolve_collection_id(file_path, catalog_root)
@@ -1013,14 +1042,14 @@ def remove_files(
                 if item_dir.exists() and item_dir.is_dir():
                     shutil.rmtree(item_dir)
 
-                # Delete file from disk
-                if file_path.exists():
-                    file_path.unlink()
+                # Delete file from disk (missing_ok handles race conditions)
+                file_path.unlink(missing_ok=True)
 
                 # Also delete sidecars if this is the primary file
+                # Use missing_ok=True to handle race conditions where another
+                # process might delete the file between exists() and unlink()
                 for sidecar in get_sidecars(file_path):
-                    if sidecar.exists():
-                        sidecar.unlink()
+                    sidecar.unlink(missing_ok=True)
 
             removed.append(file_path)
 
@@ -1050,11 +1079,9 @@ def _increment_version(version: str) -> str:
             prerelease_parts[1] = str(int(prerelease_parts[1]) + 1)
             return f"{base}-{'.'.join(prerelease_parts)}"
         else:
-            # Can't parse prerelease, increment base patch
-            parts = base.split(".")
-            if len(parts) >= 3 and parts[-1].isdigit():
-                parts[-1] = str(int(parts[-1]) + 1)
-            return ".".join(parts)
+            # No numeric suffix: 1.0.0-beta → 1.0.0-beta.1
+            # Preserve the prerelease tag by appending .1
+            return f"{base}-{prerelease}.1"
 
     # Standard semver: increment patch
     parts = version.split(".")
@@ -1102,10 +1129,9 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
     # Compute new version number safely
     new_version = _increment_version(versions_file.current_version or "0.0.0")
 
-    # Handle empty assets case - delete versions.json
-    if not new_assets:
-        versions_path.unlink()
-        return
+    # Note: Even if new_assets is empty, we preserve version history by creating
+    # an empty version entry rather than deleting versions.json entirely.
+    # This maintains collection state and allows seeing what files were removed.
 
     # Create new version entry
     new_assets_typed = {

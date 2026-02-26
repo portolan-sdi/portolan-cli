@@ -357,7 +357,8 @@ class TestFindCatalogRootProperties:
 
             result = find_catalog_root(nested_dir)
 
-            assert result == tmp_path, f"Should find catalog at {tmp_path}, got {result}"
+            # Use resolve() on both sides - macOS /var → /private/var, Windows short names
+            assert result == tmp_path.resolve(), f"Should find catalog at {tmp_path.resolve()}, got {result}"
 
     @pytest.mark.unit
     @given(collection=collection_name)
@@ -372,7 +373,8 @@ class TestFindCatalogRootProperties:
 
             result = find_catalog_root(tmp_path)
 
-            assert result == tmp_path, f"Should find catalog at {tmp_path}"
+            # Use resolve() on both sides - macOS /var → /private/var, Windows short names
+            assert result == tmp_path.resolve(), f"Should find catalog at {tmp_path.resolve()}"
 
     @pytest.mark.unit
     @given(dirname=safe_filename)
@@ -439,9 +441,13 @@ class TestIncrementVersionProperties:
         """_increment_version handles pre-release without number."""
         from portolan_cli.dataset import _increment_version
 
-        # Pre-release without number suffix falls back to patch increment
+        # Pre-release without number suffix appends .1 (preserves prerelease tag)
         result = _increment_version("1.0.0-beta")
-        assert result == "1.0.1"
+        assert result == "1.0.0-beta.1"
+
+        # Works for any prerelease name
+        assert _increment_version("2.0.0-alpha") == "2.0.0-alpha.1"
+        assert _increment_version("1.0.0-rc") == "1.0.0-rc.1"
 
     @pytest.mark.unit
     def test_increment_empty_version(self) -> None:
