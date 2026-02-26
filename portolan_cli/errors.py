@@ -8,6 +8,7 @@ All errors follow the format PRTLN-{category}{number}:
 - PRTLN-VER*: Version errors
 - PRTLN-VAL*: Validation errors
 - PRTLN-CNV*: Conversion errors
+- PRTLN-CFG*: Configuration errors
 """
 
 from __future__ import annotations
@@ -349,4 +350,43 @@ class ValidationFailedError(ConversionError):
             f"Validation failed for {path}: {errors_summary}",
             path=path,
             validation_errors=validation_errors,
+        )
+
+
+# Configuration Errors (PRTLN-CFG*)
+class ConfigError(PortolanError):
+    """Base class for configuration-related errors."""
+
+    code = "PRTLN-CFG000"
+
+
+class ConfigParseError(ConfigError):
+    """Raised when a configuration file cannot be parsed.
+
+    Error code: PRTLN-CFG001
+    """
+
+    code = "PRTLN-CFG001"
+
+    def __init__(self, path: str, parse_error: str) -> None:
+        super().__init__(
+            f"Failed to parse config file {path}: {parse_error}",
+            path=path,
+            parse_error=parse_error,
+        )
+
+
+class ConfigInvalidStructureError(ConfigError):
+    """Raised when a configuration file has an invalid structure.
+
+    Error code: PRTLN-CFG002
+    """
+
+    code = "PRTLN-CFG002"
+
+    def __init__(self, path: str, detail: str) -> None:
+        super().__init__(
+            f"Invalid config structure in {path}: {detail}",
+            path=path,
+            detail=detail,
         )
