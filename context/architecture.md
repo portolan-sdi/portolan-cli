@@ -82,7 +82,7 @@ This is the primary command. It accepts a single file or a directory and runs an
 6. Generate STAC collection/item with metadata
 7. Update `versions.json` with checksums
 8. Generate README from metadata
-9. Stage everything in `.portolan/`
+9. Stage files to the catalog structure (STAC at root per ADR-0023)
 
 Flags:
 - `--auto` / `--non-interactive` — skip interactive prompts, use smart defaults (also the agentic path)
@@ -95,19 +95,24 @@ Flags:
 
 ## Catalog Structure
 
-A Portolan catalog on disk (`.portolan/`) contains:
+Per **ADR-0023**: STAC files live at root level, only internal state goes in `.portolan/`.
 
 ```
-.portolan/
+./                            # Catalog root
 ├── catalog.json              # STAC root catalog
-├── README.md                 # Root README
-├── <dataset>/
+├── versions.json             # Catalog-level versioning (optional)
+├── .portolan/                # Internal state only
+│   ├── config.json           # Catalog configuration
+│   └── state.json            # Local sync state
+├── <collection>/             # Collection at root level
 │   ├── collection.json       # STAC collection
 │   ├── versions.json         # Version manifest with checksums
 │   ├── style.json            # MapLibre style definition
 │   ├── thumbnail.png         # Auto-generated preview
 │   ├── README.md             # Dataset README
-│   └── <data files>          # Cloud-native formats
+│   ├── <item>/               # Item directory
+│   │   ├── item.json         # STAC item
+│   │   └── <data files>      # Cloud-native formats
 ```
 
 ## Remote Ownership

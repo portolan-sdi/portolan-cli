@@ -287,21 +287,24 @@ class MetadataFreshRule(ValidationRule):
         from portolan_cli.metadata.detection import check_file_metadata
         from portolan_cli.metadata.models import MetadataCheckResult, MetadataReport
 
-        # Find all collections in the catalog
-        portolan_dir = catalog_path / ".portolan"
-        if not portolan_dir.exists():
-            return self._pass("No .portolan directory found")
-
-        collections_dir = portolan_dir / "collections"
-        if not collections_dir.exists():
-            return self._pass("No collections directory found")
+        # Find all collections in the catalog (at root level per ADR-0023)
+        catalog_json = catalog_path / "catalog.json"
+        if not catalog_json.exists():
+            return self._pass("No catalog.json found")
 
         # Scan for geo-asset files in collections
         check_results: list[MetadataCheckResult] = []
         extensions = {".parquet", ".tif", ".tiff"}
 
-        for collection_dir in collections_dir.iterdir():
+        # Collections are at root level, identified by collection.json
+        for collection_dir in catalog_path.iterdir():
             if not collection_dir.is_dir():
+                continue
+            # Skip .portolan and hidden directories
+            if collection_dir.name.startswith("."):
+                continue
+            # Only process directories with collection.json
+            if not (collection_dir / "collection.json").exists():
                 continue
             # Find geo-asset files in this collection
             for file_path in collection_dir.rglob("*"):

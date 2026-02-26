@@ -145,7 +145,8 @@ def _read_local_versions(catalog_root: Path, collection: str) -> dict[str, Any]:
         FileNotFoundError: If versions.json doesn't exist.
         ValueError: If versions.json is invalid JSON.
     """
-    versions_path = catalog_root / ".portolan" / "collections" / collection / "versions.json"
+    # versions.json at collection root (per ADR-0023)
+    versions_path = catalog_root / collection / "versions.json"
 
     if not versions_path.exists():
         raise FileNotFoundError(f"versions.json not found: {versions_path}")
@@ -269,7 +270,8 @@ def _fetch_remote_versions(
     Returns:
         Tuple of (versions_data, etag). Both are None if file doesn't exist.
     """
-    key = f"{prefix}/.portolan/collections/{collection}/versions.json".lstrip("/")
+    # versions.json at collection root (per ADR-0023)
+    key = f"{prefix}/{collection}/versions.json".lstrip("/")
 
     try:
         # Single atomic get() - includes metadata with e_tag
@@ -440,7 +442,8 @@ def _upload_versions_json(
     Raises:
         PushConflictError: If etag mismatch (remote changed during push).
     """
-    key = f"{prefix}/.portolan/collections/{collection}/versions.json".lstrip("/")
+    # versions.json at collection root (per ADR-0023)
+    key = f"{prefix}/{collection}/versions.json".lstrip("/")
     content = json.dumps(versions_data, indent=2).encode("utf-8")
 
     try:

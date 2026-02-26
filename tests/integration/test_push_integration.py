@@ -20,11 +20,15 @@ from click.testing import CliRunner
 
 @pytest.fixture
 def catalog_with_versions(tmp_path: Path) -> Path:
-    """Create a catalog with versions.json for integration tests."""
+    """Create a catalog with versions.json for integration tests.
+
+    Per ADR-0023: STAC files (catalog.json, collection.json, versions.json)
+    live at root level, only config.json goes in .portolan/.
+    """
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
-    # Create catalog.json
+    # Create catalog.json at root (per ADR-0023)
     catalog_data = {
         "type": "Catalog",
         "id": "test-catalog",
@@ -34,13 +38,28 @@ def catalog_with_versions(tmp_path: Path) -> Path:
     }
     (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
-    # Create .portolan directory structure
+    # Create .portolan directory for internal state only
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
 
-    # Create collection with versions.json
-    collection_dir = portolan_dir / "collections" / "demographics"
+    # Create collection directory at root with versions.json (per ADR-0023)
+    collection_dir = catalog_dir / "demographics"
     collection_dir.mkdir(parents=True)
+
+    # Create collection.json (STAC collection metadata)
+    collection_data = {
+        "type": "Collection",
+        "id": "demographics",
+        "stac_version": "1.0.0",
+        "description": "Demographics collection",
+        "license": "proprietary",
+        "extent": {
+            "spatial": {"bbox": [[-180, -90, 180, 90]]},
+            "temporal": {"interval": [["2024-01-01T00:00:00Z", None]]},
+        },
+        "links": [],
+    }
+    (collection_dir / "collection.json").write_text(json.dumps(collection_data, indent=2))
 
     versions_data = {
         "spec_version": "1.0.0",
@@ -55,7 +74,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
                     "census.parquet": {
                         "sha256": "abc123def456",
                         "size_bytes": 10240,
-                        "href": "collections/demographics/census.parquet",
+                        "href": "demographics/census.parquet",
                     }
                 },
                 "changes": ["census.parquet"],
@@ -69,7 +88,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
                     "census.parquet": {
                         "sha256": "ghi789jkl012",
                         "size_bytes": 15360,
-                        "href": "collections/demographics/census.parquet",
+                        "href": "demographics/census.parquet",
                     }
                 },
                 "changes": ["census.parquet"],
@@ -78,35 +97,37 @@ def catalog_with_versions(tmp_path: Path) -> Path:
     }
     (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
-    # Create actual asset file
-    asset_dir = catalog_dir / "collections" / "demographics"
-    asset_dir.mkdir(parents=True)
-    (asset_dir / "census.parquet").write_bytes(b"x" * 15360)
+    # Create actual asset file in collection directory
+    (collection_dir / "census.parquet").write_bytes(b"x" * 15360)
 
     return catalog_dir
 
 
 @pytest.fixture
 def catalog_with_versions_malformed(tmp_path: Path) -> Path:
-    """Create a catalog with invalid JSON in versions.json."""
+    """Create a catalog with invalid JSON in versions.json.
+
+    Per ADR-0023: versions.json lives at collection root level.
+    """
     catalog_dir = tmp_path / "catalog_malformed"
     catalog_dir.mkdir()
 
-    # Create catalog.json
+    # Create catalog.json at root
     catalog_data = {
         "type": "Catalog",
         "id": "test-catalog",
         "stac_version": "1.0.0",
+        "description": "Test catalog",
         "links": [],
     }
     (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
-    # Create .portolan directory structure
+    # Create .portolan directory for internal state
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
 
-    # Create collection with invalid JSON in versions.json
-    collection_dir = portolan_dir / "collections" / "demographics"
+    # Create collection directory at root with invalid versions.json
+    collection_dir = catalog_dir / "demographics"
     collection_dir.mkdir(parents=True)
 
     # Write invalid JSON
@@ -117,24 +138,29 @@ def catalog_with_versions_malformed(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def catalog_missing_versions_file(tmp_path: Path) -> Path:
-    """Create a catalog without versions.json file."""
+    """Create a catalog without versions.json file.
+
+    Per ADR-0023: Collection directory exists at root but has no versions.json.
+    """
     catalog_dir = tmp_path / "catalog_no_versions"
     catalog_dir.mkdir()
 
-    # Create catalog.json
+    # Create catalog.json at root
     catalog_data = {
         "type": "Catalog",
         "id": "test-catalog",
         "stac_version": "1.0.0",
+        "description": "Test catalog",
         "links": [],
     }
     (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
-    # Create .portolan directory but no versions.json
+    # Create .portolan directory for internal state
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
 
-    collection_dir = portolan_dir / "collections" / "demographics"
+    # Create collection directory at root but no versions.json
+    collection_dir = catalog_dir / "demographics"
     collection_dir.mkdir(parents=True)
     # Intentionally NOT creating versions.json
 
@@ -517,9 +543,7 @@ class TestAssetPathResolution:
         from portolan_cli.push import _get_assets_to_upload
 
         # Read local versions
-        versions_path = (
-            catalog_with_versions / ".portolan" / "collections" / "demographics" / "versions.json"
-        )
+        versions_path = catalog_with_versions / "demographics" / "versions.json"
         versions_data = json.loads(versions_path.read_text())
 
         assets = _get_assets_to_upload(

@@ -25,9 +25,11 @@ def runner() -> CliRunner:
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
-    """Create an initialized Portolan catalog."""
+    """Create an initialized Portolan catalog (per ADR-0023)."""
+    # Create .portolan for internal state
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
+    # catalog.json at root level (per ADR-0023)
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",
@@ -35,7 +37,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
         "description": "A Portolan-managed STAC catalog",
         "links": [],
     }
-    (portolan_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+    (tmp_path / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
     return tmp_path
 
 

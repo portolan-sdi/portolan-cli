@@ -305,7 +305,7 @@ class TestJsonFileBackendIntegration:
         from pathlib import Path
 
         catalog_root = Path(tmp_path)
-        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir = catalog_root / "test"
         collection_dir.mkdir(parents=True)
 
         # Create versions.json with two versions
@@ -343,7 +343,7 @@ class TestJsonFileBackendIntegration:
         from pathlib import Path
 
         catalog_root = Path(tmp_path)
-        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir = catalog_root / "test"
         collection_dir.mkdir(parents=True)
 
         versions_data = {
@@ -375,7 +375,7 @@ class TestJsonFileBackendIntegration:
         from pathlib import Path
 
         catalog_root = Path(tmp_path)
-        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir = catalog_root / "test"
         collection_dir.mkdir(parents=True)
 
         backend = JsonFileBackend(catalog_root=catalog_root)
@@ -412,7 +412,7 @@ class TestJsonFileBackendIntegration:
         from pathlib import Path
 
         catalog_root = Path(tmp_path)
-        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir = catalog_root / "test"
         collection_dir.mkdir(parents=True)
 
         # Create initial version
@@ -455,7 +455,7 @@ class TestJsonFileBackendIntegration:
         from pathlib import Path
 
         catalog_root = Path(tmp_path)
-        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir = catalog_root / "test"
         collection_dir.mkdir(parents=True)
 
         # Create initial version
@@ -498,7 +498,7 @@ class TestJsonFileBackendIntegration:
         from pathlib import Path
 
         catalog_root = Path(tmp_path)
-        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir = catalog_root / "test"
         collection_dir.mkdir(parents=True)
 
         versions_data = {
@@ -528,7 +528,7 @@ class TestJsonFileBackendIntegration:
         from pathlib import Path
 
         catalog_root = Path(tmp_path)
-        collection_dir = catalog_root / ".portolan" / "collections" / "test"
+        collection_dir = catalog_root / "test"
         collection_dir.mkdir(parents=True)
 
         backend = JsonFileBackend(catalog_root=catalog_root)

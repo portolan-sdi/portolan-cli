@@ -32,7 +32,7 @@ def local_catalog(tmp_path: Path) -> Path:
     catalog_root.mkdir()
 
     # Create .portolan structure
-    portolan_dir = catalog_root / ".portolan" / "collections" / "test-collection"
+    portolan_dir = catalog_root / "test-collection"
     portolan_dir.mkdir(parents=True)
 
     # Create versions.json
@@ -115,7 +115,7 @@ def malformed_local_catalog(tmp_path: Path) -> Path:
     catalog_root = tmp_path / "malformed_local"
     catalog_root.mkdir()
 
-    portolan_dir = catalog_root / ".portolan" / "collections" / "test-collection"
+    portolan_dir = catalog_root / "test-collection"
     portolan_dir.mkdir(parents=True)
 
     # Write invalid JSON
