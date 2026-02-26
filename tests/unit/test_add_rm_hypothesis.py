@@ -358,7 +358,9 @@ class TestFindCatalogRootProperties:
             result = find_catalog_root(nested_dir)
 
             # Use resolve() on both sides - macOS /var → /private/var, Windows short names
-            assert result == tmp_path.resolve(), f"Should find catalog at {tmp_path.resolve()}, got {result}"
+            assert result == tmp_path.resolve(), (
+                f"Should find catalog at {tmp_path.resolve()}, got {result}"
+            )
 
     @pytest.mark.unit
     @given(collection=collection_name)
@@ -514,3 +516,505 @@ class TestConstantsProperties:
         assert ".dbf" in shp_sidecars
         assert ".shx" in shp_sidecars
         assert ".prj" in shp_sidecars
+
+
+# =============================================================================
+# Edge case tests for uncovered branches
+# =============================================================================
+
+
+class TestResolveCollectionIdEdgeCases:
+    """Tests for edge cases in resolve_collection_id."""
+
+    @pytest.mark.unit
+    def test_resolve_raises_for_path_outside_catalog(self, tmp_path: Path) -> None:
+        """resolve_collection_id raises ValueError for paths outside catalog."""
+        from portolan_cli.dataset import resolve_collection_id
+
+        catalog = tmp_path / "catalog"
+        catalog.mkdir()
+        outside_file = tmp_path / "outside.geojson"
+        outside_file.write_text("{}")
+
+        with pytest.raises(ValueError, match="outside catalog root"):
+            resolve_collection_id(outside_file, catalog)
+
+    @pytest.mark.unit
+    def test_resolve_raises_for_file_at_root(self, tmp_path: Path) -> None:
+        """resolve_collection_id raises ValueError for file directly at root."""
+        from portolan_cli.dataset import resolve_collection_id
+
+        catalog = tmp_path / "catalog"
+        catalog.mkdir()
+        root_file = catalog / "data.geojson"
+        root_file.write_text("{}")
+
+        with pytest.raises(ValueError, match="must be in a subdirectory"):
+            resolve_collection_id(root_file, catalog)
+
+
+class TestIsCurrentEdgeCases:
+    """Tests for edge cases in is_current function."""
+
+    @pytest.mark.unit
+    def test_is_current_returns_false_no_versions_file(self, tmp_path: Path) -> None:
+        """is_current returns False when versions.json doesn't exist."""
+        from portolan_cli.dataset import is_current
+
+        test_file = tmp_path / "test.parquet"
+        test_file.write_bytes(b"data")
+        versions_path = tmp_path / "versions.json"
+
+        assert is_current(test_file, versions_path) is False
+
+    @pytest.mark.unit
+    def test_is_current_returns_false_empty_versions(self, tmp_path: Path) -> None:
+        """is_current returns False when versions list is empty."""
+        from portolan_cli.dataset import is_current
+
+        test_file = tmp_path / "test.parquet"
+        test_file.write_bytes(b"data")
+        versions_path = tmp_path / "versions.json"
+        versions_path.write_text(
+            '{"spec_version": "1.0.0", "current_version": null, "versions": []}'
+        )
+
+        assert is_current(test_file, versions_path) is False
+
+    @pytest.mark.unit
+    def test_is_current_returns_false_asset_not_found(self, tmp_path: Path) -> None:
+        """is_current returns False when asset not in versions."""
+        import json
+
+        from portolan_cli.dataset import is_current
+
+        test_file = tmp_path / "new_file.parquet"
+        test_file.write_bytes(b"data")
+        versions_path = tmp_path / "versions.json"
+        versions_path.write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [
+                        {
+                            "version": "1.0.0",
+                            "created": "2024-01-01T00:00:00Z",
+                            "message": "Initial",
+                            "breaking": False,
+                            "changes": ["other.parquet"],
+                            "assets": {
+                                "other.parquet": {
+                                    "sha256": "abc",
+                                    "size_bytes": 100,
+                                    "href": "other.parquet",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+        assert is_current(test_file, versions_path) is False
+
+    @pytest.mark.unit
+    def test_is_current_uses_mtime_fast_path(self, tmp_path: Path) -> None:
+        """is_current returns True when mtime matches (fast path)."""
+        import json
+
+        from portolan_cli.dataset import is_current
+
+        test_file = tmp_path / "test.parquet"
+        test_file.write_bytes(b"data")
+        current_mtime = test_file.stat().st_mtime
+
+        versions_path = tmp_path / "versions.json"
+        versions_path.write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [
+                        {
+                            "version": "1.0.0",
+                            "created": "2024-01-01T00:00:00Z",
+                            "message": "Initial",
+                            "breaking": False,
+                            "changes": ["test.parquet"],
+                            "assets": {
+                                "test.parquet": {
+                                    "sha256": "differenthash",  # Wrong hash, but mtime matches
+                                    "size_bytes": 4,
+                                    "mtime": current_mtime,
+                                    "href": "test.parquet",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+        # Should return True via mtime fast path (doesn't check hash)
+        assert is_current(test_file, versions_path) is True
+
+    @pytest.mark.unit
+    def test_is_current_uses_size_check_medium_path(self, tmp_path: Path) -> None:
+        """is_current returns False when size differs (skips expensive sha256)."""
+        import json
+
+        from portolan_cli.dataset import is_current
+
+        test_file = tmp_path / "test.parquet"
+        test_file.write_bytes(b"data" * 100)  # 400 bytes
+
+        versions_path = tmp_path / "versions.json"
+        versions_path.write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [
+                        {
+                            "version": "1.0.0",
+                            "created": "2024-01-01T00:00:00Z",
+                            "message": "Initial",
+                            "breaking": False,
+                            "changes": ["test.parquet"],
+                            "assets": {
+                                "test.parquet": {
+                                    "sha256": "abc",
+                                    "size_bytes": 100,  # Different size
+                                    "mtime": 0,  # Old mtime
+                                    "href": "test.parquet",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+        # Size differs → return False without computing sha256
+        assert is_current(test_file, versions_path) is False
+
+    @pytest.mark.unit
+    def test_is_current_uses_sha256_slow_path(self, tmp_path: Path) -> None:
+        """is_current falls back to sha256 when mtime differs but size matches."""
+        import json
+
+        from portolan_cli.dataset import compute_checksum, is_current
+
+        test_file = tmp_path / "test.parquet"
+        content = b"exact content"
+        test_file.write_bytes(content)
+        correct_hash = compute_checksum(test_file)
+
+        versions_path = tmp_path / "versions.json"
+        versions_path.write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [
+                        {
+                            "version": "1.0.0",
+                            "created": "2024-01-01T00:00:00Z",
+                            "message": "Initial",
+                            "breaking": False,
+                            "changes": ["test.parquet"],
+                            "assets": {
+                                "test.parquet": {
+                                    "sha256": correct_hash,
+                                    "size_bytes": len(content),
+                                    "mtime": 0,  # Old mtime, forces sha256 check
+                                    "href": "test.parquet",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+        # Mtime old, size matches → fall back to sha256 → match
+        assert is_current(test_file, versions_path) is True
+
+
+class TestAddFilesEdgeCases:
+    """Tests for edge cases in add_files function."""
+
+    @pytest.mark.unit
+    def test_add_files_resolves_symlinks(self, tmp_path: Path) -> None:
+        """add_files resolves symlinks to track real files."""
+        from unittest.mock import patch
+
+        from portolan_cli.dataset import add_files
+
+        # Setup catalog
+        catalog = tmp_path / "catalog"
+        catalog.mkdir()
+        (catalog / "catalog.json").write_text('{"type": "Catalog"}')
+        (catalog / ".portolan").mkdir()
+
+        # Create real file and symlink
+        collection = catalog / "data"
+        collection.mkdir()
+        real_file = collection / "real.geojson"
+        real_file.write_text('{"type": "FeatureCollection", "features": []}')
+        link = collection / "link.geojson"
+        link.symlink_to(real_file)
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            from portolan_cli.dataset import DatasetInfo
+            from portolan_cli.formats import FormatType
+
+            mock_add.return_value = DatasetInfo(
+                item_id="real",
+                collection_id="data",
+                format_type=FormatType.VECTOR,
+                bbox=None,
+                asset_paths=[],
+            )
+
+            added, skipped = add_files(
+                paths=[link],
+                catalog_root=catalog,
+            )
+
+            # Should have called add_dataset with resolved path
+            if mock_add.called:
+                call_path = mock_add.call_args.kwargs.get("path") or mock_add.call_args[1].get(
+                    "path"
+                )
+                # The path should be resolved (not a symlink)
+                assert not call_path.is_symlink() or call_path.resolve() == real_file.resolve()
+
+    @pytest.mark.unit
+    def test_add_files_error_wraps_context(self, tmp_path: Path) -> None:
+        """add_files wraps errors with file path context."""
+        from unittest.mock import patch
+
+        from portolan_cli.dataset import add_files
+
+        # Setup catalog
+        catalog = tmp_path / "catalog"
+        catalog.mkdir()
+        (catalog / "catalog.json").write_text('{"type": "Catalog"}')
+        (catalog / ".portolan").mkdir()
+
+        collection = catalog / "data"
+        collection.mkdir()
+        test_file = collection / "test.geojson"
+        test_file.write_text("{}")
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            mock_add.side_effect = ValueError("original error")
+
+            with pytest.raises(ValueError, match=r"Failed to add.*original error"):
+                add_files(paths=[test_file], catalog_root=catalog)
+
+
+class TestRemoveFilesEdgeCases:
+    """Tests for edge cases in remove_files function."""
+
+    @pytest.mark.unit
+    def test_remove_files_skips_symlinks_without_keep(self, tmp_path: Path) -> None:
+        """remove_files refuses to delete symlinks (security)."""
+        import json
+
+        from portolan_cli.dataset import remove_files
+
+        # Setup catalog
+        catalog = tmp_path / "catalog"
+        catalog.mkdir()
+        (catalog / "catalog.json").write_text('{"type": "Catalog"}')
+
+        # Create real file and symlink
+        collection = catalog / "data"
+        collection.mkdir()
+        real_file = collection / "real.geojson"
+        real_file.write_text("{}")
+        link = collection / "link.geojson"
+        link.symlink_to(real_file)
+
+        # Create versions.json
+        (collection / "versions.json").write_text(
+            json.dumps({"current_version": "1.0.0", "versions": []})
+        )
+
+        # Try to rm the symlink without --keep
+        removed, skipped = remove_files(
+            paths=[link],
+            catalog_root=catalog,
+            keep=False,
+            dry_run=False,
+        )
+
+        # Symlink should be skipped (not deleted)
+        assert link in skipped
+        assert link not in removed
+        # Original file should still exist
+        assert real_file.exists()
+
+    @pytest.mark.unit
+    def test_remove_files_skips_outside_catalog(self, tmp_path: Path) -> None:
+        """remove_files skips files outside catalog."""
+        from portolan_cli.dataset import remove_files
+
+        # Setup catalog
+        catalog = tmp_path / "catalog"
+        catalog.mkdir()
+        (catalog / "catalog.json").write_text('{"type": "Catalog"}')
+
+        # File outside catalog
+        outside = tmp_path / "outside.geojson"
+        outside.write_text("{}")
+
+        removed, skipped = remove_files(
+            paths=[outside],
+            catalog_root=catalog,
+            keep=False,
+            dry_run=False,
+        )
+
+        assert outside in skipped
+        assert outside not in removed
+        # File should still exist
+        assert outside.exists()
+
+    @pytest.mark.unit
+    def test_remove_files_cleans_sidecars(self, tmp_path: Path) -> None:
+        """remove_files deletes sidecars when removing shapefile."""
+        import json
+
+        from portolan_cli.dataset import remove_files
+
+        # Setup catalog
+        catalog = tmp_path / "catalog"
+        catalog.mkdir()
+        (catalog / "catalog.json").write_text('{"type": "Catalog"}')
+
+        collection = catalog / "data"
+        collection.mkdir()
+
+        # Create shapefile with sidecars
+        shp = collection / "test.shp"
+        dbf = collection / "test.dbf"
+        shx = collection / "test.shx"
+        prj = collection / "test.prj"
+        for f in [shp, dbf, shx, prj]:
+            f.write_bytes(b"data")
+
+        # Create versions.json
+        (collection / "versions.json").write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [
+                        {
+                            "version": "1.0.0",
+                            "created": "2024-01-01T00:00:00Z",
+                            "message": "test",
+                            "breaking": False,
+                            "changes": ["test.parquet"],
+                            "assets": {
+                                "test.parquet": {
+                                    "sha256": "abc",
+                                    "size_bytes": 4,
+                                    "href": "test.parquet",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+        removed, skipped = remove_files(
+            paths=[shp],
+            catalog_root=catalog,
+            keep=False,
+            dry_run=False,
+        )
+
+        # Primary file deleted
+        assert not shp.exists()
+        # Sidecars also deleted
+        assert not dbf.exists()
+        assert not shx.exists()
+        assert not prj.exists()
+
+
+class TestRemoveFromVersionsEdgeCases:
+    """Tests for edge cases in _remove_from_versions function."""
+
+    @pytest.mark.unit
+    def test_remove_from_versions_noop_no_file(self, tmp_path: Path) -> None:
+        """_remove_from_versions is a no-op if versions.json doesn't exist."""
+        from portolan_cli.dataset import _remove_from_versions
+
+        test_file = tmp_path / "test.parquet"
+        versions_path = tmp_path / "versions.json"
+
+        # Should not raise
+        _remove_from_versions(test_file, versions_path)
+
+    @pytest.mark.unit
+    def test_remove_from_versions_noop_empty_versions(self, tmp_path: Path) -> None:
+        """_remove_from_versions is a no-op if versions list is empty."""
+        from portolan_cli.dataset import _remove_from_versions
+
+        test_file = tmp_path / "test.parquet"
+        versions_path = tmp_path / "versions.json"
+        versions_path.write_text(
+            '{"spec_version": "1.0.0", "current_version": null, "versions": []}'
+        )
+
+        # Should not raise
+        _remove_from_versions(test_file, versions_path)
+
+        # File unchanged
+        content = versions_path.read_text()
+        assert '"versions": []' in content
+
+
+class TestIterFilesWithSidecarsEdgeCases:
+    """Tests for edge cases in iter_files_with_sidecars."""
+
+    @pytest.mark.unit
+    def test_iter_returns_empty_for_non_directory(self, tmp_path: Path) -> None:
+        """iter_files_with_sidecars returns empty list for non-directory."""
+        from portolan_cli.dataset import iter_files_with_sidecars
+
+        test_file = tmp_path / "test.geojson"
+        test_file.write_text("{}")
+
+        result = iter_files_with_sidecars(test_file)
+        assert result == []
+
+    @pytest.mark.unit
+    def test_iter_skips_non_geospatial_in_nested_dirs(self, tmp_path: Path) -> None:
+        """iter_files_with_sidecars skips non-geospatial files in nested dirs."""
+        from portolan_cli.dataset import iter_files_with_sidecars
+
+        # Create nested structure
+        nested = tmp_path / "sub" / "deep"
+        nested.mkdir(parents=True)
+
+        # Create geospatial and non-geospatial files
+        geo = nested / "data.geojson"
+        geo.write_text("{}")
+        non_geo = nested / "readme.txt"
+        non_geo.write_text("hello")
+        non_geo2 = nested / "config.json"
+        non_geo2.write_text("{}")
+
+        result = iter_files_with_sidecars(tmp_path)
+
+        # Only geospatial file returned
+        assert geo in result
+        assert non_geo not in result
+        assert non_geo2 not in result

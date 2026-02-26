@@ -20,6 +20,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
 
       - name: Set up Python
         run: uv python install 3.11
@@ -47,6 +49,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
 
       - name: Set up Python
         run: uv python install 3.11
@@ -79,6 +83,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: nick-fields/retry@v3
@@ -109,6 +115,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
 
       - name: Set up Python
         run: uv python install 3.11
@@ -130,6 +138,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
 
       - name: Set up Python
         run: uv python install 3.11
@@ -148,6 +158,8 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
 
       - name: Set up Python
         run: uv python install 3.11
