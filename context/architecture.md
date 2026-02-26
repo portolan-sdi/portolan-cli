@@ -1,5 +1,7 @@
 # Portolan CLI Architecture
 
+> **⚠️ Documentation Status:** This document describes both implemented features and planned behavior. Commands exist but some workflows are still being refined. See ROADMAP.md for implementation status.
+
 ## Overview
 
 Portolan CLI is the command-line tool for creating and managing Portolan catalogs — collections of cloud-native geospatial data with rich metadata, styling, and versioning. It orchestrates format conversion, STAC catalog generation, metadata enrichment, and cloud sync.
@@ -64,7 +66,7 @@ portolan dataset info <name>           # Collection/item metadata summary
 # Remote sync (all require --collection/-c flag)
 portolan push <url> -c <collection>    # Upload collection to remote
 portolan pull <url> -c <collection>    # Download collection from remote
-portolan sync <url> -c <collection>    # Orchestrate: pull → check --fix → push
+portolan sync <url> -c <collection>    # Full workflow: pull → init → scan → check → push
 portolan clone <url> <path> -c <coll>  # Clone remote collection to new directory
 
 # Configuration

@@ -41,7 +41,7 @@ portolan check                              # Validate catalog
 portolan check --fix                        # Convert to cloud-native formats
 portolan rm --keep demographics/old.parquet # Untrack without deleting
 portolan pull s3://my-bucket/catalog -c demographics  # Pull from remote
-portolan sync s3://my-bucket/catalog -c demographics  # Pull + push
+portolan sync s3://my-bucket/catalog -c demographics  # Full workflow: pull → check → push
 portolan config set remote s3://my-bucket/catalog     # Save remote URL
 portolan config list                        # List all config settings
 ```

@@ -28,6 +28,18 @@ Portolan doesn't do the heavy lifting—it orchestrates libraries like `geoparqu
 
 The CLI has a legacy `portolan dataset` command group for backward compatibility, but documentation and new code should use STAC terms.
 
+## Documentation Accuracy (CRITICAL)
+
+**ROADMAP.md is the source of truth for planned vs implemented features.**
+
+When documenting CLI commands:
+1. **Run `portolan <command> --help`** to verify actual behavior
+2. **Check ROADMAP.md** for planned features (✓ = implemented, no mark = planned)
+3. **Do NOT deprecate planned features** — if it's in the roadmap, it's intended
+4. **Do NOT simplify orchestration commands** — document the FULL workflow
+
+**Example:** `portolan sync` orchestrates `pull → init → scan → check → push`. Do NOT describe it as just "pull + push" — that misrepresents the command's purpose.
+
 **Key dependencies (check these repos for API docs):**
 - [geoparquet-io](https://github.com/geoparquet/geoparquet-io) — Vector format conversion
 - [gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles) — PMTiles generation from GeoParquet
