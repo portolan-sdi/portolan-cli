@@ -331,10 +331,12 @@ def _output_combined_check_json(
             "warnings": len(metadata_report.warnings),
         }
         if metadata_report.errors:
-            errors.extend([
-                ErrorDetail(type="ValidationError", message=r.message)
-                for r in metadata_report.errors
-            ])
+            errors.extend(
+                [
+                    ErrorDetail(type="ValidationError", message=r.message)
+                    for r in metadata_report.errors
+                ]
+            )
 
     if format_report is not None:
         data["format"] = format_report.to_dict()
@@ -413,39 +415,60 @@ def check(
     """
     use_json = should_output_json(ctx, json_output)
 
-    # Validate path exists (handle in code for JSON envelope support)
+    # Validate path exists
     if not path.exists():
-        if use_json:
-            envelope = error_envelope(
-                "check",
-                [ErrorDetail(type="PathNotFoundError", message=f"Path does not exist: {path}")],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Path does not exist: {path}")
-        raise SystemExit(1)
+        _handle_path_not_found(path, use_json)
 
     # Warn if --dry-run is used without --fix
     if dry_run and not fix:
         warn("--dry-run has no effect without --fix")
 
-    # Determine which checks to run based on flags
-    # For backward compatibility:
-    # - No flags, no fix → metadata only (original behavior)
-    # - No flags, with fix → format only (original behavior)
-    # - Explicit flags override the default behavior
+    # Determine which checks to run
+    run_metadata, run_format, mode = _determine_check_mode(metadata, geo_assets, fix)
+
+    # Execute the appropriate check workflow
+    _execute_check_workflow(
+        path=path,
+        run_metadata=run_metadata,
+        run_format=run_format,
+        mode=mode,
+        fix=fix,
+        dry_run=dry_run,
+        use_json=use_json,
+        verbose=verbose,
+    )
+
+
+def _handle_path_not_found(path: Path, use_json: bool) -> None:
+    """Handle path not found error and exit."""
+    if use_json:
+        envelope = error_envelope(
+            "check",
+            [ErrorDetail(type="PathNotFoundError", message=f"Path does not exist: {path}")],
+        )
+        output_json_envelope(envelope)
+    else:
+        error(f"Path does not exist: {path}")
+    raise SystemExit(1)
+
+
+def _determine_check_mode(metadata: bool, geo_assets: bool, fix: bool) -> tuple[bool, bool, str]:
+    """Determine which checks to run and the mode string.
+
+    Returns:
+        Tuple of (run_metadata, run_format, mode_string).
+    """
     explicit_flags = metadata or geo_assets
 
     if explicit_flags:
-        # User explicitly specified what to check
         run_metadata = metadata
         run_format = geo_assets
     else:
-        # Backward compatible default: metadata without fix, format with fix
+        # Backward compatible: metadata without fix, format with fix
         run_metadata = not fix
         run_format = fix
 
-    # Determine mode for JSON output
+    # Determine mode string
     if run_metadata and not run_format:
         mode = "metadata"
     elif run_format and not run_metadata:
@@ -453,31 +476,33 @@ def check(
     else:
         mode = "all"
 
-    # Track results for combined output
-    has_errors = False
+    return run_metadata, run_format, mode
+
+
+def _execute_check_workflow(
+    *,
+    path: Path,
+    run_metadata: bool,
+    run_format: bool,
+    mode: str,
+    fix: bool,
+    dry_run: bool,
+    use_json: bool,
+    verbose: bool,
+) -> None:
+    """Execute the check workflow based on flags."""
     metadata_report = None
-    format_report = None
 
     # Run metadata validation if requested
     if run_metadata:
         metadata_report = validate_catalog(path)
         if not run_format:
-            # Metadata-only mode: output and exit
-            if use_json:
-                _output_check_json(metadata_report, mode=mode)
-            else:
-                for result in metadata_report.results:
-                    if verbose or not result.passed:
-                        _print_validation_result(result)
-                _print_check_summary(metadata_report)
-            if metadata_report.errors:
-                raise SystemExit(1)
+            _output_metadata_only(metadata_report, mode, use_json, verbose)
             return
 
     # Run format check if requested
     if run_format:
         if fix:
-            # Run conversion workflow
             _run_check_fix(
                 path=path,
                 dry_run=dry_run,
@@ -486,26 +511,47 @@ def check(
                 mode=mode,
                 metadata_report=metadata_report,
             )
-            return
+        elif not run_metadata:
+            _output_format_only(path, mode, use_json, verbose)
         else:
-            # Just check format status (no conversion)
-            format_report = check_directory(path, fix=False, dry_run=False)
-            if not run_metadata:
-                # Format-only mode: output and exit
-                if use_json:
-                    data = format_report.to_dict()
-                    data["mode"] = mode
-                    envelope = success_envelope("check", data)
-                    output_json_envelope(envelope)
-                else:
-                    _print_format_check_results(format_report, verbose=verbose)
-                return
+            _output_combined(path, metadata_report, mode, use_json, verbose)
 
-    # Combined mode: output both results
+
+def _output_metadata_only(report: Any, mode: str, use_json: bool, verbose: bool) -> None:
+    """Output metadata-only check results."""
+    if use_json:
+        _output_check_json(report, mode=mode)
+    else:
+        for result in report.results:
+            if verbose or not result.passed:
+                _print_validation_result(result)
+        _print_check_summary(report)
+    if report.errors:
+        raise SystemExit(1)
+
+
+def _output_format_only(path: Path, mode: str, use_json: bool, verbose: bool) -> None:
+    """Output format-only check results."""
+    format_report = check_directory(path, fix=False, dry_run=False)
+    if use_json:
+        data = format_report.to_dict()
+        data["mode"] = mode
+        envelope = success_envelope("check", data)
+        output_json_envelope(envelope)
+    else:
+        _print_format_check_results(format_report, verbose=verbose)
+
+
+def _output_combined(
+    path: Path, metadata_report: Any, mode: str, use_json: bool, verbose: bool
+) -> None:
+    """Output combined metadata + format check results."""
+    format_report = check_directory(path, fix=False, dry_run=False)
+    has_errors = False
+
     if use_json:
         _output_combined_check_json(metadata_report, format_report, mode=mode)
     else:
-        # Human-readable output for both
         if metadata_report:
             info("Metadata validation:")
             for result in metadata_report.results:
@@ -517,7 +563,6 @@ def check(
             info("\nFormat check:")
             _print_format_check_results(format_report, verbose=verbose)
 
-    # Exit code: 1 if any errors
     if has_errors:
         raise SystemExit(1)
 
@@ -546,67 +591,71 @@ def _run_check_fix(
         mode: Check mode ("metadata", "format", or "all").
         metadata_report: Optional ValidationReport from metadata validation.
     """
-    from portolan_cli.convert import ConversionStatus
-
-    # Run check with fix
     report = check_directory(path, fix=True, dry_run=dry_run)
-
-    has_errors = False
+    has_metadata_errors = metadata_report is not None and bool(metadata_report.errors)
+    has_conversion_errors = (
+        report.conversion_report is not None and report.conversion_report.failed > 0
+    )
 
     if use_json:
-        # JSON output
-        data = report.to_dict()
-        data["mode"] = mode
-        if metadata_report is not None:
-            data["metadata"] = metadata_report.to_dict()
-            has_errors = bool(metadata_report.errors)
-
-        if report.conversion_report is not None and report.conversion_report.failed > 0:
-            errors = [
-                ErrorDetail(
-                    type="ConversionFailed",
-                    message=r.error or "Unknown error",
-                )
-                for r in report.conversion_report.results
-                if r.status == ConversionStatus.FAILED
-            ]
-            if has_errors and metadata_report is not None:
-                errors.extend([
-                    ErrorDetail(type="ValidationError", message=r.message)
-                    for r in metadata_report.errors
-                ])
-            envelope = error_envelope("check", errors, data=data)
-        elif has_errors and metadata_report is not None:
-            errors = [
-                ErrorDetail(type="ValidationError", message=r.message)
-                for r in metadata_report.errors
-            ]
-            envelope = error_envelope("check", errors, data=data)
-        else:
-            envelope = success_envelope("check", data)
-        output_json_envelope(envelope)
+        _output_fix_json(report, metadata_report, mode)
     else:
-        # Human-readable output
-        if metadata_report is not None:
-            info("Metadata validation:")
-            for result in metadata_report.results:
-                if verbose or not result.passed:
-                    _print_validation_result(result)
-            _print_check_summary(metadata_report)
-            has_errors = bool(metadata_report.errors)
-            info("")  # Blank line separator
+        _output_fix_human(report, metadata_report, dry_run, verbose)
 
-        info("Format conversion:")
-        if dry_run:
-            _print_check_fix_preview(report)
-        else:
-            _print_check_fix_results(report, verbose=verbose)
+    if has_conversion_errors or has_metadata_errors:
+        raise SystemExit(1)
 
-    # Exit code based on conversion results AND metadata errors
-    if report.conversion_report is not None and report.conversion_report.failed > 0:
-        raise SystemExit(1)
-    if has_errors:
-        raise SystemExit(1)
+
+def _output_fix_json(report: Any, metadata_report: Any | None, mode: str) -> None:
+    """Output JSON for check --fix workflow."""
+    from portolan_cli.convert import ConversionStatus
+
+    data = report.to_dict()
+    data["mode"] = mode
+    has_metadata_errors = metadata_report is not None and bool(metadata_report.errors)
+    has_conversion_errors = (
+        report.conversion_report is not None and report.conversion_report.failed > 0
+    )
+
+    if metadata_report is not None:
+        data["metadata"] = metadata_report.to_dict()
+
+    errors: list[ErrorDetail] = []
+    if has_conversion_errors and report.conversion_report is not None:
+        errors.extend(
+            ErrorDetail(type="ConversionFailed", message=r.error or "Unknown error")
+            for r in report.conversion_report.results
+            if r.status == ConversionStatus.FAILED
+        )
+    if has_metadata_errors and metadata_report is not None:
+        errors.extend(
+            ErrorDetail(type="ValidationError", message=r.message) for r in metadata_report.errors
+        )
+
+    if errors:
+        envelope = error_envelope("check", errors, data=data)
+    else:
+        envelope = success_envelope("check", data)
+    output_json_envelope(envelope)
+
+
+def _output_fix_human(
+    report: Any, metadata_report: Any | None, dry_run: bool, verbose: bool
+) -> None:
+    """Output human-readable results for check --fix workflow."""
+    if metadata_report is not None:
+        info("Metadata validation:")
+        for result in metadata_report.results:
+            if verbose or not result.passed:
+                _print_validation_result(result)
+        _print_check_summary(metadata_report)
+        info("")  # Blank line separator
+
+    info("Format conversion:")
+    if dry_run:
+        _print_check_fix_preview(report)
+    else:
+        _print_check_fix_results(report, verbose=verbose)
 
 
 def _print_check_fix_preview(report: Any) -> None:

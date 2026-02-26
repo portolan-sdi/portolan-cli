@@ -463,7 +463,9 @@ class TestCheckMetadataGeoAssetsFlags:
 
         with (
             patch("portolan_cli.cli.validate_catalog") as mock_validate,
-            patch("portolan_cli.cli.check_directory", return_value=mock_check_report) as mock_check_dir,
+            patch(
+                "portolan_cli.cli.check_directory", return_value=mock_check_report
+            ) as mock_check_dir,
         ):
             result = runner.invoke(cli, ["check", str(tmp_path), "--geo-assets"])
 
@@ -484,7 +486,9 @@ class TestCheckMetadataGeoAssetsFlags:
 
         with (
             patch("portolan_cli.cli.validate_catalog") as mock_validate,
-            patch("portolan_cli.cli.check_directory", return_value=mock_check_report) as mock_check_dir,
+            patch(
+                "portolan_cli.cli.check_directory", return_value=mock_check_report
+            ) as mock_check_dir,
         ):
             result = runner.invoke(cli, ["check", str(tmp_path), "--geo-assets", "--fix"])
 
@@ -501,9 +505,7 @@ class TestCheckMetadataGeoAssetsFlags:
     # ─────────────────────────────────────────────────────────────────────────
 
     @pytest.mark.unit
-    def test_both_flags_runs_both_validations(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_both_flags_runs_both_validations(self, runner: CliRunner, tmp_path: Path) -> None:
         """'portolan check --metadata --geo-assets' should run both validations."""
         from portolan_cli.check import CheckReport
 
@@ -520,8 +522,12 @@ class TestCheckMetadataGeoAssetsFlags:
         mock_check_report = CheckReport(root=tmp_path, files=[], conversion_report=None)
 
         with (
-            patch("portolan_cli.cli.validate_catalog", return_value=mock_validation_report) as mock_validate,
-            patch("portolan_cli.cli.check_directory", return_value=mock_check_report) as mock_check_dir,
+            patch(
+                "portolan_cli.cli.validate_catalog", return_value=mock_validation_report
+            ) as mock_validate,
+            patch(
+                "portolan_cli.cli.check_directory", return_value=mock_check_report
+            ) as mock_check_dir,
         ):
             result = runner.invoke(cli, ["check", str(tmp_path), "--metadata", "--geo-assets"])
 
@@ -551,7 +557,9 @@ class TestCheckMetadataGeoAssetsFlags:
         )
 
         with (
-            patch("portolan_cli.cli.validate_catalog", return_value=mock_validation_report) as mock_validate,
+            patch(
+                "portolan_cli.cli.validate_catalog", return_value=mock_validation_report
+            ) as mock_validate,
             patch("portolan_cli.cli.check_directory") as mock_check_dir,
         ):
             result = runner.invoke(cli, ["check", str(tmp_path)])
@@ -562,9 +570,7 @@ class TestCheckMetadataGeoAssetsFlags:
             assert result.exit_code == 0
 
     @pytest.mark.unit
-    def test_no_flags_with_fix_runs_format_only(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_no_flags_with_fix_runs_format_only(self, runner: CliRunner, tmp_path: Path) -> None:
         """'portolan check --fix' (no filter flags) runs format conversion only (backward compatible)."""
         from portolan_cli.check import CheckReport
 
@@ -572,7 +578,9 @@ class TestCheckMetadataGeoAssetsFlags:
 
         with (
             patch("portolan_cli.cli.validate_catalog") as mock_validate,
-            patch("portolan_cli.cli.check_directory", return_value=mock_check_report) as mock_check_dir,
+            patch(
+                "portolan_cli.cli.check_directory", return_value=mock_check_report
+            ) as mock_check_dir,
         ):
             result = runner.invoke(cli, ["check", str(tmp_path), "--fix"])
 
@@ -631,9 +639,7 @@ class TestCheckMetadataGeoAssetsFlags:
             assert output["data"].get("mode") == "geo-assets"
 
     @pytest.mark.unit
-    def test_json_output_includes_mode_both(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_json_output_includes_mode_both(self, runner: CliRunner, tmp_path: Path) -> None:
         """JSON output should indicate when both validations were run (explicit flags)."""
         from portolan_cli.check import CheckReport
 
@@ -654,7 +660,9 @@ class TestCheckMetadataGeoAssetsFlags:
             patch("portolan_cli.cli.check_directory", return_value=mock_check_report),
         ):
             # Explicit flags to run both validations
-            result = runner.invoke(cli, ["check", str(tmp_path), "--metadata", "--geo-assets", "--json"])
+            result = runner.invoke(
+                cli, ["check", str(tmp_path), "--metadata", "--geo-assets", "--json"]
+            )
 
             assert result.exit_code == 0
             output = json.loads(result.output)
@@ -694,9 +702,7 @@ class TestCheckMetadataGeoAssetsFlags:
     # ─────────────────────────────────────────────────────────────────────────
 
     @pytest.mark.unit
-    def test_metadata_errors_reported_correctly(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_metadata_errors_reported_correctly(self, runner: CliRunner, tmp_path: Path) -> None:
         """Metadata validation errors should be reported with --metadata flag."""
         mock_report = ValidationReport(
             results=[
@@ -775,9 +781,7 @@ class TestCheckFlagCombinationsHypothesis:
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=50)
     @given(flags=flag_combinations)
     @pytest.mark.unit
-    def test_exit_code_is_valid(
-        self, runner: CliRunner, flags: dict, tmp_path: Path
-    ) -> None:
+    def test_exit_code_is_valid(self, runner: CliRunner, flags: dict, tmp_path: Path) -> None:
         """Exit code should always be 0 or 1 for any flag combination."""
         from portolan_cli.check import CheckReport
 
@@ -813,7 +817,9 @@ class TestCheckFlagCombinationsHypothesis:
             result = runner.invoke(cli, args)
 
             # Exit code should always be 0 or 1
-            assert result.exit_code in (0, 1), f"Unexpected exit code {result.exit_code} for args {args}"
+            assert result.exit_code in (0, 1), (
+                f"Unexpected exit code {result.exit_code} for args {args}"
+            )
 
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=30)
     @given(flags=st.fixed_dictionaries({"metadata": st.booleans(), "geo_assets": st.booleans()}))
@@ -856,7 +862,9 @@ class TestCheckFlagCombinationsHypothesis:
                     assert "success" in output, "JSON should have 'success' field"
                     assert "command" in output, "JSON should have 'command' field"
                 except json.JSONDecodeError as e:
-                    pytest.fail(f"Invalid JSON output for args {args}: {e}\nOutput: {result.output[:200]}")
+                    pytest.fail(
+                        f"Invalid JSON output for args {args}: {e}\nOutput: {result.output[:200]}"
+                    )
 
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=20)
     @given(
@@ -909,7 +917,9 @@ class TestCheckFlagCombinationsHypothesis:
                     # No explicit flags = backward compatible (metadata only without --fix)
                     expected_mode = "metadata"
 
-                assert mode == expected_mode, f"Expected mode '{expected_mode}' but got '{mode}' for flags metadata={metadata}, geo_assets={geo_assets}"
+                assert mode == expected_mode, (
+                    f"Expected mode '{expected_mode}' but got '{mode}' for flags metadata={metadata}, geo_assets={geo_assets}"
+                )
 
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=20)
     @given(fix=st.booleans(), dry_run=st.booleans())

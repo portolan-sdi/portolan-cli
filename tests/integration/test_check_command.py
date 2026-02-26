@@ -644,9 +644,7 @@ class TestCheckBothFlags:
         input_dir.mkdir()
         shutil.copy(valid_points_geojson, input_dir / "points.geojson")
 
-        result = runner.invoke(
-            cli, ["check", str(tmp_path), "--metadata", "--geo-assets"]
-        )
+        result = runner.invoke(cli, ["check", str(tmp_path), "--metadata", "--geo-assets"])
 
         # Should fail due to missing catalog
         assert result.exit_code == 1
