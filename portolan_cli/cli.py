@@ -1983,7 +1983,7 @@ def config_list(ctx: click.Context, collection: str | None) -> None:
     settings = list_settings(catalog_path, collection=collection)
 
     if use_json:
-        data = {"settings": settings}
+        data: dict[str, Any] = {"settings": settings}
         if collection:
             data["collection"] = collection
         envelope = success_envelope("config list", data)
