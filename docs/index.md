@@ -131,10 +131,10 @@ See the [Contributing Guide](contributing.md) for full setup.
 # Initialize a catalog
 portolan init
 
-# Track a dataset (collection inferred from directory)
-portolan add demographics/census.parquet
+# Add files to a collection (collection name = directory name)
+portolan add demographics/
 
-# Push to remote storage
+# Push the collection to remote storage
 portolan push s3://my-bucket/catalog --collection demographics
 ```
 

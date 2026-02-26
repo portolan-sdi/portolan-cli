@@ -21,16 +21,16 @@ This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich
 ## Quick Start
 
 ```bash
-# Initialize a catalog in the current directory
+# Initialize a catalog
 portolan init
 
-# Scan files before adding (optional but recommended)
+# Scan a directory for issues (optional but recommended)
 portolan scan demographics/
 
-# Add a dataset (collection is inferred from the directory name)
-portolan add demographics/census.parquet
+# Add all files in a directory (creates a "demographics" collection)
+portolan add demographics/
 
-# Push collection to remote storage
+# Push the collection to remote storage
 portolan push s3://my-bucket/catalog --collection demographics
 ```
 

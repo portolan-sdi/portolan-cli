@@ -54,12 +54,12 @@ portolan check --fix --dry-run         # Preview cloud-native conversions
 portolan check --metadata              # Validate STAC metadata only
 portolan check --geo-assets            # Check cloud-native compliance only
 
-# Dataset management (git-style top-level commands)
+# File tracking (git-style top-level commands)
 portolan add <path>                    # Track files (collection inferred from directory)
 portolan rm <path>                     # Untrack and delete (requires --force)
 portolan rm --keep <path>              # Untrack without deleting
-portolan dataset list                  # Show catalog contents
-portolan dataset info <name>           # Metadata, extent, schema summary
+portolan dataset list                  # List collections and items
+portolan dataset info <name>           # Collection/item metadata summary
 
 # Remote sync (all require --collection/-c flag)
 portolan push <url> -c <collection>    # Upload collection to remote
@@ -131,7 +131,7 @@ Currently, `push --force` can overwrite remote state. Future commands for drift 
 
 `versions.json` is the single source of truth for version history, sync state, and integrity checksums. See **ADR-0005** for the full design.
 
-- Current version files live at dataset root
+- Current version files live at collection/item root
 - Old versions archived to `/v{version}/` paths
 - Version pruning is planned (see ROADMAP v0.8)
 
@@ -172,18 +172,18 @@ Every Portolan operation is available as both a CLI command and a Python functio
 ```python
 # Python API (module-level functions)
 from portolan_cli.catalog import init_catalog
-from portolan_cli.dataset import add_dataset
+from portolan_cli.dataset import add_dataset  # Legacy name, tracks files to collection
 from portolan_cli.push import push
 
 init_catalog(Path("./my-catalog"))
-add_dataset(Path("./my-catalog"), Path("demographics/census.parquet"))
+add_dataset(Path("./my-catalog"), Path("demographics/"))  # Add directory to collection
 push(Path("./my-catalog"), "s3://bucket/catalog", collection="demographics")
 ```
 
 ```bash
 # CLI equivalent
 portolan init
-portolan add demographics/census.parquet
+portolan add demographics/
 portolan push s3://bucket/catalog --collection demographics
 ```
 

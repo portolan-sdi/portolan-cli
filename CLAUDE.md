@@ -12,6 +12,22 @@ Portolan is a CLI for publishing and managing **cloud-native geospatial data cat
 
 Portolan doesn't do the heavy lifting—it orchestrates libraries like `geoparquet-io` and `rio-cogeo`.
 
+## Terminology (ENFORCED)
+
+**Use STAC terminology exclusively.** Do NOT use "dataset" — it's ambiguous and not part of the STAC spec.
+
+| Term | Meaning | Example |
+|------|---------|---------|
+| **Catalog** | Root container with metadata | `catalog.json` at repo root |
+| **Collection** | Group of related items | `demographics/collection.json` |
+| **Item** | Single spatiotemporal entity | `demographics/census-2020/item.json` |
+| **Asset** | Actual data file | `demographics/census-2020/data.parquet` |
+
+**Correct:** "Add files to a collection", "Track items", "Push a collection"
+**Wrong:** "Add a dataset", "Import datasets", "Dataset management"
+
+The CLI has a legacy `portolan dataset` command group for backward compatibility, but documentation and new code should use STAC terms.
+
 **Key dependencies (check these repos for API docs):**
 - [geoparquet-io](https://github.com/geoparquet/geoparquet-io) — Vector format conversion
 - [gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles) — PMTiles generation from GeoParquet
