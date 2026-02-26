@@ -207,7 +207,7 @@ class TestAdd:
             result = runner.invoke(cli, ["add", str(test_file)])
 
             assert result.exit_code == 1
-            assert "not a catalog" in result.output.lower()
+            assert "no catalog.json found" in result.output.lower()
 
 
 class TestRm:

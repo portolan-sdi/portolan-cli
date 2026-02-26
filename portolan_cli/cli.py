@@ -16,6 +16,7 @@ import click
 from portolan_cli.dataset import (
     DatasetInfo,
     add_files,
+    find_catalog_root,
     get_dataset_info,
     get_sidecars,
     list_datasets,
@@ -1064,20 +1065,23 @@ def _output_add_results(
     "--catalog",
     "catalog_path",
     type=click.Path(path_type=Path),
-    default=".",
-    help="Path to catalog root (default: current directory).",
+    default=None,
+    help="Path to catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
-def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path) -> None:
+def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | None) -> None:
     """Track files in the catalog.
 
     Adds files to the Portolan catalog with automatic collection inference.
     The collection ID is determined from the first directory component of
     the path relative to the catalog root.
 
+    Works like git: run from anywhere inside a catalog and it auto-detects
+    the catalog root. Use --catalog to override.
+
     \b
     Examples:
-        portolan add demographics/census.parquet
+        cd my-catalog && portolan add demographics/census.parquet
         portolan add imagery/                      # Add all files in directory
         portolan add .                             # Add all files in catalog
 
@@ -1087,11 +1091,28 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path) -
     - Sidecar files (.dbf, .shx, .prj for shapefiles) are auto-detected
     """
     use_json = should_output_json(ctx)
-    catalog_root = catalog_path.resolve()
     target_path = path.resolve()
 
-    # Validate catalog exists
-    if not (catalog_root / "catalog.json").exists():
+    # Auto-detect catalog root (git-style)
+    catalog_root: Path
+    if catalog_path is not None:
+        catalog_root = catalog_path.resolve()
+    else:
+        detected_root = find_catalog_root()
+        if detected_root is None:
+            _handle_add_error(
+                "add",
+                "NotACatalogError",
+                "Not inside a Portolan catalog (no catalog.json found)",
+                use_json,
+            )
+            if not use_json:
+                detail("Run 'portolan init' to create a catalog, or cd into one")
+            raise SystemExit(1)
+        catalog_root = detected_root
+
+    # Validate catalog exists (when explicitly specified)
+    if catalog_path is not None and not (catalog_root / "catalog.json").exists():
         _handle_add_error("add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json)
         if not use_json:
             detail("Run 'portolan init' to create a catalog")
@@ -1130,28 +1151,54 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path) -
     "--catalog",
     "catalog_path",
     type=click.Path(path_type=Path),
-    default=".",
-    help="Path to catalog root (default: current directory).",
+    default=None,
+    help="Path to catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
-def rm_cmd(ctx: click.Context, path: Path, keep: bool, catalog_path: Path) -> None:
+def rm_cmd(ctx: click.Context, path: Path, keep: bool, catalog_path: Path | None) -> None:
     """Remove files from tracking.
 
     By default, removes the file from disk AND untracks it from the catalog
     (git-style behavior, no confirmation prompt).
 
+    Works like git: run from anywhere inside a catalog and it auto-detects
+    the catalog root. Use --catalog to override.
+
     Use --keep to untrack the file but preserve it on disk.
 
     \b
     Examples:
-        portolan rm demographics/census.parquet     # Delete and untrack
+        cd my-catalog && portolan rm demographics/census.parquet
         portolan rm --keep imagery/old_data.tif    # Keep file, just untrack
         portolan rm vectors/                        # Remove entire directory
     """
     use_json = should_output_json(ctx)
 
-    try:
+    # Auto-detect catalog root (git-style)
+    catalog_root: Path
+    if catalog_path is not None:
         catalog_root = catalog_path.resolve()
+    else:
+        detected_root = find_catalog_root()
+        if detected_root is None:
+            if use_json:
+                envelope = error_envelope(
+                    "rm",
+                    [
+                        ErrorDetail(
+                            type="NotACatalogError",
+                            message="Not inside a Portolan catalog (no catalog.json found)",
+                        )
+                    ],
+                )
+                output_json_envelope(envelope)
+            else:
+                error("Not inside a Portolan catalog (no catalog.json found)")
+                detail("Run 'portolan init' to create a catalog, or cd into one")
+            raise SystemExit(1)
+        catalog_root = detected_root
+
+    try:
         target_path = path.resolve()
 
         removed = remove_files(

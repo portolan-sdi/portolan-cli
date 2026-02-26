@@ -45,6 +45,34 @@ from portolan_cli.versions import (
 )
 
 
+def find_catalog_root(start_path: Path | None = None) -> Path | None:
+    """Find the catalog root by walking up from the given path.
+
+    Searches for catalog.json starting from start_path (or cwd if None)
+    and walking up parent directories. This provides git-style behavior
+    where commands work from any subdirectory within a catalog.
+
+    Args:
+        start_path: Starting directory for search (defaults to cwd).
+
+    Returns:
+        Path to catalog root if found, None otherwise.
+    """
+    current = (start_path or Path.cwd()).resolve()
+
+    # Walk up until we find catalog.json or hit the filesystem root
+    while current != current.parent:
+        if (current / "catalog.json").exists():
+            return current
+        current = current.parent
+
+    # Check the root itself
+    if (current / "catalog.json").exists():
+        return current
+
+    return None
+
+
 @dataclass
 class DatasetInfo:
     """Information about a dataset in the catalog.

@@ -20,6 +20,7 @@ from hypothesis import strategies as st
 from portolan_cli.dataset import (
     GEOSPATIAL_EXTENSIONS,
     SIDECAR_PATTERNS,
+    find_catalog_root,
     get_sidecars,
     iter_geospatial_files,
     resolve_collection_id,
@@ -329,3 +330,77 @@ class TestGeospatialExtensionsProperties:
         assert len(GEOSPATIAL_EXTENSIONS) == len(set(GEOSPATIAL_EXTENSIONS)), (
             "Should have no duplicates"
         )
+
+
+# =============================================================================
+# Property: find_catalog_root walks up directory tree
+# =============================================================================
+
+
+class TestFindCatalogRootProperties:
+    """Property-based tests for find_catalog_root function."""
+
+    @pytest.mark.unit
+    @given(collection=collection_name, subdir=safe_filename)
+    @settings(max_examples=30)
+    def test_find_catalog_root_from_nested_dir(self, collection: str, subdir: str) -> None:
+        """find_catalog_root finds catalog from nested subdirectory."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            # Create catalog with catalog.json
+            (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')
+
+            # Create nested directory
+            nested_dir = tmp_path / collection / subdir
+            nested_dir.mkdir(parents=True, exist_ok=True)
+
+            result = find_catalog_root(nested_dir)
+
+            assert result == tmp_path, f"Should find catalog at {tmp_path}, got {result}"
+
+    @pytest.mark.unit
+    @given(collection=collection_name)
+    @settings(max_examples=30)
+    def test_find_catalog_root_from_root(self, collection: str) -> None:
+        """find_catalog_root finds catalog when starting at catalog root."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            # Create catalog with catalog.json
+            (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')
+            (tmp_path / collection).mkdir(exist_ok=True)
+
+            result = find_catalog_root(tmp_path)
+
+            assert result == tmp_path, f"Should find catalog at {tmp_path}"
+
+    @pytest.mark.unit
+    @given(dirname=safe_filename)
+    @settings(max_examples=30)
+    def test_find_catalog_root_returns_none_when_not_found(self, dirname: str) -> None:
+        """find_catalog_root returns None when no catalog.json exists."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            # Create directory structure WITHOUT catalog.json
+            search_dir = tmp_path / dirname
+            search_dir.mkdir(exist_ok=True)
+
+            result = find_catalog_root(search_dir)
+
+            assert result is None, f"Should return None, got {result}"
+
+    @pytest.mark.unit
+    @given(collection=collection_name, subdir=safe_filename)
+    @settings(max_examples=30)
+    def test_find_catalog_root_is_deterministic(self, collection: str, subdir: str) -> None:
+        """Calling find_catalog_root twice returns same result."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')
+
+            nested_dir = tmp_path / collection / subdir
+            nested_dir.mkdir(parents=True, exist_ok=True)
+
+            result1 = find_catalog_root(nested_dir)
+            result2 = find_catalog_root(nested_dir)
+
+            assert result1 == result2, "find_catalog_root should be deterministic"
