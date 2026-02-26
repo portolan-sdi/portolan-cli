@@ -64,6 +64,8 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0018](context/shared/adr/0018-metadata-generation-tiers.md) | Metadata generation tiers: auto-extractable → derivable → defaults → human-enrichable |
 | [0019](context/shared/adr/0019-cog-optimization-defaults.md) | COG defaults: DEFLATE, predictor=2, 512×512 tiles, nearest resampling |
 | [0020](context/shared/adr/0020-conversion-output-location.md) | Conversion output: side-by-side for vectors, in-place for rasters |
+| [0021](context/shared/adr/0021-catalog-json-root-level.md) | catalog.json at root level (STAC standard) |
+| [0022](context/shared/adr/0022-git-style-implicit-tracking.md) | Git-style implicit tracking (subdir = collection, delete = untrack) |
 
 ## Common Commands
 
