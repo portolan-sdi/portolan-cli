@@ -16,15 +16,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, PARQUET_EXTENSION
 from portolan_cli.convert import (
-    GEOSPATIAL_EXTENSIONS,
     ConversionReport,
     ConversionResult,
     ConversionStatus,
     convert_directory,
 )
 from portolan_cli.formats import CloudNativeStatus, get_cloud_native_status
-from portolan_cli.scan import PARQUET_EXTENSION, is_geoparquet
+from portolan_cli.scan import is_geoparquet
 
 logger = logging.getLogger(__name__)
 

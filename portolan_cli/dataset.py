@@ -23,6 +23,12 @@ from pathlib import Path
 
 import pystac
 
+from portolan_cli.constants import (
+    GEOSPATIAL_EXTENSIONS,
+    MAX_CATALOG_SEARCH_DEPTH,
+    MTIME_TOLERANCE_SECONDS,
+    SIDECAR_PATTERNS,
+)
 from portolan_cli.formats import FormatType, detect_format
 from portolan_cli.metadata import (
     extract_cog_metadata,
@@ -43,6 +49,39 @@ from portolan_cli.versions import (
     read_versions,
     write_versions,
 )
+
+
+def find_catalog_root(start_path: Path | None = None) -> Path | None:
+    """Find the catalog root by walking up from the given path.
+
+    Searches for catalog.json starting from start_path (or cwd if None)
+    and walking up parent directories. This provides git-style behavior
+    where commands work from any subdirectory within a catalog.
+
+    Security: Limited to MAX_CATALOG_SEARCH_DEPTH levels to prevent
+    traversing to filesystem root where a malicious catalog.json might exist.
+
+    Args:
+        start_path: Starting directory for search (defaults to cwd).
+
+    Returns:
+        Path to catalog root if found, None otherwise.
+    """
+    current = (start_path or Path.cwd()).resolve()
+    depth = 0
+
+    # Walk up until we find catalog.json, hit the filesystem root, or exceed depth limit
+    while current != current.parent and depth < MAX_CATALOG_SEARCH_DEPTH:
+        if (current / "catalog.json").exists():
+            return current
+        current = current.parent
+        depth += 1
+
+    # Check the root itself (only if within depth limit)
+    if depth < MAX_CATALOG_SEARCH_DEPTH and (current / "catalog.json").exists():
+        return current
+
+    return None
 
 
 @dataclass
@@ -218,6 +257,9 @@ def convert_vector(source: Path, dest_dir: Path) -> Path:
 
     # Check if already GeoParquet
     if source.suffix.lower() == ".parquet":
+        # If source is already at the destination, no copy needed
+        if source.resolve() == output_path.resolve():
+            return output_path
         shutil.copy2(source, output_path)
         return output_path
 
@@ -624,19 +666,7 @@ def remove_dataset(
 # Directory handling
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Extensions we recognize as geospatial
-GEOSPATIAL_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".geojson",
-        ".parquet",
-        ".shp",
-        ".gpkg",
-        ".fgb",
-        ".tif",
-        ".tiff",
-        ".jp2",
-    }
-)
+# Note: GEOSPATIAL_EXTENSIONS imported from portolan_cli.constants
 
 
 def iter_geospatial_files(
@@ -700,3 +730,428 @@ def add_directory(
         results.append(result)
 
     return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sidecar auto-detection (per issue #97)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Note: SIDECAR_PATTERNS imported from portolan_cli.constants
+
+
+def get_sidecars(path: Path) -> list[Path]:
+    """Detect sidecar files for a given primary file.
+
+    Automatically finds associated files like .dbf/.shx/.prj for shapefiles,
+    or .tfw/.xml for GeoTIFFs.
+
+    Args:
+        path: Path to the primary file.
+
+    Returns:
+        List of existing sidecar file paths (may be empty).
+    """
+    suffix_lower = path.suffix.lower()
+    patterns = SIDECAR_PATTERNS.get(suffix_lower, [])
+
+    sidecars: list[Path] = []
+    stem = path.stem
+    parent = path.parent
+
+    for ext in patterns:
+        sidecar_path = parent / f"{stem}{ext}"
+        if sidecar_path.exists():
+            sidecars.append(sidecar_path)
+
+    return sidecars
+
+
+def resolve_collection_id(path: Path, catalog_root: Path) -> str:
+    """Resolve collection ID from a file path.
+
+    Per ADR-0022: First path component (relative to catalog root) = collection ID.
+
+    Args:
+        path: Path to the file.
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        Collection ID (first directory component relative to catalog).
+
+    Raises:
+        ValueError: If path is not inside catalog root.
+    """
+    # Get path relative to catalog root
+    try:
+        relative = path.resolve().relative_to(catalog_root.resolve())
+    except ValueError as err:
+        raise ValueError(f"Path {path} is outside catalog root {catalog_root}") from err
+
+    # First component is the collection ID
+    parts = relative.parts
+    if not parts:
+        raise ValueError(f"Cannot determine collection from path: {path}")
+
+    # Skip the filename if path is a file
+    if path.is_file() and len(parts) == 1:
+        raise ValueError(f"File {path} must be in a subdirectory (collection)")
+
+    return parts[0]
+
+
+def is_current(
+    path: Path,
+    versions_path: Path,
+) -> bool:
+    """Check if a file is unchanged compared to versions.json.
+
+    Uses mtime as fast-path (per ADR-0017), falls back to sha256 if mtime changed.
+
+    Args:
+        path: Path to the file to check.
+        versions_path: Path to versions.json for this collection.
+
+    Returns:
+        True if file is unchanged (already tracked at current state),
+        False if new or modified.
+    """
+    if not versions_path.exists():
+        return False
+
+    versions_file = read_versions(versions_path)
+    if not versions_file.versions:
+        return False
+
+    current_version = versions_file.versions[-1]
+
+    # Look for this file in current version assets
+    filename = path.name
+    asset = current_version.assets.get(filename)
+    if asset is None:
+        # Also check for stem.parquet (converted name)
+        parquet_name = f"{path.stem}.parquet"
+        asset = current_version.assets.get(parquet_name)
+        if asset is None:
+            return False
+
+    # Get file stats once (used for both mtime and size checks)
+    file_stat = path.stat()
+
+    # Fast path: check mtime (2s tolerance for NFS/CIFS compatibility)
+    if asset.mtime is not None:
+        if abs(file_stat.st_mtime - asset.mtime) < MTIME_TOLERANCE_SECONDS:
+            return True
+
+    # Medium path: size check before expensive SHA256
+    # If size differs, file definitely changed - skip checksum
+    if asset.size_bytes is not None and file_stat.st_size != asset.size_bytes:
+        return False
+
+    # Slow path: compare sha256 (only if mtime changed but size matches)
+    current_checksum = compute_checksum(path)
+    return current_checksum == asset.sha256
+
+
+def add_files(
+    *,
+    paths: list[Path],
+    catalog_root: Path,
+    collection_id: str | None = None,
+    verbose: bool = False,
+) -> tuple[list[DatasetInfo], list[Path]]:
+    """Add files to a Portolan catalog.
+
+    This is the main entry point for the `portolan add` command.
+    Handles single files, directories, and sidecar auto-detection.
+
+    Args:
+        paths: List of paths to add (files or directories).
+        catalog_root: Root directory of the catalog.
+        collection_id: Optional explicit collection ID.
+            If not provided, inferred from first path component.
+        verbose: If True, return skipped files info.
+
+    Returns:
+        Tuple of (added_datasets, skipped_paths).
+        added_datasets: List of DatasetInfo for newly added/updated files.
+        skipped_paths: List of paths that were skipped (unchanged).
+    """
+    added: list[DatasetInfo] = []
+    skipped: list[Path] = []
+    processed_paths: set[Path] = set()
+
+    for path in paths:
+        if path.is_dir():
+            # Add all files in directory
+            files = iter_files_with_sidecars(path)
+        else:
+            # Single file + sidecars
+            files = [path] + get_sidecars(path)
+
+        for file_path in files:
+            # Resolve symlinks to track the real file
+            # This ensures we track actual data, not ephemeral links
+            if file_path.is_symlink():
+                file_path = file_path.resolve()
+
+            if file_path in processed_paths:
+                continue
+            processed_paths.add(file_path)
+
+            # Skip non-geospatial files (sidecars are handled separately)
+            if file_path.suffix.lower() not in GEOSPATIAL_EXTENSIONS:
+                continue
+
+            # Determine collection ID
+            coll_id = collection_id
+            if coll_id is None:
+                coll_id = resolve_collection_id(file_path, catalog_root)
+
+            # Check if unchanged
+            versions_path = catalog_root / coll_id / "versions.json"
+            if is_current(file_path, versions_path):
+                skipped.append(file_path)
+                continue
+
+            # Add the file
+            try:
+                result = add_dataset(
+                    path=file_path,
+                    catalog_root=catalog_root,
+                    collection_id=coll_id,
+                )
+                added.append(result)
+            except (ValueError, FileNotFoundError) as err:
+                # Re-raise with context
+                raise type(err)(f"Failed to add {file_path}: {err}") from err
+
+    return added, skipped
+
+
+def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path]:
+    """Iterate over geospatial files in a directory (including their sidecars).
+
+    Returns geospatial files and their associated sidecars (e.g., .dbf/.shx for shapefiles).
+    Filters by GEOSPATIAL_EXTENSIONS while iterating for efficiency.
+
+    Args:
+        path: Directory to scan.
+        recursive: If True, scan subdirectories recursively.
+
+    Returns:
+        List of geospatial file paths and their sidecars.
+    """
+    if not path.is_dir():
+        return []
+
+    files: list[Path] = []
+    seen: set[Path] = set()
+
+    iterator = path.rglob("*") if recursive else path.iterdir()
+
+    for item in iterator:
+        if not item.is_file():
+            continue
+
+        # Only process geospatial files (not sidecars directly)
+        if item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
+            if item not in seen:
+                files.append(item)
+                seen.add(item)
+
+            # Also include any sidecars for this file
+            for sidecar in get_sidecars(item):
+                if sidecar not in seen:
+                    files.append(sidecar)
+                    seen.add(sidecar)
+
+    return sorted(files)
+
+
+def remove_files(
+    *,
+    paths: list[Path],
+    catalog_root: Path,
+    keep: bool = False,
+    dry_run: bool = False,
+) -> tuple[list[Path], list[Path]]:
+    """Remove files from Portolan catalog tracking.
+
+    This is the main entry point for the `portolan rm` command.
+    By default, deletes the file AND removes from tracking (git-style).
+    With keep=True, removes from tracking but preserves the file.
+
+    Args:
+        paths: List of paths to remove (files or directories).
+        catalog_root: Root directory of the catalog.
+        keep: If True, preserve file on disk (only untrack).
+        dry_run: If True, preview what would be removed without actually removing.
+
+    Returns:
+        Tuple of (removed_paths, skipped_paths).
+        removed_paths: Paths that were removed from tracking.
+        skipped_paths: Paths that were skipped (not in catalog, errors).
+    """
+    removed: list[Path] = []
+    skipped: list[Path] = []
+
+    for path in paths:
+        if path.is_dir():
+            # Remove all files in directory
+            files = list(path.rglob("*")) if path.exists() else []
+            files = [f for f in files if f.is_file()]
+        else:
+            # Include sidecars for single file removal
+            sidecars = get_sidecars(path) if path.exists() else []
+            files = [path] + sidecars
+
+        for file_path in files:
+            if not file_path.exists() and not keep:
+                skipped.append(file_path)
+                continue
+
+            # Refuse to delete symlinks - they might point outside the catalog
+            # and deleting them could have unintended consequences. Users should
+            # resolve symlinks manually or use --keep to just untrack.
+            if file_path.is_symlink() and not keep:
+                skipped.append(file_path)
+                continue
+
+            # Determine collection ID
+            try:
+                coll_id = resolve_collection_id(file_path, catalog_root)
+            except ValueError:
+                # File is outside catalog - skip with warning
+                skipped.append(file_path)
+                continue
+
+            # In dry-run mode, just record what would be removed
+            if dry_run:
+                removed.append(file_path)
+                continue
+
+            # Remove from versions.json
+            versions_path = catalog_root / coll_id / "versions.json"
+            if versions_path.exists():
+                _remove_from_versions(file_path, versions_path)
+
+            # Remove STAC item and files (unless --keep)
+            if not keep:
+                item_id = file_path.stem
+                item_dir = catalog_root / coll_id / item_id
+                if item_dir.exists() and item_dir.is_dir():
+                    shutil.rmtree(item_dir)
+
+                # Delete file from disk (missing_ok handles race conditions)
+                file_path.unlink(missing_ok=True)
+
+                # Also delete sidecars if this is the primary file
+                # Use missing_ok=True to handle race conditions where another
+                # process might delete the file between exists() and unlink()
+                for sidecar in get_sidecars(file_path):
+                    sidecar.unlink(missing_ok=True)
+
+            removed.append(file_path)
+
+    return removed, skipped
+
+
+def _increment_version(version: str) -> str:
+    """Safely increment a semantic version string.
+
+    Handles standard semver (1.2.3) and pre-release versions (1.0.0-beta.1).
+
+    Args:
+        version: Current version string.
+
+    Returns:
+        Incremented version string.
+    """
+    if not version:
+        return "0.0.1"
+
+    # Handle pre-release versions (e.g., 1.0.0-beta.1)
+    if "-" in version:
+        base, prerelease = version.split("-", 1)
+        # Try to increment the prerelease number
+        prerelease_parts = prerelease.rsplit(".", 1)
+        if len(prerelease_parts) == 2 and prerelease_parts[1].isdigit():
+            prerelease_parts[1] = str(int(prerelease_parts[1]) + 1)
+            return f"{base}-{'.'.join(prerelease_parts)}"
+        else:
+            # No numeric suffix: 1.0.0-beta → 1.0.0-beta.1
+            # Preserve the prerelease tag by appending .1
+            return f"{base}-{prerelease}.1"
+
+    # Standard semver: increment patch
+    parts = version.split(".")
+    if len(parts) >= 3 and parts[-1].isdigit():
+        parts[-1] = str(int(parts[-1]) + 1)
+    elif len(parts) < 3:
+        # Pad to 3 parts if needed
+        while len(parts) < 3:
+            parts.append("0")
+        parts[-1] = "1"
+    return ".".join(parts)
+
+
+def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
+    """Remove a file from versions.json tracking.
+
+    This creates a new version entry without the specified file.
+
+    Args:
+        file_path: Path to the file to untrack.
+        versions_path: Path to the versions.json file.
+    """
+    if not versions_path.exists():
+        return
+
+    versions_file = read_versions(versions_path)
+    if not versions_file.versions:
+        return
+
+    # Get current assets, removing the file
+    current = versions_file.versions[-1]
+    filename = file_path.name
+    parquet_name = f"{file_path.stem}.parquet"
+
+    new_assets = {
+        name: asset
+        for name, asset in current.assets.items()
+        if name != filename and name != parquet_name
+    }
+
+    if len(new_assets) == len(current.assets):
+        # File wasn't tracked, nothing to do
+        return
+
+    # Compute new version number safely
+    new_version = _increment_version(versions_file.current_version or "0.0.0")
+
+    # Note: Even if new_assets is empty, we preserve version history by creating
+    # an empty version entry rather than deleting versions.json entirely.
+    # This maintains collection state and allows seeing what files were removed.
+
+    # Create new version entry
+    new_assets_typed = {
+        name: Asset(
+            sha256=asset.sha256,
+            size_bytes=asset.size_bytes,
+            href=asset.href,
+            source_path=asset.source_path,
+            source_mtime=asset.source_mtime,
+            mtime=asset.mtime,
+        )
+        for name, asset in new_assets.items()
+    }
+
+    updated = add_version(
+        versions_file,
+        version=new_version,
+        assets=new_assets_typed,
+        breaking=False,
+        message=f"Removed {filename}",
+    )
+
+    write_versions(versions_path, updated)

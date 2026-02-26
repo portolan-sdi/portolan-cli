@@ -15,10 +15,14 @@ import click
 
 from portolan_cli.check import check_directory
 from portolan_cli.dataset import (
-    add_dataset,
+    DatasetInfo,
+    add_files,
+    find_catalog_root,
     get_dataset_info,
+    get_sidecars,
     list_datasets,
-    remove_dataset,
+    remove_files,
+    resolve_collection_id,
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.output import detail, error, info, success, warn
@@ -1276,7 +1280,289 @@ def _print_next_steps(result: ScanResult) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Dataset commands
+# Top-level add/rm commands (per ADR-0022)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _handle_cmd_error(cmd: str, err_type: str, message: str, use_json: bool) -> None:
+    """Handle error output for add/rm commands (standardized)."""
+    if use_json:
+        envelope = error_envelope(cmd, [ErrorDetail(type=err_type, message=message)])
+        output_json_envelope(envelope)
+    else:
+        error(message)
+
+
+def _output_add_results(
+    added: list[DatasetInfo],
+    skipped: list[Path],
+    collection_id: str,
+    verbose: bool,
+    use_json: bool,
+) -> None:
+    """Output results for add command."""
+    if use_json:
+        data = {
+            "added": [
+                {
+                    "item_id": ds.item_id,
+                    "collection_id": ds.collection_id,
+                    "format_type": ds.format_type.value,
+                    "bbox": ds.bbox,
+                }
+                for ds in added
+            ],
+            "skipped": [str(p) for p in skipped],
+        }
+        envelope = success_envelope("add", data)
+        output_json_envelope(envelope)
+        return
+
+    # Human-readable output
+    if added:
+        count = len(added)
+        coll = added[0].collection_id if added else collection_id
+        info(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
+        for ds in added:
+            sidecars = get_sidecars(Path(ds.asset_paths[0])) if ds.asset_paths else []
+            sidecar_note = f" (+ {len(sidecars)} sidecars)" if sidecars else ""
+            success(f"  + {ds.item_id}{sidecar_note}")
+
+    if verbose and skipped:
+        for p in skipped:
+            detail(f"Skipping {p.name} (unchanged)")
+
+
+@cli.command("add")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show detailed output including skipped unchanged files.",
+)
+@click.option(
+    "--portolan-dir",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
+)
+@click.pass_context
+def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | None) -> None:
+    """Track files in the catalog.
+
+    Adds files to the Portolan catalog with automatic collection inference.
+    The collection ID is determined from the first directory component of
+    the path relative to the catalog root.
+
+    Works like git: run from anywhere inside a catalog and it auto-detects
+    the catalog root. Use --portolan-dir to override.
+
+    \b
+    Examples:
+        cd my-catalog && portolan add demographics/census.parquet
+        portolan add imagery/                      # Add all files in directory
+        portolan add .                             # Add all files in catalog
+
+    Smart behavior:
+    - Unchanged files are silently skipped (use --verbose to see them)
+    - Changed files are re-extracted with new metadata
+    - Sidecar files (.dbf, .shx, .prj for shapefiles) are auto-detected
+    """
+    use_json = should_output_json(ctx)
+    target_path = path.resolve()
+
+    # Auto-detect catalog root (git-style)
+    catalog_root: Path
+    if catalog_path is not None:
+        catalog_root = catalog_path.resolve()
+    else:
+        detected_root = find_catalog_root()
+        if detected_root is None:
+            _handle_cmd_error(
+                "add",
+                "NotACatalogError",
+                "Not inside a Portolan catalog (no catalog.json found)",
+                use_json,
+            )
+            if not use_json:
+                detail("Run 'portolan init' to create a catalog, or cd into one")
+            raise SystemExit(1)
+        catalog_root = detected_root
+
+    # Validate catalog exists (when explicitly specified)
+    if catalog_path is not None and not (catalog_root / "catalog.json").exists():
+        _handle_cmd_error("add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json)
+        if not use_json:
+            detail("Run 'portolan init' to create a catalog")
+        raise SystemExit(1)
+
+    # Determine collection ID from path
+    try:
+        collection_id = resolve_collection_id(target_path, catalog_root)
+    except ValueError as err:
+        _handle_cmd_error("add", "PathError", str(err), use_json)
+        raise SystemExit(1) from err
+
+    # Add files
+    try:
+        added, skipped = add_files(
+            paths=[target_path],
+            catalog_root=catalog_root,
+            collection_id=collection_id,
+            verbose=verbose,
+        )
+        _output_add_results(added, skipped, collection_id, verbose, use_json)
+    except (ValueError, FileNotFoundError) as err:
+        err_type = type(err).__name__
+        _handle_cmd_error("add", err_type, str(err), use_json)
+        raise SystemExit(1) from err
+
+
+@cli.command("rm")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--keep",
+    is_flag=True,
+    help="Untrack file but preserve it on disk.",
+)
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Force deletion without safety check. Required for destructive rm.",
+)
+@click.option(
+    "--dry-run",
+    "-n",
+    is_flag=True,
+    help="Show what would be removed without actually removing.",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show detailed output including skipped files.",
+)
+@click.option(
+    "--portolan-dir",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
+)
+@click.pass_context
+def rm_cmd(
+    ctx: click.Context,
+    path: Path,
+    keep: bool,
+    force: bool,
+    dry_run: bool,
+    verbose: bool,
+    catalog_path: Path | None,
+) -> None:
+    """Remove files from tracking.
+
+    By default, removes the file from disk AND untracks it from the catalog.
+    Requires --force for destructive operations (deleting files).
+
+    Works like git: run from anywhere inside a catalog and it auto-detects
+    the catalog root. Use --portolan-dir to override.
+
+    \b
+    Safety flags:
+    - --keep: Untrack file but preserve it on disk (safe, no --force needed)
+    - --force: Required for destructive rm (when not using --keep)
+    - --dry-run: Preview what would be removed without actually removing
+
+    \b
+    Examples:
+        portolan rm --keep imagery/old_data.tif     # Safe: untrack only
+        portolan rm --dry-run vectors/              # Preview what would be removed
+        portolan rm -f demographics/census.parquet  # Force delete and untrack
+        portolan rm -f vectors/                     # Force remove entire directory
+    """
+    use_json = should_output_json(ctx)
+
+    # Require --force for destructive operations (unless --keep or --dry-run)
+    if not keep and not dry_run and not force:
+        _handle_cmd_error(
+            "rm",
+            "SafetyError",
+            "Destructive rm requires --force flag. Use --keep to preserve files, or --dry-run to preview.",
+            use_json,
+        )
+        if not use_json:
+            detail("Examples:")
+            detail("  portolan rm --keep myfile.parquet  # Untrack but keep file")
+            detail("  portolan rm --dry-run myfile.parquet  # Preview removal")
+            detail("  portolan rm -f myfile.parquet  # Force delete")
+        raise SystemExit(1)
+
+    # Auto-detect catalog root (git-style)
+    catalog_root: Path
+    if catalog_path is not None:
+        catalog_root = catalog_path.resolve()
+    else:
+        detected_root = find_catalog_root()
+        if detected_root is None:
+            _handle_cmd_error(
+                "rm",
+                "NotACatalogError",
+                "Not inside a Portolan catalog (no catalog.json found)",
+                use_json,
+            )
+            if not use_json:
+                detail("Run 'portolan init' to create a catalog, or cd into one")
+            raise SystemExit(1)
+        catalog_root = detected_root
+
+    try:
+        target_path = path.resolve()
+
+        removed, skipped = remove_files(
+            paths=[target_path],
+            catalog_root=catalog_root,
+            keep=keep,
+            dry_run=dry_run,
+        )
+
+        if use_json:
+            data = {
+                "removed": [str(p) for p in removed],
+                "skipped": [str(p) for p in skipped],
+                "kept_on_disk": keep,
+                "dry_run": dry_run,
+            }
+            envelope = success_envelope("rm", data)
+            output_json_envelope(envelope)
+        else:
+            if dry_run:
+                info("Dry run - no files were actually removed:")
+            for p in removed:
+                if dry_run:
+                    detail(f"  Would remove: {p.name}")
+                elif keep:
+                    success(f"Untracked {p.name} (file preserved)")
+                else:
+                    success(f"Removed {p.name}")
+
+            # Show skipped files in verbose mode
+            if verbose and skipped:
+                for p in skipped:
+                    warn(f"Skipped {p.name} (not in catalog or outside catalog)")
+
+    except ValueError as err:
+        _handle_cmd_error("rm", "ValueError", str(err), use_json)
+        raise SystemExit(1) from err
+    except FileNotFoundError as err:
+        _handle_cmd_error("rm", "FileNotFoundError", str(err), use_json)
+        raise SystemExit(1) from err
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dataset commands (legacy - list/info only, add/remove moved to top-level)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1286,96 +1572,6 @@ def dataset(ctx: click.Context) -> None:
     """Manage datasets in the catalog."""
     # Ensure context is passed through to subcommands
     ctx.ensure_object(dict)
-
-
-@dataset.command("add")
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
-@click.option(
-    "--collection",
-    "-c",
-    required=True,
-    help="Collection to add the dataset to.",
-)
-@click.option("--title", "-t", help="Display title for the dataset.")
-@click.option("--description", "-d", help="Description of the dataset.")
-@click.option("--id", "item_id", help="Item ID (defaults to filename).")
-@click.option(
-    "--catalog",
-    "catalog_path",
-    type=click.Path(path_type=Path),
-    default=".",
-    help="Path to catalog root (default: current directory).",
-)
-@click.pass_context
-def dataset_add(
-    ctx: click.Context,
-    path: Path,
-    collection: str,
-    title: str | None,
-    description: str | None,
-    item_id: str | None,
-    catalog_path: Path,
-) -> None:
-    """Add a dataset to the catalog.
-
-    PATH is the file or directory to add.
-
-    Examples:
-
-        portolan dataset add data.geojson --collection demographics
-
-        portolan dataset add raster.tif --collection imagery --title "Satellite Image"
-    """
-    use_json = should_output_json(ctx)
-
-    try:
-        result = add_dataset(
-            path=path,
-            catalog_root=catalog_path,
-            collection_id=collection,
-            title=title,
-            description=description,
-            item_id=item_id,
-        )
-
-        if use_json:
-            envelope = success_envelope(
-                "dataset_add",
-                {
-                    "item_id": result.item_id,
-                    "collection_id": result.collection_id,
-                    "format": result.format_type.value,
-                    "bbox": result.bbox,
-                    "title": result.title,
-                },
-            )
-            output_json_envelope(envelope)
-        else:
-            success(f"Added {result.item_id} to collection {result.collection_id}")
-            if result.title:
-                detail(f"  Title: {result.title}")
-            detail(f"  Format: {result.format_type.value}")
-            detail(f"  Bbox: {result.bbox}")
-    except ValueError as err:
-        if use_json:
-            envelope = error_envelope(
-                "dataset_add",
-                [ErrorDetail(type="ValueError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
-        raise SystemExit(1) from err
-    except FileNotFoundError as err:
-        if use_json:
-            envelope = error_envelope(
-                "dataset_add",
-                [ErrorDetail(type="FileNotFoundError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
-        raise SystemExit(1) from err
 
 
 @dataset.command("list")
@@ -1491,85 +1687,6 @@ def dataset_info(
         if use_json:
             envelope = error_envelope(
                 "dataset_info",
-                [ErrorDetail(type="KeyError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
-        raise SystemExit(1) from err
-
-
-@dataset.command("remove")
-@click.argument("dataset_id")
-@click.option(
-    "--collection",
-    is_flag=True,
-    help="Remove entire collection (not just item).",
-)
-@click.option(
-    "--yes",
-    "-y",
-    is_flag=True,
-    help="Skip confirmation prompt.",
-)
-@click.option(
-    "--catalog",
-    "catalog_path",
-    type=click.Path(path_type=Path),
-    default=".",
-    help="Path to catalog root (default: current directory).",
-)
-@click.pass_context
-def dataset_remove(
-    ctx: click.Context,
-    dataset_id: str,
-    collection: bool,
-    yes: bool,
-    catalog_path: Path,
-) -> None:
-    """Remove a dataset from the catalog.
-
-    DATASET_ID is in the format 'collection/item' or just 'collection' with --collection.
-
-    Examples:
-
-        portolan dataset remove demographics/census
-
-        portolan dataset remove demographics --collection
-    """
-    use_json = should_output_json(ctx)
-
-    # Confirm unless --yes (skip confirmation in JSON mode for automation)
-    if not yes and not use_json:
-        if collection:
-            msg = f"Remove entire collection '{dataset_id}'?"
-        else:
-            msg = f"Remove dataset '{dataset_id}'?"
-        if not click.confirm(msg):
-            info("Cancelled")
-            return
-
-    try:
-        remove_dataset(catalog_path, dataset_id, remove_collection=collection)
-
-        if use_json:
-            envelope = success_envelope(
-                "dataset_remove",
-                {
-                    "removed": dataset_id,
-                    "type": "collection" if collection else "item",
-                },
-            )
-            output_json_envelope(envelope)
-        else:
-            if collection:
-                success(f"Removed collection {dataset_id}")
-            else:
-                success(f"Removed dataset {dataset_id}")
-    except KeyError as err:
-        if use_json:
-            envelope = error_envelope(
-                "dataset_remove",
                 [ErrorDetail(type="KeyError", message=str(err))],
             )
             output_json_envelope(envelope)
