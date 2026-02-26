@@ -241,7 +241,8 @@ class TestIterGeospatialFilesProperties:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             # Extensions definitely NOT in GEOSPATIAL_EXTENSIONS
-            non_geo_exts = [".txt", ".csv", ".json", ".md", ".py"]
+            # Note: .csv IS geospatial (for CSV with geometry), .json is NOT (we have .geojson)
+            non_geo_exts = [".txt", ".json", ".md", ".py", ".xml", ".html"]
 
             for ext in non_geo_exts:
                 file_path = tmp_path / f"{filename}{ext}"
@@ -404,3 +405,106 @@ class TestFindCatalogRootProperties:
             result2 = find_catalog_root(nested_dir)
 
             assert result1 == result2, "find_catalog_root should be deterministic"
+
+
+# =============================================================================
+# Property: _increment_version handles various version formats
+# =============================================================================
+
+
+class TestIncrementVersionProperties:
+    """Property-based tests for _increment_version function."""
+
+    @pytest.mark.unit
+    def test_increment_standard_semver(self) -> None:
+        """_increment_version increments standard semver correctly."""
+        from portolan_cli.dataset import _increment_version
+
+        assert _increment_version("1.2.3") == "1.2.4"
+        assert _increment_version("0.0.1") == "0.0.2"
+        assert _increment_version("10.20.30") == "10.20.31"
+
+    @pytest.mark.unit
+    def test_increment_prerelease_semver(self) -> None:
+        """_increment_version handles pre-release versions."""
+        from portolan_cli.dataset import _increment_version
+
+        # Pre-release with number suffix
+        assert _increment_version("1.0.0-beta.1") == "1.0.0-beta.2"
+        assert _increment_version("2.0.0-alpha.5") == "2.0.0-alpha.6"
+        assert _increment_version("1.0.0-rc.10") == "1.0.0-rc.11"
+
+    @pytest.mark.unit
+    def test_increment_prerelease_no_number(self) -> None:
+        """_increment_version handles pre-release without number."""
+        from portolan_cli.dataset import _increment_version
+
+        # Pre-release without number suffix falls back to patch increment
+        result = _increment_version("1.0.0-beta")
+        assert result == "1.0.1"
+
+    @pytest.mark.unit
+    def test_increment_empty_version(self) -> None:
+        """_increment_version handles empty version."""
+        from portolan_cli.dataset import _increment_version
+
+        assert _increment_version("") == "0.0.1"
+        assert _increment_version(None) == "0.0.1"  # type: ignore[arg-type]
+
+    @pytest.mark.unit
+    def test_increment_short_version(self) -> None:
+        """_increment_version handles short version strings."""
+        from portolan_cli.dataset import _increment_version
+
+        assert _increment_version("1") == "1.0.1"
+        assert _increment_version("1.0") == "1.0.1"
+
+
+# =============================================================================
+# Property: Constants module exports correct values
+# =============================================================================
+
+
+class TestConstantsProperties:
+    """Tests verifying constants module values."""
+
+    @pytest.mark.unit
+    def test_mtime_tolerance_is_reasonable(self) -> None:
+        """MTIME_TOLERANCE_SECONDS is reasonable for NFS."""
+        from portolan_cli.constants import MTIME_TOLERANCE_SECONDS
+
+        # Should be at least 1 second for NFS compatibility
+        assert MTIME_TOLERANCE_SECONDS >= 1.0
+        # Should not be too large (more than 10 seconds is excessive)
+        assert MTIME_TOLERANCE_SECONDS <= 10.0
+
+    @pytest.mark.unit
+    def test_max_catalog_search_depth_is_reasonable(self) -> None:
+        """MAX_CATALOG_SEARCH_DEPTH is reasonable."""
+        from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+
+        # Should be at least 5 levels
+        assert MAX_CATALOG_SEARCH_DEPTH >= 5
+        # Should not be too large (100 levels is excessive)
+        assert MAX_CATALOG_SEARCH_DEPTH <= 100
+
+    @pytest.mark.unit
+    def test_geospatial_extensions_contains_common_formats(self) -> None:
+        """GEOSPATIAL_EXTENSIONS includes common formats."""
+        from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
+
+        assert ".geojson" in GEOSPATIAL_EXTENSIONS
+        assert ".shp" in GEOSPATIAL_EXTENSIONS
+        assert ".tif" in GEOSPATIAL_EXTENSIONS
+        assert ".parquet" in GEOSPATIAL_EXTENSIONS
+
+    @pytest.mark.unit
+    def test_sidecar_patterns_contains_shapefile_extensions(self) -> None:
+        """SIDECAR_PATTERNS includes shapefile sidecars."""
+        from portolan_cli.constants import SIDECAR_PATTERNS
+
+        assert ".shp" in SIDECAR_PATTERNS
+        shp_sidecars = SIDECAR_PATTERNS[".shp"]
+        assert ".dbf" in shp_sidecars
+        assert ".shx" in shp_sidecars
+        assert ".prj" in shp_sidecars

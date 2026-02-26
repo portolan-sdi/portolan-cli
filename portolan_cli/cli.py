@@ -1004,8 +1004,8 @@ def _print_next_steps(result: ScanResult) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _handle_add_error(cmd: str, err_type: str, message: str, use_json: bool) -> None:
-    """Handle error output for add/rm commands."""
+def _handle_cmd_error(cmd: str, err_type: str, message: str, use_json: bool) -> None:
+    """Handle error output for add/rm commands (standardized)."""
     if use_json:
         envelope = error_envelope(cmd, [ErrorDetail(type=err_type, message=message)])
         output_json_envelope(envelope)
@@ -1100,7 +1100,7 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
     else:
         detected_root = find_catalog_root()
         if detected_root is None:
-            _handle_add_error(
+            _handle_cmd_error(
                 "add",
                 "NotACatalogError",
                 "Not inside a Portolan catalog (no catalog.json found)",
@@ -1113,7 +1113,7 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
 
     # Validate catalog exists (when explicitly specified)
     if catalog_path is not None and not (catalog_root / "catalog.json").exists():
-        _handle_add_error("add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json)
+        _handle_cmd_error("add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json)
         if not use_json:
             detail("Run 'portolan init' to create a catalog")
         raise SystemExit(1)
@@ -1122,7 +1122,7 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
     try:
         collection_id = resolve_collection_id(target_path, catalog_root)
     except ValueError as err:
-        _handle_add_error("add", "PathError", str(err), use_json)
+        _handle_cmd_error("add", "PathError", str(err), use_json)
         raise SystemExit(1) from err
 
     # Add files
@@ -1136,7 +1136,7 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
         _output_add_results(added, skipped, collection_id, verbose, use_json)
     except (ValueError, FileNotFoundError) as err:
         err_type = type(err).__name__
-        _handle_add_error("add", err_type, str(err), use_json)
+        _handle_cmd_error("add", err_type, str(err), use_json)
         raise SystemExit(1) from err
 
 
@@ -1148,6 +1148,24 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
     help="Untrack file but preserve it on disk.",
 )
 @click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Force deletion without safety check. Required for destructive rm.",
+)
+@click.option(
+    "--dry-run",
+    "-n",
+    is_flag=True,
+    help="Show what would be removed without actually removing.",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show detailed output including skipped files.",
+)
+@click.option(
     "--portolan-dir",
     "catalog_path",
     type=click.Path(path_type=Path),
@@ -1155,24 +1173,52 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
     help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
-def rm_cmd(ctx: click.Context, path: Path, keep: bool, catalog_path: Path | None) -> None:
+def rm_cmd(
+    ctx: click.Context,
+    path: Path,
+    keep: bool,
+    force: bool,
+    dry_run: bool,
+    verbose: bool,
+    catalog_path: Path | None,
+) -> None:
     """Remove files from tracking.
 
-    By default, removes the file from disk AND untracks it from the catalog
-    (git-style behavior, no confirmation prompt).
+    By default, removes the file from disk AND untracks it from the catalog.
+    Requires --force for destructive operations (deleting files).
 
     Works like git: run from anywhere inside a catalog and it auto-detects
     the catalog root. Use --portolan-dir to override.
 
-    Use --keep to untrack the file but preserve it on disk.
+    \b
+    Safety flags:
+    - --keep: Untrack file but preserve it on disk (safe, no --force needed)
+    - --force: Required for destructive rm (when not using --keep)
+    - --dry-run: Preview what would be removed without actually removing
 
     \b
     Examples:
-        cd my-catalog && portolan rm demographics/census.parquet
-        portolan rm --keep imagery/old_data.tif    # Keep file, just untrack
-        portolan rm vectors/                        # Remove entire directory
+        portolan rm --keep imagery/old_data.tif     # Safe: untrack only
+        portolan rm --dry-run vectors/              # Preview what would be removed
+        portolan rm -f demographics/census.parquet  # Force delete and untrack
+        portolan rm -f vectors/                     # Force remove entire directory
     """
     use_json = should_output_json(ctx)
+
+    # Require --force for destructive operations (unless --keep or --dry-run)
+    if not keep and not dry_run and not force:
+        _handle_cmd_error(
+            "rm",
+            "SafetyError",
+            "Destructive rm requires --force flag. Use --keep to preserve files, or --dry-run to preview.",
+            use_json,
+        )
+        if not use_json:
+            detail("Examples:")
+            detail("  portolan rm --keep myfile.parquet  # Untrack but keep file")
+            detail("  portolan rm --dry-run myfile.parquet  # Preview removal")
+            detail("  portolan rm -f myfile.parquet  # Force delete")
+        raise SystemExit(1)
 
     # Auto-detect catalog root (git-style)
     catalog_root: Path
@@ -1181,19 +1227,13 @@ def rm_cmd(ctx: click.Context, path: Path, keep: bool, catalog_path: Path | None
     else:
         detected_root = find_catalog_root()
         if detected_root is None:
-            if use_json:
-                envelope = error_envelope(
-                    "rm",
-                    [
-                        ErrorDetail(
-                            type="NotACatalogError",
-                            message="Not inside a Portolan catalog (no catalog.json found)",
-                        )
-                    ],
-                )
-                output_json_envelope(envelope)
-            else:
-                error("Not inside a Portolan catalog (no catalog.json found)")
+            _handle_cmd_error(
+                "rm",
+                "NotACatalogError",
+                "Not inside a Portolan catalog (no catalog.json found)",
+                use_json,
+            )
+            if not use_json:
                 detail("Run 'portolan init' to create a catalog, or cd into one")
             raise SystemExit(1)
         catalog_root = detected_root
@@ -1201,45 +1241,43 @@ def rm_cmd(ctx: click.Context, path: Path, keep: bool, catalog_path: Path | None
     try:
         target_path = path.resolve()
 
-        removed = remove_files(
+        removed, skipped = remove_files(
             paths=[target_path],
             catalog_root=catalog_root,
             keep=keep,
+            dry_run=dry_run,
         )
 
         if use_json:
             data = {
                 "removed": [str(p) for p in removed],
+                "skipped": [str(p) for p in skipped],
                 "kept_on_disk": keep,
+                "dry_run": dry_run,
             }
             envelope = success_envelope("rm", data)
             output_json_envelope(envelope)
         else:
+            if dry_run:
+                info("Dry run - no files were actually removed:")
             for p in removed:
-                if keep:
+                if dry_run:
+                    detail(f"  Would remove: {p.name}")
+                elif keep:
                     success(f"Untracked {p.name} (file preserved)")
                 else:
                     success(f"Removed {p.name}")
 
+            # Show skipped files in verbose mode
+            if verbose and skipped:
+                for p in skipped:
+                    warn(f"Skipped {p.name} (not in catalog or outside catalog)")
+
     except ValueError as err:
-        if use_json:
-            envelope = error_envelope(
-                "rm",
-                [ErrorDetail(type="ValueError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
+        _handle_cmd_error("rm", "ValueError", str(err), use_json)
         raise SystemExit(1) from err
     except FileNotFoundError as err:
-        if use_json:
-            envelope = error_envelope(
-                "rm",
-                [ErrorDetail(type="FileNotFoundError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"File not found: {err}")
+        _handle_cmd_error("rm", "FileNotFoundError", str(err), use_json)
         raise SystemExit(1) from err
 
 

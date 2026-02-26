@@ -23,6 +23,12 @@ from pathlib import Path
 
 import pystac
 
+from portolan_cli.constants import (
+    GEOSPATIAL_EXTENSIONS,
+    MAX_CATALOG_SEARCH_DEPTH,
+    MTIME_TOLERANCE_SECONDS,
+    SIDECAR_PATTERNS,
+)
 from portolan_cli.formats import FormatType, detect_format
 from portolan_cli.metadata import (
     extract_cog_metadata,
@@ -52,6 +58,9 @@ def find_catalog_root(start_path: Path | None = None) -> Path | None:
     and walking up parent directories. This provides git-style behavior
     where commands work from any subdirectory within a catalog.
 
+    Security: Limited to MAX_CATALOG_SEARCH_DEPTH levels to prevent
+    traversing to filesystem root where a malicious catalog.json might exist.
+
     Args:
         start_path: Starting directory for search (defaults to cwd).
 
@@ -59,15 +68,17 @@ def find_catalog_root(start_path: Path | None = None) -> Path | None:
         Path to catalog root if found, None otherwise.
     """
     current = (start_path or Path.cwd()).resolve()
+    depth = 0
 
-    # Walk up until we find catalog.json or hit the filesystem root
-    while current != current.parent:
+    # Walk up until we find catalog.json, hit the filesystem root, or exceed depth limit
+    while current != current.parent and depth < MAX_CATALOG_SEARCH_DEPTH:
         if (current / "catalog.json").exists():
             return current
         current = current.parent
+        depth += 1
 
-    # Check the root itself
-    if (current / "catalog.json").exists():
+    # Check the root itself (only if within depth limit)
+    if depth < MAX_CATALOG_SEARCH_DEPTH and (current / "catalog.json").exists():
         return current
 
     return None
@@ -655,19 +666,7 @@ def remove_dataset(
 # Directory handling
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Extensions we recognize as geospatial
-GEOSPATIAL_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".geojson",
-        ".parquet",
-        ".shp",
-        ".gpkg",
-        ".fgb",
-        ".tif",
-        ".tiff",
-        ".jp2",
-    }
-)
+# Note: GEOSPATIAL_EXTENSIONS imported from portolan_cli.constants
 
 
 def iter_geospatial_files(
@@ -737,13 +736,7 @@ def add_directory(
 # Sidecar auto-detection (per issue #97)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Sidecar file patterns by primary file extension
-SIDECAR_PATTERNS: dict[str, list[str]] = {
-    ".shp": [".dbf", ".shx", ".prj", ".cpg", ".sbn", ".sbx", ".qix"],
-    ".tif": [".tfw", ".xml", ".aux.xml", ".ovr"],
-    ".tiff": [".tfw", ".xml", ".aux.xml", ".ovr"],
-    ".img": [".ige", ".rrd", ".rde", ".xml"],
-}
+# Note: SIDECAR_PATTERNS imported from portolan_cli.constants
 
 
 def get_sidecars(path: Path) -> list[Path]:
@@ -841,10 +834,10 @@ def is_current(
         if asset is None:
             return False
 
-    # Fast path: check mtime
+    # Fast path: check mtime (2s tolerance for NFS/CIFS compatibility)
     if asset.mtime is not None:
         current_mtime = path.stat().st_mtime
-        if abs(current_mtime - asset.mtime) < 0.001:  # Within 1ms tolerance
+        if abs(current_mtime - asset.mtime) < MTIME_TOLERANCE_SECONDS:
             return True
 
     # Slow path: compare sha256
@@ -958,7 +951,8 @@ def remove_files(
     paths: list[Path],
     catalog_root: Path,
     keep: bool = False,
-) -> list[Path]:
+    dry_run: bool = False,
+) -> tuple[list[Path], list[Path]]:
     """Remove files from Portolan catalog tracking.
 
     This is the main entry point for the `portolan rm` command.
@@ -969,11 +963,15 @@ def remove_files(
         paths: List of paths to remove (files or directories).
         catalog_root: Root directory of the catalog.
         keep: If True, preserve file on disk (only untrack).
+        dry_run: If True, preview what would be removed without actually removing.
 
     Returns:
-        List of paths that were removed from tracking.
+        Tuple of (removed_paths, skipped_paths).
+        removed_paths: Paths that were removed from tracking.
+        skipped_paths: Paths that were skipped (not in catalog, errors).
     """
     removed: list[Path] = []
+    skipped: list[Path] = []
 
     for path in paths:
         if path.is_dir():
@@ -981,16 +979,26 @@ def remove_files(
             files = list(path.rglob("*")) if path.exists() else []
             files = [f for f in files if f.is_file()]
         else:
-            files = [path]
+            # Include sidecars for single file removal
+            sidecars = get_sidecars(path) if path.exists() else []
+            files = [path] + sidecars
 
         for file_path in files:
             if not file_path.exists() and not keep:
+                skipped.append(file_path)
                 continue
 
             # Determine collection ID
             try:
                 coll_id = resolve_collection_id(file_path, catalog_root)
             except ValueError:
+                # File is outside catalog - skip with warning
+                skipped.append(file_path)
+                continue
+
+            # In dry-run mode, just record what would be removed
+            if dry_run:
+                removed.append(file_path)
                 continue
 
             # Remove from versions.json
@@ -1009,9 +1017,55 @@ def remove_files(
                 if file_path.exists():
                     file_path.unlink()
 
+                # Also delete sidecars if this is the primary file
+                for sidecar in get_sidecars(file_path):
+                    if sidecar.exists():
+                        sidecar.unlink()
+
             removed.append(file_path)
 
-    return removed
+    return removed, skipped
+
+
+def _increment_version(version: str) -> str:
+    """Safely increment a semantic version string.
+
+    Handles standard semver (1.2.3) and pre-release versions (1.0.0-beta.1).
+
+    Args:
+        version: Current version string.
+
+    Returns:
+        Incremented version string.
+    """
+    if not version:
+        return "0.0.1"
+
+    # Handle pre-release versions (e.g., 1.0.0-beta.1)
+    if "-" in version:
+        base, prerelease = version.split("-", 1)
+        # Try to increment the prerelease number
+        prerelease_parts = prerelease.rsplit(".", 1)
+        if len(prerelease_parts) == 2 and prerelease_parts[1].isdigit():
+            prerelease_parts[1] = str(int(prerelease_parts[1]) + 1)
+            return f"{base}-{'.'.join(prerelease_parts)}"
+        else:
+            # Can't parse prerelease, increment base patch
+            parts = base.split(".")
+            if len(parts) >= 3 and parts[-1].isdigit():
+                parts[-1] = str(int(parts[-1]) + 1)
+            return ".".join(parts)
+
+    # Standard semver: increment patch
+    parts = version.split(".")
+    if len(parts) >= 3 and parts[-1].isdigit():
+        parts[-1] = str(int(parts[-1]) + 1)
+    elif len(parts) < 3:
+        # Pad to 3 parts if needed
+        while len(parts) < 3:
+            parts.append("0")
+        parts[-1] = "1"
+    return ".".join(parts)
 
 
 def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
@@ -1045,19 +1099,13 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
         # File wasn't tracked, nothing to do
         return
 
-    if not new_assets:
-        # No assets left, could clean up versions.json
-        # For now, just leave it with empty latest version
-        pass
+    # Compute new version number safely
+    new_version = _increment_version(versions_file.current_version or "0.0.0")
 
-    # Compute new version number
-    parts = (
-        versions_file.current_version.split(".")
-        if versions_file.current_version
-        else ["0", "0", "0"]
-    )
-    parts[-1] = str(int(parts[-1]) + 1)
-    new_version = ".".join(parts)
+    # Handle empty assets case - delete versions.json
+    if not new_assets:
+        versions_path.unlink()
+        return
 
     # Create new version entry
     new_assets_typed = {

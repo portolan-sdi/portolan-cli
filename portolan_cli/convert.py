@@ -21,6 +21,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
 from portolan_cli.errors import (
     ConversionFailedError,
 )
@@ -425,21 +426,7 @@ def _validate_cog(path: Path) -> str | None:
         return f"Failed to validate COG: {e}"
 
 
-# Extensions we recognize as geospatial for batch conversion
-GEOSPATIAL_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".geojson",
-        ".parquet",
-        ".shp",
-        ".gpkg",
-        ".fgb",
-        ".csv",
-        ".tif",
-        ".tiff",
-        ".jp2",
-        ".pmtiles",
-    }
-)
+# Note: GEOSPATIAL_EXTENSIONS imported from portolan_cli.constants
 
 
 def convert_directory(

@@ -33,6 +33,7 @@ from enum import Enum
 from pathlib import Path
 
 # Import new types from scan modules
+from portolan_cli.constants import PARQUET_EXTENSION
 from portolan_cli.scan_classify import (
     FileCategory,
     SkippedFile,
@@ -56,8 +57,7 @@ RECOGNIZED_RASTER_EXTENSIONS: frozenset[str] = frozenset({".tif", ".tiff", ".jp2
 
 RECOGNIZED_EXTENSIONS: frozenset[str] = RECOGNIZED_VECTOR_EXTENSIONS | RECOGNIZED_RASTER_EXTENSIONS
 
-# Extensions that need metadata inspection to determine if geospatial
-PARQUET_EXTENSION: str = ".parquet"
+# Note: PARQUET_EXTENSION imported from portolan_cli.constants
 
 # Overview/derivative formats (not primary assets)
 OVERVIEW_EXTENSIONS: frozenset[str] = frozenset({".pmtiles"})

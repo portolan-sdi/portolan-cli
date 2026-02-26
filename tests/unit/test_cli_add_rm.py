@@ -214,8 +214,25 @@ class TestRm:
     """Tests for 'portolan rm' command."""
 
     @pytest.mark.unit
-    def test_rm_deletes_and_untracks(self, runner: CliRunner) -> None:
-        """rm deletes file and removes from tracking (no confirmation)."""
+    def test_rm_requires_force_for_destructive(self, runner: CliRunner) -> None:
+        """rm without --force or --keep fails with safety error."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "data"
+            collection_dir.mkdir()
+            test_file = collection_dir / "to_remove.parquet"
+            test_file.write_bytes(b"parquet data")
+
+            result = runner.invoke(cli, ["rm", str(test_file)])
+
+            assert result.exit_code == 1
+            assert "--force" in result.output or "SafetyError" in result.output
+
+    @pytest.mark.unit
+    def test_rm_force_deletes_and_untracks(self, runner: CliRunner) -> None:
+        """rm --force deletes file and removes from tracking."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -226,11 +243,11 @@ class TestRm:
             test_file.write_bytes(b"parquet data")
 
             with patch("portolan_cli.cli.remove_files") as mock_rm:
-                mock_rm.return_value = [test_file]
+                mock_rm.return_value = ([test_file], [])  # (removed, skipped)
 
                 result = runner.invoke(
                     cli,
-                    ["rm", str(test_file)],
+                    ["rm", "--force", str(test_file)],
                     catch_exceptions=False,
                 )
 
@@ -238,10 +255,11 @@ class TestRm:
                 mock_rm.assert_called_once()
                 call_kwargs = mock_rm.call_args.kwargs
                 assert call_kwargs.get("keep") is False
+                assert call_kwargs.get("dry_run") is False
 
     @pytest.mark.unit
-    def test_rm_no_confirmation_prompt(self, runner: CliRunner) -> None:
-        """rm does NOT prompt for confirmation (git-style)."""
+    def test_rm_keep_does_not_require_force(self, runner: CliRunner) -> None:
+        """rm --keep does not require --force (safe operation)."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -252,12 +270,12 @@ class TestRm:
             test_file.write_bytes(b"data")
 
             with patch("portolan_cli.cli.remove_files") as mock_rm:
-                mock_rm.return_value = [test_file]
+                mock_rm.return_value = ([test_file], [])
 
-                # Don't provide any input - should still work
+                # No --force needed with --keep
                 result = runner.invoke(
                     cli,
-                    ["rm", str(test_file)],
+                    ["rm", "--keep", str(test_file)],
                     catch_exceptions=False,
                 )
 
@@ -277,7 +295,7 @@ class TestRm:
             test_file.write_bytes(b"data")
 
             with patch("portolan_cli.cli.remove_files") as mock_rm:
-                mock_rm.return_value = [test_file]
+                mock_rm.return_value = ([test_file], [])
 
                 result = runner.invoke(
                     cli,
@@ -291,15 +309,42 @@ class TestRm:
                 assert call_kwargs.get("keep") is True
 
     @pytest.mark.unit
+    def test_rm_dry_run_does_not_require_force(self, runner: CliRunner) -> None:
+        """rm --dry-run does not require --force (safe operation)."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "data"
+            collection_dir.mkdir()
+            test_file = collection_dir / "file.parquet"
+            test_file.write_bytes(b"data")
+
+            with patch("portolan_cli.cli.remove_files") as mock_rm:
+                mock_rm.return_value = ([test_file], [])
+
+                result = runner.invoke(
+                    cli,
+                    ["rm", "--dry-run", str(test_file)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                assert "dry run" in result.output.lower() or "would remove" in result.output.lower()
+                mock_rm.assert_called_once()
+                call_kwargs = mock_rm.call_args.kwargs
+                assert call_kwargs.get("dry_run") is True
+
+    @pytest.mark.unit
     def test_rm_nonexistent_fails(self, runner: CliRunner) -> None:
         """rm fails for nonexistent path."""
-        result = runner.invoke(cli, ["rm", "/nonexistent/file.parquet"])
+        result = runner.invoke(cli, ["rm", "--force", "/nonexistent/file.parquet"])
 
         assert result.exit_code != 0
 
     @pytest.mark.unit
-    def test_rm_directory(self, runner: CliRunner) -> None:
-        """rm can remove entire directory."""
+    def test_rm_directory_with_force(self, runner: CliRunner) -> None:
+        """rm --force can remove entire directory."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -310,16 +355,42 @@ class TestRm:
             (collection_dir / "file2.parquet").write_bytes(b"data2")
 
             with patch("portolan_cli.cli.remove_files") as mock_rm:
-                mock_rm.return_value = []
+                mock_rm.return_value = ([], [])
 
                 result = runner.invoke(
                     cli,
-                    ["rm", str(collection_dir)],
+                    ["rm", "--force", str(collection_dir)],
                     catch_exceptions=False,
                 )
 
                 assert result.exit_code == 0
                 mock_rm.assert_called_once()
+
+    @pytest.mark.unit
+    def test_rm_verbose_shows_skipped(self, runner: CliRunner) -> None:
+        """rm --verbose shows skipped files."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "data"
+            collection_dir.mkdir()
+            test_file = collection_dir / "file.parquet"
+            test_file.write_bytes(b"data")
+            skipped_file = collection_dir / "outside.parquet"
+
+            with patch("portolan_cli.cli.remove_files") as mock_rm:
+                mock_rm.return_value = ([test_file], [skipped_file])
+
+                result = runner.invoke(
+                    cli,
+                    ["rm", "--force", "--verbose", str(test_file)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                # Should show skipped file in verbose mode
+                assert "outside" in result.output.lower() or "skipped" in result.output.lower()
 
 
 class TestAddSidecarDetection:
@@ -491,11 +562,11 @@ class TestRmJsonOutput:
             test_file.write_bytes(b"data")
 
             with patch("portolan_cli.cli.remove_files") as mock_rm:
-                mock_rm.return_value = [test_file]
+                mock_rm.return_value = ([test_file], [])  # (removed, skipped)
 
                 result = runner.invoke(
                     cli,
-                    ["--format", "json", "rm", str(test_file)],
+                    ["--format", "json", "rm", "--force", str(test_file)],
                     catch_exceptions=False,
                 )
 
@@ -503,3 +574,30 @@ class TestRmJsonOutput:
                 envelope = json.loads(result.output)
                 assert envelope["success"] is True
                 assert envelope["command"] == "rm"
+                assert "dry_run" in envelope["data"]
+
+    @pytest.mark.unit
+    def test_rm_json_dry_run(self, runner: CliRunner) -> None:
+        """rm --format json --dry-run outputs preview without requiring force."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "data"
+            collection_dir.mkdir()
+            test_file = collection_dir / "test.parquet"
+            test_file.write_bytes(b"data")
+
+            with patch("portolan_cli.cli.remove_files") as mock_rm:
+                mock_rm.return_value = ([test_file], [])
+
+                result = runner.invoke(
+                    cli,
+                    ["--format", "json", "rm", "--dry-run", str(test_file)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                envelope = json.loads(result.output)
+                assert envelope["success"] is True
+                assert envelope["data"]["dry_run"] is True

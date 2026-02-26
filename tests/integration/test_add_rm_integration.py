@@ -219,10 +219,31 @@ class TestRmIntegration:
     """Integration tests for 'portolan rm' command."""
 
     @pytest.mark.integration
-    def test_rm_deletes_file_and_untracks(
+    def test_rm_requires_force_for_destructive(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """rm deletes file from disk and removes from versions.json."""
+        """rm without --force or --keep fails with safety error."""
+        # Set up
+        collection_dir = initialized_catalog / "vectors"
+        collection_dir.mkdir()
+        test_file = collection_dir / "data.geojson"
+        shutil.copy(valid_points_geojson, test_file)
+
+        # Try rm without --force
+        result = runner.invoke(
+            cli,
+            ["rm", "--portolan-dir", str(initialized_catalog), str(test_file)],
+        )
+
+        # Should fail with safety error
+        assert result.exit_code == 1
+        assert "--force" in result.output or "SafetyError" in result.output
+
+    @pytest.mark.integration
+    def test_rm_force_deletes_file_and_untracks(
+        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """rm --force deletes file from disk and removes from versions.json."""
         # Set up: add a file first
         collection_dir = initialized_catalog / "vectors"
         collection_dir.mkdir()
@@ -245,11 +266,11 @@ class TestRmIntegration:
                 converted_file = p
                 break
 
-        # Act: remove the file
+        # Act: remove the file with --force
         target = converted_file if converted_file.exists() else test_file
         result = runner.invoke(
             cli,
-            ["rm", "--portolan-dir", str(initialized_catalog), str(target)],
+            ["rm", "--portolan-dir", str(initialized_catalog), "--force", str(target)],
             catch_exceptions=False,
         )
 
@@ -259,10 +280,10 @@ class TestRmIntegration:
         assert not converted_file.exists() or not test_file.exists()
 
     @pytest.mark.integration
-    def test_rm_no_confirmation_required(
+    def test_rm_dry_run_previews_without_deletion(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """rm works without confirmation (git-style)."""
+        """rm --dry-run shows what would be removed without deleting."""
         # Set up
         collection_dir = initialized_catalog / "vectors"
         collection_dir.mkdir()
@@ -275,16 +296,16 @@ class TestRmIntegration:
             catch_exceptions=False,
         )
 
-        # Act: rm without any input (no confirmation needed)
+        # Act: rm --dry-run (no --force needed)
         result = runner.invoke(
             cli,
-            ["rm", "--portolan-dir", str(initialized_catalog), str(test_file)],
-            input=None,  # No input - should still work
+            ["rm", "--portolan-dir", str(initialized_catalog), "--dry-run", str(test_file)],
             catch_exceptions=False,
         )
 
-        # Assert: should succeed without prompting
+        # Assert: should succeed and file should still exist
         assert result.exit_code == 0
+        assert test_file.exists(), "File was deleted despite --dry-run"
 
     @pytest.mark.integration
     def test_rm_keep_preserves_file(
@@ -323,7 +344,7 @@ class TestRmIntegration:
     def test_rm_directory_removes_all(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """rm directory removes all tracked files inside."""
+        """rm --force directory removes all tracked files inside."""
         # Set up
         collection_dir = initialized_catalog / "vectors"
         collection_dir.mkdir()
@@ -336,10 +357,10 @@ class TestRmIntegration:
             catch_exceptions=False,
         )
 
-        # Act
+        # Act (--force required for destructive operation)
         result = runner.invoke(
             cli,
-            ["rm", "--portolan-dir", str(initialized_catalog), str(collection_dir)],
+            ["rm", "--portolan-dir", str(initialized_catalog), "--force", str(collection_dir)],
             catch_exceptions=False,
         )
 
