@@ -1761,3 +1761,304 @@ def clone(
 
     if not result.success:
         raise SystemExit(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Config Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _find_catalog_root(start_path: Path) -> Path | None:
+    """Find the catalog root by looking for .portolan directory.
+
+    Searches from start_path up to filesystem root.
+
+    Args:
+        start_path: Starting directory for search.
+
+    Returns:
+        Path to catalog root, or None if not found.
+    """
+    current = start_path.resolve()
+    while current != current.parent:
+        if (current / ".portolan").exists() or (current / "catalog.json").exists():
+            return current
+        current = current.parent
+    # Check root directory too
+    if (current / ".portolan").exists() or (current / "catalog.json").exists():
+        return current
+    return None
+
+
+@cli.group()
+def config() -> None:
+    """Manage catalog configuration.
+
+    Configuration is stored in .portolan/config.yaml and follows this precedence:
+
+    \b
+    1. CLI argument (highest)
+    2. Environment variable (PORTOLAN_<KEY>)
+    3. Collection-level config
+    4. Catalog-level config
+    5. Built-in default (lowest)
+
+    \b
+    Examples:
+        portolan config set remote s3://my-bucket/catalog/
+        portolan config get remote
+        portolan config list
+        portolan config unset remote
+    """
+
+
+@config.command("set")
+@click.argument("key")
+@click.argument("value")
+@click.option(
+    "--collection",
+    "-c",
+    type=str,
+    default=None,
+    help="Set config for a specific collection instead of catalog-level.",
+)
+@click.pass_context
+def config_set(ctx: click.Context, key: str, value: str, collection: str | None) -> None:
+    """Set a configuration value.
+
+    KEY is the setting name (e.g., remote, aws_profile).
+    VALUE is the value to set.
+
+    \b
+    Examples:
+        portolan config set remote s3://my-bucket/
+        portolan config set aws_profile production
+        portolan config set remote s3://public/ --collection demographics
+    """
+    from portolan_cli.config import set_setting
+
+    use_json = should_output_json(ctx)
+
+    # Find catalog root
+    catalog_path = _find_catalog_root(Path.cwd())
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "config set",
+                [ErrorDetail(type="CatalogNotFoundError", message="Not in a Portolan catalog")],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not in a Portolan catalog")
+            info("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    try:
+        set_setting(catalog_path, key, value, collection=collection)
+
+        if use_json:
+            data = {"key": key, "value": value}
+            if collection:
+                data["collection"] = collection
+            envelope = success_envelope("config set", data)
+            output_json_envelope(envelope)
+        else:
+            if collection:
+                success(f"Set {key}={value} for collection '{collection}'")
+            else:
+                success(f"Set {key}={value}")
+
+    except Exception as e:
+        if use_json:
+            envelope = error_envelope(
+                "config set",
+                [ErrorDetail(type=type(e).__name__, message=str(e))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Failed to set config: {e}")
+        raise SystemExit(1) from e
+
+
+@config.command("get")
+@click.argument("key")
+@click.option(
+    "--collection",
+    "-c",
+    type=str,
+    default=None,
+    help="Get config for a specific collection.",
+)
+@click.pass_context
+def config_get(ctx: click.Context, key: str, collection: str | None) -> None:
+    """Get a configuration value.
+
+    Shows the resolved value and its source (env, catalog, collection, or not set).
+
+    KEY is the setting name (e.g., remote, aws_profile).
+
+    \b
+    Examples:
+        portolan config get remote
+        portolan config get aws_profile --collection restricted
+    """
+    from portolan_cli.config import _get_setting_source, get_setting
+
+    use_json = should_output_json(ctx)
+
+    # Find catalog root
+    catalog_path = _find_catalog_root(Path.cwd())
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "config get",
+                [ErrorDetail(type="CatalogNotFoundError", message="Not in a Portolan catalog")],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not in a Portolan catalog")
+            info("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    value = get_setting(key, catalog_path=catalog_path, collection=collection)
+    source = _get_setting_source(key, catalog_path, collection)
+
+    if use_json:
+        data = {
+            "key": key,
+            "value": value,
+            "source": source,
+        }
+        if collection:
+            data["collection"] = collection
+        envelope = success_envelope("config get", data)
+        output_json_envelope(envelope)
+    else:
+        if value is not None:
+            source_label = f"(from {source})"
+            success(f"{key}={value} {source_label}")
+        else:
+            info(f"{key} is not set")
+            detail(f"  Set via: portolan config set {key} <value>")
+            detail(f"  Or set:  PORTOLAN_{key.upper()}=<value>")
+
+
+@config.command("list")
+@click.option(
+    "--collection",
+    "-c",
+    type=str,
+    default=None,
+    help="Show config for a specific collection.",
+)
+@click.pass_context
+def config_list(ctx: click.Context, collection: str | None) -> None:
+    """List all configuration settings.
+
+    Shows all settings with their values and sources.
+
+    \b
+    Examples:
+        portolan config list
+        portolan config list --collection demographics
+    """
+    from portolan_cli.config import list_settings
+
+    use_json = should_output_json(ctx)
+
+    # Find catalog root
+    catalog_path = _find_catalog_root(Path.cwd())
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "config list",
+                [ErrorDetail(type="CatalogNotFoundError", message="Not in a Portolan catalog")],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not in a Portolan catalog")
+            info("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    settings = list_settings(catalog_path, collection=collection)
+
+    if use_json:
+        data = {"settings": settings}
+        if collection:
+            data["collection"] = collection
+        envelope = success_envelope("config list", data)
+        output_json_envelope(envelope)
+    else:
+        if not settings:
+            info("No configuration settings found")
+            detail("  Set values with: portolan config set <key> <value>")
+        else:
+            if collection:
+                info(f"Configuration for collection '{collection}':")
+            else:
+                info("Configuration:")
+            for key, info_dict in settings.items():
+                value = info_dict["value"]
+                source = info_dict["source"]
+                success(f"  {key}={value} (from {source})")
+
+
+@config.command("unset")
+@click.argument("key")
+@click.option(
+    "--collection",
+    "-c",
+    type=str,
+    default=None,
+    help="Unset config for a specific collection.",
+)
+@click.pass_context
+def config_unset(ctx: click.Context, key: str, collection: str | None) -> None:
+    """Remove a configuration value.
+
+    Removes the setting from the config file. Does not affect environment variables.
+
+    KEY is the setting name to remove.
+
+    \b
+    Examples:
+        portolan config unset remote
+        portolan config unset aws_profile --collection restricted
+    """
+    from portolan_cli.config import unset_setting
+
+    use_json = should_output_json(ctx)
+
+    # Find catalog root
+    catalog_path = _find_catalog_root(Path.cwd())
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "config unset",
+                [ErrorDetail(type="CatalogNotFoundError", message="Not in a Portolan catalog")],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not in a Portolan catalog")
+            info("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    removed = unset_setting(catalog_path, key, collection=collection)
+
+    if use_json:
+        data = {"key": key, "removed": removed}
+        if collection:
+            data["collection"] = collection
+        envelope = success_envelope("config unset", data)
+        output_json_envelope(envelope)
+    else:
+        if removed:
+            if collection:
+                success(f"Removed {key} from collection '{collection}' config")
+            else:
+                success(f"Removed {key} from config")
+        else:
+            if collection:
+                info(f"{key} was not set in collection '{collection}' config")
+            else:
+                info(f"{key} was not set in config")
