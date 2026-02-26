@@ -2,6 +2,9 @@
 
 ## Status
 Accepted
+Superseded-By: ADR-0023
+
+> Note: Subsumed by ADR-0023 which provides complete structure specification.
 
 ## Context
 

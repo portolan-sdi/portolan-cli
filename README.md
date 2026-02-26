@@ -18,31 +18,32 @@ Portolan enables organizations to share geospatial data in a low-cost, accessibl
 
 This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich STAC metadata, and syncs to any object storage—no servers required.
 
-## Why Portolan?
-
-| Benefit | How |
-|---------|-----|
-| **Scalable** | Cloud object storage that scales to petabytes |
-| **Open** | 100% open source, open formats (GeoParquet, COG) |
-| **AI-Ready** | STAC metadata enables semantic search and LLM integration |
-| **Cheap** | Pay only for storage + egress — no servers to run |
-| **Sovereign** | Host anywhere (AWS, GCS, Azure, MinIO, Cloudflare R2) |
-| **Breaks the GIS silo** | Query with DuckDB, Snowflake, BigQuery, Databricks, Pandas — not just GIS tools |
-
-## What It Does
-
-- **Convert** vector/raster data to cloud-native formats (GeoParquet, COG)
-- **Generate** STAC catalogs with rich metadata, thumbnails, and MapLibre styles
-- **Version** datasets with checksums and history tracking
-- **Sync** to S3, GCS, Azure, or any S3-compatible storage
-
-## Quick Example
+## Quick Start
 
 ```bash
+# Initialize a catalog
 portolan init
-portolan dataset add census.parquet --title "Census 2022" --auto
-portolan remote add prod s3://my-bucket/catalog
-portolan sync
+
+# Scan a directory for issues (optional but recommended)
+portolan scan demographics/
+
+# Add all files in a directory (creates a "demographics" collection)
+portolan add demographics/
+
+# Push the collection to remote storage
+portolan push s3://my-bucket/catalog --collection demographics
+```
+
+Other common commands:
+
+```bash
+portolan check                              # Validate catalog
+portolan check --fix                        # Convert to cloud-native formats
+portolan rm --keep demographics/old.parquet # Untrack without deleting
+portolan pull s3://my-bucket/catalog -c demographics  # Pull from remote
+portolan sync s3://my-bucket/catalog -c demographics  # Full workflow: pull → check → push
+portolan config set remote s3://my-bucket/catalog     # Save remote URL
+portolan config list                        # List all config settings
 ```
 
 ## Installation

@@ -2470,6 +2470,11 @@ docs = [
     { name = "mkdocstrings", extra = ["python"] },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "types-pyyaml" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "bandit", marker = "extra == 'dev'", specifier = ">=1.9.3" },
@@ -2503,6 +2508,9 @@ requires-dist = [
     { name = "xenon", marker = "extra == 'dev'", specifier = ">=0.9.3" },
 ]
 provides-extras = ["dev", "docs"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "types-pyyaml", specifier = ">=6.0.12.20250915" }]
 
 [[package]]
 name = "pre-commit"

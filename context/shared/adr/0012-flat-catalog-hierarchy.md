@@ -2,6 +2,9 @@
 
 ## Status
 Accepted
+Superseded-By: ADR-0023
+
+> Note: Directory structure superseded by ADR-0023. Flat hierarchy principle remains.
 
 ## Context
 

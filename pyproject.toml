@@ -187,3 +187,8 @@ verbose = false
 [tool.mutmut]
 paths_to_mutate = ["portolan_cli/"]
 pytest_add_cli_args_test_selection = ["tests/"]
+
+[dependency-groups]
+dev = [
+    "types-pyyaml>=6.0.12.20250915",
+]

@@ -12,6 +12,34 @@ Portolan is a CLI for publishing and managing **cloud-native geospatial data cat
 
 Portolan doesn't do the heavy lifting—it orchestrates libraries like `geoparquet-io` and `rio-cogeo`.
 
+## Terminology (ENFORCED)
+
+**Use STAC terminology exclusively.** Do NOT use "dataset" — it's ambiguous and not part of the STAC spec.
+
+| Term | Meaning | Example |
+|------|---------|---------|
+| **Catalog** | Root container with metadata | `catalog.json` at repo root |
+| **Collection** | Group of related items | `demographics/collection.json` |
+| **Item** | Single spatiotemporal entity | `demographics/census-2020/item.json` |
+| **Asset** | Actual data file | `demographics/census-2020/data.parquet` |
+
+**Correct:** "Add files to a collection", "Track items", "Push a collection"
+**Wrong:** "Add a dataset", "Import datasets", "Dataset management"
+
+The CLI has a legacy `portolan dataset` command group for backward compatibility, but documentation and new code should use STAC terms.
+
+## Documentation Accuracy (CRITICAL)
+
+**ROADMAP.md is the source of truth for planned vs implemented features.**
+
+When documenting CLI commands:
+1. **Run `portolan <command> --help`** to verify actual behavior
+2. **Check ROADMAP.md** for planned features (✓ = implemented, no mark = planned)
+3. **Do NOT deprecate planned features** — if it's in the roadmap, it's intended
+4. **Do NOT simplify orchestration commands** — document the FULL workflow
+
+**Example:** `portolan sync` orchestrates `pull → init → scan → check → push`. Do NOT describe it as just "pull + push" — that misrepresents the command's purpose.
+
 **Key dependencies (check these repos for API docs):**
 - [geoparquet-io](https://github.com/geoparquet/geoparquet-io) — Vector format conversion
 - [gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles) — PMTiles generation from GeoParquet
@@ -67,6 +95,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0021](context/shared/adr/0021-catalog-json-root-level.md) | catalog.json at root level (STAC standard) |
 | [0022](context/shared/adr/0022-git-style-implicit-tracking.md) | Git-style implicit tracking (subdir = collection, delete = untrack) |
 | [0023](context/shared/adr/0023-stac-structure-separation.md) | STAC at root, Portolan internals in .portolan/ (supersedes 0012, 0021) |
+| [0024](context/shared/adr/0024-hierarchical-config-system.md) | Hierarchical config system (YAML) |
 
 ## Common Commands
 

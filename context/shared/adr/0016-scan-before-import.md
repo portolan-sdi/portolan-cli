@@ -1,6 +1,6 @@
 # ADR-0016: Scan-Before-Import Architecture
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2025-02-11
 **Related:** [#12](https://github.com/portolan-sdi/portolan-cli/issues/12), [#17](https://github.com/portolan-sdi/portolan-cli/issues/17)
 

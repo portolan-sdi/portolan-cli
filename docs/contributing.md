@@ -2,8 +2,6 @@
 
 Thank you for your interest in contributing to portolan-cli!
 
-> **For AI agents and detailed development guidelines:** See `CLAUDE.md` in the project root. This document is for human contributors and covers workflow, not implementation details.
-
 ## Development Setup
 
 1. **Clone the repository**
@@ -37,15 +35,15 @@ Thank you for your interest in contributing to portolan-cli!
 
 ### Branch Naming
 
-- Feature: `feature/description` (e.g., `feature/add-streaming-support`)
-- Bug fix: `fix/description` (e.g., `fix/bbox-metadata-issue`)
-- Documentation: `docs/description` (e.g., `docs/update-readme`)
+- Feature: `feature/description`
+- Bug fix: `fix/description`
+- Documentation: `docs/description`
+- Refactor: `refactor/description`
 
 ### Commit Messages
 
-We use [Conventional Commits](https://www.conventionalcommits.org/) enforced by commitizen. See `CLAUDE.md` for the full format specification.
+We use [Conventional Commits](https://www.conventionalcommits.org/) enforced by commitizen:
 
-**Quick reference:**
 ```
 feat(scope): add new feature
 fix(scope): fix bug
@@ -54,100 +52,58 @@ refactor(scope): restructure code
 test(scope): add tests
 ```
 
+Use `uv run cz commit` for interactive commit creation.
+
 ### Pull Request Process
 
-1. **Create a new branch** from `main`
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-
-2. **Make your changes** — Write code, add tests, update docs
-
-3. **Run pre-commit checks** (happens automatically on commit)
-   ```bash
-   uv run pre-commit run --all-files
-   ```
-
-4. **Run tests**
-   ```bash
-   uv run pytest
-   ```
-
-5. **Commit and push**
-   ```bash
-   git add .
-   git commit -m "feat(scope): description"
-   git push origin feature/your-feature-name
-   ```
-
-6. **Create a Pull Request** on GitHub
-   - Fill in the PR template
-   - Link any related issues
-   - CI will run automatically
+1. Create a branch from `main`
+2. Write tests first, then implement (TDD is required — see Testing section)
+3. Run `uv run pre-commit run --all-files` to check everything locally
+4. Push and open a PR — CI runs automatically
+5. Fill in the PR template and link related issues
 
 ### What CI Checks
 
-All PRs must pass these automated checks (see `context/shared/documentation/ci.md` for details):
+All PRs must pass:
 
-- **Linting & formatting** — ruff
-- **Type checking** — mypy
-- **Security scanning** — bandit, pip-audit
-- **Tests** — pytest with coverage
-- **Dead code detection** — vulture
-- **Complexity limits** — xenon
-- **Documentation build** — mkdocs
+- **ruff** — Linting and formatting
+- **mypy** — Type checking (strict mode)
+- **bandit** — Security scanning
+- **pip-audit** — Dependency vulnerabilities
+- **vulture** — Dead code detection
+- **xenon** — Complexity limits
+- **pytest** — Full test suite with coverage
+- **mkdocs** — Documentation build
+
+All checks are strict — none allow failures.
 
 ## Testing
 
-Tests use pytest. See `CLAUDE.md` for:
-- Test-Driven Development requirements
-- Available pytest markers (`@pytest.mark.unit`, etc.)
-- Test fixture conventions
+Tests use pytest with markers to categorize test types:
 
-**Running tests:**
+| Marker | Description |
+|--------|-------------|
+| `@pytest.mark.unit` | Fast, isolated, no I/O (< 100ms) |
+| `@pytest.mark.integration` | Multi-component, may touch filesystem |
+| `@pytest.mark.network` | Requires network (mocked locally) |
+| `@pytest.mark.slow` | Takes > 5 seconds |
+
 ```bash
-# All tests (except slow/network/benchmark)
+# All tests
 uv run pytest
 
-# Specific marker
+# Only unit tests
 uv run pytest -m unit
 
 # With coverage report
 uv run pytest --cov=portolan_cli --cov-report=html
 ```
 
-## Code Review
-
-### For Contributors
-
-- Respond to feedback promptly
-- Be open to suggestions
-- Update your PR based on feedback
-- Keep discussions focused and professional
-
-### For Reviewers
-
-- Be respectful and constructive
-- Explain the reasoning behind suggestions
-- Help contributors improve their submissions
+**Test-driven development is required.** Write tests before implementation. Tests must fail before the implementation exists and pass after. This is not optional.
 
 ## Release Process
 
-Portolan uses a **tag-based release workflow**:
-
-1. **Accumulate changes** — Merge PRs to `main` as normal using conventional commits
-2. **Prepare a release** — When ready to release, create a PR that bumps the version:
-   ```bash
-   uv run cz bump --changelog
-   git push
-   ```
-3. **Merge the bump PR** — The release workflow detects the bump commit and:
-   - Creates a git tag (e.g., `v0.3.0`)
-   - Builds the package
-   - Publishes to PyPI
-   - Creates a GitHub Release
-
-The version is determined by commitizen based on conventional commits since the last release:
+Portolan uses a tag-based release workflow driven by conventional commits:
 
 | Commit type | Version bump |
 |-------------|--------------|
@@ -156,72 +112,41 @@ The version is determined by commitizen based on conventional commits since the 
 | `BREAKING CHANGE:` | Major (x.0.0) |
 | `docs:`, `refactor:`, `test:`, `chore:` | No release |
 
+To cut a release, create a PR that runs:
+```bash
+uv run cz bump --changelog
+```
+
+Merging that PR triggers the release workflow: it creates a git tag, builds the package, publishes to PyPI, and creates a GitHub Release.
+
+## Code Standards
+
+- All code requires type annotations (`mypy --strict`)
+- Use `portolan_cli/output.py` for all user-facing terminal messages
+- Non-obvious design decisions require an ADR in `context/shared/adr/`
+
 ## AI-Assisted Development (Optional)
 
-We use AI assistants (Claude Code, etc.) extensively for development. If you do too, here are tools we find helpful:
+We use AI assistants (Claude Code, etc.) extensively. Useful tools:
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| [Speckit](https://github.com/speckit/speckit) | Specification-driven development workflow | Claude Code plugin |
+| [Speckit](https://github.com/speckit/speckit) | Specification-driven development | Claude Code plugin |
 | [Context7](https://context7.io) | Up-to-date library docs via MCP | MCP server config |
 | [Gitingest](https://github.com/cyclotruc/gitingest) | Source code exploration | `pipx install gitingest` |
 | [grepai](https://yoanbernabeu.github.io/grepai/) | Semantic code search via MCP | `pipx install grepai` |
-| Distill | Token compression for large outputs | MCP server config |
 
-### grepai Setup (Optional)
-
-[grepai](https://yoanbernabeu.github.io/grepai/) provides semantic code search—find code by meaning rather than exact text matches. It integrates via MCP with Claude Code and other AI tools.
-
-**The project includes `.mcp.json` for automatic MCP registration**, but grepai itself must be installed locally:
-
-```bash
-# Install grepai
-pipx install grepai
-
-# Initialize in the project (creates .grepai/ directory)
-cd portolan-cli
-grepai init
-
-# Build the index (runs in background, watches for changes)
-grepai watch
-```
-
-**Note:** The `.grepai/` directory is gitignored—it contains machine-local embeddings (~18MB) that are regenerated by each developer. Team members without grepai installed won't be affected.
-
-**Verify it's working:**
-```bash
-grepai status  # Should show indexed files and chunks
-```
-
-### Speckit Workflow
-
-For complex features, we use speckit's structured workflow:
-
-1. `/speckit.specify` — Create a feature specification from your description
-2. `/speckit.clarify` — Get clarifying questions answered and encoded in the spec
-3. `/speckit.plan` — Generate an implementation plan
-4. `/speckit.tasks` — Break the plan into dependency-ordered tasks
-5. `/speckit.implement` — Execute the tasks with TDD
-
-See `.specify/memory/constitution.md` for the project's core development principles.
-
-These are **entirely optional**—the project works fine without them. We document our AI workflows in `CLAUDE.md` and `context/shared/documentation/context-guide.md` for those who want to use similar approaches.
-
-> **Note**: This space evolves rapidly. Use whatever tools work for you.
+The project includes `.mcp.json` for automatic MCP registration. grepai must be installed locally (`pipx install grepai`) and initialized with `grepai init` in the project directory. The `.grepai/` index is gitignored — it's regenerated per-developer.
 
 ## Questions?
 
 - **Bug reports / feature requests:** Open an issue
 - **Questions:** Use GitHub Discussions
-- **Check existing issues** before creating new ones
 
 ## Code of Conduct
 
-- Be respectful and inclusive
-- Focus on constructive feedback
-- Help create a welcoming environment
-- Report unacceptable behavior to maintainers
+Be respectful and constructive. Help create a welcoming environment.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the Apache 2.0 License.
+By contributing, you agree your contributions will be licensed under Apache 2.0.
