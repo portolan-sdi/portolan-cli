@@ -18,7 +18,7 @@ Convert files to cloud-native formats, manage metadata, organize into a local ca
 
 | Capability | Description |
 |------------|-------------|
-| `portolan init` | Create `.portolan/` catalog structure |
+| `portolan init` | Create `catalog.json` (root) + `.portolan/` for internal state |
 | `portolan dataset add` | Detect format → convert (GeoParquet/COG) → extract metadata → stage |
 | `portolan dataset remove` | Remove datasets from catalog |
 | `portolan dataset list/info` | Catalog exploration |
