@@ -1771,7 +1771,9 @@ def clone(
 def _find_catalog_root(start_path: Path) -> Path | None:
     """Find the catalog root by looking for .portolan directory.
 
-    Searches from start_path up to filesystem root.
+    Searches from start_path up to filesystem root. Only accepts directories
+    with .portolan/ present (not just catalog.json, to avoid false positives
+    with unmanaged STAC catalogs).
 
     Args:
         start_path: Starting directory for search.
@@ -1781,11 +1783,11 @@ def _find_catalog_root(start_path: Path) -> Path | None:
     """
     current = start_path.resolve()
     while current != current.parent:
-        if (current / ".portolan").exists() or (current / "catalog.json").exists():
+        if (current / ".portolan").exists():
             return current
         current = current.parent
     # Check root directory too
-    if (current / ".portolan").exists() or (current / "catalog.json").exists():
+    if (current / ".portolan").exists():
         return current
     return None
 
@@ -1902,7 +1904,7 @@ def config_get(ctx: click.Context, key: str, collection: str | None) -> None:
         portolan config get remote
         portolan config get aws_profile --collection restricted
     """
-    from portolan_cli.config import _get_setting_source, get_setting
+    from portolan_cli.config import get_setting, get_setting_source
 
     use_json = should_output_json(ctx)
 
@@ -1921,7 +1923,7 @@ def config_get(ctx: click.Context, key: str, collection: str | None) -> None:
         raise SystemExit(1)
 
     value = get_setting(key, catalog_path=catalog_path, collection=collection)
-    source = _get_setting_source(key, catalog_path, collection)
+    source = get_setting_source(key, catalog_path, collection)
 
     if use_json:
         data = {
@@ -1997,9 +1999,9 @@ def config_list(ctx: click.Context, collection: str | None) -> None:
                 info(f"Configuration for collection '{collection}':")
             else:
                 info("Configuration:")
-            for key, info_dict in settings.items():
-                value = info_dict["value"]
-                source = info_dict["source"]
+            for key, setting_info in settings.items():
+                value = setting_info["value"]
+                source = setting_info["source"]
                 success(f"  {key}={value} (from {source})")
 
 

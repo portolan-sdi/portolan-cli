@@ -68,8 +68,28 @@ def load_config(catalog_path: Path) -> dict[str, Any]:
     if not content.strip():
         return {}
 
-    data = yaml.safe_load(content)
-    return data if data is not None else {}
+    try:
+        data = yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        from portolan_cli.errors import ConfigParseError
+
+        raise ConfigParseError(str(config_file), str(e)) from e
+
+    if data is None:
+        return {}
+
+    if not isinstance(data, dict):
+        from portolan_cli.errors import ConfigInvalidStructureError
+
+        raise ConfigInvalidStructureError(str(config_file), "Config must be a YAML mapping")
+
+    # Validate collections section if present
+    if "collections" in data and not isinstance(data["collections"], dict):
+        from portolan_cli.errors import ConfigInvalidStructureError
+
+        raise ConfigInvalidStructureError(str(config_file), "'collections' must be a mapping")
+
+    return data
 
 
 def save_config(catalog_path: Path, config: dict[str, Any]) -> None:
@@ -94,13 +114,20 @@ def save_config(catalog_path: Path, config: dict[str, Any]) -> None:
 def _get_env_var_name(key: str) -> str:
     """Convert a setting key to environment variable name.
 
+    Normalizes the key by replacing hyphens and other non-alphanumeric
+    characters with underscores.
+
     Args:
-        key: Setting key (e.g., "aws_profile")
+        key: Setting key (e.g., "aws_profile", "max-depth")
 
     Returns:
-        Environment variable name (e.g., "PORTOLAN_AWS_PROFILE")
+        Environment variable name (e.g., "PORTOLAN_AWS_PROFILE", "PORTOLAN_MAX_DEPTH")
     """
-    return f"PORTOLAN_{key.upper()}"
+    import re
+
+    # Replace non-alphanumeric chars with underscores, then uppercase
+    normalized = re.sub(r"[^A-Za-z0-9]", "_", key)
+    return f"PORTOLAN_{normalized.upper()}"
 
 
 def get_setting(
@@ -131,10 +158,10 @@ def get_setting(
     if cli_value is not None:
         return cli_value
 
-    # 2. Environment variable
+    # 2. Environment variable (skip empty strings)
     env_var = _get_env_var_name(key)
     env_value = os.environ.get(env_var)
-    if env_value is not None:
+    if env_value:  # Non-empty string
         return env_value
 
     # If no catalog path, can't check file-based config
@@ -266,14 +293,14 @@ def list_settings(
     # Resolve each setting
     for key in sorted(all_keys):
         value = get_setting(key, catalog_path=catalog_path, collection=collection)
-        source = _get_setting_source(key, catalog_path, collection)
+        source = get_setting_source(key, catalog_path, collection)
         if value is not None or source != "default":
             result[key] = {"value": value, "source": source}
 
     return result
 
 
-def _get_setting_source(
+def get_setting_source(
     key: str,
     catalog_path: Path | None,
     collection: str | None,
@@ -288,9 +315,10 @@ def _get_setting_source(
     Returns:
         Source string: "env", "collection", "catalog", or "default"
     """
-    # Check environment variable
+    # Check environment variable (skip empty strings)
     env_var = _get_env_var_name(key)
-    if env_var in os.environ:
+    env_value = os.environ.get(env_var)
+    if env_value:  # Non-empty string
         return "env"
 
     if catalog_path is None:

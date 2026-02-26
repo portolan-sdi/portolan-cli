@@ -80,6 +80,58 @@ class TestLoadConfig:
         assert result["remote"] == "s3://bucket/catalog"
         assert result["collections"]["demographics"]["remote"] == "s3://public/demographics"
 
+    @pytest.mark.unit
+    def test_load_config_raises_on_malformed_yaml(self, tmp_path: Path) -> None:
+        """load_config should raise ConfigParseError for malformed YAML."""
+        from portolan_cli.config import load_config
+        from portolan_cli.errors import ConfigParseError
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        # Invalid YAML: unquoted colon in value
+        config_file.write_text("remote: s3://bucket\n  invalid: indentation: here\n")
+
+        with pytest.raises(ConfigParseError) as exc_info:
+            load_config(tmp_path)
+
+        assert "PRTLN-CFG001" in str(exc_info.value)
+
+    @pytest.mark.unit
+    def test_load_config_raises_on_non_dict_content(self, tmp_path: Path) -> None:
+        """load_config should raise ConfigInvalidStructureError for non-dict YAML."""
+        from portolan_cli.config import load_config
+        from portolan_cli.errors import ConfigInvalidStructureError
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        # YAML list instead of dict
+        config_file.write_text("- item1\n- item2\n")
+
+        with pytest.raises(ConfigInvalidStructureError) as exc_info:
+            load_config(tmp_path)
+
+        assert "PRTLN-CFG002" in str(exc_info.value)
+        assert "mapping" in str(exc_info.value).lower()
+
+    @pytest.mark.unit
+    def test_load_config_raises_on_invalid_collections_structure(self, tmp_path: Path) -> None:
+        """load_config should raise ConfigInvalidStructureError if collections is not a dict."""
+        from portolan_cli.config import load_config
+        from portolan_cli.errors import ConfigInvalidStructureError
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        # collections is a string, not a dict
+        config_file.write_text("remote: s3://bucket/\ncollections: not_a_dict\n")
+
+        with pytest.raises(ConfigInvalidStructureError) as exc_info:
+            load_config(tmp_path)
+
+        assert "collections" in str(exc_info.value).lower()
+
 
 class TestSaveConfig:
     """Tests for save_config function."""
@@ -240,6 +292,31 @@ class TestGetSetting:
             result = get_setting("aws_profile", catalog_path=tmp_path)
 
         assert result == "test-profile"
+
+    @pytest.mark.unit
+    def test_env_var_handles_hyphenated_keys(self, tmp_path: Path) -> None:
+        """Environment variables should normalize hyphens to underscores."""
+        from portolan_cli.config import get_setting
+
+        # max-depth -> PORTOLAN_MAX_DEPTH
+        with mock.patch.dict(os.environ, {"PORTOLAN_MAX_DEPTH": "10"}):
+            result = get_setting("max-depth", catalog_path=tmp_path)
+
+        assert result == "10"
+
+    @pytest.mark.unit
+    def test_empty_env_var_does_not_override(self, tmp_path: Path) -> None:
+        """Empty environment variable should not override config file value."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"remote": "s3://from-config/"})
+
+        # Empty env var should be ignored
+        with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": ""}):
+            result = get_setting("remote", catalog_path=tmp_path)
+
+        assert result == "s3://from-config/"
 
     @pytest.mark.unit
     def test_works_without_catalog_path(self) -> None:
@@ -508,31 +585,31 @@ class TestListSettings:
 
 
 class TestGetSettingSource:
-    """Tests for _get_setting_source function."""
+    """Tests for get_setting_source function."""
 
     @pytest.mark.unit
     def test_source_returns_default_without_catalog_path(self) -> None:
-        """_get_setting_source should return 'default' when no catalog_path."""
-        from portolan_cli.config import _get_setting_source
+        """get_setting_source should return 'default' when no catalog_path."""
+        from portolan_cli.config import get_setting_source
 
-        result = _get_setting_source("remote", catalog_path=None, collection=None)
+        result = get_setting_source("remote", catalog_path=None, collection=None)
 
         assert result == "default"
 
     @pytest.mark.unit
     def test_source_returns_env_when_env_var_set(self) -> None:
-        """_get_setting_source should return 'env' when env var is set."""
-        from portolan_cli.config import _get_setting_source
+        """get_setting_source should return 'env' when env var is set."""
+        from portolan_cli.config import get_setting_source
 
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env/"}):
-            result = _get_setting_source("remote", catalog_path=None, collection=None)
+            result = get_setting_source("remote", catalog_path=None, collection=None)
 
         assert result == "env"
 
     @pytest.mark.unit
     def test_source_returns_collection_for_collection_setting(self, tmp_path: Path) -> None:
-        """_get_setting_source should return 'collection' for collection-level."""
-        from portolan_cli.config import _get_setting_source, save_config
+        """get_setting_source should return 'collection' for collection-level."""
+        from portolan_cli.config import get_setting_source, save_config
 
         (tmp_path / ".portolan").mkdir()
         save_config(
@@ -543,6 +620,6 @@ class TestGetSettingSource:
             },
         )
 
-        result = _get_setting_source("remote", catalog_path=tmp_path, collection="demo")
+        result = get_setting_source("remote", catalog_path=tmp_path, collection="demo")
 
         assert result == "collection"

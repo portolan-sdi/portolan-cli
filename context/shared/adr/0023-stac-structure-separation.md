@@ -30,7 +30,7 @@ This violates STAC conventions and makes catalogs unusable with standard STAC to
 ./catalog.json                          # STAC catalog
 ./versions.json                         # Catalog-level versioning (discoverable)
 ./.portolan/
-│   ├── config.json                     # Internal: catalog configuration
+│   ├── config.yaml                     # Internal: catalog configuration (see ADR-0024)
 │   └── state.json                      # Internal: local sync state
 ./demographics/
 │   ├── collection.json                 # STAC collection
