@@ -13,6 +13,7 @@ from typing import Any
 
 import click
 
+from portolan_cli.check import check_directory
 from portolan_cli.dataset import (
     add_dataset,
     get_dataset_info,
@@ -213,9 +214,15 @@ def init(
         raise SystemExit(1) from err
 
 
-def _output_check_json(report: Any) -> None:
-    """Output check results as JSON envelope."""
+def _output_check_json(report: Any, *, mode: str = "all") -> None:
+    """Output check results as JSON envelope.
+
+    Args:
+        report: ValidationReport from metadata validation.
+        mode: Check mode ("metadata", "format", or "all").
+    """
     data = report.to_dict()
+    data["mode"] = mode
     data["summary"] = {
         "total": len(report.results),
         "passed": sum(1 for r in report.results if r.passed),
@@ -264,6 +271,85 @@ def _print_check_summary(report: Any) -> None:
     error(f"Validation failed: {', '.join(parts)}")
 
 
+def _print_format_check_results(report: Any, *, verbose: bool = False) -> None:
+    """Print format check results (not conversion, just status check).
+
+    Args:
+        report: CheckReport with file statuses.
+        verbose: If True, show all files including cloud-native.
+    """
+    from portolan_cli.formats import CloudNativeStatus
+
+    if report.total == 0:
+        info("No geospatial files found")
+        return
+
+    cloud_native = [f for f in report.files if f.status == CloudNativeStatus.CLOUD_NATIVE]
+    convertible = [f for f in report.files if f.status == CloudNativeStatus.CONVERTIBLE]
+    unsupported = [f for f in report.files if f.status == CloudNativeStatus.UNSUPPORTED]
+
+    # Summary
+    if cloud_native:
+        success(f"{len(cloud_native)} file(s) already cloud-native")
+    if convertible:
+        warn(f"{len(convertible)} file(s) need conversion")
+    if unsupported:
+        detail(f"{len(unsupported)} file(s) unsupported")
+
+    # Details if verbose
+    if verbose:
+        for f in cloud_native:
+            success(f"  {f.relative_path} ({f.display_name})")
+        for f in convertible:
+            warn(f"  {f.relative_path} ({f.display_name}) → {f.target_format}")
+        for f in unsupported:
+            detail(f"  {f.relative_path} ({f.display_name})")
+
+
+def _output_combined_check_json(
+    metadata_report: Any | None,
+    format_report: Any | None,
+    *,
+    mode: str = "all",
+) -> None:
+    """Output combined check results as JSON envelope.
+
+    Args:
+        metadata_report: Optional ValidationReport from metadata validation.
+        format_report: Optional CheckReport from format checking.
+        mode: Check mode ("metadata", "format", or "all").
+    """
+    data: dict[str, Any] = {"mode": mode}
+    errors: list[ErrorDetail] = []
+
+    if metadata_report is not None:
+        data["metadata"] = metadata_report.to_dict()
+        data["metadata"]["summary"] = {
+            "total": len(metadata_report.results),
+            "passed": sum(1 for r in metadata_report.results if r.passed),
+            "errors": len(metadata_report.errors),
+            "warnings": len(metadata_report.warnings),
+        }
+        if metadata_report.errors:
+            errors.extend([
+                ErrorDetail(type="ValidationError", message=r.message)
+                for r in metadata_report.errors
+            ])
+
+    if format_report is not None:
+        data["format"] = format_report.to_dict()
+
+    # Determine overall success
+    has_errors = bool(errors)
+
+    if has_errors:
+        envelope = error_envelope("check", errors, data=data)
+    else:
+        envelope = success_envelope("check", data)
+
+    output_json_envelope(envelope)
+
+
 @cli.command()
 @click.argument("path", type=click.Path(path_type=Path), default=".")
 @click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
@@ -278,6 +364,17 @@ def _print_check_summary(report: Any) -> None:
     is_flag=True,
     help="Preview what would be converted (use with --fix)",
 )
+@click.option(
+    "--metadata",
+    is_flag=True,
+    help="Only validate STAC metadata (links, schema, required fields)",
+)
+@click.option(
+    "--geo-assets",
+    "geo_assets",
+    is_flag=True,
+    help="Only check geospatial assets (cloud-native status, convertibility)",
+)
 @click.pass_context
 def check(
     ctx: click.Context,
@@ -286,6 +383,8 @@ def check(
     verbose: bool,
     fix: bool,
     dry_run: bool,
+    metadata: bool,
+    geo_assets: bool,
 ) -> None:
     """Validate a Portolan catalog or check files for cloud-native status.
 
@@ -294,15 +393,24 @@ def check(
 
     PATH is the directory to check (default: current directory).
 
+    Use --metadata or --geo-assets to run only specific validations:
+    - --metadata: Validate STAC catalog structure and metadata
+    - --geo-assets: Check geospatial assets for cloud-native compliance
+
     Examples:
 
-        portolan check                    # Validate catalog
+        portolan check                        # Validate all (metadata + geo-assets)
 
-        portolan check /data --fix        # Convert files to cloud-native
+        portolan check --metadata             # Validate metadata only
+
+        portolan check --geo-assets           # Check geo-assets only
+
+        portolan check /data --fix            # Convert files to cloud-native
+
+        portolan check /data --geo-assets --fix  # Convert only (no metadata validation)
 
         portolan check /data --fix --dry-run  # Preview conversions
     """
-
     use_json = should_output_json(ctx, json_output)
 
     # Validate path exists (handle in code for JSON envelope support)
@@ -321,30 +429,96 @@ def check(
     if dry_run and not fix:
         warn("--dry-run has no effect without --fix")
 
-    # If --fix is used, run conversion workflow
-    if fix:
-        _run_check_fix(
-            path=path,
-            dry_run=dry_run,
-            use_json=use_json,
-            verbose=verbose,
-        )
-        return
+    # Determine which checks to run based on flags
+    # For backward compatibility:
+    # - No flags, no fix → metadata only (original behavior)
+    # - No flags, with fix → format only (original behavior)
+    # - Explicit flags override the default behavior
+    explicit_flags = metadata or geo_assets
 
-    # Otherwise, run catalog validation (original behavior)
-    report = validate_catalog(path)
-
-    if use_json:
-        _output_check_json(report)
+    if explicit_flags:
+        # User explicitly specified what to check
+        run_metadata = metadata
+        run_format = geo_assets
     else:
-        # Human-readable output
-        for result in report.results:
-            if verbose or not result.passed:
-                _print_validation_result(result)
-        _print_check_summary(report)
+        # Backward compatible default: metadata without fix, format with fix
+        run_metadata = not fix
+        run_format = fix
 
-    # Exit code: 1 if any errors (not warnings)
-    if report.errors:
+    # Determine mode for JSON output
+    if run_metadata and not run_format:
+        mode = "metadata"
+    elif run_format and not run_metadata:
+        mode = "geo-assets"
+    else:
+        mode = "all"
+
+    # Track results for combined output
+    has_errors = False
+    metadata_report = None
+    format_report = None
+
+    # Run metadata validation if requested
+    if run_metadata:
+        metadata_report = validate_catalog(path)
+        if not run_format:
+            # Metadata-only mode: output and exit
+            if use_json:
+                _output_check_json(metadata_report, mode=mode)
+            else:
+                for result in metadata_report.results:
+                    if verbose or not result.passed:
+                        _print_validation_result(result)
+                _print_check_summary(metadata_report)
+            if metadata_report.errors:
+                raise SystemExit(1)
+            return
+
+    # Run format check if requested
+    if run_format:
+        if fix:
+            # Run conversion workflow
+            _run_check_fix(
+                path=path,
+                dry_run=dry_run,
+                use_json=use_json,
+                verbose=verbose,
+                mode=mode,
+                metadata_report=metadata_report,
+            )
+            return
+        else:
+            # Just check format status (no conversion)
+            format_report = check_directory(path, fix=False, dry_run=False)
+            if not run_metadata:
+                # Format-only mode: output and exit
+                if use_json:
+                    data = format_report.to_dict()
+                    data["mode"] = mode
+                    envelope = success_envelope("check", data)
+                    output_json_envelope(envelope)
+                else:
+                    _print_format_check_results(format_report, verbose=verbose)
+                return
+
+    # Combined mode: output both results
+    if use_json:
+        _output_combined_check_json(metadata_report, format_report, mode=mode)
+    else:
+        # Human-readable output for both
+        if metadata_report:
+            info("Metadata validation:")
+            for result in metadata_report.results:
+                if verbose or not result.passed:
+                    _print_validation_result(result)
+            _print_check_summary(metadata_report)
+            has_errors = bool(metadata_report.errors)
+        if format_report:
+            info("\nFormat check:")
+            _print_format_check_results(format_report, verbose=verbose)
+
+    # Exit code: 1 if any errors
+    if has_errors:
         raise SystemExit(1)
 
 
@@ -359,6 +533,8 @@ def _run_check_fix(
     dry_run: bool,
     use_json: bool,
     verbose: bool = False,
+    mode: str = "all",
+    metadata_report: Any | None = None,
 ) -> None:
     """Run check --fix workflow to convert files to cloud-native formats.
 
@@ -367,15 +543,24 @@ def _run_check_fix(
         dry_run: If True, preview without making changes.
         use_json: If True, output JSON envelope.
         verbose: If True, show detailed output for each file.
+        mode: Check mode ("metadata", "format", or "all").
+        metadata_report: Optional ValidationReport from metadata validation.
     """
-    from portolan_cli.check import check_directory as check_dir_fn
     from portolan_cli.convert import ConversionStatus
 
     # Run check with fix
-    report = check_dir_fn(path, fix=True, dry_run=dry_run)
+    report = check_directory(path, fix=True, dry_run=dry_run)
+
+    has_errors = False
 
     if use_json:
         # JSON output
+        data = report.to_dict()
+        data["mode"] = mode
+        if metadata_report is not None:
+            data["metadata"] = metadata_report.to_dict()
+            has_errors = bool(metadata_report.errors)
+
         if report.conversion_report is not None and report.conversion_report.failed > 0:
             errors = [
                 ErrorDetail(
@@ -385,19 +570,42 @@ def _run_check_fix(
                 for r in report.conversion_report.results
                 if r.status == ConversionStatus.FAILED
             ]
-            envelope = error_envelope("check", errors, data=report.to_dict())
+            if has_errors and metadata_report is not None:
+                errors.extend([
+                    ErrorDetail(type="ValidationError", message=r.message)
+                    for r in metadata_report.errors
+                ])
+            envelope = error_envelope("check", errors, data=data)
+        elif has_errors and metadata_report is not None:
+            errors = [
+                ErrorDetail(type="ValidationError", message=r.message)
+                for r in metadata_report.errors
+            ]
+            envelope = error_envelope("check", errors, data=data)
         else:
-            envelope = success_envelope("check", report.to_dict())
+            envelope = success_envelope("check", data)
         output_json_envelope(envelope)
     else:
         # Human-readable output
+        if metadata_report is not None:
+            info("Metadata validation:")
+            for result in metadata_report.results:
+                if verbose or not result.passed:
+                    _print_validation_result(result)
+            _print_check_summary(metadata_report)
+            has_errors = bool(metadata_report.errors)
+            info("")  # Blank line separator
+
+        info("Format conversion:")
         if dry_run:
             _print_check_fix_preview(report)
         else:
             _print_check_fix_results(report, verbose=verbose)
 
-    # Exit code based on conversion results
+    # Exit code based on conversion results AND metadata errors
     if report.conversion_report is not None and report.conversion_report.failed > 0:
+        raise SystemExit(1)
+    if has_errors:
         raise SystemExit(1)
 
 
