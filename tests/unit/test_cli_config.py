@@ -323,9 +323,7 @@ class TestConfigErrorMessages:
         return CliRunner()
 
     @pytest.mark.unit
-    def test_error_message_suggests_alternatives(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
+    def test_error_message_suggests_alternatives(self, runner: CliRunner, tmp_path: Path) -> None:
         """Error for missing remote should suggest config/CLI/env alternatives."""
         # This tests the error message format from the issue spec
         # The actual error would be in sync/push commands, not config

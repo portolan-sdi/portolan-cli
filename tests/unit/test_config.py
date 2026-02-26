@@ -10,22 +10,20 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from unittest import mock
 
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    pass
 
 
 class TestLoadConfig:
     """Tests for load_config function."""
 
     @pytest.mark.unit
-    def test_load_config_returns_empty_dict_when_file_missing(
-        self, tmp_path: Path
-    ) -> None:
+    def test_load_config_returns_empty_dict_when_file_missing(self, tmp_path: Path) -> None:
         """load_config should return empty dict if config file doesn't exist."""
         from portolan_cli.config import load_config
 
@@ -205,9 +203,7 @@ class TestGetSetting:
         )
 
         with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env/"}):
-            result = get_setting(
-                "remote", catalog_path=tmp_path, collection="demographics"
-            )
+            result = get_setting("remote", catalog_path=tmp_path, collection="demographics")
 
         assert result == "s3://env/"
 
@@ -256,6 +252,20 @@ class TestGetSetting:
         assert result == "s3://env-only/"
 
     @pytest.mark.unit
+    def test_returns_none_without_catalog_path_or_env(self) -> None:
+        """get_setting should return None when no catalog_path and no env var."""
+        from portolan_cli.config import get_setting
+
+        # Ensure no relevant env vars are set
+        with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": ""}, clear=False):
+            # Clear the env var if it exists
+            if "PORTOLAN_REMOTE" in os.environ:
+                del os.environ["PORTOLAN_REMOTE"]
+            result = get_setting("remote")
+
+        assert result is None
+
+    @pytest.mark.unit
     def test_collection_falls_back_to_catalog_config(self, tmp_path: Path) -> None:
         """Collection should inherit catalog config for unset keys."""
         from portolan_cli.config import get_setting, save_config
@@ -273,9 +283,7 @@ class TestGetSetting:
             },
         )
 
-        result = get_setting(
-            "aws_profile", catalog_path=tmp_path, collection="demographics"
-        )
+        result = get_setting("aws_profile", catalog_path=tmp_path, collection="demographics")
 
         # Should fall back to catalog-level aws_profile
         assert result == "catalog-profile"
@@ -391,6 +399,27 @@ class TestUnsetSetting:
         # aws_profile should be removed
         assert "aws_profile" not in config["collections"]["demographics"]
 
+    @pytest.mark.unit
+    def test_unset_nonexistent_collection_key(self, tmp_path: Path) -> None:
+        """unset_setting should return False for nonexistent key in collection."""
+        from portolan_cli.config import save_config, unset_setting
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(
+            tmp_path,
+            {
+                "remote": "s3://catalog/",
+                "collections": {
+                    "demographics": {"remote": "s3://collection/"},
+                },
+            },
+        )
+
+        # Try to unset a key that doesn't exist in the collection
+        result = unset_setting(tmp_path, "aws_profile", collection="demographics")
+
+        assert result is False
+
 
 class TestConfigConstants:
     """Tests for config-related constants and defaults."""
@@ -421,3 +450,99 @@ class TestConfigFilePath:
         path = get_config_path(tmp_path)
 
         assert path == tmp_path / ".portolan" / "config.yaml"
+
+
+class TestListSettings:
+    """Tests for list_settings function."""
+
+    @pytest.mark.unit
+    def test_list_settings_basic(self, tmp_path: Path) -> None:
+        """list_settings should return all configured settings."""
+        from portolan_cli.config import list_settings, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"remote": "s3://bucket/", "aws_profile": "prod"})
+
+        result = list_settings(catalog_path=tmp_path)
+
+        assert "remote" in result
+        assert result["remote"]["value"] == "s3://bucket/"
+        assert result["remote"]["source"] == "catalog"
+
+    @pytest.mark.unit
+    def test_list_settings_with_collection(self, tmp_path: Path) -> None:
+        """list_settings should include collection-level settings."""
+        from portolan_cli.config import list_settings, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(
+            tmp_path,
+            {
+                "remote": "s3://catalog/",
+                "collections": {
+                    "demographics": {"remote": "s3://collection/", "aws_profile": "col"},
+                },
+            },
+        )
+
+        result = list_settings(catalog_path=tmp_path, collection="demographics")
+
+        assert "remote" in result
+        assert result["remote"]["value"] == "s3://collection/"
+        assert result["remote"]["source"] == "collection"
+        assert "aws_profile" in result
+        assert result["aws_profile"]["value"] == "col"
+        assert result["aws_profile"]["source"] == "collection"
+
+    @pytest.mark.unit
+    def test_list_settings_without_catalog_path(self) -> None:
+        """list_settings should work with just env vars if no catalog_path."""
+        from portolan_cli.config import list_settings
+
+        with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env/"}):
+            result = list_settings()
+
+        assert "remote" in result
+        assert result["remote"]["value"] == "s3://env/"
+        assert result["remote"]["source"] == "env"
+
+
+class TestGetSettingSource:
+    """Tests for _get_setting_source function."""
+
+    @pytest.mark.unit
+    def test_source_returns_default_without_catalog_path(self) -> None:
+        """_get_setting_source should return 'default' when no catalog_path."""
+        from portolan_cli.config import _get_setting_source
+
+        result = _get_setting_source("remote", catalog_path=None, collection=None)
+
+        assert result == "default"
+
+    @pytest.mark.unit
+    def test_source_returns_env_when_env_var_set(self) -> None:
+        """_get_setting_source should return 'env' when env var is set."""
+        from portolan_cli.config import _get_setting_source
+
+        with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env/"}):
+            result = _get_setting_source("remote", catalog_path=None, collection=None)
+
+        assert result == "env"
+
+    @pytest.mark.unit
+    def test_source_returns_collection_for_collection_setting(self, tmp_path: Path) -> None:
+        """_get_setting_source should return 'collection' for collection-level."""
+        from portolan_cli.config import _get_setting_source, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(
+            tmp_path,
+            {
+                "remote": "s3://catalog/",
+                "collections": {"demo": {"remote": "s3://collection/"}},
+            },
+        )
+
+        result = _get_setting_source("remote", catalog_path=tmp_path, collection="demo")
+
+        assert result == "collection"
