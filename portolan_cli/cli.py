@@ -545,9 +545,20 @@ def _output_format_only(path: Path, mode: str, use_json: bool, verbose: bool) ->
 def _output_combined(
     path: Path, metadata_report: Any, mode: str, use_json: bool, verbose: bool
 ) -> None:
-    """Output combined metadata + format check results."""
+    """Output combined metadata + format check results.
+
+    Args:
+        path: Directory that was checked.
+        metadata_report: ValidationReport from metadata validation.
+        mode: Check mode string for JSON output.
+        use_json: Whether to output JSON envelope.
+        verbose: Whether to show detailed output.
+
+    Raises:
+        SystemExit: If metadata validation has errors.
+    """
     format_report = check_directory(path, fix=False, dry_run=False)
-    has_errors = False
+    has_metadata_errors = metadata_report is not None and bool(metadata_report.errors)
 
     if use_json:
         _output_combined_check_json(metadata_report, format_report, mode=mode)
@@ -558,12 +569,12 @@ def _output_combined(
                 if verbose or not result.passed:
                     _print_validation_result(result)
             _print_check_summary(metadata_report)
-            has_errors = bool(metadata_report.errors)
         if format_report:
             info("\nFormat check:")
             _print_format_check_results(format_report, verbose=verbose)
 
-    if has_errors:
+    # Exit with error if metadata validation failed
+    if has_metadata_errors:
         raise SystemExit(1)
 
 
@@ -607,11 +618,23 @@ def _run_check_fix(
 
 
 def _output_fix_json(report: Any, metadata_report: Any | None, mode: str) -> None:
-    """Output JSON for check --fix workflow."""
+    """Output JSON for check --fix workflow.
+
+    Args:
+        report: CheckReport with conversion results.
+        metadata_report: Optional ValidationReport from metadata validation.
+        mode: Check mode string ("metadata", "geo-assets", or "all").
+
+    Note:
+        JSON structure is standardized with format/conversion data nested under
+        "conversion" key for consistency with non-fix combined mode.
+    """
     from portolan_cli.convert import ConversionStatus
 
-    data = report.to_dict()
-    data["mode"] = mode
+    # Build data with consistent structure (conversion nested, not at root)
+    data: dict[str, Any] = {"mode": mode}
+    data["conversion"] = report.to_dict()
+
     has_metadata_errors = metadata_report is not None and bool(metadata_report.errors)
     has_conversion_errors = (
         report.conversion_report is not None and report.conversion_report.failed > 0

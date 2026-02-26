@@ -311,13 +311,16 @@ class TestCheckFixUnsupportedFiles:
         envelope = json.loads(result.output)
         data = envelope["data"]
 
-        # Only the GeoJSON should be in the report - .nc is ignored
-        assert data["summary"]["total"] == 1
-        assert data["summary"]["convertible"] == 1
+        # With --fix, format data is nested under "conversion" key
+        conversion_data = data.get("conversion", data)
 
-        # Conversion should only process the GeoJSON
-        if "conversion" in data:
-            conversion = data["conversion"]
+        # Only the GeoJSON should be in the report - .nc is ignored
+        assert conversion_data["summary"]["total"] == 1
+        assert conversion_data["summary"]["convertible"] == 1
+
+        # Conversion results should show only the GeoJSON was converted
+        if "conversion" in conversion_data:
+            conversion = conversion_data["conversion"]
             # No failures
             assert conversion["summary"]["failed"] == 0
             # Only the GeoJSON was converted

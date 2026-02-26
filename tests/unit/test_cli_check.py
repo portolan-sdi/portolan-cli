@@ -14,6 +14,60 @@ from hypothesis import strategies as st
 from portolan_cli.cli import cli
 from portolan_cli.validation.results import Severity, ValidationReport, ValidationResult
 
+# =============================================================================
+# Shared Fixtures for Mock Reports
+# =============================================================================
+
+
+@pytest.fixture
+def mock_passing_validation_report() -> ValidationReport:
+    """Create a passing ValidationReport for testing.
+
+    Returns:
+        ValidationReport with a single passing result.
+    """
+    return ValidationReport(
+        results=[
+            ValidationResult(
+                rule_name="catalog_exists",
+                passed=True,
+                severity=Severity.ERROR,
+                message="Catalog exists",
+            ),
+        ]
+    )
+
+
+@pytest.fixture
+def mock_failing_validation_report() -> ValidationReport:
+    """Create a failing ValidationReport for testing.
+
+    Returns:
+        ValidationReport with a failing error result.
+    """
+    return ValidationReport(
+        results=[
+            ValidationResult(
+                rule_name="catalog_exists",
+                passed=False,
+                severity=Severity.ERROR,
+                message="Catalog does not exist",
+            ),
+        ]
+    )
+
+
+@pytest.fixture
+def mock_check_report(tmp_path: Path):
+    """Create a mock CheckReport for testing.
+
+    Returns:
+        CheckReport with empty files list.
+    """
+    from portolan_cli.check import CheckReport
+
+    return CheckReport(root=tmp_path, files=[], conversion_report=None)
+
 
 class TestCheckCommand:
     """Tests for 'portolan check' CLI command."""
@@ -750,6 +804,110 @@ class TestCheckMetadataGeoAssetsFlags:
             mock_check_dir.assert_not_called()
             assert result.exit_code == 0
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Error path tests
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @pytest.mark.unit
+    def test_nonexistent_path_with_metadata_flag(self, runner: CliRunner) -> None:
+        """'portolan check /nonexistent --metadata' should fail with error."""
+        result = runner.invoke(cli, ["check", "/nonexistent/path", "--metadata"])
+
+        assert result.exit_code == 1
+        assert "not exist" in result.output.lower() or "not found" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_nonexistent_path_with_geo_assets_flag(self, runner: CliRunner) -> None:
+        """'portolan check /nonexistent --geo-assets' should fail with error."""
+        result = runner.invoke(cli, ["check", "/nonexistent/path", "--geo-assets"])
+
+        assert result.exit_code == 1
+        assert "not exist" in result.output.lower() or "not found" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_nonexistent_path_with_both_flags(self, runner: CliRunner) -> None:
+        """'portolan check /nonexistent --metadata --geo-assets' should fail."""
+        result = runner.invoke(cli, ["check", "/nonexistent/path", "--metadata", "--geo-assets"])
+
+        assert result.exit_code == 1
+        assert "not exist" in result.output.lower() or "not found" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_metadata_fix_with_metadata_errors(self, runner: CliRunner, tmp_path: Path) -> None:
+        """'portolan check --metadata --fix' should fail if metadata has errors."""
+        from portolan_cli.check import CheckReport
+
+        mock_failing_report = ValidationReport(
+            results=[
+                ValidationResult(
+                    rule_name="catalog_exists",
+                    passed=False,
+                    severity=Severity.ERROR,
+                    message="Catalog does not exist",
+                ),
+            ]
+        )
+        mock_check_report = CheckReport(root=tmp_path, files=[], conversion_report=None)
+
+        with (
+            patch("portolan_cli.cli.validate_catalog", return_value=mock_failing_report),
+            patch("portolan_cli.cli.check_directory", return_value=mock_check_report),
+        ):
+            result = runner.invoke(
+                cli, ["check", str(tmp_path), "--metadata", "--geo-assets", "--fix"]
+            )
+
+            # Should fail due to metadata errors
+            assert result.exit_code == 1
+
+    @pytest.mark.unit
+    def test_metadata_fix_json_with_metadata_errors(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """'portolan check --metadata --fix --json' should include errors in JSON."""
+        from portolan_cli.check import CheckReport
+
+        mock_failing_report = ValidationReport(
+            results=[
+                ValidationResult(
+                    rule_name="catalog_exists",
+                    passed=False,
+                    severity=Severity.ERROR,
+                    message="Catalog does not exist",
+                ),
+            ]
+        )
+        mock_check_report = CheckReport(root=tmp_path, files=[], conversion_report=None)
+
+        with (
+            patch("portolan_cli.cli.validate_catalog", return_value=mock_failing_report),
+            patch("portolan_cli.cli.check_directory", return_value=mock_check_report),
+        ):
+            result = runner.invoke(
+                cli,
+                ["check", str(tmp_path), "--metadata", "--geo-assets", "--fix", "--json"],
+            )
+
+            # Should fail
+            assert result.exit_code == 1
+
+            # JSON should indicate failure
+            output = json.loads(result.output)
+            assert output["success"] is False
+            assert "errors" in output
+
+    @pytest.mark.unit
+    def test_nonexistent_path_json_output(self, runner: CliRunner) -> None:
+        """'portolan check /nonexistent --json' should output JSON error envelope."""
+        result = runner.invoke(cli, ["check", "/nonexistent/path", "--json"])
+
+        assert result.exit_code == 1
+
+        output = json.loads(result.output)
+        assert output["success"] is False
+        assert output["command"] == "check"
+        assert "errors" in output
+
 
 # =============================================================================
 # Hypothesis (Property-Based) Tests for Flag Combinations
@@ -760,6 +918,15 @@ class TestCheckFlagCombinationsHypothesis:
     """Property-based tests for --metadata and --geo-assets flag combinations.
 
     These tests verify invariants that should hold across all valid flag combinations.
+
+    Note on health check suppression:
+        We suppress HealthCheck.function_scoped_fixture because pytest fixtures
+        (runner, tmp_path) are function-scoped by design. Hypothesis warns about
+        this because function-scoped fixtures are recreated for each example,
+        which can be slow. In our case, this is acceptable because:
+        1. CliRunner is lightweight
+        2. tmp_path cleanup is handled by pytest
+        3. Test execution time is still reasonable
     """
 
     @pytest.fixture
@@ -767,7 +934,7 @@ class TestCheckFlagCombinationsHypothesis:
         """Create a CLI test runner."""
         return CliRunner()
 
-    # Strategy for flag combinations
+    # Strategy for flag combinations - generates random boolean combinations
     flag_combinations = st.fixed_dictionaries(
         {
             "metadata": st.booleans(),
@@ -778,24 +945,19 @@ class TestCheckFlagCombinationsHypothesis:
         }
     )
 
+    # Suppress function_scoped_fixture health check - see class docstring for rationale
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=50)
     @given(flags=flag_combinations)
     @pytest.mark.unit
-    def test_exit_code_is_valid(self, runner: CliRunner, flags: dict, tmp_path: Path) -> None:
+    def test_exit_code_is_valid(
+        self,
+        runner: CliRunner,
+        flags: dict,
+        tmp_path: Path,
+        mock_passing_validation_report: ValidationReport,
+        mock_check_report,
+    ) -> None:
         """Exit code should always be 0 or 1 for any flag combination."""
-        from portolan_cli.check import CheckReport
-
-        mock_validation_report = ValidationReport(
-            results=[
-                ValidationResult(
-                    rule_name="catalog_exists",
-                    passed=True,
-                    severity=Severity.ERROR,
-                    message="Catalog exists",
-                ),
-            ]
-        )
-        mock_check_report = CheckReport(root=tmp_path, files=[], conversion_report=None)
 
         # Build command args
         args = ["check", str(tmp_path)]
@@ -811,7 +973,10 @@ class TestCheckFlagCombinationsHypothesis:
             args.append("--json")
 
         with (
-            patch("portolan_cli.cli.validate_catalog", return_value=mock_validation_report),
+            patch(
+                "portolan_cli.cli.validate_catalog",
+                return_value=mock_passing_validation_report,
+            ),
             patch("portolan_cli.cli.check_directory", return_value=mock_check_report),
         ):
             result = runner.invoke(cli, args)
@@ -821,27 +986,19 @@ class TestCheckFlagCombinationsHypothesis:
                 f"Unexpected exit code {result.exit_code} for args {args}"
             )
 
+    # Suppress function_scoped_fixture - see class docstring for rationale
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=30)
     @given(flags=st.fixed_dictionaries({"metadata": st.booleans(), "geo_assets": st.booleans()}))
     @pytest.mark.unit
     def test_json_output_is_valid_json(
-        self, runner: CliRunner, flags: dict, tmp_path: Path
+        self,
+        runner: CliRunner,
+        flags: dict,
+        tmp_path: Path,
+        mock_passing_validation_report: ValidationReport,
+        mock_check_report,
     ) -> None:
         """JSON output should always be valid JSON regardless of flag combination."""
-        from portolan_cli.check import CheckReport
-
-        mock_validation_report = ValidationReport(
-            results=[
-                ValidationResult(
-                    rule_name="catalog_exists",
-                    passed=True,
-                    severity=Severity.ERROR,
-                    message="Catalog exists",
-                ),
-            ]
-        )
-        mock_check_report = CheckReport(root=tmp_path, files=[], conversion_report=None)
-
         args = ["check", str(tmp_path), "--json"]
         if flags["metadata"]:
             args.append("--metadata")
@@ -849,7 +1006,10 @@ class TestCheckFlagCombinationsHypothesis:
             args.append("--geo-assets")
 
         with (
-            patch("portolan_cli.cli.validate_catalog", return_value=mock_validation_report),
+            patch(
+                "portolan_cli.cli.validate_catalog",
+                return_value=mock_passing_validation_report,
+            ),
             patch("portolan_cli.cli.check_directory", return_value=mock_check_report),
         ):
             result = runner.invoke(cli, args)
@@ -866,6 +1026,7 @@ class TestCheckFlagCombinationsHypothesis:
                         f"Invalid JSON output for args {args}: {e}\nOutput: {result.output[:200]}"
                     )
 
+    # Suppress function_scoped_fixture - see class docstring for rationale
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=20)
     @given(
         metadata=st.booleans(),
@@ -873,23 +1034,15 @@ class TestCheckFlagCombinationsHypothesis:
     )
     @pytest.mark.unit
     def test_json_mode_field_matches_flags(
-        self, runner: CliRunner, metadata: bool, geo_assets: bool, tmp_path: Path
+        self,
+        runner: CliRunner,
+        metadata: bool,
+        geo_assets: bool,
+        tmp_path: Path,
+        mock_passing_validation_report: ValidationReport,
+        mock_check_report,
     ) -> None:
         """JSON 'mode' field should correctly reflect which flags were used."""
-        from portolan_cli.check import CheckReport
-
-        mock_validation_report = ValidationReport(
-            results=[
-                ValidationResult(
-                    rule_name="catalog_exists",
-                    passed=True,
-                    severity=Severity.ERROR,
-                    message="Catalog exists",
-                ),
-            ]
-        )
-        mock_check_report = CheckReport(root=tmp_path, files=[], conversion_report=None)
-
         args = ["check", str(tmp_path), "--json"]
         if metadata:
             args.append("--metadata")
@@ -897,7 +1050,10 @@ class TestCheckFlagCombinationsHypothesis:
             args.append("--geo-assets")
 
         with (
-            patch("portolan_cli.cli.validate_catalog", return_value=mock_validation_report),
+            patch(
+                "portolan_cli.cli.validate_catalog",
+                return_value=mock_passing_validation_report,
+            ),
             patch("portolan_cli.cli.check_directory", return_value=mock_check_report),
         ):
             result = runner.invoke(cli, args)
@@ -918,30 +1074,24 @@ class TestCheckFlagCombinationsHypothesis:
                     expected_mode = "metadata"
 
                 assert mode == expected_mode, (
-                    f"Expected mode '{expected_mode}' but got '{mode}' for flags metadata={metadata}, geo_assets={geo_assets}"
+                    f"Expected mode '{expected_mode}' but got '{mode}' "
+                    f"for flags metadata={metadata}, geo_assets={geo_assets}"
                 )
 
+    # Suppress function_scoped_fixture - see class docstring for rationale
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=20)
     @given(fix=st.booleans(), dry_run=st.booleans())
     @pytest.mark.unit
     def test_dry_run_without_fix_warns(
-        self, runner: CliRunner, fix: bool, dry_run: bool, tmp_path: Path
+        self,
+        runner: CliRunner,
+        fix: bool,
+        dry_run: bool,
+        tmp_path: Path,
+        mock_passing_validation_report: ValidationReport,
+        mock_check_report,
     ) -> None:
         """--dry-run without --fix should produce a warning."""
-        from portolan_cli.check import CheckReport
-
-        mock_validation_report = ValidationReport(
-            results=[
-                ValidationResult(
-                    rule_name="catalog_exists",
-                    passed=True,
-                    severity=Severity.ERROR,
-                    message="Catalog exists",
-                ),
-            ]
-        )
-        mock_check_report = CheckReport(root=tmp_path, files=[], conversion_report=None)
-
         args = ["check", str(tmp_path)]
         if fix:
             args.append("--fix")
@@ -949,7 +1099,10 @@ class TestCheckFlagCombinationsHypothesis:
             args.append("--dry-run")
 
         with (
-            patch("portolan_cli.cli.validate_catalog", return_value=mock_validation_report),
+            patch(
+                "portolan_cli.cli.validate_catalog",
+                return_value=mock_passing_validation_report,
+            ),
             patch("portolan_cli.cli.check_directory", return_value=mock_check_report),
         ):
             result = runner.invoke(cli, args)
