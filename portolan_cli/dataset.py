@@ -218,6 +218,9 @@ def convert_vector(source: Path, dest_dir: Path) -> Path:
 
     # Check if already GeoParquet
     if source.suffix.lower() == ".parquet":
+        # If source is already at the destination, no copy needed
+        if source.resolve() == output_path.resolve():
+            return output_path
         shutil.copy2(source, output_path)
         return output_path
 
