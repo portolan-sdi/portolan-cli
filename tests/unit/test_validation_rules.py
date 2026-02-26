@@ -776,7 +776,12 @@ class TestMetadataFreshRule:
         # Create collection with collection.json but no geo assets
         collection_dir = tmp_path / "test-collection"
         collection_dir.mkdir()
-        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        collection_data = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "test-collection",
+            "links": [],
+        }
         (collection_dir / "collection.json").write_text(json.dumps(collection_data))
 
         rule = MetadataFreshRule()
@@ -822,7 +827,12 @@ class TestMetadataFreshRule:
         # Create collection at root with collection.json
         collection = tmp_path / "test-collection"
         collection.mkdir()
-        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        collection_data = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "test-collection",
+            "links": [],
+        }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
         # Copy a parquet file but don't create STAC item
@@ -865,7 +875,12 @@ class TestMetadataFreshRule:
         # Create collection at root with collection.json
         collection = tmp_path / "test-collection"
         collection.mkdir()
-        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        collection_data = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "test-collection",
+            "links": [],
+        }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
         # Create a parquet file
@@ -943,7 +958,12 @@ class TestMetadataFreshRule:
         # Create collection at root with collection.json
         collection = tmp_path / "test-collection"
         collection.mkdir()
-        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        collection_data = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "test-collection",
+            "links": [],
+        }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
         # Create a parquet file
@@ -1024,7 +1044,12 @@ class TestMetadataFreshRule:
         # Create collection at root with collection.json but no STAC item
         collection = tmp_path / "test-collection"
         collection.mkdir()
-        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        collection_data = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "test-collection",
+            "links": [],
+        }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
         parquet_path = collection / "test.parquet"
@@ -1109,7 +1134,12 @@ class TestMetadataFreshRule:
         # Create collection at root with collection.json
         collection = tmp_path / "test-collection"
         collection.mkdir()
-        collection_data = {"type": "Collection", "stac_version": "1.0.0", "id": "test-collection", "links": []}
+        collection_data = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "test-collection",
+            "links": [],
+        }
         (collection / "collection.json").write_text(json.dumps(collection_data))
         subdir = collection / "data" / "2024"
         subdir.mkdir(parents=True)

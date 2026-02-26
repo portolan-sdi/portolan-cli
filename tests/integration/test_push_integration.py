@@ -543,9 +543,7 @@ class TestAssetPathResolution:
         from portolan_cli.push import _get_assets_to_upload
 
         # Read local versions
-        versions_path = (
-            catalog_with_versions / "demographics" / "versions.json"
-        )
+        versions_path = catalog_with_versions / "demographics" / "versions.json"
         versions_data = json.loads(versions_path.read_text())
 
         assets = _get_assets_to_upload(

@@ -287,9 +287,7 @@ def _fetch_remote_versions(
         PullError: If fetch fails.
     """
     # Build remote versions.json path (per ADR-0023)
-    remote_versions_url = (
-        f"{remote_url.rstrip('/')}/{collection}/versions.json"
-    )
+    remote_versions_url = f"{remote_url.rstrip('/')}/{collection}/versions.json"
 
     # Download to temp file
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:

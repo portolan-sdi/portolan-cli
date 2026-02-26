@@ -645,9 +645,7 @@ class TestRemoveDataset:
 
         # Update catalog to link to collection (catalog.json is at root per ADR-0023)
         catalog_data = json.loads((initialized_catalog / "catalog.json").read_text())
-        catalog_data["links"].append(
-            {"rel": "child", "href": "./to-remove-col/collection.json"}
-        )
+        catalog_data["links"].append({"rel": "child", "href": "./to-remove-col/collection.json"})
         (initialized_catalog / "catalog.json").write_text(json.dumps(catalog_data))
 
         remove_dataset(initialized_catalog, "to-remove-col", remove_collection=True)

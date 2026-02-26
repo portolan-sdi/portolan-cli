@@ -894,11 +894,7 @@ class TestPullOperation:
         assert result.success is True
 
         # Verify local versions.json was updated (per ADR-0023: at collection root)
-        versions_path = (
-            catalog_with_versions
-            / "test-collection"
-            / "versions.json"
-        )
+        versions_path = catalog_with_versions / "test-collection" / "versions.json"
         updated_versions = json.loads(versions_path.read_text())
         assert updated_versions["current_version"] == "1.1.0"
 

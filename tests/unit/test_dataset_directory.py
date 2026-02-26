@@ -193,12 +193,8 @@ class TestAddDirectory:
                 return FormatType.RASTER
 
             mock_detect.side_effect = detect_side_effect
-            mock_convert_v.return_value = (
-                initialized_catalog / "col" / "a" / "a.parquet"
-            )
-            mock_convert_r.return_value = (
-                initialized_catalog / "col" / "b" / "b.tif"
-            )
+            mock_convert_v.return_value = initialized_catalog / "col" / "a" / "a.parquet"
+            mock_convert_r.return_value = initialized_catalog / "col" / "b" / "b.tif"
             mock_meta_v.return_value = MagicMock(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
