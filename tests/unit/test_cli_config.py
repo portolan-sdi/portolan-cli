@@ -104,6 +104,20 @@ class TestConfigSet:
             assert result.exit_code == 1
             assert "catalog" in result.output.lower() or "not found" in result.output.lower()
 
+    @pytest.mark.unit
+    def test_set_shows_collection_in_text_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config set --collection should mention collection in text output."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(
+                cli,
+                ["config", "set", "remote", "s3://col/", "--collection", "demo"],
+            )
+
+            assert result.exit_code == 0
+            assert "demo" in result.output
+
 
 class TestConfigGet:
     """Tests for `portolan config get` command."""
@@ -163,6 +177,17 @@ class TestConfigGet:
             assert result.exit_code == 0
             # Should indicate not set
             assert "not set" in result.output.lower() or "none" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_get_fails_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config get should fail outside a Portolan catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Don't init a catalog
+
+            result = runner.invoke(cli, ["config", "get", "remote"])
+
+            assert result.exit_code == 1
+            assert "catalog" in result.output.lower() or "not found" in result.output.lower()
 
     @pytest.mark.unit
     def test_get_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -247,6 +272,32 @@ class TestConfigList:
             assert result.exit_code == 0
             # Should not crash, may show "no settings" or similar
 
+    @pytest.mark.unit
+    def test_list_fails_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config list should fail outside a Portolan catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Don't init a catalog
+
+            result = runner.invoke(cli, ["config", "list"])
+
+            assert result.exit_code == 1
+            assert "catalog" in result.output.lower() or "not found" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_list_shows_collection_in_text(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config list --collection should mention collection in text output."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(
+                cli,
+                ["config", "set", "remote", "s3://col/", "--collection", "demo"],
+            )
+
+            result = runner.invoke(cli, ["config", "list", "--collection", "demo"])
+
+            assert result.exit_code == 0
+            assert "demo" in result.output
+
 
 class TestConfigUnset:
     """Tests for `portolan config unset` command."""
@@ -280,6 +331,17 @@ class TestConfigUnset:
             # Should succeed but indicate key wasn't set
             assert result.exit_code == 0
             assert "not set" in result.output.lower() or "not found" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_unset_fails_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config unset should fail outside a Portolan catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Don't init a catalog
+
+            result = runner.invoke(cli, ["config", "unset", "remote"])
+
+            assert result.exit_code == 1
+            assert "catalog" in result.output.lower() or "not found" in result.output.lower()
 
     @pytest.mark.unit
     def test_unset_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -340,3 +402,140 @@ class TestConfigErrorMessages:
                 or "portolan_remote" in output_lower
                 or "not set" in output_lower
             )
+
+    @pytest.mark.unit
+    def test_get_json_output_not_set(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config get should output JSON with value=null when not set."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(cli, ["--format", "json", "config", "get", "remote"])
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            assert output["data"]["key"] == "remote"
+            assert output["data"]["value"] is None
+
+    @pytest.mark.unit
+    def test_get_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config get --collection should include collection in JSON output."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(
+                cli,
+                ["config", "set", "remote", "s3://col/", "--collection", "demo"],
+            )
+
+            result = runner.invoke(
+                cli, ["--format", "json", "config", "get", "remote", "--collection", "demo"]
+            )
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            assert output["data"]["value"] == "s3://col/"
+            assert output["data"]["collection"] == "demo"
+
+    @pytest.mark.unit
+    def test_set_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config set --collection should include collection in JSON output."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--format",
+                    "json",
+                    "config",
+                    "set",
+                    "remote",
+                    "s3://col/",
+                    "--collection",
+                    "demo",
+                ],
+            )
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            assert output["data"]["collection"] == "demo"
+
+    @pytest.mark.unit
+    def test_list_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config list --collection should include collection in JSON output."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(
+                cli,
+                ["config", "set", "remote", "s3://col/", "--collection", "demo"],
+            )
+
+            result = runner.invoke(
+                cli, ["--format", "json", "config", "list", "--collection", "demo"]
+            )
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            assert output["data"]["collection"] == "demo"
+
+    @pytest.mark.unit
+    def test_get_json_error_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config get should return JSON error envelope outside catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Don't init a catalog
+
+            result = runner.invoke(cli, ["--format", "json", "config", "get", "remote"])
+
+            assert result.exit_code == 1
+            output = json.loads(result.output)
+            assert output["success"] is False
+            assert output["errors"][0]["type"] == "CatalogNotFoundError"
+
+    @pytest.mark.unit
+    def test_list_json_error_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config list should return JSON error envelope outside catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Don't init a catalog
+
+            result = runner.invoke(cli, ["--format", "json", "config", "list"])
+
+            assert result.exit_code == 1
+            output = json.loads(result.output)
+            assert output["success"] is False
+            assert output["errors"][0]["type"] == "CatalogNotFoundError"
+
+    @pytest.mark.unit
+    def test_unset_json_error_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config unset should return JSON error envelope outside catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            # Don't init a catalog
+
+            result = runner.invoke(cli, ["--format", "json", "config", "unset", "remote"])
+
+            assert result.exit_code == 1
+            output = json.loads(result.output)
+            assert output["success"] is False
+            assert output["errors"][0]["type"] == "CatalogNotFoundError"
+
+    @pytest.mark.unit
+    def test_unset_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config unset --collection should include collection in JSON output."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            runner.invoke(
+                cli,
+                ["config", "set", "remote", "s3://col/", "--collection", "demo"],
+            )
+
+            result = runner.invoke(
+                cli, ["--format", "json", "config", "unset", "remote", "--collection", "demo"]
+            )
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            assert output["data"]["collection"] == "demo"
+            assert output["data"]["removed"] is True
