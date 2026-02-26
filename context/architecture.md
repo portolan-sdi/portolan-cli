@@ -8,15 +8,15 @@ Portolan CLI is the command-line tool for creating and managing Portolan catalog
 
 Portolan CLI is one component in a broader ecosystem. Each component has a clear responsibility:
 
-| Component | Responsibility | Status |
-|---|---|---|
-| **[geoparquet-io](https://github.com/geoparquet/geoparquet-io)** | Vector format conversion, inspection, partitioning, sorting | Existing |
-| **[gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles)** | PMTiles generation from GeoParquet | Existing |
-| **[rio-cogeo](https://github.com/cogeotiff/rio-cogeo)** | Raster conversion to Cloud-Optimized GeoTIFF | Existing |
-| **portolan-cli** | Catalog orchestration, metadata, versioning, validation, sync | This project |
-| **QGIS plugin** | Browse and pull data from Portolan catalogs into local GIS | Later |
-| **Browser/Map UI** | Web-based catalog browsing and visualization | Later |
-| **Global Data Bootstrapper** | Subset global datasets to bootstrap local catalogs | Later |
+| Component | Responsibility |
+|---|---|
+| **[geoparquet-io](https://github.com/geoparquet/geoparquet-io)** | Vector format conversion, inspection, partitioning, sorting |
+| **[gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles)** | PMTiles generation from GeoParquet |
+| **[rio-cogeo](https://github.com/cogeotiff/rio-cogeo)** | Raster conversion to Cloud-Optimized GeoTIFF |
+| **portolan-cli** | Catalog orchestration, metadata, versioning, validation, sync |
+| **QGIS plugin** | Browse and pull data from Portolan catalogs into local GIS |
+| **Browser/Map UI** | Web-based catalog browsing and visualization |
+| **Global Data Bootstrapper** | Subset global datasets to bootstrap local catalogs |
 
 Portolan CLI does not implement format conversion itself. It calls geoparquet-io and rio-cogeo as library dependencies and wires their output into the catalog structure.
 
@@ -43,13 +43,13 @@ Commands covering the full lifecycle from files to live catalog:
 
 ```
 # Catalog setup
-portolan init                          # Create catalog.json + .portolan/ structure ✓
+portolan init                          # Create catalog.json + .portolan/ structure
 
 # Discovery & validation
-portolan scan <path>                   # Discover geospatial files, detect issues ✓
-portolan scan --fix --dry-run          # Preview safe renames (invalid chars, reserved names) ✓
-portolan check                         # Validate local catalog against spec ✓
-portolan check --fix --dry-run         # Preview cloud-native conversions ✓
+portolan scan <path>                   # Discover geospatial files, detect issues
+portolan scan --fix --dry-run          # Preview safe renames (invalid chars, reserved names)
+portolan check                         # Validate local catalog against spec
+portolan check --fix --dry-run         # Preview cloud-native conversions
 
 # Dataset management
 portolan dataset add <file_or_dir>     # Convert, enrich, stage (interactive or --auto)
@@ -57,18 +57,16 @@ portolan dataset remove <name_or_dir>  # Remove dataset(s) from catalog
 portolan dataset list                  # Show catalog contents
 portolan dataset info <name>           # Metadata, extent, schema summary
 
-# Remote sync (planned)
+# Remote sync
 portolan push                          # Diff local vs remote → upload changed files
 portolan pull                          # Diff remote vs local → download changed files
 portolan sync                          # Orchestrate: init → scan → check --fix → push
 
-# Maintenance (planned)
+# Maintenance
 portolan check --remote                # Detect drift between local and remote
 portolan repair                        # Re-sync remote from local truth
 portolan prune                         # Delete old version files from remote
 ```
-
-**Status:** ✓ = implemented, planned = in roadmap
 
 ### `dataset add` Workflow
 

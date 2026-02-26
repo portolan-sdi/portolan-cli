@@ -67,6 +67,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0021](context/shared/adr/0021-catalog-json-root-level.md) | catalog.json at root level (STAC standard) |
 | [0022](context/shared/adr/0022-git-style-implicit-tracking.md) | Git-style implicit tracking (subdir = collection, delete = untrack) |
 | [0023](context/shared/adr/0023-stac-structure-separation.md) | STAC at root, Portolan internals in .portolan/ (supersedes 0012, 0021) |
+| [0024](context/shared/adr/0024-hierarchical-config-system.md) | Hierarchical config system (YAML) |
 
 ## Common Commands
 
