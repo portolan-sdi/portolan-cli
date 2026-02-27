@@ -150,6 +150,9 @@ jobs:
       - name: Build documentation
         run: uv run mkdocs build --strict
 
+      - name: Test documentation examples
+        run: uv run pytest tests/docs/ -v --tb=short
+
   build:
     name: Build Package
     runs-on: ubuntu-latest

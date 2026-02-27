@@ -33,6 +33,7 @@ portolan scan demographics/
 # Add all files in a directory (creates a "demographics" collection)
 portolan add demographics/
 
+# notest - requires S3 credentials
 # Push the collection to remote storage
 portolan push s3://my-bucket/catalog --collection demographics
 ```
@@ -43,7 +44,9 @@ Other common commands:
 portolan check                              # Validate catalog
 portolan check --fix                        # Convert to cloud-native formats
 portolan rm --keep demographics/old.parquet # Untrack without deleting
+# notest - requires S3 credentials
 portolan pull s3://my-bucket/catalog -c demographics  # Pull from remote
+# notest - requires S3 credentials
 portolan sync s3://my-bucket/catalog -c demographics  # Full workflow: pull → check → push
 portolan config set remote s3://my-bucket/catalog     # Save remote URL
 portolan config list                        # List all config settings
@@ -56,6 +59,7 @@ portolan config list                        # List all config settings
 ### Recommended: pipx (for global use)
 
 ```bash
+# notest - installation command
 pipx install portolan-cli
 ```
 
@@ -63,6 +67,7 @@ This installs `portolan` in an isolated environment while making the command glo
 
 If you don't have pipx installed:
 ```bash
+# notest - installation commands
 python3 -m pip install --user pipx
 python3 -m pipx ensurepath
 ```
@@ -70,6 +75,7 @@ python3 -m pipx ensurepath
 ### Alternative: pip
 
 ```bash
+# notest - installation command
 pip install portolan-cli
 ```
 
@@ -80,6 +86,7 @@ pip install portolan-cli
 Use [uv](https://github.com/astral-sh/uv) for local development:
 
 ```bash
+# notest - development setup
 git clone https://github.com/portolan-sdi/portolan-cli.git
 cd portolan-cli
 uv sync --all-extras
