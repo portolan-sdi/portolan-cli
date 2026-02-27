@@ -58,6 +58,7 @@ plugins:
 markdown_extensions:
   - admonition
   - attr_list
+  - mkdocs-click  # Must come after attr_list for correct rendering
   - md_in_html
   - pymdownx.superfences
   - pymdownx.tabbed:
@@ -75,6 +76,8 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Reference:
+    - CLI: reference/cli.md
   - Roadmap: roadmap.md
   - Contributing: contributing.md
   - Changelog: changelog.md

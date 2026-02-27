@@ -1,0 +1,722 @@
+{
+  "cli": {
+    "arguments": [],
+    "help": "Portolan - Publish and manage cloud-native geospatial data catalogs.",
+    "name": "cli",
+    "options": [
+      {
+        "default": false,
+        "help": "Show the version and exit.",
+        "names": [
+          "--version"
+        ],
+        "required": false,
+        "type": "BOOLEAN"
+      },
+      {
+        "default": "text",
+        "help": "Output format (json for machine parsing, text for humans).",
+        "names": [
+          "--format"
+        ],
+        "required": false,
+        "type": "Choice([json, text])"
+      }
+    ],
+    "subcommands": {
+      "add": {
+        "arguments": [
+          {
+            "name": "path",
+            "required": true,
+            "type": "Path"
+          }
+        ],
+        "help": "Track files in the catalog.",
+        "name": "add",
+        "options": [
+          {
+            "default": false,
+            "help": "Show detailed output including skipped unchanged files.",
+            "names": [
+              "--verbose",
+              "-v"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "help": "Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
+            "names": [
+              "--portolan-dir"
+            ],
+            "required": false,
+            "type": "Path"
+          }
+        ]
+      },
+      "check": {
+        "arguments": [
+          {
+            "name": "path",
+            "required": false,
+            "type": "Path"
+          }
+        ],
+        "help": "Validate a Portolan catalog or check files for cloud-native status.",
+        "name": "check",
+        "options": [
+          {
+            "default": false,
+            "help": "Output results as JSON",
+            "names": [
+              "--json"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Show all validation rules, not just failures",
+            "names": [
+              "--verbose",
+              "-v"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Convert non-cloud-native files to cloud-native formats (GeoParquet, COG)",
+            "names": [
+              "--fix"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Preview what would be converted (use with --fix)",
+            "names": [
+              "--dry-run"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Only validate STAC metadata (links, schema, required fields)",
+            "names": [
+              "--metadata"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Only check geospatial assets (cloud-native status, convertibility)",
+            "names": [
+              "--geo-assets"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          }
+        ]
+      },
+      "clone": {
+        "arguments": [
+          {
+            "name": "remote_url",
+            "required": true,
+            "type": "TEXT"
+          },
+          {
+            "name": "local_path",
+            "required": true,
+            "type": "Path"
+          }
+        ],
+        "help": "Clone a remote catalog to a local directory.",
+        "name": "clone",
+        "options": [
+          {
+            "default": "<Sentinel>",
+            "help": "Collection to clone (required).",
+            "names": [
+              "--collection",
+              "-c"
+            ],
+            "required": true,
+            "type": "TEXT"
+          },
+          {
+            "default": "<Sentinel>",
+            "help": "AWS profile name (for S3 sources).",
+            "names": [
+              "--profile"
+            ],
+            "required": false,
+            "type": "TEXT"
+          }
+        ]
+      },
+      "config": {
+        "arguments": [],
+        "help": "Manage catalog configuration.",
+        "name": "config",
+        "options": [],
+        "subcommands": {
+          "get": {
+            "arguments": [
+              {
+                "name": "key",
+                "required": true,
+                "type": "TEXT"
+              }
+            ],
+            "help": "Get a configuration value.",
+            "name": "get",
+            "options": [
+              {
+                "help": "Get config for a specific collection.",
+                "names": [
+                  "--collection",
+                  "-c"
+                ],
+                "required": false,
+                "type": "TEXT"
+              }
+            ]
+          },
+          "list": {
+            "arguments": [],
+            "help": "List all configuration settings.",
+            "name": "list",
+            "options": [
+              {
+                "help": "Show config for a specific collection.",
+                "names": [
+                  "--collection",
+                  "-c"
+                ],
+                "required": false,
+                "type": "TEXT"
+              }
+            ]
+          },
+          "set": {
+            "arguments": [
+              {
+                "name": "key",
+                "required": true,
+                "type": "TEXT"
+              },
+              {
+                "name": "value",
+                "required": true,
+                "type": "TEXT"
+              }
+            ],
+            "help": "Set a configuration value.",
+            "name": "set",
+            "options": [
+              {
+                "help": "Set config for a specific collection instead of catalog-level.",
+                "names": [
+                  "--collection",
+                  "-c"
+                ],
+                "required": false,
+                "type": "TEXT"
+              }
+            ]
+          },
+          "unset": {
+            "arguments": [
+              {
+                "name": "key",
+                "required": true,
+                "type": "TEXT"
+              }
+            ],
+            "help": "Remove a configuration value.",
+            "name": "unset",
+            "options": [
+              {
+                "help": "Unset config for a specific collection.",
+                "names": [
+                  "--collection",
+                  "-c"
+                ],
+                "required": false,
+                "type": "TEXT"
+              }
+            ]
+          }
+        }
+      },
+      "dataset": {
+        "arguments": [],
+        "help": "Manage datasets in the catalog.",
+        "name": "dataset",
+        "options": [],
+        "subcommands": {
+          "info": {
+            "arguments": [
+              {
+                "name": "dataset_id",
+                "required": true,
+                "type": "TEXT"
+              }
+            ],
+            "help": "Show information about a dataset.",
+            "name": "info",
+            "options": [
+              {
+                "default": ".",
+                "help": "Path to catalog root (default: current directory).",
+                "names": [
+                  "--catalog"
+                ],
+                "required": false,
+                "type": "Path"
+              },
+              {
+                "default": false,
+                "help": "Output as JSON.",
+                "names": [
+                  "--json"
+                ],
+                "required": false,
+                "type": "BOOLEAN"
+              }
+            ]
+          },
+          "list": {
+            "arguments": [],
+            "help": "List datasets in the catalog.",
+            "name": "list",
+            "options": [
+              {
+                "default": "<Sentinel>",
+                "help": "Filter by collection ID.",
+                "names": [
+                  "--collection",
+                  "-c"
+                ],
+                "required": false,
+                "type": "TEXT"
+              },
+              {
+                "default": ".",
+                "help": "Path to catalog root (default: current directory).",
+                "names": [
+                  "--catalog"
+                ],
+                "required": false,
+                "type": "Path"
+              }
+            ]
+          }
+        }
+      },
+      "init": {
+        "arguments": [
+          {
+            "name": "path",
+            "required": false,
+            "type": "Path"
+          }
+        ],
+        "help": "Initialize a new Portolan catalog.",
+        "name": "init",
+        "options": [
+          {
+            "default": false,
+            "help": "Skip interactive prompts and use auto-extracted/default values.",
+            "names": [
+              "--auto"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "help": "Human-readable title for the catalog.",
+            "names": [
+              "--title",
+              "-t"
+            ],
+            "required": false,
+            "type": "TEXT"
+          },
+          {
+            "help": "Description of the catalog.",
+            "names": [
+              "--description",
+              "-d"
+            ],
+            "required": false,
+            "type": "TEXT"
+          }
+        ]
+      },
+      "pull": {
+        "arguments": [
+          {
+            "name": "remote_url",
+            "required": true,
+            "type": "TEXT"
+          }
+        ],
+        "help": "Pull updates from a remote catalog.",
+        "name": "pull",
+        "options": [
+          {
+            "default": "<Sentinel>",
+            "help": "Collection to pull.",
+            "names": [
+              "--collection",
+              "-c"
+            ],
+            "required": true,
+            "type": "TEXT"
+          },
+          {
+            "default": ".",
+            "help": "Path to local catalog root (default: current directory).",
+            "names": [
+              "--catalog"
+            ],
+            "required": false,
+            "type": "Path"
+          },
+          {
+            "default": false,
+            "help": "Discard uncommitted local changes and overwrite with remote.",
+            "names": [
+              "--force"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Show what would be downloaded without actually downloading.",
+            "names": [
+              "--dry-run"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "help": "AWS profile name (for S3).",
+            "names": [
+              "--profile"
+            ],
+            "required": false,
+            "type": "TEXT"
+          }
+        ]
+      },
+      "push": {
+        "arguments": [
+          {
+            "name": "destination",
+            "required": true,
+            "type": "TEXT"
+          }
+        ],
+        "help": "Push local catalog changes to cloud object storage.",
+        "name": "push",
+        "options": [
+          {
+            "default": "<Sentinel>",
+            "help": "Collection to push (required).",
+            "names": [
+              "--collection",
+              "-c"
+            ],
+            "required": true,
+            "type": "TEXT"
+          },
+          {
+            "default": false,
+            "help": "Overwrite remote even if it has diverged.",
+            "names": [
+              "--force"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Show what would be pushed without uploading.",
+            "names": [
+              "--dry-run"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": "<Sentinel>",
+            "help": "AWS profile name (for S3 destinations).",
+            "names": [
+              "--profile"
+            ],
+            "required": false,
+            "type": "TEXT"
+          },
+          {
+            "default": ".",
+            "help": "Path to catalog root (default: current directory).",
+            "names": [
+              "--catalog"
+            ],
+            "required": false,
+            "type": "Path"
+          }
+        ]
+      },
+      "rm": {
+        "arguments": [
+          {
+            "name": "path",
+            "required": true,
+            "type": "Path"
+          }
+        ],
+        "help": "Remove files from tracking.",
+        "name": "rm",
+        "options": [
+          {
+            "default": false,
+            "help": "Untrack file but preserve it on disk.",
+            "names": [
+              "--keep"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Force deletion without safety check. Required for destructive rm.",
+            "names": [
+              "--force",
+              "-f"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Show what would be removed without actually removing.",
+            "names": [
+              "--dry-run",
+              "-n"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Show detailed output including skipped files.",
+            "names": [
+              "--verbose",
+              "-v"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "help": "Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
+            "names": [
+              "--portolan-dir"
+            ],
+            "required": false,
+            "type": "Path"
+          }
+        ]
+      },
+      "scan": {
+        "arguments": [
+          {
+            "name": "path",
+            "required": true,
+            "type": "Path"
+          }
+        ],
+        "help": "Scan a directory for geospatial files and potential issues.",
+        "name": "scan",
+        "options": [
+          {
+            "default": false,
+            "help": "Output results as JSON",
+            "names": [
+              "--json"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Scan only the target directory (no subdirectories)",
+            "names": [
+              "--no-recursive"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "help": "Maximum recursion depth (0 = target directory only)",
+            "names": [
+              "--max-depth"
+            ],
+            "required": false,
+            "type": "INTEGER"
+          },
+          {
+            "default": false,
+            "help": "Include hidden files (starting with .)",
+            "names": [
+              "--include-hidden"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Follow symbolic links (may cause loops)",
+            "names": [
+              "--follow-symlinks"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Show all issues without truncation (default: show first 10 per severity)",
+            "names": [
+              "--all"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Show directory tree view with file status markers",
+            "names": [
+              "--tree"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Suggest collection groupings based on filename patterns",
+            "names": [
+              "--suggest-collections"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Show only issues requiring manual resolution",
+            "names": [
+              "--manual"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Apply safe fixes (rename files with invalid characters, Windows reserved names, or long paths)",
+            "names": [
+              "--fix"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Preview fixes without applying them (use with --fix)",
+            "names": [
+              "--dry-run"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          }
+        ]
+      },
+      "sync": {
+        "arguments": [
+          {
+            "name": "destination",
+            "required": true,
+            "type": "TEXT"
+          }
+        ],
+        "help": "Sync local catalog with remote storage (pull + push).",
+        "name": "sync",
+        "options": [
+          {
+            "default": "<Sentinel>",
+            "help": "Collection to sync (required).",
+            "names": [
+              "--collection",
+              "-c"
+            ],
+            "required": true,
+            "type": "TEXT"
+          },
+          {
+            "default": false,
+            "help": "Overwrite conflicts on both pull and push.",
+            "names": [
+              "--force"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Show what would happen without making changes.",
+            "names": [
+              "--dry-run"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": false,
+            "help": "Convert non-cloud-native formats during check.",
+            "names": [
+              "--fix"
+            ],
+            "required": false,
+            "type": "BOOLEAN"
+          },
+          {
+            "default": "<Sentinel>",
+            "help": "AWS profile name (for S3 destinations).",
+            "names": [
+              "--profile"
+            ],
+            "required": false,
+            "type": "TEXT"
+          },
+          {
+            "default": ".",
+            "help": "Path to catalog root (default: current directory).",
+            "names": [
+              "--catalog"
+            ],
+            "required": false,
+            "type": "Path"
+          }
+        ]
+      }
+    }
+  },
+  "version": "1.0"
+}

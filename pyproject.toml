@@ -69,6 +69,7 @@ dev = [
 ]
 docs = [
     "mkdocs>=1.6.1",
+    "mkdocs-click>=0.8.0",  # Auto-generate CLI reference from Click commands
     "mkdocs-material>=9.7.1",
     "mkdocstrings[python]>=1.0.0",
 ]

@@ -49,6 +49,13 @@ repos:
         files: ^(CLAUDE\.md|context/shared/adr/.*\.md|context/shared/known-issues/.*\.md)$
         pass_filenames: false
 
+      - id: validate-cli-docs
+        name: validate CLI docs match source
+        entry: uv run python scripts/validate_cli_docs.py
+        language: system
+        files: ^(portolan_cli/cli\.py|docs/\.cli-snapshot\.json)$
+        pass_filenames: false
+
       - id: mypy
         name: mypy
         entry: uv run mypy
