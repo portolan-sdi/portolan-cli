@@ -42,6 +42,32 @@ repos:
 
   - repo: local
     hooks:
+      # === AUTO-UPDATE HOOKS ===
+      # These regenerate content from code - keeps docs in sync automatically
+
+      - id: update-claude-md
+        name: auto-update CLAUDE.md sections
+        entry: uv run python scripts/generate_claude_md_sections.py --update
+        language: system
+        files: ^(CLAUDE\.md|context/shared/adr/.*\.md|context/shared/known-issues/.*\.md|pyproject\.toml|portolan_cli/cli\.py)$
+        pass_filenames: false
+
+      - id: update-skill-md
+        name: auto-update SKILL.md sections
+        entry: uv run python scripts/generate_skill_md.py --write
+        language: system
+        files: ^(SKILL\.md|portolan_cli/__init__\.py|portolan_cli/cli\.py)$
+        pass_filenames: false
+
+      - id: update-freshness
+        name: auto-update freshness markers
+        entry: uv run python scripts/update_freshness.py
+        language: system
+        files: ^portolan_cli/(output|errors|constants|json_output|cli)\.py$
+        pass_filenames: true
+
+      # === VALIDATION HOOKS ===
+
       - id: validate-claude-md
         name: validate CLAUDE.md references
         entry: uv run python scripts/validate_claude_md.py
@@ -49,19 +75,11 @@ repos:
         files: ^(CLAUDE\.md|context/shared/adr/.*\.md|context/shared/known-issues/.*\.md)$
         pass_filenames: false
 
-      - id: validate-cli-docs
-        name: validate CLI docs match source
-        entry: uv run python scripts/validate_cli_docs.py
-        language: system
-        files: ^(portolan_cli/cli\.py|docs/\.cli-snapshot\.json)$
-        pass_filenames: false
-
       - id: validate-skill-md
         name: validate SKILL.md structure
         entry: uv run python scripts/validate_skill_md.py
         language: system
         files: ^(SKILL\.md|portolan_cli/__init__\.py|portolan_cli/cli\.py)$
-        pass_filenames: false
         pass_filenames: false
 
       - id: mypy

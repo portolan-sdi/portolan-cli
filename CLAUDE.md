@@ -30,12 +30,12 @@ The CLI has a legacy `portolan dataset` command group for backward compatibility
 
 ## Documentation Accuracy (CRITICAL)
 
-**ROADMAP.md is the source of truth for planned vs implemented features.**
+**GitHub Issues + Milestones are the source of truth for planned vs implemented features.**
 
 When documenting CLI commands:
 1. **Run `portolan <command> --help`** to verify actual behavior
-2. **Check ROADMAP.md** for planned features (✓ = implemented, no mark = planned)
-3. **Do NOT deprecate planned features** — if it's in the roadmap, it's intended
+2. **Check [GitHub Issues](https://github.com/portolan-sdi/portolan-cli/issues?q=label%3Aroadmap%3Amvp)** for planned features
+3. **Do NOT deprecate planned features** — if it's in GitHub Issues as planned, it's intended
 4. **Do NOT simplify orchestration commands** — document the FULL workflow
 
 **Example:** `portolan sync` orchestrates `pull → init → scan → check → push`. Do NOT describe it as just "pull + push" — that misrepresents the command's purpose.
@@ -53,7 +53,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 
 | Resource | Location |
 |----------|----------|
-| **Roadmap** | `ROADMAP.md` |
+| **Roadmap** | [GitHub Issues](https://github.com/portolan-sdi/portolan-cli/issues?q=label%3Aroadmap%3Amvp%2Croadmap%3Anext%2Croadmap%3Afuture) |
 | Contributing guide | `docs/contributing.md` |
 | Architecture | `pyproject.toml` [tool.importlinter] + [ADR-0025](context/shared/adr/0025-architecture-as-code.md) |
 | CI/CD documentation | `context/shared/documentation/ci.md` |
