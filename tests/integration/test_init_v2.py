@@ -1,10 +1,10 @@
 """Integration tests for `portolan init` command with new file structure.
 
-The new init command creates:
+The new init command creates (per ADR-0023):
 - catalog.json at ROOT level (valid STAC catalog via pystac)
-- .portolan/config.json (empty {} for now)
-- .portolan/state.json (empty {} for now)
-- .portolan/versions.json (minimal catalog-level versioning)
+- versions.json at ROOT level (consumer-visible catalog-level versioning)
+- .portolan/config.json (empty {} for now) -- internal tooling state
+- .portolan/state.json (empty {} for now) -- internal tooling state
 
 Error cases:
 - MANAGED state: abort with "already a Portolan catalog"
@@ -64,30 +64,49 @@ class TestInitCreatesRequiredFiles:
 
     @pytest.mark.integration
     def test_init_creates_portolan_versions(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init should create .portolan/versions.json with minimal versioning."""
+        """Init should create versions.json at catalog ROOT with minimal versioning.
+
+        Per ADR-0023: versions.json is consumer-visible metadata and must live
+        at the catalog root alongside STAC files, not inside .portolan/.
+        """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 0
-            versions_file = Path(".portolan/versions.json")
-            assert versions_file.exists()
+            # Per ADR-0023: versions.json is at root, NOT inside .portolan/
+            versions_file = Path("versions.json")
+            assert versions_file.exists(), "versions.json must be at catalog root per ADR-0023"
+            assert not Path(".portolan/versions.json").exists(), (
+                "versions.json must NOT be inside .portolan/ per ADR-0023"
+            )
             data = json.loads(versions_file.read_text())
             # Should have at least a version field
             assert isinstance(data, dict)
 
     @pytest.mark.integration
     def test_init_creates_all_four_files(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init should create all 4 required files in correct locations."""
+        """Init should create all 4 required files in correct locations (ADR-0023).
+
+        Root level (user-visible STAC + versioning):
+          - catalog.json
+          - versions.json
+
+        .portolan/ (internal tooling state only):
+          - config.json
+          - state.json
+        """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 0
-            # Root level
+            # Root level: STAC catalog + consumer-visible versioning
             assert Path("catalog.json").exists()
-            # .portolan directory
+            assert Path("versions.json").exists()
+            # .portolan/ directory: internal tooling state only
             assert Path(".portolan/config.json").exists()
             assert Path(".portolan/state.json").exists()
-            assert Path(".portolan/versions.json").exists()
+            # versions.json must NOT be inside .portolan/ (ADR-0023)
+            assert not Path(".portolan/versions.json").exists()
 
 
 class TestCatalogJsonValidity:
