@@ -8,9 +8,7 @@ hide:
 
 **Cloud-native geospatial data catalogs, simplified**
 
-Portolan enables organizations to share geospatial data in a low-cost, accessible, sovereign, and reliable way. Built on [cloud-native geospatial](https://cloudnativegeo.org) formats, a Portolan catalog is as interactive as any geospatial portal—but faster, more scalable, and much cheaper to run.
-
-This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich STAC metadata, and syncs to any object storage—no servers required.
+--8<-- "README.md:intro"
 
 [Get Started](#installation){ .md-button .md-button--primary }
 [View on GitHub](https://github.com/portolan-sdi/portolan-cli){ .md-button }
@@ -91,52 +89,11 @@ This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich
 
 </div>
 
-## Installation
+--8<-- "README.md:installation"
 
-### Recommended: pipx
+See the [Contributing Guide](contributing.md) for full development setup.
 
-Install with [pipx](https://pipx.pypa.io/) for an isolated global install:
-
-```bash
-pipx install portolan-cli
-```
-
-!!! tip "Installing pipx"
-    ```bash
-    python3 -m pip install --user pipx
-    python3 -m pipx ensurepath
-    ```
-    Restart your terminal after installation.
-
-### Alternative: pip
-
-```bash
-pip install portolan-cli
-```
-
-### For Development
-
-```bash
-git clone https://github.com/portolan-sdi/portolan-cli.git
-cd portolan-cli
-uv sync --all-extras
-uv run portolan --help
-```
-
-See the [Contributing Guide](contributing.md) for full setup.
-
-## Quick Start
-
-```bash
-# Initialize a catalog
-portolan init
-
-# Add files to a collection (collection name = directory name)
-portolan add demographics/
-
-# Push the collection to remote storage
-portolan push s3://my-bucket/catalog --collection demographics
-```
+--8<-- "README.md:quickstart"
 
 ## Next Steps
 

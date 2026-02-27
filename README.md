@@ -14,10 +14,13 @@
 
 ---
 
+<!-- --8<-- [start:intro] -->
 Portolan enables organizations to share geospatial data in a low-cost, accessible, sovereign, and reliable way. Built on [cloud-native geospatial](https://cloudnativegeo.org) formats, a Portolan catalog is as interactive as any geospatial portal—but faster, more scalable, and much cheaper to run.
 
 This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich STAC metadata, and syncs to any object storage—no servers required.
+<!-- --8<-- [end:intro] -->
 
+<!-- --8<-- [start:quickstart] -->
 ## Quick Start
 
 ```bash
@@ -45,7 +48,9 @@ portolan sync s3://my-bucket/catalog -c demographics  # Full workflow: pull → 
 portolan config set remote s3://my-bucket/catalog     # Save remote URL
 portolan config list                        # List all config settings
 ```
+<!-- --8<-- [end:quickstart] -->
 
+<!-- --8<-- [start:installation] -->
 ## Installation
 
 ### Recommended: pipx (for global use)
@@ -80,6 +85,7 @@ cd portolan-cli
 uv sync --all-extras
 uv run portolan --help
 ```
+<!-- --8<-- [end:installation] -->
 
 See [Contributing Guide](docs/contributing.md) for full development setup.
 
