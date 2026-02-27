@@ -30,12 +30,12 @@ The CLI has a legacy `portolan dataset` command group for backward compatibility
 
 ## Documentation Accuracy (CRITICAL)
 
-**ROADMAP.md is the source of truth for planned vs implemented features.**
+**GitHub Issues + Milestones are the source of truth for planned vs implemented features.**
 
 When documenting CLI commands:
 1. **Run `portolan <command> --help`** to verify actual behavior
-2. **Check ROADMAP.md** for planned features (✓ = implemented, no mark = planned)
-3. **Do NOT deprecate planned features** — if it's in the roadmap, it's intended
+2. **Check [GitHub Issues](https://github.com/portolan-sdi/portolan-cli/issues?q=label%3Aroadmap%3Amvp)** for planned features
+3. **Do NOT deprecate planned features** — if it's in GitHub Issues as planned, it's intended
 4. **Do NOT simplify orchestration commands** — document the FULL workflow
 
 **Example:** `portolan sync` orchestrates `pull → init → scan → check → push`. Do NOT describe it as just "pull + push" — that misrepresents the command's purpose.
@@ -53,9 +53,9 @@ AI agents will write most of the code. Human review does not scale to match AI o
 
 | Resource | Location |
 |----------|----------|
-| **Roadmap** | `ROADMAP.md` |
+| **Roadmap** | [GitHub Issues](https://github.com/portolan-sdi/portolan-cli/issues?q=label%3Aroadmap%3Amvp%2Croadmap%3Anext%2Croadmap%3Afuture) |
 | Contributing guide | `docs/contributing.md` |
-| Architecture | `context/architecture.md` |
+| Architecture | `pyproject.toml` [tool.importlinter] + [ADR-0025](context/shared/adr/0025-architecture-as-code.md) |
 | CI/CD documentation | `context/shared/documentation/ci.md` |
 | **Real-world test fixtures** | `context/shared/documentation/test-fixtures.md` |
 | Distill MCP tools | `context/shared/documentation/distill-mcp.md` |
@@ -96,6 +96,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0022](context/shared/adr/0022-git-style-implicit-tracking.md) | Git-style implicit tracking (subdir = collection, delete = untrack) |
 | [0023](context/shared/adr/0023-stac-structure-separation.md) | STAC at root, Portolan internals in .portolan/ (supersedes 0012, 0021) |
 | [0024](context/shared/adr/0024-hierarchical-config-system.md) | Hierarchical config system (YAML) |
+| [0025](context/shared/adr/0025-architecture-as-code.md) | Architecture as code with import-linter |
 
 ## Common Commands
 
@@ -179,6 +180,7 @@ Always research before implementing:
 @pytest.mark.integration # Multi-component, may touch filesystem
 @pytest.mark.network     # Requires network (mocked locally, live in nightly)
 @pytest.mark.realdata    # Uses real-world fixtures committed in tests/fixtures/realdata/
+@pytest.mark.snapshot    # Compares output against golden files
 @pytest.mark.benchmark   # Performance measurement
 @pytest.mark.slow        # Takes > 5 seconds
 ```
@@ -368,6 +370,7 @@ error("No geometry column (required)")     # ✗ Red X
 detail("Processing chunk 3/10...")         # Dimmed text
 ```
 
+<!-- freshness: last-verified: 2026-02-27 -->
 ## Design Principles
 
 | Principle | Meaning | ADR |
@@ -378,6 +381,7 @@ detail("Processing chunk 3/10...")         # Dimmed text
 | **versions.json is truth** | Drives sync, validation, history | [ADR-0005](context/shared/adr/0005-versions-json-source-of-truth.md) |
 | **Plugin interface early** | Handlers follow consistent interface for future plugins | [ADR-0003](context/shared/adr/0003-plugin-architecture.md) |
 | **CLI wraps API** | All logic in library; CLI is thin Click layer | [ADR-0007](context/shared/adr/0007-cli-wraps-api.md) |
+<!-- /freshness -->
 
 ## Tool Usage
 

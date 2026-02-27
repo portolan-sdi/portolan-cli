@@ -58,13 +58,14 @@ plugins:
 markdown_extensions:
   - admonition
   - attr_list
+  - mkdocs-click  # Must come after attr_list for correct rendering
   - md_in_html
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.highlight
   - pymdownx.snippets:
-      base_path: docs
+      base_path: .
       check_paths: true
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
@@ -75,7 +76,8 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Roadmap: roadmap.md
+  - Reference:
+    - CLI: reference/cli.md
   - Contributing: contributing.md
   - Changelog: changelog.md
 

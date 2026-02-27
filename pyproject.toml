@@ -48,8 +48,9 @@ portolan = "portolan_cli:cli"
 [project.optional-dependencies]
 dev = [
     "bandit>=1.9.3",
-    "gitingest>=0.1.0",  # Auto-fetch API docs for core dependencies
     "codespell>=2.4.1",
+    "gitingest>=0.1.0",  # Auto-fetch API docs for core dependencies
+    "import-linter>=2.0",  # Architecture enforcement via import contracts
     "commitizen>=4.13.4",
     "hypothesis>=6.151.5",
     "mutmut>=3.4.0",
@@ -68,6 +69,7 @@ dev = [
 ]
 docs = [
     "mkdocs>=1.6.1",
+    "mkdocs-click>=0.8.0",  # Auto-generate CLI reference from Click commands
     "mkdocs-material>=9.7.1",
     "mkdocstrings[python]>=1.0.0",
 ]
@@ -187,6 +189,33 @@ verbose = false
 [tool.mutmut]
 paths_to_mutate = ["portolan_cli/"]
 pytest_add_cli_args_test_selection = ["tests/"]
+
+# ---------- architecture enforcement ----------
+# See ADR-0025 for rationale. These contracts enforce critical architectural boundaries.
+# Stricter layered contracts are aspirational - the current architecture has some coupling
+# that would need refactoring to support full layered enforcement.
+
+[tool.importlinter]
+root_packages = ["portolan_cli"]
+include_external_packages = false
+
+[[tool.importlinter.contracts]]
+id = "cli-no-storage"
+name = "CLI cannot import storage backends directly"
+type = "forbidden"
+source_modules = ["portolan_cli.cli"]
+forbidden_modules = ["portolan_cli.backends"]
+
+[[tool.importlinter.contracts]]
+id = "utilities-are-foundational"
+name = "Utilities must not import other portolan modules"
+type = "independence"
+modules = [
+    "portolan_cli.output",
+    "portolan_cli.errors",
+    "portolan_cli.constants",
+    "portolan_cli.json_output",
+]
 
 [dependency-groups]
 dev = [
