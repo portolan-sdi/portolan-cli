@@ -65,6 +65,13 @@ repos:
         args: [tests/, -m, unit, --timeout=30, -q]
         pass_filenames: false
 
+      - id: import-linter
+        name: architecture rules
+        entry: uv run lint-imports
+        language: system
+        types: [python]
+        pass_filenames: false
+
   - repo: https://github.com/commitizen-tools/commitizen
     rev: v4.1.0
     hooks:
