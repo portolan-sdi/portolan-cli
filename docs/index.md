@@ -99,12 +99,6 @@ See the [Contributing Guide](contributing.md) for full development setup.
 
 <div class="grid cards" markdown>
 
-- :material-road-variant:{ .lg .middle } **[Roadmap](roadmap.md)**
-
-    ---
-
-    See planned features and the development timeline
-
 - :material-account-group:{ .lg .middle } **[Contributing](contributing.md)**
 
     ---

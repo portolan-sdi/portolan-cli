@@ -102,7 +102,7 @@ repos:
         name: architecture rules
         entry: uv run lint-imports
         language: system
-        types: [python]
+        files: ^(pyproject\.toml|portolan_cli/.*\.py)$
         pass_filenames: false
 
   - repo: https://github.com/commitizen-tools/commitizen

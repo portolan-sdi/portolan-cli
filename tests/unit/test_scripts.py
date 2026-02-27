@@ -74,7 +74,7 @@ Some content here.
 class TestGenerateClaudeMdSections:
     """Tests for generate_claude_md_sections.py."""
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Uses tmp_path filesystem I/O
     def test_extract_adr_title_from_file(self, tmp_path: Path) -> None:
         """Should extract title from ADR file."""
         from generate_claude_md_sections import extract_adr_title
@@ -85,7 +85,7 @@ class TestGenerateClaudeMdSections:
         title = extract_adr_title(adr)
         assert title == "My Test Decision"
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Uses tmp_path filesystem I/O
     def test_extract_adr_title_fallback_to_filename(self, tmp_path: Path) -> None:
         """Should fall back to filename if no heading found."""
         from generate_claude_md_sections import extract_adr_title
@@ -96,7 +96,7 @@ class TestGenerateClaudeMdSections:
         title = extract_adr_title(adr)
         assert "another" in title.lower() or "decision" in title.lower()
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Uses tmp_path filesystem I/O
     def test_generate_adr_index_produces_table(self, tmp_path: Path) -> None:
         """Should generate a markdown table for ADRs."""
         from generate_claude_md_sections import generate_adr_index

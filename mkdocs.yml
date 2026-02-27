@@ -78,7 +78,6 @@ nav:
   - Home: index.md
   - Reference:
     - CLI: reference/cli.md
-  - Roadmap: roadmap.md
   - Contributing: contributing.md
   - Changelog: changelog.md
 

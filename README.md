@@ -99,8 +99,6 @@ See [Contributing Guide](docs/contributing.md) for full development setup.
 ## Documentation
 
 - [Contributing Guide](docs/contributing.md)
-- [Architecture](context/architecture.md)
-- [Roadmap](ROADMAP.md)
 
 ## License
 
