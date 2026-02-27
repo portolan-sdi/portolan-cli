@@ -180,6 +180,7 @@ Always research before implementing:
 @pytest.mark.integration # Multi-component, may touch filesystem
 @pytest.mark.network     # Requires network (mocked locally, live in nightly)
 @pytest.mark.realdata    # Uses real-world fixtures committed in tests/fixtures/realdata/
+@pytest.mark.snapshot    # Compares output against golden files
 @pytest.mark.benchmark   # Performance measurement
 @pytest.mark.slow        # Takes > 5 seconds
 ```
@@ -369,6 +370,7 @@ error("No geometry column (required)")     # ✗ Red X
 detail("Processing chunk 3/10...")         # Dimmed text
 ```
 
+<!-- freshness: last-verified: 2026-02-27 -->
 ## Design Principles
 
 | Principle | Meaning | ADR |
@@ -379,6 +381,7 @@ detail("Processing chunk 3/10...")         # Dimmed text
 | **versions.json is truth** | Drives sync, validation, history | [ADR-0005](context/shared/adr/0005-versions-json-source-of-truth.md) |
 | **Plugin interface early** | Handlers follow consistent interface for future plugins | [ADR-0003](context/shared/adr/0003-plugin-architecture.md) |
 | **CLI wraps API** | All logic in library; CLI is thin Click layer | [ADR-0007](context/shared/adr/0007-cli-wraps-api.md) |
+<!-- /freshness -->
 
 ## Tool Usage
 
