@@ -19,10 +19,47 @@ Portolan is a CLI for publishing and managing **cloud-native geospatial data cat
 <!-- BEGIN GENERATED: cli-commands -->
 ## CLI Commands
 
+### `portolan add`
+Track files in the catalog.
+
+```bash
+portolan add imagery/                      # Add all files in directory
+portolan add .                             # Add all files in catalog
+```
+
+### `portolan check`
+Validate a Portolan catalog or check files for cloud-native status.
+
+```bash
+portolan check                        # Validate all (metadata + geo-assets)
+portolan check --metadata             # Validate metadata only
+portolan check --geo-assets           # Check geo-assets only
+portolan check /data --fix            # Convert files to cloud-native
+```
+
+### `portolan clone`
+Clone a remote catalog to a local directory.
+
+```bash
+portolan clone s3://mybucket/catalog ./local --collection demographics
+portolan clone s3://mybucket/catalog ./data -c imagery --profile prod
+```
+
+### `portolan config`
+Manage catalog configuration.
+
+```bash
+portolan config set remote s3://my-bucket/catalog/
+portolan config get remote
+portolan config list
+portolan config unset remote
+```
+
+### `portolan dataset`
+Manage datasets in the catalog.
+
 ### `portolan init`
 Initialize a new Portolan catalog.
-
-Creates a catalog.json at the root level and a .portolan directory with management files (config.json, state.json, versions.json).
 
 ```bash
 portolan init                       # Initialize in current directory
@@ -31,58 +68,18 @@ portolan init --title "My Catalog"  # Set title
 portolan init /path/to/data --auto  # Initialize in specific directory
 ```
 
-### `portolan scan`
-Scan a directory for geospatial files and potential issues.
-
-Discovers files by extension, validates shapefile completeness, and reports issues that may cause problems during import.
+### `portolan pull`
+Pull updates from a remote catalog.
 
 ```bash
-portolan scan /data/geospatial      # Scan directory
-portolan scan . --json              # JSON output
-portolan scan /large/tree --max-depth=2  # Limit depth
-portolan scan /data --fix --dry-run # Preview fixes
-portolan scan /data --fix           # Apply auto-fixes
-```
-
-### `portolan check`
-Validate a Portolan catalog or check files for cloud-native status.
-
-Runs validation rules against the catalog and reports any issues. With --fix, converts non-cloud-native files to GeoParquet (vectors) or COG (rasters).
-
-```bash
-portolan check                        # Validate all (metadata + geo-assets)
-portolan check --metadata             # Validate metadata only
-portolan check --geo-assets           # Check geo-assets only
-portolan check /data --fix            # Convert files to cloud-native
-portolan check /data --fix --dry-run  # Preview conversions
-```
-
-### `portolan add`
-Track files in the catalog.
-
-Adds files to the Portolan catalog with automatic collection inference. The collection ID is determined from the first directory component of the path relative to the catalog root.
-
-```bash
-cd my-catalog && portolan add demographics/census.parquet
-portolan add imagery/                 # Add all files in directory
-portolan add .                        # Add all files in catalog
-```
-
-### `portolan rm`
-Remove files from tracking.
-
-By default, removes the file from disk AND untracks it from the catalog. Requires --force for destructive operations.
-
-```bash
-portolan rm --keep imagery/old.tif    # Untrack only (safe)
-portolan rm --dry-run vectors/        # Preview removal
-portolan rm -f demographics/census.parquet  # Force delete
+portolan pull s3://mybucket/my-catalog --collection demographics
+portolan pull s3://mybucket/catalog -c imagery --dry-run
+portolan pull s3://bucket/catalog -c data --force
+portolan pull s3://bucket/catalog -c data --profile myprofile
 ```
 
 ### `portolan push`
 Push local catalog changes to cloud object storage.
-
-Syncs a collection's versions to a remote destination (S3, GCS, Azure). Uses optimistic locking to detect concurrent modifications.
 
 ```bash
 portolan push s3://mybucket/catalog --collection demographics
@@ -90,39 +87,36 @@ portolan push gs://mybucket/catalog -c imagery --dry-run
 portolan push s3://mybucket/catalog -c data --force --profile prod
 ```
 
-### `portolan pull`
-Pull updates from a remote catalog.
-
-Fetches changes from a remote catalog and downloads updated files. Checks for uncommitted local changes before overwriting.
+### `portolan rm`
+Remove files from tracking.
 
 ```bash
-portolan pull s3://mybucket/catalog --collection demographics
-portolan pull s3://mybucket/catalog -c imagery --dry-run
-portolan pull s3://bucket/catalog -c data --force
+portolan rm --keep imagery/old_data.tif     # Safe: untrack only
+portolan rm --dry-run vectors/              # Preview what would be removed
+portolan rm -f demographics/census.parquet  # Force delete and untrack
+portolan rm -f vectors/                     # Force remove entire directory
+```
+
+### `portolan scan`
+Scan a directory for geospatial files and potential issues.
+
+```bash
+portolan scan /data/geospatial
+portolan scan . --json
+portolan scan /large/tree --max-depth=2
+portolan scan /data --no-recursive
 ```
 
 ### `portolan sync`
 Sync local catalog with remote storage (pull + push).
 
-Orchestrates a full sync workflow: Pull → Init → Scan → Check → Push. This is the recommended way to keep a local catalog in sync with remote.
-
 ```bash
 portolan sync s3://mybucket/catalog --collection demographics
 portolan sync s3://mybucket/catalog -c imagery --dry-run
 portolan sync s3://mybucket/catalog -c data --fix --force
+portolan sync s3://mybucket/catalog -c data --profile prod
 ```
 
-### `portolan config`
-Manage catalog configuration.
-
-Configuration is stored in .portolan/config.yaml and follows precedence: CLI argument > environment variable > collection-level > catalog-level > default.
-
-```bash
-portolan config set remote s3://my-bucket/catalog/
-portolan config get remote
-portolan config list
-portolan config unset remote
-```
 <!-- END GENERATED: cli-commands -->
 
 <!-- BEGIN GENERATED: python-api -->
@@ -141,11 +135,11 @@ format_type = detect_format("data.parquet")  # Returns FormatType.GEOPARQUET
 ```
 
 **Public exports:**
-- `Catalog` - Main catalog class for programmatic operations
-- `CatalogExistsError` - Raised when catalog already exists
-- `FormatType` - Enum of supported geospatial formats
-- `detect_format` - Detect format type from file path
-- `cli` - Click CLI entry point
+- `Catalog` - A Portolan catalog backed by a .portolan directory.
+- `CatalogExistsError` - Raised when attempting to initialize a catalog that already exists.
+- `FormatType` - Detected format type for routing to conversion library.
+- `cli` - Portolan - Publish and manage cloud-native geospatial data catalogs.
+- `detect_format` - Detect whether a file is vector, raster, or unknown.
 <!-- END GENERATED: python-api -->
 
 <!-- freshness: last-verified: 2026-02-27 -->

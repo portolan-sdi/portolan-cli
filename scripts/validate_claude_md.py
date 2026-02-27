@@ -219,7 +219,12 @@ def validate_file_paths(claude_md: str, root: Path) -> ValidationResult:
 
 def _normalize_function_name(name: str) -> str:
     """Convert function name to CLI command name."""
-    return name.replace("_cmd", "").replace("_", "-")
+    # Remove common suffixes
+    for suffix in ("_cmd", "_command"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name.replace("_", "-")
 
 
 def _get_explicit_command_name(decorator: ast.Call) -> str | None:
@@ -231,51 +236,84 @@ def _get_explicit_command_name(decorator: ast.Call) -> str | None:
     return None
 
 
-def _is_command_decorator(decorator: ast.expr, attr_name: str) -> bool:
-    """Check if decorator is a command/group decorator."""
-    if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute):
-        return decorator.func.attr == attr_name
-    if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Name):
-        return decorator.func.id == attr_name
-    if isinstance(decorator, ast.Attribute):
-        return decorator.attr == attr_name
-    return False
+def _parse_click_decorator(decorator: ast.expr) -> tuple[str | None, str | None, bool]:
+    """Parse a Click decorator and extract command info.
+
+    Returns:
+        (decorator_type, parent_group, has_explicit_name)
+        decorator_type: "command" | "group" | None
+        parent_group: parent group name if this is a subcommand, else None
+        has_explicit_name: whether decorator has explicit name arg
+    """
+    if not isinstance(decorator, ast.Call):
+        return None, None, False
+
+    func = decorator.func
+
+    # Handle @cli.command(), @config.command(), @click.group()
+    if isinstance(func, ast.Attribute) and func.attr in ("command", "group"):
+        parent = None
+        if isinstance(func.value, ast.Name):
+            name = func.value.id
+            # "cli" and "click" are not parent groups
+            if name not in ("cli", "click"):
+                parent = name
+        return func.attr, parent, bool(decorator.args)
+
+    # Handle standalone @command(), @group() (rare)
+    if isinstance(func, ast.Name) and func.id in ("command", "group"):
+        return func.id, None, bool(decorator.args)
+
+    return None, None, False
 
 
-def _extract_command_from_function(node: ast.FunctionDef) -> str | None:
-    """Extract command name from a function with Click decorators."""
+def _extract_command_info(node: ast.FunctionDef) -> tuple[str | None, str | None, bool]:
+    """Extract command info from a function with Click decorators.
+
+    Returns:
+        (command_name, parent_group, is_group)
+    """
     for decorator in node.decorator_list:
-        if _is_command_decorator(decorator, "command"):
-            if isinstance(decorator, ast.Call):
-                explicit = _get_explicit_command_name(decorator)
-                if explicit:
-                    return explicit
-            return _normalize_function_name(node.name)
-        if _is_command_decorator(decorator, "group"):
-            return _normalize_function_name(node.name)
-    return None
+        dec_type, parent, has_explicit = _parse_click_decorator(decorator)
+        if dec_type is None:
+            continue
+
+        # Get command name: explicit from decorator or derived from function name
+        cmd_name = _get_explicit_command_name(decorator) if has_explicit else None
+        if not cmd_name:
+            cmd_name = _normalize_function_name(node.name)
+
+        return cmd_name, parent, dec_type == "group"
+
+    return None, None, False
 
 
 def extract_cli_commands_from_source(root: Path) -> set[str]:
-    """Extract CLI command names from portolan_cli/cli.py using AST parsing."""
+    """Extract CLI command names from portolan_cli/cli.py using AST parsing.
+
+    Handles grouped commands like `config set` → returns "config-set".
+    """
     cli_path = root / "portolan_cli" / "cli.py"
     if not cli_path.exists():
         return set()
 
-    commands: set[str] = set()
-
     try:
-        source = cli_path.read_text()
-        tree = ast.parse(source)
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                cmd = _extract_command_from_function(node)
-                if cmd:
-                    commands.add(cmd)
-
+        tree = ast.parse(cli_path.read_text())
     except (SyntaxError, FileNotFoundError):
-        pass
+        return set()
+
+    commands: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        cmd_name, parent, _ = _extract_command_info(node)
+        if not cmd_name:
+            continue
+        if parent and parent != "cli":
+            parent_normalized = _normalize_function_name(parent)
+            commands.add(f"{parent_normalized}-{cmd_name}")
+        else:
+            commands.add(cmd_name)
 
     return commands
 
@@ -290,13 +328,8 @@ def validate_cli_commands(claude_md: str, root: Path) -> ValidationResult:
     """
     result = ValidationResult(validator="CLI Commands")
 
-    # Extract actual commands from source
+    # Extract actual commands from source (including grouped subcommands like config-set)
     actual_commands = extract_cli_commands_from_source(root)
-
-    # Also add known subcommands
-    actual_commands.update({"init", "check", "scan", "add", "rm", "push", "pull", "sync", "clone"})
-    actual_commands.update({"config", "config-set", "config-get", "config-list", "config-unset"})
-    actual_commands.update({"dataset", "dataset-list", "dataset-info"})
 
     # Extract command references from CLAUDE.md
     # Match: portolan <command> (in backticks or code blocks)
@@ -392,66 +425,58 @@ def validate_test_markers(claude_md: str, root: Path) -> ValidationResult:
 # =============================================================================
 
 
+def _find_module_source(module_path: str, root: Path) -> Path | None:
+    """Find the source file for a module path."""
+    file_path = root / module_path.replace(".", "/")
+    py_file = file_path.with_suffix(".py")
+    init_file = file_path / "__init__.py"
+    if py_file.exists():
+        return py_file
+    if init_file.exists():
+        return init_file
+    return None
+
+
+def _extract_defined_names(source_file: Path) -> set[str]:
+    """Extract all defined names (functions, classes, variables) from a source file."""
+    try:
+        tree = ast.parse(source_file.read_text())
+    except (SyntaxError, FileNotFoundError):
+        return set()
+
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+    return names
+
+
 def validate_code_examples(claude_md: str, root: Path) -> ValidationResult:
-    """Check that import examples in CLAUDE.md are valid.
-
-    Matches patterns like:
-    - from portolan_cli.output import success
-    - from portolan_cli import cli
-    """
+    """Check that import examples in CLAUDE.md are valid."""
     result = ValidationResult(validator="Code Examples")
-
-    # Extract import statements from code blocks
-    # Match: from portolan_cli.X import Y
     pattern = (
         r"from\s+(portolan_cli(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*)\s+import\s+([a-zA-Z_][a-zA-Z0-9_, ]*)"
     )
-
     invalid_imports: list[str] = []
 
     for match in re.finditer(pattern, claude_md):
         module_path = match.group(1)
         imports = [i.strip() for i in match.group(2).split(",")]
+        source_file = _find_module_source(module_path, root)
 
-        # Convert module path to file path
-        file_path = root / module_path.replace(".", "/")
-
-        # Check if module exists (as .py file or __init__.py in directory)
-        py_file = file_path.with_suffix(".py")
-        init_file = file_path / "__init__.py"
-
-        if not py_file.exists() and not init_file.exists():
+        if source_file is None:
             invalid_imports.append(f"Module not found: {module_path}")
             continue
 
-        # Try to verify imports exist in the module
-        source_file = py_file if py_file.exists() else init_file
-        try:
-            source = source_file.read_text()
-            tree = ast.parse(source)
-
-            # Extract defined names (functions, classes, variables)
-            defined_names: set[str] = set()
-            for node in ast.walk(tree):
-                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                    defined_names.add(node.name)
-                elif isinstance(node, ast.ClassDef):
-                    defined_names.add(node.name)
-                elif isinstance(node, ast.Assign):
-                    for target in node.targets:
-                        if isinstance(target, ast.Name):
-                            defined_names.add(target.id)
-
-            # Check if imported names exist
-            for imp in imports:
-                if imp not in defined_names and not imp.startswith("_"):
-                    # Could be re-exported from __init__.py or a type alias
-                    # Only warn if it's clearly missing
-                    if module_path.count(".") > 0:  # Not the top-level package
-                        invalid_imports.append(f"Import may not exist: {imp} from {module_path}")
-
-        except (SyntaxError, FileNotFoundError):
-            pass
+        defined_names = _extract_defined_names(source_file)
+        for imp in imports:
+            # Skip private imports; only warn for submodules (not top-level package)
+            if imp not in defined_names and not imp.startswith("_") and "." in module_path:
+                invalid_imports.append(f"Import may not exist: {imp} from {module_path}")
 
     if invalid_imports:
         result.warnings.append(
@@ -537,6 +562,35 @@ def validate_freshness(claude_md: str, root: Path, stale_days: int = 30) -> Vali
 # Main Validation Runner
 # =============================================================================
 
+VALIDATORS = [
+    validate_adrs,
+    validate_known_issues,
+    validate_file_paths,
+    validate_cli_commands,
+    validate_test_markers,
+    validate_code_examples,
+    validate_freshness,
+]
+
+
+def _collect_messages(results: list[ValidationResult]) -> tuple[list[str], list[str]]:
+    """Collect all errors and warnings from validation results."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    for result in results:
+        errors.extend(f"[{result.validator}] {e}" for e in result.errors)
+        warnings.extend(f"[{result.validator}] {w}" for w in result.warnings)
+    return errors, warnings
+
+
+def _print_messages(label: str, messages: list[str]) -> None:
+    """Print a list of messages with a label header."""
+    if messages:
+        print(f"{label}:\n")
+        for msg in messages:
+            print(msg)
+            print()
+
 
 def main() -> int:
     """Run all validations and report results."""
@@ -548,51 +602,18 @@ def main() -> int:
         return 1
 
     claude_md = claude_md_path.read_text()
+    results = [v(claude_md, root) for v in VALIDATORS]
+    all_errors, all_warnings = _collect_messages(results)
 
-    # Run all validators
-    validators = [
-        validate_adrs,
-        validate_known_issues,
-        validate_file_paths,
-        validate_cli_commands,
-        validate_test_markers,
-        validate_code_examples,
-        validate_freshness,
-    ]
-
-    results: list[ValidationResult] = []
-    for validator in validators:
-        results.append(validator(claude_md, root))
-
-    # Collect errors and warnings
-    all_errors: list[str] = []
-    all_warnings: list[str] = []
-
-    for result in results:
-        if result.errors:
-            all_errors.extend([f"[{result.validator}] {e}" for e in result.errors])
-        if result.warnings:
-            all_warnings.extend([f"[{result.validator}] {w}" for w in result.warnings])
-
-    # Report results
-    if all_warnings:
-        print("WARNINGS:\n")
-        for warning in all_warnings:
-            print(warning)
-            print()
+    _print_messages("WARNINGS", all_warnings)
 
     if all_errors:
-        print("ERRORS:\n")
-        for error in all_errors:
-            print(error)
-            print()
+        _print_messages("ERRORS", all_errors)
         print("Fix: Update CLAUDE.md to fix references, or update source files.")
         return 1
 
-    # Count successes
     adr_count = len(extract_adr_links(claude_md))
     issue_count = len(extract_known_issue_links(claude_md))
-
     print(
         f"CLAUDE.md validation passed: {adr_count} ADRs, {issue_count} known issues, "
         f"{len(all_warnings)} warnings"
