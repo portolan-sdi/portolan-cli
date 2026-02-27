@@ -56,6 +56,14 @@ repos:
         files: ^(portolan_cli/cli\.py|docs/\.cli-snapshot\.json)$
         pass_filenames: false
 
+      - id: validate-skill-md
+        name: validate SKILL.md structure
+        entry: uv run python scripts/validate_skill_md.py
+        language: system
+        files: ^(SKILL\.md|portolan_cli/__init__\.py|portolan_cli/cli\.py)$
+        pass_filenames: false
+        pass_filenames: false
+
       - id: mypy
         name: mypy
         entry: uv run mypy
