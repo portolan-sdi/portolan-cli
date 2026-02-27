@@ -112,3 +112,41 @@ class TestCatalogInit:
         # v2 structure: catalog.json at root, not inside .portolan
         assert catalog.catalog_file == tmp_path / "catalog.json"
         assert catalog.catalog_file.exists()
+
+    @pytest.mark.unit
+    def test_versions_json_at_catalog_root_not_portolan(self, tmp_path: Path) -> None:
+        """versions.json must be written to catalog root, not .portolan/ (ADR-0023).
+
+        ADR-0023 states: versions.json is consumer-visible metadata and must live
+        alongside STAC files at the catalog root, not hidden inside .portolan/.
+        """
+        Catalog.init(tmp_path)
+
+        root_versions = tmp_path / "versions.json"
+        portolan_versions = tmp_path / ".portolan" / "versions.json"
+
+        # versions.json MUST be at root (user-visible per ADR-0023)
+        assert root_versions.exists(), (
+            f"versions.json not found at catalog root {root_versions}; "
+            "per ADR-0023 it must live alongside STAC files, not inside .portolan/"
+        )
+        # versions.json must NOT be inside .portolan/ (that's for internal state only)
+        assert not portolan_versions.exists(), (
+            f"versions.json found at {portolan_versions}; "
+            "per ADR-0023 only internal tooling state belongs in .portolan/"
+        )
+
+    @pytest.mark.unit
+    def test_versions_json_root_has_valid_content(self, tmp_path: Path) -> None:
+        """versions.json at catalog root must contain valid catalog-level versioning data."""
+        import json
+
+        Catalog.init(tmp_path)
+
+        versions_file = tmp_path / "versions.json"
+        data = json.loads(versions_file.read_text())
+
+        assert "schema_version" in data
+        assert "catalog_id" in data
+        assert "created" in data
+        assert "collections" in data

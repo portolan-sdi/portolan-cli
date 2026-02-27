@@ -83,15 +83,21 @@ class TestInitCommandAutoMode:
 
     @pytest.mark.integration
     def test_init_creates_all_management_files(self, runner: CliRunner, tmp_path: Path) -> None:
-        """portolan init --auto should create all management files in .portolan."""
+        """portolan init --auto should create management files in correct locations.
+
+        Per ADR-0023: versions.json is consumer-visible metadata at catalog root.
+        Internal state (config.json, state.json) lives in .portolan/.
+        """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 0
-            # Verify all management files exist
+            # Internal tooling state: lives in .portolan/
             assert Path(".portolan/config.json").exists()
             assert Path(".portolan/state.json").exists()
-            assert Path(".portolan/versions.json").exists()
+            # Consumer-visible metadata: lives at catalog root (ADR-0023)
+            assert Path("versions.json").exists()
+            assert not Path(".portolan/versions.json").exists()
 
 
 class TestInitCommandErrors:

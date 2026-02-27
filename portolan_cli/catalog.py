@@ -271,11 +271,14 @@ def init_catalog(
     Creates (in order for partial failure recovery):
     1. .portolan/ directory
     2. .portolan/config.json (empty {} for now)
-    3. .portolan/state.json (empty {} for now)
-    4. .portolan/versions.json (minimal catalog-level versioning)
-    5. catalog.json at ROOT level (valid STAC catalog via pystac) - LAST
+    3. versions.json at ROOT level (consumer-visible per ADR-0023)
+    4. catalog.json at ROOT level (valid STAC catalog via pystac)
+    5. .portolan/state.json (empty {} for now) - LAST
 
     Write order ensures failed runs stay in FRESH state (retry-safe).
+    Per ADR-0023: versions.json is user-visible metadata and lives at the
+    catalog root alongside STAC files; only internal tooling state goes in
+    .portolan/.
 
     Args:
         path: Directory path for the catalog. Will be created if doesn't exist.
@@ -341,8 +344,9 @@ def init_catalog(
         raise CatalogInitError(f"Cannot write config.json: {e}") from e
 
     # Step 3: versions.json - minimal catalog-level versioning
-    # TODO: Catalog-level versions.json structure differs from ADR-0005's
-    # collection-level spec. Consider creating ADR-0018 to document this.
+    # Per ADR-0023: versions.json is consumer-visible metadata and must live at
+    # the catalog root alongside STAC files, NOT inside .portolan/ (which is
+    # reserved for internal tooling state only).
     now = datetime.now(timezone.utc)
     versions_data = {
         "schema_version": "1.0.0",
@@ -351,7 +355,7 @@ def init_catalog(
         "collections": {},
     }
     try:
-        (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2) + "\n")
+        (path / "versions.json").write_text(json.dumps(versions_data, indent=2) + "\n")
     except OSError as e:
         raise CatalogInitError(f"Cannot write versions.json: {e}") from e
 
