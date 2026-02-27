@@ -34,6 +34,7 @@ GEO_ASSET_EXTENSIONS: frozenset[str] = frozenset(
         ".shp",
         ".gpkg",
         ".fgb",
+        ".parquet",
         ".tif",
         ".tiff",
         ".jp2",
