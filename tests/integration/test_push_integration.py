@@ -61,6 +61,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
     }
     (collection_dir / "collection.json").write_text(json.dumps(collection_data, indent=2))
 
+    # hrefs are catalog-root-relative: collection/item/filename
     versions_data = {
         "spec_version": "1.0.0",
         "current_version": "1.1.0",
@@ -74,7 +75,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
                     "census.parquet": {
                         "sha256": "abc123def456",
                         "size_bytes": 10240,
-                        "href": "demographics/census.parquet",
+                        "href": "demographics/census/census.parquet",
                     }
                 },
                 "changes": ["census.parquet"],
@@ -88,7 +89,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
                     "census.parquet": {
                         "sha256": "ghi789jkl012",
                         "size_bytes": 15360,
-                        "href": "demographics/census.parquet",
+                        "href": "demographics/census/census.parquet",
                     }
                 },
                 "changes": ["census.parquet"],
@@ -97,8 +98,10 @@ def catalog_with_versions(tmp_path: Path) -> Path:
     }
     (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
-    # Create actual asset file in collection directory
-    (collection_dir / "census.parquet").write_bytes(b"x" * 15360)
+    # Create actual asset file at collection/item/filename
+    item_dir = collection_dir / "census"
+    item_dir.mkdir(parents=True)
+    (item_dir / "census.parquet").write_bytes(b"x" * 15360)
 
     return catalog_dir
 

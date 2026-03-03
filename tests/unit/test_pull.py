@@ -329,12 +329,15 @@ class TestUncommittedChangeDetection:
         portolan_dir = catalog_root / "test"
         portolan_dir.mkdir(parents=True)
 
-        # Create file first to get its mtime
-        data_file = catalog_root / "data.parquet"
+        # Create file first to get its mtime (at collection/item/filename)
+        item_dir = catalog_root / "test" / "data"
+        item_dir.mkdir(parents=True, exist_ok=True)
+        data_file = item_dir / "data.parquet"
         data_file.write_bytes(b"x" * 1000)
         stat = data_file.stat()
 
         # Create versions.json with matching mtime and size
+        # hrefs are catalog-root-relative: collection/item/filename
         versions_data = {
             "spec_version": "1.0.0",
             "current_version": "1.0.0",
@@ -348,7 +351,7 @@ class TestUncommittedChangeDetection:
                         "data.parquet": {
                             "sha256": "abc123",
                             "size_bytes": 1000,
-                            "href": "data.parquet",
+                            "href": "test/data/data.parquet",
                             "mtime": stat.st_mtime,
                         }
                     },
@@ -379,11 +382,14 @@ class TestUncommittedChangeDetection:
         portolan_dir = catalog_root / "test"
         portolan_dir.mkdir(parents=True)
 
-        # Create file
-        data_file = catalog_root / "data.parquet"
+        # Create file at collection/item/filename
+        item_dir = portolan_dir / "data"
+        item_dir.mkdir(parents=True)
+        data_file = item_dir / "data.parquet"
         data_file.write_bytes(b"x" * 1000)
 
         # Create versions.json with different mtime
+        # hrefs are catalog-root-relative: collection/item/filename
         versions_data = {
             "spec_version": "1.0.0",
             "current_version": "1.0.0",
@@ -397,7 +403,7 @@ class TestUncommittedChangeDetection:
                         "data.parquet": {
                             "sha256": "abc123",
                             "size_bytes": 1000,
-                            "href": "data.parquet",
+                            "href": "test/data/data.parquet",
                             "mtime": 0.0,  # Different mtime
                         }
                     },
@@ -430,12 +436,15 @@ class TestUncommittedChangeDetection:
         portolan_dir = catalog_root / "test"
         portolan_dir.mkdir(parents=True)
 
-        # Create file
-        data_file = catalog_root / "data.parquet"
+        # Create file at collection/item/filename
+        item_dir = portolan_dir / "data"
+        item_dir.mkdir(parents=True)
+        data_file = item_dir / "data.parquet"
         data_file.write_bytes(b"x" * 1000)
         stat = data_file.stat()
 
         # Create versions.json with matching mtime but different size
+        # hrefs are catalog-root-relative: collection/item/filename
         versions_data = {
             "spec_version": "1.0.0",
             "current_version": "1.0.0",
@@ -449,7 +458,7 @@ class TestUncommittedChangeDetection:
                         "data.parquet": {
                             "sha256": "abc123",
                             "size_bytes": 500,  # Different size
-                            "href": "data.parquet",
+                            "href": "test/data/data.parquet",
                             "mtime": stat.st_mtime,
                         }
                     },
@@ -482,11 +491,14 @@ class TestUncommittedChangeDetection:
         portolan_dir = catalog_root / "test"
         portolan_dir.mkdir(parents=True)
 
-        # Create file
-        data_file = catalog_root / "data.parquet"
+        # Create file at collection/item/filename
+        item_dir = portolan_dir / "data"
+        item_dir.mkdir(parents=True)
+        data_file = item_dir / "data.parquet"
         data_file.write_bytes(b"x" * 1000)
 
         # Create versions.json WITHOUT mtime
+        # hrefs are catalog-root-relative: collection/item/filename
         versions_data = {
             "spec_version": "1.0.0",
             "current_version": "1.0.0",
@@ -500,7 +512,7 @@ class TestUncommittedChangeDetection:
                         "data.parquet": {
                             "sha256": "abc123",
                             "size_bytes": 1000,
-                            "href": "data.parquet",
+                            "href": "test/data/data.parquet",
                             # No mtime field
                         }
                     },

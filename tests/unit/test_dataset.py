@@ -16,12 +16,14 @@ import pytest
 
 from portolan_cli.dataset import (
     DatasetInfo,
+    _update_versions,
     add_dataset,
     get_dataset_info,
     list_datasets,
     remove_dataset,
 )
 from portolan_cli.formats import FormatType
+from portolan_cli.versions import read_versions
 
 if TYPE_CHECKING:
     pass
@@ -694,3 +696,112 @@ class TestAddDatasetMissingBbox:
                     catalog_root=initialized_catalog,
                     collection_id="test",
                 )
+
+
+class TestPathSegmentValidation:
+    """Tests for item_id and collection_id path traversal prevention."""
+
+    _UNSAFE_IDS = [
+        pytest.param("../etc", id="traversal"),
+        pytest.param("a/b", id="slash"),
+        pytest.param("a\\b", id="backslash"),
+        pytest.param(".", id="dot"),
+        pytest.param("..", id="dotdot"),
+        pytest.param("", id="empty"),
+    ]
+
+    _GEOJSON = (
+        '{"type":"FeatureCollection","features":[{"type":"Feature",'
+        '"geometry":{"type":"Point","coordinates":[0,0]},'
+        '"properties":{"name":"x"}}]}'
+    )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("bad_id", _UNSAFE_IDS)
+    def test_rejects_unsafe_item_id(
+        self, initialized_catalog: Path, tmp_path: Path, bad_id: str
+    ) -> None:
+        """add_dataset rejects item_id values with path separators or traversal."""
+        geojson_path = tmp_path / "data.geojson"
+        geojson_path.write_text(self._GEOJSON)
+
+        with pytest.raises(ValueError, match="must be a single path segment"):
+            add_dataset(
+                path=geojson_path,
+                catalog_root=initialized_catalog,
+                collection_id="test",
+                item_id=bad_id,
+            )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("bad_id", _UNSAFE_IDS)
+    def test_rejects_unsafe_collection_id(
+        self, initialized_catalog: Path, tmp_path: Path, bad_id: str
+    ) -> None:
+        """add_dataset rejects collection_id values with path separators or traversal."""
+        geojson_path = tmp_path / "data.geojson"
+        geojson_path.write_text(self._GEOJSON)
+
+        with pytest.raises(ValueError, match="must be a single path segment"):
+            add_dataset(
+                path=geojson_path,
+                catalog_root=initialized_catalog,
+                collection_id=bad_id,
+            )
+
+
+class TestUpdateVersionsHref:
+    """Tests for _update_versions producing catalog-root-relative hrefs.
+
+    The href in versions.json must be relative to catalog root so that
+    push.py and pull.py can resolve it via `catalog_root / href`.
+    """
+
+    @pytest.mark.unit
+    def test_href_is_catalog_root_relative(self, tmp_path: Path) -> None:
+        """_update_versions produces href as collection_id/item_id/filename."""
+        catalog_root = tmp_path / "catalog"
+        collection_dir = catalog_root / "agriculture"
+        item_dir = collection_dir / "census-2020"
+        item_dir.mkdir(parents=True)
+
+        # Create the output file where add_dataset would place it
+        output_file = item_dir / "census-2020.parquet"
+        output_file.write_bytes(b"fake parquet data")
+
+        _update_versions(
+            collection_dir=collection_dir,
+            item_id="census-2020",
+            output_path=output_file,
+            checksum="abc123",
+        )
+
+        versions = read_versions(collection_dir / "versions.json")
+        asset = versions.versions[0].assets["census-2020.parquet"]
+
+        assert asset.href == "agriculture/census-2020/census-2020.parquet"
+
+    @pytest.mark.unit
+    def test_href_resolves_to_actual_file(self, tmp_path: Path) -> None:
+        """catalog_root / href resolves to the actual asset file on disk."""
+        catalog_root = tmp_path / "catalog"
+        collection_dir = catalog_root / "demographics"
+        item_dir = collection_dir / "pop-data"
+        item_dir.mkdir(parents=True)
+
+        output_file = item_dir / "pop-data.parquet"
+        output_file.write_bytes(b"fake parquet data")
+
+        _update_versions(
+            collection_dir=collection_dir,
+            item_id="pop-data",
+            output_path=output_file,
+            checksum="def456",
+        )
+
+        versions = read_versions(collection_dir / "versions.json")
+        asset = versions.versions[0].assets["pop-data.parquet"]
+
+        resolved = catalog_root / asset.href
+        assert resolved.exists(), f"catalog_root / href should resolve to file: {resolved}"
+        assert resolved == output_file

@@ -30,16 +30,16 @@ Each collection has a single `versions.json` that serves as:
 `versions.json` exists at each level of the catalog hierarchy:
 
 ```
-s3://bucket/
-├── versions.json           # Catalog-level versioning
-├── collection-a/
-│   ├── versions.json       # Collection-level versioning
-│   └── v1.0.0/
+catalog-root/                              # Same structure locally and on remote (ADR-0023)
+├── versions.json                          # Catalog-level versioning
+├── demographics/
+│   ├── versions.json                      # Collection-level versioning
+│   └── census-2020/
 │       └── data.parquet
-└── collection-b/
-    ├── versions.json       # Collection-level versioning
-    └── v1.0.0/
-        └── data.parquet
+└── imagery/
+    ├── versions.json                      # Collection-level versioning
+    └── sentinel-tile-32T/
+        └── data.tif
 ```
 
 ### Structure
@@ -68,7 +68,7 @@ s3://bucket/
         "data.parquet": {
           "sha256": "abc123...",
           "size_bytes": 1048576,
-          "href": "s3://bucket/collection/v2.1.0/data.parquet"
+          "href": "demographics/census-2020/data.parquet"
         }
       },
       "changes": ["data.parquet"]
@@ -131,8 +131,7 @@ Adding columns or bands is NOT breaking (additive change).
 
 ### Version archival
 
-- Each version's files live in versioned paths: `/v{version}/asset.parquet`
-- `portolan prune` removes old version files (with safety mechanisms)
+- `portolan prune` removes old version data (with safety mechanisms)
 - Pruned versions retain metadata in `versions.json` (marked with `pruned: true`) for audit trail
 
 ## Consequences

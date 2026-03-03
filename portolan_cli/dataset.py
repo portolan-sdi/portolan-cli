@@ -156,6 +156,11 @@ def add_dataset(
     if item_id is None:
         item_id = path.stem
 
+    # Validate IDs are safe single path segments
+    for label, value in [("collection_id", collection_id), ("item_id", item_id)]:
+        if not value or "/" in value or "\\" in value or value in {".", ".."}:
+            raise ValueError(f"Invalid {label} '{value}': must be a single path segment")
+
     # Set up paths (STAC at root, per ADR-0023)
     collection_dir = catalog_root / collection_id
     item_dir = collection_dir / item_id
@@ -446,11 +451,14 @@ def _update_versions(
         parts[-1] = str(int(parts[-1]) + 1)
         new_version = ".".join(parts)
 
+    collection_id = collection_dir.name
+    href = f"{collection_id}/{item_id}/{output_path.name}"
+
     assets = {
         output_path.name: Asset(
             sha256=checksum,
             size_bytes=output_path.stat().st_size,
-            href=output_path.name,
+            href=href,
         )
     }
 

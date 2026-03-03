@@ -51,7 +51,7 @@ class AssetVersion:
     Attributes:
         sha256: File checksum.
         size_bytes: File size.
-        href: Versioned path.
+        href: Path relative to catalog root (e.g., "collection/item/file.parquet").
     """
 
     sha256: str
