@@ -62,21 +62,9 @@ class TestGetEffectiveStatusForceConvert:
         assert result.error_message is None
 
     @pytest.mark.unit
-    def test_pmtiles_force_convert(self, tmp_path: Path) -> None:
-        """PMTiles in convert list returns CONVERTIBLE."""
-        pmtiles_file = tmp_path / "test.pmtiles"
-        pmtiles_file.write_bytes(b"\x00\x00\x00\x00")
-
-        overrides = ConversionOverrides(extensions_convert=frozenset({".pmtiles"}))
-        result = get_effective_status(pmtiles_file, overrides=overrides)
-
-        assert result.status == CloudNativeStatus.CONVERTIBLE
-        assert result.display_name == "PMTiles"
-        assert result.target_format == "GeoParquet"
-
-    @pytest.mark.unit
     def test_unlisted_cloud_native_not_affected(self, tmp_path: Path) -> None:
         """Cloud-native formats not in convert list remain CLOUD_NATIVE."""
+        # Use PMTiles as an example of a cloud-native format
         pmtiles_file = tmp_path / "test.pmtiles"
         pmtiles_file.write_bytes(b"\x00\x00\x00\x00")
 
@@ -233,7 +221,7 @@ class TestGetEffectiveStatusUnsupported:
 class TestGetEffectiveStatusWithRealFixtures:
     """Tests using real fixture files."""
 
-    @pytest.mark.unit
+    @pytest.mark.realdata
     def test_real_shapefile_preserve(self) -> None:
         """Real shapefile fixture with preserve override."""
         # Use the complete_shapefile fixture

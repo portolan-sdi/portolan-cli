@@ -24,8 +24,12 @@ from portolan_cli.convert import (
     ConversionStatus,
     convert_directory,
 )
-from portolan_cli.formats import CloudNativeStatus, get_cloud_native_status, get_effective_status
-from portolan_cli.scan import is_geoparquet
+from portolan_cli.formats import (
+    CloudNativeStatus,
+    get_cloud_native_status,
+    get_effective_status,
+    is_geoparquet,
+)
 
 logger = logging.getLogger(__name__)
 

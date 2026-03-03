@@ -84,7 +84,6 @@ conversion:
   extensions:
     convert:
       - fgb       # FlatGeobuf -> GeoParquet
-      - pmtiles   # PMTiles -> GeoParquet
 ```
 
 #### `extensions.preserve`

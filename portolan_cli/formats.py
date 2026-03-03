@@ -410,8 +410,6 @@ def get_effective_status(
         >>> result = get_effective_status(Path("data.fgb"), overrides=overrides)
         >>> result.status  # CONVERTIBLE instead of CLOUD_NATIVE
     """
-    # Import here to avoid circular dependency
-
     # Get original status
     info = get_cloud_native_status(path)
 

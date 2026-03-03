@@ -28,6 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Any
 
 from portolan_cli.config import load_config
 
@@ -78,7 +79,8 @@ class ConversionOverrides:
         if self.paths_preserve and root is not None:
             try:
                 relative = path.relative_to(root)
-                relative_str = str(relative)
+                # Use POSIX-style paths for consistent matching across platforms
+                relative_str = relative.as_posix()
                 for pattern in self.paths_preserve:
                     if fnmatch(relative_str, pattern):
                         return True
@@ -105,6 +107,28 @@ def _normalize_extension(ext: str) -> str:
     return ext
 
 
+def _get_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
+    """Safely get a dict value, returning empty dict if not a dict."""
+    value = data.get(key, {})
+    return value if isinstance(value, dict) else {}
+
+
+def _get_list(data: dict[str, Any], key: str) -> list[Any]:
+    """Safely get a list value, returning empty list if not a list."""
+    value = data.get(key, [])
+    return value if isinstance(value, list) else []
+
+
+def _parse_extensions(items: list[Any]) -> frozenset[str]:
+    """Parse and normalize extension list, filtering non-strings."""
+    return frozenset(_normalize_extension(e) for e in items if isinstance(e, str) and e)
+
+
+def _parse_paths(items: list[Any]) -> tuple[str, ...]:
+    """Parse path list, filtering non-strings."""
+    return tuple(p for p in items if isinstance(p, str))
+
+
 def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
     """Load conversion overrides from catalog config.
 
@@ -119,38 +143,15 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
     """
     config = load_config(catalog_path)
 
-    conversion = config.get("conversion", {})
-    if not isinstance(conversion, dict):
+    conversion = _get_dict(config, "conversion")
+    if not conversion:
         return ConversionOverrides()
 
-    extensions = conversion.get("extensions", {})
-    if not isinstance(extensions, dict):
-        extensions = {}
-
-    paths = conversion.get("paths", {})
-    if not isinstance(paths, dict):
-        paths = {}
-
-    # Parse extensions.convert
-    convert_list = extensions.get("convert", [])
-    if not isinstance(convert_list, list):
-        convert_list = []
-    extensions_convert = frozenset(_normalize_extension(e) for e in convert_list if e)
-
-    # Parse extensions.preserve
-    preserve_list = extensions.get("preserve", [])
-    if not isinstance(preserve_list, list):
-        preserve_list = []
-    extensions_preserve = frozenset(_normalize_extension(e) for e in preserve_list if e)
-
-    # Parse paths.preserve
-    paths_preserve_list = paths.get("preserve", [])
-    if not isinstance(paths_preserve_list, list):
-        paths_preserve_list = []
-    paths_preserve = tuple(p for p in paths_preserve_list if isinstance(p, str))
+    extensions = _get_dict(conversion, "extensions")
+    paths = _get_dict(conversion, "paths")
 
     return ConversionOverrides(
-        extensions_convert=extensions_convert,
-        extensions_preserve=extensions_preserve,
-        paths_preserve=paths_preserve,
+        extensions_convert=_parse_extensions(_get_list(extensions, "convert")),
+        extensions_preserve=_parse_extensions(_get_list(extensions, "preserve")),
+        paths_preserve=_parse_paths(_get_list(paths, "preserve")),
     )

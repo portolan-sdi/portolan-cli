@@ -272,3 +272,126 @@ class TestConversionOverridesDataclass:
         other_fgb = tmp_path / "data" / "data.fgb"
         assert overrides.should_force_convert(other_fgb) is True
         assert overrides.should_preserve(other_fgb, root=tmp_path) is False
+
+    @pytest.mark.unit
+    def test_should_preserve_path_not_relative_to_root(self, tmp_path: Path) -> None:
+        """should_preserve() handles paths not relative to root gracefully."""
+        from portolan_cli.conversion_config import ConversionOverrides
+
+        overrides = ConversionOverrides(
+            extensions_convert=frozenset(),
+            extensions_preserve=frozenset({".shp"}),
+            paths_preserve=("archive/**",),
+        )
+
+        # Create a path completely outside root
+        unrelated_path = Path("/some/other/location/data.fgb")
+
+        # Should not raise, should fall through to extension check
+        result = overrides.should_preserve(unrelated_path, root=tmp_path)
+        assert result is False  # .fgb not in extensions_preserve
+
+
+class TestConversionConfigEdgeCases:
+    """Tests for edge cases in config parsing."""
+
+    @pytest.mark.unit
+    def test_conversion_not_a_dict(self, tmp_path: Path) -> None:
+        """get_conversion_overrides() handles non-dict conversion value."""
+        from portolan_cli.conversion_config import get_conversion_overrides
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        # conversion is a string, not a dict
+        config_file.write_text("conversion: invalid_value\n")
+
+        overrides = get_conversion_overrides(tmp_path)
+
+        # Should return empty overrides
+        assert overrides.extensions_convert == frozenset()
+        assert overrides.extensions_preserve == frozenset()
+        assert overrides.paths_preserve == ()
+
+    @pytest.mark.unit
+    def test_extensions_not_a_dict(self, tmp_path: Path) -> None:
+        """get_conversion_overrides() handles non-dict extensions value."""
+        from portolan_cli.conversion_config import get_conversion_overrides
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        # extensions is a list, not a dict
+        config_file.write_text("""
+conversion:
+  extensions: [fgb, shp]
+""")
+        overrides = get_conversion_overrides(tmp_path)
+
+        # Should return empty extensions
+        assert overrides.extensions_convert == frozenset()
+        assert overrides.extensions_preserve == frozenset()
+
+    @pytest.mark.unit
+    def test_paths_not_a_dict(self, tmp_path: Path) -> None:
+        """get_conversion_overrides() handles non-dict paths value."""
+        from portolan_cli.conversion_config import get_conversion_overrides
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        # paths is a string, not a dict
+        config_file.write_text("""
+conversion:
+  paths: archive/**
+""")
+        overrides = get_conversion_overrides(tmp_path)
+
+        # Should return empty paths
+        assert overrides.paths_preserve == ()
+
+    @pytest.mark.unit
+    def test_non_string_items_in_convert_list(self, tmp_path: Path) -> None:
+        """get_conversion_overrides() filters non-string items from convert list."""
+        from portolan_cli.conversion_config import get_conversion_overrides
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        # Mix of valid strings and invalid types
+        config_file.write_text("""
+conversion:
+  extensions:
+    convert:
+      - fgb
+      - 123
+      - null
+      - gpkg
+""")
+        overrides = get_conversion_overrides(tmp_path)
+
+        # Should only include valid string extensions
+        assert overrides.extensions_convert == frozenset({".fgb", ".gpkg"})
+
+    @pytest.mark.unit
+    def test_non_string_items_in_preserve_list(self, tmp_path: Path) -> None:
+        """get_conversion_overrides() filters non-string items from preserve list."""
+        from portolan_cli.conversion_config import get_conversion_overrides
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        # Mix of valid strings and invalid types
+        config_file.write_text("""
+conversion:
+  extensions:
+    preserve:
+      - shp
+      - 456
+      - true
+      - geojson
+""")
+        overrides = get_conversion_overrides(tmp_path)
+
+        # Should only include valid string extensions
+        assert overrides.extensions_preserve == frozenset({".shp", ".geojson"})
