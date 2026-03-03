@@ -27,6 +27,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli.collection_id import CollectionIdError, normalize_collection_id
 from portolan_cli.constants import WINDOWS_RESERVED_NAMES
 
 if TYPE_CHECKING:
@@ -77,6 +78,7 @@ FIX_FLAG_ISSUE_TYPES: frozenset[str] = frozenset(
         "windows_reserved_name",
         "long_path",
         "path_too_long",
+        "invalid_collection_id",
     }
 )
 
@@ -482,6 +484,65 @@ def _is_fix_flag_issue(issue: ScanIssue) -> bool:
     return issue.issue_type.value in FIX_FLAG_ISSUE_TYPES
 
 
+def _compute_collection_id_fix(dir_path: Path) -> tuple[Path, str] | None:
+    """Compute fix for an invalid collection ID (directory rename).
+
+    Args:
+        dir_path: Path to the collection directory with invalid ID.
+
+    Returns:
+        Tuple of (new_path, preview_message) or None if cannot be fixed.
+    """
+    old_name = dir_path.name
+
+    try:
+        new_name = normalize_collection_id(old_name)
+    except CollectionIdError:
+        # Cannot normalize (e.g., all special characters)
+        return None
+
+    if new_name == old_name:
+        # Already valid (shouldn't happen, but defensive)
+        return None
+
+    new_path = dir_path.parent / new_name
+    preview = f"Rename directory: {old_name}/ → {new_name}/"
+
+    return new_path, preview
+
+
+def _apply_directory_rename(old_path: Path, new_path: Path) -> bool:
+    """Apply a directory rename operation.
+
+    Uses atomic rename when possible.
+
+    Args:
+        old_path: Current directory path.
+        new_path: Target directory path.
+
+    Returns:
+        True if rename succeeded, False if collision or error.
+    """
+    import os
+
+    try:
+        # Use os.rename for atomic operation on same filesystem
+        os.rename(str(old_path), str(new_path))
+        return True
+    except FileExistsError:
+        # Target already exists (collision)
+        return False
+    except OSError:
+        # Cross-filesystem or other error, fall back to shutil.move
+        if new_path.exists():
+            return False
+        try:
+            shutil.move(str(old_path), str(new_path))
+            return True
+        except (OSError, shutil.Error):
+            return False
+
+
 def apply_safe_fixes(
     issues: list[ScanIssue],
     dry_run: bool = False,
@@ -509,11 +570,44 @@ def apply_safe_fixes(
         if not _is_fix_flag_issue(issue):
             continue
 
-        # Skip if file doesn't exist
+        # Skip if path doesn't exist
         if not issue.path.exists():
             continue
 
-        # Compute the rename
+        # Handle collection ID issues (directory renames)
+        if issue.issue_type.value == "invalid_collection_id":
+            result = _compute_collection_id_fix(issue.path)
+            if result is None:
+                continue
+
+            new_path, preview = result
+
+            # Check for collision
+            collision = new_path.exists()
+            if collision:
+                preview = f"{preview} [COLLISION: target exists]"
+
+            fix = ProposedFix(
+                issue=issue,
+                category=FixCategory.SAFE,
+                action="rename",
+                details={
+                    "old_path": str(issue.path),
+                    "new_path": str(new_path),
+                    "collision": collision,
+                    "is_directory": True,
+                },
+                preview=preview,
+            )
+            proposed.append(fix)
+
+            if not dry_run and not collision:
+                success = _apply_directory_rename(issue.path, new_path)
+                if success:
+                    applied.append(fix)
+            continue
+
+        # Handle file renames (invalid characters, Windows reserved, long paths)
         result = _compute_safe_rename(issue.path)
         if result is None:
             continue

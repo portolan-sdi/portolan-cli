@@ -33,6 +33,7 @@ from enum import Enum
 from pathlib import Path
 
 # Import new types from scan modules
+from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
 from portolan_cli.scan_classify import (
     FileCategory,
@@ -118,6 +119,9 @@ class IssueType(Enum):
     # NEW: Structure issues
     MIXED_FLAT_MULTIITEM = "mixed_flat_multiitem"
     ORPHAN_SIDECAR = "orphan_sidecar"
+
+    # NEW: Collection ID validation
+    INVALID_COLLECTION_ID = "invalid_collection_id"
 
 
 class FormatType(Enum):
@@ -681,6 +685,56 @@ def _check_mixed_structure(ctx: _ScanContext) -> None:
             return  # Only report once per root
 
 
+def _check_collection_ids(ctx: _ScanContext) -> None:
+    """Check directory names for valid collection ID format.
+
+    Per portolan-spec/structure.md, collection IDs SHOULD:
+    - Contain only lowercase letters, numbers, hyphens, and underscores
+    - Start with a letter
+    """
+    # Get unique directories that contain geospatial files
+    checked_dirs: set[Path] = set()
+
+    for dir_path in ctx.primaries_by_dir:
+        # Only check immediate subdirectories of root (potential collections)
+        if dir_path == ctx.root:
+            continue
+
+        # Get the first-level directory (collection level)
+        try:
+            relative = dir_path.relative_to(ctx.root)
+            collection_dir_name = relative.parts[0]
+            collection_dir = ctx.root / collection_dir_name
+        except (ValueError, IndexError):
+            continue
+
+        # Skip if already checked
+        if collection_dir in checked_dirs:
+            continue
+        checked_dirs.add(collection_dir)
+
+        # Validate the collection ID (directory name)
+        is_valid, error_msg = validate_collection_id(collection_dir_name)
+        if not is_valid:
+            # Generate suggested normalized name
+            try:
+                normalized = normalize_collection_id(collection_dir_name)
+                suggestion = f"Rename to '{normalized}' or use --fix to auto-rename"
+            except Exception:
+                suggestion = "Rename directory to use only lowercase letters, numbers, hyphens, and underscores"
+
+            ctx.issues.append(
+                ScanIssue(
+                    path=collection_dir,
+                    relative_path=collection_dir_name,
+                    issue_type=IssueType.INVALID_COLLECTION_ID,
+                    severity=Severity.WARNING,
+                    message=f"Invalid collection ID: {error_msg}",
+                    suggestion=suggestion,
+                )
+            )
+
+
 def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
     """Run checks that need all files collected first."""
     # Check for multiple primaries per directory
@@ -1027,6 +1081,9 @@ def scan_directory(
 
     # Check for orphan sidecars (sidecars without a .shp file)
     _check_orphan_sidecars(ctx)
+
+    # Check for invalid collection IDs
+    _check_collection_ids(ctx)
 
     # Check for mixed flat/multi-item structure
     _check_mixed_structure(ctx)

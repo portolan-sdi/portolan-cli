@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pystac
 
+from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
     MAX_CATALOG_SEARCH_DEPTH,
@@ -144,9 +145,17 @@ def add_dataset(
         DatasetInfo with details about the added dataset.
 
     Raises:
-        ValueError: If the format is unsupported.
+        ValueError: If the format is unsupported or collection_id is invalid.
         FileNotFoundError: If the source file doesn't exist.
     """
+    # Validate collection ID before proceeding
+    is_valid, error_msg = validate_collection_id(collection_id)
+    if not is_valid:
+        normalized = normalize_collection_id(collection_id)
+        raise ValueError(
+            f"Invalid collection ID '{collection_id}': {error_msg}. Suggested: '{normalized}'"
+        )
+
     # Step 1: Detect format
     format_type = detect_format(path)
     if format_type == FormatType.UNKNOWN:
