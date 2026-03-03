@@ -48,7 +48,7 @@ This violates STAC conventions and makes catalogs unusable with standard STAC to
 | `collection.json` | `./{collection}/` | STAC standard |
 | `item.json` | `./{collection}/{item}/` | STAC standard |
 | `versions.json` | Alongside STAC files | Consumer-visible metadata (version history, checksums) |
-| `config.json` | `.portolan/` | Internal tooling configuration |
+| `config.yaml` | `.portolan/` | Internal tooling configuration |
 | `state.json` | `.portolan/` | Internal local state (not synced? TBD) |
 
 ### Local = Remote

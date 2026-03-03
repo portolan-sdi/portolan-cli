@@ -3,7 +3,7 @@
 The new init command creates (per ADR-0023):
 - catalog.json at ROOT level (valid STAC catalog via pystac)
 - versions.json at ROOT level (consumer-visible catalog-level versioning)
-- .portolan/config.json (empty {} for now) -- internal tooling state
+- .portolan/config.yaml (empty {} for now) -- internal tooling state
 - .portolan/state.json (empty {} for now) -- internal tooling state
 
 Error cases:
@@ -42,14 +42,18 @@ class TestInitCreatesRequiredFiles:
 
     @pytest.mark.integration
     def test_init_creates_portolan_config(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init should create .portolan/config.json (empty {} for now)."""
+        """Init should create .portolan/config.yaml (per ADR-0027, serves as sentinel and user config)."""
+        import yaml
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 0
-            config_file = Path(".portolan/config.json")
+            config_file = Path(".portolan/config.yaml")
             assert config_file.exists()
-            assert json.loads(config_file.read_text()) == {}
+            # Config starts as a comment-only file (empty dict when parsed as YAML)
+            content = yaml.safe_load(config_file.read_text())
+            assert content is None or content == {}  # Empty YAML or comment-only
 
     @pytest.mark.integration
     def test_init_creates_portolan_state(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -92,7 +96,7 @@ class TestInitCreatesRequiredFiles:
           - versions.json
 
         .portolan/ (internal tooling state only):
-          - config.json
+          - config.yaml
           - state.json
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
@@ -103,7 +107,7 @@ class TestInitCreatesRequiredFiles:
             assert Path("catalog.json").exists()
             assert Path("versions.json").exists()
             # .portolan/ directory: internal tooling state only
-            assert Path(".portolan/config.json").exists()
+            assert Path(".portolan/config.yaml").exists()
             assert Path(".portolan/state.json").exists()
             # versions.json must NOT be inside .portolan/ (ADR-0023)
             assert not Path(".portolan/versions.json").exists()
@@ -172,7 +176,7 @@ class TestInitErrorCases:
             # Create managed catalog structure
             portolan = Path(".portolan")
             portolan.mkdir()
-            (portolan / "config.json").write_text("{}")
+            (portolan / "config.yaml").write_text("{}")
             (portolan / "state.json").write_text("{}")
 
             # Use --auto to skip interactive prompts and test error path
@@ -231,12 +235,12 @@ class TestInitPartialState:
     def test_init_succeeds_with_partial_portolan(self, runner: CliRunner, tmp_path: Path) -> None:
         """Partial .portolan (only config, no state) should allow init.
 
-        Both config.json AND state.json are required for MANAGED state.
+        Both config.yaml AND state.json are required for MANAGED state.
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             portolan = Path(".portolan")
             portolan.mkdir()
-            (portolan / "config.json").write_text("{}")
+            (portolan / "config.yaml").write_text("{}")
             # Note: state.json is missing
 
             result = runner.invoke(cli, ["init", "--auto"])
@@ -333,7 +337,7 @@ class TestInitJsonOutput:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             portolan = Path(".portolan")
             portolan.mkdir()
-            (portolan / "config.json").write_text("{}")
+            (portolan / "config.yaml").write_text("{}")
             (portolan / "state.json").write_text("{}")
 
             result = runner.invoke(cli, ["--format", "json", "init"])

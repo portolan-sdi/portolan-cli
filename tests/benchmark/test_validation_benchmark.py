@@ -22,7 +22,7 @@ def valid_catalog(tmp_path: Path) -> Path:
     # v2 structure: .portolan directory with config, state, and versions
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
-    (portolan_dir / "config.json").write_text("{}")
+    (portolan_dir / "config.yaml").write_text("{}")
     (portolan_dir / "versions.json").write_text(
         json.dumps(
             {

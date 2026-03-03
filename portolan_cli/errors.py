@@ -91,7 +91,7 @@ class UnmanagedStacCatalogError(CatalogError):
     Error code: PRTLN-CAT003
 
     This occurs when a directory has a catalog.json file but is not managed
-    by Portolan (missing .portolan/config.json and .portolan/state.json).
+    by Portolan (missing .portolan/config.yaml and .portolan/state.json).
     Use `portolan adopt` to bring an existing STAC catalog under management.
     """
 

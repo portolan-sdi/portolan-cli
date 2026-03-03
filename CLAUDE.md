@@ -98,6 +98,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0024](context/shared/adr/0024-hierarchical-config-system.md) | Hierarchical config system (YAML) |
 | [0025](context/shared/adr/0025-architecture-as-code.md) | Architecture as code with import-linter |
 | [0026](context/shared/adr/0026-conversion-config-design.md) | Conversion config: extension/path overrides, precedence rules |
+| [0027](context/shared/adr/0027-unified-config-yaml-sentinel.md) | Unified config.yaml as sentinel and user config (eliminates config.json) |
 
 ## Common Commands
 

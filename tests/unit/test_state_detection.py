@@ -1,7 +1,7 @@
 """Tests for catalog state detection.
 
 The detect_state() function determines the current state of a directory:
-- MANAGED: A full Portolan catalog (.portolan/config.json AND .portolan/state.json exist)
+- MANAGED: A full Portolan catalog (.portolan/config.yaml AND .portolan/state.json exist)
 - UNMANAGED_STAC: An existing STAC catalog (catalog.json exists but not managed)
 - FRESH: No catalog exists (neither .portolan nor catalog.json)
 """
@@ -70,22 +70,22 @@ class TestDetectStateFresh:
 
     @pytest.mark.unit
     def test_portolan_with_only_config_is_fresh(self, tmp_path: Path) -> None:
-        """Partial .portolan (only config.json, no state.json) is FRESH.
+        """Partial .portolan (only config.yaml, no state.json) is FRESH.
 
-        Both config.json AND state.json are required for MANAGED state.
+        Both config.yaml AND state.json are required for MANAGED state.
         """
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        (portolan_dir / "config.json").write_text("{}")
+        (portolan_dir / "config.yaml").write_text("{}")
 
         state = detect_state(tmp_path)
         assert state == CatalogState.FRESH
 
     @pytest.mark.unit
     def test_portolan_with_only_state_is_fresh(self, tmp_path: Path) -> None:
-        """Partial .portolan (only state.json, no config.json) is FRESH.
+        """Partial .portolan (only state.json, no config.yaml) is FRESH.
 
-        Both config.json AND state.json are required for MANAGED state.
+        Both config.yaml AND state.json are required for MANAGED state.
         """
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -100,10 +100,10 @@ class TestDetectStateManaged:
 
     @pytest.mark.unit
     def test_full_portolan_structure_is_managed(self, tmp_path: Path) -> None:
-        """Directory with .portolan/config.json AND .portolan/state.json is MANAGED."""
+        """Directory with .portolan/config.yaml AND .portolan/state.json is MANAGED."""
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        (portolan_dir / "config.json").write_text("{}")
+        (portolan_dir / "config.yaml").write_text("{}")
         (portolan_dir / "state.json").write_text("{}")
 
         state = detect_state(tmp_path)
@@ -114,7 +114,7 @@ class TestDetectStateManaged:
         """MANAGED state should work even with extra files in .portolan."""
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        (portolan_dir / "config.json").write_text("{}")
+        (portolan_dir / "config.yaml").write_text("{}")
         (portolan_dir / "state.json").write_text("{}")
         (portolan_dir / "versions.json").write_text("{}")
         (portolan_dir / "catalog.json").write_text("{}")
@@ -132,7 +132,7 @@ class TestDetectStateManaged:
         # .portolan with both required files
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        (portolan_dir / "config.json").write_text("{}")
+        (portolan_dir / "config.yaml").write_text("{}")
         (portolan_dir / "state.json").write_text("{}")
 
         state = detect_state(tmp_path)
@@ -190,7 +190,7 @@ class TestDetectStateUnmanagedStac:
         (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        (portolan_dir / "config.json").write_text("{}")
+        (portolan_dir / "config.yaml").write_text("{}")
         # Note: state.json is missing, so not fully managed
 
         state = detect_state(tmp_path)
@@ -202,6 +202,61 @@ def is_case_sensitive_fs(tmp_path: Path) -> bool:
     test_file = tmp_path / "CaseSensitivityTest"
     test_file.touch()
     return not (tmp_path / "casesensitivitytest").exists()
+
+
+class TestDetectStateConfigYamlSentinel:
+    """Tests for config.yaml as the sentinel file (ADR-0027).
+
+    Per ADR-0027, we use config.yaml (not config.yaml) as the sentinel file.
+    MANAGED state requires: .portolan/config.yaml AND .portolan/state.json
+    """
+
+    @pytest.mark.unit
+    def test_config_yaml_with_state_json_is_managed(self, tmp_path: Path) -> None:
+        """config.yaml + state.json should be MANAGED (new behavior per ADR-0027)."""
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
+        (portolan_dir / "state.json").write_text("{}")
+
+        state = detect_state(tmp_path)
+        assert state == CatalogState.MANAGED
+
+    @pytest.mark.unit
+    def test_config_yaml_only_is_fresh(self, tmp_path: Path) -> None:
+        """config.yaml without state.json should be FRESH."""
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
+
+        state = detect_state(tmp_path)
+        assert state == CatalogState.FRESH
+
+    @pytest.mark.unit
+    def test_config_yaml_empty_is_valid_sentinel(self, tmp_path: Path) -> None:
+        """Empty config.yaml should still work as sentinel."""
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("")
+        (portolan_dir / "state.json").write_text("{}")
+
+        state = detect_state(tmp_path)
+        assert state == CatalogState.MANAGED
+
+    @pytest.mark.unit
+    def test_old_config_json_not_recognized(self, tmp_path: Path) -> None:
+        """Old config.json (without config.yaml) should NOT be MANAGED.
+
+        Per ADR-0027, we no longer recognize config.json as the sentinel.
+        """
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.json").write_text("{}")  # Old pattern
+        (portolan_dir / "state.json").write_text("{}")
+
+        state = detect_state(tmp_path)
+        # Old pattern is no longer recognized - should be FRESH
+        assert state == CatalogState.FRESH
 
 
 class TestDetectStateEdgeCases:
@@ -216,7 +271,7 @@ class TestDetectStateEdgeCases:
         # Create files with invalid JSON (would error if read)
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        (portolan_dir / "config.json").write_text("not valid json {{{")
+        (portolan_dir / "config.yaml").write_text("not valid json {{{")
         (portolan_dir / "state.json").write_text("also invalid!!!")
 
         # Should still detect as MANAGED (existence check only)
@@ -259,7 +314,7 @@ class TestDetectStateEdgeCases:
         # Create real portolan dir elsewhere
         real_portolan = tmp_path / "real-portolan"
         real_portolan.mkdir()
-        (real_portolan / "config.json").write_text("{}")
+        (real_portolan / "config.yaml").write_text("{}")
         (real_portolan / "state.json").write_text("{}")
 
         # Create workspace with symlink

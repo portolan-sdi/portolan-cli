@@ -86,14 +86,14 @@ class TestInitCommandAutoMode:
         """portolan init --auto should create management files in correct locations.
 
         Per ADR-0023: versions.json is consumer-visible metadata at catalog root.
-        Internal state (config.json, state.json) lives in .portolan/.
+        Internal state (config.yaml, state.json) lives in .portolan/.
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto"])
 
             assert result.exit_code == 0
             # Internal tooling state: lives in .portolan/
-            assert Path(".portolan/config.json").exists()
+            assert Path(".portolan/config.yaml").exists()
             assert Path(".portolan/state.json").exists()
             # Consumer-visible metadata: lives at catalog root (ADR-0023)
             assert Path("versions.json").exists()
@@ -115,7 +115,7 @@ class TestInitCommandErrors:
             # Create managed catalog (both config and state required)
             portolan = Path(".portolan")
             portolan.mkdir()
-            (portolan / "config.json").write_text("{}")
+            (portolan / "config.yaml").write_text("{}")
             (portolan / "state.json").write_text("{}")
 
             # Use --auto to skip interactive prompts and test error path
@@ -145,7 +145,7 @@ class TestInitCommandErrors:
             # Create managed catalog
             portolan = Path(".portolan")
             portolan.mkdir()
-            (portolan / "config.json").write_text("{}")
+            (portolan / "config.yaml").write_text("{}")
             (portolan / "state.json").write_text("{}")
 
             result = runner.invoke(cli, ["--format", "json", "init"])
@@ -184,7 +184,7 @@ class TestInitCommandJsonOutput:
             # Create managed catalog
             portolan = Path(".portolan")
             portolan.mkdir()
-            (portolan / "config.json").write_text("{}")
+            (portolan / "config.yaml").write_text("{}")
             (portolan / "state.json").write_text("{}")
 
             result = runner.invoke(cli, ["--format", "json", "init"])

@@ -37,7 +37,7 @@ def managed_catalog(tmp_path: Path) -> Path:
     # Create .portolan directory structure (MANAGED state requires both config and state)
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
-    (portolan_dir / "config.json").write_text("{}\n")
+    (portolan_dir / "config.yaml").write_text("{}\n")
     (portolan_dir / "state.json").write_text("{}\n")
 
     # Create collection with versions.json
