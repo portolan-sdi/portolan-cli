@@ -51,6 +51,144 @@ from portolan_cli.versions import (
     write_versions,
 )
 
+# Files to ignore when scanning item directories for assets.
+# These are STAC/Portolan structural files, not user data.
+IGNORED_FILES: frozenset[str] = frozenset(
+    {
+        "catalog.json",
+        "collection.json",
+        "versions.json",
+    }
+)
+
+# Extension-to-MIME-type mapping for asset files.
+_MEDIA_TYPE_MAP: dict[str, str] = {
+    ".parquet": "application/x-parquet",
+    ".tif": "image/tiff; application=geotiff; profile=cloud-optimized",
+    ".tiff": "image/tiff; application=geotiff; profile=cloud-optimized",
+    ".geojson": "application/geo+json",
+    ".json": "application/json",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".svg": "image/svg+xml",
+    ".xml": "application/xml",
+    ".csv": "text/csv",
+    ".gpkg": "application/geopackage+sqlite3",
+    ".fgb": "application/flatgeobuf",
+    ".pmtiles": "application/vnd.pmtiles",
+    ".shp": "application/x-shapefile",
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".html": "text/html",
+}
+
+# Extension-to-role mapping for asset files.
+# Data formats get "data", images get "thumbnail", metadata gets "metadata".
+_ROLE_MAP: dict[str, str] = {
+    ".parquet": "data",
+    ".tif": "data",
+    ".tiff": "data",
+    ".geojson": "data",
+    ".gpkg": "data",
+    ".fgb": "data",
+    ".csv": "data",
+    ".shp": "data",
+    ".pmtiles": "data",
+    ".png": "thumbnail",
+    ".jpg": "thumbnail",
+    ".jpeg": "thumbnail",
+    ".svg": "thumbnail",
+    ".xml": "metadata",
+    ".json": "metadata",
+    ".pdf": "documentation",
+    ".txt": "documentation",
+    ".md": "documentation",
+    ".html": "documentation",
+}
+
+
+def _get_media_type(path: Path) -> str:
+    """Determine MIME type from file extension.
+
+    Args:
+        path: Path to the file.
+
+    Returns:
+        MIME type string. Defaults to "application/octet-stream" for
+        unknown extensions.
+    """
+    return _MEDIA_TYPE_MAP.get(path.suffix.lower(), "application/octet-stream")
+
+
+def _get_asset_role(path: Path) -> str:
+    """Determine STAC asset role from file extension.
+
+    Args:
+        path: Path to the file.
+
+    Returns:
+        Role string: "data", "thumbnail", "metadata", or "documentation".
+        Defaults to "data" for unknown extensions.
+    """
+    return _ROLE_MAP.get(path.suffix.lower(), "data")
+
+
+def _scan_item_assets(
+    item_dir: Path,
+    item_id: str,
+    primary_file: Path,
+) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str]], list[str]]:
+    """Scan an item directory for all trackable assets.
+
+    Per issue #133, ALL files in item directories are tracked as assets.
+    Skips: directories, symlinks, hidden files, STAC structural files.
+
+    Args:
+        item_dir: Path to the item directory.
+        item_id: Item identifier (for skipping item.json).
+        primary_file: Path to the primary data file (gets "data" key).
+
+    Returns:
+        Tuple of (stac_assets, asset_files, asset_paths):
+        - stac_assets: Dict mapping asset key to pystac.Asset
+        - asset_files: Dict mapping filename to (path, checksum) tuples
+        - asset_paths: List of absolute path strings
+    """
+    stac_assets: dict[str, pystac.Asset] = {}
+    asset_files: dict[str, tuple[Path, str]] = {}
+    asset_paths: list[str] = []
+
+    for file_path in item_dir.iterdir():
+        # Skip non-files, symlinks, hidden files, and structural files
+        if not file_path.is_file():
+            continue
+        if file_path.is_symlink():
+            continue
+        if file_path.name.startswith("."):
+            continue
+        if file_path.name in IGNORED_FILES:
+            continue
+        if file_path.name == f"{item_id}.json":
+            continue
+
+        file_checksum = compute_checksum(file_path)
+        file_media_type = _get_media_type(file_path)
+        file_role = _get_asset_role(file_path)
+
+        # Primary geo file gets "data" key, others use stem
+        asset_key = "data" if file_path == primary_file else file_path.stem
+        stac_assets[asset_key] = pystac.Asset(
+            href=file_path.name,
+            media_type=file_media_type,
+            roles=[file_role],
+        )
+        asset_files[file_path.name] = (file_path, file_checksum)
+        asset_paths.append(str(file_path))
+
+    return stac_assets, asset_files, asset_paths
+
 
 def find_catalog_root(start_path: Path | None = None) -> Path | None:
     """Find the catalog root by walking up from the given path.
@@ -195,14 +333,9 @@ def add_dataset(
     if format_type == FormatType.VECTOR:
         output_path = convert_vector(path, item_dir)
         metadata = extract_geoparquet_metadata(output_path)
-        media_type = "application/x-parquet"
     else:  # RASTER
         output_path = convert_raster(path, item_dir)
         metadata = extract_cog_metadata(output_path)
-        media_type = "image/tiff; application=geotiff; profile=cloud-optimized"
-
-    # Step 3: Compute checksum
-    checksum = compute_checksum(output_path)
 
     # Step 4: Extract bbox (handle tuple -> list conversion)
     if not metadata.bbox:
@@ -212,7 +345,14 @@ def add_dataset(
         )
     bbox = list(metadata.bbox)
 
-    # Step 5: Create STAC item
+    # Step 5: Scan ALL files in item_dir for assets (per issue #133)
+    stac_assets, asset_files, asset_paths = _scan_item_assets(
+        item_dir=item_dir,
+        item_id=item_id,
+        primary_file=output_path,
+    )
+
+    # Step 6: Create STAC item with ALL assets
     stac_properties = metadata.to_stac_properties()
     if title:
         stac_properties["title"] = title
@@ -223,16 +363,10 @@ def add_dataset(
         item_id=item_id,
         bbox=bbox,
         properties=stac_properties,
-        assets={
-            "data": pystac.Asset(
-                href=output_path.name,
-                media_type=media_type,
-                roles=["data"],
-            )
-        },
+        assets=stac_assets,
     )
 
-    # Step 6: Load or create collection
+    # Step 7: Load or create collection
     collection = _get_or_create_collection(
         catalog_root=catalog_root,
         collection_id=collection_id,
@@ -242,19 +376,18 @@ def add_dataset(
     # Add item to collection
     add_item_to_collection(collection, item, update_extent=True)
 
-    # Step 7: Save collection
+    # Step 8: Save collection
     collection.normalize_hrefs(str(collection_dir))
     collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
 
-    # Step 8: Update catalog to link to collection (if new)
+    # Step 9: Update catalog to link to collection (if new)
     _update_catalog_links(catalog_root, collection_id)
 
-    # Step 9: Update versions.json
+    # Step 10: Update versions.json with ALL assets
     _update_versions(
         collection_dir=collection_dir,
         item_id=item_id,
-        output_path=output_path,
-        checksum=checksum,
+        asset_files=asset_files,
     )
 
     return DatasetInfo(
@@ -262,7 +395,7 @@ def add_dataset(
         collection_id=collection_id,
         format_type=format_type,
         bbox=bbox,
-        asset_paths=[str(output_path)],
+        asset_paths=asset_paths,
         title=title,
         description=description,
     )
@@ -442,16 +575,22 @@ def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
 def _update_versions(
     collection_dir: Path,
     item_id: str,
-    output_path: Path,
-    checksum: str,
+    output_path: Path | None = None,
+    checksum: str | None = None,
+    *,
+    asset_files: dict[str, tuple[Path, str]] | None = None,
 ) -> None:
-    """Update versions.json with new asset.
+    """Update versions.json with assets.
+
+    Supports both single-file (backward compat) and multi-file modes.
 
     Args:
         collection_dir: Path to collection directory.
         item_id: Item identifier.
-        output_path: Path to the output file.
-        checksum: SHA-256 checksum.
+        output_path: Path to single output file (legacy mode).
+        checksum: SHA-256 checksum for single file (legacy mode).
+        asset_files: Dict mapping filename to (path, checksum) tuples.
+            If provided, output_path/checksum are ignored.
     """
     versions_path = collection_dir / "versions.json"
 
@@ -474,15 +613,28 @@ def _update_versions(
         new_version = ".".join(parts)
 
     collection_id = collection_dir.name
-    href = f"{collection_id}/{item_id}/{output_path.name}"
 
-    assets = {
-        output_path.name: Asset(
+    # Build assets dict - support both single-file and multi-file modes
+    assets: dict[str, Asset] = {}
+    if asset_files is not None:
+        # Multi-asset mode (per issue #133)
+        for filename, (file_path, file_checksum) in asset_files.items():
+            href = f"{collection_id}/{item_id}/{filename}"
+            assets[filename] = Asset(
+                sha256=file_checksum,
+                size_bytes=file_path.stat().st_size,
+                href=href,
+            )
+    elif output_path is not None and checksum is not None:
+        # Legacy single-file mode (backward compatibility)
+        href = f"{collection_id}/{item_id}/{output_path.name}"
+        assets[output_path.name] = Asset(
             sha256=checksum,
             size_bytes=output_path.stat().st_size,
             href=href,
         )
-    }
+    else:
+        raise ValueError("Either asset_files or (output_path, checksum) must be provided")
 
     updated = add_version(
         versions_file,
@@ -831,6 +983,8 @@ def resolve_collection_id(path: Path, catalog_root: Path) -> str:
 def is_current(
     path: Path,
     versions_path: Path,
+    *,
+    asset_key: str | None = None,
 ) -> bool:
     """Check if a file is unchanged compared to versions.json.
 
@@ -839,6 +993,8 @@ def is_current(
     Args:
         path: Path to the file to check.
         versions_path: Path to versions.json for this collection.
+        asset_key: Optional explicit key to look up in versions.json.
+            If not provided, looks up by filename alone (legacy behavior).
 
     Returns:
         True if file is unchanged (already tracked at current state),
@@ -854,14 +1010,19 @@ def is_current(
     current_version = versions_file.versions[-1]
 
     # Look for this file in current version assets
-    filename = path.name
-    asset = current_version.assets.get(filename)
+    # Try explicit key first, then filename, then converted name
+    asset = None
+    if asset_key is not None:
+        asset = current_version.assets.get(asset_key)
+    if asset is None:
+        filename = path.name
+        asset = current_version.assets.get(filename)
     if asset is None:
         # Also check for stem.parquet (converted name)
         parquet_name = f"{path.stem}.parquet"
         asset = current_version.assets.get(parquet_name)
-        if asset is None:
-            return False
+    if asset is None:
+        return False
 
     # Get file stats once (used for both mtime and size checks)
     file_stat = path.stat()

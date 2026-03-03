@@ -5,6 +5,9 @@ modified, deleted) by comparing filesystem contents against versions.json.
 
 Per ADR-0007, this is the library layer - CLI wraps these functions.
 Per ADR-0022, status shows: untracked, modified, deleted files.
+Per ADR-0023, item files live in collection/{item_id}/ subdirectories and
+    versions.json is at collection/versions.json (not .portolan/versions.json).
+Per issue #133, ALL files in item directories are tracked (not just geo files).
 """
 
 from __future__ import annotations
@@ -13,9 +16,22 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
 from portolan_cli.dataset import is_current
 from portolan_cli.versions import read_versions
+
+# Files that are always excluded from tracking regardless of location.
+# These are OS/tool artifacts that provide no value as catalog assets.
+IGNORED_FILES: frozenset[str] = frozenset(
+    {
+        ".DS_Store",
+        "Thumbs.db",
+        ".gitkeep",
+    }
+)
+
+# STAC metadata filenames that live inside item directories but are not
+# user data assets and should not appear in status output.
+_STAC_METADATA_FILES: frozenset[str] = frozenset({"item.json"})
 
 
 @dataclass(frozen=True)
@@ -24,16 +40,18 @@ class FileStatus:
 
     Attributes:
         collection_id: The collection containing this file.
-        filename: The filename within the collection.
+        item_id: The item subdirectory (per ADR-0023 hierarchy).
+        filename: The filename within the item directory.
     """
 
     collection_id: str
+    item_id: str
     filename: str
 
     @property
     def path(self) -> str:
-        """Return the full relative path (collection_id/filename)."""
-        return f"{self.collection_id}/{self.filename}"
+        """Return the full relative path (collection_id/item_id/filename)."""
+        return f"{self.collection_id}/{self.item_id}/{self.filename}"
 
 
 @dataclass
@@ -41,7 +59,7 @@ class StatusResult:
     """Result of a catalog status check.
 
     Attributes:
-        untracked: Files in catalog dirs but not in versions.json.
+        untracked: Files in item dirs but not in versions.json.
         modified: Files that exist but have changed since last tracked.
         deleted: Files in versions.json but missing from disk.
     """
@@ -55,11 +73,81 @@ class StatusResult:
         return not self.untracked and not self.modified and not self.deleted
 
 
+def _get_tracked_assets(versions_path: Path) -> set[str]:
+    """Read tracked asset keys from versions.json.
+
+    Args:
+        versions_path: Path to versions.json file.
+
+    Returns:
+        Set of asset keys from the current version, or empty set if
+        versions.json doesn't exist or is corrupt.
+    """
+    if not versions_path.exists():
+        return set()
+    try:
+        versions_file = read_versions(versions_path)
+        if versions_file.versions:
+            current_version = versions_file.versions[-1]
+            return set(current_version.assets.keys())
+    except (ValueError, json.JSONDecodeError):
+        pass
+    return set()
+
+
+def _scan_item_dir_status(
+    item_dir: Path,
+    collection_id: str,
+    versions_path: Path,
+    tracked_assets: set[str],
+) -> tuple[list[FileStatus], list[FileStatus], set[str]]:
+    """Scan a single item directory for status changes.
+
+    Args:
+        item_dir: Path to the item directory.
+        collection_id: ID of the containing collection.
+        versions_path: Path to versions.json.
+        tracked_assets: Set of tracked asset keys.
+
+    Returns:
+        Tuple of (untracked, modified, seen_keys).
+    """
+    untracked: list[FileStatus] = []
+    modified: list[FileStatus] = []
+    seen_keys: set[str] = set()
+    item_id = item_dir.name
+
+    for file_path in sorted(item_dir.iterdir()):
+        if not file_path.is_file():
+            continue
+
+        filename = file_path.name
+        if filename in IGNORED_FILES or filename in _STAC_METADATA_FILES:
+            continue
+
+        relative_key = f"{item_id}/{filename}"
+        seen_keys.add(relative_key)
+
+        if relative_key not in tracked_assets:
+            untracked.append(FileStatus(collection_id, item_id, filename))
+        elif not is_current(file_path, versions_path, asset_key=relative_key):
+            modified.append(FileStatus(collection_id, item_id, filename))
+
+    return untracked, modified, seen_keys
+
+
 def get_catalog_status(catalog_root: Path) -> StatusResult:
     """Get the tracking status of all files in a catalog.
 
     Compares filesystem contents against versions.json for each collection
     to determine which files are untracked, modified, or deleted.
+
+    Scans item subdirectories (collection/{item_id}/) for ALL files, not
+    just geospatial ones.  STAC metadata files (item.json) and files in
+    IGNORED_FILES are excluded from reporting.
+
+    Per ADR-0023, versions.json lives at the collection root
+    (collection/versions.json), NOT inside .portolan/.
 
     Args:
         catalog_root: Root directory of the catalog (contains catalog.json).
@@ -78,60 +166,42 @@ def get_catalog_status(catalog_root: Path) -> StatusResult:
     modified: list[FileStatus] = []
     deleted: list[FileStatus] = []
 
-    # Scan root-level directories for collections (per ADR-0023)
-    for col_dir in catalog_root.iterdir():
-        if not col_dir.is_dir():
+    for col_dir in sorted(catalog_root.iterdir()):
+        if not col_dir.is_dir() or col_dir.name.startswith("."):
             continue
 
-        # Skip .portolan and hidden directories
-        if col_dir.name.startswith("."):
-            continue
-
-        collection_path = col_dir / "collection.json"
-        if not collection_path.exists():
+        if not (col_dir / "collection.json").exists():
             continue
 
         collection_id = col_dir.name
-        versions_path = col_dir / ".portolan" / "versions.json"
+        versions_path = col_dir / "versions.json"
+        tracked_assets = _get_tracked_assets(versions_path)
+        seen_relative_paths: set[str] = set()
 
-        # Get tracked assets from versions.json
-        tracked_assets: set[str] = set()
-        if versions_path.exists():
-            try:
-                versions_file = read_versions(versions_path)
-                if versions_file.versions:
-                    current_version = versions_file.versions[-1]
-                    tracked_assets = set(current_version.assets.keys())
-            except (ValueError, json.JSONDecodeError):
-                # If versions.json is corrupt, treat all files as untracked
-                pass
-
-        # Scan for geospatial files in collection directory
-        for item in col_dir.iterdir():
-            if not item.is_file():
+        # Scan item subdirectories
+        for item_dir in sorted(col_dir.iterdir()):
+            if not item_dir.is_dir() or item_dir.name.startswith("."):
                 continue
 
-            # Skip non-geospatial files
-            if item.suffix.lower() not in GEOSPATIAL_EXTENSIONS:
+            item_untracked, item_modified, item_seen = _scan_item_dir_status(
+                item_dir, collection_id, versions_path, tracked_assets
+            )
+            untracked.extend(item_untracked)
+            modified.extend(item_modified)
+            seen_relative_paths.update(item_seen)
+
+        # Check for deleted files
+        for tracked_key in tracked_assets:
+            if tracked_key in seen_relative_paths:
                 continue
+            if not (col_dir / tracked_key).exists():
+                parts = tracked_key.split("/", 1)
+                if len(parts) == 2:
+                    deleted.append(FileStatus(collection_id, parts[0], parts[1]))
+                else:
+                    deleted.append(FileStatus(collection_id, "", tracked_key))
 
-            filename = item.name
-
-            if filename not in tracked_assets:
-                # File exists on disk but not in versions.json -> untracked
-                untracked.append(FileStatus(collection_id, filename))
-            elif not is_current(item, versions_path):
-                # File exists but has changed -> modified
-                modified.append(FileStatus(collection_id, filename))
-            # else: file is tracked and unchanged, don't report
-
-        # Check for deleted files (in versions.json but not on disk)
-        for tracked_filename in tracked_assets:
-            file_path = col_dir / tracked_filename
-            if not file_path.exists():
-                deleted.append(FileStatus(collection_id, tracked_filename))
-
-    # Sort results for consistent output
+    # Sort for consistent output
     untracked.sort(key=lambda f: f.path)
     modified.sort(key=lambda f: f.path)
     deleted.sort(key=lambda f: f.path)
