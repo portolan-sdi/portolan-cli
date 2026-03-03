@@ -81,9 +81,9 @@ def _transliterate_to_ascii(text: str) -> str:
     encodes to ASCII, ignoring characters that can't be represented.
 
     Example:
-        >>> _transliterate_to_ascii("donnees")
+        >>> _transliterate_to_ascii("données")
         'donnees'
-        >>> _transliterate_to_ascii("naive")
+        >>> _transliterate_to_ascii("naïve")
         'naive'
     """
     # Normalize to decomposed form (e -> e + combining accent)

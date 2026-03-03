@@ -33,7 +33,11 @@ from enum import Enum
 from pathlib import Path
 
 # Import new types from scan modules
-from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
+from portolan_cli.collection_id import (
+    CollectionIdError,
+    normalize_collection_id,
+    validate_collection_id,
+)
 from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
 from portolan_cli.scan_classify import (
     FileCategory,
@@ -720,7 +724,7 @@ def _check_collection_ids(ctx: _ScanContext) -> None:
             try:
                 normalized = normalize_collection_id(collection_dir_name)
                 suggestion = f"Rename to '{normalized}' or use --fix to auto-rename"
-            except Exception:
+            except CollectionIdError:
                 suggestion = "Rename directory to use only lowercase letters, numbers, hyphens, and underscores"
 
             ctx.issues.append(
