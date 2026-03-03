@@ -52,39 +52,33 @@ class TestEnums:
         assert Severity.INFO.value == "info"
 
     def test_issue_type_has_all_types(self) -> None:
-        """IssueType enum has all 18 issue types (10 original + 8 new)."""
+        """IssueType enum has all 19 issue types."""
         from portolan_cli.scan import IssueType
 
-        # Original 10 issue types
-        assert IssueType.INCOMPLETE_SHAPEFILE.value == "incomplete_shapefile"
-        assert IssueType.ZERO_BYTE_FILE.value == "zero_byte_file"
-        assert IssueType.SYMLINK_LOOP.value == "symlink_loop"
-        assert IssueType.BROKEN_SYMLINK.value == "broken_symlink"
-        assert IssueType.PERMISSION_DENIED.value == "permission_denied"
-        assert IssueType.INVALID_CHARACTERS.value == "invalid_characters"
-        assert IssueType.MULTIPLE_PRIMARIES.value == "multiple_primaries"
-        assert IssueType.LONG_PATH.value == "long_path"
-        assert IssueType.DUPLICATE_BASENAME.value == "duplicate_basename"
-        assert IssueType.MIXED_FORMATS.value == "mixed_formats"
-
-        # NEW: Special format detection (4)
-        assert IssueType.FILEGDB_DETECTED.value == "filegdb_detected"
-        assert IssueType.HIVE_PARTITION_DETECTED.value == "hive_partition"
-        assert IssueType.EXISTING_CATALOG.value == "existing_catalog"
-        assert IssueType.DUAL_FORMAT.value == "dual_format"
-
-        # NEW: Cross-platform compatibility (2)
-        assert IssueType.WINDOWS_RESERVED_NAME.value == "windows_reserved_name"
-        assert IssueType.PATH_TOO_LONG.value == "path_too_long"
-
-        # NEW: Structure issues (2)
-        assert IssueType.MIXED_FLAT_MULTIITEM.value == "mixed_flat_multiitem"
-        assert IssueType.ORPHAN_SIDECAR.value == "orphan_sidecar"
-
-        # NEW: Collection ID validation (1)
-        assert IssueType.INVALID_COLLECTION_ID.value == "invalid_collection_id"
-
-        # Total should be 19
+        # All expected issue type values
+        expected_values = {
+            "incomplete_shapefile",
+            "zero_byte_file",
+            "symlink_loop",
+            "broken_symlink",
+            "permission_denied",
+            "invalid_characters",
+            "multiple_primaries",
+            "long_path",
+            "duplicate_basename",
+            "mixed_formats",
+            "filegdb_detected",
+            "hive_partition",
+            "existing_catalog",
+            "dual_format",
+            "windows_reserved_name",
+            "path_too_long",
+            "mixed_flat_multiitem",
+            "orphan_sidecar",
+            "invalid_collection_id",
+        }
+        actual_values = {t.value for t in IssueType}
+        assert actual_values == expected_values, f"Missing: {expected_values - actual_values}"
         assert len(IssueType) == 19
 
     def test_format_type_has_vector_and_raster(self) -> None:
