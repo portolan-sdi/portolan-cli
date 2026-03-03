@@ -61,6 +61,7 @@ _FIXABILITY_MAP: dict[IssueType, Fixability] = {
     IssueType.INVALID_CHARACTERS: Fixability.FIX_FLAG,
     IssueType.WINDOWS_RESERVED_NAME: Fixability.FIX_FLAG,
     IssueType.LONG_PATH: Fixability.FIX_FLAG,
+    IssueType.INVALID_COLLECTION_ID: Fixability.FIX_FLAG,
     # Manual: User decision required
     IssueType.MULTIPLE_PRIMARIES: Fixability.MANUAL,
     IssueType.MIXED_FLAT_MULTIITEM: Fixability.MANUAL,

@@ -27,6 +27,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli.collection_id import CollectionIdError, normalize_collection_id
 from portolan_cli.constants import WINDOWS_RESERVED_NAMES
 
 if TYPE_CHECKING:
@@ -77,6 +78,7 @@ FIX_FLAG_ISSUE_TYPES: frozenset[str] = frozenset(
         "windows_reserved_name",
         "long_path",
         "path_too_long",
+        "invalid_collection_id",
     }
 )
 
@@ -113,6 +115,35 @@ class ProposedFix:
 # =============================================================================
 # Helper functions
 # =============================================================================
+
+
+def _is_case_only_rename(source: Path, target: Path) -> bool:
+    """Check if source and target refer to the same file (case-only rename).
+
+    On case-insensitive filesystems (macOS, Windows), renaming MyDir/ to mydir/
+    should not be flagged as a collision since they refer to the same inode.
+
+    Args:
+        source: The source path being renamed.
+        target: The target path.
+
+    Returns:
+        True if this is a case-only rename (same file), False if true collision.
+    """
+    if not target.exists():
+        return False
+
+    try:
+        # samefile() returns True if both paths refer to the same inode
+        return source.samefile(target)
+    except (OSError, ValueError):
+        # Fallback: compare case-normalized resolved paths
+        # This handles edge cases where samefile() fails
+        try:
+            return source.resolve().as_posix().lower() == target.resolve().as_posix().lower()
+        except (OSError, ValueError):
+            # If all else fails, assume it's a collision (safe default)
+            return False
 
 
 def _transliterate_to_ascii(text: str) -> str:
@@ -482,6 +513,91 @@ def _is_fix_flag_issue(issue: ScanIssue) -> bool:
     return issue.issue_type.value in FIX_FLAG_ISSUE_TYPES
 
 
+def _compute_collection_id_fix(dir_path: Path) -> tuple[Path, str] | None:
+    """Compute fix for an invalid collection ID (directory rename).
+
+    Args:
+        dir_path: Path to the collection directory with invalid ID.
+
+    Returns:
+        Tuple of (new_path, preview_message) or None if cannot be fixed.
+    """
+    old_name = dir_path.name
+
+    try:
+        new_name = normalize_collection_id(old_name)
+    except CollectionIdError:
+        # Cannot normalize (e.g., all special characters)
+        return None
+
+    if new_name == old_name:
+        # Already valid (shouldn't happen, but defensive)
+        return None
+
+    new_path = dir_path.parent / new_name
+    preview = f"Rename directory: {old_name}/ → {new_name}/"
+
+    return new_path, preview
+
+
+def _apply_directory_rename(old_path: Path, new_path: Path) -> bool:
+    """Apply a directory rename operation.
+
+    Uses atomic rename when possible. Handles case-only renames on
+    case-insensitive filesystems (Windows, macOS) via a two-step rename
+    through a temporary intermediate name.
+
+    Args:
+        old_path: Current directory path.
+        new_path: Target directory path.
+
+    Returns:
+        True if rename succeeded, False if collision or error.
+    """
+    import os
+    import uuid
+
+    try:
+        # Use os.rename for atomic operation on same filesystem
+        os.rename(str(old_path), str(new_path))
+        return True
+    except FileExistsError:
+        # Check if this is a case-only rename (e.g., MyDir/ -> mydir/)
+        # On case-insensitive filesystems, this raises FileExistsError
+        if _is_case_only_rename(old_path, new_path):
+            # Two-step rename: old -> temp -> new
+            temp_name = f".portolan_rename_{uuid.uuid4().hex[:8]}"
+            temp_path = old_path.parent / temp_name
+            try:
+                # Step 1: Rename to temporary name
+                os.rename(str(old_path), str(temp_path))
+                try:
+                    # Step 2: Rename from temp to final target
+                    # Use os.replace to handle the final rename atomically
+                    os.replace(str(temp_path), str(new_path))
+                    return True
+                except OSError:
+                    # Rollback: restore original name
+                    try:
+                        os.rename(str(temp_path), str(old_path))
+                    except OSError:
+                        pass  # Best effort rollback
+                    return False
+            except OSError:
+                return False
+        # True collision (different directory exists at target)
+        return False
+    except OSError:
+        # Cross-filesystem or other error, fall back to shutil.move
+        if new_path.exists() and not _is_case_only_rename(old_path, new_path):
+            return False
+        try:
+            shutil.move(str(old_path), str(new_path))
+            return True
+        except (OSError, shutil.Error):
+            return False
+
+
 def apply_safe_fixes(
     issues: list[ScanIssue],
     dry_run: bool = False,
@@ -509,19 +625,52 @@ def apply_safe_fixes(
         if not _is_fix_flag_issue(issue):
             continue
 
-        # Skip if file doesn't exist
+        # Skip if path doesn't exist
         if not issue.path.exists():
             continue
 
-        # Compute the rename
+        # Handle collection ID issues (directory renames)
+        if issue.issue_type.value == "invalid_collection_id":
+            result = _compute_collection_id_fix(issue.path)
+            if result is None:
+                continue
+
+            new_path, preview = result
+
+            # Check for collision (but allow case-only renames like MyDir/ -> mydir/)
+            collision = new_path.exists() and not _is_case_only_rename(issue.path, new_path)
+            if collision:
+                preview = f"{preview} [COLLISION: target exists]"
+
+            fix = ProposedFix(
+                issue=issue,
+                category=FixCategory.SAFE,
+                action="rename",
+                details={
+                    "old_path": str(issue.path),
+                    "new_path": str(new_path),
+                    "collision": collision,
+                    "is_directory": True,
+                },
+                preview=preview,
+            )
+            proposed.append(fix)
+
+            if not dry_run and not collision:
+                success = _apply_directory_rename(issue.path, new_path)
+                if success:
+                    applied.append(fix)
+            continue
+
+        # Handle file renames (invalid characters, Windows reserved, long paths)
         result = _compute_safe_rename(issue.path)
         if result is None:
             continue
 
         new_path, preview = result
 
-        # Check for collision before creating ProposedFix
-        collision = new_path.exists()
+        # Check for collision (but allow case-only renames)
+        collision = new_path.exists() and not _is_case_only_rename(issue.path, new_path)
         if collision:
             preview = f"{preview} [COLLISION: target exists]"
 
@@ -618,11 +767,16 @@ def preview_fix(issue: ScanIssue) -> ProposedFix | None:
     if not _is_fix_flag_issue(issue):
         return None
 
-    # FIX_FLAG issues - compute the safe rename
+    # FIX_FLAG issues - compute the fix
     if not issue.path.exists():
         return None
 
-    result = _compute_safe_rename(issue.path)
+    # Handle collection ID issues (directory renames) separately
+    if issue.issue_type.value == "invalid_collection_id":
+        result = _compute_collection_id_fix(issue.path)
+    else:
+        result = _compute_safe_rename(issue.path)
+
     if result is None:
         return None
 

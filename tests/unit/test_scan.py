@@ -52,37 +52,34 @@ class TestEnums:
         assert Severity.INFO.value == "info"
 
     def test_issue_type_has_all_types(self) -> None:
-        """IssueType enum has all 18 issue types (10 original + 8 new)."""
+        """IssueType enum has all 19 issue types."""
         from portolan_cli.scan import IssueType
 
-        # Original 10 issue types
-        assert IssueType.INCOMPLETE_SHAPEFILE.value == "incomplete_shapefile"
-        assert IssueType.ZERO_BYTE_FILE.value == "zero_byte_file"
-        assert IssueType.SYMLINK_LOOP.value == "symlink_loop"
-        assert IssueType.BROKEN_SYMLINK.value == "broken_symlink"
-        assert IssueType.PERMISSION_DENIED.value == "permission_denied"
-        assert IssueType.INVALID_CHARACTERS.value == "invalid_characters"
-        assert IssueType.MULTIPLE_PRIMARIES.value == "multiple_primaries"
-        assert IssueType.LONG_PATH.value == "long_path"
-        assert IssueType.DUPLICATE_BASENAME.value == "duplicate_basename"
-        assert IssueType.MIXED_FORMATS.value == "mixed_formats"
-
-        # NEW: Special format detection (4)
-        assert IssueType.FILEGDB_DETECTED.value == "filegdb_detected"
-        assert IssueType.HIVE_PARTITION_DETECTED.value == "hive_partition"
-        assert IssueType.EXISTING_CATALOG.value == "existing_catalog"
-        assert IssueType.DUAL_FORMAT.value == "dual_format"
-
-        # NEW: Cross-platform compatibility (2)
-        assert IssueType.WINDOWS_RESERVED_NAME.value == "windows_reserved_name"
-        assert IssueType.PATH_TOO_LONG.value == "path_too_long"
-
-        # NEW: Structure issues (2)
-        assert IssueType.MIXED_FLAT_MULTIITEM.value == "mixed_flat_multiitem"
-        assert IssueType.ORPHAN_SIDECAR.value == "orphan_sidecar"
-
-        # Total should be 18
-        assert len(IssueType) == 18
+        # All expected issue type values
+        expected_values = {
+            "incomplete_shapefile",
+            "zero_byte_file",
+            "symlink_loop",
+            "broken_symlink",
+            "permission_denied",
+            "invalid_characters",
+            "multiple_primaries",
+            "long_path",
+            "duplicate_basename",
+            "mixed_formats",
+            "filegdb_detected",
+            "hive_partition",
+            "existing_catalog",
+            "dual_format",
+            "windows_reserved_name",
+            "path_too_long",
+            "mixed_flat_multiitem",
+            "orphan_sidecar",
+            "invalid_collection_id",
+        }
+        actual_values = {t.value for t in IssueType}
+        assert actual_values == expected_values, f"Missing: {expected_values - actual_values}"
+        assert len(IssueType) == 19
 
     def test_format_type_has_vector_and_raster(self) -> None:
         """FormatType enum has VECTOR and RASTER values."""
@@ -1666,3 +1663,99 @@ class TestBrokenSymlinkEdgeCases:
         assert report["summary"]["issue_count"] >= 1
         broken_issues = [i for i in report["issues"] if i["type"] == "broken_symlink"]
         assert len(broken_issues) == 1
+
+
+@pytest.mark.unit
+class TestCollectionIdValidation:
+    """Tests for collection ID validation during scan."""
+
+    def test_scan_detects_invalid_collection_id_uppercase(self, tmp_path: Path) -> None:
+        """Scan should detect uppercase in collection directory names."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # Create directory structure: MyCollection/data.geojson
+        collection_dir = tmp_path / "MyCollection"
+        collection_dir.mkdir()
+        (collection_dir / "data.geojson").write_text(
+            '{"type": "FeatureCollection", "features": []}'
+        )
+
+        result = scan_directory(tmp_path)
+
+        # Should find the issue
+        collection_id_issues = [
+            i for i in result.issues if i.issue_type == IssueType.INVALID_COLLECTION_ID
+        ]
+        assert len(collection_id_issues) == 1
+        assert "uppercase" in collection_id_issues[0].message.lower()
+        assert "mycollection" in collection_id_issues[0].suggestion.lower()
+
+    def test_scan_detects_invalid_collection_id_spaces(self, tmp_path: Path) -> None:
+        """Scan should detect spaces in collection directory names."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # Create directory structure: "My Data"/data.geojson
+        collection_dir = tmp_path / "My Data"
+        collection_dir.mkdir()
+        (collection_dir / "data.geojson").write_text(
+            '{"type": "FeatureCollection", "features": []}'
+        )
+
+        result = scan_directory(tmp_path)
+
+        collection_id_issues = [
+            i for i in result.issues if i.issue_type == IssueType.INVALID_COLLECTION_ID
+        ]
+        assert len(collection_id_issues) == 1
+        assert "space" in collection_id_issues[0].message.lower()
+
+    def test_scan_detects_invalid_collection_id_starts_with_number(self, tmp_path: Path) -> None:
+        """Scan should detect collection IDs starting with numbers."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # Create directory structure: 2020-census/data.geojson
+        collection_dir = tmp_path / "2020-census"
+        collection_dir.mkdir()
+        (collection_dir / "data.geojson").write_text(
+            '{"type": "FeatureCollection", "features": []}'
+        )
+
+        result = scan_directory(tmp_path)
+
+        collection_id_issues = [
+            i for i in result.issues if i.issue_type == IssueType.INVALID_COLLECTION_ID
+        ]
+        assert len(collection_id_issues) == 1
+        assert "start with a letter" in collection_id_issues[0].message.lower()
+
+    def test_scan_valid_collection_id_no_issue(self, tmp_path: Path) -> None:
+        """Scan should not flag valid collection IDs."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # Create directory structure: census-2020/data.geojson
+        collection_dir = tmp_path / "census-2020"
+        collection_dir.mkdir()
+        (collection_dir / "data.geojson").write_text(
+            '{"type": "FeatureCollection", "features": []}'
+        )
+
+        result = scan_directory(tmp_path)
+
+        collection_id_issues = [
+            i for i in result.issues if i.issue_type == IssueType.INVALID_COLLECTION_ID
+        ]
+        assert len(collection_id_issues) == 0
+
+    def test_scan_root_level_files_no_collection_check(self, tmp_path: Path) -> None:
+        """Files at root level should not trigger collection ID check."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # Create file directly at root (no collection subdirectory)
+        (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        collection_id_issues = [
+            i for i in result.issues if i.issue_type == IssueType.INVALID_COLLECTION_ID
+        ]
+        assert len(collection_id_issues) == 0
