@@ -1762,6 +1762,13 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
     the catalog root. Use --portolan-dir to override.
 
     \b
+    Item ID derivation:
+        The item ID is derived from the filename stem of the geospatial file.
+        For example, adding 'census/data/radios.parquet' creates an item
+        named 'radios', not 'data'. All other files in the item directory
+        are tracked as companion assets (per ADR-0028).
+
+    \b
     Examples:
         cd my-catalog && portolan add demographics/census.parquet
         portolan add imagery/                      # Add all files in directory
@@ -1771,6 +1778,7 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
     - Unchanged files are silently skipped (use --verbose to see them)
     - Changed files are re-extracted with new metadata
     - Sidecar files (.dbf, .shx, .prj for shapefiles) are auto-detected
+    - All files in the item directory are tracked, not just geo files (ADR-0028)
     """
     use_json = should_output_json(ctx)
     target_path = path.resolve()
