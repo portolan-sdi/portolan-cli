@@ -32,7 +32,7 @@ class TestCheck:
         # .portolan with management files (required for MANAGED state)
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        (portolan_dir / "config.json").write_text("{}")
+        (portolan_dir / "config.yaml").write_text("{}")
         (portolan_dir / "state.json").write_text("{}")
         return tmp_path
 

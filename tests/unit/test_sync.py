@@ -41,7 +41,7 @@ def managed_catalog(tmp_path: Path) -> Path:
     # Create .portolan structure to indicate MANAGED state
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
-    (portolan_dir / "config.json").write_text("{}\n")
+    (portolan_dir / "config.yaml").write_text("{}\n")
     (portolan_dir / "state.json").write_text("{}\n")
 
     # Create collection versions.json
@@ -404,7 +404,7 @@ class TestInitSkip:
             # Simulate init creating the .portolan directory
             portolan_dir = path / ".portolan"
             portolan_dir.mkdir(parents=True, exist_ok=True)
-            (portolan_dir / "config.json").write_text("{}\n")
+            (portolan_dir / "config.yaml").write_text("{}\n")
             (portolan_dir / "state.json").write_text("{}\n")
             return path / "catalog.json", []
 

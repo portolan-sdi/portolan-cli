@@ -33,9 +33,9 @@ class TestCliInit:
             assert result.exit_code == 0, f"Failed: {result.output}"
             # New structure: catalog.json at root
             assert Path("catalog.json").exists()
-            # .portolan directory with management files
+            # .portolan directory with management files (config.yaml per ADR-0027)
             assert Path(".portolan").exists()
-            assert Path(".portolan/config.json").exists()
+            assert Path(".portolan/config.yaml").exists()
             assert Path(".portolan/state.json").exists()
 
     @pytest.mark.unit
@@ -51,10 +51,10 @@ class TestCliInit:
     def test_init_fails_if_managed_catalog_exists(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan init should fail if MANAGED catalog exists."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create managed catalog (both config and state)
+            # Create managed catalog (config.yaml + state.json per ADR-0027)
             portolan = Path(".portolan")
             portolan.mkdir()
-            (portolan / "config.json").write_text("{}")
+            (portolan / "config.yaml").write_text("# Portolan config\n")
             (portolan / "state.json").write_text("{}")
 
             # Use --auto to skip interactive prompts and test error path
