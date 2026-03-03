@@ -117,6 +117,35 @@ class ProposedFix:
 # =============================================================================
 
 
+def _is_case_only_rename(source: Path, target: Path) -> bool:
+    """Check if source and target refer to the same file (case-only rename).
+
+    On case-insensitive filesystems (macOS, Windows), renaming MyDir/ to mydir/
+    should not be flagged as a collision since they refer to the same inode.
+
+    Args:
+        source: The source path being renamed.
+        target: The target path.
+
+    Returns:
+        True if this is a case-only rename (same file), False if true collision.
+    """
+    if not target.exists():
+        return False
+
+    try:
+        # samefile() returns True if both paths refer to the same inode
+        return source.samefile(target)
+    except (OSError, ValueError):
+        # Fallback: compare case-normalized resolved paths
+        # This handles edge cases where samefile() fails
+        try:
+            return source.resolve().as_posix().lower() == target.resolve().as_posix().lower()
+        except (OSError, ValueError):
+            # If all else fails, assume it's a collision (safe default)
+            return False
+
+
 def _transliterate_to_ascii(text: str) -> str:
     """Transliterate non-ASCII characters to ASCII equivalents.
 
@@ -582,8 +611,8 @@ def apply_safe_fixes(
 
             new_path, preview = result
 
-            # Check for collision
-            collision = new_path.exists()
+            # Check for collision (but allow case-only renames like MyDir/ -> mydir/)
+            collision = new_path.exists() and not _is_case_only_rename(issue.path, new_path)
             if collision:
                 preview = f"{preview} [COLLISION: target exists]"
 
@@ -614,8 +643,8 @@ def apply_safe_fixes(
 
         new_path, preview = result
 
-        # Check for collision before creating ProposedFix
-        collision = new_path.exists()
+        # Check for collision (but allow case-only renames)
+        collision = new_path.exists() and not _is_case_only_rename(issue.path, new_path)
         if collision:
             preview = f"{preview} [COLLISION: target exists]"
 
