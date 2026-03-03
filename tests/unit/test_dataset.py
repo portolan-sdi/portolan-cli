@@ -698,6 +698,42 @@ class TestAddDatasetMissingBbox:
                 )
 
 
+class TestItemIdValidation:
+    """Tests for item_id path traversal prevention."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "bad_id",
+        [
+            "../etc",
+            "a/b",
+            "a\\b",
+            ".",
+            "..",
+            "",
+        ],
+        ids=["traversal", "slash", "backslash", "dot", "dotdot", "empty"],
+    )
+    def test_rejects_unsafe_item_id(
+        self, initialized_catalog: Path, tmp_path: Path, bad_id: str
+    ) -> None:
+        """add_dataset rejects item_id values with path separators or traversal."""
+        geojson_path = tmp_path / "data.geojson"
+        geojson_path.write_text(
+            '{"type":"FeatureCollection","features":[{"type":"Feature",'
+            '"geometry":{"type":"Point","coordinates":[0,0]},'
+            '"properties":{"name":"x"}}]}'
+        )
+
+        with pytest.raises(ValueError, match="must be a single path segment"):
+            add_dataset(
+                path=geojson_path,
+                catalog_root=initialized_catalog,
+                collection_id="test",
+                item_id=bad_id,
+            )
+
+
 class TestUpdateVersionsHref:
     """Tests for _update_versions producing catalog-root-relative hrefs.
 
