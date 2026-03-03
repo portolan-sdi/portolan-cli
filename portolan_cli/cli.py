@@ -536,7 +536,7 @@ def _output_metadata_only(report: Any, mode: str, use_json: bool, verbose: bool)
 
 def _output_format_only(path: Path, mode: str, use_json: bool, verbose: bool) -> None:
     """Output format-only check results."""
-    format_report = check_directory(path, fix=False, dry_run=False)
+    format_report = check_directory(path, fix=False, dry_run=False, catalog_path=path)
     if use_json:
         data = format_report.to_dict()
         data["mode"] = mode
@@ -561,7 +561,7 @@ def _output_combined(
     Raises:
         SystemExit: If metadata validation has errors.
     """
-    format_report = check_directory(path, fix=False, dry_run=False)
+    format_report = check_directory(path, fix=False, dry_run=False, catalog_path=path)
     has_metadata_errors = metadata_report is not None and bool(metadata_report.errors)
 
     if use_json:
@@ -606,7 +606,7 @@ def _run_check_fix(
         mode: Check mode ("metadata", "format", or "all").
         metadata_report: Optional ValidationReport from metadata validation.
     """
-    report = check_directory(path, fix=True, dry_run=dry_run)
+    report = check_directory(path, fix=True, dry_run=dry_run, catalog_path=path)
     has_metadata_errors = metadata_report is not None and bool(metadata_report.errors)
     has_conversion_errors = (
         report.conversion_report is not None and report.conversion_report.failed > 0

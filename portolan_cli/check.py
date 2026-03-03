@@ -17,14 +17,19 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, PARQUET_EXTENSION
+from portolan_cli.conversion_config import ConversionOverrides, get_conversion_overrides
 from portolan_cli.convert import (
     ConversionReport,
     ConversionResult,
     ConversionStatus,
     convert_directory,
 )
-from portolan_cli.formats import CloudNativeStatus, get_cloud_native_status
-from portolan_cli.scan import is_geoparquet
+from portolan_cli.formats import (
+    CloudNativeStatus,
+    get_cloud_native_status,
+    get_effective_status,
+    is_geoparquet,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,17 +122,26 @@ def check_directory(
     fix: bool = False,
     dry_run: bool = False,
     on_progress: Callable[[ConversionResult], None] | None = None,
+    catalog_path: Path | None = None,
 ) -> CheckReport:
     """Check a directory for cloud-native status and optionally fix.
 
     Scans the directory for geospatial files and reports their cloud-native
     status. With --fix, converts CONVERTIBLE files to cloud-native formats.
 
+    Respects conversion config from .portolan/config.yaml if catalog_path is
+    provided. This allows:
+    - Force-converting cloud-native formats (e.g., FlatGeobuf -> GeoParquet)
+    - Preserving convertible formats (e.g., keeping Shapefiles as-is)
+    - Path-based overrides (e.g., preserving everything in archive/)
+
     Args:
         path: Directory to check.
         fix: If True, convert convertible files to cloud-native formats.
         dry_run: If True, preview what would be converted without changes.
         on_progress: Optional callback for conversion progress (--fix mode).
+        catalog_path: Optional catalog root for loading conversion config.
+            If provided, loads conversion overrides from .portolan/config.yaml.
 
     Returns:
         CheckReport with file statuses and conversion results (if fix=True).
@@ -135,6 +149,10 @@ def check_directory(
     Raises:
         FileNotFoundError: If the directory does not exist.
         NotADirectoryError: If the path is not a directory.
+
+    See Also:
+        - GitHub Issue #75: FlatGeobuf cloud-native status
+        - GitHub Issue #103: Config for non-cloud-native file handling
     """
     if not path.exists():
         raise FileNotFoundError(f"Directory not found: {path}")
@@ -142,14 +160,22 @@ def check_directory(
     if not path.is_dir():
         raise NotADirectoryError(f"Path is not a directory: {path}")
 
+    # Load conversion overrides from config (if catalog_path provided)
+    overrides: ConversionOverrides | None = None
+    if catalog_path is not None:
+        overrides = get_conversion_overrides(catalog_path)
+
     # Scan for geospatial files
     files = _scan_for_files(path)
 
-    # Get cloud-native status for each file
+    # Get cloud-native status for each file (with overrides applied)
     file_statuses = []
     for file_path in files:
         relative = _get_relative_path(file_path, path)
-        status_info = get_cloud_native_status(file_path)
+        if overrides is not None:
+            status_info = get_effective_status(file_path, overrides=overrides, root=catalog_path)
+        else:
+            status_info = get_cloud_native_status(file_path)
         file_statuses.append(
             FileStatus(
                 path=file_path,

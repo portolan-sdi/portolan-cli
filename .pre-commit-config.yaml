@@ -38,7 +38,8 @@ repos:
     rev: v0.9.3
     hooks:
       - id: xenon
-        args: ['--max-absolute=C', '--max-modules=B', '--max-average=A']
+        args: ['--max-absolute=C', '--max-modules=B', '--max-average=A', 'portolan_cli/']
+        pass_filenames: false
 
   - repo: local
     hooks:

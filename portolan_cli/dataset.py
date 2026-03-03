@@ -29,7 +29,7 @@ from portolan_cli.constants import (
     MTIME_TOLERANCE_SECONDS,
     SIDECAR_PATTERNS,
 )
-from portolan_cli.formats import FormatType, detect_format
+from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
     extract_cog_metadata,
     extract_geoparquet_metadata,
@@ -292,12 +292,11 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
 
     output_path = dest_dir / f"{source.stem}.tif"
 
-    # Check if already COG (simple heuristic: .tif extension)
-    # In production, should validate with rio_cogeo.cogeo.cog_validate
-    if source.suffix.lower() in (".tif", ".tiff"):
-        # For now, assume .tif files need conversion
-        # TODO: Add proper COG validation
-        pass
+    # Check if already a valid COG — skip conversion if so
+    if source.suffix.lower() in (".tif", ".tiff") and is_cloud_optimized_geotiff(source):
+        # Already a COG, just copy to destination
+        shutil.copy2(source, output_path)
+        return output_path
 
     # Convert using rio-cogeo with Portolan's opinionated defaults
     profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]

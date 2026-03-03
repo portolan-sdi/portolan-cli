@@ -177,7 +177,9 @@ def _step_check(
     """Execute check step. Returns (check_result, error_msg)."""
     info("Checking cloud-native status...")
     try:
-        check_result = check_directory(catalog_root, fix=fix, dry_run=dry_run)
+        check_result = check_directory(
+            catalog_root, fix=fix, dry_run=dry_run, catalog_path=catalog_root
+        )
 
         if check_result.convertible_count > 0:
             if fix:

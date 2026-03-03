@@ -97,6 +97,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0023](context/shared/adr/0023-stac-structure-separation.md) | STAC at root, Portolan internals in .portolan/ (supersedes 0012, 0021) |
 | [0024](context/shared/adr/0024-hierarchical-config-system.md) | Hierarchical config system (YAML) |
 | [0025](context/shared/adr/0025-architecture-as-code.md) | Architecture as code with import-linter |
+| [0026](context/shared/adr/0026-conversion-config-design.md) | Conversion config: extension/path overrides, precedence rules |
 
 ## Common Commands
 
@@ -370,7 +371,7 @@ error("No geometry column (required)")     # ✗ Red X
 detail("Processing chunk 3/10...")         # Dimmed text
 ```
 
-<!-- freshness: last-verified: 2026-02-27 -->
+<!-- freshness: last-verified: 2026-03-03 -->
 ## Design Principles
 
 | Principle | Meaning | ADR |
