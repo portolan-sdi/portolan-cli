@@ -39,3 +39,33 @@ MTIME_TOLERANCE_SECONDS: float = 2.0
 
 # Maximum depth for catalog root discovery (prevent traversing to filesystem root)
 MAX_CATALOG_SEARCH_DEPTH: int = 20
+
+# Windows reserved device names (case-insensitive)
+# Files with these names (with any extension) are problematic on Windows.
+# Used by scan.py and scan_fix.py for cross-platform compatibility checks.
+WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        "com1",
+        "com2",
+        "com3",
+        "com4",
+        "com5",
+        "com6",
+        "com7",
+        "com8",
+        "com9",
+        "lpt1",
+        "lpt2",
+        "lpt3",
+        "lpt4",
+        "lpt5",
+        "lpt6",
+        "lpt7",
+        "lpt8",
+        "lpt9",
+    }
+)

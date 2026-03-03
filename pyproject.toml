@@ -219,5 +219,6 @@ modules = [
 
 [dependency-groups]
 dev = [
+    "pylint>=4.0.5",
     "types-pyyaml>=6.0.12.20250915",
 ]
