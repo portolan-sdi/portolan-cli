@@ -698,32 +698,32 @@ class TestAddDatasetMissingBbox:
                 )
 
 
-class TestItemIdValidation:
-    """Tests for item_id path traversal prevention."""
+class TestPathSegmentValidation:
+    """Tests for item_id and collection_id path traversal prevention."""
+
+    _UNSAFE_IDS = [
+        pytest.param("../etc", id="traversal"),
+        pytest.param("a/b", id="slash"),
+        pytest.param("a\\b", id="backslash"),
+        pytest.param(".", id="dot"),
+        pytest.param("..", id="dotdot"),
+        pytest.param("", id="empty"),
+    ]
+
+    _GEOJSON = (
+        '{"type":"FeatureCollection","features":[{"type":"Feature",'
+        '"geometry":{"type":"Point","coordinates":[0,0]},'
+        '"properties":{"name":"x"}}]}'
+    )
 
     @pytest.mark.unit
-    @pytest.mark.parametrize(
-        "bad_id",
-        [
-            "../etc",
-            "a/b",
-            "a\\b",
-            ".",
-            "..",
-            "",
-        ],
-        ids=["traversal", "slash", "backslash", "dot", "dotdot", "empty"],
-    )
+    @pytest.mark.parametrize("bad_id", _UNSAFE_IDS)
     def test_rejects_unsafe_item_id(
         self, initialized_catalog: Path, tmp_path: Path, bad_id: str
     ) -> None:
         """add_dataset rejects item_id values with path separators or traversal."""
         geojson_path = tmp_path / "data.geojson"
-        geojson_path.write_text(
-            '{"type":"FeatureCollection","features":[{"type":"Feature",'
-            '"geometry":{"type":"Point","coordinates":[0,0]},'
-            '"properties":{"name":"x"}}]}'
-        )
+        geojson_path.write_text(self._GEOJSON)
 
         with pytest.raises(ValueError, match="must be a single path segment"):
             add_dataset(
@@ -731,6 +731,22 @@ class TestItemIdValidation:
                 catalog_root=initialized_catalog,
                 collection_id="test",
                 item_id=bad_id,
+            )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("bad_id", _UNSAFE_IDS)
+    def test_rejects_unsafe_collection_id(
+        self, initialized_catalog: Path, tmp_path: Path, bad_id: str
+    ) -> None:
+        """add_dataset rejects collection_id values with path separators or traversal."""
+        geojson_path = tmp_path / "data.geojson"
+        geojson_path.write_text(self._GEOJSON)
+
+        with pytest.raises(ValueError, match="must be a single path segment"):
+            add_dataset(
+                path=geojson_path,
+                catalog_root=initialized_catalog,
+                collection_id=bad_id,
             )
 
 

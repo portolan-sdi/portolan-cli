@@ -156,9 +156,10 @@ def add_dataset(
     if item_id is None:
         item_id = path.stem
 
-    # Validate item_id is a safe single path segment
-    if not item_id or "/" in item_id or "\\" in item_id or item_id in {".", ".."}:
-        raise ValueError(f"Invalid item_id '{item_id}': must be a single path segment")
+    # Validate IDs are safe single path segments
+    for label, value in [("collection_id", collection_id), ("item_id", item_id)]:
+        if not value or "/" in value or "\\" in value or value in {".", ".."}:
+            raise ValueError(f"Invalid {label} '{value}': must be a single path segment")
 
     # Set up paths (STAC at root, per ADR-0023)
     collection_dir = catalog_root / collection_id
