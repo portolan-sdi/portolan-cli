@@ -14,7 +14,7 @@ silently skipped and placed in the `skipped` list of `ScanResult`.
 
 A typical real-world item directory contains more than a single geo file:
 
-```
+```text
 demographics/census-2020/
 ├── data.parquet          # primary GeoParquet asset (tracked)
 ├── codebook.pdf          # documentation (skipped)

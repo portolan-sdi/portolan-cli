@@ -131,6 +131,7 @@ Show tracking status of files in the catalog.
 
 ```bash
 portolan status                     # Show status from current directory
+portolan status --json              # Output as JSON
 ```
 
 ### `portolan sync`

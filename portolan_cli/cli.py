@@ -535,8 +535,9 @@ def _output_catalog_info(result: Any, *, use_json: bool) -> None:
 
 
 @cli.command()
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 @click.pass_context
-def status(ctx: click.Context) -> None:
+def status(ctx: click.Context, json_output: bool) -> None:
     """Show tracking status of files in the catalog.
 
     Compares filesystem contents against versions.json for each collection
@@ -552,8 +553,9 @@ def status(ctx: click.Context) -> None:
     \b
     Examples:
         portolan status                     # Show status from current directory
+        portolan status --json              # Output as JSON
     """
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Find catalog root from current directory
     catalog_root = find_catalog_root(Path.cwd())
@@ -589,17 +591,17 @@ def status(ctx: click.Context) -> None:
             output_json_envelope(envelope)
         else:
             if result.is_clean():
-                click.echo("Nothing to commit, working tree clean")
+                success("Nothing to commit, working tree clean")
             else:
                 if result.untracked:
                     for f in result.untracked:
-                        click.echo(f"# Untracked: {f.path}")
+                        detail(f"# Untracked: {f.path}")
                 if result.modified:
                     for f in result.modified:
-                        click.echo(f"# Modified: {f.path}")
+                        detail(f"# Modified: {f.path}")
                 if result.deleted:
                     for f in result.deleted:
-                        click.echo(f"# Deleted: {f.path}")
+                        detail(f"# Deleted: {f.path}")
 
     except FileNotFoundError as err:
         if use_json:

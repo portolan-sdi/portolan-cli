@@ -334,14 +334,17 @@ def _lookup_version(path: Path, catalog_root: Path) -> str | None:
     if current_version_obj is None:
         return None
 
-    # Check if file is tracked (by name or relative path)
+    # Check if file is tracked using item-scoped key format ({item_id}/{filename})
     filename = path.name
-    for asset_name, asset in current_version_obj.assets.items():
-        # Check direct filename match
-        if asset_name == filename:
+    # Determine item_id from path (parent directory name)
+    item_id = path.parent.name if path.parent != catalog_root else ""
+
+    for asset_name, _asset in current_version_obj.assets.items():
+        # Check item-scoped key format (new format per ADR-0028)
+        if item_id and asset_name == f"{item_id}/{filename}":
             return f"v{versions_file.current_version}"
-        # Check if href ends with the filename
-        if asset.href.endswith(filename):
+        # Check legacy format (just filename)
+        if asset_name == filename:
             return f"v{versions_file.current_version}"
 
     return None

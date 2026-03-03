@@ -34,6 +34,26 @@ IGNORED_FILES: frozenset[str] = frozenset(
 _STAC_METADATA_FILES: frozenset[str] = frozenset({"item.json"})
 
 
+def _is_stac_item_metadata(filename: str, item_id: str) -> bool:
+    """Check if a file is a STAC item metadata file.
+
+    STAC item metadata can be named either "item.json" or "{item_id}.json".
+
+    Args:
+        filename: The filename to check.
+        item_id: The item directory name.
+
+    Returns:
+        True if the file is STAC item metadata.
+    """
+    if filename in _STAC_METADATA_FILES:
+        return True
+    # Also match {item_id}.json pattern (e.g., census.json in census/ directory)
+    if filename == f"{item_id}.json":
+        return True
+    return False
+
+
 @dataclass(frozen=True)
 class FileStatus:
     """Represents a file's tracking status.
@@ -127,7 +147,7 @@ def _scan_item_dir_status(
         if filename.startswith("."):
             continue
 
-        if filename in IGNORED_FILES or filename in _STAC_METADATA_FILES:
+        if filename in IGNORED_FILES or _is_stac_item_metadata(filename, item_id):
             continue
 
         relative_key = f"{item_id}/{filename}"

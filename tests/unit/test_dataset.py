@@ -781,7 +781,8 @@ class TestUpdateVersionsHref:
         )
 
         versions = read_versions(collection_dir / "versions.json")
-        asset = versions.versions[0].assets["census-2020.parquet"]
+        # Asset key uses item-scoped format: {item_id}/{filename} (per ADR-0028)
+        asset = versions.versions[0].assets["census-2020/census-2020.parquet"]
 
         assert asset.href == "agriculture/census-2020/census-2020.parquet"
 
@@ -805,7 +806,8 @@ class TestUpdateVersionsHref:
         )
 
         versions = read_versions(collection_dir / "versions.json")
-        asset = versions.versions[0].assets["pop-data.parquet"]
+        # Asset key uses item-scoped format: {item_id}/{filename} (per ADR-0028)
+        asset = versions.versions[0].assets["pop-data/pop-data.parquet"]
 
         resolved = catalog_root / asset.href
         assert resolved.exists(), f"catalog_root / href should resolve to file: {resolved}"
@@ -1199,20 +1201,20 @@ class TestMultiAssetUpdateVersions:
         assert len(versions.versions) == 1
         assets = versions.versions[0].assets
 
-        # All three files should be tracked
-        assert "my-item.parquet" in assets
-        assert "thumbnail.png" in assets
-        assert "metadata.xml" in assets
+        # All three files should be tracked with item-scoped keys (per ADR-0028)
+        assert "my-item/my-item.parquet" in assets
+        assert "my-item/thumbnail.png" in assets
+        assert "my-item/metadata.xml" in assets
 
         # Check hrefs are catalog-root-relative
-        assert assets["my-item.parquet"].href == "my-collection/my-item/my-item.parquet"
-        assert assets["thumbnail.png"].href == "my-collection/my-item/thumbnail.png"
-        assert assets["metadata.xml"].href == "my-collection/my-item/metadata.xml"
+        assert assets["my-item/my-item.parquet"].href == "my-collection/my-item/my-item.parquet"
+        assert assets["my-item/thumbnail.png"].href == "my-collection/my-item/thumbnail.png"
+        assert assets["my-item/metadata.xml"].href == "my-collection/my-item/metadata.xml"
 
         # Check checksums
-        assert assets["my-item.parquet"].sha256 == "hash1"
-        assert assets["thumbnail.png"].sha256 == "hash2"
-        assert assets["metadata.xml"].sha256 == "hash3"
+        assert assets["my-item/my-item.parquet"].sha256 == "hash1"
+        assert assets["my-item/thumbnail.png"].sha256 == "hash2"
+        assert assets["my-item/metadata.xml"].sha256 == "hash3"
 
     @pytest.mark.unit
     def test_update_versions_single_asset_backward_compat(self, tmp_path: Path) -> None:
@@ -1234,7 +1236,8 @@ class TestMultiAssetUpdateVersions:
         )
 
         versions = read_versions(collection_dir / "versions.json")
-        asset = versions.versions[0].assets["census-2020.parquet"]
+        # Single asset still uses item-scoped key format (per ADR-0028)
+        asset = versions.versions[0].assets["census-2020/census-2020.parquet"]
         assert asset.href == "agriculture/census-2020/census-2020.parquet"
         assert asset.sha256 == "abc123"
 

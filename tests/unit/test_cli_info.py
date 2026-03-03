@@ -332,4 +332,6 @@ class TestDatasetInfoDeprecated:
 
         # Should still work but show deprecation
         # Note: Existing dataset info expects collection/item format
-        assert result.exit_code == 0 or "deprecated" in result.output.lower()
+        assert result.exit_code == 0, f"Command failed: {result.output}"
+        # If we want to check for deprecation warning, do so separately:
+        # assert "deprecated" in result.output.lower()

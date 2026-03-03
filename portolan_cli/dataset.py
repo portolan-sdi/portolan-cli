@@ -177,8 +177,16 @@ def _scan_item_assets(
         file_media_type = _get_media_type(file_path)
         file_role = _get_asset_role(file_path)
 
-        # Primary geo file gets "data" key, others use stem
-        asset_key = "data" if file_path == primary_file else file_path.stem
+        # Primary geo file gets "data" key, others use stem with disambiguation
+        if file_path == primary_file:
+            asset_key = "data"
+        else:
+            # Use stem, but disambiguate on collision (e.g., metadata.json vs metadata.xml)
+            base_key = file_path.stem
+            asset_key = base_key
+            if asset_key in stac_assets or asset_key == "data":
+                # Collision: use full filename instead
+                asset_key = file_path.name
         stac_assets[asset_key] = pystac.Asset(
             href=file_path.name,
             media_type=file_media_type,
@@ -618,9 +626,11 @@ def _update_versions(
     assets: dict[str, Asset] = {}
     if asset_files is not None:
         # Multi-asset mode (per issue #133)
+        # Use item-scoped keys ({item_id}/{filename}) for multi-asset tracking
         for filename, (file_path, file_checksum) in asset_files.items():
             href = f"{collection_id}/{item_id}/{filename}"
-            assets[filename] = Asset(
+            asset_key = f"{item_id}/{filename}"
+            assets[asset_key] = Asset(
                 sha256=file_checksum,
                 size_bytes=file_path.stat().st_size,
                 href=href,
