@@ -543,7 +543,9 @@ def _compute_collection_id_fix(dir_path: Path) -> tuple[Path, str] | None:
 def _apply_directory_rename(old_path: Path, new_path: Path) -> bool:
     """Apply a directory rename operation.
 
-    Uses atomic rename when possible.
+    Uses atomic rename when possible. Handles case-only renames on
+    case-insensitive filesystems (Windows, macOS) via a two-step rename
+    through a temporary intermediate name.
 
     Args:
         old_path: Current directory path.
@@ -553,17 +555,41 @@ def _apply_directory_rename(old_path: Path, new_path: Path) -> bool:
         True if rename succeeded, False if collision or error.
     """
     import os
+    import uuid
 
     try:
         # Use os.rename for atomic operation on same filesystem
         os.rename(str(old_path), str(new_path))
         return True
     except FileExistsError:
-        # Target already exists (collision)
+        # Check if this is a case-only rename (e.g., MyDir/ -> mydir/)
+        # On case-insensitive filesystems, this raises FileExistsError
+        if _is_case_only_rename(old_path, new_path):
+            # Two-step rename: old -> temp -> new
+            temp_name = f".portolan_rename_{uuid.uuid4().hex[:8]}"
+            temp_path = old_path.parent / temp_name
+            try:
+                # Step 1: Rename to temporary name
+                os.rename(str(old_path), str(temp_path))
+                try:
+                    # Step 2: Rename from temp to final target
+                    # Use os.replace to handle the final rename atomically
+                    os.replace(str(temp_path), str(new_path))
+                    return True
+                except OSError:
+                    # Rollback: restore original name
+                    try:
+                        os.rename(str(temp_path), str(old_path))
+                    except OSError:
+                        pass  # Best effort rollback
+                    return False
+            except OSError:
+                return False
+        # True collision (different directory exists at target)
         return False
     except OSError:
         # Cross-filesystem or other error, fall back to shutil.move
-        if new_path.exists():
+        if new_path.exists() and not _is_case_only_rename(old_path, new_path):
             return False
         try:
             shutil.move(str(old_path), str(new_path))
