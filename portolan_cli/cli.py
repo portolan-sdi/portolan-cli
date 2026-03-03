@@ -25,7 +25,8 @@ from portolan_cli.dataset import (
     resolve_collection_id,
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
-from portolan_cli.output import detail, error, info, success, warn
+from portolan_cli.output import detail, error, success, warn
+from portolan_cli.output import info as info_output
 from portolan_cli.scan import (
     ScanIssue,
     ScanOptions,
@@ -45,6 +46,7 @@ from portolan_cli.scan_output import (
     group_skipped_files,
     render_tree_view,
 )
+from portolan_cli.status import get_catalog_status
 from portolan_cli.validation import Severity
 from portolan_cli.validation import check as validate_catalog
 
@@ -210,7 +212,7 @@ def init(
             output_json_envelope(envelope)
         else:
             success(f"Initialized Portolan catalog in {path.resolve()}")
-            info(f"Catalog ID: {catalog_id}")
+            info_output(f"Catalog ID: {catalog_id}")
             for w in warnings:
                 warn(w)
 
@@ -233,7 +235,9 @@ def init(
             output_json_envelope(envelope)
         else:
             error(f"Existing STAC catalog found at {path.resolve()}")
-            info("Use 'portolan adopt' to bring it under Portolan management (not yet implemented)")
+            info_output(
+                "Use 'portolan adopt' to bring it under Portolan management (not yet implemented)"
+            )
         raise SystemExit(1) from err
 
 
@@ -315,7 +319,7 @@ def _list_tree_output(datasets: list[DatasetInfo], catalog_path: Path) -> None:
     # Sort collections alphabetically
     for collection_id in sorted(by_collection.keys()):
         # Print collection header
-        info(f"{collection_id}/")
+        info_output(f"{collection_id}/")
 
         # Print items under collection
         items = by_collection[collection_id]
@@ -399,10 +403,214 @@ def list_cmd(
         output_json_envelope(envelope)
     else:
         if not datasets:
-            info("No items found")
+            info_output("No items found")
             return
 
         _list_tree_output(datasets, catalog_path)
+
+
+# =============================================================================
+# Info command (top-level, ADR-0022)
+# =============================================================================
+
+
+@cli.command("info")
+@click.argument("target", type=click.Path(path_type=Path), required=False)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=".",
+    help="Path to catalog root (default: current directory).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def info_cmd(
+    ctx: click.Context,
+    target: Path | None,
+    catalog_path: Path,
+    json_output: bool,
+) -> None:
+    """Show information about a file, collection, or catalog.
+
+    TARGET can be:
+    - A file path (e.g., demographics/census.parquet) - shows file metadata
+    - A collection directory (e.g., demographics/) - shows collection metadata
+    - Omitted - shows catalog-level metadata
+
+    Per ADR-0022, the output format for files is:
+        Format: GeoParquet
+        CRS: EPSG:4326
+        Bbox: [-122.5, 37.7, -122.3, 37.9]
+        Features: 4,231
+        Version: v1.2.0
+
+    \b
+    Examples:
+        portolan info demographics/census.parquet  # File info
+        portolan info demographics/                # Collection info
+        portolan info                              # Catalog info
+        portolan info demographics/census.parquet --json  # JSON output
+    """
+    from portolan_cli.inspect import (
+        inspect_catalog,
+        inspect_collection,
+        inspect_file,
+    )
+
+    use_json = should_output_json(ctx, json_output)
+
+    try:
+        if target is None:
+            # Catalog-level info
+            catalog_result = inspect_catalog(catalog_path)
+            _output_catalog_info(catalog_result, use_json=use_json)
+        elif target.is_file():
+            # File-level info
+            file_result = inspect_file(target, catalog_root=catalog_path)
+            _output_file_info(file_result, use_json=use_json)
+        elif target.is_dir():
+            # Collection-level info
+            collection_result = inspect_collection(target)
+            _output_collection_info(collection_result, use_json=use_json)
+        else:
+            # Path doesn't exist
+            raise FileNotFoundError(f"Path not found: {target}")
+
+    except FileNotFoundError as err:
+        if use_json:
+            envelope = error_envelope(
+                "info",
+                [ErrorDetail(type="FileNotFoundError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(err))
+        raise SystemExit(1) from err
+    except ValueError as err:
+        if use_json:
+            envelope = error_envelope(
+                "info",
+                [ErrorDetail(type="ValueError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(err))
+        raise SystemExit(1) from err
+
+
+def _output_file_info(result: Any, *, use_json: bool) -> None:
+    """Output file info in human or JSON format."""
+    if use_json:
+        envelope = success_envelope("info", result.to_dict())
+        output_json_envelope(envelope)
+    else:
+        for line in result.format_human():
+            info_output(line)
+
+
+def _output_collection_info(result: Any, *, use_json: bool) -> None:
+    """Output collection info in human or JSON format."""
+    if use_json:
+        envelope = success_envelope("info", result.to_dict())
+        output_json_envelope(envelope)
+    else:
+        for line in result.format_human():
+            info_output(line)
+
+
+def _output_catalog_info(result: Any, *, use_json: bool) -> None:
+    """Output catalog info in human or JSON format."""
+    if use_json:
+        envelope = success_envelope("info", result.to_dict())
+        output_json_envelope(envelope)
+    else:
+        for line in result.format_human():
+            info_output(line)
+
+
+# =============================================================================
+# Status command (top-level, ADR-0022)
+# =============================================================================
+
+
+@cli.command()
+@click.pass_context
+def status(ctx: click.Context) -> None:
+    """Show tracking status of files in the catalog.
+
+    Compares filesystem contents against versions.json for each collection
+    to show which files are untracked, modified, or deleted.
+
+    \b
+    Output format (per ADR-0022):
+        # Untracked: demographics/new-file.parquet
+        # Modified: imagery/satellite.tif
+        # Deleted: boundaries/old-data.parquet
+        (or "Nothing to commit, working tree clean" if all synced)
+
+    \b
+    Examples:
+        portolan status                     # Show status from current directory
+    """
+    use_json = should_output_json(ctx)
+
+    # Find catalog root from current directory
+    catalog_root = find_catalog_root(Path.cwd())
+
+    if catalog_root is None:
+        if use_json:
+            envelope = error_envelope(
+                "status",
+                [
+                    ErrorDetail(
+                        type="NoCatalogError",
+                        message="No catalog found in current directory or parents",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("No catalog found in current directory or parents")
+        raise SystemExit(1)
+
+    try:
+        result = get_catalog_status(catalog_root)
+
+        if use_json:
+            data = {
+                "catalog_root": str(catalog_root),
+                "untracked": [f.path for f in result.untracked],
+                "modified": [f.path for f in result.modified],
+                "deleted": [f.path for f in result.deleted],
+                "is_clean": result.is_clean(),
+            }
+            envelope = success_envelope("status", data)
+            output_json_envelope(envelope)
+        else:
+            if result.is_clean():
+                click.echo("Nothing to commit, working tree clean")
+            else:
+                if result.untracked:
+                    for f in result.untracked:
+                        click.echo(f"# Untracked: {f.path}")
+                if result.modified:
+                    for f in result.modified:
+                        click.echo(f"# Modified: {f.path}")
+                if result.deleted:
+                    for f in result.deleted:
+                        click.echo(f"# Deleted: {f.path}")
+
+    except FileNotFoundError as err:
+        if use_json:
+            envelope = error_envelope(
+                "status",
+                [ErrorDetail(type="FileNotFoundError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(err))
+        raise SystemExit(1) from err
 
 
 def _output_check_json(report: Any, *, mode: str = "all") -> None:
@@ -440,7 +648,7 @@ def _print_validation_result(result: Any) -> None:
     elif result.severity == Severity.WARNING:
         warn(msg)
     else:
-        info(msg)
+        info_output(msg)
 
     if not result.passed and result.fix_hint:
         detail(f"  Hint: {result.fix_hint}")
@@ -472,7 +680,7 @@ def _print_format_check_results(report: Any, *, verbose: bool = False) -> None:
     from portolan_cli.formats import CloudNativeStatus
 
     if report.total == 0:
-        info("No geospatial files found")
+        info_output("No geospatial files found")
         return
 
     cloud_native = [f for f in report.files if f.status == CloudNativeStatus.CLOUD_NATIVE]
@@ -755,13 +963,13 @@ def _output_combined(
         _output_combined_check_json(metadata_report, format_report, mode=mode)
     else:
         if metadata_report:
-            info("Metadata validation:")
+            info_output("Metadata validation:")
             for result in metadata_report.results:
                 if verbose or not result.passed:
                     _print_validation_result(result)
             _print_check_summary(metadata_report)
         if format_report:
-            info("\nFormat check:")
+            info_output("\nFormat check:")
             _print_format_check_results(format_report, verbose=verbose)
 
     # Exit with error if metadata validation failed
@@ -858,14 +1066,14 @@ def _output_fix_human(
 ) -> None:
     """Output human-readable results for check --fix workflow."""
     if metadata_report is not None:
-        info("Metadata validation:")
+        info_output("Metadata validation:")
         for result in metadata_report.results:
             if verbose or not result.passed:
                 _print_validation_result(result)
         _print_check_summary(metadata_report)
-        info("")  # Blank line separator
+        info_output("")  # Blank line separator
 
-    info("Format conversion:")
+    info_output("Format conversion:")
     if dry_run:
         _print_check_fix_preview(report)
     else:
@@ -879,10 +1087,10 @@ def _print_check_fix_preview(report: Any) -> None:
     convertible = [f for f in report.files if f.status == CloudNativeStatus.CONVERTIBLE]
 
     if not convertible:
-        info("No files need conversion")
+        info_output("No files need conversion")
         return
 
-    info(f"Dry run: {len(convertible)} file(s) would be converted")
+    info_output(f"Dry run: {len(convertible)} file(s) would be converted")
     for f in convertible:
         detail(f"  {f.relative_path} ({f.display_name}) -> {f.target_format}")
 
@@ -901,7 +1109,7 @@ def _print_check_fix_results(report: Any, *, verbose: bool = False) -> None:
         return
 
     if conv.total == 0:
-        info("No files to convert")
+        info_output("No files to convert")
         return
 
     # Summary
@@ -950,9 +1158,9 @@ def _handle_fix_mode(
         proposed, _ = apply_safe_fixes(result.issues, dry_run=True)
         if not use_json:
             if not proposed:
-                info("No issues to fix")
+                info_output("No issues to fix")
             else:
-                info(f"Dry run: {len(proposed)} fix(es) would be applied")
+                info_output(f"Dry run: {len(proposed)} fix(es) would be applied")
                 for fix in proposed:
                     detail(f"  {fix.preview}")
         return proposed, []
@@ -962,7 +1170,7 @@ def _handle_fix_mode(
 
     if not use_json:
         if not proposed:
-            info("No issues to fix")
+            info_output("No issues to fix")
         else:
             # Show successful fixes
             if applied:
@@ -1207,7 +1415,7 @@ def _print_scan_header(result: ScanResult) -> None:
     """Print scan header with file counts."""
     ready_count = len(result.ready)
     if ready_count == 0:
-        info(f"Scanned {result.directories_scanned} directories")
+        info_output(f"Scanned {result.directories_scanned} directories")
         warn("No geo-assets found")
     else:
         success(f"{ready_count} geo-asset{'s' if ready_count != 1 else ''} found")
@@ -1292,7 +1500,12 @@ def _print_issues_by_severity(result: ScanResult, *, show_all: bool = False) -> 
         show_all=show_all,
     )
     _print_issue_group(
-        result.issues, ScanSeverity.INFO, info, result.info_count, "info message", show_all=show_all
+        result.issues,
+        ScanSeverity.INFO,
+        info_output,
+        result.info_count,
+        "info message",
+        show_all=show_all,
     )
 
 
@@ -1372,7 +1585,7 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
     for severity, header_fn, label in [
         (ScanSeverity.ERROR, error, "error"),
         (ScanSeverity.WARNING, warn, "warning"),
-        (ScanSeverity.INFO, info, "info message"),
+        (ScanSeverity.INFO, info_output, "info message"),
     ]:
         severity_issues = [i for i in result.issues if i.severity == severity]
         if not severity_issues:
@@ -1445,7 +1658,7 @@ def _print_collection_suggestions(result: ScanResult) -> None:
         return
 
     click.echo()
-    info("Suggested collections:")
+    info_output("Suggested collections:")
     for suggestion in result.collection_suggestions:
         click.echo(format_collection_suggestion(suggestion))
 
@@ -1461,7 +1674,7 @@ def _print_next_steps(result: ScanResult) -> None:
         return
 
     click.echo()
-    info("Next steps:")
+    info_output("Next steps:")
     for step in steps:
         detail(f"  \u2192 {step}")
 
@@ -1509,7 +1722,7 @@ def _output_add_results(
     if added:
         count = len(added)
         coll = added[0].collection_id if added else collection_id
-        info(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
+        info_output(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
         for ds in added:
             sidecars = get_sidecars(Path(ds.asset_paths[0])) if ds.asset_paths else []
             sidecar_note = f" (+ {len(sidecars)} sidecars)" if sidecars else ""
@@ -1726,7 +1939,7 @@ def rm_cmd(
             output_json_envelope(envelope)
         else:
             if dry_run:
-                info("Dry run - no files were actually removed:")
+                info_output("Dry run - no files were actually removed:")
             for p in removed:
                 if dry_run:
                     detail(f"  Would remove: {p.name}")
@@ -1812,7 +2025,7 @@ def dataset_list(ctx: click.Context, collection: str | None, catalog_path: Path)
         output_json_envelope(envelope)
     else:
         if not datasets:
-            info("No datasets found")
+            info_output("No datasets found")
             return
 
         # Use the new tree view output
@@ -1863,7 +2076,7 @@ def dataset_info(
             )
             output_json_envelope(envelope)
         else:
-            info(f"Dataset: {ds.collection_id}/{ds.item_id}")
+            info_output(f"Dataset: {ds.collection_id}/{ds.item_id}")
             if ds.title:
                 detail(f"  Title: {ds.title}")
             if ds.description:
@@ -1974,7 +2187,7 @@ def push(
                         f"Pushed {result.versions_pushed} version(s), {result.files_uploaded} file(s)"
                     )
                 else:
-                    info("Nothing to push - local and remote are in sync")
+                    info_output("Nothing to push - local and remote are in sync")
             else:
                 for err_msg in result.errors:
                     error(err_msg)
@@ -1989,7 +2202,7 @@ def push(
             output_json_envelope(envelope)
         else:
             error(f"Push conflict: {err}")
-            info("Use --force to overwrite, or pull remote changes first")
+            info_output("Use --force to overwrite, or pull remote changes first")
         raise SystemExit(1) from err
 
     except FileNotFoundError as err:
@@ -2117,10 +2330,10 @@ def pull_command(
     else:
         # Human-readable output
         if result.up_to_date:
-            info("Already up to date")
+            info_output("Already up to date")
         elif result.success:
             if dry_run:
-                info(f"[DRY RUN] Would pull {result.files_downloaded} file(s)")
+                info_output(f"[DRY RUN] Would pull {result.files_downloaded} file(s)")
             else:
                 success(f"Pulled {result.files_downloaded} file(s)")
                 detail(f"  Local: {result.local_version} -> {result.remote_version}")
@@ -2251,7 +2464,7 @@ def sync(
         # Just handle the final status
         if result.success:
             if dry_run:
-                info("[DRY RUN] Sync completed successfully")
+                info_output("[DRY RUN] Sync completed successfully")
             else:
                 success("Sync completed successfully")
         else:
@@ -2438,7 +2651,7 @@ def config_set(ctx: click.Context, key: str, value: str, collection: str | None)
             output_json_envelope(envelope)
         else:
             error("Not in a Portolan catalog")
-            info("Run 'portolan init' to create one")
+            info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
     try:
@@ -2505,7 +2718,7 @@ def config_get(ctx: click.Context, key: str, collection: str | None) -> None:
             output_json_envelope(envelope)
         else:
             error("Not in a Portolan catalog")
-            info("Run 'portolan init' to create one")
+            info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
     value = get_setting(key, catalog_path=catalog_path, collection=collection)
@@ -2526,7 +2739,7 @@ def config_get(ctx: click.Context, key: str, collection: str | None) -> None:
             source_label = f"(from {source})"
             success(f"{key}={value} {source_label}")
         else:
-            info(f"{key} is not set")
+            info_output(f"{key} is not set")
             detail(f"  Set via: portolan config set {key} <value>")
             detail(f"  Or set:  PORTOLAN_{key.upper()}=<value>")
 
@@ -2565,7 +2778,7 @@ def config_list(ctx: click.Context, collection: str | None) -> None:
             output_json_envelope(envelope)
         else:
             error("Not in a Portolan catalog")
-            info("Run 'portolan init' to create one")
+            info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
     settings = list_settings(catalog_path, collection=collection)
@@ -2578,13 +2791,13 @@ def config_list(ctx: click.Context, collection: str | None) -> None:
         output_json_envelope(envelope)
     else:
         if not settings:
-            info("No configuration settings found")
+            info_output("No configuration settings found")
             detail("  Set values with: portolan config set <key> <value>")
         else:
             if collection:
-                info(f"Configuration for collection '{collection}':")
+                info_output(f"Configuration for collection '{collection}':")
             else:
-                info("Configuration:")
+                info_output("Configuration:")
             for key, setting_info in settings.items():
                 value = setting_info["value"]
                 source = setting_info["source"]
@@ -2628,7 +2841,7 @@ def config_unset(ctx: click.Context, key: str, collection: str | None) -> None:
             output_json_envelope(envelope)
         else:
             error("Not in a Portolan catalog")
-            info("Run 'portolan init' to create one")
+            info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
     removed = unset_setting(catalog_path, key, collection=collection)
@@ -2647,6 +2860,6 @@ def config_unset(ctx: click.Context, key: str, collection: str | None) -> None:
                 success(f"Removed {key} from config")
         else:
             if collection:
-                info(f"{key} was not set in collection '{collection}' config")
+                info_output(f"{key} was not set in collection '{collection}' config")
             else:
-                info(f"{key} was not set in config")
+                info_output(f"{key} was not set in config")
