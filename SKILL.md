@@ -58,6 +58,16 @@ portolan config unset remote
 ### `portolan dataset`
 Manage datasets in the catalog.
 
+### `portolan info`
+Show information about a file, collection, or catalog.
+
+```bash
+portolan info demographics/census.parquet  # File info
+portolan info demographics/                # Collection info
+portolan info                              # Catalog info
+portolan info demographics/census.parquet --json  # JSON output
+```
+
 ### `portolan init`
 Initialize a new Portolan catalog.
 
@@ -66,6 +76,15 @@ portolan init                       # Initialize in current directory
 portolan init --auto                # Skip prompts, use defaults
 portolan init --title "My Catalog"  # Set title
 portolan init /path/to/data --auto  # Initialize in specific directory
+```
+
+### `portolan list`
+List items in the catalog.
+
+```bash
+portolan list                           # List all items
+portolan list --collection demographics # Filter by collection
+portolan list --json                    # JSON output
 ```
 
 ### `portolan pull`
@@ -105,6 +124,14 @@ portolan scan /data/geospatial
 portolan scan . --json
 portolan scan /large/tree --max-depth=2
 portolan scan /data --no-recursive
+```
+
+### `portolan status`
+Show tracking status of files in the catalog.
+
+```bash
+portolan status                     # Show status from current directory
+portolan status --json              # Output as JSON
 ```
 
 ### `portolan sync`

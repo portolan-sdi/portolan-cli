@@ -32,7 +32,22 @@ from typing import Any
 import yaml
 
 # Known settings for documentation/validation (but unknown keys are still allowed)
-KNOWN_SETTINGS: frozenset[str] = frozenset({"remote", "aws_profile"})
+KNOWN_SETTINGS: frozenset[str] = frozenset({"remote", "aws_profile", "ignored_files"})
+
+# Default glob patterns for files to exclude from asset tracking (per ADR-0028).
+# These cover common OS-generated junk files and temporary files that should
+# never appear as STAC assets. Users can override this list in config.yaml.
+DEFAULT_IGNORED_FILES: list[str] = [
+    ".DS_Store",  # macOS Finder metadata
+    "Thumbs.db",  # Windows thumbnail cache
+    "desktop.ini",  # Windows folder settings
+    "*.tmp",  # Temporary files
+    "*.temp",  # Temporary files (alternate extension)
+    "~*",  # Temporary files (e.g., ~lock.docx)
+    ".git*",  # Git internals (.gitignore, .gitattributes, etc.)
+    "*.pyc",  # Python bytecode
+    "__pycache__",  # Python cache directory marker
+]
 
 # Config file name (inside .portolan/)
 CONFIG_FILENAME = "config.yaml"
@@ -90,6 +105,58 @@ def load_config(catalog_path: Path) -> dict[str, Any]:
         raise ConfigInvalidStructureError(str(config_file), "'collections' must be a mapping")
 
     return data
+
+
+def get_ignored_files(catalog_path: Path | None) -> list[str]:
+    """Return the list of glob patterns for files to exclude from asset tracking.
+
+    Reads the ``ignored_files`` key from .portolan/config.yaml.  If the key is
+    absent (or no catalog_path is given) the built-in DEFAULT_IGNORED_FILES list
+    is returned so that callers always get a usable value without any config
+    being present.
+
+    The config value **replaces** the defaults entirely — if a user sets
+    ``ignored_files``, they take full control over the list.  This matches how
+    ``.gitignore`` works: a file at a given scope replaces inherited patterns.
+
+    Args:
+        catalog_path: Root path of the catalog, or None to get defaults.
+
+    Returns:
+        List of glob patterns (strings).  Never returns None.
+
+    Raises:
+        ConfigInvalidStructureError: If ``ignored_files`` is present but not a
+            list of strings.
+    """
+    if catalog_path is None:
+        return list(DEFAULT_IGNORED_FILES)
+
+    config = load_config(catalog_path)
+
+    if "ignored_files" not in config:
+        return list(DEFAULT_IGNORED_FILES)
+
+    raw = config["ignored_files"]
+
+    if not isinstance(raw, list):
+        from portolan_cli.errors import ConfigInvalidStructureError
+
+        raise ConfigInvalidStructureError(
+            str(get_config_path(catalog_path)),
+            "'ignored_files' must be a list of glob patterns (strings)",
+        )
+
+    for item in raw:
+        if not isinstance(item, str):
+            from portolan_cli.errors import ConfigInvalidStructureError
+
+            raise ConfigInvalidStructureError(
+                str(get_config_path(catalog_path)),
+                f"'ignored_files' must be a list of strings; got item {item!r}",
+            )
+
+    return list(raw)
 
 
 def save_config(catalog_path: Path, config: dict[str, Any]) -> None:

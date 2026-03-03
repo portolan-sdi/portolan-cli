@@ -1018,3 +1018,193 @@ class TestIterFilesWithSidecarsEdgeCases:
         assert geo in result
         assert non_geo not in result
         assert non_geo2 not in result
+
+
+# =============================================================================
+# Multi-Asset Properties (Issue #133)
+# =============================================================================
+
+
+class TestMultiAssetProperties:
+    """Property-based tests for multi-asset tracking behavior (issue #133).
+
+    Per issue #133, ALL files in item directories should be tracked as assets,
+    not just geospatial files. These tests verify the properties of that behavior.
+    """
+
+    @pytest.mark.unit
+    @given(ext=st.sampled_from([".png", ".jpg", ".pdf", ".txt", ".md", ".json", ".xml"]))
+    @settings(max_examples=20)
+    def test_media_type_is_deterministic(self, ext: str) -> None:
+        """Same extension always produces the same MIME type."""
+        from portolan_cli.dataset import _get_media_type
+
+        path1 = Path(f"file1{ext}")
+        path2 = Path(f"different_name{ext}")
+
+        assert _get_media_type(path1) == _get_media_type(path2)
+
+    @pytest.mark.unit
+    @given(ext=st.sampled_from([".PNG", ".Png", ".pNg", ".pdf", ".PDF", ".Pdf"]))
+    @settings(max_examples=15)
+    def test_media_type_is_case_insensitive(self, ext: str) -> None:
+        """Media type lookup is case-insensitive."""
+        from portolan_cli.dataset import _get_media_type
+
+        path = Path(f"test{ext}")
+        lower_path = Path(f"test{ext.lower()}")
+
+        assert _get_media_type(path) == _get_media_type(lower_path)
+
+    @pytest.mark.unit
+    @given(ext=st.sampled_from([".parquet", ".tif", ".geojson", ".gpkg", ".csv"]))
+    @settings(max_examples=10)
+    def test_data_formats_get_data_role(self, ext: str) -> None:
+        """Data format extensions always get 'data' role."""
+        from portolan_cli.dataset import _get_asset_role
+
+        path = Path(f"file{ext}")
+        assert _get_asset_role(path) == "data"
+
+    @pytest.mark.unit
+    @given(ext=st.sampled_from([".png", ".jpg", ".jpeg", ".svg"]))
+    @settings(max_examples=10)
+    def test_image_formats_get_thumbnail_role(self, ext: str) -> None:
+        """Image format extensions always get 'thumbnail' role."""
+        from portolan_cli.dataset import _get_asset_role
+
+        path = Path(f"image{ext}")
+        assert _get_asset_role(path) == "thumbnail"
+
+    @pytest.mark.unit
+    @given(ext=st.sampled_from([".pdf", ".txt", ".md", ".html"]))
+    @settings(max_examples=10)
+    def test_doc_formats_get_documentation_role(self, ext: str) -> None:
+        """Documentation format extensions always get 'documentation' role."""
+        from portolan_cli.dataset import _get_asset_role
+
+        path = Path(f"doc{ext}")
+        assert _get_asset_role(path) == "documentation"
+
+    @pytest.mark.unit
+    @given(
+        ext=st.text(
+            alphabet=string.ascii_lowercase + string.digits,
+            min_size=3,
+            max_size=8,
+        ).map(lambda s: f".{s}zz")  # Add suffix to avoid collisions
+    )
+    @settings(max_examples=30)
+    def test_unknown_extensions_get_default_role(self, ext: str) -> None:
+        """Unknown extensions get 'data' as default role."""
+        from portolan_cli.dataset import _ROLE_MAP, _get_asset_role
+
+        # Skip if extension happens to be in the role map (very unlikely with .zz suffix)
+        if ext.lower() in _ROLE_MAP:
+            return
+
+        path = Path(f"file{ext}")
+        assert _get_asset_role(path) == "data"
+
+    @pytest.mark.unit
+    @given(
+        ext=st.text(
+            alphabet=string.ascii_lowercase + string.digits,
+            min_size=3,
+            max_size=8,
+        ).map(lambda s: f".{s}zz")  # Add suffix to avoid collisions
+    )
+    @settings(max_examples=30)
+    def test_unknown_extensions_get_octet_stream(self, ext: str) -> None:
+        """Unknown extensions get 'application/octet-stream' MIME type."""
+        from portolan_cli.dataset import _MEDIA_TYPE_MAP, _get_media_type
+
+        # Skip if extension happens to be in the map (very unlikely with .zz suffix)
+        if ext.lower() in _MEDIA_TYPE_MAP:
+            return
+
+        path = Path(f"file{ext}")
+        assert _get_media_type(path) == "application/octet-stream"
+
+    @pytest.mark.unit
+    def test_ignored_files_are_stac_structural(self) -> None:
+        """IGNORED_FILES contains only STAC structural files."""
+        from portolan_cli.dataset import IGNORED_FILES
+
+        # These are the structural files that should never be assets
+        expected = {"catalog.json", "collection.json", "versions.json"}
+        assert IGNORED_FILES == frozenset(expected)
+
+    @pytest.mark.unit
+    @given(
+        filenames=st.lists(
+            st.text(
+                st.sampled_from(string.ascii_lowercase + string.digits),
+                min_size=1,
+                max_size=10,
+            ).map(lambda s: f"{s}.txt"),
+            min_size=1,
+            max_size=5,
+        )
+    )
+    @settings(max_examples=20)
+    def test_scan_item_assets_excludes_hidden_files(self, filenames: list[str]) -> None:
+        """_scan_item_assets never includes hidden files."""
+        from portolan_cli.dataset import _scan_item_assets
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            item_dir = Path(tmp_dir)
+
+            # Create a primary "data" file
+            primary = item_dir / "data.parquet"
+            primary.write_bytes(b"fake parquet")
+
+            # Create regular files
+            for fn in filenames:
+                (item_dir / fn).write_text("content")
+
+            # Create hidden files
+            (item_dir / ".hidden").write_text("hidden")
+            (item_dir / ".DS_Store").write_bytes(b"junk")
+
+            stac_assets, asset_files, asset_paths = _scan_item_assets(
+                item_dir=item_dir,
+                item_id="test",
+                primary_file=primary,
+            )
+
+            # No hidden files should be in results
+            for filename in asset_files.keys():
+                assert not filename.startswith("."), f"Hidden file {filename} included"
+
+    @pytest.mark.unit
+    def test_scan_item_assets_excludes_structural_files(self) -> None:
+        """_scan_item_assets excludes STAC structural files."""
+        from portolan_cli.dataset import IGNORED_FILES, _scan_item_assets
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            item_dir = Path(tmp_dir)
+
+            # Create primary file
+            primary = item_dir / "data.parquet"
+            primary.write_bytes(b"parquet")
+
+            # Create structural files that should be ignored
+            for ignored in IGNORED_FILES:
+                (item_dir / ignored).write_text("{}")
+
+            # Create a regular file
+            (item_dir / "readme.txt").write_text("hello")
+
+            stac_assets, asset_files, asset_paths = _scan_item_assets(
+                item_dir=item_dir,
+                item_id="test",
+                primary_file=primary,
+            )
+
+            # No structural files should be in results
+            for filename in asset_files.keys():
+                assert filename not in IGNORED_FILES, f"Structural {filename} included"
+
+            # But regular files should be
+            assert "readme.txt" in asset_files or "data.parquet" in asset_files

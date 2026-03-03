@@ -515,6 +515,159 @@ class TestConfigConstants:
 
         assert "aws_profile" in KNOWN_SETTINGS
 
+    @pytest.mark.unit
+    def test_known_settings_includes_ignored_files(self) -> None:
+        """KNOWN_SETTINGS should include 'ignored_files'."""
+        from portolan_cli.config import KNOWN_SETTINGS
+
+        assert "ignored_files" in KNOWN_SETTINGS
+
+
+class TestGetIgnoredFiles:
+    """Tests for get_ignored_files function."""
+
+    @pytest.mark.unit
+    def test_returns_default_patterns_when_no_config(self, tmp_path: Path) -> None:
+        """get_ignored_files should return DEFAULT_IGNORED_FILES when no config exists."""
+        from portolan_cli.config import DEFAULT_IGNORED_FILES, get_ignored_files
+
+        result = get_ignored_files(tmp_path)
+
+        assert result == DEFAULT_IGNORED_FILES
+
+    @pytest.mark.unit
+    def test_default_patterns_include_ds_store(self) -> None:
+        """DEFAULT_IGNORED_FILES should include .DS_Store."""
+        from portolan_cli.config import DEFAULT_IGNORED_FILES
+
+        assert ".DS_Store" in DEFAULT_IGNORED_FILES
+
+    @pytest.mark.unit
+    def test_default_patterns_include_thumbs_db(self) -> None:
+        """DEFAULT_IGNORED_FILES should include Thumbs.db."""
+        from portolan_cli.config import DEFAULT_IGNORED_FILES
+
+        assert "Thumbs.db" in DEFAULT_IGNORED_FILES
+
+    @pytest.mark.unit
+    def test_default_patterns_include_tmp_glob(self) -> None:
+        """DEFAULT_IGNORED_FILES should include *.tmp glob pattern."""
+        from portolan_cli.config import DEFAULT_IGNORED_FILES
+
+        assert "*.tmp" in DEFAULT_IGNORED_FILES
+
+    @pytest.mark.unit
+    def test_default_patterns_include_git_glob(self) -> None:
+        """DEFAULT_IGNORED_FILES should include .git* glob pattern."""
+        from portolan_cli.config import DEFAULT_IGNORED_FILES
+
+        assert ".git*" in DEFAULT_IGNORED_FILES
+
+    @pytest.mark.unit
+    def test_returns_list_type(self, tmp_path: Path) -> None:
+        """get_ignored_files should always return a list."""
+        from portolan_cli.config import get_ignored_files
+
+        result = get_ignored_files(tmp_path)
+
+        assert isinstance(result, list)
+
+    @pytest.mark.unit
+    def test_loads_ignored_files_from_config(self, tmp_path: Path) -> None:
+        """get_ignored_files should load patterns from .portolan/config.yaml."""
+        from portolan_cli.config import get_ignored_files
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("ignored_files:\n  - '*.bak'\n  - '*.swp'\n")
+
+        result = get_ignored_files(tmp_path)
+
+        assert result == ["*.bak", "*.swp"]
+
+    @pytest.mark.unit
+    def test_config_ignored_files_overrides_defaults(self, tmp_path: Path) -> None:
+        """Config ignored_files replaces (not merges with) defaults."""
+        from portolan_cli.config import DEFAULT_IGNORED_FILES, get_ignored_files
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("ignored_files:\n  - '*.custom'\n")
+
+        result = get_ignored_files(tmp_path)
+
+        # Should be exactly the config value, not merged with defaults
+        assert result == ["*.custom"]
+        assert result != DEFAULT_IGNORED_FILES
+
+    @pytest.mark.unit
+    def test_empty_ignored_files_list_is_valid(self, tmp_path: Path) -> None:
+        """An explicit empty list in config means no files are ignored."""
+        from portolan_cli.config import get_ignored_files
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("ignored_files: []\n")
+
+        result = get_ignored_files(tmp_path)
+
+        assert result == []
+
+    @pytest.mark.unit
+    def test_raises_on_non_list_ignored_files(self, tmp_path: Path) -> None:
+        """get_ignored_files should raise ConfigInvalidStructureError if ignored_files is not a list."""
+        from portolan_cli.config import get_ignored_files
+        from portolan_cli.errors import ConfigInvalidStructureError
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("ignored_files: not_a_list\n")
+
+        with pytest.raises(ConfigInvalidStructureError) as exc_info:
+            get_ignored_files(tmp_path)
+
+        assert "ignored_files" in str(exc_info.value).lower()
+
+    @pytest.mark.unit
+    def test_raises_on_non_string_items_in_ignored_files(self, tmp_path: Path) -> None:
+        """get_ignored_files should raise ConfigInvalidStructureError if items are not strings."""
+        from portolan_cli.config import get_ignored_files
+        from portolan_cli.errors import ConfigInvalidStructureError
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("ignored_files:\n  - 123\n  - valid_pattern\n")
+
+        with pytest.raises(ConfigInvalidStructureError) as exc_info:
+            get_ignored_files(tmp_path)
+
+        assert "ignored_files" in str(exc_info.value).lower()
+
+    @pytest.mark.unit
+    def test_works_without_catalog_path(self) -> None:
+        """get_ignored_files returns defaults when no catalog_path provided."""
+        from portolan_cli.config import DEFAULT_IGNORED_FILES, get_ignored_files
+
+        result = get_ignored_files(None)
+
+        assert result == DEFAULT_IGNORED_FILES
+
+    @pytest.mark.unit
+    def test_load_config_accepts_ignored_files_list(self, tmp_path: Path) -> None:
+        """load_config should parse ignored_files as a list without error."""
+        from portolan_cli.config import load_config
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text(
+            "remote: s3://bucket/\nignored_files:\n  - '.DS_Store'\n  - '*.tmp'\n"
+        )
+
+        result = load_config(tmp_path)
+
+        assert result["ignored_files"] == [".DS_Store", "*.tmp"]
+        assert result["remote"] == "s3://bucket/"
+
 
 class TestConfigFilePath:
     """Tests for config file path handling."""

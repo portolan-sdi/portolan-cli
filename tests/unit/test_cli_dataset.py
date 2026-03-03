@@ -4,6 +4,9 @@ Tests the CLI layer for dataset list/info commands.
 
 Note: dataset add/remove were moved to top-level `portolan add` and `portolan rm`
 commands (see test_cli_add_rm.py).
+
+Note: `portolan list` is the promoted top-level command (ADR-0022).
+`portolan dataset list` remains as a deprecated alias.
 """
 
 from __future__ import annotations
@@ -73,7 +76,11 @@ class TestDatasetList:
 
     @pytest.mark.unit
     def test_list_with_datasets(self, runner: CliRunner) -> None:
-        """dataset list shows datasets."""
+        """dataset list shows datasets in tree view format.
+
+        Note: dataset list now uses the tree view format and shows asset
+        filenames, collections, and format types (not item IDs).
+        """
         with patch("portolan_cli.cli.list_datasets") as mock_list:
             mock_list.return_value = [
                 DatasetInfo(
@@ -99,8 +106,11 @@ class TestDatasetList:
                 result = runner.invoke(cli, ["dataset", "list"])
 
                 assert result.exit_code == 0
-                assert "item1" in result.output
-                assert "item2" in result.output
+                # Output is now in tree view format with collections and filenames
+                assert "col1/" in result.output
+                assert "col2/" in result.output
+                assert "data.parquet" in result.output
+                assert "data.tif" in result.output
 
     @pytest.mark.unit
     def test_list_filter_by_collection(self, runner: CliRunner) -> None:
@@ -171,11 +181,19 @@ class TestDatasetInfo:
 
 
 class TestDatasetListWithTitle:
-    """Tests for dataset list with title display."""
+    """Tests for dataset list with title display.
+
+    Note: The tree view format (ADR-0022) shows filenames and formats,
+    not titles. Titles are still available via JSON output or dataset info.
+    """
 
     @pytest.mark.unit
-    def test_list_shows_titles(self, runner: CliRunner) -> None:
-        """dataset list displays titles when present."""
+    def test_list_shows_format_and_filename(self, runner: CliRunner) -> None:
+        """dataset list displays format type and filename in tree view.
+
+        The tree view (ADR-0022) shows: collection/ -> filename (Format, Size)
+        Titles are available via --json output.
+        """
         with patch("portolan_cli.cli.list_datasets") as mock_list:
             mock_list.return_value = [
                 DatasetInfo(
@@ -183,7 +201,7 @@ class TestDatasetListWithTitle:
                     collection_id="col1",
                     format_type=FormatType.VECTOR,
                     bbox=[0, 0, 1, 1],
-                    asset_paths=["data.parquet"],
+                    asset_paths=["census.parquet"],
                     title="My Dataset Title",
                 ),
             ]
@@ -195,7 +213,10 @@ class TestDatasetListWithTitle:
                 result = runner.invoke(cli, ["dataset", "list"])
 
                 assert result.exit_code == 0
-                assert "My Dataset Title" in result.output
+                # Tree view shows collection, filename, and format
+                assert "col1/" in result.output
+                assert "census.parquet" in result.output
+                assert "GeoParquet" in result.output
 
 
 class TestDatasetInfoJson:
@@ -275,3 +296,303 @@ class TestDatasetInfoJson:
 
                 assert result.exit_code == 0
                 assert "data.parquet" in result.output
+
+
+# =============================================================================
+# Top-level 'portolan list' command tests (ADR-0022)
+# =============================================================================
+
+
+class TestTopLevelList:
+    """Tests for 'portolan list' top-level command (ADR-0022)."""
+
+    @pytest.mark.unit
+    def test_list_command_exists(self, runner: CliRunner) -> None:
+        """portolan list command is available at top level."""
+        result = runner.invoke(cli, ["list", "--help"])
+
+        assert result.exit_code == 0
+        assert "list" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_list_empty_catalog(self, runner: CliRunner) -> None:
+        """portolan list shows empty message for catalog with no items."""
+        with runner.isolated_filesystem():
+            # Create catalog structure per ADR-0023
+            Path("catalog.json").write_text(
+                json.dumps(
+                    {
+                        "type": "Catalog",
+                        "stac_version": "1.0.0",
+                        "id": "test",
+                        "description": "Test",
+                        "links": [],
+                    }
+                )
+            )
+            Path(".portolan").mkdir()
+
+            result = runner.invoke(cli, ["list"])
+
+            assert result.exit_code == 0
+            assert "no items" in result.output.lower() or "empty" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_list_shows_tree_view_format(self, runner: CliRunner) -> None:
+        """portolan list shows items in tree view format per ADR-0022.
+
+        Expected format:
+        demographics/
+          census.parquet (GeoParquet, 4.2MB)
+          boundaries.parquet (GeoParquet, 1.1MB)
+        """
+        with patch("portolan_cli.cli.list_datasets") as mock_list:
+            mock_list.return_value = [
+                DatasetInfo(
+                    item_id="census",
+                    collection_id="demographics",
+                    format_type=FormatType.VECTOR,
+                    bbox=[0, 0, 1, 1],
+                    asset_paths=["./census/census.parquet"],
+                ),
+                DatasetInfo(
+                    item_id="boundaries",
+                    collection_id="demographics",
+                    format_type=FormatType.VECTOR,
+                    bbox=[0, 0, 1, 1],
+                    asset_paths=["./boundaries/boundaries.parquet"],
+                ),
+            ]
+
+            with runner.isolated_filesystem():
+                Path("catalog.json").write_text("{}")
+                Path(".portolan").mkdir()
+                # Create mock files for size calculation
+                Path("demographics").mkdir()
+                Path("demographics/census").mkdir()
+                census_file = Path("demographics/census/census.parquet")
+                census_file.write_bytes(b"x" * 4_400_000)  # ~4.2MB
+                Path("demographics/boundaries").mkdir()
+                boundaries_file = Path("demographics/boundaries/boundaries.parquet")
+                boundaries_file.write_bytes(b"x" * 1_100_000)  # ~1.1MB
+
+                result = runner.invoke(cli, ["list"])
+
+                assert result.exit_code == 0
+                # Check tree structure - collection header
+                assert "demographics/" in result.output
+                # Check items show with filenames (per ADR-0022)
+                assert "census.parquet" in result.output
+                assert "boundaries.parquet" in result.output
+
+    @pytest.mark.unit
+    def test_list_shows_file_sizes(self, runner: CliRunner) -> None:
+        """portolan list displays human-readable file sizes."""
+        with patch("portolan_cli.cli.list_datasets") as mock_list:
+            mock_list.return_value = [
+                DatasetInfo(
+                    item_id="large-raster",
+                    collection_id="imagery",
+                    format_type=FormatType.RASTER,
+                    bbox=[0, 0, 1, 1],
+                    asset_paths=["./large-raster/satellite.tif"],
+                ),
+            ]
+
+            with runner.isolated_filesystem():
+                Path("catalog.json").write_text("{}")
+                Path(".portolan").mkdir()
+                # Create mock file
+                Path("imagery").mkdir()
+                Path("imagery/large-raster").mkdir()
+                raster_file = Path("imagery/large-raster/satellite.tif")
+                raster_file.write_bytes(b"x" * 120_000_000)  # ~120MB
+
+                result = runner.invoke(cli, ["list"])
+
+                assert result.exit_code == 0
+                # Should show file size in human-readable format
+                assert "MB" in result.output or "mb" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_list_shows_format_type(self, runner: CliRunner) -> None:
+        """portolan list displays format type (GeoParquet, COG)."""
+        with patch("portolan_cli.cli.list_datasets") as mock_list:
+            mock_list.return_value = [
+                DatasetInfo(
+                    item_id="vector-item",
+                    collection_id="data",
+                    format_type=FormatType.VECTOR,
+                    bbox=[0, 0, 1, 1],
+                    asset_paths=["./vector-item/data.parquet"],
+                ),
+                DatasetInfo(
+                    item_id="raster-item",
+                    collection_id="imagery",
+                    format_type=FormatType.RASTER,
+                    bbox=[0, 0, 1, 1],
+                    asset_paths=["./raster-item/data.tif"],
+                ),
+            ]
+
+            with runner.isolated_filesystem():
+                Path("catalog.json").write_text("{}")
+                Path(".portolan").mkdir()
+                # Create mock files
+                Path("data").mkdir()
+                Path("data/vector-item").mkdir()
+                Path("data/vector-item/data.parquet").write_bytes(b"x" * 1000)
+                Path("imagery").mkdir()
+                Path("imagery/raster-item").mkdir()
+                Path("imagery/raster-item/data.tif").write_bytes(b"x" * 1000)
+
+                result = runner.invoke(cli, ["list"])
+
+                assert result.exit_code == 0
+                # Should show format types
+                assert "GeoParquet" in result.output or "vector" in result.output.lower()
+                assert "COG" in result.output or "raster" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_list_filter_by_collection(self, runner: CliRunner) -> None:
+        """portolan list --collection filters by collection."""
+        with patch("portolan_cli.cli.list_datasets") as mock_list:
+            mock_list.return_value = [
+                DatasetInfo(
+                    item_id="item1",
+                    collection_id="target",
+                    format_type=FormatType.VECTOR,
+                    bbox=[0, 0, 1, 1],
+                    asset_paths=["./item1/data.parquet"],
+                ),
+            ]
+
+            with runner.isolated_filesystem():
+                Path("catalog.json").write_text("{}")
+                Path(".portolan").mkdir()
+                Path("target").mkdir()
+                Path("target/item1").mkdir()
+                Path("target/item1/data.parquet").write_bytes(b"x" * 1000)
+
+                result = runner.invoke(cli, ["list", "--collection", "target"])
+
+                assert result.exit_code == 0
+                mock_list.assert_called_once()
+                call_kwargs = mock_list.call_args.kwargs
+                assert call_kwargs.get("collection_id") == "target"
+
+    @pytest.mark.unit
+    def test_list_json_output(self, runner: CliRunner) -> None:
+        """portolan list --json outputs valid JSON envelope."""
+        with patch("portolan_cli.cli.list_datasets") as mock_list:
+            mock_list.return_value = [
+                DatasetInfo(
+                    item_id="item1",
+                    collection_id="col1",
+                    format_type=FormatType.VECTOR,
+                    bbox=[0, 0, 1, 1],
+                    asset_paths=["./item1/data.parquet"],
+                    title="Test Item",
+                ),
+            ]
+
+            with runner.isolated_filesystem():
+                Path("catalog.json").write_text("{}")
+                Path(".portolan").mkdir()
+                Path("col1").mkdir()
+                Path("col1/item1").mkdir()
+                Path("col1/item1/data.parquet").write_bytes(b"x" * 1000)
+
+                result = runner.invoke(cli, ["list", "--json"])
+
+                assert result.exit_code == 0
+                envelope = json.loads(result.output)
+                assert envelope["success"] is True
+                assert envelope["command"] == "list"
+                assert "items" in envelope["data"] or "datasets" in envelope["data"]
+
+
+class TestDatasetListDeprecation:
+    """Tests for deprecated 'portolan dataset list' command."""
+
+    @pytest.mark.unit
+    def test_dataset_list_shows_deprecation_warning(self, runner: CliRunner) -> None:
+        """dataset list shows deprecation warning."""
+        with patch("portolan_cli.cli.list_datasets") as mock_list:
+            mock_list.return_value = []
+
+            with runner.isolated_filesystem():
+                Path("catalog.json").write_text("{}")
+                Path(".portolan").mkdir()
+
+                result = runner.invoke(cli, ["dataset", "list"])
+
+                assert result.exit_code == 0
+                # Should show deprecation warning
+                assert "deprecated" in result.output.lower()
+                assert "portolan list" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_dataset_list_still_works(self, runner: CliRunner) -> None:
+        """dataset list still functions as an alias."""
+        with patch("portolan_cli.cli.list_datasets") as mock_list:
+            mock_list.return_value = [
+                DatasetInfo(
+                    item_id="item1",
+                    collection_id="col1",
+                    format_type=FormatType.VECTOR,
+                    bbox=[0, 0, 1, 1],
+                    asset_paths=["./item1/data.parquet"],
+                ),
+            ]
+
+            with runner.isolated_filesystem():
+                Path("catalog.json").write_text("{}")
+                Path(".portolan").mkdir()
+                Path("col1").mkdir()
+                Path("col1/item1").mkdir()
+                Path("col1/item1/data.parquet").write_bytes(b"x" * 1000)
+
+                result = runner.invoke(cli, ["dataset", "list"])
+
+                assert result.exit_code == 0
+                # Should still show items (after deprecation warning)
+                assert "col1" in result.output
+
+
+class TestListFormatSize:
+    """Tests for format_size helper function."""
+
+    @pytest.mark.unit
+    def test_format_size_bytes(self) -> None:
+        """format_size handles bytes correctly."""
+        from portolan_cli.cli import format_size
+
+        assert format_size(0) == "0B"
+        assert format_size(100) == "100B"
+        assert format_size(999) == "999B"
+
+    @pytest.mark.unit
+    def test_format_size_kilobytes(self) -> None:
+        """format_size handles kilobytes correctly."""
+        from portolan_cli.cli import format_size
+
+        assert format_size(1024) == "1.0KB"
+        assert format_size(1536) == "1.5KB"
+        assert format_size(10240) == "10.0KB"
+
+    @pytest.mark.unit
+    def test_format_size_megabytes(self) -> None:
+        """format_size handles megabytes correctly."""
+        from portolan_cli.cli import format_size
+
+        assert format_size(1024 * 1024) == "1.0MB"
+        assert format_size(4_400_000) == "4.2MB"
+
+    @pytest.mark.unit
+    def test_format_size_gigabytes(self) -> None:
+        """format_size handles gigabytes correctly."""
+        from portolan_cli.cli import format_size
+
+        assert format_size(1024 * 1024 * 1024) == "1.0GB"
+        assert format_size(2 * 1024 * 1024 * 1024) == "2.0GB"
