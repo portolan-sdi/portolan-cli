@@ -16,6 +16,10 @@ import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from portolan_cli.conversion_config import ConversionOverrides
 
 logger = logging.getLogger(__name__)
 
@@ -365,6 +369,90 @@ def get_cloud_native_status(path: Path) -> FormatInfo:
         target_format=None,
         error_message=error_msg,
     )
+
+
+# =============================================================================
+# Effective Status with Conversion Overrides
+# =============================================================================
+
+
+def get_effective_status(
+    path: Path,
+    overrides: ConversionOverrides | None = None,
+    *,
+    root: Path | None = None,
+) -> FormatInfo:
+    """Get cloud-native status with conversion overrides applied.
+
+    This function wraps get_cloud_native_status() and applies user-configured
+    overrides to modify the classification:
+    - Force-convert: Cloud-native formats can be marked as CONVERTIBLE
+    - Preserve: Convertible formats can be marked as CLOUD_NATIVE
+
+    Path-based overrides take precedence over extension-based overrides.
+
+    Args:
+        path: Path to the file to classify.
+        overrides: Optional ConversionOverrides with user configuration.
+            If None, returns the same result as get_cloud_native_status().
+        root: Catalog root for resolving relative paths in glob patterns.
+            Required if using path-based overrides.
+
+    Returns:
+        FormatInfo with potentially modified status based on overrides.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+
+    Example:
+        >>> from portolan_cli.conversion_config import ConversionOverrides
+        >>> overrides = ConversionOverrides(extensions_convert=frozenset({".fgb"}))
+        >>> result = get_effective_status(Path("data.fgb"), overrides=overrides)
+        >>> result.status  # CONVERTIBLE instead of CLOUD_NATIVE
+    """
+    # Import here to avoid circular dependency
+
+    # Get original status
+    info = get_cloud_native_status(path)
+
+    # No overrides? Return original
+    if overrides is None:
+        return info
+
+    # UNSUPPORTED formats cannot be overridden - they're genuinely unsupported
+    if info.status == CloudNativeStatus.UNSUPPORTED:
+        return info
+
+    # Check path-based preserve first (highest precedence)
+    if overrides.paths_preserve and root is not None:
+        if overrides.should_preserve(path, root=root):
+            # Override to CLOUD_NATIVE (preserve)
+            return FormatInfo(
+                status=CloudNativeStatus.CLOUD_NATIVE,
+                display_name=info.display_name,
+                target_format=None,
+                error_message=None,
+            )
+
+    # Check extension-based preserve
+    if overrides.should_preserve(path):
+        return FormatInfo(
+            status=CloudNativeStatus.CLOUD_NATIVE,
+            display_name=info.display_name,
+            target_format=None,
+            error_message=None,
+        )
+
+    # Check extension-based force-convert (only for CLOUD_NATIVE)
+    if info.status == CloudNativeStatus.CLOUD_NATIVE and overrides.should_force_convert(path):
+        return FormatInfo(
+            status=CloudNativeStatus.CONVERTIBLE,
+            display_name=info.display_name,
+            target_format="GeoParquet",  # All force-converts go to GeoParquet
+            error_message=None,
+        )
+
+    return info
 
 
 # =============================================================================
