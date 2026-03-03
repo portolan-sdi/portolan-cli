@@ -1671,6 +1671,7 @@ class TestBrokenSymlinkEdgeCases:
         assert len(broken_issues) == 1
 
 
+@pytest.mark.unit
 class TestCollectionIdValidation:
     """Tests for collection ID validation during scan."""
 

@@ -151,10 +151,13 @@ def add_dataset(
     # Validate collection ID before proceeding
     is_valid, error_msg = validate_collection_id(collection_id)
     if not is_valid:
-        normalized = normalize_collection_id(collection_id)
-        raise ValueError(
-            f"Invalid collection ID '{collection_id}': {error_msg}. Suggested: '{normalized}'"
-        )
+        try:
+            normalized = normalize_collection_id(collection_id)
+            suggestion = f" Suggested: '{normalized}'"
+        except Exception:
+            # Cannot normalize (e.g., all special characters)
+            suggestion = ""
+        raise ValueError(f"Invalid collection ID '{collection_id}': {error_msg}.{suggestion}")
 
     # Step 1: Detect format
     format_type = detect_format(path)

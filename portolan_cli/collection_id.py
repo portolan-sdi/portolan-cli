@@ -137,8 +137,9 @@ def normalize_collection_id(collection_id: str) -> str:
             f"Collection ID '{collection_id}' cannot be normalized - no valid characters remain"
         )
 
-    # Step 6: Prefix with 'n' if starts with a number
-    if result[0].isdigit():
+    # Step 6: Prefix with 'n' if doesn't start with a letter
+    # (handles digits, underscores, or hyphens that survived stripping)
+    if not result[0].isalpha():
         result = f"n{result}"
 
     return result

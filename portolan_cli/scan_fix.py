@@ -712,11 +712,16 @@ def preview_fix(issue: ScanIssue) -> ProposedFix | None:
     if not _is_fix_flag_issue(issue):
         return None
 
-    # FIX_FLAG issues - compute the safe rename
+    # FIX_FLAG issues - compute the fix
     if not issue.path.exists():
         return None
 
-    result = _compute_safe_rename(issue.path)
+    # Handle collection ID issues (directory renames) separately
+    if issue.issue_type.value == "invalid_collection_id":
+        result = _compute_collection_id_fix(issue.path)
+    else:
+        result = _compute_safe_rename(issue.path)
+
     if result is None:
         return None
 

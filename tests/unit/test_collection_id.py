@@ -18,6 +18,8 @@ from portolan_cli.collection_id import (
     validate_collection_id,
 )
 
+pytestmark = pytest.mark.unit
+
 
 class TestValidateCollectionId:
     """Tests for validate_collection_id()."""
@@ -182,6 +184,18 @@ class TestNormalizeCollectionId:
         """IDs starting with numbers should be prefixed with 'n'."""
         assert normalize_collection_id(input_id) == expected
 
+    @pytest.mark.parametrize(
+        ("input_id", "expected"),
+        [
+            ("_data", "n_data"),  # leading underscore gets 'n' prefix
+            ("_my-collection", "n_my-collection"),
+            ("@_test", "n_test"),  # @ removed, then underscore prefixed
+        ],
+    )
+    def test_leading_underscore_prefix(self, input_id: str, expected: str) -> None:
+        """IDs starting with underscores should be prefixed with 'n'."""
+        assert normalize_collection_id(input_id) == expected
+
     # Edge cases
     def test_already_valid(self) -> None:
         """Already valid IDs should be unchanged."""
@@ -199,9 +213,12 @@ class TestNormalizeCollectionId:
 
     def test_non_ascii_transliteration(self) -> None:
         """Non-ASCII characters should be transliterated or removed."""
-        assert normalize_collection_id("donnees") == "donnees"
-        # Accented characters get transliterated
-        result = normalize_collection_id("donnees")
+        # Test actual non-ASCII input - accented characters get transliterated
+        assert normalize_collection_id("données") == "donnees"
+        assert normalize_collection_id("naïve") == "naive"
+        assert normalize_collection_id("café") == "cafe"
+        # Mixed case with accents
+        result = normalize_collection_id("Données")
         assert result == "donnees"
 
     def test_empty_raises(self) -> None:
@@ -232,6 +249,8 @@ class TestNormalizedIdIsValid:
             "2020-census",
             "my@data!set",
             "Census_2020",
+            "_data",  # underscore-prefixed should also normalize to valid
+            "_my-collection",
         ],
     )
     def test_normalized_ids_are_valid(self, input_id: str) -> None:
