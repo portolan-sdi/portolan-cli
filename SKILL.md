@@ -68,6 +68,15 @@ portolan init --title "My Catalog"  # Set title
 portolan init /path/to/data --auto  # Initialize in specific directory
 ```
 
+### `portolan list`
+List items in the catalog.
+
+```bash
+portolan list                           # List all items
+portolan list --collection demographics # Filter by collection
+portolan list --json                    # JSON output
+```
+
 ### `portolan pull`
 Pull updates from a remote catalog.
 

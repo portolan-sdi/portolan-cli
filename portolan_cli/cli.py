@@ -49,6 +49,25 @@ from portolan_cli.validation import Severity
 from portolan_cli.validation import check as validate_catalog
 
 
+def format_size(size_bytes: int) -> str:
+    """Format a file size in human-readable format.
+
+    Args:
+        size_bytes: Size in bytes.
+
+    Returns:
+        Human-readable size string (e.g., "4.2MB", "100B").
+    """
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f}KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f}MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.1f}GB"
+
+
 def should_output_json(ctx: click.Context, json_flag: bool = False) -> bool:
     """Determine if JSON output should be used.
 
@@ -216,6 +235,174 @@ def init(
             error(f"Existing STAC catalog found at {path.resolve()}")
             info("Use 'portolan adopt' to bring it under Portolan management (not yet implemented)")
         raise SystemExit(1) from err
+
+
+# =============================================================================
+# List command (top-level, ADR-0022)
+# =============================================================================
+
+
+def _get_format_display_name(format_type: Any) -> str:
+    """Get human-readable format name.
+
+    Args:
+        format_type: FormatType enum value.
+
+    Returns:
+        Human-readable format name (e.g., "GeoParquet", "COG").
+    """
+    from portolan_cli.formats import FormatType
+
+    if format_type == FormatType.VECTOR:
+        return "GeoParquet"
+    elif format_type == FormatType.RASTER:
+        return "COG"
+    else:
+        return "Unknown"
+
+
+def _get_asset_file_size(catalog_path: Path, collection_id: str, asset_href: str) -> int | None:
+    """Get the file size for an asset.
+
+    Args:
+        catalog_path: Path to catalog root.
+        collection_id: Collection ID.
+        asset_href: Asset href (relative path).
+
+    Returns:
+        File size in bytes, or None if file not found.
+    """
+    # Asset hrefs are relative to the item, which is in collection/item/
+    # The href looks like "./data.parquet" or "../shared/data.parquet"
+    # Try to resolve it relative to the collection directory
+    clean_href = asset_href.removeprefix("./")
+
+    # Check if the href contains a subdirectory (e.g., "./item/data.parquet")
+    if "/" in clean_href:
+        # Full path from collection
+        asset_path = catalog_path / collection_id / clean_href
+    else:
+        # Just a filename, try different locations
+        asset_path = catalog_path / collection_id / clean_href
+
+    if asset_path.exists():
+        return asset_path.stat().st_size
+
+    return None
+
+
+def _list_tree_output(datasets: list[DatasetInfo], catalog_path: Path) -> None:
+    """Output datasets in tree view format per ADR-0022.
+
+    Format:
+        demographics/
+          census.parquet (GeoParquet, 4.2MB)
+          boundaries.parquet (GeoParquet, 1.1MB)
+        imagery/
+          satellite.tif (COG, 120MB)
+
+    Args:
+        datasets: List of DatasetInfo objects.
+        catalog_path: Path to catalog root for file size lookups.
+    """
+    from collections import defaultdict
+
+    # Group datasets by collection
+    by_collection: dict[str, list[DatasetInfo]] = defaultdict(list)
+    for ds in datasets:
+        by_collection[ds.collection_id].append(ds)
+
+    # Sort collections alphabetically
+    for collection_id in sorted(by_collection.keys()):
+        # Print collection header
+        info(f"{collection_id}/")
+
+        # Print items under collection
+        items = by_collection[collection_id]
+        for ds in sorted(items, key=lambda d: d.item_id):
+            # Get the primary asset (first one)
+            asset_name = ds.item_id
+            size_str = ""
+
+            if ds.asset_paths:
+                # Get filename from first asset
+                first_asset = ds.asset_paths[0]
+                asset_name = Path(first_asset).name
+
+                # Try to get file size
+                file_size = _get_asset_file_size(catalog_path, ds.collection_id, first_asset)
+                if file_size is not None:
+                    size_str = f", {format_size(file_size)}"
+
+            format_name = _get_format_display_name(ds.format_type)
+            detail(f"  {asset_name} ({format_name}{size_str})")
+
+
+@cli.command("list")
+@click.option(
+    "--collection",
+    "-c",
+    help="Filter by collection ID.",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=".",
+    help="Path to catalog root (default: current directory).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def list_cmd(
+    ctx: click.Context, collection: str | None, catalog_path: Path, json_output: bool
+) -> None:
+    """List items in the catalog.
+
+    Shows all items organized by collection in a tree view format.
+    Each item displays its filename, format type, and file size.
+
+    \b
+    Example output:
+        demographics/
+          census.parquet (GeoParquet, 4.2MB)
+          boundaries.parquet (GeoParquet, 1.1MB)
+        imagery/
+          satellite.tif (COG, 120MB)
+
+    \b
+    Examples:
+        portolan list                           # List all items
+        portolan list --collection demographics # Filter by collection
+        portolan list --json                    # JSON output
+    """
+    use_json = should_output_json(ctx, json_output)
+
+    datasets = list_datasets(catalog_path, collection_id=collection)
+
+    if use_json:
+        envelope = success_envelope(
+            "list",
+            {
+                "items": [
+                    {
+                        "item_id": ds.item_id,
+                        "collection_id": ds.collection_id,
+                        "format": ds.format_type.value,
+                        "title": ds.title,
+                        "assets": ds.asset_paths,
+                    }
+                    for ds in datasets
+                ],
+                "count": len(datasets),
+            },
+        )
+        output_json_envelope(envelope)
+    else:
+        if not datasets:
+            info("No items found")
+            return
+
+        _list_tree_output(datasets, catalog_path)
 
 
 def _output_check_json(report: Any, *, mode: str = "all") -> None:
@@ -1589,15 +1776,20 @@ def dataset(ctx: click.Context) -> None:
 )
 @click.pass_context
 def dataset_list(ctx: click.Context, collection: str | None, catalog_path: Path) -> None:
-    """List datasets in the catalog.
+    """List datasets in the catalog (DEPRECATED).
+
+    This command is deprecated. Use 'portolan list' instead.
 
     Examples:
 
-        portolan dataset list
-
-        portolan dataset list --collection demographics
+        portolan list                           # New command
+        portolan list --collection demographics # Filter by collection
     """
     use_json = should_output_json(ctx)
+
+    # Show deprecation warning (unless JSON output)
+    if not use_json:
+        warn("'portolan dataset list' is deprecated. Use 'portolan list' instead.")
 
     datasets = list_datasets(catalog_path, collection_id=collection)
 
@@ -1623,11 +1815,8 @@ def dataset_list(ctx: click.Context, collection: str | None, catalog_path: Path)
             info("No datasets found")
             return
 
-        for ds in datasets:
-            info(f"{ds.collection_id}/{ds.item_id}")
-            if ds.title:
-                detail(f"  Title: {ds.title}")
-            detail(f"  Format: {ds.format_type.value}")
+        # Use the new tree view output
+        _list_tree_output(datasets, catalog_path)
 
 
 @dataset.command("info")
