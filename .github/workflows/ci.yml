@@ -108,7 +108,7 @@ jobs:
           slug: portolan-sdi/portolan-cli
 
   dead-code:
-    name: Dead Code & Complexity
+    name: Dead Code, Complexity & Duplication
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -129,6 +129,9 @@ jobs:
 
       - name: Check code complexity
         run: uv run xenon --max-absolute=C --max-modules=B --max-average=A portolan_cli tests
+
+      - name: Check for duplicate code
+        run: uv run pylint --disable=all --enable=duplicate-code --fail-under=9.5 portolan_cli/
 
   docs:
     name: Documentation Build

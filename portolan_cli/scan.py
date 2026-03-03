@@ -33,7 +33,7 @@ from enum import Enum
 from pathlib import Path
 
 # Import new types from scan modules
-from portolan_cli.constants import PARQUET_EXTENSION
+from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
 from portolan_cli.scan_classify import (
     FileCategory,
     SkippedFile,
@@ -74,34 +74,7 @@ LONG_PATH_THRESHOLD: int = 200
 # Matches: spaces, parentheses, brackets, control chars (0x00-0x1F, 0x7F), and non-ASCII
 INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[\s()\[\]\x00-\x1f\x7f]|[^\x00-\x7f]")
 
-# Windows reserved device names (case-insensitive)
-# Files with these names (with any extension) are problematic on Windows
-WINDOWS_RESERVED_NAMES: frozenset[str] = frozenset(
-    {
-        "con",
-        "prn",
-        "aux",
-        "nul",
-        "com1",
-        "com2",
-        "com3",
-        "com4",
-        "com5",
-        "com6",
-        "com7",
-        "com8",
-        "com9",
-        "lpt1",
-        "lpt2",
-        "lpt3",
-        "lpt4",
-        "lpt5",
-        "lpt6",
-        "lpt7",
-        "lpt8",
-        "lpt9",
-    }
-)
+# WINDOWS_RESERVED_NAMES imported from portolan_cli.constants
 
 
 # =============================================================================

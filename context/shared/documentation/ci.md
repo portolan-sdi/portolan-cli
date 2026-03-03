@@ -67,10 +67,11 @@ Workflow: `.github/workflows/ci.yml`
 - Excludes network, slow, and benchmark tests
 - Coverage reporting to Codecov
 
-#### `dead-code` — Dead Code & Complexity
+#### `dead-code` — Dead Code, Complexity & Duplication
 
 - `vulture` — Unused code detection (min confidence 80%)
 - `xenon` — Complexity thresholds (max C absolute, B modules, A average)
+- `pylint` — Duplicate code detection (R0801 only, `--fail-under=9.5`)
 
 #### `docs` — Documentation Build
 

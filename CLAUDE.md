@@ -115,6 +115,7 @@ uv run ruff format .                    # Format
 uv run mypy portolan_cli                # Type check
 uv run vulture portolan_cli tests       # Dead code
 uv run xenon --max-absolute=C portolan_cli  # Complexity
+uv run pylint --disable=all --enable=duplicate-code portolan_cli/  # Duplicate code
 
 # Commits (use commitizen for conventional commits)
 uv run cz commit                        # Interactive commit
@@ -228,6 +229,7 @@ Install: `uv run pre-commit install`. All hooks block—no `--no-verify`. See `.
 - **mypy** — Type checking (`strict = true`)
 - **vulture** — Dead code detection
 - **xenon** — Complexity monitoring (max C function, B module, A average)
+- **pylint** — Duplicate code detection (R0801 only, `--fail-under=9.5`)
 - **bandit** — Security scanning
 - **pip-audit** — Dependency vulnerabilities
 
