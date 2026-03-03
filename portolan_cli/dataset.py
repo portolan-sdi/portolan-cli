@@ -447,11 +447,14 @@ def _update_versions(
         parts[-1] = str(int(parts[-1]) + 1)
         new_version = ".".join(parts)
 
+    collection_id = collection_dir.name
+    href = f"{collection_id}/{item_id}/{output_path.name}"
+
     assets = {
         output_path.name: Asset(
             sha256=checksum,
             size_bytes=output_path.stat().st_size,
-            href=output_path.name,
+            href=href,
         )
     }
 

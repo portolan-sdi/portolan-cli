@@ -16,12 +16,14 @@ import pytest
 
 from portolan_cli.dataset import (
     DatasetInfo,
+    _update_versions,
     add_dataset,
     get_dataset_info,
     list_datasets,
     remove_dataset,
 )
 from portolan_cli.formats import FormatType
+from portolan_cli.versions import read_versions
 
 if TYPE_CHECKING:
     pass
@@ -694,3 +696,60 @@ class TestAddDatasetMissingBbox:
                     catalog_root=initialized_catalog,
                     collection_id="test",
                 )
+
+
+class TestUpdateVersionsHref:
+    """Tests for _update_versions producing catalog-root-relative hrefs.
+
+    The href in versions.json must be relative to catalog root so that
+    push.py and pull.py can resolve it via `catalog_root / href`.
+    """
+
+    @pytest.mark.unit
+    def test_href_is_catalog_root_relative(self, tmp_path: Path) -> None:
+        """_update_versions produces href as collection_id/item_id/filename."""
+        catalog_root = tmp_path / "catalog"
+        collection_dir = catalog_root / "agriculture"
+        item_dir = collection_dir / "census-2020"
+        item_dir.mkdir(parents=True)
+
+        # Create the output file where add_dataset would place it
+        output_file = item_dir / "census-2020.parquet"
+        output_file.write_bytes(b"fake parquet data")
+
+        _update_versions(
+            collection_dir=collection_dir,
+            item_id="census-2020",
+            output_path=output_file,
+            checksum="abc123",
+        )
+
+        versions = read_versions(collection_dir / "versions.json")
+        asset = versions.versions[0].assets["census-2020.parquet"]
+
+        assert asset.href == "agriculture/census-2020/census-2020.parquet"
+
+    @pytest.mark.unit
+    def test_href_resolves_to_actual_file(self, tmp_path: Path) -> None:
+        """catalog_root / href resolves to the actual asset file on disk."""
+        catalog_root = tmp_path / "catalog"
+        collection_dir = catalog_root / "demographics"
+        item_dir = collection_dir / "pop-data"
+        item_dir.mkdir(parents=True)
+
+        output_file = item_dir / "pop-data.parquet"
+        output_file.write_bytes(b"fake parquet data")
+
+        _update_versions(
+            collection_dir=collection_dir,
+            item_id="pop-data",
+            output_path=output_file,
+            checksum="def456",
+        )
+
+        versions = read_versions(collection_dir / "versions.json")
+        asset = versions.versions[0].assets["pop-data.parquet"]
+
+        resolved = catalog_root / asset.href
+        assert resolved.exists(), f"catalog_root / href should resolve to file: {resolved}"
+        assert resolved == output_file

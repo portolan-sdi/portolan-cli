@@ -67,7 +67,9 @@ class Asset:
     Attributes:
         sha256: SHA-256 checksum of the file content.
         size_bytes: File size in bytes.
-        href: Relative or absolute path/URL to the asset.
+        href: Path to the asset, relative to catalog root
+            (e.g., "collection_id/item_id/filename.parquet").
+            push.py and pull.py resolve this via ``catalog_root / href``.
         source_path: Optional relative path to the original source file
             (e.g., the GeoJSON that was converted to this GeoParquet).
         source_mtime: Optional Unix timestamp of the source file when

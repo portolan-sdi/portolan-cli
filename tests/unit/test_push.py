@@ -43,6 +43,7 @@ def local_catalog(tmp_path: Path) -> Path:
     versions_dir = catalog_dir / "test"
     versions_dir.mkdir(parents=True)
 
+    # hrefs are catalog-root-relative: collection/item/filename
     versions_data = {
         "spec_version": "1.0.0",
         "current_version": "1.1.0",
@@ -56,7 +57,7 @@ def local_catalog(tmp_path: Path) -> Path:
                     "data.parquet": {
                         "sha256": "abc123",
                         "size_bytes": 1024,
-                        "href": "data.parquet",
+                        "href": "test/data/data.parquet",
                     }
                 },
                 "changes": ["data.parquet"],
@@ -70,7 +71,7 @@ def local_catalog(tmp_path: Path) -> Path:
                     "data.parquet": {
                         "sha256": "def456",
                         "size_bytes": 2048,
-                        "href": "data.parquet",
+                        "href": "test/data/data.parquet",
                     }
                 },
                 "changes": ["data.parquet"],
@@ -80,8 +81,10 @@ def local_catalog(tmp_path: Path) -> Path:
 
     (versions_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
-    # Create actual data file
-    (catalog_dir / "data.parquet").write_bytes(b"x" * 2048)
+    # Create actual data file at catalog_root/collection/item/filename
+    item_dir = versions_dir / "data"
+    item_dir.mkdir(parents=True)
+    (item_dir / "data.parquet").write_bytes(b"x" * 2048)
 
     return catalog_dir
 
@@ -836,6 +839,7 @@ class TestForceFlag:
         versions_dir = catalog_dir / "test"
         versions_dir.mkdir(parents=True)
 
+        # hrefs are catalog-root-relative: collection/item/filename
         versions_data = {
             "spec_version": "1.0.0",
             "current_version": "1.0.0",
@@ -849,7 +853,7 @@ class TestForceFlag:
                         "data.parquet": {
                             "sha256": "abc123",
                             "size_bytes": 1024,
-                            "href": "data.parquet",
+                            "href": "test/data/data.parquet",
                         }
                     },
                     "changes": ["data.parquet"],
@@ -857,7 +861,9 @@ class TestForceFlag:
             ],
         }
         (versions_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
-        (catalog_dir / "data.parquet").write_bytes(b"x" * 1024)
+        item_dir = versions_dir / "data"
+        item_dir.mkdir(parents=True)
+        (item_dir / "data.parquet").write_bytes(b"x" * 1024)
 
         with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
             # Remote has v1.0.0 AND v1.0.1 - local is missing v1.0.1
