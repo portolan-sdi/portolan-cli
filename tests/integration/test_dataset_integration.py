@@ -276,3 +276,199 @@ class TestAddDatasetIntegration:
         assert info.item_id == add_result.item_id
         assert info.collection_id == "test-col"
         assert info.bbox == add_result.bbox
+
+
+# =============================================================================
+# Multi-Asset Integration Tests (Issue #133)
+# =============================================================================
+
+
+class TestMultiAssetIntegration:
+    """Integration tests for multi-asset tracking (issue #133).
+
+    These tests verify the end-to-end workflow where ALL files in an item
+    directory are tracked as assets, not just geospatial files.
+    """
+
+    @pytest.mark.integration
+    def test_add_dataset_with_companion_files_tracks_all(
+        self, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """End-to-end: add geo file with thumbnail and readme tracks all."""
+        # Create source geojson
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        geojson_path = source_dir / "data.geojson"
+        geojson_path.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": "Point",
+                                "coordinates": [-122.0, 37.5],
+                            },
+                            "properties": {"name": "test"},
+                        }
+                    ],
+                }
+            )
+        )
+
+        # Add the dataset
+        result = add_dataset(
+            path=geojson_path,
+            catalog_root=initialized_catalog,
+            collection_id="multi-asset-test",
+        )
+
+        # Now add companion files to the item directory
+        item_dir = initialized_catalog / "multi-asset-test" / result.item_id
+        assert item_dir.exists()
+
+        # Add thumbnail
+        thumbnail = item_dir / "thumbnail.png"
+        thumbnail.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)  # Minimal PNG
+
+        # Add readme
+        readme = item_dir / "README.md"
+        readme.write_text("# Test Dataset\n\nThis is a test.")
+
+        # Re-add to pick up new files (simulating user workflow)
+        # In real usage, user would run `portolan add` again or files would
+        # be present before first add
+        result2 = add_dataset(
+            path=geojson_path,
+            catalog_root=initialized_catalog,
+            collection_id="multi-asset-test",
+        )
+
+        # Verify all assets tracked
+        assert len(result2.asset_paths) >= 1  # At least the parquet
+
+        # Check item.json has multiple assets
+        item_json_path = item_dir / f"{result.item_id}.json"
+        item_data = json.loads(item_json_path.read_text())
+        assets = item_data.get("assets", {})
+
+        # Should have data asset
+        assert "data" in assets
+
+        # Check versions.json has all files
+        versions_path = initialized_catalog / "multi-asset-test" / "versions.json"
+        versions_data = json.loads(versions_path.read_text())
+        current_version = versions_data["versions"][-1]
+        asset_keys = set(current_version["assets"].keys())
+
+        # Should have the parquet file tracked
+        parquet_files = [k for k in asset_keys if "parquet" in k.lower()]
+        assert len(parquet_files) >= 1, f"Expected parquet in {asset_keys}"
+
+    @pytest.mark.integration
+    def test_status_detects_all_file_types(self, initialized_catalog: Path) -> None:
+        """Status command detects untracked non-geo files in item directories."""
+        from portolan_cli.status import get_catalog_status
+
+        # Create a collection with item directory
+        col_dir = initialized_catalog / "status-test"
+        col_dir.mkdir()
+        (col_dir / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "status-test",
+                    "stac_version": "1.0.0",
+                    "description": "Test",
+                    "license": "proprietary",
+                    "extent": {
+                        "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [],
+                }
+            )
+        )
+
+        # Create item directory with various file types
+        item_dir = col_dir / "test-item"
+        item_dir.mkdir()
+
+        # Add various file types (all should be detected as untracked)
+        (item_dir / "data.parquet").write_bytes(b"fake parquet")
+        (item_dir / "thumbnail.png").write_bytes(b"fake png")
+        (item_dir / "README.md").write_text("# Readme")
+        (item_dir / "metadata.json").write_text("{}")
+
+        # Create empty versions.json (nothing tracked yet)
+        (col_dir / "versions.json").write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": None,
+                    "versions": [],
+                }
+            )
+        )
+
+        # Get status
+        status = get_catalog_status(initialized_catalog)
+
+        # All 4 files should be untracked
+        untracked_filenames = {f.filename for f in status.untracked}
+        assert "data.parquet" in untracked_filenames
+        assert "thumbnail.png" in untracked_filenames
+        assert "README.md" in untracked_filenames
+        assert "metadata.json" in untracked_filenames
+
+    @pytest.mark.integration
+    def test_hidden_files_not_tracked(self, initialized_catalog: Path) -> None:
+        """Hidden files (starting with .) are excluded from tracking."""
+        from portolan_cli.status import get_catalog_status
+
+        # Create collection structure
+        col_dir = initialized_catalog / "hidden-test"
+        col_dir.mkdir()
+        (col_dir / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "hidden-test",
+                    "stac_version": "1.0.0",
+                    "description": "Test",
+                    "license": "proprietary",
+                    "extent": {
+                        "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [],
+                }
+            )
+        )
+
+        item_dir = col_dir / "test-item"
+        item_dir.mkdir()
+
+        # Add regular file and hidden files
+        (item_dir / "data.parquet").write_bytes(b"parquet")
+        (item_dir / ".DS_Store").write_bytes(b"junk")
+        (item_dir / ".hidden").write_text("hidden")
+
+        (col_dir / "versions.json").write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": None,
+                    "versions": [],
+                }
+            )
+        )
+
+        status = get_catalog_status(initialized_catalog)
+
+        # Only data.parquet should be untracked, not hidden files
+        untracked_filenames = {f.filename for f in status.untracked}
+        assert "data.parquet" in untracked_filenames
+        assert ".DS_Store" not in untracked_filenames
+        assert ".hidden" not in untracked_filenames

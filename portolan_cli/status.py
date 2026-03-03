@@ -122,6 +122,11 @@ def _scan_item_dir_status(
             continue
 
         filename = file_path.name
+
+        # Skip hidden files (starting with .)
+        if filename.startswith("."):
+            continue
+
         if filename in IGNORED_FILES or filename in _STAC_METADATA_FILES:
             continue
 
