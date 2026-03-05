@@ -20,6 +20,7 @@ from portolan_cli.scan import (
     ScanOptions,
     ScanResult,
     Severity,
+    _get_dir_size,
     _get_format_type,
     _get_relative_path,
     _has_invalid_characters,
@@ -552,6 +553,118 @@ class TestPropertyBasedScanResult:
             assert result.warning_count == warning_count
             assert result.info_count == info_count
             assert result.has_errors == (error_count > 0)
+
+
+# =============================================================================
+# _get_dir_size Error Path Tests (lines 872-875 coverage)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestGetDirSizeErrorPaths:
+    """Tests for _get_dir_size error handling paths."""
+
+    def test_get_dir_size_oserror_on_scandir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OSError during scandir should be caught and return 0."""
+        from portolan_cli import scan as scan_module
+
+        # Create a FileGDB structure
+        gdb_dir = tmp_path / "test.gdb"
+        gdb_dir.mkdir()
+        (gdb_dir / "a00000001.gdbtable").write_bytes(b"x" * 100)
+
+        # Mock os.scandir to raise OSError
+        def raise_oserror(path: Path) -> None:
+            raise OSError("Permission denied")
+
+        monkeypatch.setattr(scan_module.os, "scandir", raise_oserror)
+
+        # Call _get_dir_size - should catch OSError and return 0
+        result = scan_module._get_dir_size(gdb_dir)
+        assert result == 0
+
+    def test_get_dir_size_oserror_on_stat(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OSError during stat should be caught and file skipped."""
+        import os
+
+        from portolan_cli import scan as scan_module
+
+        # Create a FileGDB structure
+        gdb_dir = tmp_path / "test.gdb"
+        gdb_dir.mkdir()
+        (gdb_dir / "a00000001.gdbtable").write_bytes(b"x" * 100)
+        (gdb_dir / "a00000002.gdbtable").write_bytes(b"y" * 200)
+
+        # Store original scandir
+        original_scandir = os.scandir
+
+        # Create a wrapper that makes stat fail for one file
+        class FailingStatEntry:
+            def __init__(self, entry: os.DirEntry) -> None:
+                self._entry = entry
+                self._fail_stat = "a00000001" in entry.name
+
+            def is_file(self, follow_symlinks: bool = True) -> bool:
+                return self._entry.is_file(follow_symlinks=follow_symlinks)
+
+            def stat(self, follow_symlinks: bool = True) -> os.stat_result:
+                if self._fail_stat:
+                    raise OSError("Permission denied on stat")
+                return self._entry.stat(follow_symlinks=follow_symlinks)
+
+            @property
+            def name(self) -> str:
+                return self._entry.name
+
+        def wrapped_scandir(path: Path):
+            for entry in original_scandir(path):
+                yield FailingStatEntry(entry)
+
+        monkeypatch.setattr(scan_module.os, "scandir", wrapped_scandir)
+
+        # Call _get_dir_size - should catch OSError on one file, still count the other
+        result = scan_module._get_dir_size(gdb_dir)
+        # Only the 200-byte file should be counted (a00000002.gdbtable)
+        assert result == 200
+
+    def test_get_dir_size_normal_operation(self, tmp_path: Path) -> None:
+        """Normal operation should sum all file sizes."""
+
+        # Create a directory with known file sizes
+        test_dir = tmp_path / "testdir"
+        test_dir.mkdir()
+        (test_dir / "file1.txt").write_bytes(b"a" * 100)
+        (test_dir / "file2.txt").write_bytes(b"b" * 200)
+        (test_dir / "file3.txt").write_bytes(b"c" * 300)
+
+        result = _get_dir_size(test_dir)
+        assert result == 600
+
+    def test_get_dir_size_empty_directory(self, tmp_path: Path) -> None:
+        """Empty directory should return 0."""
+
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+
+        result = _get_dir_size(empty_dir)
+        assert result == 0
+
+    def test_get_dir_size_skips_subdirectories(self, tmp_path: Path) -> None:
+        """Subdirectories should be skipped in size calculation."""
+
+        test_dir = tmp_path / "testdir"
+        test_dir.mkdir()
+        (test_dir / "file.txt").write_bytes(b"x" * 100)
+        subdir = test_dir / "subdir"
+        subdir.mkdir()
+        (subdir / "nested.txt").write_bytes(b"y" * 500)  # Should NOT be counted
+
+        result = _get_dir_size(test_dir)
+        assert result == 100  # Only top-level file
 
 
 # =============================================================================
