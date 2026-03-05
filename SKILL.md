@@ -41,8 +41,10 @@ portolan check /data --fix            # Convert files to cloud-native
 Clone a remote catalog to a local directory.
 
 ```bash
-portolan clone s3://mybucket/catalog ./local --collection demographics
-portolan clone s3://mybucket/catalog ./data -c imagery --profile prod
+portolan clone s3://mybucket/my-catalog
+portolan clone s3://mybucket/my-catalog .
+portolan clone s3://mybucket/catalog -c demographics
+portolan clone s3://mybucket/catalog ./local-copy
 ```
 
 ### `portolan config`

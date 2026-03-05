@@ -2503,12 +2503,15 @@ def sync(
 @click.argument(
     "local_path",
     type=click.Path(path_type=Path),
+    required=False,
+    default=None,
 )
 @click.option(
     "--collection",
     "-c",
-    required=True,
-    help="Collection to clone (required).",
+    required=False,
+    default=None,
+    help="Collection to clone. If not specified, clones all collections.",
 )
 @click.option(
     "--profile",
@@ -2518,26 +2521,61 @@ def sync(
 def clone(
     ctx: click.Context,
     remote_url: str,
-    local_path: Path,
-    collection: str,
+    local_path: Path | None,
+    collection: str | None,
     profile: str | None,
 ) -> None:
     """Clone a remote catalog to a local directory.
 
     This is essentially "pull to an empty directory" with guardrails.
-    Creates the target directory and pulls the specified collection.
+    Creates the target directory and pulls collections from remote storage.
 
     REMOTE_URL is the object store URL (e.g., s3://mybucket/my-catalog).
-    LOCAL_PATH is the directory to clone into (will be created).
+
+    LOCAL_PATH is optional - if not provided, it will be inferred from the
+    catalog name in the URL (git clone style).
+
+    --collection is optional - if not provided, all collections in the remote
+    catalog will be cloned.
 
     \b
     Examples:
-        portolan clone s3://mybucket/catalog ./local --collection demographics
+        # Infer directory from URL, clone all collections
+        portolan clone s3://mybucket/my-catalog
+
+        # Clone to current directory (must be empty)
+        portolan clone s3://mybucket/my-catalog .
+
+        # Clone specific collection
+        portolan clone s3://mybucket/catalog -c demographics
+
+        # Clone all collections to specific directory
+        portolan clone s3://mybucket/catalog ./local-copy
+
+        # Clone specific collection with profile
         portolan clone s3://mybucket/catalog ./data -c imagery --profile prod
     """
     from portolan_cli.sync import clone as clone_fn
+    from portolan_cli.sync import infer_local_path_from_url
 
     use_json = should_output_json(ctx)
+
+    # Infer local_path from URL if not provided
+    if local_path is None:
+        try:
+            local_path = infer_local_path_from_url(remote_url)
+            if not use_json:
+                info_output(f"Inferred local path: {local_path}")
+        except ValueError as e:
+            if use_json:
+                envelope = error_envelope(
+                    "clone",
+                    [ErrorDetail(type="CloneError", message=str(e), code="INVALID_URL")],
+                )
+                click.echo(json.dumps(envelope, indent=2))
+            else:
+                error(str(e))
+            raise SystemExit(1) from None
 
     result = clone_fn(
         remote_url=remote_url,
@@ -2549,6 +2587,8 @@ def clone(
     if use_json:
         data: dict[str, Any] = {
             "local_path": str(result.local_path),
+            "collections_cloned": result.collections_cloned,
+            "total_files_downloaded": result.total_files_downloaded,
         }
 
         if result.pull_result is not None:
@@ -2569,7 +2609,14 @@ def clone(
         click.echo(json.dumps(envelope, indent=2))
     else:
         if result.success:
-            success(f"Clone completed: {result.local_path}")
+            if result.collections_cloned:
+                success(
+                    f"Clone completed: {result.local_path} "
+                    f"({len(result.collections_cloned)} collection(s), "
+                    f"{result.total_files_downloaded} file(s))"
+                )
+            else:
+                success(f"Clone completed: {result.local_path}")
         else:
             if result.errors:
                 for err_msg in result.errors:

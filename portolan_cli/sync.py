@@ -16,13 +16,16 @@ See ADR-0007 for CLI wraps Python API (all logic in library layer).
 
 from __future__ import annotations
 
+import json
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.catalog import CatalogState, detect_state, init_catalog
 from portolan_cli.check import CheckReport, check_directory
-from portolan_cli.output import error, info, success, warn
+from portolan_cli.download import download_file
+from portolan_cli.output import detail, error, info, success, warn
 from portolan_cli.pull import PullError, PullResult, pull
 from portolan_cli.push import PushConflictError, PushResult, push
 from portolan_cli.scan import ScanResult, scan_directory
@@ -40,6 +43,181 @@ class SyncError(Exception):
     """Base exception for sync operations."""
 
     pass
+
+
+# =============================================================================
+# URL Parsing Utilities
+# =============================================================================
+
+
+def infer_local_path_from_url(remote_url: str) -> Path:
+    """Infer local directory name from a remote catalog URL.
+
+    Extracts the last path component from the URL as the directory name,
+    similar to how `git clone` infers directory name from repo URL.
+
+    Args:
+        remote_url: Remote catalog URL (e.g., s3://mybucket/my-catalog).
+
+    Returns:
+        Path object with the inferred directory name.
+
+    Raises:
+        ValueError: If cannot infer a name (e.g., bucket-only URL).
+
+    Examples:
+        >>> infer_local_path_from_url("s3://bucket/my-catalog")
+        Path('my-catalog')
+        >>> infer_local_path_from_url("s3://bucket/path/to/catalog/")
+        Path('catalog')
+    """
+    # Strip trailing slashes
+    url = remote_url.rstrip("/")
+
+    # Split by '/' and get last non-empty component
+    parts = url.split("/")
+
+    # Filter out empty parts (from multiple slashes)
+    parts = [p for p in parts if p]
+
+    # We need at least scheme://bucket/catalog (3+ parts after split)
+    # e.g., ['s3:', 'bucket', 'catalog'] or ['s3:', '', 'bucket', 'catalog']
+    # After removing scheme part, we need the catalog name
+    if len(parts) < 3:
+        raise ValueError(
+            f"Cannot infer local path from URL: {remote_url}. "
+            "URL must include a catalog name (e.g., s3://bucket/catalog-name)."
+        )
+
+    catalog_name = parts[-1]
+
+    # The last part should not be empty or just the bucket
+    if not catalog_name or catalog_name.endswith(":"):
+        raise ValueError(
+            f"Cannot infer local path from URL: {remote_url}. "
+            "URL must include a catalog name (e.g., s3://bucket/catalog-name)."
+        )
+
+    return Path(catalog_name)
+
+
+# =============================================================================
+# Remote Catalog Fetching
+# =============================================================================
+
+
+def _fetch_remote_catalog_json(
+    remote_url: str,
+    *,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    """Fetch and parse catalog.json from a remote catalog.
+
+    Args:
+        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
+        profile: AWS profile name (for S3).
+
+    Returns:
+        Parsed catalog.json as a dictionary.
+
+    Raises:
+        CloneError: If fetch or parse fails.
+    """
+    # Build remote catalog.json path
+    catalog_url = f"{remote_url.rstrip('/')}/catalog.json"
+
+    # Download to temp file
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+
+    try:
+        result = download_file(
+            source=catalog_url,
+            destination=tmp_path,
+            profile=profile,
+        )
+
+        if not result.success:
+            error_msgs = (
+                ", ".join(f"{path}: {exc}" for path, exc in result.errors)
+                if result.errors
+                else "Unknown error"
+            )
+            raise CloneError(f"Failed to fetch remote catalog.json: {error_msgs}")
+
+        # Parse the downloaded file
+        with open(tmp_path, encoding="utf-8") as f:
+            data: dict[str, Any] = json.load(f)
+            return data
+
+    except json.JSONDecodeError as e:
+        raise CloneError(f"Failed to parse remote catalog.json: {e}") from e
+
+    finally:
+        # Clean up temp file
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def list_remote_collections(
+    remote_url: str,
+    *,
+    profile: str | None = None,
+) -> list[str]:
+    """List all collections available in a remote catalog.
+
+    Fetches the remote catalog.json and parses STAC child links
+    to discover collection names.
+
+    Args:
+        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
+        profile: AWS profile name (for S3).
+
+    Returns:
+        List of collection names found in the catalog.
+
+    Raises:
+        CloneError: If unable to fetch or parse the catalog.
+    """
+    catalog_data = _fetch_remote_catalog_json(remote_url, profile=profile)
+
+    collections: list[str] = []
+
+    # Parse STAC links to find child collections
+    links = catalog_data.get("links", [])
+    for link in links:
+        if link.get("rel") != "child":
+            continue
+
+        href = link.get("href", "")
+        if not href:
+            continue
+
+        # Extract collection name from href
+        # Handles both relative (./collection-name/collection.json)
+        # and absolute (s3://bucket/catalog/collection-name/collection.json)
+        # The collection name is the directory containing collection.json
+
+        # Remove collection.json suffix if present
+        if href.endswith("/collection.json"):
+            href = href[: -len("/collection.json")]
+        elif href.endswith("collection.json"):
+            href = href[: -len("collection.json")]
+
+        # Remove any trailing slashes
+        href = href.rstrip("/")
+
+        # Get the last path component (collection name)
+        if "/" in href:
+            collection_name = href.split("/")[-1]
+        else:
+            # Handle case like "./collection-name"
+            collection_name = href.lstrip("./")
+
+        if collection_name:
+            collections.append(collection_name)
+
+    return collections
 
 
 # =============================================================================
@@ -392,15 +570,19 @@ class CloneResult:
 
     Attributes:
         success: True if clone completed successfully.
-        pull_result: Result from the pull operation.
+        pull_result: Result from the pull operation (single collection).
         local_path: Path where the catalog was cloned to.
         errors: List of error messages if any step failed.
+        collections_cloned: List of collection names that were cloned (multi-collection).
+        total_files_downloaded: Total files downloaded across all collections.
     """
 
     success: bool
     pull_result: PullResult | None
     local_path: Path
     errors: list[str] = field(default_factory=list)
+    collections_cloned: list[str] = field(default_factory=list)
+    total_files_downloaded: int = 0
 
 
 class CloneError(Exception):
@@ -412,7 +594,7 @@ class CloneError(Exception):
 def clone(
     remote_url: str,
     local_path: Path,
-    collection: str,
+    collection: str | None = None,
     *,
     profile: str | None = None,
 ) -> CloneResult:
@@ -420,12 +602,15 @@ def clone(
 
     This is essentially "pull to an empty directory" with guardrails.
     Creates the target directory, initializes a Portolan catalog, and pulls
-    the specified collection from remote storage.
+    collections from remote storage.
+
+    When collection is None, all collections from the remote catalog are cloned.
+    When collection is specified, only that collection is cloned.
 
     Args:
         remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
         local_path: Local directory to clone into (will be created).
-        collection: Collection name to clone.
+        collection: Collection name to clone, or None to clone all collections.
         profile: AWS profile name (for S3).
 
     Returns:
@@ -436,6 +621,8 @@ def clone(
                     or if the clone operation fails.
     """
     errors: list[str] = []
+    collections_cloned: list[str] = []
+    total_files: int = 0
 
     # Check if target already exists
     if local_path.exists():
@@ -449,6 +636,36 @@ def clone(
                 local_path=local_path,
                 errors=[error_msg],
             )
+
+    # Determine which collections to clone
+    if collection is None:
+        # Clone all collections - fetch remote catalog to discover them
+        info("Discovering remote collections...")
+        try:
+            collections_to_clone = list_remote_collections(remote_url, profile=profile)
+        except CloneError as e:
+            error_msg = str(e)
+            error(error_msg)
+            return CloneResult(
+                success=False,
+                pull_result=None,
+                local_path=local_path,
+                errors=[error_msg],
+            )
+
+        if not collections_to_clone:
+            error_msg = f"Remote catalog has no collections to clone: {remote_url}"
+            error(error_msg)
+            return CloneResult(
+                success=False,
+                pull_result=None,
+                local_path=local_path,
+                errors=[error_msg],
+            )
+
+        info(f"Found {len(collections_to_clone)} collection(s): {', '.join(collections_to_clone)}")
+    else:
+        collections_to_clone = [collection]
 
     # Create target directory
     info(f"Cloning to {local_path}...")
@@ -473,49 +690,81 @@ def clone(
             errors=errors,
         )
 
-    # Pull from remote
-    info(f"Pulling collection '{collection}' from {remote_url}...")
-    try:
-        pull_result = pull(
-            remote_url=remote_url,
-            local_root=local_path,
-            collection=collection,
-            force=False,  # No local changes to force-overwrite
-            dry_run=False,
-            profile=profile,
-        )
+    # Pull each collection
+    last_pull_result: PullResult | None = None
 
-        if not pull_result.success:
-            # Check if remote doesn't exist
-            if pull_result.remote_version is None:
-                error_msg = f"Remote collection '{collection}' not found at {remote_url}"
-            else:
-                error_msg = "Pull failed during clone"
-            errors.append(error_msg)
-            error(error_msg)
-            return CloneResult(
-                success=False,
-                pull_result=pull_result,
-                local_path=local_path,
-                errors=errors,
+    for coll in collections_to_clone:
+        info(f"Pulling collection '{coll}' from {remote_url}...")
+        try:
+            pull_result = pull(
+                remote_url=remote_url,
+                local_root=local_path,
+                collection=coll,
+                force=False,  # No local changes to force-overwrite
+                dry_run=False,
+                profile=profile,
             )
 
-        success(f"Cloned {pull_result.files_downloaded} file(s) to {local_path}")
+            if not pull_result.success:
+                # Check if remote doesn't exist
+                if pull_result.remote_version is None:
+                    error_msg = f"Remote collection '{coll}' not found at {remote_url}"
+                else:
+                    error_msg = f"Pull failed for collection '{coll}'"
+                errors.append(error_msg)
+                error(error_msg)
+                # Continue with other collections instead of failing immediately
+                continue
 
-    except PullError as e:
-        error_msg = f"Clone failed: {e}"
-        errors.append(error_msg)
-        error(error_msg)
+            collections_cloned.append(coll)
+            total_files += pull_result.files_downloaded
+            last_pull_result = pull_result
+            detail(f"Cloned {pull_result.files_downloaded} file(s) from '{coll}'")
+
+        except PullError as e:
+            error_msg = f"Clone failed for collection '{coll}': {e}"
+            errors.append(error_msg)
+            error(error_msg)
+            # Continue with other collections
+            continue
+
+    # Determine overall success
+    if not collections_cloned:
+        # No collections were successfully cloned
         return CloneResult(
             success=False,
-            pull_result=None,
+            pull_result=last_pull_result,
             local_path=local_path,
             errors=errors,
+            collections_cloned=[],
+            total_files_downloaded=0,
         )
+
+    # At least some collections succeeded
+    if errors:
+        # Partial success
+        warn(
+            f"Cloned {len(collections_cloned)}/{len(collections_to_clone)} collections with errors"
+        )
+        return CloneResult(
+            success=False,  # Partial failure is still failure
+            pull_result=last_pull_result,
+            local_path=local_path,
+            errors=errors,
+            collections_cloned=collections_cloned,
+            total_files_downloaded=total_files,
+        )
+
+    # Full success
+    success(
+        f"Cloned {total_files} file(s) from {len(collections_cloned)} collection(s) to {local_path}"
+    )
 
     return CloneResult(
         success=True,
-        pull_result=pull_result,
+        pull_result=last_pull_result,
         local_path=local_path,
         errors=[],
+        collections_cloned=collections_cloned,
+        total_files_downloaded=total_files,
     )
