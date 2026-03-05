@@ -232,7 +232,9 @@ def _step_push(
                 f"Pushed {push_result.versions_pushed} version(s), "
                 f"{push_result.files_uploaded} file(s)"
             )
-        else:
+        elif not dry_run:
+            # Only show "Nothing to push" in non-dry-run mode
+            # In dry-run mode, push() already printed the appropriate message
             info("Nothing to push - local and remote are in sync")
 
         return push_result, None

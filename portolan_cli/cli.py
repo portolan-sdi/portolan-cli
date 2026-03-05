@@ -2196,6 +2196,9 @@ def push(
                     success(
                         f"Pushed {result.versions_pushed} version(s), {result.files_uploaded} file(s)"
                     )
+                elif dry_run:
+                    # Dry-run mode: push.py already printed what would be done
+                    info_output("[DRY RUN] Complete - no files were uploaded")
                 else:
                     info_output("Nothing to push - local and remote are in sync")
             else:
