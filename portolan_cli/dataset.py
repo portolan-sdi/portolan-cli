@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import click
 import pystac
 
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
@@ -50,6 +52,8 @@ from portolan_cli.versions import (
     read_versions,
     write_versions,
 )
+
+logger = logging.getLogger(__name__)
 
 # Files to ignore when scanning item directories for assets.
 # These are STAC/Portolan structural files, not user data.
@@ -1121,6 +1125,23 @@ def add_files(
                     collection_id=coll_id,
                 )
                 added.append(result)
+            except click.ClickException as err:
+                # Handle geometry detection errors from geoparquet-io gracefully
+                # for CSV/TSV files that don't have geometry columns (Issue #140)
+                err_msg = str(err.message) if hasattr(err, "message") else str(err)
+                if (
+                    "geometry columns" in err_msg.lower()
+                    or "could not detect geometry" in err_msg.lower()
+                ):
+                    logger.warning(
+                        "Skipping non-geospatial file %s: no geometry columns detected. "
+                        "This file appears to be tabular data without spatial information.",
+                        file_path.name,
+                    )
+                    skipped.append(file_path)
+                    continue
+                # Re-raise other click exceptions
+                raise
             except (ValueError, FileNotFoundError) as err:
                 # Re-raise with context
                 raise type(err)(f"Failed to add {file_path}: {err}") from err
