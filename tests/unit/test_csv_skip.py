@@ -26,7 +26,9 @@ from hypothesis import strategies as st
 
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
 from portolan_cli.dataset import (
+    _copy_non_geo_to_item_dir,
     _is_no_geometry_error,
+    _update_item_with_asset,
     add_files,
     iter_files_with_sidecars,
 )
@@ -832,6 +834,230 @@ class TestAdr0028AssetTracking:
             or str(csv_file) in all_messages
             or "metadata.csv" in all_messages
         )
+
+
+# =============================================================================
+# Helper Function Unit Tests (Coverage for lines 1104-1109, 1281-1333)
+# =============================================================================
+
+
+class TestCopyNonGeoToItemDir:
+    """Unit tests for _copy_non_geo_to_item_dir helper function."""
+
+    @pytest.mark.unit
+    def test_copies_file_to_item_dir(self, tmp_path: Path) -> None:
+        """_copy_non_geo_to_item_dir should copy source file to item directory."""
+        # Create source file
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        source_file = source_dir / "metadata.csv"
+        source_file.write_text("name,value\ntest,100\n")
+
+        # Create item directory
+        item_dir = tmp_path / "item"
+        item_dir.mkdir()
+
+        # Copy
+        result = _copy_non_geo_to_item_dir(source_file, item_dir)
+
+        # Should return path to copied file
+        assert result == item_dir / "metadata.csv"
+        assert result.exists()
+        assert result.read_text() == "name,value\ntest,100\n"
+
+    @pytest.mark.unit
+    def test_returns_existing_file_if_already_in_place(self, tmp_path: Path) -> None:
+        """_copy_non_geo_to_item_dir should return existing file if source == dest."""
+        # File already in item directory
+        item_dir = tmp_path / "item"
+        item_dir.mkdir()
+        existing_file = item_dir / "metadata.csv"
+        existing_file.write_text("name,value\ntest,100\n")
+
+        # "Copy" file that's already in place
+        result = _copy_non_geo_to_item_dir(existing_file, item_dir)
+
+        # Should return the same file without error
+        assert result == existing_file
+        assert result.exists()
+
+    @pytest.mark.unit
+    def test_preserves_file_metadata(self, tmp_path: Path) -> None:
+        """_copy_non_geo_to_item_dir should preserve file metadata (uses copy2)."""
+        import os
+        import time
+
+        # Create source file with specific content
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        source_file = source_dir / "metadata.csv"
+        source_file.write_text("name,value\ntest,100\n")
+
+        # Get original mtime
+        original_mtime = os.path.getmtime(source_file)
+
+        # Wait a bit to ensure time difference
+        time.sleep(0.1)
+
+        # Create item directory
+        item_dir = tmp_path / "item"
+        item_dir.mkdir()
+
+        # Copy
+        result = _copy_non_geo_to_item_dir(source_file, item_dir)
+
+        # mtime should be preserved (within tolerance)
+        copied_mtime = os.path.getmtime(result)
+        assert abs(copied_mtime - original_mtime) < 1.0, "File metadata not preserved"
+
+
+class TestUpdateItemWithAsset:
+    """Unit tests for _update_item_with_asset helper function."""
+
+    @pytest.mark.unit
+    def test_updates_item_json_with_new_asset(self, tmp_path: Path) -> None:
+        """_update_item_with_asset should add new asset to existing item.json."""
+        # Create catalog structure
+        catalog_root = tmp_path
+        collection_id = "collection"
+        item_id = "test-item"
+
+        collection_dir = catalog_root / collection_id
+        item_dir = collection_dir / item_id
+        item_dir.mkdir(parents=True)
+
+        # Create primary data file
+        primary_file = item_dir / "data.parquet"
+        primary_file.write_bytes(b"fake parquet content")
+
+        # Create initial item.json
+        item_json_path = item_dir / f"{item_id}.json"
+        initial_item = {
+            "type": "Feature",
+            "stac_version": "1.0.0",
+            "id": item_id,
+            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+            "bbox": [-122.4, 37.8, -122.4, 37.8],
+            "properties": {"datetime": "2024-01-01T00:00:00Z"},
+            "links": [],
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/x-parquet",
+                    "roles": ["data"],
+                }
+            },
+        }
+        item_json_path.write_text(json.dumps(initial_item, indent=2))
+
+        # Create versions.json with correct schema (dict-based assets, not list)
+        versions_path = collection_dir / "versions.json"
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-01T00:00:00Z",
+                    "breaking": False,
+                    "changes": ["data.parquet"],
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": "abc123def456",
+                            "size_bytes": 1024,
+                            "href": f"{collection_id}/{item_id}/data.parquet",
+                        }
+                    },
+                }
+            ],
+        }
+        versions_path.write_text(json.dumps(versions_data, indent=2))
+
+        # Add new asset file
+        new_asset = item_dir / "metadata.csv"
+        new_asset.write_text("name,value\ntest,100\n")
+
+        # Update item with asset
+        _update_item_with_asset(
+            catalog_root=catalog_root,
+            collection_id=collection_id,
+            item_id=item_id,
+            asset_path=new_asset,
+        )
+
+        # Verify item.json was updated
+        updated_item = json.loads(item_json_path.read_text())
+        assert "metadata" in updated_item["assets"] or "metadata.csv" in str(
+            updated_item["assets"]
+        ), f"New asset not found in: {updated_item['assets']}"
+
+    @pytest.mark.unit
+    def test_handles_missing_item_json(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """_update_item_with_asset should log warning if item.json doesn't exist."""
+        catalog_root = tmp_path
+        collection_id = "collection"
+        item_id = "nonexistent-item"
+
+        # Create directory but no item.json
+        item_dir = catalog_root / collection_id / item_id
+        item_dir.mkdir(parents=True)
+
+        asset_path = item_dir / "metadata.csv"
+        asset_path.write_text("name,value\ntest,100\n")
+
+        with caplog.at_level(logging.WARNING):
+            _update_item_with_asset(
+                catalog_root=catalog_root,
+                collection_id=collection_id,
+                item_id=item_id,
+                asset_path=asset_path,
+            )
+
+        # Should log warning about missing item.json
+        assert any("not found" in r.message.lower() for r in caplog.records)
+
+    @pytest.mark.unit
+    def test_handles_item_without_primary_file(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """_update_item_with_asset should handle item directory with only JSON files."""
+        catalog_root = tmp_path
+        collection_id = "collection"
+        item_id = "empty-item"
+
+        item_dir = catalog_root / collection_id / item_id
+        item_dir.mkdir(parents=True)
+
+        # Create item.json but no data files
+        item_json_path = item_dir / f"{item_id}.json"
+        item_json_path.write_text(
+            json.dumps(
+                {
+                    "type": "Feature",
+                    "stac_version": "1.0.0",
+                    "id": item_id,
+                    "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                    "bbox": [-122.4, 37.8, -122.4, 37.8],
+                    "properties": {"datetime": "2024-01-01T00:00:00Z"},
+                    "links": [],
+                    "assets": {},
+                }
+            )
+        )
+
+        with caplog.at_level(logging.WARNING):
+            _update_item_with_asset(
+                catalog_root=catalog_root,
+                collection_id=collection_id,
+                item_id=item_id,
+                asset_path=item_dir / "metadata.csv",
+            )
+
+        # Should log warning about no primary file
+        warning_msgs = [r.message.lower() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("primary" in msg or "not found" in msg for msg in warning_msgs)
 
 
 # =============================================================================
