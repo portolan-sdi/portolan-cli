@@ -45,7 +45,7 @@ from portolan_cli.scan_classify import (
     SkipReasonType,
     classify_file,
 )
-from portolan_cli.scan_detect import DualFormatPair, SpecialFormat
+from portolan_cli.scan_detect import DualFormatPair, SpecialFormat, detect_filegdb, is_filegdb
 from portolan_cli.scan_fix import ProposedFix
 from portolan_cli.scan_infer import CollectionSuggestion
 
@@ -352,6 +352,8 @@ class _ScanContext:
     formats_by_dir: dict[Path, set[FormatType]] = field(default_factory=lambda: defaultdict(set))
     # Track shapefile sidecars
     shapefile_sidecars: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
+    # Track special formats (FileGDB, etc.)
+    special_formats: list[SpecialFormat] = field(default_factory=list)
 
 
 # =============================================================================
@@ -852,6 +854,28 @@ def _check_windows_reserved(ctx: _ScanContext, path: Path) -> None:
 # =============================================================================
 
 
+def _get_dir_size(path: Path) -> int:
+    """Calculate total size of all files in a directory (non-recursive).
+
+    Args:
+        path: Path to directory.
+
+    Returns:
+        Total size in bytes of all files in the directory.
+    """
+    total = 0
+    try:
+        for entry in os.scandir(path):
+            if entry.is_file(follow_symlinks=False):
+                try:
+                    total += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
 def _discover_files(
     ctx: _ScanContext,
 ) -> Iterator[tuple[Path, int]]:
@@ -925,8 +949,14 @@ def _discover_files(
                     continue
 
             if is_dir:
-                # Queue directory for later processing
-                dirs_to_process.append(path)
+                # Check if directory is a FileGDB - treat as single asset, don't recurse
+                if is_filegdb(path):
+                    # Yield FileGDB directory as a single file with total size
+                    size = _get_dir_size(path)
+                    yield (path, size)
+                else:
+                    # Queue regular directory for later processing
+                    dirs_to_process.append(path)
             elif is_file:
                 try:
                     size = entry.stat(follow_symlinks=options.follow_symlinks).st_size
@@ -954,7 +984,24 @@ def _discover_files(
 
 
 def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
-    """Process a single discovered file."""
+    """Process a single discovered file or FileGDB directory."""
+    # Check for FileGDB directory FIRST - these are yielded by _discover_files
+    # as directories to be treated as single assets
+    if path.is_dir() and is_filegdb(path):
+        special_format = detect_filegdb(path, ctx.root)
+        if special_format is not None:
+            # Add size to the details for FileGDB directories
+            details = dict(special_format.details)
+            details["size_bytes"] = size
+            enriched = SpecialFormat(
+                path=special_format.path,
+                relative_path=special_format.relative_path,
+                format_type=special_format.format_type,
+                details=details,
+            )
+            ctx.special_formats.append(enriched)
+        return
+
     ext = path.suffix.lower()
     name = path.name
     parent = path.parent
@@ -1101,4 +1148,5 @@ def scan_directory(
         issues=ctx.issues,
         skipped=ctx.skipped,
         directories_scanned=ctx.directories_scanned,
+        special_formats=ctx.special_formats,
     )
