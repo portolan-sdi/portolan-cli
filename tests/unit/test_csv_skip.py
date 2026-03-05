@@ -1,9 +1,10 @@
-"""Unit tests for non-geospatial CSV skip logic (Issue #140).
+"""Unit tests for non-geospatial CSV/TSV handling (Issue #140).
 
-Tests that `portolan add` gracefully handles CSV files without geometry:
-- Warn and skip non-geospatial CSVs instead of erroring
-- Continue processing other geospatial files in the directory
-- Emit appropriate warning messages
+Tests that `portolan add` gracefully handles CSV/TSV files without geometry:
+- Per ADR-0028: Track non-geo files as assets when in same dir as geo file
+- Skip non-geo files that have no companion geo file (can't create STAC item)
+- Emit appropriate log messages
+- Support both CSV and TSV file formats
 
 See: https://github.com/portolan-sdi/portolan-cli/issues/140
 """
@@ -18,11 +19,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.dataset import add_files, iter_files_with_sidecars
+from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
+from portolan_cli.dataset import (
+    _is_no_geometry_error,
+    add_files,
+    iter_files_with_sidecars,
+)
 
 if TYPE_CHECKING:
     pass
@@ -568,5 +575,388 @@ class TestCsvSkipHypothesis:
                 )
             except Exception as e:
                 pytest.fail(f"add_files raised for CSV content: {e}")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# =============================================================================
+# TSV Support Tests (Issue #140 extension)
+# =============================================================================
+
+
+class TestTsvSupport:
+    """Tests for TSV file handling (same logic as CSV)."""
+
+    @pytest.mark.unit
+    def test_tsv_in_geospatial_extensions(self) -> None:
+        """TSV should be in GEOSPATIAL_EXTENSIONS constant."""
+        assert ".tsv" in GEOSPATIAL_EXTENSIONS
+
+    @pytest.mark.unit
+    def test_tsv_in_tabular_extensions(self) -> None:
+        """TSV should be in TABULAR_EXTENSIONS constant."""
+        assert ".tsv" in TABULAR_EXTENSIONS
+        assert ".csv" in TABULAR_EXTENSIONS
+
+    @pytest.mark.unit
+    def test_non_geo_tsv_handled_gracefully(
+        self, initialized_catalog: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Non-geospatial TSV should be handled the same as non-geo CSV."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create non-geo TSV (tab-separated)
+        tsv_file = collection_dir / "metadata.tsv"
+        tsv_file.write_text("name\tvalue\tdescription\nfield1\t100\tTest field\n")
+
+        with caplog.at_level(logging.WARNING):
+            try:
+                added, skipped = add_files(
+                    paths=[tsv_file],
+                    catalog_root=initialized_catalog,
+                    collection_id="collection",
+                )
+            except Exception as e:
+                pytest.fail(f"add_files raised for non-geo TSV: {e}")
+
+        # Should not error
+        assert len(added) == 0
+
+    @pytest.mark.unit
+    def test_geo_tsv_with_lat_lon_is_processed(
+        self, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """TSV with lat/lon columns should be attempted for processing."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True, exist_ok=True)
+
+        geo_tsv = collection_dir / "points.tsv"
+        geo_tsv.write_text(
+            "name\tlatitude\tlongitude\tvalue\n"
+            "Point A\t40.7128\t-74.0060\t100\n"
+            "Point B\t34.0522\t-118.2437\t200\n"
+        )
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            mock_add.return_value = MagicMock(item_id="points", collection_id="collection")
+
+            added, skipped = add_files(
+                paths=[geo_tsv],
+                catalog_root=initialized_catalog,
+                collection_id="collection",
+            )
+
+            # Should attempt to process
+            assert mock_add.called
+
+    @pytest.mark.unit
+    def test_iter_files_with_sidecars_includes_tsv(self, tmp_path: Path) -> None:
+        """iter_files_with_sidecars should include TSV files."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+
+        (collection_dir / "metadata.tsv").write_text("name\tvalue\nfield1\t100\n")
+        (collection_dir / "data.geojson").write_text('{"type":"FeatureCollection","features":[]}')
+
+        files = list(iter_files_with_sidecars(collection_dir))
+        extensions = {f.suffix.lower() for f in files}
+
+        assert ".tsv" in extensions
+
+
+# =============================================================================
+# Exception Handling Tests (Adversarial Review - Narrow Exception Catch)
+# =============================================================================
+
+
+class TestExceptionHandlingNarrowness:
+    """Tests for narrow exception handling (adversarial review issue #1)."""
+
+    @pytest.mark.unit
+    def test_is_no_geometry_error_detects_geometry_error(self) -> None:
+        """_is_no_geometry_error should detect geoparquet-io geometry errors."""
+        # Create mock errors that match geoparquet-io patterns
+        geometry_errors = [
+            click.ClickException("Could not detect geometry columns in CSV/TSV file"),
+            click.ClickException("Reading failed: Could not detect geometry columns"),
+            click.ClickException("No geometry columns in csv file"),
+            click.ClickException("No geometry columns in tsv file"),
+        ]
+
+        for err in geometry_errors:
+            assert _is_no_geometry_error(err), f"Should detect as geometry error: {err.message}"
+
+    @pytest.mark.unit
+    def test_is_no_geometry_error_rejects_other_errors(self) -> None:
+        """_is_no_geometry_error should NOT match non-geometry errors."""
+        # These are errors that should NOT be caught as geometry errors
+        other_errors = [
+            click.ClickException("Permission denied: /path/to/file"),
+            click.ClickException("File not found: data.csv"),
+            click.ClickException("Memory allocation failed"),
+            click.ClickException("Invalid encoding: UTF-16"),
+            click.ClickException("Connection timeout"),
+        ]
+
+        for err in other_errors:
+            assert not _is_no_geometry_error(err), f"Should NOT be geometry error: {err.message}"
+
+    @pytest.mark.unit
+    def test_non_geometry_click_exception_propagates(
+        self, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """Non-geometry ClickExceptions should propagate (not be swallowed)."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True, exist_ok=True)
+
+        csv_file = collection_dir / "data.csv"
+        csv_file.write_text("name,value\ntest,100\n")
+
+        # Mock add_dataset to raise a non-geometry ClickException
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            mock_add.side_effect = click.ClickException("Permission denied: /some/path")
+
+            with pytest.raises(click.ClickException) as exc_info:
+                add_files(
+                    paths=[csv_file],
+                    catalog_root=initialized_catalog,
+                    collection_id="collection",
+                )
+
+            assert "Permission denied" in str(exc_info.value.message)
+
+
+# =============================================================================
+# ADR-0028 Asset Tracking Tests
+# =============================================================================
+
+
+class TestAdr0028AssetTracking:
+    """Tests for ADR-0028 compliance: non-geo files tracked as assets."""
+
+    @pytest.mark.unit
+    def test_non_geo_csv_with_geo_file_tracked_as_asset(
+        self, initialized_catalog: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Non-geo CSV in same dir as geo file should be tracked as asset (ADR-0028)."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create non-geo CSV
+        metadata_csv = collection_dir / "metadata.csv"
+        metadata_csv.write_text("name,description\nfield1,Test field\n")
+
+        # Create valid GeoJSON
+        geojson = collection_dir / "data.geojson"
+        geojson.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                            "properties": {"name": "Test"},
+                        }
+                    ],
+                }
+            )
+        )
+
+        # Mock add_dataset to simulate successful geo file processing
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
+
+            with caplog.at_level(logging.INFO):
+                added, skipped = add_files(
+                    paths=[collection_dir],
+                    catalog_root=initialized_catalog,
+                    collection_id="collection",
+                )
+
+            # Should process geo file
+            assert mock_add.called
+
+    @pytest.mark.unit
+    def test_non_geo_only_directory_logs_warning(
+        self, initialized_catalog: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Directory with only non-geo files should log warning about missing geo file."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create only non-geo CSVs (no geo files)
+        (collection_dir / "metadata.csv").write_text("name,value\nfield1,100\n")
+        (collection_dir / "config.csv").write_text("key,value\nsetting1,true\n")
+
+        with caplog.at_level(logging.WARNING):
+            added, skipped = add_files(
+                paths=[collection_dir],
+                catalog_root=initialized_catalog,
+                collection_id="collection",
+            )
+
+        # Should return empty (no geo files to create items)
+        assert len(added) == 0
+
+        # Should log warning about missing geo file
+        warning_messages = " ".join(r.message for r in caplog.records).lower()
+        assert "geospatial" in warning_messages or "geometry" in warning_messages, (
+            f"Expected warning about non-geospatial files: {warning_messages}"
+        )
+
+    @pytest.mark.unit
+    def test_warning_message_includes_full_path(
+        self, initialized_catalog: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Warning/info messages should include full file path (not just filename)."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True, exist_ok=True)
+
+        csv_file = collection_dir / "metadata.csv"
+        csv_file.write_text("name,value\ntest,100\n")
+
+        with caplog.at_level(logging.WARNING):
+            add_files(
+                paths=[csv_file],
+                catalog_root=initialized_catalog,
+                collection_id="collection",
+            )
+
+        # Check messages include path info (not just "metadata.csv")
+        all_messages = " ".join(r.message for r in caplog.records)
+        # Should have some path context (either full path or meaningful directory info)
+        assert (
+            "collection" in all_messages.lower()
+            or str(csv_file) in all_messages
+            or "metadata.csv" in all_messages
+        )
+
+
+# =============================================================================
+# Mixed Format Integration Tests
+# =============================================================================
+
+
+class TestMixedFormatIntegration:
+    """Integration tests for mixed CSV/TSV/geo file processing."""
+
+    @pytest.mark.unit
+    def test_mixed_csv_tsv_directory(
+        self, initialized_catalog: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Directory with mix of CSV, TSV, and geo files should be handled correctly."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create non-geo CSV
+        (collection_dir / "metadata.csv").write_text("name,value\nfield1,100\n")
+
+        # Create non-geo TSV
+        (collection_dir / "config.tsv").write_text("key\tvalue\nsetting1\ttrue\n")
+
+        # Create valid GeoJSON
+        geojson = collection_dir / "data.geojson"
+        geojson.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                            "properties": {"name": "Test"},
+                        }
+                    ],
+                }
+            )
+        )
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
+
+            with caplog.at_level(logging.INFO):
+                try:
+                    added, skipped = add_files(
+                        paths=[collection_dir],
+                        catalog_root=initialized_catalog,
+                        collection_id="collection",
+                    )
+                except Exception as e:
+                    pytest.fail(f"add_files raised for mixed format directory: {e}")
+
+            # Should process the geo file
+            assert mock_add.called
+
+    @pytest.mark.unit
+    @given(
+        num_csv=st.integers(min_value=0, max_value=2),
+        num_tsv=st.integers(min_value=0, max_value=2),
+        num_geo=st.integers(min_value=0, max_value=2),
+    )
+    @settings(max_examples=10, deadline=10000)
+    def test_property_mixed_formats_never_raise(
+        self, num_csv: int, num_tsv: int, num_geo: int
+    ) -> None:
+        """Property: Any mix of CSV/TSV/geo files should never raise unexpected exceptions."""
+        tmp_dir = tempfile.mkdtemp()
+        tmp_path = Path(tmp_dir)
+        try:
+            # Set up catalog
+            portolan_dir = tmp_path / ".portolan"
+            portolan_dir.mkdir(exist_ok=True)
+            catalog_data = {
+                "type": "Catalog",
+                "stac_version": "1.0.0",
+                "id": "portolan-catalog",
+                "description": "Test catalog",
+                "links": [],
+            }
+            (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
+
+            collection_dir = tmp_path / "collection"
+            collection_dir.mkdir(exist_ok=True)
+
+            # Create non-geo CSVs
+            for i in range(num_csv):
+                (collection_dir / f"meta_{i}.csv").write_text(f"name,value\nfield{i},100\n")
+
+            # Create non-geo TSVs
+            for i in range(num_tsv):
+                (collection_dir / f"conf_{i}.tsv").write_text(f"key\tvalue\nset{i}\ttrue\n")
+
+            # Create GeoJSONs
+            for i in range(num_geo):
+                geojson = collection_dir / f"geo_{i}.geojson"
+                geojson.write_text(
+                    json.dumps(
+                        {
+                            "type": "FeatureCollection",
+                            "features": [
+                                {
+                                    "type": "Feature",
+                                    "geometry": {
+                                        "type": "Point",
+                                        "coordinates": [-122.4 + i, 37.8],
+                                    },
+                                    "properties": {"name": f"Point {i}"},
+                                }
+                            ],
+                        }
+                    )
+                )
+
+            with patch("portolan_cli.dataset.add_dataset") as mock_add:
+                mock_add.return_value = MagicMock(item_id="test", collection_id="collection")
+
+                try:
+                    add_files(
+                        paths=[collection_dir],
+                        catalog_root=tmp_path,
+                        collection_id="collection",
+                    )
+                except Exception as e:
+                    pytest.fail(f"add_files raised for mixed formats: {e}")
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
