@@ -372,9 +372,11 @@ def add_version(
 
     # Early return if nothing changed (no new/modified assets and no removals)
     # This prevents creating no-op versions when re-adding unchanged files
-    # BUT: allow creating first version even with empty assets (metadata-only)
+    # BUT: allow versions when metadata indicates explicit request (message, breaking, schema)
     if not changes and not removed and versions_file.versions:
-        return versions_file
+        # Only skip if truly a no-op: no message, not breaking, no schema change
+        if not message and not breaking and not schema:
+            return versions_file
 
     new_version = Version(
         version=version,
