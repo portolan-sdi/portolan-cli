@@ -1337,3 +1337,112 @@ class TestCorruptedVersionsJson:
 
         with pytest.raises(ValueError, match="Invalid versions.json schema"):
             read_versions(versions_path)
+
+
+class TestSnapshotModel:
+    """Tests for the snapshot versioning model (issues #141, #147).
+
+    Each version should contain ALL assets at that point in time,
+    not just the newly-added ones. This is per ADR-0005.
+    """
+
+    @pytest.mark.unit
+    def test_add_multiple_files_accumulates_assets(self) -> None:
+        """Adding files incrementally accumulates assets in each version.
+
+        Version 1.0.0: {A}
+        Version 1.0.1: {A, B}  <- B added, A preserved
+        Version 1.0.2: {A, B, C}  <- C added, A and B preserved
+        """
+        vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
+
+        # Add first file
+        asset_a = Asset(sha256="aaa", size_bytes=100, href="coll/item/a.parquet")
+        vf = add_version(vf, version="1.0.0", assets={"a.parquet": asset_a}, breaking=False)
+
+        assert len(vf.versions) == 1
+        assert "a.parquet" in vf.versions[0].assets
+
+        # Add second file - should preserve first
+        asset_b = Asset(sha256="bbb", size_bytes=200, href="coll/item/b.parquet")
+        vf = add_version(vf, version="1.0.1", assets={"b.parquet": asset_b}, breaking=False)
+
+        assert len(vf.versions) == 2
+        # Key assertion: version 1.0.1 should have BOTH assets
+        assert "a.parquet" in vf.versions[1].assets, "Previous asset should be preserved"
+        assert "b.parquet" in vf.versions[1].assets, "New asset should be added"
+
+        # Add third file - should preserve both previous
+        asset_c = Asset(sha256="ccc", size_bytes=300, href="coll/item/c.parquet")
+        vf = add_version(vf, version="1.0.2", assets={"c.parquet": asset_c}, breaking=False)
+
+        assert len(vf.versions) == 3
+        assert "a.parquet" in vf.versions[2].assets
+        assert "b.parquet" in vf.versions[2].assets
+        assert "c.parquet" in vf.versions[2].assets
+
+    @pytest.mark.unit
+    def test_changes_field_only_shows_new_or_modified(self) -> None:
+        """The 'changes' field should only list what changed, not all assets."""
+        vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
+
+        # Add first file
+        asset_a = Asset(sha256="aaa", size_bytes=100, href="coll/item/a.parquet")
+        vf = add_version(vf, version="1.0.0", assets={"a.parquet": asset_a}, breaking=False)
+
+        assert vf.versions[0].changes == ["a.parquet"]
+
+        # Add second file
+        asset_b = Asset(sha256="bbb", size_bytes=200, href="coll/item/b.parquet")
+        vf = add_version(vf, version="1.0.1", assets={"b.parquet": asset_b}, breaking=False)
+
+        # Changes should only show b.parquet (the new file), not a.parquet
+        assert vf.versions[1].changes == ["b.parquet"]
+
+    @pytest.mark.unit
+    def test_updating_existing_asset_shows_in_changes(self) -> None:
+        """Modifying an existing asset should show in changes."""
+        vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
+
+        # Add initial file
+        asset_a_v1 = Asset(sha256="aaa_v1", size_bytes=100, href="coll/item/a.parquet")
+        vf = add_version(vf, version="1.0.0", assets={"a.parquet": asset_a_v1}, breaking=False)
+
+        # Update the same file (different checksum)
+        asset_a_v2 = Asset(sha256="aaa_v2", size_bytes=150, href="coll/item/a.parquet")
+        vf = add_version(vf, version="1.0.1", assets={"a.parquet": asset_a_v2}, breaking=False)
+
+        # Changes should show a.parquet was modified
+        assert vf.versions[1].changes == ["a.parquet"]
+        # Asset should be updated
+        assert vf.versions[1].assets["a.parquet"].sha256 == "aaa_v2"
+
+    @pytest.mark.unit
+    def test_remove_asset_from_snapshot(self) -> None:
+        """Removing an asset should exclude it from subsequent versions."""
+        vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
+
+        # Add two files
+        asset_a = Asset(sha256="aaa", size_bytes=100, href="coll/item/a.parquet")
+        asset_b = Asset(sha256="bbb", size_bytes=200, href="coll/item/b.parquet")
+        vf = add_version(
+            vf,
+            version="1.0.0",
+            assets={"a.parquet": asset_a, "b.parquet": asset_b},
+            breaking=False,
+        )
+
+        assert len(vf.versions[0].assets) == 2
+
+        # Remove file A by passing removed parameter
+        vf = add_version(
+            vf,
+            version="1.0.1",
+            assets={},  # No new assets
+            breaking=False,
+            removed={"a.parquet"},
+        )
+
+        # Version 1.0.1 should only have B
+        assert "a.parquet" not in vf.versions[1].assets
+        assert "b.parquet" in vf.versions[1].assets
