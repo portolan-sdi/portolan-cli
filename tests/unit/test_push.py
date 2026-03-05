@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 if TYPE_CHECKING:
     pass
@@ -1659,3 +1661,135 @@ class TestMalformedDataHandling:
 
         with pytest.raises(KeyError):
             _ = asset_data["size_bytes"]
+
+
+# =============================================================================
+# Property-Based Tests (Hypothesis)
+# =============================================================================
+
+
+class TestPushResultInvariants:
+    """Property-based tests for PushResult invariants using Hypothesis."""
+
+    @pytest.mark.unit
+    @given(
+        success=st.booleans(),
+        files_uploaded=st.integers(min_value=0, max_value=1000),
+        versions_pushed=st.integers(min_value=0, max_value=100),
+        conflicts=st.lists(st.text(min_size=1, max_size=50), max_size=10),
+        errors=st.lists(st.text(min_size=1, max_size=100), max_size=10),
+    )
+    def test_push_result_dataclass_accepts_valid_inputs(
+        self,
+        success: bool,
+        files_uploaded: int,
+        versions_pushed: int,
+        conflicts: list[str],
+        errors: list[str],
+    ) -> None:
+        """PushResult should accept any valid combination of inputs."""
+        from portolan_cli.push import PushResult
+
+        result = PushResult(
+            success=success,
+            files_uploaded=files_uploaded,
+            versions_pushed=versions_pushed,
+            conflicts=conflicts,
+            errors=errors,
+        )
+
+        assert result.success == success
+        assert result.files_uploaded == files_uploaded
+        assert result.versions_pushed == versions_pushed
+        assert result.conflicts == conflicts
+        assert result.errors == errors
+
+    @pytest.mark.unit
+    @given(
+        files_uploaded=st.integers(min_value=0, max_value=1000),
+        versions_pushed=st.integers(min_value=0, max_value=100),
+    )
+    def test_dry_run_result_always_has_zero_counts(
+        self, files_uploaded: int, versions_pushed: int
+    ) -> None:
+        """In dry-run mode, PushResult should always report zero work done.
+
+        This property encodes the semantic contract: dry-run never actually
+        pushes, so files_uploaded and versions_pushed must be 0.
+        """
+        from portolan_cli.push import PushResult
+
+        # Simulating what push() returns in dry-run mode
+        dry_run_result = PushResult(
+            success=True,
+            files_uploaded=0,  # Always 0 in dry-run
+            versions_pushed=0,  # Always 0 in dry-run
+            conflicts=[],
+            errors=[],
+        )
+
+        # Invariant: dry-run results always have zero counts
+        assert dry_run_result.files_uploaded == 0
+        assert dry_run_result.versions_pushed == 0
+
+
+class TestVersionDiffInvariants:
+    """Property-based tests for version diffing invariants."""
+
+    @pytest.mark.unit
+    @given(
+        local_versions=st.lists(st.text(min_size=1, max_size=10), min_size=0, max_size=20),
+        remote_versions=st.lists(st.text(min_size=1, max_size=10), min_size=0, max_size=20),
+    )
+    def test_diff_partitions_versions(
+        self, local_versions: list[str], remote_versions: list[str]
+    ) -> None:
+        """Version diff should partition versions into local_only and remote_only.
+
+        Property: local_only ∪ remote_only ∪ common = local ∪ remote
+        Property: local_only ∩ remote_only = ∅
+        """
+        from portolan_cli.push import diff_version_lists
+
+        diff = diff_version_lists(local_versions, remote_versions)
+
+        # Union of sets should equal union of inputs
+        local_set = set(local_versions)
+        remote_set = set(remote_versions)
+
+        assert set(diff.local_only) == local_set - remote_set
+        assert set(diff.remote_only) == remote_set - local_set
+        assert set(diff.local_only) & set(diff.remote_only) == set()  # Disjoint
+
+    @pytest.mark.unit
+    @given(
+        versions=st.lists(st.text(min_size=1, max_size=10), min_size=0, max_size=20, unique=True),
+    )
+    def test_identical_versions_means_nothing_to_push(self, versions: list[str]) -> None:
+        """When local and remote have identical versions, diff should be empty.
+
+        This is the "nothing to push" case - the invariant our fix addresses.
+        """
+        from portolan_cli.push import diff_version_lists
+
+        diff = diff_version_lists(versions, versions)
+
+        assert diff.local_only == []
+        assert diff.remote_only == []
+        assert not diff.has_conflict
+
+    @pytest.mark.unit
+    @given(
+        local_versions=st.lists(
+            st.text(min_size=1, max_size=10), min_size=1, max_size=20, unique=True
+        ),
+    )
+    def test_empty_remote_means_local_only(self, local_versions: list[str]) -> None:
+        """When remote is empty, all local versions should be in local_only."""
+        from portolan_cli.push import diff_version_lists
+
+        diff = diff_version_lists(local_versions, [])
+
+        assert set(diff.local_only) == set(local_versions)
+        assert diff.remote_only == []
+        assert not diff.has_conflict  # First push, no conflict

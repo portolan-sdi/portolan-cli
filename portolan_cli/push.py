@@ -543,7 +543,10 @@ def push(
     # Nothing to push?
     # With --force, we still push if remote has versions we don't have (to overwrite remote state)
     if not diff.local_only and not (force and diff.remote_only):
-        info("Nothing to push - local and remote are in sync")
+        if dry_run:
+            info("[DRY RUN] Nothing would be pushed - local and remote are in sync")
+        else:
+            info("Nothing to push - local and remote are in sync")
         return PushResult(
             success=True,
             files_uploaded=0,
