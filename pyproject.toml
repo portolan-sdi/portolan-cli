@@ -171,6 +171,12 @@ ignore_missing_imports = true
 exclude_dirs = ["tests", ".venv"]
 skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
 
+# ---------- spell check ----------
+
+[tool.codespell]
+# "Nd" is a Unicode category code for "Number, decimal digit" used in Hypothesis tests
+ignore-words-list = "nd"
+
 # ---------- dead code ----------
 
 [tool.vulture]
