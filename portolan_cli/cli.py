@@ -2056,17 +2056,22 @@ def dataset_list(ctx: click.Context, collection: str | None, catalog_path: Path)
 def dataset_info(
     ctx: click.Context, dataset_id: str, catalog_path: Path, json_output: bool
 ) -> None:
-    """Show information about a dataset.
+    """Show information about a dataset (DEPRECATED).
+
+    This command is deprecated. Use 'portolan info' instead.
 
     DATASET_ID is in the format 'collection/item'.
 
     Examples:
 
-        portolan dataset info demographics/census
-
-        portolan dataset info imagery/satellite-2024 --json
+        portolan info demographics/census          # New command
+        portolan info imagery/satellite-2024 --json
     """
     use_json = should_output_json(ctx, json_output)
+
+    # Show deprecation warning (unless JSON output)
+    if not use_json:
+        warn("'portolan dataset info' is deprecated. Use 'portolan info' instead.")
 
     try:
         ds = get_dataset_info(catalog_path, dataset_id)

@@ -79,7 +79,7 @@ hide:
 
     ---
 
-    Track datasets with checksums and full history
+    Track items with checksums and full history
 
 - :material-cloud-sync-outline:{ .lg .middle } **Sync**
 
