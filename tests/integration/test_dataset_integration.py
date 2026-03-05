@@ -472,3 +472,116 @@ class TestMultiAssetIntegration:
         assert "data.parquet" in untracked_filenames
         assert ".DS_Store" not in untracked_filenames
         assert ".hidden" not in untracked_filenames
+
+
+# =============================================================================
+# Deprecation Warning Integration Tests (Issue #148)
+# =============================================================================
+
+
+class TestDatasetInfoDeprecationIntegration:
+    """Integration tests verifying 'portolan dataset info' deprecation behavior.
+
+    These tests exercise the full CLI path to ensure the deprecation warning
+    is emitted at the right point and doesn't break the command output.
+    """
+
+    @pytest.mark.integration
+    def test_dataset_info_cli_shows_deprecation_warning(
+        self, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """dataset info CLI emits deprecation warning with real catalog data."""
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        # Add a real dataset first
+        add_result = add_dataset(
+            path=valid_points_geojson,
+            catalog_root=initialized_catalog,
+            collection_id="test-col",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "dataset",
+                "info",
+                f"test-col/{add_result.item_id}",
+                "--catalog",
+                str(initialized_catalog),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "deprecated" in result.output.lower()
+        assert "portolan info" in result.output
+
+    @pytest.mark.integration
+    def test_dataset_info_cli_still_returns_correct_data_after_warning(
+        self, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """dataset info CLI still returns item data after emitting deprecation warning."""
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        add_result = add_dataset(
+            path=valid_points_geojson,
+            catalog_root=initialized_catalog,
+            collection_id="test-col",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "dataset",
+                "info",
+                f"test-col/{add_result.item_id}",
+                "--catalog",
+                str(initialized_catalog),
+            ],
+        )
+
+        assert result.exit_code == 0
+        # Deprecation warning is present
+        assert "deprecated" in result.output.lower()
+        # Item data is also present
+        assert add_result.item_id in result.output
+        assert "test-col" in result.output
+
+    @pytest.mark.integration
+    def test_dataset_info_cli_json_mode_no_deprecation_warning(
+        self, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """dataset info CLI in JSON mode does not contaminate output with warning."""
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import cli
+
+        add_result = add_dataset(
+            path=valid_points_geojson,
+            catalog_root=initialized_catalog,
+            collection_id="test-col",
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "dataset",
+                "info",
+                f"test-col/{add_result.item_id}",
+                "--catalog",
+                str(initialized_catalog),
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        # Output must be valid JSON (warning would break this)
+        parsed = json.loads(result.output)
+        assert parsed["success"] is True
+        assert "deprecated" not in result.output.lower()

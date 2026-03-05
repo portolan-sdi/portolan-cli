@@ -17,6 +17,8 @@ from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from portolan_cli.cli import cli
 from portolan_cli.dataset import DatasetInfo
@@ -558,6 +560,136 @@ class TestDatasetListDeprecation:
                 assert result.exit_code == 0
                 # Should still show items (after deprecation warning)
                 assert "col1" in result.output
+
+
+class TestDatasetInfoDeprecation:
+    """Tests for deprecated 'portolan dataset info' command."""
+
+    @pytest.mark.unit
+    def test_dataset_info_shows_deprecation_warning(self, runner: CliRunner) -> None:
+        """dataset info shows deprecation warning."""
+        with patch("portolan_cli.cli.get_dataset_info") as mock_info:
+            mock_info.return_value = DatasetInfo(
+                item_id="my-item",
+                collection_id="my-collection",
+                format_type=FormatType.VECTOR,
+                bbox=[-122.5, 37.5, -122.0, 38.0],
+                asset_paths=["data.parquet"],
+            )
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "info", "my-collection/my-item"])
+
+                assert result.exit_code == 0
+                assert "deprecated" in result.output.lower()
+                assert "portolan info" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_dataset_info_still_works_after_deprecation_warning(self, runner: CliRunner) -> None:
+        """dataset info still returns correct information despite deprecation warning."""
+        with patch("portolan_cli.cli.get_dataset_info") as mock_info:
+            mock_info.return_value = DatasetInfo(
+                item_id="census",
+                collection_id="demographics",
+                format_type=FormatType.VECTOR,
+                bbox=[-122.5, 37.5, -122.0, 38.0],
+                asset_paths=["data.parquet"],
+                title="Census 2020",
+            )
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "info", "demographics/census"])
+
+                assert result.exit_code == 0
+                # Warning present
+                assert "deprecated" in result.output.lower()
+                # But data also present
+                assert "census" in result.output
+                assert "demographics" in result.output
+
+    @pytest.mark.unit
+    def test_dataset_info_deprecation_warning_not_in_json_mode(self, runner: CliRunner) -> None:
+        """dataset info does not show deprecation warning in JSON mode."""
+        with patch("portolan_cli.cli.get_dataset_info") as mock_info:
+            mock_info.return_value = DatasetInfo(
+                item_id="my-item",
+                collection_id="my-collection",
+                format_type=FormatType.VECTOR,
+                bbox=[-122.5, 37.5, -122.0, 38.0],
+                asset_paths=["data.parquet"],
+            )
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "info", "my-collection/my-item", "--json"])
+
+                assert result.exit_code == 0
+                # JSON output should be parseable without the warning contaminating it
+                data = json.loads(result.output)
+                assert data["success"] is True
+                assert "deprecated" not in result.output.lower()
+
+    @pytest.mark.unit
+    def test_dataset_info_deprecation_warning_points_to_info_command(
+        self, runner: CliRunner
+    ) -> None:
+        """dataset info deprecation warning points users to 'portolan info' specifically."""
+        with patch("portolan_cli.cli.get_dataset_info") as mock_info:
+            mock_info.return_value = DatasetInfo(
+                item_id="my-item",
+                collection_id="my-collection",
+                format_type=FormatType.VECTOR,
+                bbox=[-122.5, 37.5, -122.0, 38.0],
+                asset_paths=["data.parquet"],
+            )
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "info", "my-collection/my-item"])
+
+                assert result.exit_code == 0
+                # Must specifically mention 'portolan info' (not just any info)
+                assert "portolan info" in result.output
+
+    @pytest.mark.unit
+    @given(
+        item_id=st.from_regex(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}", fullmatch=True),
+        collection_id=st.from_regex(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,39}", fullmatch=True),
+    )
+    @settings(max_examples=20)
+    def test_dataset_info_deprecation_warning_always_present_for_any_dataset_id(
+        self, item_id: str, collection_id: str
+    ) -> None:
+        """dataset info deprecation warning is always shown regardless of dataset_id value."""
+        runner = CliRunner()
+        with patch("portolan_cli.cli.get_dataset_info") as mock_info:
+            mock_info.return_value = DatasetInfo(
+                item_id=item_id,
+                collection_id=collection_id,
+                format_type=FormatType.VECTOR,
+                bbox=[-180.0, -90.0, 180.0, 90.0],
+                asset_paths=["data.parquet"],
+            )
+
+            with runner.isolated_filesystem():
+                Path(".portolan").mkdir()
+                (Path(".portolan") / "catalog.json").write_text("{}")
+
+                result = runner.invoke(cli, ["dataset", "info", f"{collection_id}/{item_id}"])
+
+                assert result.exit_code == 0
+                assert "deprecated" in result.output.lower()
+                assert "portolan info" in result.output
 
 
 class TestListFormatSize:
