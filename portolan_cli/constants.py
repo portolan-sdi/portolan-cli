@@ -15,12 +15,18 @@ GEOSPATIAL_EXTENSIONS: frozenset[str] = frozenset(
         ".gpkg",
         ".fgb",
         ".csv",
+        ".tsv",  # Tab-separated values (may or may not have geometry)
         ".tif",
         ".tiff",
         ".jp2",
         ".pmtiles",
     }
 )
+
+# Extensions for tabular data that may or may not have geometry columns.
+# When these files lack geometry, they should be tracked as non-geospatial assets
+# (per ADR-0028) rather than causing errors.
+TABULAR_EXTENSIONS: frozenset[str] = frozenset({".csv", ".tsv"})
 
 # Cloud-native parquet extension
 PARQUET_EXTENSION: str = ".parquet"

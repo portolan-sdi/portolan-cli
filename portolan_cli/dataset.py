@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+import click
 import pystac
 
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
@@ -29,6 +31,7 @@ from portolan_cli.constants import (
     MAX_CATALOG_SEARCH_DEPTH,
     MTIME_TOLERANCE_SECONDS,
     SIDECAR_PATTERNS,
+    TABULAR_EXTENSIONS,
 )
 from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
@@ -49,6 +52,18 @@ from portolan_cli.versions import (
     add_version,
     read_versions,
     write_versions,
+)
+
+logger = logging.getLogger(__name__)
+
+# Error message patterns from geoparquet-io for non-geospatial CSV/TSV files.
+# These specific patterns indicate the file lacks geometry columns (not other errors
+# like permission denied, encoding issues, or memory errors).
+# See: https://github.com/geoparquet/geoparquet-io (geometry detection logic)
+_GEOPARQUET_IO_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
+    "could not detect geometry columns",
+    "geometry columns in csv",
+    "geometry columns in tsv",
 )
 
 # Files to ignore when scanning item directories for assets.
@@ -1052,6 +1067,48 @@ def is_current(
     return current_checksum == asset.sha256
 
 
+def _is_no_geometry_error(err: click.ClickException) -> bool:
+    """Check if a ClickException is specifically a 'no geometry columns' error from geoparquet-io.
+
+    This narrows the exception handling to ONLY geometry detection errors,
+    avoiding accidentally catching permission errors, encoding issues, or
+    memory errors that might also be wrapped in ClickException.
+
+    Args:
+        err: The ClickException to check.
+
+    Returns:
+        True if the error is specifically about missing geometry columns.
+    """
+    err_msg = (str(err.message) if hasattr(err, "message") else str(err)).lower()
+    return any(pattern in err_msg for pattern in _GEOPARQUET_IO_NO_GEOMETRY_PATTERNS)
+
+
+def _copy_non_geo_to_item_dir(
+    file_path: Path,
+    item_dir: Path,
+) -> Path:
+    """Copy a non-geospatial file to an item directory as a companion asset.
+
+    Per ADR-0028, ALL files in item directories should be tracked as STAC assets.
+    Non-geospatial CSV/TSV files are copied (not converted) and tracked alongside
+    the primary geospatial data.
+
+    Args:
+        file_path: Source file path.
+        item_dir: Destination item directory.
+
+    Returns:
+        Path to the copied file in item_dir.
+    """
+    dest_path = item_dir / file_path.name
+    if dest_path.exists() and dest_path.resolve() == file_path.resolve():
+        # Already in place
+        return dest_path
+    shutil.copy2(file_path, dest_path)
+    return dest_path
+
+
 def add_files(
     *,
     paths: list[Path],
@@ -1064,6 +1121,11 @@ def add_files(
     This is the main entry point for the `portolan add` command.
     Handles single files, directories, and sidecar auto-detection.
 
+    Per ADR-0028 ("Track ALL files in item directories as assets"):
+    - Geospatial files (with geometry) are converted to cloud-native format
+    - Non-geospatial CSV/TSV files are tracked as companion assets (no conversion)
+    - Files must be in a directory with at least one geospatial file to be tracked
+
     Args:
         paths: List of paths to add (files or directories).
         catalog_root: Root directory of the catalog.
@@ -1074,11 +1136,19 @@ def add_files(
     Returns:
         Tuple of (added_datasets, skipped_paths).
         added_datasets: List of DatasetInfo for newly added/updated files.
-        skipped_paths: List of paths that were skipped (unchanged).
+        skipped_paths: List of paths that were skipped (unchanged or non-geospatial).
     """
     added: list[DatasetInfo] = []
     skipped: list[Path] = []
     processed_paths: set[Path] = set()
+
+    # Track source_dir -> item_dir mappings for non-geo file placement (ADR-0028)
+    # Key: source directory, Value: (item_dir, collection_id, item_id)
+    source_to_item_dir: dict[Path, tuple[Path, str, str]] = {}
+
+    # Deferred non-geo files: (file_path, source_dir, collection_id)
+    # These are processed after geo files to ensure item directories exist
+    deferred_non_geo: list[tuple[Path, Path, str]] = []
 
     for path in paths:
         if path.is_dir():
@@ -1121,11 +1191,150 @@ def add_files(
                     collection_id=coll_id,
                 )
                 added.append(result)
+
+                # Track source_dir -> item_dir mapping for non-geo file placement
+                source_dir = file_path.parent
+                item_dir = catalog_root / coll_id / result.item_id
+                source_to_item_dir[source_dir] = (item_dir, coll_id, result.item_id)
+
+            except click.ClickException as err:
+                # Handle geometry detection errors from geoparquet-io gracefully
+                # for CSV/TSV files that don't have geometry columns (Issue #140)
+                #
+                # IMPORTANT: Only catch SPECIFIC geometry-related errors.
+                # Other ClickExceptions (permission, encoding, memory) should propagate.
+                if not _is_no_geometry_error(err):
+                    raise
+
+                # Only tabular formats can be non-geospatial assets
+                if file_path.suffix.lower() not in TABULAR_EXTENSIONS:
+                    # Non-tabular format without geometry is a real error
+                    raise
+
+                # Defer non-geo tabular files until geo files are processed
+                # This ensures we have an item_dir to place them in
+                source_dir = file_path.parent
+                deferred_non_geo.append((file_path, source_dir, coll_id))
+
             except (ValueError, FileNotFoundError) as err:
                 # Re-raise with context
                 raise type(err)(f"Failed to add {file_path}: {err}") from err
 
+    # Process deferred non-geo files (ADR-0028: track as assets, skip conversion)
+    for file_path, source_dir, coll_id in deferred_non_geo:
+        if source_dir in source_to_item_dir:
+            item_dir, _, item_id = source_to_item_dir[source_dir]
+
+            # Copy non-geo file to item directory as companion asset
+            dest_path = _copy_non_geo_to_item_dir(file_path, item_dir)
+
+            # Log info message (not warning - this is expected behavior per ADR-0028)
+            ext = file_path.suffix.upper().lstrip(".")
+            logger.info(
+                "Tracking %s as non-geospatial %s asset (no conversion): %s",
+                file_path,
+                ext,
+                dest_path.name,
+            )
+
+            # Update the STAC item to include this new asset
+            _update_item_with_asset(
+                catalog_root=catalog_root,
+                collection_id=coll_id,
+                item_id=item_id,
+                asset_path=dest_path,
+            )
+
+            # Add to skipped (tracked but not converted)
+            skipped.append(file_path)
+        else:
+            # No geo file in same directory - cannot create item without bbox
+            ext = file_path.suffix.upper().lstrip(".")
+            logger.warning(
+                "Cannot track non-geospatial %s file %s: no geospatial file in same directory. "
+                "Non-geospatial files require a companion geospatial file to create a STAC item.",
+                ext,
+                file_path,
+            )
+            skipped.append(file_path)
+
     return added, skipped
+
+
+def _update_item_with_asset(
+    catalog_root: Path,
+    collection_id: str,
+    item_id: str,
+    asset_path: Path,
+) -> None:
+    """Update a STAC item to include a new asset file.
+
+    Re-scans the item directory and updates the item.json with all assets.
+    This is used to add non-geospatial companion files to existing items.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_id: Collection identifier.
+        item_id: Item identifier.
+        asset_path: Path to the new asset file.
+    """
+    collection_dir = catalog_root / collection_id
+    item_dir = collection_dir / item_id
+    item_json_path = item_dir / f"{item_id}.json"
+
+    if not item_json_path.exists():
+        logger.warning("Item JSON not found: %s", item_json_path)
+        return
+
+    # Load existing item
+    with open(item_json_path) as f:
+        item_data = json.load(f)
+
+    # Find the primary data file (look for .parquet or .tif)
+    primary_file: Path | None = None
+    for file in item_dir.iterdir():
+        if file.suffix.lower() in {".parquet", ".tif", ".tiff"}:
+            primary_file = file
+            break
+
+    if primary_file is None:
+        # Use the first non-json file as primary
+        for file in item_dir.iterdir():
+            if file.is_file() and file.suffix.lower() != ".json":
+                primary_file = file
+                break
+
+    if primary_file is None:
+        logger.warning("No primary file found in item directory: %s", item_dir)
+        return
+
+    # Re-scan assets
+    stac_assets, asset_files, _ = _scan_item_assets(
+        item_dir=item_dir,
+        item_id=item_id,
+        primary_file=primary_file,
+    )
+
+    # Update item assets
+    item_data["assets"] = {
+        key: {
+            "href": asset.href,
+            "type": asset.media_type,
+            "roles": asset.roles,
+        }
+        for key, asset in stac_assets.items()
+    }
+
+    # Write updated item
+    with open(item_json_path, "w") as f:
+        json.dump(item_data, f, indent=2)
+
+    # Update versions.json with new asset
+    _update_versions(
+        collection_dir=collection_dir,
+        item_id=item_id,
+        asset_files=asset_files,
+    )
 
 
 def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path]:

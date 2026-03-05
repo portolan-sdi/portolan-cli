@@ -94,6 +94,7 @@ CONVERTIBLE_VECTOR_EXTENSIONS: frozenset[str] = frozenset(
         ".geojson",  # GeoJSON
         ".gpkg",  # GeoPackage
         ".csv",  # CSV with geometry
+        ".tsv",  # TSV with geometry (tab-separated)
     }
 )
 
@@ -130,6 +131,7 @@ FORMAT_DISPLAY_NAMES: dict[str, str] = {
     ".geojson": "GeoJSON",
     ".gpkg": "GPKG",
     ".csv": "CSV",
+    ".tsv": "TSV",
     ".json": "GeoJSON",
     # Convertible raster
     ".jp2": "JP2",
@@ -475,6 +477,7 @@ VECTOR_EXTENSIONS: frozenset[str] = frozenset(
         ".gpkg",
         ".fgb",  # FlatGeobuf
         ".csv",
+        ".tsv",  # Tab-separated values (may or may not have geometry)
     }
 )
 
