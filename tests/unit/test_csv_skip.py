@@ -283,7 +283,7 @@ class TestCsvGeometryDetection:
             )
 
             # Should attempt to add the CSV (whether it succeeds depends on geoparquet-io)
-            # The key is it's not pre-emptively skipped
+            # The key is it's not preemptively skipped
             # mock_add.called would be True if CSV was attempted
 
     @pytest.mark.unit
