@@ -2564,7 +2564,8 @@ def clone(
     if local_path is None:
         try:
             local_path = infer_local_path_from_url(remote_url)
-            info_output(f"Inferred local path: {local_path}")
+            if not use_json:
+                info_output(f"Inferred local path: {local_path}")
         except ValueError as e:
             if use_json:
                 envelope = error_envelope(
