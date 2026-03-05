@@ -1705,32 +1705,83 @@ class TestPushResultInvariants:
         assert result.errors == errors
 
     @pytest.mark.unit
-    @given(
-        files_uploaded=st.integers(min_value=0, max_value=1000),
-        versions_pushed=st.integers(min_value=0, max_value=100),
-    )
-    def test_dry_run_result_always_has_zero_counts(
-        self, files_uploaded: int, versions_pushed: int
-    ) -> None:
-        """In dry-run mode, PushResult should always report zero work done.
+    def test_dry_run_result_always_has_zero_counts(self, local_catalog: Path) -> None:
+        """In dry-run mode, push() should always return zero work done.
 
         This property encodes the semantic contract: dry-run never actually
         pushes, so files_uploaded and versions_pushed must be 0.
+
+        Tests multiple scenarios to verify invariant holds:
+        1. First push (no remote versions)
+        2. Incremental push (remote has some versions)
+        3. Nothing to push (remote matches local)
         """
-        from portolan_cli.push import PushResult
+        from portolan_cli.push import push
 
-        # Simulating what push() returns in dry-run mode
-        dry_run_result = PushResult(
-            success=True,
-            files_uploaded=0,  # Always 0 in dry-run
-            versions_pushed=0,  # Always 0 in dry-run
-            conflicts=[],
-            errors=[],
-        )
+        # Scenario 1: First push (remote has no versions)
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            mock_fetch.return_value = (None, None)
 
-        # Invariant: dry-run results always have zero counts
-        assert dry_run_result.files_uploaded == 0
-        assert dry_run_result.versions_pushed == 0
+            result = push(
+                catalog_root=local_catalog,
+                collection="test",
+                destination="s3://bucket/catalog",
+                dry_run=True,
+            )
+
+            # INVARIANT: dry-run always returns zero counts
+            assert result.files_uploaded == 0, "Dry-run should not report files uploaded"
+            assert result.versions_pushed == 0, "Dry-run should not report versions pushed"
+            assert result.success is True
+
+        # Scenario 2: Incremental push (remote has v1.0.0, local has v1.0.0 + v1.1.0)
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            mock_fetch.return_value = (
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [
+                        {
+                            "version": "1.0.0",
+                            "created": "2024-01-01T00:00:00Z",
+                            "breaking": False,
+                            "message": "Initial",
+                            "assets": {},
+                            "changes": [],
+                        }
+                    ],
+                },
+                "etag-123",
+            )
+
+            result = push(
+                catalog_root=local_catalog,
+                collection="test",
+                destination="s3://bucket/catalog",
+                dry_run=True,
+            )
+
+            # INVARIANT: dry-run always returns zero counts
+            assert result.files_uploaded == 0, "Dry-run should not report files uploaded"
+            assert result.versions_pushed == 0, "Dry-run should not report versions pushed"
+            assert result.success is True
+
+        # Scenario 3: Nothing to push (remote matches local exactly)
+        local_versions = json.loads((local_catalog / "test" / "versions.json").read_text())
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            mock_fetch.return_value = (local_versions, "etag-456")
+
+            result = push(
+                catalog_root=local_catalog,
+                collection="test",
+                destination="s3://bucket/catalog",
+                dry_run=True,
+            )
+
+            # INVARIANT: dry-run always returns zero counts (even when nothing to do)
+            assert result.files_uploaded == 0, "Dry-run should not report files uploaded"
+            assert result.versions_pushed == 0, "Dry-run should not report versions pushed"
+            assert result.success is True
 
 
 class TestVersionDiffInvariants:
