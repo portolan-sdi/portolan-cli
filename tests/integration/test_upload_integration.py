@@ -173,13 +173,17 @@ class TestUrlParsing:
 
     @pytest.mark.integration
     def test_s3_url_with_complex_prefix(self) -> None:
-        """S3 URL with complex prefix should parse correctly."""
+        """S3 URL with complex prefix should parse correctly.
+
+        Note: Trailing slashes are stripped per issue #144 fix to prevent
+        double-slash issues in path construction.
+        """
         from portolan_cli.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket/path/to/deeply/nested/data/")
 
         assert bucket_url == "s3://mybucket"
-        assert prefix == "path/to/deeply/nested/data/"
+        assert prefix == "path/to/deeply/nested/data"  # Trailing slash stripped (issue #144)
 
     @pytest.mark.integration
     def test_azure_url_complex(self) -> None:

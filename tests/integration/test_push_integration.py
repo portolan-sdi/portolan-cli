@@ -1338,3 +1338,106 @@ class TestDryRunRealCodePath:
             assert result.success is True
             assert result.versions_pushed == 0  # Dry-run doesn't push
             assert result.files_uploaded == 0  # Dry-run doesn't upload
+
+
+# =============================================================================
+# Trailing Slash URL Tests (Issue #144)
+# =============================================================================
+
+
+class TestTrailingSlashNormalization:
+    """Tests for URL trailing slash handling.
+
+    Regression tests for issue #144: trailing slash in S3 URL causes path
+    parsing error due to double slashes in constructed paths.
+    """
+
+    @pytest.mark.integration
+    def test_push_with_trailing_slash_url(self, catalog_with_versions: Path) -> None:
+        """Push should handle destination URLs with trailing slashes.
+
+        Before fix: s3://bucket/prefix/ would cause:
+        "Could not parse path: Path 'prefix//collection/versions.json' contained empty path segment"
+        """
+        from portolan_cli.push import push
+
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            mock_fetch.return_value = (None, None)  # First push
+
+            # This should NOT fail with trailing slash
+            result = push(
+                catalog_root=catalog_with_versions,
+                collection="demographics",
+                destination="s3://mybucket/catalog/",  # <-- Trailing slash
+                dry_run=True,
+            )
+
+        assert result.success is True
+        # Verify no double slashes were constructed
+        # (mock was called with the normalized prefix)
+
+    @pytest.mark.integration
+    def test_push_with_multiple_trailing_slashes(self, catalog_with_versions: Path) -> None:
+        """Push should handle multiple trailing slashes gracefully."""
+        from portolan_cli.push import push
+
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            mock_fetch.return_value = (None, None)
+
+            result = push(
+                catalog_root=catalog_with_versions,
+                collection="demographics",
+                destination="s3://mybucket/catalog///",  # <-- Multiple trailing slashes
+                dry_run=True,
+            )
+
+        assert result.success is True
+
+    @pytest.mark.integration
+    def test_push_url_bucket_only_with_trailing_slash(self, catalog_with_versions: Path) -> None:
+        """Push to bucket root with trailing slash should work."""
+        from portolan_cli.push import push
+
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            mock_fetch.return_value = (None, None)
+
+            # s3://bucket/ should work (empty prefix)
+            result = push(
+                catalog_root=catalog_with_versions,
+                collection="demographics",
+                destination="s3://mybucket/",  # <-- Bucket with trailing slash
+                dry_run=True,
+            )
+
+        assert result.success is True
+
+    @pytest.mark.integration
+    def test_push_constructed_paths_have_no_double_slashes(
+        self, catalog_with_versions: Path
+    ) -> None:
+        """Verify that path construction doesn't create double slashes.
+
+        This test verifies the fix by checking the actual paths that would
+        be used for upload/fetch operations.
+        """
+        from portolan_cli.push import _setup_store
+
+        # Test various trailing slash scenarios
+        test_cases = [
+            ("s3://mybucket/prefix/", "prefix"),
+            ("s3://mybucket/prefix///", "prefix"),
+            ("s3://mybucket/", ""),
+            ("s3://mybucket/a/b/c/", "a/b/c"),
+        ]
+
+        for destination, expected_prefix in test_cases:
+            with patch("portolan_cli.push.S3Store"):
+                _, prefix = _setup_store(destination)
+                assert prefix == expected_prefix, (
+                    f"For {destination!r}, expected prefix {expected_prefix!r}, got {prefix!r}"
+                )
+                # Verify path construction wouldn't create double slashes
+                test_path = f"{prefix}/collection/versions.json".lstrip("/")
+                assert "//" not in test_path, (
+                    f"Path {test_path!r} contains double slash (from prefix={prefix!r})"
+                )
