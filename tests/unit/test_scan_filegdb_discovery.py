@@ -182,13 +182,36 @@ class TestFileGDBDirectorySizeCalculation:
 
         result = scan_directory(tmp_path)
 
-        # If FileGDB appears in special_formats, check its size
-        # The size should be the total of internal files
-        if result.special_formats:
-            filegdb_formats = [sf for sf in result.special_formats if sf.format_type == "filegdb"]
-            if filegdb_formats:
-                # Verify size is calculated correctly
-                assert filegdb_formats[0].details.get("size_bytes", 0) >= expected_total - 100
+        # FileGDB MUST appear in special_formats - not conditional
+        assert len(result.special_formats) >= 1, "FileGDB should be in special_formats"
+
+        filegdb_formats = [sf for sf in result.special_formats if sf.format_type == "filegdb"]
+        assert len(filegdb_formats) == 1, f"Expected 1 FileGDB, got {len(filegdb_formats)}"
+
+        # Verify size is calculated correctly (total of internal files)
+        actual_size = filegdb_formats[0].details.get("size_bytes", 0)
+        assert actual_size == expected_total, (
+            f"FileGDB size should be {expected_total}, got {actual_size}"
+        )
+
+    def test_filegdb_appears_in_special_formats_not_skipped(self, tmp_path: Path) -> None:
+        """FileGDB directories MUST appear in special_formats, NOT in skipped."""
+        gdb_dir = tmp_path / "test.gdb"
+        gdb_dir.mkdir()
+        (gdb_dir / "a00000001.gdbtable").write_bytes(b"\x00")
+
+        result = scan_directory(tmp_path)
+
+        # MUST be in special_formats
+        assert len(result.special_formats) == 1, (
+            f"FileGDB must be in special_formats, got {len(result.special_formats)}"
+        )
+        assert result.special_formats[0].format_type == "filegdb"
+        assert result.special_formats[0].path == gdb_dir
+
+        # MUST NOT be in skipped
+        skipped_paths = [f.path if hasattr(f, "path") else f for f in result.skipped]
+        assert gdb_dir not in skipped_paths, f"FileGDB must NOT be in skipped list: {skipped_paths}"
 
 
 # =============================================================================
