@@ -151,6 +151,14 @@ class TestParseObjectStoreUrl:
         assert prefix == "data/path"
 
     @pytest.mark.unit
+    def test_az_url_missing_container_raises(self) -> None:
+        """Azure URL with only account (no container) should raise ValueError."""
+        from portolan_cli.upload import parse_object_store_url
+
+        with pytest.raises(ValueError, match="Invalid Azure URL"):
+            parse_object_store_url("az://myaccount")
+
+    @pytest.mark.unit
     def test_unsupported_scheme_raises(self) -> None:
         """Unsupported URL scheme should raise ValueError."""
         from portolan_cli.upload import parse_object_store_url
