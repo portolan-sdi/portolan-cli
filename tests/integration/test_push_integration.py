@@ -16,6 +16,8 @@ from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 
 @pytest.fixture
@@ -531,6 +533,121 @@ class TestDryRunBehavior:
                     dry_run=True,
                 )
 
+    @pytest.mark.integration
+    def test_cli_dry_run_no_contradictory_messages(self, catalog_with_versions: Path) -> None:
+        """CLI should not show 'Nothing to push' after dry-run shows pending work.
+
+        Regression test for issue #145: dry-run was showing contradictory messages:
+        - "[DRY RUN] Would push 7 version(s)" followed by
+        - "Nothing to push - local and remote are in sync"
+        """
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push") as mock_push:
+            # Simulate dry-run where there IS work to do
+            # (versions_pushed=0 because dry-run doesn't actually push)
+            mock_push.return_value = PushResult(
+                success=True,
+                files_uploaded=0,
+                versions_pushed=0,  # Dry-run returns 0 even when work exists
+                conflicts=[],
+                errors=[],
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "push",
+                    "s3://mybucket/catalog",
+                    "--collection",
+                    "demographics",
+                    "--dry-run",
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+                catch_exceptions=False,
+            )
+
+            # Should NOT show the misleading "Nothing to push" message
+            assert "Nothing to push" not in result.output, (
+                f"Contradictory message found in dry-run output: {result.output}"
+            )
+
+    @pytest.mark.integration
+    def test_cli_dry_run_shows_completion_message(self, catalog_with_versions: Path) -> None:
+        """CLI should show dry-run completion message when dry-run succeeds."""
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.return_value = PushResult(
+                success=True,
+                files_uploaded=0,
+                versions_pushed=0,
+                conflicts=[],
+                errors=[],
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "push",
+                    "s3://mybucket/catalog",
+                    "--collection",
+                    "demographics",
+                    "--dry-run",
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+                catch_exceptions=False,
+            )
+
+            # Should show dry-run completion indicator
+            assert "DRY RUN" in result.output or "dry-run" in result.output.lower(), (
+                f"Expected dry-run completion message, got: {result.output}"
+            )
+
+    @pytest.mark.integration
+    def test_cli_normal_push_still_shows_nothing_to_push(self, catalog_with_versions: Path) -> None:
+        """Non-dry-run with nothing to push should still show 'Nothing to push'."""
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.return_value = PushResult(
+                success=True,
+                files_uploaded=0,
+                versions_pushed=0,
+                conflicts=[],
+                errors=[],
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "push",
+                    "s3://mybucket/catalog",
+                    "--collection",
+                    "demographics",
+                    # NOTE: No --dry-run flag
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+                catch_exceptions=False,
+            )
+
+            # Normal push with nothing to do SHOULD show this message
+            assert "Nothing to push" in result.output, (
+                f"Expected 'Nothing to push' for sync'd repo, got: {result.output}"
+            )
+
 
 # =============================================================================
 # Asset Path Resolution Tests
@@ -787,3 +904,182 @@ class TestPushCLIErrorBranches:
 
         assert result.exit_code == 1
         assert "force" in result.output.lower() or "pull" in result.output.lower()
+
+
+# =============================================================================
+# Property-Based Tests (Hypothesis)
+# =============================================================================
+
+
+class TestPushOutputInvariants:
+    """Property-based tests for push CLI output invariants.
+
+    These tests verify invariants that should hold across all possible states:
+    - Dry-run never shows "Nothing to push" (contradictory)
+    - Non-dry-run with 0 versions pushed shows "Nothing to push"
+    - Successful push with >0 versions shows success message
+    """
+
+    @pytest.mark.unit
+    @given(
+        files_uploaded=st.integers(min_value=0, max_value=100),
+        versions_pushed=st.integers(min_value=0, max_value=100),
+    )
+    @settings(
+        max_examples=50,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+        deadline=None,  # CLI invocation can be slow
+    )
+    def test_dry_run_never_shows_nothing_to_push(
+        self,
+        catalog_with_versions: Path,
+        files_uploaded: int,
+        versions_pushed: int,
+    ) -> None:
+        """Property: Dry-run mode never outputs 'Nothing to push'.
+
+        This invariant ensures we don't show contradictory messages where
+        dry-run indicates work to do but then says nothing to push.
+        """
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.return_value = PushResult(
+                success=True,
+                files_uploaded=files_uploaded,
+                versions_pushed=versions_pushed,
+                conflicts=[],
+                errors=[],
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "push",
+                    "s3://mybucket/catalog",
+                    "--collection",
+                    "demographics",
+                    "--dry-run",  # Key: dry-run mode
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+                catch_exceptions=False,
+            )
+
+            # INVARIANT: Dry-run should never show "Nothing to push"
+            assert "Nothing to push" not in result.output, (
+                f"Dry-run with files_uploaded={files_uploaded}, "
+                f"versions_pushed={versions_pushed} showed 'Nothing to push': {result.output}"
+            )
+
+    @pytest.mark.unit
+    @given(
+        files_uploaded=st.integers(min_value=0, max_value=100),
+    )
+    @settings(
+        max_examples=25,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+        deadline=None,  # CLI invocation can be slow
+    )
+    def test_non_dry_run_zero_versions_shows_nothing_to_push(
+        self,
+        catalog_with_versions: Path,
+        files_uploaded: int,
+    ) -> None:
+        """Property: Non-dry-run with 0 versions pushed shows 'Nothing to push'.
+
+        This invariant ensures the normal case still works correctly.
+        """
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.return_value = PushResult(
+                success=True,
+                files_uploaded=files_uploaded,
+                versions_pushed=0,  # Key: 0 versions
+                conflicts=[],
+                errors=[],
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "push",
+                    "s3://mybucket/catalog",
+                    "--collection",
+                    "demographics",
+                    # No --dry-run
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+                catch_exceptions=False,
+            )
+
+            # INVARIANT: Non-dry-run with 0 versions should show "Nothing to push"
+            assert "Nothing to push" in result.output, (
+                f"Non-dry-run with files_uploaded={files_uploaded}, "
+                f"versions_pushed=0 didn't show 'Nothing to push': {result.output}"
+            )
+
+    @pytest.mark.unit
+    @given(
+        files_uploaded=st.integers(min_value=0, max_value=100),
+        versions_pushed=st.integers(min_value=1, max_value=100),
+    )
+    @settings(
+        max_examples=25,
+        suppress_health_check=[HealthCheck.function_scoped_fixture],
+        deadline=None,  # CLI invocation can be slow
+    )
+    def test_successful_push_with_versions_shows_pushed_message(
+        self,
+        catalog_with_versions: Path,
+        files_uploaded: int,
+        versions_pushed: int,
+    ) -> None:
+        """Property: Successful push with >0 versions shows 'Pushed' message.
+
+        This invariant ensures success messages appear when work is done.
+        """
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.return_value = PushResult(
+                success=True,
+                files_uploaded=files_uploaded,
+                versions_pushed=versions_pushed,  # Key: >0 versions
+                conflicts=[],
+                errors=[],
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "push",
+                    "s3://mybucket/catalog",
+                    "--collection",
+                    "demographics",
+                    # No --dry-run
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+                catch_exceptions=False,
+            )
+
+            # INVARIANT: Should show "Pushed" message with version count
+            assert "Pushed" in result.output, (
+                f"Successful push with files_uploaded={files_uploaded}, "
+                f"versions_pushed={versions_pushed} didn't show 'Pushed': {result.output}"
+            )
+            assert str(versions_pushed) in result.output, (
+                f"Output didn't contain version count {versions_pushed}: {result.output}"
+            )
