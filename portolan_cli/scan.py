@@ -45,7 +45,7 @@ from portolan_cli.scan_classify import (
     SkipReasonType,
     classify_file,
 )
-from portolan_cli.scan_detect import DualFormatPair, SpecialFormat
+from portolan_cli.scan_detect import DualFormatPair, SpecialFormat, is_filegdb
 from portolan_cli.scan_fix import ProposedFix
 from portolan_cli.scan_infer import CollectionSuggestion
 
@@ -852,6 +852,28 @@ def _check_windows_reserved(ctx: _ScanContext, path: Path) -> None:
 # =============================================================================
 
 
+def _get_dir_size(path: Path) -> int:
+    """Calculate total size of all files in a directory (non-recursive).
+
+    Args:
+        path: Path to directory.
+
+    Returns:
+        Total size in bytes of all files in the directory.
+    """
+    total = 0
+    try:
+        for entry in os.scandir(path):
+            if entry.is_file(follow_symlinks=False):
+                try:
+                    total += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total
+
+
 def _discover_files(
     ctx: _ScanContext,
 ) -> Iterator[tuple[Path, int]]:
@@ -925,8 +947,14 @@ def _discover_files(
                     continue
 
             if is_dir:
-                # Queue directory for later processing
-                dirs_to_process.append(path)
+                # Check if directory is a FileGDB - treat as single asset, don't recurse
+                if is_filegdb(path):
+                    # Yield FileGDB directory as a single file with total size
+                    size = _get_dir_size(path)
+                    yield (path, size)
+                else:
+                    # Queue regular directory for later processing
+                    dirs_to_process.append(path)
             elif is_file:
                 try:
                     size = entry.stat(follow_symlinks=options.follow_symlinks).st_size
