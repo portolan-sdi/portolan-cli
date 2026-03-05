@@ -214,6 +214,80 @@ class TestAddIntegration:
         collection_json = initialized_catalog / "demographics" / "collection.json"
         assert collection_json.exists(), "Collection not created at 'demographics'"
 
+    @pytest.mark.integration
+    def test_add_multiple_files_creates_snapshot_with_all_assets(
+        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """Adding files incrementally accumulates assets in versions.json.
+
+        This tests the fix for issues #141 and #147:
+        - Each version should contain ALL assets at that point in time
+        - Not just the newly-added assets
+
+        Expected behavior:
+        - Add file A → version 1.0.0 with {A}
+        - Add file B → version 1.0.1 with {A, B}
+        """
+        import json
+
+        # Set up: create collection with two files in separate item directories
+        collection_dir = initialized_catalog / "snapshot-test"
+        (collection_dir / "item-a").mkdir(parents=True)
+        (collection_dir / "item-b").mkdir(parents=True)
+        shutil.copy(valid_points_geojson, collection_dir / "item-a" / "file-a.geojson")
+        shutil.copy(valid_points_geojson, collection_dir / "item-b" / "file-b.geojson")
+
+        # Act 1: Add first file
+        result1 = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                str(collection_dir / "item-a" / "file-a.geojson"),
+            ],
+            catch_exceptions=False,
+        )
+        assert result1.exit_code == 0, f"First add failed: {result1.output}"
+
+        # Check version 1.0.0 has 1 asset
+        versions_path = collection_dir / "versions.json"
+        with open(versions_path) as f:
+            v1 = json.load(f)
+        assert len(v1["versions"]) == 1
+        assert len(v1["versions"][0]["assets"]) >= 1  # At least file-a
+
+        # Act 2: Add second file
+        result2 = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                str(collection_dir / "item-b" / "file-b.geojson"),
+            ],
+            catch_exceptions=False,
+        )
+        assert result2.exit_code == 0, f"Second add failed: {result2.output}"
+
+        # Assert: version 1.0.1 should have BOTH files (snapshot model)
+        with open(versions_path) as f:
+            v2 = json.load(f)
+
+        assert len(v2["versions"]) == 2, "Should have 2 versions"
+        latest_version = v2["versions"][-1]
+        asset_keys = list(latest_version["assets"].keys())
+
+        # The key assertion: latest version contains assets from BOTH adds
+        assert len(asset_keys) >= 2, (
+            f"Latest version should have assets from both adds, got: {asset_keys}"
+        )
+
+        # Verify changes field only shows the new file (not all assets)
+        assert len(latest_version["changes"]) == 1, (
+            f"Changes should only show new file, got: {latest_version['changes']}"
+        )
+
 
 class TestRmIntegration:
     """Integration tests for 'portolan rm' command."""
