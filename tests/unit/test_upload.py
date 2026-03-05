@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -156,10 +158,164 @@ class TestParseObjectStoreUrl:
         with pytest.raises(ValueError, match="Unsupported URL scheme"):
             parse_object_store_url("ftp://server/path")
 
+    # =========================================================================
+    # Trailing Slash Normalization Tests (Issue #144)
+    # =========================================================================
+
+    @pytest.mark.unit
+    def test_s3_url_trailing_slash_normalized(self) -> None:
+        """S3 URL with trailing slash should have it stripped from prefix.
+
+        Regression test for issue #144: trailing slash in destination URL
+        causes double-slash in path construction, leading to parse errors.
+        """
+        from portolan_cli.upload import parse_object_store_url
+
+        bucket_url, prefix = parse_object_store_url("s3://mybucket/prefix/")
+        assert bucket_url == "s3://mybucket"
+        assert prefix == "prefix"  # NOT "prefix/"
+
+    @pytest.mark.unit
+    def test_s3_url_multiple_trailing_slashes_normalized(self) -> None:
+        """S3 URL with multiple trailing slashes should have all stripped."""
+        from portolan_cli.upload import parse_object_store_url
+
+        bucket_url, prefix = parse_object_store_url("s3://mybucket/prefix///")
+        assert bucket_url == "s3://mybucket"
+        assert prefix == "prefix"  # NOT "prefix///"
+
+    @pytest.mark.unit
+    def test_gs_url_trailing_slash_normalized(self) -> None:
+        """GCS URL with trailing slash should have it stripped from prefix."""
+        from portolan_cli.upload import parse_object_store_url
+
+        bucket_url, prefix = parse_object_store_url("gs://mybucket/path/to/data/")
+        assert bucket_url == "gs://mybucket"
+        assert prefix == "path/to/data"  # NOT "path/to/data/"
+
+    @pytest.mark.unit
+    def test_az_url_trailing_slash_normalized(self) -> None:
+        """Azure URL with trailing slash should have it stripped from prefix."""
+        from portolan_cli.upload import parse_object_store_url
+
+        bucket_url, prefix = parse_object_store_url("az://myaccount/mycontainer/data/")
+        assert bucket_url == "az://myaccount/mycontainer"
+        assert prefix == "data"  # NOT "data/"
+
+    @pytest.mark.unit
+    def test_s3_bucket_only_with_trailing_slash(self) -> None:
+        """S3 URL with bucket and trailing slash but no prefix.
+
+        s3://bucket/ should result in empty prefix, not "/".
+        """
+        from portolan_cli.upload import parse_object_store_url
+
+        bucket_url, prefix = parse_object_store_url("s3://mybucket/")
+        assert bucket_url == "s3://mybucket"
+        assert prefix == ""  # NOT "/"
+
+    # =========================================================================
+    # Hypothesis Property-Based Tests (Issue #144)
+    # =========================================================================
+
+    @pytest.mark.unit
+    @given(
+        scheme=st.sampled_from(["s3", "gs"]),
+        bucket=st.text(
+            alphabet=st.characters(
+                whitelist_categories=("Ll", "Lu", "Nd"), whitelist_characters="-"
+            ),
+            min_size=3,
+            max_size=20,
+        ).filter(lambda s: s and not s.startswith("-") and not s.endswith("-")),
+        path_segments=st.lists(
+            st.text(
+                alphabet=st.characters(
+                    whitelist_categories=("Ll", "Lu", "Nd"), whitelist_characters="-_"
+                ),
+                min_size=1,
+                max_size=10,
+            ).filter(lambda s: s and s[0].isalnum()),
+            min_size=0,
+            max_size=3,
+        ),
+        num_trailing_slashes=st.integers(min_value=0, max_value=5),
+    )
+    @settings(max_examples=100)
+    def test_prefix_never_ends_with_slash(
+        self,
+        scheme: str,
+        bucket: str,
+        path_segments: list[str],
+        num_trailing_slashes: int,
+    ) -> None:
+        """Property: prefix should NEVER end with a slash.
+
+        This is the core invariant that issue #144 violated.
+        """
+        from portolan_cli.upload import parse_object_store_url
+
+        # Build URL with optional trailing slashes
+        path = "/".join(path_segments) if path_segments else ""
+        trailing = "/" * num_trailing_slashes
+        url = f"{scheme}://{bucket}/{path}{trailing}" if path else f"{scheme}://{bucket}{trailing}"
+
+        bucket_url, prefix = parse_object_store_url(url)
+
+        # The invariant: prefix never ends with slash
+        assert not prefix.endswith("/"), f"Prefix {prefix!r} should not end with '/'"
+        # Also: prefix should not contain double slashes
+        assert "//" not in prefix, f"Prefix {prefix!r} should not contain '//'"
+
+    @pytest.mark.unit
+    @given(
+        scheme=st.sampled_from(["s3", "gs"]),
+        bucket=st.text(
+            alphabet=st.characters(
+                whitelist_categories=("Ll", "Lu", "Nd"), whitelist_characters="-"
+            ),
+            min_size=3,
+            max_size=10,
+        ).filter(lambda s: s and not s.startswith("-") and not s.endswith("-")),
+        prefix_path=st.text(
+            alphabet=st.characters(
+                whitelist_categories=("Ll", "Lu", "Nd"), whitelist_characters="-_/"
+            ),
+            min_size=1,
+            max_size=30,
+        ).filter(lambda s: s and s[0].isalnum() and "//" not in s),
+    )
+    @settings(max_examples=50)
+    def test_path_construction_no_double_slashes(
+        self,
+        scheme: str,
+        bucket: str,
+        prefix_path: str,
+    ) -> None:
+        """Property: constructing paths with prefix should never create double slashes.
+
+        Simulates the path construction in push.py:
+        key = f"{prefix}/{collection}/versions.json"
+        """
+        from portolan_cli.upload import parse_object_store_url
+
+        url = f"{scheme}://{bucket}/{prefix_path}/"  # With trailing slash
+        _, prefix = parse_object_store_url(url)
+
+        # Simulate the path construction from push.py
+        collection = "my-collection"
+        constructed_path = f"{prefix}/{collection}/versions.json".lstrip("/")
+
+        # No double slashes should exist
+        assert "//" not in constructed_path, (
+            f"Path {constructed_path!r} contains '//' "
+            f"(from prefix={prefix!r}, collection={collection!r})"
+        )
+
 
 # =============================================================================
 # Credential Checking Tests
-# =============================================================================
+# ==============================================================================
 
 
 class TestCheckCredentials:

@@ -125,13 +125,15 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
     if url.startswith("s3://"):
         parts = url[5:].split("/", 1)
         bucket = parts[0]
-        prefix = parts[1] if len(parts) > 1 else ""
+        # Strip trailing slashes to prevent double-slash in path construction (issue #144)
+        prefix = parts[1].rstrip("/") if len(parts) > 1 else ""
         return f"s3://{bucket}", prefix
 
     elif url.startswith("gs://"):
         parts = url[5:].split("/", 1)
         bucket = parts[0]
-        prefix = parts[1] if len(parts) > 1 else ""
+        # Strip trailing slashes to prevent double-slash in path construction (issue #144)
+        prefix = parts[1].rstrip("/") if len(parts) > 1 else ""
         return f"gs://{bucket}", prefix
 
     elif url.startswith("az://"):
@@ -140,7 +142,8 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
         if len(parts) < 2:
             raise ValueError(f"Invalid Azure URL: {url}. Expected az://account/container/path")
         account, container = parts[0], parts[1]
-        prefix = parts[2] if len(parts) > 2 else ""
+        # Strip trailing slashes to prevent double-slash in path construction (issue #144)
+        prefix = parts[2].rstrip("/") if len(parts) > 2 else ""
         return f"az://{account}/{container}", prefix
 
     elif url.startswith(("https://", "http://")):
