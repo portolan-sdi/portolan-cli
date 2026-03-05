@@ -159,6 +159,48 @@ class TestParseObjectStoreUrl:
             parse_object_store_url("ftp://server/path")
 
     # =========================================================================
+    # HTTP/HTTPS URL Handling Tests
+    # =========================================================================
+
+    @pytest.mark.unit
+    def test_http_url_returned_unchanged(self) -> None:
+        """HTTP URLs are returned unchanged with empty prefix.
+
+        HTTP stores are treated as read-only references to public data.
+        The full URL is returned as the bucket_url for obstore HTTPStore,
+        and no prefix manipulation is performed.
+        """
+        from portolan_cli.upload import parse_object_store_url
+
+        bucket_url, prefix = parse_object_store_url("http://example.com/data/file.parquet")
+        assert bucket_url == "http://example.com/data/file.parquet"
+        assert prefix == ""
+
+    @pytest.mark.unit
+    def test_https_url_returned_unchanged(self) -> None:
+        """HTTPS URLs are returned unchanged with empty prefix."""
+        from portolan_cli.upload import parse_object_store_url
+
+        bucket_url, prefix = parse_object_store_url("https://example.com/path/to/data/")
+        assert bucket_url == "https://example.com/path/to/data/"
+        assert prefix == ""
+
+    @pytest.mark.unit
+    def test_http_url_no_trailing_slash_normalization(self) -> None:
+        """HTTP URLs do NOT have trailing slashes normalized.
+
+        Unlike cloud storage URLs (s3://, gs://, az://), HTTP URLs are passed
+        through without modification. This is intentional: HTTP URLs may point
+        to specific resources where the trailing slash is meaningful.
+        """
+        from portolan_cli.upload import parse_object_store_url
+
+        # Trailing slash preserved (not normalized)
+        bucket_url, prefix = parse_object_store_url("https://api.example.com/v1/")
+        assert bucket_url == "https://api.example.com/v1/"  # Preserved as-is
+        assert prefix == ""
+
+    # =========================================================================
     # Trailing Slash Normalization Tests (Issue #144)
     # =========================================================================
 
@@ -214,13 +256,48 @@ class TestParseObjectStoreUrl:
         assert bucket_url == "s3://mybucket"
         assert prefix == ""  # NOT "/"
 
+    @pytest.mark.unit
+    def test_s3_internal_double_slashes_preserved(self) -> None:
+        """Internal double slashes in path are preserved.
+
+        This documents intentional behavior: only TRAILING slashes are stripped.
+        Internal double slashes (e.g., s3://bucket/a//b/) are part of the user's
+        intended path structure and should be preserved as "a//b".
+
+        Note: While unusual, some object storage systems may interpret double
+        slashes differently. Portolan preserves user intent.
+        """
+        from portolan_cli.upload import parse_object_store_url
+
+        bucket_url, prefix = parse_object_store_url("s3://mybucket/a//b/")
+        assert bucket_url == "s3://mybucket"
+        assert prefix == "a//b"  # Internal // preserved, trailing / stripped
+
+    @pytest.mark.unit
+    def test_gs_internal_double_slashes_preserved(self) -> None:
+        """GCS internal double slashes preserved."""
+        from portolan_cli.upload import parse_object_store_url
+
+        bucket_url, prefix = parse_object_store_url("gs://mybucket/path//to//data/")
+        assert bucket_url == "gs://mybucket"
+        assert prefix == "path//to//data"
+
+    @pytest.mark.unit
+    def test_az_internal_double_slashes_preserved(self) -> None:
+        """Azure internal double slashes preserved."""
+        from portolan_cli.upload import parse_object_store_url
+
+        bucket_url, prefix = parse_object_store_url("az://account/container/a//b/")
+        assert bucket_url == "az://account/container"
+        assert prefix == "a//b"
+
     # =========================================================================
     # Hypothesis Property-Based Tests (Issue #144)
     # =========================================================================
 
     @pytest.mark.unit
     @given(
-        scheme=st.sampled_from(["s3", "gs"]),
+        scheme=st.sampled_from(["s3", "gs", "az"]),
         bucket=st.text(
             alphabet=st.characters(
                 whitelist_categories=("Ll", "Lu", "Nd"), whitelist_characters="-"
@@ -256,20 +333,36 @@ class TestParseObjectStoreUrl:
         from portolan_cli.upload import parse_object_store_url
 
         # Build URL with optional trailing slashes
+        # Azure requires account/container structure, so add a container for Azure
         path = "/".join(path_segments) if path_segments else ""
         trailing = "/" * num_trailing_slashes
-        url = f"{scheme}://{bucket}/{path}{trailing}" if path else f"{scheme}://{bucket}{trailing}"
+
+        if scheme == "az":
+            # Azure: az://account/container/path - use bucket as account, add container
+            container = "container"
+            if path:
+                url = f"{scheme}://{bucket}/{container}/{path}{trailing}"
+            else:
+                url = f"{scheme}://{bucket}/{container}{trailing}"
+        else:
+            # S3/GCS: scheme://bucket/path
+            url = (
+                f"{scheme}://{bucket}/{path}{trailing}"
+                if path
+                else f"{scheme}://{bucket}{trailing}"
+            )
 
         bucket_url, prefix = parse_object_store_url(url)
 
         # The invariant: prefix never ends with slash
         assert not prefix.endswith("/"), f"Prefix {prefix!r} should not end with '/'"
-        # Also: prefix should not contain double slashes
+        # Also: prefix should not contain double slashes (from trailing slash normalization)
+        # Note: Internal double slashes in user-provided paths are preserved
         assert "//" not in prefix, f"Prefix {prefix!r} should not contain '//'"
 
     @pytest.mark.unit
     @given(
-        scheme=st.sampled_from(["s3", "gs"]),
+        scheme=st.sampled_from(["s3", "gs", "az"]),
         bucket=st.text(
             alphabet=st.characters(
                 whitelist_categories=("Ll", "Lu", "Nd"), whitelist_characters="-"
@@ -299,7 +392,13 @@ class TestParseObjectStoreUrl:
         """
         from portolan_cli.upload import parse_object_store_url
 
-        url = f"{scheme}://{bucket}/{prefix_path}/"  # With trailing slash
+        # Build URL - Azure requires account/container structure
+        if scheme == "az":
+            container = "container"
+            url = f"{scheme}://{bucket}/{container}/{prefix_path}/"
+        else:
+            url = f"{scheme}://{bucket}/{prefix_path}/"  # With trailing slash
+
         _, prefix = parse_object_store_url(url)
 
         # Simulate the path construction from push.py
