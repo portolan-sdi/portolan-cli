@@ -370,6 +370,12 @@ def add_version(
     # Compute which files changed (new or different checksum)
     changes = _compute_changes(versions_file, assets)
 
+    # Early return if nothing changed (no new/modified assets and no removals)
+    # This prevents creating no-op versions when re-adding unchanged files
+    # BUT: allow creating first version even with empty assets (metadata-only)
+    if not changes and not removed and versions_file.versions:
+        return versions_file
+
     new_version = Version(
         version=version,
         created=datetime.now(timezone.utc),

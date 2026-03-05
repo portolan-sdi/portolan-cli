@@ -1446,3 +1446,28 @@ class TestSnapshotModel:
         # Version 1.0.1 should only have B
         assert "a.parquet" not in vf.versions[1].assets
         assert "b.parquet" in vf.versions[1].assets
+
+    @pytest.mark.unit
+    def test_readding_unchanged_asset_is_idempotent(self) -> None:
+        """Re-adding an unchanged asset should not create a new version.
+
+        This is a regression test for idempotency: calling add_version with
+        an asset that already exists with the same checksum should be a no-op.
+        """
+        vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
+
+        # Add initial file
+        asset_a = Asset(sha256="aaa", size_bytes=100, href="coll/item/a.parquet")
+        vf = add_version(vf, version="1.0.0", assets={"a.parquet": asset_a}, breaking=False)
+
+        assert len(vf.versions) == 1
+        assert vf.current_version == "1.0.0"
+
+        # Try to re-add the SAME asset (same checksum)
+        vf_after = add_version(vf, version="1.0.1", assets={"a.parquet": asset_a}, breaking=False)
+
+        # Should NOT create a new version - idempotent operation
+        assert len(vf_after.versions) == 1, "Should not create new version for unchanged asset"
+        assert vf_after.current_version == "1.0.0", "Current version should not change"
+        # The returned object should be the same as input (no mutation)
+        assert vf_after is vf, "Should return original VersionsFile when no changes"
