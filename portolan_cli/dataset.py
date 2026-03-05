@@ -1346,12 +1346,17 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
         for name, asset in new_assets.items()
     }
 
+    # Pass removed= so add_version excludes these from the snapshot
+    # (otherwise the snapshot model would re-add them from previous version)
+    removed_keys = {filename, parquet_name}
+
     updated = add_version(
         versions_file,
         version=new_version,
         assets=new_assets_typed,
         breaking=False,
         message=f"Removed {filename}",
+        removed=removed_keys,
     )
 
     write_versions(versions_path, updated)

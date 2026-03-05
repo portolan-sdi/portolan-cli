@@ -330,31 +330,59 @@ def add_version(
     breaking: bool,
     schema: SchemaInfo | None = None,
     message: str | None = None,
+    removed: set[str] | None = None,
 ) -> VersionsFile:
     """Add a new version to a VersionsFile.
 
     This function is immutable - it returns a new VersionsFile rather than
     modifying the input.
 
+    Each version is a complete SNAPSHOT of all assets at that point in time
+    (per ADR-0005). New assets are merged with the previous version's assets,
+    and any assets in `removed` are excluded.
+
     Args:
         versions_file: The existing VersionsFile.
         version: The new version string (e.g., "1.1.0").
-        assets: Mapping of filename to Asset for this version.
+        assets: Mapping of filename to Asset to add or update in this version.
         breaking: Whether this version has breaking changes.
         schema: Optional schema fingerprint for breaking change detection (ADR-0005).
         message: Optional human-readable description of the change.
+        removed: Optional set of asset keys to remove from the snapshot.
 
     Returns:
         A new VersionsFile with the version added.
     """
+    # Build complete snapshot: start with previous assets, apply changes
+    if versions_file.versions:
+        # Copy previous version's assets as base
+        merged_assets = dict(versions_file.versions[-1].assets)
+        # Update with new/modified assets
+        merged_assets.update(assets)
+        # Remove any assets marked for removal
+        if removed:
+            for key in removed:
+                merged_assets.pop(key, None)
+    else:
+        # First version: just use the provided assets
+        merged_assets = dict(assets)
+
     # Compute which files changed (new or different checksum)
     changes = _compute_changes(versions_file, assets)
+
+    # Early return if nothing changed (no new/modified assets and no removals)
+    # This prevents creating no-op versions when re-adding unchanged files
+    # BUT: allow versions when metadata indicates explicit request (message, breaking, schema)
+    if not changes and not removed and versions_file.versions:
+        # Only skip if truly a no-op: no message, not breaking, no schema change
+        if not message and not breaking and not schema:
+            return versions_file
 
     new_version = Version(
         version=version,
         created=datetime.now(timezone.utc),
         breaking=breaking,
-        assets=assets,
+        assets=merged_assets,
         changes=changes,
         schema=schema,
         message=message,
