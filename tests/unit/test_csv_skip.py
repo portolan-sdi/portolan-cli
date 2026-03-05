@@ -1061,6 +1061,371 @@ class TestUpdateItemWithAsset:
 
 
 # =============================================================================
+# add_files Code Path Coverage Tests
+# =============================================================================
+
+
+class TestAddFilesCodePaths:
+    """Tests for specific code paths in add_files to improve coverage."""
+
+    @pytest.mark.unit
+    def test_symlink_resolution(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add_files should resolve symlinks to track the real file."""
+        # Create a real file
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True)
+        real_file = collection_dir / "data.geojson"
+        real_file.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                            "properties": {"name": "Test"},
+                        }
+                    ],
+                }
+            )
+        )
+
+        # Create a symlink
+        link_dir = tmp_path / "links"
+        link_dir.mkdir()
+        symlink = link_dir / "link.geojson"
+        symlink.symlink_to(real_file)
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
+
+            added, skipped = add_files(
+                paths=[symlink],
+                catalog_root=initialized_catalog,
+                collection_id="collection",
+            )
+
+            # Should have called add_dataset with the resolved path
+            assert mock_add.called
+
+    @pytest.mark.unit
+    def test_duplicate_file_skipping(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add_files should skip duplicate files in the paths list."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True)
+
+        geojson = collection_dir / "data.geojson"
+        geojson.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                            "properties": {"name": "Test"},
+                        }
+                    ],
+                }
+            )
+        )
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
+
+            # Pass the same file twice
+            added, skipped = add_files(
+                paths=[geojson, geojson],
+                catalog_root=initialized_catalog,
+                collection_id="collection",
+            )
+
+            # Should only call add_dataset once
+            assert mock_add.call_count == 1
+
+    @pytest.mark.unit
+    def test_non_geospatial_extension_skipped(
+        self, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """add_files should skip files with non-geospatial extensions."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True)
+
+        # Create a .txt file (not in GEOSPATIAL_EXTENSIONS)
+        txt_file = collection_dir / "readme.txt"
+        txt_file.write_text("This is a readme file")
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            added, skipped = add_files(
+                paths=[txt_file],
+                catalog_root=initialized_catalog,
+                collection_id="collection",
+            )
+
+            # Should NOT call add_dataset for non-geospatial files
+            assert not mock_add.called
+            assert len(added) == 0
+
+    @pytest.mark.unit
+    def test_unchanged_file_skipped(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add_files should skip unchanged files (is_current returns True)."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True)
+
+        geojson = collection_dir / "data.geojson"
+        geojson.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                            "properties": {"name": "Test"},
+                        }
+                    ],
+                }
+            )
+        )
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            with patch("portolan_cli.dataset.is_current", return_value=True):
+                added, skipped = add_files(
+                    paths=[geojson],
+                    catalog_root=initialized_catalog,
+                    collection_id="collection",
+                )
+
+                # Should NOT call add_dataset for unchanged files
+                assert not mock_add.called
+                assert geojson in skipped
+
+    @pytest.mark.unit
+    def test_collection_id_resolution(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add_files should resolve collection_id when not provided."""
+        # Create a file in a subdirectory that will be used for collection_id
+        collection_dir = tmp_path / "my-collection"
+        collection_dir.mkdir(parents=True)
+
+        geojson = collection_dir / "data.geojson"
+        geojson.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                            "properties": {"name": "Test"},
+                        }
+                    ],
+                }
+            )
+        )
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            with patch(
+                "portolan_cli.dataset.resolve_collection_id", return_value="my-collection"
+            ) as mock_resolve:
+                mock_add.return_value = MagicMock(item_id="data", collection_id="my-collection")
+
+                # Don't pass collection_id - should be resolved
+                added, skipped = add_files(
+                    paths=[geojson],
+                    catalog_root=initialized_catalog,
+                    collection_id=None,
+                )
+
+                # Should have resolved collection_id
+                mock_resolve.assert_called_once()
+
+    @pytest.mark.unit
+    def test_deferred_non_geo_processing_with_geo_file(
+        self, initialized_catalog: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Non-geo CSV in same dir as geo file should be processed in deferred pass."""
+        # Use a separate source directory to avoid item_dir files being scanned
+        source_dir = tmp_path / "source" / "collection"
+        source_dir.mkdir(parents=True)
+
+        # Create both geo and non-geo files in same directory
+        geojson = source_dir / "data.geojson"
+        geojson.write_text(
+            json.dumps(
+                {
+                    "type": "FeatureCollection",
+                    "features": [
+                        {
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                            "properties": {"name": "Test"},
+                        }
+                    ],
+                }
+            )
+        )
+
+        csv_file = source_dir / "metadata.csv"
+        csv_file.write_text("name,value\ntest,100\n")
+
+        # Create the item directory that add_dataset would create
+        item_dir = initialized_catalog / "collection" / "data"
+        item_dir.mkdir(parents=True)
+
+        # Create item.json
+        item_json = item_dir / "data.json"
+        item_json.write_text(
+            json.dumps(
+                {
+                    "type": "Feature",
+                    "stac_version": "1.0.0",
+                    "id": "data",
+                    "geometry": {"type": "Point", "coordinates": [-122.4, 37.8]},
+                    "bbox": [-122.4, 37.8, -122.4, 37.8],
+                    "properties": {"datetime": "2024-01-01T00:00:00Z"},
+                    "links": [],
+                    "assets": {},
+                }
+            )
+        )
+
+        # Create primary data file
+        primary_file = item_dir / "data.parquet"
+        primary_file.write_bytes(b"fake parquet")
+
+        # Create versions.json
+        versions_path = initialized_catalog / "collection" / "versions.json"
+        versions_path.write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [
+                        {
+                            "version": "1.0.0",
+                            "created": "2024-01-01T00:00:00Z",
+                            "breaking": False,
+                            "changes": ["data.parquet"],
+                            "assets": {
+                                "data.parquet": {
+                                    "sha256": "abc123",
+                                    "size_bytes": 12,
+                                    "href": "collection/data/data.parquet",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+        def mock_add_dataset_side_effect(path, catalog_root, collection_id):
+            """Simulate add_dataset: success for geojson, geometry error for csv."""
+            if path.suffix.lower() == ".geojson":
+                return MagicMock(item_id="data", collection_id="collection")
+            elif path.suffix.lower() == ".csv":
+                raise click.ClickException("Could not detect geometry columns in CSV file")
+            else:
+                # Skip other files (like parquet) - they shouldn't be in source_dir
+                raise ValueError(f"Unexpected file type: {path}")
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            mock_add.side_effect = mock_add_dataset_side_effect
+
+            with caplog.at_level(logging.INFO):
+                added, skipped = add_files(
+                    paths=[source_dir],
+                    catalog_root=initialized_catalog,
+                    collection_id="collection",
+                )
+
+            # Geo file should be added
+            assert len(added) == 1
+
+            # CSV should be in skipped (tracked as asset, not converted)
+            assert csv_file in skipped
+
+            # Should log about tracking the non-geo file
+            info_msgs = " ".join(r.message for r in caplog.records if r.levelno == logging.INFO)
+            assert "non-geospatial" in info_msgs.lower() or "tracking" in info_msgs.lower()
+
+    @pytest.mark.unit
+    def test_non_tabular_format_geometry_error_propagates(
+        self, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """Non-tabular format (e.g. GeoJSON) without geometry should raise, not defer."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True)
+
+        # Create a GeoJSON that will fail geometry detection
+        # (simulated via mock - in reality this wouldn't happen for valid GeoJSON)
+        geojson = collection_dir / "invalid.geojson"
+        geojson.write_text('{"type": "FeatureCollection", "features": []}')
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            # Simulate geometry detection error for a non-tabular format
+            mock_add.side_effect = click.ClickException("Could not detect geometry columns in file")
+
+            # Should propagate the error (not defer like CSV/TSV)
+            with pytest.raises(click.ClickException) as exc_info:
+                add_files(
+                    paths=[geojson],
+                    catalog_root=initialized_catalog,
+                    collection_id="collection",
+                )
+
+            assert "geometry" in str(exc_info.value.message).lower()
+
+    @pytest.mark.unit
+    def test_value_error_reraise_with_context(
+        self, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """add_files should re-raise ValueError with file context."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True)
+
+        geojson = collection_dir / "data.geojson"
+        geojson.write_text('{"type": "FeatureCollection", "features": []}')
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            mock_add.side_effect = ValueError("Invalid data")
+
+            with pytest.raises(ValueError) as exc_info:
+                add_files(
+                    paths=[geojson],
+                    catalog_root=initialized_catalog,
+                    collection_id="collection",
+                )
+
+            # Should include file path in error
+            assert "data.geojson" in str(exc_info.value) or "Failed to add" in str(exc_info.value)
+
+    @pytest.mark.unit
+    def test_file_not_found_error_reraise_with_context(
+        self, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """add_files should re-raise FileNotFoundError with file context."""
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir(parents=True)
+
+        geojson = collection_dir / "data.geojson"
+        geojson.write_text('{"type": "FeatureCollection", "features": []}')
+
+        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            mock_add.side_effect = FileNotFoundError("File missing")
+
+            with pytest.raises(FileNotFoundError) as exc_info:
+                add_files(
+                    paths=[geojson],
+                    catalog_root=initialized_catalog,
+                    collection_id="collection",
+                )
+
+            # Should include file path in error
+            assert "data.geojson" in str(exc_info.value) or "Failed to add" in str(exc_info.value)
+
+
+# =============================================================================
 # Mixed Format Integration Tests
 # =============================================================================
 
