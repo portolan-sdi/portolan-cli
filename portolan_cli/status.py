@@ -17,11 +17,15 @@ Per issue #137, uninitialized directories (no collection.json) that contain
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
 from portolan_cli.dataset import is_current
 from portolan_cli.versions import read_versions
+
+logger = logging.getLogger(__name__)
 
 # Files that are always excluded from tracking regardless of location.
 # These are OS/tool artifacts that provide no value as catalog assets.
@@ -33,65 +37,79 @@ IGNORED_FILES: frozenset[str] = frozenset(
     }
 )
 
-# Geospatial file extensions used to detect potential (uninitialized) collections.
-# A directory containing any of these extensions is treated as a potential collection
-# even without a collection.json (fixes issue #137).
-# Note: .parquet is included because GeoParquet is the primary vector format.
-# Note: .gdb is a directory, not a file — handled separately in scan_detect.
-_GEO_ASSET_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        # Cloud-native vector
-        ".parquet",
-        ".fgb",  # FlatGeobuf
-        ".pmtiles",  # PMTiles
-        # Cloud-native raster
-        ".tif",
-        ".tiff",
-        # Convertible vector (common inputs)
-        ".geojson",
-        ".shp",
-        ".gpkg",
-        # Convertible raster
-        ".jp2",
-    }
-)
-
 # STAC metadata filenames that live inside item directories but are not
 # user data assets and should not appear in status output.
 _STAC_METADATA_FILES: frozenset[str] = frozenset({"item.json"})
 
+# Maximum depth to scan for geo-assets in uninitialized directories.
+# Supports hive-partitioned datasets (e.g., year=2024/month=01/data.parquet).
+_MAX_GEO_SCAN_DEPTH: int = 5
 
-def _has_geo_assets(directory: Path) -> bool:
+
+def _has_geo_assets(directory: Path, *, max_depth: int = _MAX_GEO_SCAN_DEPTH) -> bool:
     """Check whether a directory subtree contains at least one geospatial file.
 
     Used to determine if an uninitialized directory (one without collection.json)
     should be treated as a potential collection for status reporting purposes.
 
-    A directory is considered a potential collection when it contains files
-    with known geospatial extensions (e.g. .parquet, .tif, .geojson) in any
-    of its immediate subdirectories (item-level directories).
+    Recursively scans the directory tree up to max_depth levels to find any file
+    with a known geospatial extension. This supports hive-partitioned datasets
+    where geo files may be nested deeply (e.g., collection/item/year=2024/data.parquet).
 
-    Hidden subdirectories (names starting with '.') are skipped.
+    Hidden directories (names starting with '.') are skipped. Symlinks are followed
+    but broken symlinks are logged and skipped. FileGDB directories (.gdb) are
+    detected as geo-assets.
 
     Args:
         directory: Path to the candidate collection directory.
+        max_depth: Maximum recursion depth (default: 5). Prevents runaway recursion.
 
     Returns:
-        True if any geospatial file is found within the directory subtree.
+        True if any geospatial file or .gdb directory is found within the subtree.
     """
+    if max_depth <= 0:
+        return False
+
     try:
-        for item_dir in directory.iterdir():
-            if not item_dir.is_dir() or item_dir.name.startswith("."):
+        for entry in directory.iterdir():
+            name = entry.name
+
+            # Skip hidden entries
+            if name.startswith("."):
                 continue
-            for file_path in item_dir.iterdir():
-                if not file_path.is_file():
+
+            # Skip ignored files
+            if name in IGNORED_FILES:
+                continue
+
+            # Check for .gdb directories (FileGDB is a directory, not a file)
+            if entry.suffix.lower() == ".gdb":
+                try:
+                    if entry.is_dir():
+                        return True
+                except OSError as e:
+                    logger.debug("Cannot access %s: %s", entry, e)
                     continue
-                if file_path.name in IGNORED_FILES or file_path.name.startswith("."):
-                    continue
-                if file_path.suffix.lower() in _GEO_ASSET_EXTENSIONS:
-                    return True
-    except OSError:
-        pass
+
+            # Check if it's a file with a geo extension
+            try:
+                if entry.is_file():
+                    if entry.suffix.lower() in GEOSPATIAL_EXTENSIONS:
+                        return True
+                elif entry.is_dir():
+                    # Recurse into subdirectories
+                    if _has_geo_assets(entry, max_depth=max_depth - 1):
+                        return True
+            except OSError as e:
+                # Handle broken symlinks, permission errors, etc.
+                logger.debug("Cannot access %s: %s", entry, e)
+                continue
+
+    except PermissionError as e:
+        logger.warning("Permission denied scanning %s: %s", directory, e)
+    except OSError as e:
+        logger.warning("Error scanning %s: %s", directory, e)
+
     return False
 
 
@@ -176,6 +194,93 @@ def _get_tracked_assets(versions_path: Path) -> set[str]:
     return set()
 
 
+def _scan_item_dir_recursive(
+    base_dir: Path,
+    item_id: str,
+    current_dir: Path,
+    collection_id: str,
+    versions_path: Path,
+    tracked_assets: set[str],
+    untracked: list[FileStatus],
+    modified: list[FileStatus],
+    seen_keys: set[str],
+    *,
+    max_depth: int = _MAX_GEO_SCAN_DEPTH,
+) -> None:
+    """Recursively scan an item directory for status changes.
+
+    Supports hive-partitioned datasets where geo files are nested
+    in subdirectories (e.g., year=2024/month=01/data.parquet).
+
+    Args:
+        base_dir: Base item directory (used for relative path calculation).
+        item_id: ID of the item (base directory name).
+        current_dir: Current directory being scanned.
+        collection_id: ID of the containing collection.
+        versions_path: Path to versions.json.
+        tracked_assets: Set of tracked asset keys.
+        untracked: List to append untracked files to.
+        modified: List to append modified files to.
+        seen_keys: Set to add seen asset keys to.
+        max_depth: Maximum recursion depth to prevent runaway recursion.
+    """
+    if max_depth <= 0:
+        return
+
+    try:
+        entries = sorted(current_dir.iterdir())
+    except OSError as e:
+        logger.debug("Cannot scan %s: %s", current_dir, e)
+        return
+
+    for entry in entries:
+        name = entry.name
+
+        # Skip hidden entries
+        if name.startswith("."):
+            continue
+
+        # Skip ignored files
+        if name in IGNORED_FILES:
+            continue
+
+        try:
+            if entry.is_file():
+                # Skip STAC metadata files
+                if _is_stac_item_metadata(name, item_id):
+                    continue
+
+                # Calculate relative path from base item directory
+                relative_path = entry.relative_to(base_dir)
+                relative_key = f"{item_id}/{relative_path}"
+                seen_keys.add(relative_key)
+
+                # For deeply nested files, we report with the item_id as the container
+                # and the full relative path as the filename (for display purposes)
+                if relative_key not in tracked_assets:
+                    untracked.append(FileStatus(collection_id, item_id, str(relative_path)))
+                elif not is_current(entry, versions_path, asset_key=relative_key):
+                    modified.append(FileStatus(collection_id, item_id, str(relative_path)))
+
+            elif entry.is_dir():
+                # Recurse into subdirectories (for hive partitions)
+                _scan_item_dir_recursive(
+                    base_dir=base_dir,
+                    item_id=item_id,
+                    current_dir=entry,
+                    collection_id=collection_id,
+                    versions_path=versions_path,
+                    tracked_assets=tracked_assets,
+                    untracked=untracked,
+                    modified=modified,
+                    seen_keys=seen_keys,
+                    max_depth=max_depth - 1,
+                )
+        except OSError as e:
+            logger.debug("Cannot access %s: %s", entry, e)
+            continue
+
+
 def _scan_item_dir_status(
     item_dir: Path,
     collection_id: str,
@@ -183,6 +288,9 @@ def _scan_item_dir_status(
     tracked_assets: set[str],
 ) -> tuple[list[FileStatus], list[FileStatus], set[str]]:
     """Scan a single item directory for status changes.
+
+    Recursively scans the item directory to support hive-partitioned
+    datasets where geo files are nested in subdirectories.
 
     Args:
         item_dir: Path to the item directory.
@@ -198,26 +306,18 @@ def _scan_item_dir_status(
     seen_keys: set[str] = set()
     item_id = item_dir.name
 
-    for file_path in sorted(item_dir.iterdir()):
-        if not file_path.is_file():
-            continue
-
-        filename = file_path.name
-
-        # Skip hidden files (starting with .)
-        if filename.startswith("."):
-            continue
-
-        if filename in IGNORED_FILES or _is_stac_item_metadata(filename, item_id):
-            continue
-
-        relative_key = f"{item_id}/{filename}"
-        seen_keys.add(relative_key)
-
-        if relative_key not in tracked_assets:
-            untracked.append(FileStatus(collection_id, item_id, filename))
-        elif not is_current(file_path, versions_path, asset_key=relative_key):
-            modified.append(FileStatus(collection_id, item_id, filename))
+    # Use recursive scanning to support hive partitions
+    _scan_item_dir_recursive(
+        base_dir=item_dir,
+        item_id=item_id,
+        current_dir=item_dir,
+        collection_id=collection_id,
+        versions_path=versions_path,
+        tracked_assets=tracked_assets,
+        untracked=untracked,
+        modified=modified,
+        seen_keys=seen_keys,
+    )
 
     return untracked, modified, seen_keys
 

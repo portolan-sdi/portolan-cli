@@ -408,3 +408,81 @@ class TestStatusCLIIntegration:
         # Results should be sorted by path
         paths = [f.path for f in result.untracked]
         assert paths == sorted(paths), f"Expected sorted paths but got: {paths}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Integration tests: Deep nesting (hive partitions)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestHivePartitionIntegration:
+    """Integration tests for hive-partitioned datasets.
+
+    These tests verify that deeply nested geo files (common in hive-partitioned
+    datasets like year=2024/month=01/data.parquet) are detected correctly.
+    """
+
+    @pytest.mark.integration
+    def test_hive_partitioned_parquet_workflow(self, tmp_path: Path) -> None:
+        """Simulates a hive-partitioned dataset before running portolan add."""
+        _write_catalog(tmp_path)
+
+        # Hive partition structure: collection/item/year=2024/month=01/data.parquet
+        col_dir = tmp_path / "timeseries"
+        col_dir.mkdir()
+        item_dir = col_dir / "weather-data"
+        item_dir.mkdir()
+        year_dir = item_dir / "year=2024"
+        year_dir.mkdir()
+        month_dir = year_dir / "month=01"
+        month_dir.mkdir()
+        (month_dir / "data.parquet").write_bytes(b"partitioned weather data")
+
+        result = get_catalog_status(tmp_path)
+
+        assert not result.is_clean()
+        assert len(result.untracked) == 1
+        assert result.untracked[0].collection_id == "timeseries"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Integration tests: CSV/TSV tabular geo data
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestTabularGeoIntegration:
+    """Integration tests for CSV/TSV files that may contain geometry."""
+
+    @pytest.mark.integration
+    def test_csv_with_coordinates_detected(self, tmp_path: Path) -> None:
+        """CSV file with lat/lon columns triggers uninitialized detection."""
+        _write_catalog(tmp_path)
+
+        col_dir = tmp_path / "points"
+        col_dir.mkdir()
+        item_dir = col_dir / "locations"
+        item_dir.mkdir()
+        (item_dir / "places.csv").write_text(
+            "name,latitude,longitude\nNew York,40.7128,-74.0060\nLos Angeles,34.0522,-118.2437"
+        )
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "places.csv"
+
+    @pytest.mark.integration
+    def test_tsv_detected_in_uninitialized_collection(self, tmp_path: Path) -> None:
+        """TSV file in uninitialized collection is detected."""
+        _write_catalog(tmp_path)
+
+        col_dir = tmp_path / "tabular"
+        col_dir.mkdir()
+        item_dir = col_dir / "data"
+        item_dir.mkdir()
+        (item_dir / "points.tsv").write_text("lat\tlon\tname\n40.7\t-74.0\tNYC")
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "points.tsv"
