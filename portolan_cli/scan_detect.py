@@ -137,15 +137,25 @@ def is_filegdb_archive(path: Path) -> bool:
 
 
 def _get_relative_path(path: Path, root: Path) -> str:
-    """Get path relative to root as string."""
+    """Get path relative to root as forward-slash string.
+
+    Returns paths with forward slashes regardless of OS for STAC compatibility.
+    STAC uses URL-style paths which always use forward slashes.
+    """
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def detect_filegdb(path: Path, root: Path) -> SpecialFormat | None:
     """Detect FileGDB and return SpecialFormat.
+
+    .. deprecated::
+        This function is deprecated since FileGDB directories are now added
+        directly to the ready list in scan.py using _gather_filegdb_metadata().
+        Kept for backwards compatibility with existing code that may use
+        special_formats for FileGDB detection.
 
     Args:
         path: Path to check.

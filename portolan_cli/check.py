@@ -247,8 +247,12 @@ def _scan_for_files(path: Path) -> list[Path]:
 
 
 def _get_relative_path(file_path: Path, root: Path) -> str:
-    """Get path relative to root as string."""
+    """Get path relative to root as forward-slash string.
+
+    Returns paths with forward slashes regardless of OS for STAC compatibility.
+    STAC uses URL-style paths which always use forward slashes.
+    """
     try:
-        return str(file_path.relative_to(root))
+        return file_path.relative_to(root).as_posix()
     except ValueError:
-        return str(file_path)
+        return file_path.as_posix()

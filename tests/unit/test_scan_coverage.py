@@ -79,7 +79,8 @@ class TestRelativePathCalculation:
         """Normal paths should return relative path string."""
         child = tmp_path / "subdir" / "file.txt"
         result = _get_relative_path(child, tmp_path)
-        assert result == "subdir/file.txt" or result == "subdir\\file.txt"
+        # _get_relative_path uses as_posix() for STAC compatibility - always forward slashes
+        assert result == "subdir/file.txt"
 
     def test_non_relative_path_returns_full_path(self, tmp_path: Path) -> None:
         """Paths not relative to root should return full path (line 399-400 coverage)."""
@@ -87,8 +88,8 @@ class TestRelativePathCalculation:
         path = Path("/some/other/path/file.txt")
         root = tmp_path
         result = _get_relative_path(path, root)
-        # Should return the full path as string since it's not relative
-        assert result == str(path)
+        # Should return the full path with forward slashes (as_posix) for STAC compatibility
+        assert result == path.as_posix()
 
     def test_same_path_returns_dot(self, tmp_path: Path) -> None:
         """Same path should return '.'"""

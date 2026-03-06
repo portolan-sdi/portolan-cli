@@ -7,6 +7,7 @@ to avoid duplication and ensure consistency.
 from __future__ import annotations
 
 # Extensions we recognize as geospatial files
+# Note: .gdb is a directory extension (FileGDB) - handled specially in detection code
 GEOSPATIAL_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".geojson",
@@ -14,6 +15,7 @@ GEOSPATIAL_EXTENSIONS: frozenset[str] = frozenset(
         ".shp",
         ".gpkg",
         ".fgb",
+        ".gdb",  # FileGDB directory (ESRI File Geodatabase)
         ".csv",
         ".tsv",  # Tab-separated values (may or may not have geometry)
         ".tif",

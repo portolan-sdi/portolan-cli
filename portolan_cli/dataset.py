@@ -875,6 +875,20 @@ def remove_dataset(
 # Note: GEOSPATIAL_EXTENSIONS imported from portolan_cli.constants
 
 
+def _is_filegdb(path: Path) -> bool:
+    """Check if a path is a FileGDB directory.
+
+    A FileGDB is a directory with .gdb extension containing .gdbtable files.
+    """
+    if not path.is_dir() or path.suffix.lower() != ".gdb":
+        return False
+    # Check for at least one .gdbtable file (marker of valid FileGDB)
+    try:
+        return any(f.suffix.lower() == ".gdbtable" for f in path.iterdir())
+    except OSError:
+        return False
+
+
 def iter_geospatial_files(
     path: Path,
     *,
@@ -882,25 +896,44 @@ def iter_geospatial_files(
 ) -> list[Path]:
     """Iterate over geospatial files in a directory.
 
+    Includes both regular files and FileGDB directories (.gdb).
+    FileGDB directories are treated as single geospatial assets.
+
     Args:
         path: Directory to scan.
         recursive: If True, scan subdirectories recursively.
 
     Returns:
-        List of paths to geospatial files.
+        List of paths to geospatial files (including FileGDB directories).
     """
+    # Special case: if path itself is a FileGDB, return it directly
+    if _is_filegdb(path):
+        return [path]
+
     if not path.is_dir():
         return []
 
     files: list[Path] = []
+    seen_filegdbs: set[Path] = set()  # Track FileGDBs to avoid recursing into them
 
     if recursive:
         for item in path.rglob("*"):
-            if item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
+            # Skip items inside FileGDB directories (they're internal files)
+            if any(parent in seen_filegdbs for parent in item.parents):
+                continue
+
+            # Check for FileGDB directory
+            if item.is_dir() and _is_filegdb(item):
+                files.append(item)
+                seen_filegdbs.add(item)
+            elif item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
                 files.append(item)
     else:
         for item in path.iterdir():
-            if item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
+            # Check for FileGDB directory
+            if item.is_dir() and _is_filegdb(item):
+                files.append(item)
+            elif item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
                 files.append(item)
 
     return sorted(files)
@@ -1341,6 +1374,7 @@ def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path
     """Iterate over geospatial files in a directory (including their sidecars).
 
     Returns geospatial files and their associated sidecars (e.g., .dbf/.shx for shapefiles).
+    FileGDB directories (.gdb) are treated as single geospatial assets.
     Filters by GEOSPATIAL_EXTENSIONS while iterating for efficiency.
 
     Args:
@@ -1348,17 +1382,34 @@ def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path
         recursive: If True, scan subdirectories recursively.
 
     Returns:
-        List of geospatial file paths and their sidecars.
+        List of geospatial file paths (including FileGDB directories) and their sidecars.
     """
+    # Special case: if path itself is a FileGDB, return it directly
+    if _is_filegdb(path):
+        return [path]
+
     if not path.is_dir():
         return []
 
     files: list[Path] = []
     seen: set[Path] = set()
+    seen_filegdbs: set[Path] = set()  # Track FileGDBs to avoid recursing into them
 
     iterator = path.rglob("*") if recursive else path.iterdir()
 
     for item in iterator:
+        # Skip items inside FileGDB directories (they're internal files)
+        if any(parent in seen_filegdbs for parent in item.parents):
+            continue
+
+        # Check for FileGDB directory (treat as single asset)
+        if item.is_dir() and _is_filegdb(item):
+            if item not in seen:
+                files.append(item)
+                seen.add(item)
+                seen_filegdbs.add(item)
+            continue
+
         if not item.is_file():
             continue
 
