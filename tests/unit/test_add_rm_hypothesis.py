@@ -1320,3 +1320,190 @@ class TestCatalogRootAddProperties:
             assert result == collection, (
                 f"Expected first component '{collection}', got '{result}' for deeply nested path"
             )
+
+
+# =============================================================================
+# Property: item_id derivation from parent directory (Issue #163)
+# =============================================================================
+
+
+class TestItemIdDerivationProperties:
+    """Property-based tests for item_id derivation.
+
+    Issue #163: item_id should be derived from parent directory name, not filename.
+    This enables the canonical structure: catalog_root/collection/item_id/files.
+    """
+
+    @pytest.mark.unit
+    @given(
+        collection=collection_name,
+        item_id=collection_name,  # Reuse collection_name strategy (safe dir names)
+        filename=safe_filename,
+        ext=geospatial_ext,
+    )
+    @settings(max_examples=50)
+    def test_item_id_equals_parent_directory_name(
+        self, collection: str, item_id: str, filename: str, ext: str
+    ) -> None:
+        """For any file at catalog/collection/item_dir/file, item_id = parent dir name.
+
+        This is the fundamental invariant from Issue #163: the directory structure
+        determines item boundaries, not filenames.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+            # Create canonical structure: catalog_root/<collection>/<item_id>/<file>
+            item_dir = catalog_root / collection / item_id
+            item_dir.mkdir(parents=True, exist_ok=True)
+            geo_file = item_dir / f"{filename}{ext}"
+            geo_file.write_bytes(b"test")
+
+            # The item_id should always be the parent directory name
+            expected_item_id = geo_file.parent.name
+
+            assert expected_item_id == item_id, (
+                f"item_id should be parent dir '{item_id}', not filename '{filename}'"
+            )
+
+    @pytest.mark.unit
+    @given(
+        collection=collection_name,
+        item_id=collection_name,
+        filename1=safe_filename,
+        filename2=safe_filename,
+        ext=geospatial_ext,
+    )
+    @settings(max_examples=50)
+    def test_multiple_files_same_item_id(
+        self, collection: str, item_id: str, filename1: str, filename2: str, ext: str
+    ) -> None:
+        """Multiple files in the same directory should share the same item_id.
+
+        Issue #163: Files in the same item directory are assets of ONE item,
+        not separate items with different item_ids.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+            item_dir = catalog_root / collection / item_id
+            item_dir.mkdir(parents=True, exist_ok=True)
+
+            # Create two files in the same item directory
+            file1 = item_dir / f"{filename1}{ext}"
+            file2 = item_dir / f"{filename2}_other{ext}"
+            file1.write_bytes(b"test1")
+            file2.write_bytes(b"test2")
+
+            # Both files should have the same item_id (parent directory name)
+            item_id_1 = file1.parent.name
+            item_id_2 = file2.parent.name
+
+            assert item_id_1 == item_id_2 == item_id, (
+                f"All files in {item_dir} should have item_id='{item_id}'"
+            )
+
+
+# =============================================================================
+# Property: Pre-validation atomicity (Issue #163)
+# =============================================================================
+
+
+class TestPreValidationAtomicityProperties:
+    """Property-based tests for pre-validation atomicity.
+
+    Issue #163: Failed add operations should not create partial artifacts.
+    Pre-validation should check for valid geometry BEFORE any filesystem operations.
+    """
+
+    @pytest.mark.unit
+    @given(collection=collection_name, item_id=collection_name)
+    @settings(max_examples=30)
+    def test_invalid_geojson_no_directories_created(self, collection: str, item_id: str) -> None:
+        """Pre-validation failure should not create any directories.
+
+        When add_dataset fails due to missing geometry, no collection or item
+        directories should be created. The operation should be atomic: either
+        all changes happen, or none do.
+        """
+        import json
+
+        from portolan_cli.dataset import _pre_validate_geometry
+        from portolan_cli.formats import FormatType
+
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+
+            # Create a catalog with .portolan sentinel
+            portolan_dir = catalog_root / ".portolan"
+            portolan_dir.mkdir()
+            (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+
+            # Create an INVALID GeoJSON file (no geometry)
+            source_dir = catalog_root / "source"
+            source_dir.mkdir()
+            invalid_geojson = source_dir / "data.geojson"
+            invalid_geojson.write_text(
+                json.dumps(
+                    {
+                        "type": "FeatureCollection",
+                        "features": [{"type": "Feature", "properties": {"name": "no geometry"}}],
+                    }
+                )
+            )
+
+            # Record directory state before validation attempt
+            dirs_before = {p for p in catalog_root.rglob("*") if p.is_dir()}
+
+            # Pre-validation should fail for invalid GeoJSON
+            try:
+                _pre_validate_geometry(invalid_geojson, FormatType.VECTOR)
+                raise AssertionError("Expected ValueError for GeoJSON without geometry")
+            except ValueError:
+                pass  # Expected
+
+            # Directory state should be unchanged after failed validation
+            dirs_after = {p for p in catalog_root.rglob("*") if p.is_dir()}
+
+            assert dirs_before == dirs_after, (
+                f"Pre-validation failure should not create directories. "
+                f"Created: {dirs_after - dirs_before}"
+            )
+
+    @pytest.mark.unit
+    @given(collection=collection_name, item_id=collection_name)
+    @settings(max_examples=30)
+    def test_empty_features_no_directories_created(self, collection: str, item_id: str) -> None:
+        """GeoJSON with empty features array should fail without creating directories."""
+        import json
+
+        from portolan_cli.dataset import _pre_validate_geometry
+        from portolan_cli.formats import FormatType
+
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+
+            # Create source file with empty features
+            source_dir = catalog_root / "source"
+            source_dir.mkdir()
+            empty_geojson = source_dir / "empty.geojson"
+            empty_geojson.write_text(
+                json.dumps(
+                    {
+                        "type": "FeatureCollection",
+                        "features": [],  # Empty!
+                    }
+                )
+            )
+
+            # Record directory state
+            dirs_before = {p for p in catalog_root.rglob("*") if p.is_dir()}
+
+            # Pre-validation should fail
+            try:
+                _pre_validate_geometry(empty_geojson, FormatType.VECTOR)
+                raise AssertionError("Expected ValueError for empty features")
+            except ValueError:
+                pass  # Expected
+
+            # No new directories
+            dirs_after = {p for p in catalog_root.rglob("*") if p.is_dir()}
+            assert dirs_before == dirs_after

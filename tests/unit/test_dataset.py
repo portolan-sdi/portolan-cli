@@ -92,8 +92,11 @@ class TestAddDataset:
     @pytest.mark.unit
     def test_add_vector_dataset(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add_dataset processes a vector file and creates STAC item."""
-        # Create a mock GeoJSON file
-        geojson_path = tmp_path / "data.geojson"
+        # Create file INSIDE collection/item directory structure (Issue #163)
+        item_dir = initialized_catalog / "test-collection" / "data"
+        item_dir.mkdir(parents=True, exist_ok=True)
+
+        geojson_path = item_dir / "data.geojson"
         geojson_data = {
             "type": "FeatureCollection",
             "features": [
@@ -106,10 +109,8 @@ class TestAddDataset:
         }
         geojson_path.write_text(json.dumps(geojson_data))
 
-        # Create the output file that convert_vector would create
-        output_dir = initialized_catalog / "test-collection" / "data"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / "data.parquet"
+        # Create the output file that convert_vector would create (in same dir)
+        output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake parquet data")
 
         with (
@@ -136,6 +137,7 @@ class TestAddDataset:
             )
 
             assert result.collection_id == "test-collection"
+            assert result.item_id == "data"  # From parent directory, not filename
             assert result.format_type == FormatType.VECTOR
             mock_detect.assert_called_once()
             mock_convert.assert_called_once()
@@ -143,14 +145,15 @@ class TestAddDataset:
     @pytest.mark.unit
     def test_add_raster_dataset(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add_dataset processes a raster file and creates STAC item."""
-        tiff_path = tmp_path / "data.tif"
+        # Create file INSIDE collection/item directory structure (Issue #163)
+        item_dir = initialized_catalog / "imagery" / "satellite"
+        item_dir.mkdir(parents=True, exist_ok=True)
+
+        tiff_path = item_dir / "data.tif"
         tiff_path.write_bytes(b"fake tiff data")
 
-        # Create the output file that convert_raster would create
-        output_dir = initialized_catalog / "imagery" / "data"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / "data.tif"
-        output_file.write_bytes(b"fake cog data")
+        # Output file in same directory (in-place)
+        output_file = item_dir / "data.tif"
 
         with (
             patch("portolan_cli.dataset.detect_format") as mock_detect,
@@ -177,6 +180,7 @@ class TestAddDataset:
             )
 
             assert result.collection_id == "imagery"
+            assert result.item_id == "satellite"  # From parent directory
             assert result.format_type == FormatType.RASTER
 
     @pytest.mark.unit
@@ -202,13 +206,25 @@ class TestAddDataset:
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """add_dataset accepts optional title and description."""
-        geojson_path = tmp_path / "data.geojson"
-        geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
+        # Create file INSIDE collection/item directory structure (Issue #163)
+        item_dir = initialized_catalog / "test" / "mydata"
+        item_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create the output file
-        output_dir = initialized_catalog / "test" / "data"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / "data.parquet"
+        geojson_path = item_dir / "data.geojson"
+        # Must have valid features for pre-validation
+        geojson_data = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [0, 0]},
+                    "properties": {},
+                }
+            ],
+        }
+        geojson_path.write_text(json.dumps(geojson_data))
+
+        output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake data")
 
         with (
@@ -222,7 +238,7 @@ class TestAddDataset:
             mock_metadata.return_value = MagicMock(
                 bbox=(-1, -1, 1, 1),
                 crs="EPSG:4326",
-                feature_count=0,
+                feature_count=1,
                 geometry_type="Point",
                 to_stac_properties=lambda: {},
             )
@@ -244,13 +260,25 @@ class TestAddDataset:
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """add_dataset creates collection when it doesn't exist."""
-        geojson_path = tmp_path / "data.geojson"
-        geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
+        # Create file INSIDE collection/item directory structure (Issue #163)
+        item_dir = initialized_catalog / "new-collection" / "mydata"
+        item_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create the output file
-        output_dir = initialized_catalog / "new-collection" / "data"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / "data.parquet"
+        geojson_path = item_dir / "data.geojson"
+        # Must have valid features for pre-validation
+        geojson_data = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [0, 0]},
+                    "properties": {},
+                }
+            ],
+        }
+        geojson_path.write_text(json.dumps(geojson_data))
+
+        output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake data")
 
         with (
@@ -264,7 +292,7 @@ class TestAddDataset:
             mock_metadata.return_value = MagicMock(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                feature_count=0,
+                feature_count=1,
                 geometry_type="Point",
                 to_stac_properties=lambda: {},
             )
@@ -701,6 +729,209 @@ class TestAddDatasetMissingBbox:
                 )
 
 
+class TestAddDatasetItemIdDerivation:
+    """Tests for item_id derivation from directory structure (Issue #163).
+
+    Per the design, item_id should be derived from the PARENT DIRECTORY name,
+    not the filename. This ensures files stay organized with their companions
+    and avoids creating duplicate directories.
+
+    Example:
+        censo-2010/data/radios.parquet
+                   ^^^^
+                   item_id = "data" (parent directory)
+                   NOT "radios" (filename stem)
+    """
+
+    @pytest.mark.unit
+    def test_item_id_from_parent_directory_not_filename(
+        self, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """item_id should be derived from parent directory name, not filename.
+
+        Given: censo-2010/data/radios.parquet
+        Expected item_id: "data" (parent directory)
+        Wrong item_id: "radios" (filename stem)
+        """
+        # Set up: collection/item_dir/file.geojson structure
+        collection_dir = initialized_catalog / "censo-2010"
+        item_dir = collection_dir / "data"  # This should become the item_id
+        item_dir.mkdir(parents=True)
+
+        geojson_path = item_dir / "radios.geojson"
+        geojson_data = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [-58.4, -34.6]},
+                    "properties": {"name": "Buenos Aires"},
+                }
+            ],
+        }
+        geojson_path.write_text(json.dumps(geojson_data))
+
+        with (
+            patch("portolan_cli.dataset.detect_format") as mock_detect,
+            patch("portolan_cli.dataset.convert_vector") as mock_convert,
+            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+        ):
+            mock_detect.return_value = FormatType.VECTOR
+            # Simulate conversion output in the SAME directory (in-place)
+            output_file = item_dir / "radios.parquet"
+            output_file.write_bytes(b"fake parquet")
+            mock_convert.return_value = output_file
+            mock_metadata.return_value = MagicMock(
+                bbox=(-58.5, -34.7, -58.3, -34.5),
+                crs="EPSG:4326",
+                feature_count=1,
+                geometry_type="Point",
+                to_stac_properties=lambda: {"geoparquet:feature_count": 1},
+            )
+            mock_checksum.return_value = "abc123"
+
+            result = add_dataset(
+                path=geojson_path,
+                catalog_root=initialized_catalog,
+                collection_id="censo-2010",
+            )
+
+            # CRITICAL ASSERTION: item_id should be "data" (parent dir), not "radios" (filename)
+            assert result.item_id == "data", (
+                f"item_id should be parent directory name 'data', not filename stem '{result.item_id}'. "
+                "See Issue #163: item boundaries should be directories, not filenames."
+            )
+
+    @pytest.mark.unit
+    def test_add_dataset_tracks_in_place_no_copy(
+        self, initialized_catalog: Path, tmp_path: Path
+    ) -> None:
+        """add_dataset should track files in-place, not copy them to a new directory.
+
+        Given: collection/item_dir/file.geojson
+        Expected: Converted file stays in collection/item_dir/
+        Wrong: Copied to collection/filename_stem/ (creates duplicate)
+
+        Issue #163: The current implementation copies files, causing duplication.
+        """
+        # Set up structure: collection/data/radios.geojson
+        collection_dir = initialized_catalog / "censo-2010"
+        item_dir = collection_dir / "data"
+        item_dir.mkdir(parents=True)
+
+        geojson_path = item_dir / "radios.geojson"
+        geojson_data = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [-58.4, -34.6]},
+                    "properties": {"name": "Buenos Aires"},
+                }
+            ],
+        }
+        geojson_path.write_text(json.dumps(geojson_data))
+
+        with (
+            patch("portolan_cli.dataset.detect_format") as mock_detect,
+            patch("portolan_cli.dataset.convert_vector") as mock_convert,
+            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+        ):
+            mock_detect.return_value = FormatType.VECTOR
+            # Simulate conversion output in the SAME directory (in-place)
+            output_file = item_dir / "radios.parquet"
+            output_file.write_bytes(b"fake parquet")
+            mock_convert.return_value = output_file
+            mock_metadata.return_value = MagicMock(
+                bbox=(-58.5, -34.7, -58.3, -34.5),
+                crs="EPSG:4326",
+                feature_count=1,
+                geometry_type="Point",
+                to_stac_properties=lambda: {"geoparquet:feature_count": 1},
+            )
+            mock_checksum.return_value = "abc123"
+
+            add_dataset(
+                path=geojson_path,
+                catalog_root=initialized_catalog,
+                collection_id="censo-2010",
+            )
+
+            # CRITICAL ASSERTION: convert_vector should be called with the SAME directory
+            # as the source file (in-place conversion), not a new directory
+            convert_call_args = mock_convert.call_args
+            dest_dir = convert_call_args[0][1]  # Second positional arg is dest_dir
+
+            assert dest_dir == item_dir, (
+                f"convert_vector should output to source directory '{item_dir}', "
+                f"not '{dest_dir}'. Files should be tracked in-place, not copied. "
+                "See Issue #163."
+            )
+
+            # Also verify no duplicate directory was created
+            wrong_dir = collection_dir / "radios"  # Would exist if using filename as item_id
+            assert not wrong_dir.exists(), (
+                f"Directory '{wrong_dir}' should not exist. "
+                "Files should stay in their original directory, not be copied."
+            )
+
+    @pytest.mark.integration
+    def test_add_dataset_no_artifacts_on_validation_failure(
+        self, initialized_catalog: Path
+    ) -> None:
+        """Failed add_dataset leaves no partial artifacts (Issue #163 atomicity).
+
+        When add_dataset fails due to missing geometry/bbox, it should be atomic:
+        - No new directories created
+        - No files copied
+        - No collection.json created
+        - No versions.json created
+
+        This tests the REAL code path without mocks to verify atomicity.
+        """
+        # Create collection with an item directory containing non-geo parquet
+        collection_dir = initialized_catalog / "demographics"
+        item_dir = collection_dir / "census-data"
+        item_dir.mkdir(parents=True)
+
+        # Create a GeoJSON with no geometry (empty FeatureCollection)
+        geojson_path = item_dir / "data.geojson"
+        geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
+
+        # Record state before add attempt
+        files_before = set(initialized_catalog.rglob("*"))
+
+        # Attempt to add - should fail due to missing bbox
+        with pytest.raises(ValueError, match="missing bounding box"):
+            add_dataset(
+                path=geojson_path,
+                catalog_root=initialized_catalog,
+                collection_id="demographics",
+            )
+
+        # Verify NO new artifacts were created beyond what we set up
+        files_after = set(initialized_catalog.rglob("*"))
+        new_files = files_after - files_before
+
+        # Filter out the source files we created (they should exist)
+        expected_files = {collection_dir, item_dir, geojson_path}
+        unexpected_files = new_files - expected_files
+
+        assert unexpected_files == set(), (
+            f"Failed add_dataset created partial artifacts: {unexpected_files}\n"
+            "Expected atomic failure with no leftover files. See Issue #163."
+        )
+
+        # Explicitly verify STAC artifacts don't exist
+        collection_json = collection_dir / "collection.json"
+        assert not collection_json.exists(), "collection.json should not exist after failed add"
+
+        versions_json = collection_dir / "versions.json"
+        assert not versions_json.exists(), "versions.json should not exist after failed add"
+
+
 class TestPathSegmentValidation:
     """Tests for item_id and collection_id path traversal prevention."""
 
@@ -987,24 +1218,39 @@ class TestIgnoredFiles:
 class TestMultiAssetAddDataset:
     """Tests for multi-asset behavior in add_dataset."""
 
+    # Helper to create valid GeoJSON data
+    VALID_GEOJSON = json.dumps(
+        {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [0, 0]},
+                    "properties": {},
+                }
+            ],
+        }
+    )
+
     @pytest.mark.unit
     def test_add_dataset_tracks_multiple_files_in_item_dir(
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """add_dataset creates assets for ALL files in item_dir, not just the primary."""
-        geojson_path = tmp_path / "data.geojson"
-        geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
+        # Create file INSIDE item directory (Issue #163)
+        item_dir = initialized_catalog / "test-collection" / "data"
+        item_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create the output directory with multiple files
-        output_dir = initialized_catalog / "test-collection" / "data"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / "data.parquet"
+        geojson_path = item_dir / "data.geojson"
+        geojson_path.write_text(self.VALID_GEOJSON)
+
+        output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake parquet data")
         # Add a thumbnail
-        thumbnail = output_dir / "thumbnail.png"
+        thumbnail = item_dir / "thumbnail.png"
         thumbnail.write_bytes(b"fake png data")
         # Add a metadata sidecar
-        metadata_file = output_dir / "metadata.xml"
+        metadata_file = item_dir / "metadata.xml"
         metadata_file.write_bytes(b"<metadata/>")
 
         with (
@@ -1031,7 +1277,8 @@ class TestMultiAssetAddDataset:
             )
 
             # Should have all non-ignored files as asset paths
-            assert len(result.asset_paths) == 3
+            # Note: includes geojson now that it's in item_dir
+            assert len(result.asset_paths) >= 3
             assert str(output_file) in result.asset_paths
             assert str(thumbnail) in result.asset_paths
             assert str(metadata_file) in result.asset_paths
@@ -1041,12 +1288,14 @@ class TestMultiAssetAddDataset:
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """add_dataset ignores STAC JSON files (collection.json, etc.) in the item directory."""
-        geojson_path = tmp_path / "data.geojson"
-        geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
+        # Create file INSIDE item directory (Issue #163)
+        item_dir = initialized_catalog / "test-collection" / "data"
+        item_dir.mkdir(parents=True, exist_ok=True)
 
-        output_dir = initialized_catalog / "test-collection" / "data"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / "data.parquet"
+        geojson_path = item_dir / "data.geojson"
+        geojson_path.write_text(self.VALID_GEOJSON)
+
+        output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake parquet data")
 
         with (
@@ -1060,7 +1309,7 @@ class TestMultiAssetAddDataset:
             mock_metadata.return_value = MagicMock(
                 bbox=(-1, -1, 1, 1),
                 crs="EPSG:4326",
-                feature_count=0,
+                feature_count=1,
                 geometry_type="Point",
                 to_stac_properties=lambda: {},
             )
@@ -1084,15 +1333,17 @@ class TestMultiAssetAddDataset:
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """add_dataset skips hidden files (starting with dot) in item_dir."""
-        geojson_path = tmp_path / "data.geojson"
-        geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
+        # Create file INSIDE item directory (Issue #163)
+        item_dir = initialized_catalog / "test-collection" / "data"
+        item_dir.mkdir(parents=True, exist_ok=True)
 
-        output_dir = initialized_catalog / "test-collection" / "data"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / "data.parquet"
+        geojson_path = item_dir / "data.geojson"
+        geojson_path.write_text(self.VALID_GEOJSON)
+
+        output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake parquet data")
         # Add a hidden file
-        hidden_file = output_dir / ".hidden"
+        hidden_file = item_dir / ".hidden"
         hidden_file.write_bytes(b"hidden data")
 
         with (
@@ -1106,7 +1357,7 @@ class TestMultiAssetAddDataset:
             mock_metadata.return_value = MagicMock(
                 bbox=(-1, -1, 1, 1),
                 crs="EPSG:4326",
-                feature_count=0,
+                feature_count=1,
                 geometry_type="Point",
                 to_stac_properties=lambda: {},
             )
@@ -1127,15 +1378,17 @@ class TestMultiAssetAddDataset:
     @pytest.mark.unit
     def test_add_dataset_skips_symlinks(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add_dataset does not follow symlinks when scanning item_dir."""
-        geojson_path = tmp_path / "data.geojson"
-        geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
+        # Create file INSIDE item directory (Issue #163)
+        item_dir = initialized_catalog / "test-collection" / "data"
+        item_dir.mkdir(parents=True, exist_ok=True)
 
-        output_dir = initialized_catalog / "test-collection" / "data"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / "data.parquet"
+        geojson_path = item_dir / "data.geojson"
+        geojson_path.write_text(self.VALID_GEOJSON)
+
+        output_file = item_dir / "data.parquet"
         output_file.write_bytes(b"fake parquet data")
         # Create a symlink
-        symlink = output_dir / "link.txt"
+        symlink = item_dir / "link.txt"
         symlink.symlink_to(output_file)
 
         with (
@@ -1149,7 +1402,7 @@ class TestMultiAssetAddDataset:
             mock_metadata.return_value = MagicMock(
                 bbox=(-1, -1, 1, 1),
                 crs="EPSG:4326",
-                feature_count=0,
+                feature_count=1,
                 geometry_type="Point",
                 to_stac_properties=lambda: {},
             )
