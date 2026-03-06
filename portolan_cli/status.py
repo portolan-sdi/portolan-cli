@@ -251,16 +251,18 @@ def _scan_item_dir_recursive(
                     continue
 
                 # Calculate relative path from base item directory
+                # Use as_posix() to ensure consistent forward slashes on all platforms
                 relative_path = entry.relative_to(base_dir)
-                relative_key = f"{item_id}/{relative_path}"
+                relative_path_str = relative_path.as_posix()
+                relative_key = f"{item_id}/{relative_path_str}"
                 seen_keys.add(relative_key)
 
                 # For deeply nested files, we report with the item_id as the container
                 # and the full relative path as the filename (for display purposes)
                 if relative_key not in tracked_assets:
-                    untracked.append(FileStatus(collection_id, item_id, str(relative_path)))
+                    untracked.append(FileStatus(collection_id, item_id, relative_path_str))
                 elif not is_current(entry, versions_path, asset_key=relative_key):
-                    modified.append(FileStatus(collection_id, item_id, str(relative_path)))
+                    modified.append(FileStatus(collection_id, item_id, relative_path_str))
 
             elif entry.is_dir():
                 # Recurse into subdirectories (for hive partitions)
