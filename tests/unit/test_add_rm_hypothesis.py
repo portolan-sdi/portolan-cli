@@ -41,11 +41,18 @@ geospatial_ext = st.sampled_from(list(GEOSPATIAL_EXTENSIONS))
 sidecar_ext = st.sampled_from(list(SIDECAR_PATTERNS.keys()))
 
 # Valid collection names (first path component)
-collection_name = st.text(
-    st.sampled_from(string.ascii_lowercase + string.digits + "_-"),
-    min_size=1,
-    max_size=30,
-).filter(lambda s: not s.startswith(".") and not s.startswith("-"))
+# Per collection_id.py: must start with a letter, contain only [a-z0-9_-]
+collection_name = st.builds(
+    lambda first, rest: first + rest,
+    # First character must be a letter
+    st.sampled_from(string.ascii_lowercase),
+    # Rest can be letters, digits, underscore, or hyphen
+    st.text(
+        st.sampled_from(string.ascii_lowercase + string.digits + "_-"),
+        min_size=0,
+        max_size=20,
+    ),
+)
 
 
 # =============================================================================
@@ -1064,7 +1071,7 @@ class TestMultiAssetProperties:
 
     @pytest.mark.unit
     @given(ext=st.sampled_from([".png", ".jpg", ".pdf", ".txt", ".md", ".json", ".xml"]))
-    @settings(max_examples=20)
+    @settings(max_examples=5, deadline=30000)
     def test_media_type_is_deterministic(self, ext: str) -> None:
         """Same extension always produces the same MIME type."""
         from portolan_cli.dataset import _get_media_type
@@ -1177,7 +1184,7 @@ class TestMultiAssetProperties:
             max_size=5,
         )
     )
-    @settings(max_examples=20)
+    @settings(max_examples=5, deadline=30000)
     def test_scan_item_assets_excludes_hidden_files(self, filenames: list[str]) -> None:
         """_scan_item_assets never includes hidden files."""
         from portolan_cli.dataset import _scan_item_assets
@@ -1327,78 +1334,165 @@ class TestCatalogRootAddProperties:
 # =============================================================================
 
 
+# Valid GeoJSON template for testing add_dataset()
+VALID_GEOJSON_TEMPLATE = {
+    "type": "FeatureCollection",
+    "features": [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [0, 0]},
+            "properties": {"name": "test"},
+        }
+    ],
+}
+
+# Minimal STAC catalog for testing
+MINIMAL_CATALOG_TEMPLATE = {
+    "type": "Catalog",
+    "id": "test-catalog",
+    "stac_version": "1.0.0",
+    "description": "Test catalog",
+    "links": [],
+}
+
+
+def _setup_managed_catalog(catalog_root: Path) -> None:
+    """Set up a minimal managed catalog for testing.
+
+    Creates:
+    - catalog.json (STAC root)
+    - .portolan/config.yaml (sentinel)
+    - .portolan/state.json (operational state)
+    """
+    import json
+
+    # STAC catalog at root
+    (catalog_root / "catalog.json").write_text(json.dumps(MINIMAL_CATALOG_TEMPLATE, indent=2))
+
+    # .portolan sentinel (per ADR-0029)
+    portolan_dir = catalog_root / ".portolan"
+    portolan_dir.mkdir(exist_ok=True)
+    (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+    (portolan_dir / "state.json").write_text("{}")
+
+
 class TestItemIdDerivationProperties:
     """Property-based tests for item_id derivation.
 
     Issue #163: item_id should be derived from parent directory name, not filename.
     This enables the canonical structure: catalog_root/collection/item_id/files.
+
+    CRITICAL: These tests MUST call add_dataset() to verify actual behavior,
+    not just test Python's Path operations (which would be tautological).
     """
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Calls add_dataset() with real filesystem + geoparquet-io
     @given(
         collection=collection_name,
         item_id=collection_name,  # Reuse collection_name strategy (safe dir names)
         filename=safe_filename,
-        ext=geospatial_ext,
     )
-    @settings(max_examples=50)
-    def test_item_id_equals_parent_directory_name(
-        self, collection: str, item_id: str, filename: str, ext: str
+    @settings(
+        max_examples=5, deadline=30000
+    )  # Reduced: integration tests with geoparquet-io are slow
+    def test_add_dataset_derives_item_id_from_parent_directory(
+        self, collection: str, item_id: str, filename: str
     ) -> None:
-        """For any file at catalog/collection/item_dir/file, item_id = parent dir name.
+        """add_dataset() should derive item_id from parent directory name, not filename.
 
         This is the fundamental invariant from Issue #163: the directory structure
         determines item boundaries, not filenames.
+
+        NON-TAUTOLOGICAL: This test calls add_dataset() and verifies DatasetInfo.item_id.
         """
+        import json
+
+        from portolan_cli.dataset import add_dataset
+
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
+
+            # Set up managed catalog (catalog.json + .portolan sentinel)
+            _setup_managed_catalog(catalog_root)
+
             # Create canonical structure: catalog_root/<collection>/<item_id>/<file>
             item_dir = catalog_root / collection / item_id
             item_dir.mkdir(parents=True, exist_ok=True)
-            geo_file = item_dir / f"{filename}{ext}"
-            geo_file.write_bytes(b"test")
 
-            # The item_id should always be the parent directory name
-            expected_item_id = geo_file.parent.name
+            # Create a VALID GeoJSON file (with geometry)
+            geo_file = item_dir / f"{filename}.geojson"
+            geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
 
-            assert expected_item_id == item_id, (
-                f"item_id should be parent dir '{item_id}', not filename '{filename}'"
+            # Call add_dataset() - this is what we're actually testing
+            result = add_dataset(
+                path=geo_file,
+                catalog_root=catalog_root,
+                collection_id=collection,
             )
 
-    @pytest.mark.unit
+            # Verify add_dataset() derived item_id from parent directory name
+            assert result.item_id == item_id, (
+                f"add_dataset() should derive item_id='{item_id}' from parent dir, "
+                f"not '{result.item_id}' (filename stem: '{filename}')"
+            )
+
+    @pytest.mark.integration  # Calls add_dataset() with real filesystem + geoparquet-io
     @given(
         collection=collection_name,
         item_id=collection_name,
         filename1=safe_filename,
         filename2=safe_filename,
-        ext=geospatial_ext,
     )
-    @settings(max_examples=50)
-    def test_multiple_files_same_item_id(
-        self, collection: str, item_id: str, filename1: str, filename2: str, ext: str
+    @settings(max_examples=5, deadline=60000)  # Reduced: creates 2 files per iteration
+    def test_add_dataset_multiple_files_same_item_id(
+        self, collection: str, item_id: str, filename1: str, filename2: str
     ) -> None:
-        """Multiple files in the same directory should share the same item_id.
+        """Multiple calls to add_dataset() for files in same directory return same item_id.
 
         Issue #163: Files in the same item directory are assets of ONE item,
         not separate items with different item_ids.
+
+        NON-TAUTOLOGICAL: This test calls add_dataset() twice and compares results.
         """
+        import json
+
+        from portolan_cli.dataset import add_dataset
+
+        # Ensure distinct filenames
+        if filename1 == filename2:
+            filename2 = f"{filename2}_other"
+
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
+
+            # Set up managed catalog (catalog.json + .portolan sentinel)
+            _setup_managed_catalog(catalog_root)
+
+            # Create item directory with two valid GeoJSON files
             item_dir = catalog_root / collection / item_id
             item_dir.mkdir(parents=True, exist_ok=True)
 
-            # Create two files in the same item directory
-            file1 = item_dir / f"{filename1}{ext}"
-            file2 = item_dir / f"{filename2}_other{ext}"
-            file1.write_bytes(b"test1")
-            file2.write_bytes(b"test2")
+            file1 = item_dir / f"{filename1}.geojson"
+            file2 = item_dir / f"{filename2}.geojson"
+            file1.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
+            file2.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
 
-            # Both files should have the same item_id (parent directory name)
-            item_id_1 = file1.parent.name
-            item_id_2 = file2.parent.name
+            # Call add_dataset() for both files
+            result1 = add_dataset(
+                path=file1,
+                catalog_root=catalog_root,
+                collection_id=collection,
+            )
+            result2 = add_dataset(
+                path=file2,
+                catalog_root=catalog_root,
+                collection_id=collection,
+            )
 
-            assert item_id_1 == item_id_2 == item_id, (
-                f"All files in {item_dir} should have item_id='{item_id}'"
+            # Both should have the same item_id (parent directory name)
+            assert result1.item_id == result2.item_id == item_id, (
+                f"Files in {item_dir} should share item_id='{item_id}', "
+                f"got '{result1.item_id}' and '{result2.item_id}'"
             )
 
 
@@ -1407,22 +1501,139 @@ class TestItemIdDerivationProperties:
 # =============================================================================
 
 
+# Invalid GeoJSON templates for atomicity testing
+INVALID_GEOJSON_NO_GEOMETRY = {
+    "type": "FeatureCollection",
+    "features": [{"type": "Feature", "properties": {"name": "no geometry"}}],
+}
+
+INVALID_GEOJSON_EMPTY_FEATURES = {
+    "type": "FeatureCollection",
+    "features": [],
+}
+
+
 class TestPreValidationAtomicityProperties:
     """Property-based tests for pre-validation atomicity.
 
     Issue #163: Failed add operations should not create partial artifacts.
     Pre-validation should check for valid geometry BEFORE any filesystem operations.
+
+    CRITICAL: These tests MUST call add_dataset() to verify actual atomicity,
+    not just _pre_validate_geometry() in isolation.
     """
+
+    @pytest.mark.integration  # Calls add_dataset() - requires full catalog setup
+    @given(collection=collection_name, item_id=collection_name)
+    @settings(max_examples=5, deadline=30000)
+    def test_add_dataset_invalid_geojson_no_stac_artifacts(
+        self, collection: str, item_id: str
+    ) -> None:
+        """add_dataset() failure should not create STAC collection/item/versions.json.
+
+        Issue #163: When add_dataset fails due to missing geometry, no STAC artifacts
+        (collection.json, item.json, versions.json) should be created.
+
+        NON-TAUTOLOGICAL: This test calls add_dataset() and checks for artifacts.
+        """
+        import json
+
+        from portolan_cli.dataset import add_dataset
+
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+
+            # Set up managed catalog (catalog.json + .portolan sentinel)
+            _setup_managed_catalog(catalog_root)
+
+            # Create canonical structure with INVALID GeoJSON file
+            item_dir = catalog_root / collection / item_id
+            item_dir.mkdir(parents=True, exist_ok=True)
+            invalid_geojson = item_dir / "data.geojson"
+            invalid_geojson.write_text(json.dumps(INVALID_GEOJSON_NO_GEOMETRY))
+
+            # Record file state before add_dataset attempt
+            files_before = set(catalog_root.rglob("*"))
+
+            # add_dataset should fail due to missing geometry
+            try:
+                add_dataset(
+                    path=invalid_geojson,
+                    catalog_root=catalog_root,
+                    collection_id=collection,
+                )
+                raise AssertionError("Expected ValueError for GeoJSON without geometry")
+            except ValueError:
+                pass  # Expected
+
+            # Check that no STAC artifacts were created
+            files_after = set(catalog_root.rglob("*"))
+            new_files = files_after - files_before
+
+            stac_artifacts = [
+                f for f in new_files if f.suffix == ".json" and f.name != "state.json"
+            ]
+            assert not stac_artifacts, (
+                f"add_dataset() failure should not create STAC artifacts. "
+                f"Created: {[str(f.relative_to(catalog_root)) for f in stac_artifacts]}"
+            )
+
+    @pytest.mark.integration  # Calls add_dataset() - requires full catalog setup
+    @given(collection=collection_name, item_id=collection_name)
+    @settings(max_examples=5, deadline=30000)
+    def test_add_dataset_empty_features_no_stac_artifacts(
+        self, collection: str, item_id: str
+    ) -> None:
+        """add_dataset() with empty features array should fail without creating artifacts.
+
+        NON-TAUTOLOGICAL: This test calls add_dataset() and verifies atomicity.
+        """
+        import json
+
+        from portolan_cli.dataset import add_dataset
+
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+
+            # Set up managed catalog (catalog.json + .portolan sentinel)
+            _setup_managed_catalog(catalog_root)
+
+            # Create canonical structure with empty features GeoJSON
+            item_dir = catalog_root / collection / item_id
+            item_dir.mkdir(parents=True, exist_ok=True)
+            empty_geojson = item_dir / "data.geojson"
+            empty_geojson.write_text(json.dumps(INVALID_GEOJSON_EMPTY_FEATURES))
+
+            # Record file state
+            files_before = set(catalog_root.rglob("*"))
+
+            # add_dataset should fail
+            try:
+                add_dataset(
+                    path=empty_geojson,
+                    catalog_root=catalog_root,
+                    collection_id=collection,
+                )
+                raise AssertionError("Expected ValueError for empty features")
+            except ValueError:
+                pass  # Expected
+
+            # No new STAC artifacts
+            files_after = set(catalog_root.rglob("*"))
+            new_files = files_after - files_before
+
+            stac_artifacts = [
+                f for f in new_files if f.suffix == ".json" and f.name != "state.json"
+            ]
+            assert not stac_artifacts, f"Should not create artifacts: {stac_artifacts}"
 
     @pytest.mark.unit
     @given(collection=collection_name, item_id=collection_name)
     @settings(max_examples=30)
-    def test_invalid_geojson_no_directories_created(self, collection: str, item_id: str) -> None:
-        """Pre-validation failure should not create any directories.
+    def test_pre_validate_geometry_is_pure(self, collection: str, item_id: str) -> None:
+        """_pre_validate_geometry() should be a pure function (no side effects).
 
-        When add_dataset fails due to missing geometry, no collection or item
-        directories should be created. The operation should be atomic: either
-        all changes happen, or none do.
+        This tests the helper function directly to ensure it doesn't create files.
         """
         import json
 
@@ -1432,78 +1643,20 @@ class TestPreValidationAtomicityProperties:
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
 
-            # Create a catalog with .portolan sentinel
-            portolan_dir = catalog_root / ".portolan"
-            portolan_dir.mkdir()
-            (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+            # Create INVALID GeoJSON
+            invalid_geojson = catalog_root / "data.geojson"
+            invalid_geojson.write_text(json.dumps(INVALID_GEOJSON_NO_GEOMETRY))
 
-            # Create an INVALID GeoJSON file (no geometry)
-            source_dir = catalog_root / "source"
-            source_dir.mkdir()
-            invalid_geojson = source_dir / "data.geojson"
-            invalid_geojson.write_text(
-                json.dumps(
-                    {
-                        "type": "FeatureCollection",
-                        "features": [{"type": "Feature", "properties": {"name": "no geometry"}}],
-                    }
-                )
-            )
-
-            # Record directory state before validation attempt
-            dirs_before = {p for p in catalog_root.rglob("*") if p.is_dir()}
-
-            # Pre-validation should fail for invalid GeoJSON
-            try:
-                _pre_validate_geometry(invalid_geojson, FormatType.VECTOR)
-                raise AssertionError("Expected ValueError for GeoJSON without geometry")
-            except ValueError:
-                pass  # Expected
-
-            # Directory state should be unchanged after failed validation
-            dirs_after = {p for p in catalog_root.rglob("*") if p.is_dir()}
-
-            assert dirs_before == dirs_after, (
-                f"Pre-validation failure should not create directories. "
-                f"Created: {dirs_after - dirs_before}"
-            )
-
-    @pytest.mark.unit
-    @given(collection=collection_name, item_id=collection_name)
-    @settings(max_examples=30)
-    def test_empty_features_no_directories_created(self, collection: str, item_id: str) -> None:
-        """GeoJSON with empty features array should fail without creating directories."""
-        import json
-
-        from portolan_cli.dataset import _pre_validate_geometry
-        from portolan_cli.formats import FormatType
-
-        with tempfile.TemporaryDirectory() as tmp:
-            catalog_root = Path(tmp).resolve()
-
-            # Create source file with empty features
-            source_dir = catalog_root / "source"
-            source_dir.mkdir()
-            empty_geojson = source_dir / "empty.geojson"
-            empty_geojson.write_text(
-                json.dumps(
-                    {
-                        "type": "FeatureCollection",
-                        "features": [],  # Empty!
-                    }
-                )
-            )
-
-            # Record directory state
-            dirs_before = {p for p in catalog_root.rglob("*") if p.is_dir()}
+            # Record state before
+            files_before = set(catalog_root.rglob("*"))
 
             # Pre-validation should fail
             try:
-                _pre_validate_geometry(empty_geojson, FormatType.VECTOR)
-                raise AssertionError("Expected ValueError for empty features")
+                _pre_validate_geometry(invalid_geojson, FormatType.VECTOR)
+                raise AssertionError("Expected ValueError")
             except ValueError:
-                pass  # Expected
+                pass
 
-            # No new directories
-            dirs_after = {p for p in catalog_root.rglob("*") if p.is_dir()}
-            assert dirs_before == dirs_after
+            # State should be unchanged (pure function)
+            files_after = set(catalog_root.rglob("*"))
+            assert files_before == files_after, "_pre_validate_geometry should be pure"

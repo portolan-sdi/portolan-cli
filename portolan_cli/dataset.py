@@ -389,8 +389,9 @@ def add_dataset(
     item_dir = path.parent  # Use existing directory, don't create new one
 
     # Verify structural consistency: item_dir should be inside collection_dir
+    # Use .resolve() to prevent symlink bypass attacks (CodeRabbit review)
     try:
-        item_dir.relative_to(collection_dir)
+        item_dir.resolve().relative_to(collection_dir.resolve())
     except ValueError as err:
         raise ValueError(
             f"File '{path}' is not inside collection '{collection_id}'. "
@@ -523,6 +524,9 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
 
     # Check if already a valid COG — skip conversion if so
     if source.suffix.lower() in (".tif", ".tiff") and is_cloud_optimized_geotiff(source):
+        # If source is already at the destination, no copy needed (CodeRabbit review)
+        if source.resolve() == output_path.resolve():
+            return output_path
         # Already a COG, just copy to destination
         shutil.copy2(source, output_path)
         return output_path
