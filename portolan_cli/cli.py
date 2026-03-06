@@ -26,6 +26,7 @@ from portolan_cli.dataset import (
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.metadata import check_directory_metadata, fix_metadata
+from portolan_cli.metadata.fix import FixReport
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.scan import (
@@ -761,28 +762,23 @@ def _output_combined_check_json(
 @click.option(
     "--fix",
     is_flag=True,
-    help="Convert non-cloud-native files to cloud-native formats (GeoParquet, COG)",
+    help="Fix issues: convert geo-assets to cloud-native, update stale metadata",
 )
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Preview what would be converted (use with --fix)",
+    help="Preview what would be fixed (use with --fix)",
 )
 @click.option(
     "--metadata",
     is_flag=True,
-    help="Only validate STAC metadata (links, schema, required fields)",
+    help="Only check/fix STAC metadata (links, schema, staleness)",
 )
 @click.option(
     "--geo-assets",
     "geo_assets",
     is_flag=True,
-    help="Only check geospatial assets (cloud-native status, convertibility)",
-)
-@click.option(
-    "--fix-metadata",
-    is_flag=True,
-    help="Create or update missing/stale STAC metadata items",
+    help="Only check/fix geospatial assets (cloud-native status, convertibility)",
 )
 @click.pass_context
 def check(
@@ -794,23 +790,18 @@ def check(
     dry_run: bool,
     metadata: bool,
     geo_assets: bool,
-    fix_metadata: bool,
 ) -> None:
     """Validate a Portolan catalog or check files for cloud-native status.
 
     Runs validation rules against the catalog and reports any issues.
-    With --fix, converts non-cloud-native files to GeoParquet (vectors) or COG (rasters).
-    With --fix-metadata, creates or updates missing/stale STAC metadata items.
+    With --fix, applies fixes based on selected scope.
 
     PATH is the directory to check (default: current directory).
 
-    Use --metadata or --geo-assets to run only specific validations:
-    - --metadata: Validate STAC catalog structure and metadata
-    - --geo-assets: Check geospatial assets for cloud-native compliance
-
-    Use --fix or --fix-metadata to make changes:
-    - --fix: Convert non-cloud-native files
-    - --fix-metadata: Create/update STAC metadata items
+    Use --metadata or --geo-assets to limit scope:
+    - --metadata: Only check/fix STAC metadata (staleness, missing items)
+    - --geo-assets: Only check/fix geospatial assets (cloud-native status)
+    - Neither: Check/fix both (default)
 
     Examples:
 
@@ -820,15 +811,13 @@ def check(
 
         portolan check --geo-assets           # Check geo-assets only
 
-        portolan check /data --fix            # Convert files to cloud-native
+        portolan check --fix                  # Fix both metadata and geo-assets
 
-        portolan check /data --fix-metadata   # Create/update STAC metadata
+        portolan check --metadata --fix       # Fix only metadata (create/update items)
 
-        portolan check /data --geo-assets --fix  # Convert only (no metadata validation)
+        portolan check --geo-assets --fix     # Fix only geo-assets (convert files)
 
-        portolan check /data --fix --dry-run  # Preview conversions
-
-        portolan check /data --fix-metadata --dry-run  # Preview metadata fixes
+        portolan check --fix --dry-run        # Preview all fixes
     """
     use_json = should_output_json(ctx, json_output)
 
@@ -836,28 +825,18 @@ def check(
     if not path.exists():
         _handle_path_not_found(path, use_json)
 
-    # Warn if --dry-run is used without --fix or --fix-metadata
-    if dry_run and not fix and not fix_metadata:
-        warn("--dry-run has no effect without --fix or --fix-metadata")
+    # Warn if --dry-run is used without --fix
+    if dry_run and not fix:
+        warn("--dry-run has no effect without --fix")
 
-    # Handle --fix-metadata independently
-    if fix_metadata:
-        _handle_fix_metadata(
-            path=path,
-            dry_run=dry_run,
-            use_json=use_json,
-            verbose=verbose,
-        )
-        return
-
-    # Determine which checks to run
-    run_metadata, run_format, mode = _determine_check_mode(metadata, geo_assets, fix)
+    # Determine which checks to run based on scope flags
+    run_metadata, run_geo_assets, mode = _determine_check_mode(metadata, geo_assets)
 
     # Execute the appropriate check workflow
     _execute_check_workflow(
         path=path,
         run_metadata=run_metadata,
-        run_format=run_format,
+        run_geo_assets=run_geo_assets,
         mode=mode,
         fix=fix,
         dry_run=dry_run,
@@ -866,90 +845,93 @@ def check(
     )
 
 
-def _handle_fix_metadata(
-    path: Path,
-    dry_run: bool,
-    use_json: bool,
-    verbose: bool,
+def _output_fix_json(
+    *,
+    mode: str,
+    metadata_fix_report: FixReport | None,
+    format_fix_report: Any,
+    has_failures: bool,
 ) -> None:
-    """Handle --fix-metadata flag: validate and fix metadata issues.
+    """Output combined fix results as JSON.
 
     Args:
-        path: Directory to check.
-        dry_run: If True, don't make changes.
-        use_json: If True, output JSON.
-        verbose: If True, show all results.
+        mode: Check mode string.
+        metadata_fix_report: Results from metadata fix (if run).
+        format_fix_report: Results from geo-asset fix (if run).
+        has_failures: Whether any fix operation failed.
     """
-    # Run metadata validation
-    metadata_report = check_directory_metadata(path)
+    data: dict[str, Any] = {"mode": mode}
 
-    # Run fix_metadata with the report
-    fix_report = fix_metadata(path, metadata_report, dry_run=dry_run)
+    if metadata_fix_report is not None:
+        if not isinstance(metadata_fix_report, FixReport):
+            raise TypeError(f"Expected FixReport, got {type(metadata_fix_report).__name__}")
+        data["metadata_fix"] = metadata_fix_report.to_dict()
 
-    # Output results
-    if use_json:
-        _output_fix_metadata_json(fix_report, metadata_report)
+    if format_fix_report is not None:
+        # Use "conversion" key for backward compatibility with existing tests
+        data["conversion"] = format_fix_report.to_dict()
+
+    # Use error_envelope if there were failures
+    if has_failures:
+        envelope = error_envelope(
+            "check",
+            [ErrorDetail(type="FixError", message="Some fixes failed")],
+            data=data,
+        )
     else:
-        _output_fix_metadata_human(fix_report, metadata_report, verbose, dry_run)
-
-    # Exit with error if there were failures
-    if fix_report.failure_count > 0:
-        raise SystemExit(1)
-
-
-def _output_fix_metadata_json(fix_report: Any, metadata_report: Any) -> None:
-    """Output fix metadata results as JSON."""
-    from portolan_cli.metadata.fix import FixReport
-
-    assert isinstance(fix_report, FixReport)
-
-    data = {
-        "fix_results": fix_report.to_dict(),
-        "metadata_issues": {
-            "total": len(metadata_report.results),
-            "missing": sum(1 for r in metadata_report.results if r.status.value == "missing"),
-            "stale": sum(1 for r in metadata_report.results if r.status.value == "stale"),
-            "breaking": sum(1 for r in metadata_report.results if r.status.value == "breaking"),
-        },
-    }
-
-    envelope = success_envelope("check", data)
+        envelope = success_envelope("check", data)
     output_json_envelope(envelope)
 
 
-def _output_fix_metadata_human(
-    fix_report: Any,
-    metadata_report: Any,
+def _output_fix_human(
+    *,
+    mode: str,
+    metadata_fix_report: FixReport | None,
+    format_fix_report: Any,
     verbose: bool,
     dry_run: bool,
 ) -> None:
-    """Output fix metadata results in human-readable format."""
-    from portolan_cli.metadata.fix import FixReport
+    """Output combined fix results in human-readable format.
 
-    assert isinstance(fix_report, FixReport)
+    Args:
+        mode: Check mode string.
+        metadata_fix_report: Results from metadata fix (if run).
+        format_fix_report: Results from geo-asset fix (if run).
+        verbose: Show detailed output.
+        dry_run: Whether this was a dry run.
+    """
+    # Output metadata fix results
+    if metadata_fix_report is not None:
+        if not isinstance(metadata_fix_report, FixReport):
+            raise TypeError(f"Expected FixReport, got {type(metadata_fix_report).__name__}")
 
-    prefix = "Would create/update" if dry_run else "Created/updated"
+        if metadata_fix_report.total_count > 0:
+            action = "create/update" if dry_run else "Created/updated"
+            success(
+                f"{action} {metadata_fix_report.total_count} metadata "
+                f"item{'s' if metadata_fix_report.total_count != 1 else ''}"
+            )
+        if metadata_fix_report.skipped_count > 0:
+            info_output(f"Skipped {metadata_fix_report.skipped_count} items (already fresh)")
+        if metadata_fix_report.failure_count > 0:
+            error(f"Failed to fix {metadata_fix_report.failure_count} metadata items")
 
-    # Show summary
-    if fix_report.total_count > 0:
-        success(
-            f"{prefix} {fix_report.total_count} metadata "
-            f"item{'s' if fix_report.total_count != 1 else ''}"
-        )
-    if fix_report.skipped_count > 0:
-        info_output(f"Skipped {fix_report.skipped_count} items (already fresh)")
-    if fix_report.failure_count > 0:
-        error(f"Failed to fix {fix_report.failure_count} items")
+        # Show details if verbose or failures
+        if verbose or metadata_fix_report.failure_count > 0:
+            for result in metadata_fix_report.results:
+                status_char = "✓" if result.success else "✗"
+                msg = f"{status_char} {result.file_path}: {result.action.value} ({result.message})"
+                if result.success:
+                    detail(msg)
+                else:
+                    error(msg)
 
-    # Show details if verbose
-    if verbose or fix_report.failure_count > 0:
-        for result in fix_report.results:
-            status_char = "✓" if result.success else "✗"
-            msg = f"{status_char} {result.file_path}: {result.action.value} ({result.message})"
-            if result.success:
-                detail(msg)
-            else:
-                error(msg)
+    # Output format fix results (conversion)
+    if format_fix_report is not None:
+        if dry_run:
+            _print_check_fix_preview(format_fix_report)
+        else:
+            _print_check_fix_results(format_fix_report, verbose=verbose)
 
 
 def _handle_path_not_found(path: Path, use_json: bool) -> None:
@@ -965,69 +947,148 @@ def _handle_path_not_found(path: Path, use_json: bool) -> None:
     raise SystemExit(1)
 
 
-def _determine_check_mode(metadata: bool, geo_assets: bool, fix: bool) -> tuple[bool, bool, str]:
+def _determine_check_mode(metadata: bool, geo_assets: bool) -> tuple[bool, bool, str]:
     """Determine which checks to run and the mode string.
 
+    The scope flags (--metadata, --geo-assets) determine WHAT to check/fix:
+    - Neither flag: check/fix both (default)
+    - --metadata: check/fix metadata only
+    - --geo-assets: check/fix geo-assets only
+    - Both flags: check/fix both (explicit)
+
+    The --fix flag separately controls WHETHER to apply fixes (orthogonal).
+
     Returns:
-        Tuple of (run_metadata, run_format, mode_string).
+        Tuple of (run_metadata, run_geo_assets, mode_string).
     """
     explicit_flags = metadata or geo_assets
 
     if explicit_flags:
         run_metadata = metadata
-        run_format = geo_assets
+        run_geo_assets = geo_assets
     else:
-        # Backward compatible: metadata without fix, format with fix
-        run_metadata = not fix
-        run_format = fix
+        # No explicit flags: run both
+        run_metadata = True
+        run_geo_assets = True
 
     # Determine mode string
-    if run_metadata and not run_format:
+    if run_metadata and not run_geo_assets:
         mode = "metadata"
-    elif run_format and not run_metadata:
+    elif run_geo_assets and not run_metadata:
         mode = "geo-assets"
     else:
         mode = "all"
 
-    return run_metadata, run_format, mode
+    return run_metadata, run_geo_assets, mode
 
 
 def _execute_check_workflow(
     *,
     path: Path,
     run_metadata: bool,
-    run_format: bool,
+    run_geo_assets: bool,
     mode: str,
     fix: bool,
     dry_run: bool,
     use_json: bool,
     verbose: bool,
 ) -> None:
-    """Execute the check workflow based on flags."""
-    metadata_report = None
+    """Execute the check workflow based on flags.
 
-    # Run metadata validation if requested
-    if run_metadata:
+    The workflow varies based on scope (--metadata, --geo-assets) and --fix:
+    - Without --fix: run validation and report issues
+    - With --fix: run validation AND apply fixes for the selected scope
+    """
+    # Handle fix workflows (may exit early)
+    if fix:
+        _run_fix_workflow(
+            path=path,
+            run_metadata=run_metadata,
+            run_geo_assets=run_geo_assets,
+            mode=mode,
+            dry_run=dry_run,
+            use_json=use_json,
+            verbose=verbose,
+        )
+        return
+
+    # Check-only workflows (no --fix)
+    if run_metadata and not run_geo_assets:
+        # Metadata only
         metadata_report = validate_catalog(path)
-        if not run_format:
-            _output_metadata_only(metadata_report, mode, use_json, verbose)
-            return
+        _output_metadata_only(metadata_report, mode, use_json, verbose)
+    elif run_geo_assets and not run_metadata:
+        # Geo-assets only
+        _output_format_only(path, mode, use_json, verbose)
+    else:
+        # Both (combined)
+        metadata_report = validate_catalog(path)
+        _output_combined(path, metadata_report, mode, use_json, verbose)
 
-    # Run format check if requested
-    if run_format:
-        if fix:
-            _run_check_fix(
-                path=path,
-                dry_run=dry_run,
-                use_json=use_json,
-                verbose=verbose,
-                mode=mode,
-                metadata_report=metadata_report,
-            )
-        elif not run_metadata:
-            _output_format_only(path, mode, use_json, verbose)
-        else:
-            _output_combined(path, metadata_report, mode, use_json, verbose)
+
+def _run_fix_workflow(
+    *,
+    path: Path,
+    run_metadata: bool,
+    run_geo_assets: bool,
+    mode: str,
+    dry_run: bool,
+    use_json: bool,
+    verbose: bool,
+) -> None:
+    """Execute the fix workflow for selected scope.
+
+    Args:
+        path: Directory to check/fix.
+        run_metadata: Whether to fix metadata issues.
+        run_geo_assets: Whether to fix geo-asset format issues.
+        mode: Mode string for JSON output.
+        dry_run: Preview changes without applying them.
+        use_json: Output JSON envelope.
+        verbose: Show detailed output.
+    """
+    metadata_fix_report: FixReport | None = None
+    format_fix_report = None
+    has_failures = False
+
+    # Fix metadata if in scope
+    if run_metadata:
+        metadata_check_report = check_directory_metadata(path)
+        metadata_fix_report = fix_metadata(path, metadata_check_report, dry_run=dry_run)
+        if metadata_fix_report.failure_count > 0:
+            has_failures = True
+
+    # Fix geo-assets if in scope
+    if run_geo_assets:
+        format_fix_report = check_directory(path, fix=True, dry_run=dry_run, catalog_path=path)
+
+    # Output results
+    if use_json:
+        _output_fix_json(
+            mode=mode,
+            metadata_fix_report=metadata_fix_report,
+            format_fix_report=format_fix_report,
+            has_failures=has_failures,
+        )
+    else:
+        _output_fix_human(
+            mode=mode,
+            metadata_fix_report=metadata_fix_report,
+            format_fix_report=format_fix_report,
+            verbose=verbose,
+            dry_run=dry_run,
+        )
+
+    # Exit with error if any failures
+    if has_failures:
+        raise SystemExit(1)
+    # Also exit with error if format conversion had failures
+    if (
+        format_fix_report
+        and format_fix_report.conversion_report
+        and format_fix_report.conversion_report.failed > 0
+    ):
+        raise SystemExit(1)
 
 
 def _output_metadata_only(report: Any, mode: str, use_json: bool, verbose: bool) -> None:
@@ -1089,109 +1150,6 @@ def _output_combined(
     # Exit with error if metadata validation failed
     if has_metadata_errors:
         raise SystemExit(1)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Check --fix helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _run_check_fix(
-    *,
-    path: Path,
-    dry_run: bool,
-    use_json: bool,
-    verbose: bool = False,
-    mode: str = "all",
-    metadata_report: Any | None = None,
-) -> None:
-    """Run check --fix workflow to convert files to cloud-native formats.
-
-    Args:
-        path: Directory to check and optionally fix.
-        dry_run: If True, preview without making changes.
-        use_json: If True, output JSON envelope.
-        verbose: If True, show detailed output for each file.
-        mode: Check mode ("metadata", "format", or "all").
-        metadata_report: Optional ValidationReport from metadata validation.
-    """
-    report = check_directory(path, fix=True, dry_run=dry_run, catalog_path=path)
-    has_metadata_errors = metadata_report is not None and bool(metadata_report.errors)
-    has_conversion_errors = (
-        report.conversion_report is not None and report.conversion_report.failed > 0
-    )
-
-    if use_json:
-        _output_fix_json(report, metadata_report, mode)
-    else:
-        _output_fix_human(report, metadata_report, dry_run, verbose)
-
-    if has_conversion_errors or has_metadata_errors:
-        raise SystemExit(1)
-
-
-def _output_fix_json(report: Any, metadata_report: Any | None, mode: str) -> None:
-    """Output JSON for check --fix workflow.
-
-    Args:
-        report: CheckReport with conversion results.
-        metadata_report: Optional ValidationReport from metadata validation.
-        mode: Check mode string ("metadata", "geo-assets", or "all").
-
-    Note:
-        JSON structure is standardized with format/conversion data nested under
-        "conversion" key for consistency with non-fix combined mode.
-    """
-    from portolan_cli.convert import ConversionStatus
-
-    # Build data with consistent structure (conversion nested, not at root)
-    data: dict[str, Any] = {"mode": mode}
-    data["conversion"] = report.to_dict()
-
-    has_metadata_errors = metadata_report is not None and bool(metadata_report.errors)
-    has_conversion_errors = (
-        report.conversion_report is not None and report.conversion_report.failed > 0
-    )
-
-    if metadata_report is not None:
-        data["metadata"] = metadata_report.to_dict()
-
-    errors: list[ErrorDetail] = []
-    if has_conversion_errors and report.conversion_report is not None:
-        errors.extend(
-            ErrorDetail(type="ConversionFailed", message=r.error or "Unknown error")
-            for r in report.conversion_report.results
-            if r.status == ConversionStatus.FAILED
-        )
-    if has_metadata_errors and metadata_report is not None:
-        errors.extend(
-            ErrorDetail(type="ValidationError", message=r.message) for r in metadata_report.errors
-        )
-
-    if errors:
-        envelope = error_envelope("check", errors, data=data)
-    else:
-        envelope = success_envelope("check", data)
-    output_json_envelope(envelope)
-
-
-def _output_fix_human(
-    report: Any, metadata_report: Any | None, dry_run: bool, verbose: bool
-) -> None:
-    """Output human-readable results for check --fix workflow."""
-    if metadata_report is not None:
-        info_output("Metadata validation:")
-        for result in metadata_report.results:
-            if verbose or not result.passed:
-                _print_validation_result(result)
-        _print_check_summary(metadata_report)
-        info_output("")  # Blank line separator
-
-    info_output("Format conversion:")
-    if dry_run:
-        _print_check_fix_preview(report)
-    else:
-        _print_check_fix_results(report, verbose=verbose)
 
 
 def _print_check_fix_preview(report: Any) -> None:

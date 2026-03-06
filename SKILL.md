@@ -34,7 +34,7 @@ Validate a Portolan catalog or check files for cloud-native status.
 portolan check                        # Validate all (metadata + geo-assets)
 portolan check --metadata             # Validate metadata only
 portolan check --geo-assets           # Check geo-assets only
-portolan check /data --fix            # Convert files to cloud-native
+portolan check --fix                  # Fix both metadata and geo-assets
 ```
 
 ### `portolan clone`

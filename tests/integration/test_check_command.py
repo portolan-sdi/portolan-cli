@@ -693,27 +693,27 @@ class TestCheckBackwardCompatibility:
 
 
 # =============================================================================
-# Test: Check --fix-metadata Flag
+# Test: Check --metadata --fix Flag
 # =============================================================================
 
 
 @pytest.mark.integration
-class TestCheckFixMetadataFlag:
-    """Tests for check --fix-metadata flag.
+class TestCheckMetadataFixFlag:
+    """Tests for check --metadata --fix flag combination.
 
-    Note: These tests verify that --fix-metadata flag is accepted and runs
+    Note: These tests verify that --metadata --fix flag is accepted and runs
     without errors. Full end-to-end metadata fixing is tested in
     test_metadata_fix.py (unit tests) since fix_metadata() only operates on
     files that check_directory_metadata() reports, which typically requires
     versions.json or existing STAC items.
     """
 
-    def test_fix_metadata_flag_accepted(
+    def test_metadata_fix_flag_accepted(
         self,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        """Check --fix-metadata flag is accepted without error."""
+        """Check --metadata --fix flag is accepted without error."""
         # Create minimal valid catalog
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -731,10 +731,10 @@ class TestCheckFixMetadataFlag:
             )
         )
 
-        # Run check --fix-metadata (should not error even with empty catalog)
+        # Run check --metadata --fix (should not error even with empty catalog)
         result = runner.invoke(
             cli,
-            ["check", str(catalog_dir), "--fix-metadata"],
+            ["check", str(catalog_dir), "--metadata", "--fix"],
         )
 
         # Should succeed (no items to fix)
@@ -745,12 +745,12 @@ class TestCheckFixMetadataFlag:
             or "updated" in result.output.lower()
         )
 
-    def test_fix_metadata_dry_run_flag(
+    def test_metadata_fix_dry_run_flag(
         self,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        """Check --fix-metadata --dry-run is accepted."""
+        """Check --metadata --fix --dry-run is accepted."""
         # Create minimal valid catalog
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -768,21 +768,21 @@ class TestCheckFixMetadataFlag:
             )
         )
 
-        # Run check --fix-metadata --dry-run
+        # Run check --metadata --fix --dry-run
         result = runner.invoke(
             cli,
-            ["check", str(catalog_dir), "--fix-metadata", "--dry-run"],
+            ["check", str(catalog_dir), "--metadata", "--fix", "--dry-run"],
         )
 
         # Should succeed
         assert result.exit_code == 0
 
-    def test_fix_metadata_json_output(
+    def test_metadata_fix_json_output(
         self,
         runner: CliRunner,
         tmp_path: Path,
     ) -> None:
-        """Check --fix-metadata with --json produces valid JSON output."""
+        """Check --metadata --fix with --json produces valid JSON output."""
         # Create minimal valid catalog
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -800,10 +800,10 @@ class TestCheckFixMetadataFlag:
             )
         )
 
-        # Run check --fix-metadata --json
+        # Run check --metadata --fix --json
         result = runner.invoke(
             cli,
-            ["check", str(catalog_dir), "--fix-metadata", "--json"],
+            ["check", str(catalog_dir), "--metadata", "--fix", "--json"],
         )
 
         # Should succeed and produce valid JSON
@@ -811,6 +811,6 @@ class TestCheckFixMetadataFlag:
         try:
             output = json.loads(result.output)
             assert isinstance(output, dict)
-            assert "success" in output or "fix_results" in result.output
+            assert "success" in output or "metadata_fix" in result.output
         except json.JSONDecodeError:
             pytest.fail(f"Invalid JSON output: {result.output[:200]}")

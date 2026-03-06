@@ -248,7 +248,7 @@ class TestCheckCommandWithMockedRules:
         runner: CliRunner,
         valid_catalog: Path,
     ) -> None:
-        """check shows warnings but exits with 0."""
+        """check shows warnings but exits with 0 (warnings don't block)."""
         report = ValidationReport(
             results=[
                 ValidationResult(
@@ -268,7 +268,7 @@ class TestCheckCommandWithMockedRules:
 
         with patch("portolan_cli.cli.validate_catalog", return_value=report):
             result = runner.invoke(cli, ["check", str(valid_catalog)])
-            assert result.exit_code == 1  # Errors block
+            assert result.exit_code == 0  # Warnings don't block
             # Should show plural warnings
             assert "warnings" in result.output.lower() or "warning" in result.output.lower()
 
@@ -533,8 +533,8 @@ class TestCheckFlagCombinationsHypothesis:
                 elif geo_assets and not metadata:
                     expected_mode = "geo-assets"
                 else:
-                    # No explicit flags = backward compatible (metadata only without --fix)
-                    expected_mode = "metadata"
+                    # No explicit flags = check both (new behavior)
+                    expected_mode = "all"
 
                 assert mode == expected_mode, (
                     f"Expected mode '{expected_mode}' but got '{mode}' "
@@ -575,10 +575,10 @@ class TestCheckFlagCombinationsHypothesis:
                 assert "--dry-run has no effect without --fix" in result.output
 
 
-class TestCheckFixMetadataFlag:
-    """Tests for --fix-metadata flag on the check command.
+class TestCheckMetadataFixFlag:
+    """Tests for --metadata --fix flag combination on the check command.
 
-    The --fix-metadata flag allows fixing metadata issues found during
+    The --metadata --fix combination fixes metadata issues found during
     metadata validation (MISSING or STALE STAC items).
     """
 
@@ -611,25 +611,26 @@ class TestCheckFixMetadataFlag:
         return tmp_path
 
     @pytest.mark.unit
-    def test_fix_metadata_flag_exists(
+    def test_metadata_fix_flags_exist(
         self,
         runner: CliRunner,
         valid_catalog_with_parquet: Path,
     ) -> None:
-        """--fix-metadata flag should be accepted by check command."""
-        # Use --help to verify flag exists
+        """--metadata and --fix flags should be accepted by check command."""
+        # Use --help to verify flags exist
         result = runner.invoke(cli, ["check", "--help"])
         assert result.exit_code == 0
-        assert "--fix-metadata" in result.output
+        assert "--metadata" in result.output
+        assert "--fix" in result.output
 
     @pytest.mark.unit
-    def test_fix_metadata_with_passing_validation(
+    def test_metadata_fix_with_passing_validation(
         self,
         runner: CliRunner,
         valid_catalog_with_parquet: Path,
         mock_passing_validation_report: ValidationReport,
     ) -> None:
-        """--fix-metadata with no issues should succeed."""
+        """--metadata --fix with no issues should succeed."""
         # Create a metadata report with no issues
         from portolan_cli.metadata.models import MetadataReport
 
@@ -651,18 +652,18 @@ class TestCheckFixMetadataFlag:
             mock_fix.return_value = FixReport(results=[], skipped_count=0)
             result = runner.invoke(
                 cli,
-                ["check", str(valid_catalog_with_parquet), "--fix-metadata"],
+                ["check", str(valid_catalog_with_parquet), "--metadata", "--fix"],
             )
             assert result.exit_code == 0
 
     @pytest.mark.unit
-    def test_fix_metadata_calls_fix_metadata_function(
+    def test_metadata_fix_calls_fix_metadata_function(
         self,
         runner: CliRunner,
         valid_catalog_with_parquet: Path,
         mock_passing_validation_report: ValidationReport,
     ) -> None:
-        """--fix-metadata should call fix_metadata function."""
+        """--metadata --fix should call fix_metadata function."""
         from portolan_cli.metadata.models import (
             MetadataCheckResult,
             MetadataReport,
@@ -699,7 +700,7 @@ class TestCheckFixMetadataFlag:
 
             result = runner.invoke(
                 cli,
-                ["check", str(valid_catalog_with_parquet), "--fix-metadata"],
+                ["check", str(valid_catalog_with_parquet), "--metadata", "--fix"],
             )
 
             # Verify fix_metadata was called
@@ -707,13 +708,13 @@ class TestCheckFixMetadataFlag:
             assert result.exit_code == 0
 
     @pytest.mark.unit
-    def test_fix_metadata_with_dry_run(
+    def test_metadata_fix_with_dry_run(
         self,
         runner: CliRunner,
         valid_catalog_with_parquet: Path,
         mock_passing_validation_report: ValidationReport,
     ) -> None:
-        """--fix-metadata --dry-run should not make changes."""
+        """--metadata --fix --dry-run should not make changes."""
         from portolan_cli.metadata.models import (
             MetadataCheckResult,
             MetadataReport,
@@ -751,7 +752,8 @@ class TestCheckFixMetadataFlag:
                 [
                     "check",
                     str(valid_catalog_with_parquet),
-                    "--fix-metadata",
+                    "--metadata",
+                    "--fix",
                     "--dry-run",
                 ],
             )
@@ -763,41 +765,18 @@ class TestCheckFixMetadataFlag:
             assert result.exit_code == 0
 
     @pytest.mark.unit
-    def test_fix_metadata_incompatible_with_geo_assets(
+    def test_fix_with_both_scopes(
         self,
         runner: CliRunner,
         valid_catalog_with_parquet: Path,
     ) -> None:
-        """--fix-metadata should be used with --metadata, not --geo-assets."""
-        # This test verifies the expected behavior:
-        # --fix-metadata only makes sense when running metadata checks
-        # Using it with --geo-assets should either ignore it or warn
-        result = runner.invoke(
-            cli,
-            [
-                "check",
-                str(valid_catalog_with_parquet),
-                "--fix-metadata",
-                "--geo-assets",
-            ],
-        )
-        # Should either succeed (ignoring --geo-assets) or show a warning
-        # The command should not fail
-        assert result.exit_code in (0, 1)  # 1 if validation fails
-
-    @pytest.mark.unit
-    def test_fix_metadata_not_with_fix_flag(
-        self,
-        runner: CliRunner,
-        valid_catalog_with_parquet: Path,
-    ) -> None:
-        """--fix-metadata and --fix are separate concerns."""
-        # --fix is for converting files (geo-assets)
-        # --fix-metadata is for fixing STAC metadata
-        # They should be independent
+        """--fix alone should fix both metadata and geo-assets."""
+        # --fix without scope flags should run both metadata and geo-asset fixes
         with (
             patch("portolan_cli.cli.validate_catalog") as mock_validate,
             patch("portolan_cli.cli.check_directory") as mock_check,
+            patch("portolan_cli.cli.check_directory_metadata") as mock_md_check,
+            patch("portolan_cli.cli.fix_metadata") as mock_fix,
         ):
             from portolan_cli.validation.results import ValidationReport
 
@@ -807,15 +786,19 @@ class TestCheckFixMetadataFlag:
             mock_check.return_value = CheckReport(
                 root=valid_catalog_with_parquet, files=[], conversion_report=None
             )
+            from portolan_cli.metadata.models import MetadataReport
+
+            mock_md_check.return_value = MetadataReport(results=[])
+            from portolan_cli.metadata.fix import FixReport
+
+            mock_fix.return_value = FixReport(results=[], skipped_count=0)
 
             result = runner.invoke(
                 cli,
-                [
-                    "check",
-                    str(valid_catalog_with_parquet),
-                    "--fix-metadata",
-                    "--fix",
-                ],
+                ["check", str(valid_catalog_with_parquet), "--fix"],
             )
-            # Command should execute (may succeed or fail based on validation)
+            # Command should execute and call both fix workflows
             assert result.exit_code in (0, 1)
+            # Both fix functions should be called
+            mock_fix.assert_called_once()
+            mock_check.assert_called_once()

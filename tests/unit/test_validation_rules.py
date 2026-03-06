@@ -1061,7 +1061,7 @@ class TestMetadataFreshRule:
 
         assert result.passed is False
         assert result.fix_hint is not None
-        assert "fix-metadata" in result.fix_hint.lower()
+        assert "--metadata --fix" in result.fix_hint.lower()
 
     @pytest.mark.unit
     def test_handles_file_not_found_gracefully(self, tmp_path: Path) -> None:

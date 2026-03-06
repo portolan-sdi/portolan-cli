@@ -354,5 +354,5 @@ class MetadataFreshRule(ValidationRule):
             passed=False,
             severity=Severity.ERROR if has_errors else Severity.WARNING,
             message=message,
-            fix_hint="Run 'portolan check --fix-metadata' to update STAC metadata",
+            fix_hint="Run 'portolan check --metadata --fix' to update STAC metadata",
         )
