@@ -906,6 +906,10 @@ def iter_geospatial_files(
     Returns:
         List of paths to geospatial files (including FileGDB directories).
     """
+    # Special case: if path itself is a FileGDB, return it directly
+    if _is_filegdb(path):
+        return [path]
+
     if not path.is_dir():
         return []
 
@@ -1380,6 +1384,10 @@ def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path
     Returns:
         List of geospatial file paths (including FileGDB directories) and their sidecars.
     """
+    # Special case: if path itself is a FileGDB, return it directly
+    if _is_filegdb(path):
+        return [path]
+
     if not path.is_dir():
         return []
 
