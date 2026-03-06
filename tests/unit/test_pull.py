@@ -1814,9 +1814,11 @@ class TestDryRunNetworkIsolation:
             )
 
         mock_fetch.assert_not_called()
-        # Result must be a valid PullResult
+        # Result must be a valid PullResult with dry_run=True
         assert result.success is True
         assert result.files_downloaded == 0  # dry-run never downloads
+        assert result.dry_run is True  # H1: result must indicate dry-run mode
+        assert result.remote_version is None  # dry-run cannot check remote
 
     @pytest.mark.unit
     def test_pull_dry_run_does_not_write_versions_json(self, catalog_with_versions: Path) -> None:
@@ -1859,3 +1861,32 @@ class TestDryRunNetworkIsolation:
 
         # Regular pull MUST make the network call
         mock_fetch.assert_called_once()
+
+    @pytest.mark.unit
+    def test_pull_dry_run_on_fresh_catalog_without_versions_json(
+        self, fresh_catalog_no_versions: Path
+    ) -> None:
+        """M2: pull(dry_run=True) should work on fresh catalog without versions.json.
+
+        This tests the edge case where a user runs `portolan pull --dry-run`
+        on a catalog that has never been versioned before (no versions.json).
+        """
+        from portolan_cli.pull import pull
+
+        with patch("portolan_cli.pull._fetch_remote_versions") as mock_fetch:
+            result = pull(
+                remote_url="s3://bucket/catalog",
+                local_root=fresh_catalog_no_versions,
+                collection="test-collection",
+                dry_run=True,
+            )
+
+        # Network function must NOT be called in dry-run
+        mock_fetch.assert_not_called()
+
+        # Result should be valid with sensible defaults
+        assert result.success is True
+        assert result.dry_run is True
+        assert result.local_version is None  # no versions.json = no local version
+        assert result.remote_version is None  # dry-run = no remote check
+        assert result.files_downloaded == 0

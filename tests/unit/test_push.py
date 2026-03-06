@@ -1916,6 +1916,8 @@ class TestDryRunNetworkIsolation:
 
         assert result.success is True
         assert result.files_uploaded == 0  # dry-run never uploads
+        assert result.dry_run is True  # H3: result must indicate dry-run mode
+        assert result.would_push_versions > 0  # H3: should show how many would push
 
     @pytest.mark.unit
     def test_push_dry_run_does_not_call_upload_assets(self, local_catalog: Path) -> None:
@@ -1957,3 +1959,60 @@ class TestDryRunNetworkIsolation:
         # Regular push MUST call both setup and fetch
         mock_setup.assert_called_once()
         mock_fetch.assert_called_once()
+
+    @pytest.mark.unit
+    def test_push_dry_run_handles_missing_asset_gracefully(self, tmp_path: Path) -> None:
+        """H2: push(dry_run=True) should warn but not crash on missing assets.
+
+        When an asset referenced in versions.json is missing locally, dry-run
+        should warn and continue (not raise FileNotFoundError) so users can
+        see the preview even if local state is inconsistent.
+        """
+        import json
+
+        from portolan_cli.push import push
+
+        # Create catalog with versions.json referencing a missing file
+        catalog_dir = tmp_path / "catalog_missing_asset"
+        catalog_dir.mkdir()
+        collection_dir = catalog_dir / "test"
+        collection_dir.mkdir()
+
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-01T00:00:00Z",
+                    "breaking": False,
+                    "message": "Initial",
+                    "assets": {
+                        "missing.parquet": {
+                            "sha256": "abc123",
+                            "size_bytes": 1000,
+                            "href": "test/missing.parquet",  # File does NOT exist
+                        }
+                    },
+                    "changes": ["missing.parquet"],
+                }
+            ],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+        # NOTE: We deliberately do NOT create the asset file
+
+        with patch("portolan_cli.push._setup_store"):
+            with patch("portolan_cli.push._fetch_remote_versions"):
+                # Should NOT raise - dry-run is forgiving
+                result = push(
+                    catalog_root=catalog_dir,
+                    collection="test",
+                    destination="s3://mybucket/catalog",
+                    dry_run=True,
+                )
+
+        # Dry-run should succeed but record the error
+        assert result.success is True
+        assert result.dry_run is True
+        assert len(result.errors) == 1  # Missing asset recorded as error
+        assert "missing.parquet" in result.errors[0]

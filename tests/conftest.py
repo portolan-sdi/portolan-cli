@@ -227,3 +227,107 @@ def temp_catalog_dir(tmp_path: Path) -> Iterator[Path]:
     catalog_dir = tmp_path / "test-catalog"
     catalog_dir.mkdir()
     yield catalog_dir
+
+
+# =============================================================================
+# Catalog State Fixtures (for push/pull/sync tests)
+# =============================================================================
+
+
+@pytest.fixture
+def catalog_with_versions_for_dry_run(tmp_path: Path) -> Path:
+    """Catalog with ADR-0023-compliant structure for dry-run tests.
+
+    This fixture is used by TestDryRunNetworkIsolation classes across
+    test_pull.py, test_push.py, and test_sync.py.
+
+    Structure:
+    - <catalog_root>/catalog.json
+    - <catalog_root>/.portolan/config.yaml
+    - <catalog_root>/.portolan/state.json
+    - <catalog_root>/<collection>/versions.json
+    - <catalog_root>/<collection>/data.parquet
+    """
+    import json
+
+    catalog_dir = tmp_path / "catalog_dry_run"
+    catalog_dir.mkdir()
+
+    # Create catalog.json at root (per ADR-0023)
+    catalog_data = {
+        "type": "Catalog",
+        "id": "test-catalog",
+        "stac_version": "1.0.0",
+        "description": "Test catalog for dry-run tests",
+        "links": [],
+    }
+    (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+    # .portolan sentinel: both config.yaml AND state.json required for MANAGED state
+    portolan_dir = catalog_dir / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("{}\n")
+    (portolan_dir / "state.json").write_text("{}\n")
+
+    # Per ADR-0023: versions.json at <catalog_root>/<collection>/versions.json
+    collection_dir = catalog_dir / "test-collection"
+    collection_dir.mkdir()
+    versions_data = {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2024-01-15T10:00:00Z",
+                "breaking": False,
+                "message": "Initial version",
+                "assets": {
+                    "data.parquet": {
+                        "sha256": "abc123",
+                        "size_bytes": 1000,
+                        "href": "test-collection/data.parquet",
+                    }
+                },
+                "changes": ["data.parquet"],
+            }
+        ],
+    }
+    (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+    (collection_dir / "data.parquet").write_bytes(b"x" * 1000)
+
+    return catalog_dir
+
+
+@pytest.fixture
+def fresh_catalog_no_versions(tmp_path: Path) -> Path:
+    """Catalog WITHOUT versions.json (fresh state for initial pull/push).
+
+    This tests the edge case where dry-run is called on a catalog that
+    has never been versioned before.
+    """
+    import json
+
+    catalog_dir = tmp_path / "catalog_fresh"
+    catalog_dir.mkdir()
+
+    # Create catalog.json at root (per ADR-0023)
+    catalog_data = {
+        "type": "Catalog",
+        "id": "test-catalog",
+        "stac_version": "1.0.0",
+        "description": "Fresh catalog without versions",
+        "links": [],
+    }
+    (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+    # .portolan sentinel
+    portolan_dir = catalog_dir / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("{}\n")
+    (portolan_dir / "state.json").write_text("{}\n")
+
+    # Collection directory exists but NO versions.json
+    collection_dir = catalog_dir / "test-collection"
+    collection_dir.mkdir()
+
+    return catalog_dir
