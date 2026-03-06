@@ -4,6 +4,8 @@ Tests the status module (library layer) and CLI command that shows
 tracking states: untracked, tracked, modified, deleted.
 
 Per issue #133: status tracks ALL files in item directories (not just geo files).
+Per issue #137: status must detect untracked files in UNINITIALIZED collections
+    (directories with geo-assets but without collection.json).
 Per ADR-0023: item files live in collection/{item_id}/ subdirectories.
 Per ADR-0023: versions.json is at collection/versions.json (not .portolan/).
 """
@@ -11,16 +13,21 @@ Per ADR-0023: versions.json is at collection/versions.json (not .portolan/).
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from portolan_cli.cli import cli
+from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
 from portolan_cli.status import (
     IGNORED_FILES,
     FileStatus,
     StatusResult,
+    _has_geo_assets,
     get_catalog_status,
 )
 
@@ -698,3 +705,808 @@ class TestIgnoredFiles:
     def test_gitkeep_ignored(self) -> None:
         """.gitkeep should be in IGNORED_FILES."""
         assert ".gitkeep" in IGNORED_FILES
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestUninitializedCollections - Bug #137: uninitialized dirs with geo-assets
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestUninitializedCollections:
+    """Tests for detecting untracked files in uninitialized collections.
+
+    Issue #137: status.py previously skipped any directory without
+    collection.json, creating a chicken-and-egg problem — files were never
+    shown as untracked before `portolan add` was run.
+
+    After the fix, directories that contain geo-assets (geospatial files)
+    but have no collection.json should still surface their files as untracked.
+    Empty directories and non-geo-asset directories are ignored.
+    """
+
+    @pytest.mark.unit
+    def test_uninitialized_dir_with_parquet_shows_untracked(self, tmp_path: Path) -> None:
+        """A directory with a .parquet file but no collection.json shows untracked."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "demographics"
+        col_dir.mkdir()
+        # No collection.json — uninitialized
+        item_dir = col_dir / "census-2020"
+        item_dir.mkdir()
+        (item_dir / "data.parquet").write_bytes(b"fake parquet data")
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].collection_id == "demographics"
+        assert result.untracked[0].item_id == "census-2020"
+        assert result.untracked[0].filename == "data.parquet"
+        assert not result.is_clean()
+
+    @pytest.mark.unit
+    def test_uninitialized_dir_with_geojson_shows_untracked(self, tmp_path: Path) -> None:
+        """A directory with a .geojson file but no collection.json shows untracked."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "boundaries"
+        col_dir.mkdir()
+        item_dir = col_dir / "country-borders"
+        item_dir.mkdir()
+        (item_dir / "borders.geojson").write_text('{"type":"FeatureCollection","features":[]}')
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].collection_id == "boundaries"
+        assert result.untracked[0].filename == "borders.geojson"
+
+    @pytest.mark.unit
+    def test_uninitialized_dir_with_tiff_shows_untracked(self, tmp_path: Path) -> None:
+        """A directory with a .tif file but no collection.json shows untracked."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "imagery"
+        col_dir.mkdir()
+        item_dir = col_dir / "scene-001"
+        item_dir.mkdir()
+        (item_dir / "image.tif").write_bytes(b"\x00" * 64)
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].collection_id == "imagery"
+        assert result.untracked[0].filename == "image.tif"
+
+    @pytest.mark.unit
+    def test_empty_uninitialized_dir_ignored(self, tmp_path: Path) -> None:
+        """An empty directory without collection.json is ignored (not a potential collection)."""
+        make_catalog(tmp_path)
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+
+        result = get_catalog_status(tmp_path)
+
+        assert result.is_clean()
+
+    @pytest.mark.unit
+    def test_non_geo_only_uninitialized_dir_ignored(self, tmp_path: Path) -> None:
+        """A directory containing only non-geo files and no collection.json is ignored."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "docs-only"
+        col_dir.mkdir()
+        item_dir = col_dir / "readme-item"
+        item_dir.mkdir()
+        (item_dir / "README.txt").write_text("not geospatial")
+        (item_dir / "notes.md").write_text("# Notes")
+
+        result = get_catalog_status(tmp_path)
+
+        # txt/md are not geo-assets, so the directory is not treated as a potential collection
+        assert result.is_clean()
+
+    @pytest.mark.unit
+    def test_initialized_collection_still_works(self, tmp_path: Path) -> None:
+        """Initialized collections (with collection.json) still work correctly."""
+        make_catalog(tmp_path, ["demographics"])
+        col_dir = tmp_path / "demographics"
+        make_collection(col_dir)
+        item_dir = col_dir / "census-2020"
+        item_dir.mkdir()
+        (item_dir / "data.parquet").write_bytes(b"data")
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].collection_id == "demographics"
+
+    @pytest.mark.unit
+    def test_mix_initialized_and_uninitialized(self, tmp_path: Path) -> None:
+        """Catalog with one initialized + one uninitialized collection shows both."""
+        make_catalog(tmp_path, ["initialized"])
+
+        # Initialized collection
+        col1 = tmp_path / "initialized"
+        make_collection(col1)
+        item1 = col1 / "item-a"
+        item1.mkdir()
+        (item1 / "data.parquet").write_bytes(b"data")
+
+        # Uninitialized potential collection (no collection.json)
+        col2 = tmp_path / "uninitialized"
+        col2.mkdir()
+        item2 = col2 / "item-b"
+        item2.mkdir()
+        (item2 / "roads.geojson").write_text('{"type":"FeatureCollection","features":[]}')
+
+        result = get_catalog_status(tmp_path)
+
+        collection_ids = {f.collection_id for f in result.untracked}
+        assert "initialized" in collection_ids
+        assert "uninitialized" in collection_ids
+        assert len(result.untracked) == 2
+
+    @pytest.mark.unit
+    def test_uninitialized_dir_multiple_geo_files(self, tmp_path: Path) -> None:
+        """All geo-asset files in an uninitialized item dir are reported."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "imagery"
+        col_dir.mkdir()
+        item_dir = col_dir / "scene-001"
+        item_dir.mkdir()
+        (item_dir / "image.tif").write_bytes(b"\x00" * 64)
+        (item_dir / "overview.pmtiles").write_bytes(b"\x00" * 32)
+
+        result = get_catalog_status(tmp_path)
+
+        filenames = {f.filename for f in result.untracked}
+        assert "image.tif" in filenames
+        assert "overview.pmtiles" in filenames
+
+    @pytest.mark.unit
+    def test_cli_status_shows_uninitialized_collection_files(self, tmp_path: Path) -> None:
+        """CLI status command shows untracked files in uninitialized directories."""
+        import os
+
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "boundaries"
+        col_dir.mkdir()
+        item_dir = col_dir / "country-borders"
+        item_dir.mkdir()
+        (item_dir / "borders.geojson").write_text('{"type":"FeatureCollection","features":[]}')
+
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            result = runner.invoke(cli, ["status"], catch_exceptions=False)
+        finally:
+            os.chdir(old_cwd)
+
+        assert result.exit_code == 0
+        assert "Untracked:" in result.output
+        assert "boundaries/country-borders/borders.geojson" in result.output
+
+    @pytest.mark.unit
+    def test_has_geo_assets_returns_true_for_parquet(self, tmp_path: Path) -> None:
+        """_has_geo_assets returns True when directory subtree has a .parquet file."""
+        col_dir = tmp_path / "col"
+        col_dir.mkdir()
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+        (item_dir / "data.parquet").write_bytes(b"data")
+
+        assert _has_geo_assets(col_dir) is True
+
+    @pytest.mark.unit
+    def test_has_geo_assets_returns_true_for_tif(self, tmp_path: Path) -> None:
+        """_has_geo_assets returns True when directory subtree has a .tif file."""
+        col_dir = tmp_path / "col"
+        col_dir.mkdir()
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+        (item_dir / "image.tif").write_bytes(b"\x00" * 16)
+
+        assert _has_geo_assets(col_dir) is True
+
+    @pytest.mark.unit
+    def test_has_geo_assets_returns_false_for_empty_dir(self, tmp_path: Path) -> None:
+        """_has_geo_assets returns False for a directory with no files."""
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+
+        assert _has_geo_assets(empty_dir) is False
+
+    @pytest.mark.unit
+    def test_has_geo_assets_returns_false_for_non_geo_files(self, tmp_path: Path) -> None:
+        """_has_geo_assets returns False when no geospatial extensions are present."""
+        col_dir = tmp_path / "col"
+        col_dir.mkdir()
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+        (item_dir / "README.txt").write_text("docs")
+        (item_dir / "notes.md").write_text("# notes")
+
+        assert _has_geo_assets(col_dir) is False
+
+    @pytest.mark.unit
+    def test_ignored_files_not_counted_as_geo_assets(self, tmp_path: Path) -> None:
+        """IGNORED_FILES (e.g. .DS_Store) don't cause a dir to be treated as geo-collection."""
+        col_dir = tmp_path / "col"
+        col_dir.mkdir()
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+        for name in IGNORED_FILES:
+            (item_dir / name).write_bytes(b"")
+
+        # Only ignored files present → should NOT be treated as a potential collection
+        assert _has_geo_assets(col_dir) is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestStatusHypothesis - Property-based tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestStatusHypothesis:
+    """Property-based tests for status module invariants.
+
+    These tests use Hypothesis to verify that status behaves consistently
+    regardless of the number of collections, items, and files involved.
+    """
+
+    @pytest.mark.unit
+    @given(
+        collection_names=st.lists(
+            st.text(
+                alphabet=st.characters(
+                    whitelist_categories=("Ll", "Lu", "Nd"), whitelist_characters="-_"
+                ),
+                min_size=1,
+                max_size=20,
+            ).filter(lambda s: s[0].isalpha()),
+            min_size=0,
+            max_size=5,
+            unique=True,
+        )
+    )
+    @settings(
+        max_examples=30, deadline=5000, suppress_health_check=[HealthCheck.function_scoped_fixture]
+    )
+    def test_clean_catalog_always_reports_clean(
+        self, tmp_path: Path, collection_names: list[str]
+    ) -> None:
+        """A catalog where all files are tracked+current is always clean.
+
+        Uses a fresh tempdir per call to avoid state accumulation between
+        Hypothesis examples (tmp_path is function-scoped, not example-scoped).
+        """
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            make_catalog(root, collection_names)
+            for col_name in collection_names:
+                col_dir = root / col_name
+                make_collection(col_dir)
+                # No item dirs and no files → clean
+
+            result = get_catalog_status(root)
+            assert result.is_clean(), (
+                f"Expected clean catalog but got: untracked={result.untracked}, "
+                f"modified={result.modified}, deleted={result.deleted}"
+            )
+
+    @pytest.mark.unit
+    @given(
+        geo_ext=st.sampled_from(
+            [
+                ".parquet",
+                ".geojson",
+                ".tif",
+                ".tiff",
+                ".shp",
+                ".gpkg",
+                ".fgb",
+                ".csv",
+                ".tsv",
+                ".jp2",
+                ".pmtiles",  # Added from GEOSPATIAL_EXTENSIONS
+            ]
+        )
+    )
+    @settings(
+        max_examples=25, deadline=5000, suppress_health_check=[HealthCheck.function_scoped_fixture]
+    )
+    def test_geo_file_in_uninitialized_dir_always_appears_untracked(
+        self, tmp_path: Path, geo_ext: str
+    ) -> None:
+        """Any geospatial file in an uninitialized directory always surfaces as untracked."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            make_catalog(root)
+            col_dir = root / "test-collection"
+            col_dir.mkdir()
+            # No collection.json — uninitialized
+            item_dir = col_dir / "test-item"
+            item_dir.mkdir()
+            geo_file = item_dir / f"data{geo_ext}"
+            geo_file.write_bytes(b"fake geo data content")
+
+            result = get_catalog_status(root)
+
+            filenames = [f.filename for f in result.untracked]
+            assert f"data{geo_ext}" in filenames, (
+                f"Expected data{geo_ext} to be untracked but got: {filenames}"
+            )
+
+    @pytest.mark.unit
+    @given(
+        num_untracked=st.integers(min_value=0, max_value=10),
+        num_tracked=st.integers(min_value=0, max_value=10),
+    )
+    @settings(
+        max_examples=20, deadline=5000, suppress_health_check=[HealthCheck.function_scoped_fixture]
+    )
+    def test_untracked_count_equals_files_not_in_versions_json(
+        self, tmp_path: Path, num_untracked: int, num_tracked: int
+    ) -> None:
+        """Number of untracked results equals exactly the files not in versions.json."""
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            make_catalog(root, ["test-col"])
+            col_dir = root / "test-col"
+            make_collection(col_dir)
+
+            assets: dict[str, dict] = {}
+            # Create tracked files (match mtime/size in versions.json)
+            for i in range(num_tracked):
+                item_dir = col_dir / f"tracked-{i}"
+                item_dir.mkdir()
+                f = item_dir / "data.parquet"
+                f.write_bytes(b"tracked content")
+                stat = f.stat()
+                assets[f"tracked-{i}/data.parquet"] = asset_entry(
+                    size_bytes=stat.st_size,
+                    mtime=stat.st_mtime,
+                    href=f"test-col/tracked-{i}/data.parquet",
+                )
+
+            # Create untracked files (no versions.json entry)
+            for i in range(num_untracked):
+                item_dir = col_dir / f"untracked-{i}"
+                item_dir.mkdir()
+                (item_dir / "data.parquet").write_bytes(b"untracked content")
+
+            if assets:
+                make_versions_json(col_dir, assets)
+
+            result = get_catalog_status(root)
+            assert len(result.untracked) == num_untracked, (
+                f"Expected {num_untracked} untracked files but got {len(result.untracked)}"
+            )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestDeepNesting - Hive-partitioned datasets and deep directory structures
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestDeepNesting:
+    """Tests for deeply nested geo-assets (hive partitions, complex structures).
+
+    Verifies that _has_geo_assets correctly finds geo files at various depths,
+    supporting hive-partitioned datasets like year=2024/month=01/data.parquet.
+    """
+
+    @pytest.mark.unit
+    def test_hive_partitioned_parquet_depth_3(self, tmp_path: Path) -> None:
+        """Geo file at depth 3 (hive partition) is detected."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "timeseries"
+        col_dir.mkdir()
+        # Hive partition structure: item/year=2024/month=01/data.parquet
+        item_dir = col_dir / "weather-data"
+        item_dir.mkdir()
+        year_dir = item_dir / "year=2024"
+        year_dir.mkdir()
+        month_dir = year_dir / "month=01"
+        month_dir.mkdir()
+        (month_dir / "data.parquet").write_bytes(b"partitioned data")
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        # Filename includes full relative path from item dir
+        assert result.untracked[0].filename == "year=2024/month=01/data.parquet"
+        assert result.untracked[0].item_id == "weather-data"
+        assert result.untracked[0].collection_id == "timeseries"
+
+    @pytest.mark.unit
+    def test_hive_partitioned_depth_4(self, tmp_path: Path) -> None:
+        """Geo file at depth 4 is detected."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "deep-data"
+        col_dir.mkdir()
+        # item/year/month/day/data.parquet
+        current = col_dir / "item"
+        current.mkdir()
+        for level in ["year=2024", "month=01", "day=15"]:
+            current = current / level
+            current.mkdir()
+        (current / "data.geojson").write_text('{"type":"FeatureCollection","features":[]}')
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        # Filename includes full relative path from item dir
+        assert result.untracked[0].filename == "year=2024/month=01/day=15/data.geojson"
+        assert result.untracked[0].item_id == "item"
+
+    @pytest.mark.unit
+    def test_has_geo_assets_respects_max_depth(self, tmp_path: Path) -> None:
+        """_has_geo_assets stops at max_depth to prevent runaway recursion."""
+        col_dir = tmp_path / "very-deep"
+        col_dir.mkdir()
+        # Create structure deeper than default max_depth
+        current = col_dir
+        for i in range(10):  # More than default _MAX_GEO_SCAN_DEPTH (5)
+            current = current / f"level-{i}"
+            current.mkdir()
+        (current / "data.parquet").write_bytes(b"very deep data")
+
+        # With max_depth=3, should NOT find the file
+        assert _has_geo_assets(col_dir, max_depth=3) is False
+
+        # With sufficient depth, should find it
+        assert _has_geo_assets(col_dir, max_depth=15) is True
+
+    @pytest.mark.unit
+    def test_geo_file_at_collection_root_not_detected(self, tmp_path: Path) -> None:
+        """Geo file directly in collection dir (not in item subdir) is ignored.
+
+        Files must be in item subdirectories per ADR-0023 structure.
+        """
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "flat-structure"
+        col_dir.mkdir()
+        # File directly in collection, not in an item subdirectory
+        (col_dir / "data.parquet").write_bytes(b"flat data")
+
+        result = get_catalog_status(tmp_path)
+
+        # File at wrong level should not be detected
+        assert result.is_clean()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestSymlinks - Symlink handling
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestSymlinks:
+    """Tests for symlink handling in status detection.
+
+    Verifies that symlinks are followed correctly and broken symlinks
+    are handled gracefully without crashing.
+    """
+
+    @pytest.mark.unit
+    def test_symlink_to_geo_file_detected(self, tmp_path: Path) -> None:
+        """Symlink pointing to a geo file is detected as untracked."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "symlinked"
+        col_dir.mkdir()
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+
+        # Create real file outside the collection
+        external = tmp_path / "external"
+        external.mkdir()
+        real_file = external / "real_data.parquet"
+        real_file.write_bytes(b"real data")
+
+        # Create symlink to the real file
+        symlink = item_dir / "linked_data.parquet"
+        symlink.symlink_to(real_file)
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "linked_data.parquet"
+
+    @pytest.mark.unit
+    def test_symlink_to_directory_followed(self, tmp_path: Path) -> None:
+        """Symlink to a directory containing geo files is followed."""
+        # Create catalog in a subdirectory so external dir isn't in catalog root
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        make_catalog(catalog_root)
+        col_dir = catalog_root / "col"
+        col_dir.mkdir()
+
+        # Real item directory OUTSIDE the catalog root
+        external = tmp_path / "external-items"
+        external.mkdir()
+        real_item = external / "real-item"
+        real_item.mkdir()
+        (real_item / "data.tif").write_bytes(b"\x00" * 64)
+
+        # Symlink to item directory inside the collection
+        symlink_item = col_dir / "linked-item"
+        symlink_item.symlink_to(real_item)
+
+        result = get_catalog_status(catalog_root)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].item_id == "linked-item"
+
+    @pytest.mark.unit
+    def test_broken_symlink_handled_gracefully(self, tmp_path: Path) -> None:
+        """Broken symlinks are skipped without crashing."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "broken"
+        col_dir.mkdir()
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+
+        # Create broken symlink
+        broken_link = item_dir / "broken.parquet"
+        broken_link.symlink_to(tmp_path / "nonexistent_file.parquet")
+
+        # Also add a real geo file to ensure the directory is scanned
+        (item_dir / "real.geojson").write_text('{"type":"FeatureCollection","features":[]}')
+
+        result = get_catalog_status(tmp_path)
+
+        # Should find the real file but not crash on the broken symlink
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "real.geojson"
+
+    @pytest.mark.unit
+    def test_has_geo_assets_handles_broken_symlinks(self, tmp_path: Path) -> None:
+        """_has_geo_assets handles broken symlinks without crashing."""
+        col_dir = tmp_path / "col"
+        col_dir.mkdir()
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+
+        # Only broken symlinks
+        (item_dir / "broken.parquet").symlink_to(tmp_path / "gone.parquet")
+
+        # Should return False, not crash
+        assert _has_geo_assets(col_dir) is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestFileGDB - .gdb directory detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestFileGDB:
+    """Tests for FileGDB (.gdb) directory detection.
+
+    FileGDB is a directory, not a file, but should still trigger
+    uninitialized collection detection.
+    """
+
+    @pytest.mark.unit
+    def test_gdb_directory_triggers_uninitialized_detection(self, tmp_path: Path) -> None:
+        """A .gdb directory in an uninitialized collection triggers detection."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "esri-data"
+        col_dir.mkdir()
+        item_dir = col_dir / "features"
+        item_dir.mkdir()
+
+        # Create a minimal FileGDB structure (just the directory)
+        gdb_dir = item_dir / "MyDatabase.gdb"
+        gdb_dir.mkdir()
+        # FileGDB contains internal files
+        (gdb_dir / "a00000001.gdbtable").write_bytes(b"gdb table data")
+
+        assert _has_geo_assets(col_dir) is True
+
+    @pytest.mark.unit
+    def test_gdb_directory_case_insensitive(self, tmp_path: Path) -> None:
+        """FileGDB detection is case-insensitive for .gdb extension."""
+        col_dir = tmp_path / "col"
+        col_dir.mkdir()
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+
+        # Mixed case
+        gdb_dir = item_dir / "MyData.GDB"
+        gdb_dir.mkdir()
+
+        assert _has_geo_assets(col_dir) is True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestMixedCaseExtensions - Case-insensitive extension matching
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestMixedCaseExtensions:
+    """Tests for case-insensitive extension matching.
+
+    Verifies that .TIF, .PARQUET, .GeoJSON, etc. are all recognized.
+    """
+
+    @pytest.mark.unit
+    def test_uppercase_tif_detected(self, tmp_path: Path) -> None:
+        """Uppercase .TIF extension is detected."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "imagery"
+        col_dir.mkdir()
+        item_dir = col_dir / "scene"
+        item_dir.mkdir()
+        (item_dir / "image.TIF").write_bytes(b"\x00" * 64)
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "image.TIF"
+
+    @pytest.mark.unit
+    def test_mixed_case_geojson_detected(self, tmp_path: Path) -> None:
+        """Mixed case .GeoJSON extension is detected."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "boundaries"
+        col_dir.mkdir()
+        item_dir = col_dir / "borders"
+        item_dir.mkdir()
+        (item_dir / "data.GeoJSON").write_text('{"type":"FeatureCollection","features":[]}')
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "data.GeoJSON"
+
+    @pytest.mark.unit
+    def test_uppercase_parquet_detected(self, tmp_path: Path) -> None:
+        """Uppercase .PARQUET extension is detected."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "vectors"
+        col_dir.mkdir()
+        item_dir = col_dir / "roads"
+        item_dir.mkdir()
+        (item_dir / "roads.PARQUET").write_bytes(b"parquet data")
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+
+    @pytest.mark.unit
+    def test_has_geo_assets_case_insensitive(self, tmp_path: Path) -> None:
+        """_has_geo_assets handles mixed case extensions."""
+        col_dir = tmp_path / "col"
+        col_dir.mkdir()
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+        (item_dir / "DATA.TIFF").write_bytes(b"\x00" * 16)
+
+        assert _has_geo_assets(col_dir) is True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestTabularFormats - CSV/TSV detection via GEOSPATIAL_EXTENSIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestTabularFormats:
+    """Tests for CSV/TSV detection in uninitialized collections.
+
+    CSV/TSV files are included in GEOSPATIAL_EXTENSIONS because they
+    may contain geometry columns. Status should detect them.
+    """
+
+    @pytest.mark.unit
+    def test_csv_triggers_uninitialized_detection(self, tmp_path: Path) -> None:
+        """A .csv file in an uninitialized collection triggers detection."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "tabular"
+        col_dir.mkdir()
+        item_dir = col_dir / "points"
+        item_dir.mkdir()
+        (item_dir / "locations.csv").write_text("lat,lon,name\n40.7,-74.0,NYC")
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "locations.csv"
+
+    @pytest.mark.unit
+    def test_tsv_triggers_uninitialized_detection(self, tmp_path: Path) -> None:
+        """A .tsv file in an uninitialized collection triggers detection."""
+        make_catalog(tmp_path)
+        col_dir = tmp_path / "tabular"
+        col_dir.mkdir()
+        item_dir = col_dir / "points"
+        item_dir.mkdir()
+        (item_dir / "locations.tsv").write_text("lat\tlon\tname\n40.7\t-74.0\tNYC")
+
+        result = get_catalog_status(tmp_path)
+
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "locations.tsv"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestPermissionErrors - Error handling for inaccessible directories
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestExtensionConsistency - Verify no extension list drift
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestExtensionConsistency:
+    """Tests to prevent extension list drift between modules.
+
+    Verifies that status.py uses the canonical GEOSPATIAL_EXTENSIONS from
+    constants.py rather than a local duplicate that could drift over time.
+    """
+
+    @pytest.mark.unit
+    def test_status_uses_geospatial_extensions_from_constants(self) -> None:
+        """Status module should import GEOSPATIAL_EXTENSIONS from constants.
+
+        This test guards against accidentally creating a local extension list
+        in status.py that could drift from the canonical list.
+        """
+        import portolan_cli.status as status_module
+
+        # Verify the module doesn't define its own extension list
+        assert not hasattr(status_module, "_GEO_ASSET_EXTENSIONS"), (
+            "status.py should not define _GEO_ASSET_EXTENSIONS; "
+            "use GEOSPATIAL_EXTENSIONS from constants.py instead"
+        )
+
+    @pytest.mark.unit
+    def test_all_geospatial_extensions_trigger_detection(self, tmp_path: Path) -> None:
+        """Every extension in GEOSPATIAL_EXTENSIONS should trigger detection.
+
+        This test ensures that any new extension added to constants.py
+        automatically works in status detection without code changes.
+        """
+        # Skip .gdb as it's a directory, not a file
+        file_extensions = GEOSPATIAL_EXTENSIONS - {".gdb"}
+
+        for ext in file_extensions:
+            col_dir = tmp_path / f"col-{ext.replace('.', '')}"
+            col_dir.mkdir()
+            item_dir = col_dir / "item"
+            item_dir.mkdir()
+            (item_dir / f"data{ext}").write_bytes(b"test data")
+
+            assert _has_geo_assets(col_dir), f"Extension {ext} should trigger detection"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestPermissionErrors - Error handling for inaccessible directories
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestPermissionErrors:
+    """Tests for handling permission and access errors gracefully."""
+
+    @pytest.mark.unit
+    def test_has_geo_assets_handles_permission_denied(self, tmp_path: Path) -> None:
+        """_has_geo_assets logs and continues when permission is denied."""
+        import os
+
+        col_dir = tmp_path / "col"
+        col_dir.mkdir()
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+
+        # Add a geo file so the test can verify the function still works
+        (item_dir / "data.parquet").write_bytes(b"data")
+
+        # Create an unreadable directory (skip on Windows where this doesn't work)
+        if os.name != "nt":
+            unreadable = col_dir / "unreadable"
+            unreadable.mkdir()
+            os.chmod(unreadable, 0o000)
+            try:
+                # Should still find the accessible geo file
+                assert _has_geo_assets(col_dir) is True
+            finally:
+                os.chmod(unreadable, 0o755)
