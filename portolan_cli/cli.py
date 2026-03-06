@@ -403,7 +403,11 @@ def list_cmd(
         output_json_envelope(envelope)
     else:
         if not datasets:
-            info_output("No items found")
+            info_output("No tracked items")
+            info_output("")
+            detail("To get started:")
+            detail("  portolan scan .      Discover files in this directory")
+            detail("  portolan add <path>  Track a specific file or directory")
             return
 
         _list_tree_output(datasets, catalog_path)

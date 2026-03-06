@@ -337,7 +337,109 @@ class TestTopLevelList:
             result = runner.invoke(cli, ["list"])
 
             assert result.exit_code == 0
-            assert "no items" in result.output.lower() or "empty" in result.output.lower()
+            assert "no tracked items" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_list_empty_shows_guidance_scan(self, runner: CliRunner) -> None:
+        """portolan list shows guidance about scan command when empty."""
+        with runner.isolated_filesystem():
+            # Create catalog structure per ADR-0023
+            Path("catalog.json").write_text(
+                json.dumps(
+                    {
+                        "type": "Catalog",
+                        "stac_version": "1.0.0",
+                        "id": "test",
+                        "description": "Test",
+                        "links": [],
+                    }
+                )
+            )
+            Path(".portolan").mkdir()
+
+            result = runner.invoke(cli, ["list"])
+
+            assert result.exit_code == 0
+            # Check for scan guidance
+            assert "scan" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_list_empty_shows_guidance_add(self, runner: CliRunner) -> None:
+        """portolan list shows guidance about add command when empty."""
+        with runner.isolated_filesystem():
+            # Create catalog structure per ADR-0023
+            Path("catalog.json").write_text(
+                json.dumps(
+                    {
+                        "type": "Catalog",
+                        "stac_version": "1.0.0",
+                        "id": "test",
+                        "description": "Test",
+                        "links": [],
+                    }
+                )
+            )
+            Path(".portolan").mkdir()
+
+            result = runner.invoke(cli, ["list"])
+
+            assert result.exit_code == 0
+            # Check for add guidance
+            assert "add" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_list_empty_guidance_not_shown_in_json_mode(self, runner: CliRunner) -> None:
+        """portolan list --json returns valid empty envelope without guidance text."""
+        with runner.isolated_filesystem():
+            # Create catalog structure per ADR-0023
+            Path("catalog.json").write_text(
+                json.dumps(
+                    {
+                        "type": "Catalog",
+                        "stac_version": "1.0.0",
+                        "id": "test",
+                        "description": "Test",
+                        "links": [],
+                    }
+                )
+            )
+            Path(".portolan").mkdir()
+
+            result = runner.invoke(cli, ["list", "--json"])
+
+            assert result.exit_code == 0
+            # Parse JSON and verify it's a valid empty response
+            envelope = json.loads(result.output)
+            assert envelope["success"] is True
+            assert envelope["command"] == "list"
+            # Items should be empty list, not contain guidance text
+            assert envelope["data"]["count"] == 0
+            assert envelope["data"]["items"] == []
+
+    @pytest.mark.unit
+    def test_list_empty_guidance_mentions_portolan_commands(self, runner: CliRunner) -> None:
+        """portolan list empty guidance mentions full portolan commands."""
+        with runner.isolated_filesystem():
+            # Create catalog structure per ADR-0023
+            Path("catalog.json").write_text(
+                json.dumps(
+                    {
+                        "type": "Catalog",
+                        "stac_version": "1.0.0",
+                        "id": "test",
+                        "description": "Test",
+                        "links": [],
+                    }
+                )
+            )
+            Path(".portolan").mkdir()
+
+            result = runner.invoke(cli, ["list"])
+
+            assert result.exit_code == 0
+            # Check for command references
+            assert "portolan scan" in result.output or "scan ." in result.output
+            assert "portolan add" in result.output or "add <path>" in result.output
 
     @pytest.mark.unit
     def test_list_shows_tree_view_format(self, runner: CliRunner) -> None:
