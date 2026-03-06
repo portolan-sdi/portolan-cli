@@ -45,7 +45,7 @@ from portolan_cli.scan_classify import (
     SkipReasonType,
     classify_file,
 )
-from portolan_cli.scan_detect import DualFormatPair, SpecialFormat, detect_filegdb, is_filegdb
+from portolan_cli.scan_detect import DualFormatPair, SpecialFormat, is_filegdb
 from portolan_cli.scan_fix import ProposedFix
 from portolan_cli.scan_infer import CollectionSuggestion
 
@@ -987,19 +987,23 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
     """Process a single discovered file or FileGDB directory."""
     # Check for FileGDB directory FIRST - these are yielded by _discover_files
     # as directories to be treated as single assets
+    # Issue #154: FileGDBs should be added to ready list (not special_formats)
+    # so they can be processed by `portolan add`
     if path.is_dir() and is_filegdb(path):
-        special_format = detect_filegdb(path, ctx.root)
-        if special_format is not None:
-            # Add size to the details for FileGDB directories
-            details = dict(special_format.details)
-            details["size_bytes"] = size
-            enriched = SpecialFormat(
-                path=special_format.path,
-                relative_path=special_format.relative_path,
-                format_type=special_format.format_type,
-                details=details,
-            )
-            ctx.special_formats.append(enriched)
+        # Create ScannedFile for FileGDB directory
+        scanned = ScannedFile(
+            path=path,
+            relative_path=_get_relative_path(path, ctx.root),
+            extension=".gdb",
+            format_type=FormatType.VECTOR,
+            size_bytes=size,
+        )
+        ctx.ready.append(scanned)
+
+        # Track for duplicate/multi-asset detection
+        ctx.basenames[path.name.lower()].append(path)
+        ctx.primaries_by_dir[path.parent].append(path)
+        ctx.formats_by_dir[path.parent].add(FormatType.VECTOR)
         return
 
     ext = path.suffix.lower()
