@@ -8,6 +8,10 @@ Per ADR-0022, status shows: untracked, modified, deleted files.
 Per ADR-0023, item files live in collection/{item_id}/ subdirectories and
     versions.json is at collection/versions.json (not .portolan/versions.json).
 Per issue #133, ALL files in item directories are tracked (not just geo files).
+Per issue #137, uninitialized directories (no collection.json) that contain
+    geo-assets are treated as potential collections and their files reported
+    as untracked. This fixes the chicken-and-egg problem where files were
+    never shown as untracked before `portolan add` was run.
 """
 
 from __future__ import annotations
@@ -29,9 +33,66 @@ IGNORED_FILES: frozenset[str] = frozenset(
     }
 )
 
+# Geospatial file extensions used to detect potential (uninitialized) collections.
+# A directory containing any of these extensions is treated as a potential collection
+# even without a collection.json (fixes issue #137).
+# Note: .parquet is included because GeoParquet is the primary vector format.
+# Note: .gdb is a directory, not a file — handled separately in scan_detect.
+_GEO_ASSET_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        # Cloud-native vector
+        ".parquet",
+        ".fgb",  # FlatGeobuf
+        ".pmtiles",  # PMTiles
+        # Cloud-native raster
+        ".tif",
+        ".tiff",
+        # Convertible vector (common inputs)
+        ".geojson",
+        ".shp",
+        ".gpkg",
+        # Convertible raster
+        ".jp2",
+    }
+)
+
 # STAC metadata filenames that live inside item directories but are not
 # user data assets and should not appear in status output.
 _STAC_METADATA_FILES: frozenset[str] = frozenset({"item.json"})
+
+
+def _has_geo_assets(directory: Path) -> bool:
+    """Check whether a directory subtree contains at least one geospatial file.
+
+    Used to determine if an uninitialized directory (one without collection.json)
+    should be treated as a potential collection for status reporting purposes.
+
+    A directory is considered a potential collection when it contains files
+    with known geospatial extensions (e.g. .parquet, .tif, .geojson) in any
+    of its immediate subdirectories (item-level directories).
+
+    Hidden subdirectories (names starting with '.') are skipped.
+
+    Args:
+        directory: Path to the candidate collection directory.
+
+    Returns:
+        True if any geospatial file is found within the directory subtree.
+    """
+    try:
+        for item_dir in directory.iterdir():
+            if not item_dir.is_dir() or item_dir.name.startswith("."):
+                continue
+            for file_path in item_dir.iterdir():
+                if not file_path.is_file():
+                    continue
+                if file_path.name in IGNORED_FILES or file_path.name.startswith("."):
+                    continue
+                if file_path.suffix.lower() in _GEO_ASSET_EXTENSIONS:
+                    return True
+    except OSError:
+        pass
+    return False
 
 
 def _is_stac_item_metadata(filename: str, item_id: str) -> bool:
@@ -195,7 +256,12 @@ def get_catalog_status(catalog_root: Path) -> StatusResult:
         if not col_dir.is_dir() or col_dir.name.startswith("."):
             continue
 
-        if not (col_dir / "collection.json").exists():
+        # Include directories that have collection.json (initialized collections)
+        # OR directories that contain geo-assets (uninitialized potential collections).
+        # This fixes issue #137: without this, files in un-added directories never
+        # showed up as untracked, creating a chicken-and-egg problem.
+        is_initialized = (col_dir / "collection.json").exists()
+        if not is_initialized and not _has_geo_assets(col_dir):
             continue
 
         collection_id = col_dir.name
