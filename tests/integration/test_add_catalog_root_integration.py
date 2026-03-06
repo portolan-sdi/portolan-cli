@@ -281,3 +281,136 @@ class TestAddCatalogRootVsSubdirBehavior:
 
         # Should fail: file must be inside a collection subdirectory
         assert result.exit_code == 1
+
+
+class TestMultiCollectionOutput:
+    """Tests verifying multi-collection output correctness (non-mocked)."""
+
+    @pytest.mark.integration
+    def test_add_root_shows_all_collections_in_output(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        valid_points_geojson: Path,
+    ) -> None:
+        """add . at catalog root shows all collections in output, not just the first."""
+        # Set up: two collections with different files
+        (initialized_catalog / "rivers").mkdir()
+        (initialized_catalog / "cities").mkdir()
+        shutil.copy(valid_points_geojson, initialized_catalog / "rivers" / "amazon.geojson")
+        shutil.copy(valid_points_geojson, initialized_catalog / "cities" / "tokyo.geojson")
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(initialized_catalog)],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, f"Add failed: {result.output}"
+        # Should mention both collections in output (multi-collection format)
+        assert "rivers" in result.output, f"Expected 'rivers' in output: {result.output}"
+        assert "cities" in result.output, f"Expected 'cities' in output: {result.output}"
+        assert "2 collections" in result.output, (
+            f"Expected '2 collections' for multi-collection output: {result.output}"
+        )
+
+    @pytest.mark.integration
+    def test_add_root_with_stray_files_skips_with_warning(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        valid_points_geojson: Path,
+    ) -> None:
+        """add . with stray files at root level skips them with warning, doesn't crash."""
+        # Set up: valid file in collection + stray file at root
+        (initialized_catalog / "vectors").mkdir()
+        shutil.copy(valid_points_geojson, initialized_catalog / "vectors" / "valid.geojson")
+        shutil.copy(valid_points_geojson, initialized_catalog / "stray.geojson")
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(initialized_catalog)],
+            catch_exceptions=False,
+        )
+
+        # Should succeed (not crash) but warn about stray file
+        assert result.exit_code == 0, f"Expected exit 0, got: {result.output}"
+        assert "stray.geojson" in result.output, (
+            f"Expected warning about stray.geojson: {result.output}"
+        )
+        assert "subdirectory" in result.output.lower(), (
+            f"Expected warning about subdirectory requirement: {result.output}"
+        )
+        # The valid file should still be added
+        assert (initialized_catalog / "vectors" / "collection.json").exists()
+
+    @pytest.mark.integration
+    def test_add_root_json_output_includes_all_collections(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        valid_points_geojson: Path,
+    ) -> None:
+        """add . --format json includes files from all collections in response."""
+        import json
+
+        # Set up: two collections
+        (initialized_catalog / "alpha").mkdir()
+        (initialized_catalog / "beta").mkdir()
+        shutil.copy(valid_points_geojson, initialized_catalog / "alpha" / "a.geojson")
+        shutil.copy(valid_points_geojson, initialized_catalog / "beta" / "b.geojson")
+
+        result = runner.invoke(
+            cli,
+            [
+                "--format",
+                "json",
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                str(initialized_catalog),
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        envelope = json.loads(result.output)
+        assert envelope["success"] is True
+
+        # Should have files from both collections
+        added = envelope["data"]["added"]
+        collection_ids = {item["collection_id"] for item in added}
+        assert "alpha" in collection_ids, f"Missing 'alpha' in {collection_ids}"
+        assert "beta" in collection_ids, f"Missing 'beta' in {collection_ids}"
+
+
+class TestSymlinkHandling:
+    """Tests for symlink edge cases in catalog root detection."""
+
+    @pytest.mark.integration
+    def test_add_from_symlinked_catalog_root(
+        self,
+        runner: CliRunner,
+        initialized_catalog: Path,
+        valid_points_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """add . works when running from a symlink pointing to catalog root."""
+        # Set up: file in collection
+        (initialized_catalog / "data").mkdir()
+        shutil.copy(valid_points_geojson, initialized_catalog / "data" / "points.geojson")
+
+        # Create symlink to catalog root in a different location
+        symlink_path = tmp_path / "symlink_catalog"
+        symlink_path.symlink_to(initialized_catalog)
+
+        # Run add from the symlink path (samefile() should handle this)
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(symlink_path), str(symlink_path)],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, f"Add via symlink failed: {result.output}"
+        # Verify the file was actually added
+        assert (initialized_catalog / "data" / "collection.json").exists()

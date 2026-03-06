@@ -167,6 +167,12 @@ class TestAddAtCatalogRoot:
                 )
 
                 assert result.exit_code == 0, f"Expected success, got: {result.output}"
+                # Verify multi-collection output format shows BOTH collections
+                assert "col1" in result.output, f"Expected col1 in output: {result.output}"
+                assert "col2" in result.output, f"Expected col2 in output: {result.output}"
+                assert "2 collections" in result.output, (
+                    f"Expected '2 collections' in output: {result.output}"
+                )
 
     @pytest.mark.unit
     def test_add_dot_at_catalog_root_with_json_output(self, runner: CliRunner) -> None:
@@ -201,7 +207,7 @@ class TestAddAtCatalogRoot:
 
     @pytest.mark.unit
     def test_add_dot_empty_catalog_succeeds(self, runner: CliRunner) -> None:
-        """add . on a catalog with no geo-files exits gracefully."""
+        """add . on a catalog with no geo-files exits gracefully with informative message."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -217,6 +223,10 @@ class TestAddAtCatalogRoot:
                 )
 
                 assert result.exit_code == 0
+                # Should show informative message, not "Adding 0 files to catalog"
+                assert "no geospatial files" in result.output.lower(), (
+                    f"Expected 'no geospatial files' message, got: {result.output}"
+                )
 
     @pytest.mark.unit
     def test_add_dot_not_a_catalog_fails(self, runner: CliRunner) -> None:
