@@ -88,11 +88,13 @@ CLOUD_NATIVE_EXTENSIONS: frozenset[str] = frozenset(
 )
 
 # Extensions for convertible vector formats
+# Note: .gdb is a directory extension (FileGDB) - handled specially in detection code
 CONVERTIBLE_VECTOR_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".shp",  # Shapefile
         ".geojson",  # GeoJSON
         ".gpkg",  # GeoPackage
+        ".gdb",  # FileGDB directory (ESRI File Geodatabase)
         ".csv",  # CSV with geometry
         ".tsv",  # TSV with geometry (tab-separated)
     }
@@ -469,6 +471,7 @@ class FormatType(Enum):
 
 
 # Extensions that indicate vector formats (handled by geoparquet-io)
+# Note: .gdb is a directory extension (FileGDB) - handled specially in detect_format
 VECTOR_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".geojson",
@@ -476,6 +479,7 @@ VECTOR_EXTENSIONS: frozenset[str] = frozenset(
         ".shp",
         ".gpkg",
         ".fgb",  # FlatGeobuf
+        ".gdb",  # FileGDB directory (ESRI File Geodatabase)
         ".csv",
         ".tsv",  # Tab-separated values (may or may not have geometry)
     }
@@ -499,21 +503,25 @@ def detect_format(path: Path) -> FormatType:
     delegated to geoparquet-io or rio-cogeo per ADR-0010.
 
     Args:
-        path: Path to the file to detect.
+        path: Path to the file or directory to detect.
 
     Returns:
         FormatType indicating vector, raster, or unknown.
 
     Raises:
         FileNotFoundError: If the file does not exist.
-        IsADirectoryError: If the path is a directory.
+        IsADirectoryError: If the path is a non-geospatial directory.
     """
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
-    if path.is_dir():
-        raise IsADirectoryError(f"Path is a directory: {path}")
 
     extension = path.suffix.lower()
+
+    # Special case: FileGDB directories (.gdb) are treated as vector format
+    if path.is_dir():
+        if extension == ".gdb":
+            return FormatType.VECTOR
+        raise IsADirectoryError(f"Path is a directory: {path}")
 
     # Check extension-based detection first
     if extension in VECTOR_EXTENSIONS:
