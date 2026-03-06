@@ -810,31 +810,27 @@ class TestPullOperation:
     def test_pull_dry_run_no_downloads(
         self, catalog_with_versions: Path, remote_versions_data: dict
     ) -> None:
-        """Pull --dry-run should not download anything."""
+        """Pull --dry-run should not download anything and make no network calls.
+
+        Bug #137: dry-run must return early before ANY network I/O, including
+        _fetch_remote_versions. This test verifies neither the remote fetch
+        nor the download step is invoked.
+        """
         from portolan_cli.pull import pull
 
         with patch("portolan_cli.pull._fetch_remote_versions") as mock_fetch:
             with patch("portolan_cli.pull._download_assets") as mock_download:
-                with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
-                    from portolan_cli.versions import _parse_versions_file
+                result = pull(
+                    remote_url="s3://bucket/catalog",
+                    local_root=catalog_with_versions,
+                    collection="test-collection",
+                    dry_run=True,
+                )
 
-                    mock_fetch.return_value = _parse_versions_file(remote_versions_data)
-                    mock_checksum.return_value = "abc123"  # Match local version
-                    mock_download.return_value = (0, 0)  # dry_run returns (0, 0)
-
-                    result = pull(
-                        remote_url="s3://bucket/catalog",
-                        local_root=catalog_with_versions,
-                        collection="test-collection",
-                        dry_run=True,
-                    )
-
-        # In dry-run mode, _download_assets is called but doesn't actually download
-        # It prints what would be done and returns (0, 0)
-        mock_download.assert_called_once()
-        # Verify dry_run=True was passed
-        call_kwargs = mock_download.call_args.kwargs
-        assert call_kwargs.get("dry_run") is True
+        # dry-run must not call either network function
+        mock_fetch.assert_not_called()
+        mock_download.assert_not_called()
+        assert result.success is True
         assert result.files_downloaded == 0
 
     @pytest.mark.unit
@@ -1765,3 +1761,101 @@ class TestMalformedDataHandling:
                     remote_url="s3://bucket/catalog",
                     collection="test-collection",
                 )
+
+
+# =============================================================================
+# Dry-Run Network Isolation Tests
+# =============================================================================
+
+
+class TestDryRunNetworkIsolation:
+    """Tests that dry-run mode never makes network calls.
+
+    Bug #137: --dry-run was still calling _fetch_remote_versions,
+    making real network connections. These tests assert the fix:
+    dry_run=True must return early BEFORE any network I/O.
+    """
+
+    @pytest.mark.unit
+    def test_pull_dry_run_never_calls_fetch_remote_versions(
+        self, catalog_with_versions: Path
+    ) -> None:
+        """pull(dry_run=True) must not call _fetch_remote_versions at all.
+
+        This is the core regression test for bug #137. The previous behaviour
+        called _fetch_remote_versions unconditionally, which triggered a real
+        network connection even when the user passed --dry-run.
+        """
+        from portolan_cli.pull import pull
+
+        with patch("portolan_cli.pull._fetch_remote_versions") as mock_fetch:
+            result = pull(
+                remote_url="s3://bucket/catalog",
+                local_root=catalog_with_versions,
+                collection="test-collection",
+                dry_run=True,
+            )
+
+        # The network call must never happen
+        mock_fetch.assert_not_called()
+        assert result.success is True
+
+    @pytest.mark.unit
+    def test_pull_dry_run_returns_simulated_result(self, catalog_with_versions: Path) -> None:
+        """pull(dry_run=True) should return a valid PullResult showing 'would pull'."""
+        from portolan_cli.pull import pull
+
+        with patch("portolan_cli.pull._fetch_remote_versions") as mock_fetch:
+            result = pull(
+                remote_url="s3://bucket/catalog",
+                local_root=catalog_with_versions,
+                collection="test-collection",
+                dry_run=True,
+            )
+
+        mock_fetch.assert_not_called()
+        # Result must be a valid PullResult
+        assert result.success is True
+        assert result.files_downloaded == 0  # dry-run never downloads
+
+    @pytest.mark.unit
+    def test_pull_dry_run_does_not_write_versions_json(self, catalog_with_versions: Path) -> None:
+        """pull(dry_run=True) must not modify local versions.json."""
+        from portolan_cli.pull import pull
+
+        versions_path = catalog_with_versions / "test-collection" / "versions.json"
+        original_mtime = versions_path.stat().st_mtime
+
+        with patch("portolan_cli.pull._fetch_remote_versions"):
+            pull(
+                remote_url="s3://bucket/catalog",
+                local_root=catalog_with_versions,
+                collection="test-collection",
+                dry_run=True,
+            )
+
+        # versions.json must be untouched
+        assert versions_path.stat().st_mtime == original_mtime
+
+    @pytest.mark.unit
+    def test_pull_non_dry_run_still_calls_fetch_remote_versions(
+        self, catalog_with_versions: Path, remote_versions_data: dict
+    ) -> None:
+        """Non-dry-run pull must still call _fetch_remote_versions (sanity check)."""
+        from portolan_cli.pull import pull
+        from portolan_cli.versions import _parse_versions_file
+
+        with patch("portolan_cli.pull._fetch_remote_versions") as mock_fetch:
+            with patch("portolan_cli.pull._download_assets") as mock_download:
+                mock_fetch.return_value = _parse_versions_file(remote_versions_data)
+                mock_download.return_value = (1, 0)
+
+                pull(
+                    remote_url="s3://bucket/catalog",
+                    local_root=catalog_with_versions,
+                    collection="test-collection",
+                    dry_run=False,
+                )
+
+        # Regular pull MUST make the network call
+        mock_fetch.assert_called_once()

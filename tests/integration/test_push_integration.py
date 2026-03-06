@@ -507,9 +507,15 @@ class TestDryRunBehavior:
         assert result.files_uploaded == 0  # Dry-run doesn't upload
 
     @pytest.mark.integration
-    def test_dry_run_detects_conflicts(self, catalog_with_versions: Path) -> None:
-        """Dry-run should still detect and report conflicts."""
-        from portolan_cli.push import PushConflictError, push
+    def test_dry_run_does_not_detect_conflicts(self, catalog_with_versions: Path) -> None:
+        """Dry-run must NOT make network calls, so it cannot detect remote conflicts.
+
+        Bug #137: dry-run previously called _fetch_remote_versions to check for
+        conflicts even in dry-run mode. The fix ensures dry-run returns early
+        before any network I/O, which means remote conflicts are not checked.
+        Users who want conflict detection must run without --dry-run.
+        """
+        from portolan_cli.push import push
 
         with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
             mock_fetch.return_value = (
@@ -524,14 +530,18 @@ class TestDryRunBehavior:
                 "etag-123",
             )
 
-            # Should raise conflict even in dry-run
-            with pytest.raises(PushConflictError):
-                push(
-                    catalog_root=catalog_with_versions,
-                    collection="demographics",
-                    destination="s3://mybucket/catalog",
-                    dry_run=True,
-                )
+            # dry-run must NOT raise — it never fetches remote state
+            result = push(
+                catalog_root=catalog_with_versions,
+                collection="demographics",
+                destination="s3://mybucket/catalog",
+                dry_run=True,
+            )
+
+        # Verify the remote was never consulted
+        mock_fetch.assert_not_called()
+        assert result.success is True
+        assert result.files_uploaded == 0
 
     @pytest.mark.integration
     def test_cli_dry_run_no_contradictory_messages(self, catalog_with_versions: Path) -> None:

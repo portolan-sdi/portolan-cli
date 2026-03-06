@@ -511,6 +511,23 @@ def push(
     local_data = _read_local_versions(catalog_root, collection)
     local_versions = [v.get("version") for v in local_data.get("versions", [])]
 
+    # Bug #137: dry-run must not make any network calls.
+    # Return early with a simulated "would push" result before any I/O.
+    if dry_run:
+        assets = _get_assets_to_upload(catalog_root, local_data, local_versions)
+        info(f"[DRY RUN] Would push {len(local_versions)} version(s): {local_versions}")
+        info(f"[DRY RUN] Would upload {len(assets)} asset file(s)")
+        for asset in assets:
+            rel_path = asset.relative_to(catalog_root)
+            detail(f"  {rel_path}")
+        return PushResult(
+            success=True,
+            files_uploaded=0,
+            versions_pushed=0,
+            conflicts=[],
+            errors=[],
+        )
+
     # Setup store
     store, prefix = _setup_store(destination, profile=profile)
 

@@ -1844,3 +1844,116 @@ class TestVersionDiffInvariants:
         assert set(diff.local_only) == set(local_versions)
         assert diff.remote_only == []
         assert not diff.has_conflict  # First push, no conflict
+
+
+# =============================================================================
+# Dry-Run Network Isolation Tests
+# =============================================================================
+
+
+class TestDryRunNetworkIsolation:
+    """Tests that dry-run mode never makes network calls.
+
+    Bug #137: --dry-run was still calling _fetch_remote_versions and
+    _setup_store, making real network connections. These tests assert
+    the fix: dry_run=True must return early BEFORE any network I/O.
+    """
+
+    @pytest.mark.unit
+    def test_push_dry_run_never_calls_fetch_remote_versions(self, local_catalog: Path) -> None:
+        """push(dry_run=True) must not call _fetch_remote_versions at all.
+
+        This is the core regression test for bug #137. The previous behaviour
+        always called _setup_store then _fetch_remote_versions regardless of
+        dry_run, making real S3/GCS/Azure connections.
+        """
+        from portolan_cli.push import push
+
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            with patch("portolan_cli.push._setup_store") as mock_setup:
+                mock_setup.return_value = (MagicMock(), "prefix")
+
+                result = push(
+                    catalog_root=local_catalog,
+                    collection="test",
+                    destination="s3://mybucket/catalog",
+                    dry_run=True,
+                )
+
+        # Neither network operation should be called
+        mock_fetch.assert_not_called()
+        assert result.success is True
+
+    @pytest.mark.unit
+    def test_push_dry_run_never_calls_setup_store(self, local_catalog: Path) -> None:
+        """push(dry_run=True) must not call _setup_store (which creates cloud connections)."""
+        from portolan_cli.push import push
+
+        with patch("portolan_cli.push._setup_store") as mock_setup:
+            result = push(
+                catalog_root=local_catalog,
+                collection="test",
+                destination="s3://mybucket/catalog",
+                dry_run=True,
+            )
+
+        mock_setup.assert_not_called()
+        assert result.success is True
+
+    @pytest.mark.unit
+    def test_push_dry_run_shows_would_push_message(self, local_catalog: Path) -> None:
+        """push(dry_run=True) should report files that would be uploaded."""
+        from portolan_cli.push import push
+
+        with patch("portolan_cli.push._setup_store"):
+            with patch("portolan_cli.push._fetch_remote_versions"):
+                result = push(
+                    catalog_root=local_catalog,
+                    collection="test",
+                    destination="s3://mybucket/catalog",
+                    dry_run=True,
+                )
+
+        assert result.success is True
+        assert result.files_uploaded == 0  # dry-run never uploads
+
+    @pytest.mark.unit
+    def test_push_dry_run_does_not_call_upload_assets(self, local_catalog: Path) -> None:
+        """push(dry_run=True) must not call _upload_assets."""
+        from portolan_cli.push import push
+
+        with patch("portolan_cli.push._setup_store"):
+            with patch("portolan_cli.push._fetch_remote_versions"):
+                with patch("portolan_cli.push._upload_assets") as mock_upload:
+                    push(
+                        catalog_root=local_catalog,
+                        collection="test",
+                        destination="s3://mybucket/catalog",
+                        dry_run=True,
+                    )
+
+        mock_upload.assert_not_called()
+
+    @pytest.mark.unit
+    def test_push_non_dry_run_still_calls_fetch_remote_versions(self, local_catalog: Path) -> None:
+        """Non-dry-run push must still call _fetch_remote_versions (sanity check)."""
+        from portolan_cli.push import push
+
+        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+            with patch("portolan_cli.push._setup_store") as mock_setup:
+                mock_fetch.return_value = (None, None)
+                mock_setup.return_value = (MagicMock(), "prefix")
+
+                with patch("portolan_cli.push._upload_assets") as mock_upload:
+                    mock_upload.return_value = (1, [], ["key"])
+                    with patch("portolan_cli.push._upload_versions_json"):
+                        push(
+                            catalog_root=local_catalog,
+                            collection="test",
+                            destination="s3://mybucket/catalog",
+                            dry_run=False,
+                        )
+
+        # Regular push MUST call both setup and fetch
+        mock_setup.assert_called_once()
+        mock_fetch.assert_called_once()

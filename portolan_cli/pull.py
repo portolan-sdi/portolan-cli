@@ -566,6 +566,19 @@ def pull(
             versions=[],
         )
 
+    # Bug #137: dry-run must not make any network calls.
+    # Return early with a simulated "would pull" result before any I/O.
+    if dry_run:
+        info(f"[DRY RUN] Would pull from {remote_url}/{collection}")
+        info("[DRY RUN] Skipping remote version check (no network calls in dry-run mode)")
+        return PullResult(
+            success=True,
+            files_downloaded=0,
+            files_skipped=0,
+            local_version=local_versions.current_version,
+            remote_version=None,
+        )
+
     # Fetch remote versions
     try:
         remote_versions = _fetch_remote_versions(remote_url, collection, profile)
