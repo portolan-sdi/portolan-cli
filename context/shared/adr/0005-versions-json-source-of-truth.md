@@ -46,7 +46,7 @@ catalog-root/                              # Same structure locally and on remot
 
 ```json
 {
-  "spec_version": "1.0.0",
+  "schema_version": "1.0.0",
   "current_version": "2.1.0",
   "versions": [
     {
