@@ -28,7 +28,6 @@ import pystac
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
-    MAX_CATALOG_SEARCH_DEPTH,
     MTIME_TOLERANCE_SECONDS,
     SIDECAR_PATTERNS,
     TABULAR_EXTENSIONS,
@@ -211,39 +210,6 @@ def _scan_item_assets(
         asset_paths.append(str(file_path))
 
     return stac_assets, asset_files, asset_paths
-
-
-def find_catalog_root(start_path: Path | None = None) -> Path | None:
-    """Find the catalog root by walking up from the given path.
-
-    Searches for catalog.json starting from start_path (or cwd if None)
-    and walking up parent directories. This provides git-style behavior
-    where commands work from any subdirectory within a catalog.
-
-    Security: Limited to MAX_CATALOG_SEARCH_DEPTH levels to prevent
-    traversing to filesystem root where a malicious catalog.json might exist.
-
-    Args:
-        start_path: Starting directory for search (defaults to cwd).
-
-    Returns:
-        Path to catalog root if found, None otherwise.
-    """
-    current = (start_path or Path.cwd()).resolve()
-    depth = 0
-
-    # Walk up until we find catalog.json, hit the filesystem root, or exceed depth limit
-    while current != current.parent and depth < MAX_CATALOG_SEARCH_DEPTH:
-        if (current / "catalog.json").exists():
-            return current
-        current = current.parent
-        depth += 1
-
-    # Check the root itself (only if within depth limit)
-    if depth < MAX_CATALOG_SEARCH_DEPTH and (current / "catalog.json").exists():
-        return current
-
-    return None
 
 
 @dataclass

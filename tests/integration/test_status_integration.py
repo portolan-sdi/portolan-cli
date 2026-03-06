@@ -28,7 +28,17 @@ from portolan_cli.status import get_catalog_status
 
 
 def _write_catalog(root: Path, collection_ids: list[str] | None = None) -> None:
-    """Write a minimal catalog.json."""
+    """Write a minimal managed catalog (per ADR-0023 and ADR-0029).
+
+    Creates both .portolan/config.yaml (the sentinel per ADR-0029) and catalog.json.
+    """
+    # Create .portolan sentinel files (per ADR-0029)
+    portolan_dir = root / ".portolan"
+    portolan_dir.mkdir(parents=True, exist_ok=True)
+    (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
+    (portolan_dir / "state.json").write_text("{}")
+
+    # Create catalog.json at root (STAC standard per ADR-0023)
     links = [{"rel": "child", "href": f"./{c}/collection.json"} for c in (collection_ids or [])]
     (root / "catalog.json").write_text(
         json.dumps(
@@ -244,8 +254,9 @@ class TestUninitializedCollectionIntegration:
         """Hidden directories like .portolan are never treated as collections."""
         _write_catalog(tmp_path)
 
+        # _write_catalog already creates .portolan/ with config.yaml and state.json
+        # Add extra content to verify .portolan is still ignored
         portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("remote: s3://my-bucket")
         # Even if .portolan contains a .parquet file, it's hidden → ignored
         (portolan_dir / "state.parquet").write_bytes(b"internal state")

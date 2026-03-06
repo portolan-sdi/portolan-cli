@@ -13,11 +13,11 @@ from typing import Any
 
 import click
 
+from portolan_cli.catalog import find_catalog_root
 from portolan_cli.check import check_directory
 from portolan_cli.dataset import (
     DatasetInfo,
     add_files,
-    find_catalog_root,
     get_dataset_info,
     get_sidecars,
     list_datasets,
@@ -580,6 +580,7 @@ def status(ctx: click.Context, json_output: bool) -> None:
             output_json_envelope(envelope)
         else:
             error("No catalog found in current directory or parents")
+            detail("Run 'portolan init' to create a catalog, or cd into one")
         raise SystemExit(1)
 
     try:
@@ -1891,7 +1892,7 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
             _handle_cmd_error(
                 "add",
                 "NotACatalogError",
-                "Not inside a Portolan catalog (no catalog.json found)",
+                "Not inside a Portolan catalog (no .portolan/config.yaml found)",
                 use_json,
             )
             if not use_json:
@@ -1900,7 +1901,8 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
         catalog_root = detected_root
 
     # Validate catalog exists (when explicitly specified)
-    if catalog_path is not None and not (catalog_root / "catalog.json").exists():
+    # Per ADR-0029, use .portolan/config.yaml as the single sentinel
+    if catalog_path is not None and not (catalog_root / ".portolan" / "config.yaml").exists():
         _handle_cmd_error("add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json)
         if not use_json:
             detail("Run 'portolan init' to create a catalog")
@@ -2032,7 +2034,7 @@ def rm_cmd(
             _handle_cmd_error(
                 "rm",
                 "NotACatalogError",
-                "Not inside a Portolan catalog (no catalog.json found)",
+                "Not inside a Portolan catalog (no .portolan/config.yaml found)",
                 use_json,
             )
             if not use_json:
@@ -2805,30 +2807,6 @@ def clone(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _find_catalog_root(start_path: Path) -> Path | None:
-    """Find the catalog root by looking for .portolan directory.
-
-    Searches from start_path up to filesystem root. Only accepts directories
-    with .portolan/ present (not just catalog.json, to avoid false positives
-    with unmanaged STAC catalogs).
-
-    Args:
-        start_path: Starting directory for search.
-
-    Returns:
-        Path to catalog root, or None if not found.
-    """
-    current = start_path.resolve()
-    while current != current.parent:
-        if (current / ".portolan").exists():
-            return current
-        current = current.parent
-    # Check root directory too
-    if (current / ".portolan").exists():
-        return current
-    return None
-
-
 @cli.group()
 def config() -> None:
     """Manage catalog configuration.
@@ -2879,7 +2857,7 @@ def config_set(ctx: click.Context, key: str, value: str, collection: str | None)
     use_json = should_output_json(ctx)
 
     # Find catalog root
-    catalog_path = _find_catalog_root(Path.cwd())
+    catalog_path = find_catalog_root()
     if catalog_path is None:
         if use_json:
             envelope = error_envelope(
@@ -2946,7 +2924,7 @@ def config_get(ctx: click.Context, key: str, collection: str | None) -> None:
     use_json = should_output_json(ctx)
 
     # Find catalog root
-    catalog_path = _find_catalog_root(Path.cwd())
+    catalog_path = find_catalog_root()
     if catalog_path is None:
         if use_json:
             envelope = error_envelope(
@@ -3006,7 +2984,7 @@ def config_list(ctx: click.Context, collection: str | None) -> None:
     use_json = should_output_json(ctx)
 
     # Find catalog root
-    catalog_path = _find_catalog_root(Path.cwd())
+    catalog_path = find_catalog_root()
     if catalog_path is None:
         if use_json:
             envelope = error_envelope(
@@ -3069,7 +3047,7 @@ def config_unset(ctx: click.Context, key: str, collection: str | None) -> None:
     use_json = should_output_json(ctx)
 
     # Find catalog root
-    catalog_path = _find_catalog_root(Path.cwd())
+    catalog_path = find_catalog_root()
     if catalog_path is None:
         if use_json:
             envelope = error_envelope(

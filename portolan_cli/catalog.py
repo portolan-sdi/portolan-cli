@@ -95,6 +95,87 @@ def detect_state(path: Path) -> CatalogState:
     return CatalogState.FRESH
 
 
+def find_catalog_root(
+    start_path: Path | None = None,
+    *,
+    require_operational: bool = True,
+) -> Path | None:
+    """Find the catalog root by walking up from the given path.
+
+    Searches for a managed Portolan catalog starting from start_path (or cwd if None)
+    and walking up parent directories. This provides git-style behavior
+    where commands work from any subdirectory within a catalog.
+
+    Per ADR-0029, this uses .portolan/config.yaml as the primary sentinel,
+    unifying detection across all CLI commands. By default (require_operational=True),
+    it also requires at least one operational file (catalog.json or state.json)
+    to avoid detecting half-initialized repos.
+
+    Security: Limited to MAX_CATALOG_SEARCH_DEPTH levels to prevent
+    traversing to filesystem root where a malicious .portolan might exist.
+
+    Args:
+        start_path: Starting directory for search (defaults to cwd).
+        require_operational: If True (default), require .portolan/config.yaml
+            AND at least one of (catalog.json, .portolan/state.json) to exist.
+            Set to False during init_catalog() when creating a new catalog
+            where config.yaml is written before catalog.json.
+
+    Returns:
+        Path to catalog root if found, None otherwise.
+
+    Examples:
+        >>> find_catalog_root(Path("/my-catalog/collection/item"))
+        PosixPath('/my-catalog')
+
+        >>> find_catalog_root(Path("/no-catalog-here"))
+        None
+
+        >>> find_catalog_root()  # Uses current working directory
+        PosixPath('/my-catalog')
+
+        >>> # During init, check for config.yaml only (catalog.json not yet written)
+        >>> find_catalog_root(start_path, require_operational=False)
+    """
+    from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+
+    def _is_catalog_root(path: Path) -> bool:
+        """Check if path is a valid catalog root."""
+        config_yaml = path / ".portolan" / "config.yaml"
+        if not config_yaml.exists():
+            return False
+
+        if not require_operational:
+            # During init, config.yaml alone is sufficient
+            return True
+
+        # Require operational file: catalog.json at root OR state.json in .portolan
+        catalog_json = path / "catalog.json"
+        state_json = path / ".portolan" / "state.json"
+        return catalog_json.exists() or state_json.exists()
+
+    # Handle non-existent paths gracefully
+    if start_path is not None and not start_path.exists():
+        return None
+
+    current = (start_path or Path.cwd()).resolve()
+    depth = 0
+
+    # Walk up until we find a valid catalog root, hit filesystem root, or exceed depth
+    while current != current.parent and depth < MAX_CATALOG_SEARCH_DEPTH:
+        if _is_catalog_root(current):
+            return current
+        current = current.parent
+        depth += 1
+
+    # Check the root directory itself (only if within depth limit)
+    if depth < MAX_CATALOG_SEARCH_DEPTH:
+        if _is_catalog_root(current):
+            return current
+
+    return None
+
+
 # Keep legacy exception for backward compatibility
 class CatalogExistsError(Exception):
     """Raised when attempting to initialize a catalog that already exists.
