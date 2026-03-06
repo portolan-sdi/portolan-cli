@@ -372,8 +372,6 @@ class TestCatalogVersionsHypothesis:
     ) -> None:
         """All added collections should be tracked in catalog versions."""
         # Create a fresh catalog for each test run using uuid for uniqueness
-        import uuid
-
         from portolan_cli.catalog_versions import (
             read_catalog_versions,
             update_catalog_versions_collection,

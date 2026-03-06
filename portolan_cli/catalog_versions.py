@@ -211,14 +211,9 @@ def update_catalog_versions_collection(
         item_count: Number of items in the collection.
         current_version: Optional version string for the collection.
     """
-    versions_path = catalog_root / "versions.json"
-
-    # Read existing data
-    if versions_path.exists():
-        data = json.loads(versions_path.read_text(encoding="utf-8"))
-        catalog_versions = _parse_catalog_versions(data)
-    else:
-        raise FileNotFoundError(f"versions.json not found: {versions_path}")
+    # Read existing data (reuses read_catalog_versions for DRY)
+    data = read_catalog_versions(catalog_root)
+    catalog_versions = _parse_catalog_versions(data)
 
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -272,12 +267,11 @@ def remove_collection_from_catalog_versions(catalog_root: Path, collection_id: s
         catalog_root: Root directory of the catalog.
         collection_id: Unique identifier for the collection to remove.
     """
-    versions_path = catalog_root / "versions.json"
-
-    if not versions_path.exists():
+    try:
+        data = read_catalog_versions(catalog_root)
+    except FileNotFoundError:
         return
 
-    data = json.loads(versions_path.read_text(encoding="utf-8"))
     catalog_versions = _parse_catalog_versions(data)
 
     if collection_id in catalog_versions.collections:
