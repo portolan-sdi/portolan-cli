@@ -31,6 +31,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 # Import new types from scan modules
 from portolan_cli.collection_id import (
@@ -45,7 +46,12 @@ from portolan_cli.scan_classify import (
     SkipReasonType,
     classify_file,
 )
-from portolan_cli.scan_detect import DualFormatPair, SpecialFormat, is_filegdb
+from portolan_cli.scan_detect import (
+    FILEGDB_LOCK_PATTERNS,
+    DualFormatPair,
+    SpecialFormat,
+    is_filegdb,
+)
 from portolan_cli.scan_fix import ProposedFix
 from portolan_cli.scan_infer import CollectionSuggestion
 
@@ -174,13 +180,23 @@ class ScanOptions:
 
 @dataclass(frozen=True)
 class ScannedFile:
-    """A geospatial file ready for import."""
+    """A geospatial file ready for import.
+
+    Attributes:
+        path: Absolute path to the file or directory.
+        relative_path: Path relative to scan root, using forward slashes.
+        extension: File extension (e.g., ".parquet", ".gdb").
+        format_type: Whether this is VECTOR or RASTER data.
+        size_bytes: Total size in bytes.
+        metadata: Format-specific metadata (e.g., gdbtable_count for FileGDB).
+    """
 
     path: Path
     relative_path: str
     extension: str
     format_type: FormatType
     size_bytes: int
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def basename(self) -> str:
@@ -393,11 +409,15 @@ def _has_invalid_characters(name: str) -> bool:
 
 
 def _get_relative_path(path: Path, root: Path) -> str:
-    """Get path relative to root as string."""
+    """Get path relative to root as forward-slash string.
+
+    Returns paths with forward slashes regardless of OS for STAC compatibility.
+    STAC uses URL-style paths which always use forward slashes.
+    """
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def _make_skipped_file(
@@ -876,6 +896,39 @@ def _get_dir_size(path: Path) -> int:
     return total
 
 
+def _gather_filegdb_metadata(path: Path) -> dict[str, Any]:
+    """Gather FileGDB-specific metadata.
+
+    Args:
+        path: Path to FileGDB directory.
+
+    Returns:
+        Dict with keys:
+        - gdbtable_count: Number of .gdbtable files
+        - lock_files_present: True if lock files detected (ArcGIS may have it open)
+    """
+    gdbtable_count = 0
+    lock_files_present = False
+
+    try:
+        for entry in os.scandir(path):
+            name_lower = entry.name.lower()
+            if name_lower.endswith(".gdbtable"):
+                gdbtable_count += 1
+            # Check for lock files (ArcGIS patterns)
+            for lock_pattern in FILEGDB_LOCK_PATTERNS:
+                if lock_pattern in name_lower:
+                    lock_files_present = True
+                    break
+    except OSError:
+        pass
+
+    return {
+        "gdbtable_count": gdbtable_count,
+        "lock_files_present": lock_files_present,
+    }
+
+
 def _discover_files(
     ctx: _ScanContext,
 ) -> Iterator[tuple[Path, int]]:
@@ -990,6 +1043,9 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
     # Issue #154: FileGDBs should be added to ready list (not special_formats)
     # so they can be processed by `portolan add`
     if path.is_dir() and is_filegdb(path):
+        # Gather FileGDB-specific metadata
+        metadata = _gather_filegdb_metadata(path)
+
         # Create ScannedFile for FileGDB directory
         scanned = ScannedFile(
             path=path,
@@ -997,6 +1053,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
             extension=".gdb",
             format_type=FormatType.VECTOR,
             size_bytes=size,
+            metadata=metadata,
         )
         ctx.ready.append(scanned)
 

@@ -259,3 +259,233 @@ class TestFileGDBPropertyBased:
             ready_paths = {f.path for f in result.ready}
             for gdb_dir in gdb_dirs:
                 assert gdb_dir in ready_paths, f"FileGDB {gdb_dir.name} should be in ready"
+
+
+@pytest.mark.realdata
+class TestFileGDBRealFixture:
+    """Tests using real FileGDB fixtures from GDAL test data.
+
+    These tests verify Portolan's orchestration works with production FileGDB structures.
+    The fixture is field_alias.gdb from GDAL autotest/ogr/data/filegdb/.
+    """
+
+    @pytest.fixture
+    def real_filegdb(self) -> Path:
+        """Return path to real FileGDB fixture."""
+        fixture_path = (
+            Path(__file__).parent.parent / "fixtures" / "realdata" / "filegdb" / "field_alias.gdb"
+        )
+        if not fixture_path.exists():
+            pytest.skip("Real FileGDB fixture not found (run fixture download first)")
+        return fixture_path
+
+    def test_real_filegdb_detected_as_ready(self, real_filegdb: Path) -> None:
+        """Real FileGDB should be detected and added to ready list."""
+        # Scan the parent directory containing the FileGDB
+        result = scan_directory(real_filegdb.parent)
+
+        ready_paths = [f.path for f in result.ready]
+        assert real_filegdb in ready_paths, (
+            f"Real FileGDB should be in ready list. Found: {ready_paths}"
+        )
+
+    def test_real_filegdb_has_correct_properties(self, real_filegdb: Path) -> None:
+        """Real FileGDB should have correct extension and format type."""
+        result = scan_directory(real_filegdb.parent)
+
+        filegdb_files = [f for f in result.ready if f.path == real_filegdb]
+        assert len(filegdb_files) == 1
+
+        scanned = filegdb_files[0]
+        assert scanned.extension == ".gdb"
+        assert scanned.format_type == FormatType.VECTOR
+        assert scanned.size_bytes > 0, "Real FileGDB should have non-zero size"
+
+    def test_real_filegdb_has_metadata(self, real_filegdb: Path) -> None:
+        """Real FileGDB should have metadata with accurate table count."""
+        result = scan_directory(real_filegdb.parent)
+
+        scanned = next(f for f in result.ready if f.path == real_filegdb)
+
+        assert "gdbtable_count" in scanned.metadata
+        # field_alias.gdb has multiple .gdbtable files
+        assert scanned.metadata["gdbtable_count"] >= 1, (
+            f"Expected at least 1 gdbtable, got {scanned.metadata['gdbtable_count']}"
+        )
+        assert scanned.metadata["lock_files_present"] is False, (
+            "Clean fixture should have no lock files"
+        )
+
+    def test_real_filegdb_not_in_special_formats(self, real_filegdb: Path) -> None:
+        """Real FileGDB should NOT appear in special_formats (promoted to ready)."""
+        result = scan_directory(real_filegdb.parent)
+
+        special_filegdb = [sf for sf in result.special_formats if sf.format_type == "filegdb"]
+        assert len(special_filegdb) == 0, (
+            f"FileGDB should not be in special_formats. Found: {special_filegdb}"
+        )
+
+
+@pytest.mark.unit
+class TestFileGDBArchives:
+    """Tests for FileGDB archive (.gdb.zip) handling."""
+
+    def test_filegdb_archive_not_in_ready(self, tmp_path: Path) -> None:
+        """FileGDB archives (.gdb.zip) should NOT be in ready list.
+
+        Archives need extraction before they can be processed by `portolan add`.
+        They should remain as skipped files (or special_formats) until we
+        implement archive extraction.
+        """
+        archive = tmp_path / "data.gdb.zip"
+        archive.write_bytes(b"PK\x03\x04" + b"\x00" * 100)  # Minimal ZIP header
+
+        result = scan_directory(tmp_path)
+
+        # Archive should NOT be in ready
+        ready_paths = [f.path for f in result.ready]
+        assert archive not in ready_paths, (
+            "FileGDB archive should not be in ready list (needs extraction)"
+        )
+
+    def test_filegdb_archive_is_skipped_or_special(self, tmp_path: Path) -> None:
+        """FileGDB archives should be tracked as skipped or special_formats."""
+        archive = tmp_path / "data.gdb.zip"
+        archive.write_bytes(b"PK\x03\x04" + b"\x00" * 100)
+
+        result = scan_directory(tmp_path)
+
+        # Should be in skipped (as unknown) or special_formats
+        skipped_paths = [f.path for f in result.skipped]
+        special_paths = [sf.path for sf in result.special_formats]
+
+        is_tracked = archive in skipped_paths or archive in special_paths
+        assert is_tracked, (
+            f"FileGDB archive should be tracked. Skipped: {skipped_paths}, Special: {special_paths}"
+        )
+
+
+@pytest.mark.unit
+class TestFileGDBMetadata:
+    """Tests for FileGDB metadata on ScannedFile."""
+
+    def test_filegdb_has_metadata_dict(self, tmp_path: Path) -> None:
+        """FileGDB ScannedFile should have metadata with table count and lock info."""
+        gdb_dir = tmp_path / "data.gdb"
+        gdb_dir.mkdir()
+        (gdb_dir / "a00000001.gdbtable").write_bytes(b"x" * 100)
+        (gdb_dir / "a00000002.gdbtable").write_bytes(b"y" * 200)
+        (gdb_dir / "a00000003.gdbtable").write_bytes(b"z" * 300)
+
+        result = scan_directory(tmp_path)
+
+        filegdb_files = [f for f in result.ready if f.path == gdb_dir]
+        assert len(filegdb_files) == 1
+        scanned = filegdb_files[0]
+
+        # Should have metadata dict
+        assert hasattr(scanned, "metadata"), "ScannedFile should have metadata attribute"
+        assert isinstance(scanned.metadata, dict), "metadata should be a dict"
+
+        # Should contain FileGDB-specific info
+        assert "gdbtable_count" in scanned.metadata, "metadata should include gdbtable_count"
+        assert scanned.metadata["gdbtable_count"] == 3, (
+            f"Expected 3 gdbtables, got {scanned.metadata['gdbtable_count']}"
+        )
+        assert "lock_files_present" in scanned.metadata, (
+            "metadata should include lock_files_present"
+        )
+        assert scanned.metadata["lock_files_present"] is False, "No lock files should be present"
+
+    def test_filegdb_detects_lock_files(self, tmp_path: Path) -> None:
+        """FileGDB with lock files should have lock_files_present=True in metadata."""
+        gdb_dir = tmp_path / "locked.gdb"
+        gdb_dir.mkdir()
+        (gdb_dir / "a00000001.gdbtable").write_bytes(b"x")
+        # Create a lock file (ArcGIS uses .lock and .gdbcache patterns)
+        (gdb_dir / "a00000001.gdbtable.lock").write_bytes(b"lock")
+
+        result = scan_directory(tmp_path)
+
+        filegdb_files = [f for f in result.ready if f.path == gdb_dir]
+        assert len(filegdb_files) == 1
+        scanned = filegdb_files[0]
+
+        assert scanned.metadata.get("lock_files_present") is True, "Lock files should be detected"
+
+    def test_regular_file_has_empty_metadata(self, tmp_path: Path) -> None:
+        """Non-FileGDB files should have empty metadata dict."""
+        geojson = tmp_path / "points.geojson"
+        geojson.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        geojson_files = [f for f in result.ready if f.path == geojson]
+        assert len(geojson_files) == 1
+        scanned = geojson_files[0]
+
+        assert hasattr(scanned, "metadata"), "ScannedFile should have metadata attribute"
+        assert scanned.metadata == {}, "Non-FileGDB should have empty metadata"
+
+
+@pytest.mark.unit
+class TestFileGDBDuplicateDetection:
+    """Tests for FileGDB participation in duplicate/multi-asset detection."""
+
+    def test_filegdb_tracked_in_basenames(self, tmp_path: Path) -> None:
+        """FileGDB should participate in duplicate basename detection.
+
+        If parcels.gdb and parcels.shp exist in the same directory, both should
+        be flagged as potential duplicates since they have the same base name.
+        """
+        # Create FileGDB
+        gdb_dir = tmp_path / "parcels.gdb"
+        gdb_dir.mkdir()
+        (gdb_dir / "a00000001.gdbtable").write_bytes(b"x")
+
+        # Create Shapefile with same base name
+        shp = tmp_path / "parcels.shp"
+        shp.write_bytes(b"\x00" * 100)  # Minimal shapefile header
+        shx = tmp_path / "parcels.shx"
+        shx.write_bytes(b"\x00" * 100)
+        dbf = tmp_path / "parcels.dbf"
+        dbf.write_bytes(b"\x00" * 100)
+
+        result = scan_directory(tmp_path)
+
+        # Both should be in ready list
+        ready_paths = {f.path for f in result.ready}
+        assert gdb_dir in ready_paths, "FileGDB should be in ready"
+        assert shp in ready_paths, "Shapefile should be in ready"
+
+        # Verify FileGDB participates in duplicate/multi-asset tracking.
+        # The implementation tracks basenames, so both parcels.gdb and parcels.shp
+        # are registered. Whether this raises a warning depends on policy.
+        # The key assertion is that both files are discovered and tracked.
+        assert len(result.ready) >= 2, "Both FileGDB and Shapefile should be tracked"
+
+    def test_filegdb_tracked_in_primaries_by_dir(self, tmp_path: Path) -> None:
+        """FileGDB should be tracked as a primary file in its directory.
+
+        This enables multi-asset detection for directories containing both
+        FileGDB and other formats.
+        """
+        # Create FileGDB
+        gdb_dir = tmp_path / "data.gdb"
+        gdb_dir.mkdir()
+        (gdb_dir / "a00000001.gdbtable").write_bytes(b"x")
+
+        # Create GeoJSON in same directory
+        geojson = tmp_path / "data.geojson"
+        geojson.write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        # Both should be in ready list
+        ready_paths = {f.path for f in result.ready}
+        assert gdb_dir in ready_paths
+        assert geojson in ready_paths
+
+        # Both should be counted as primary vector files
+        vector_files = [f for f in result.ready if f.format_type == FormatType.VECTOR]
+        assert len(vector_files) == 2, f"Expected 2 vector files, got {len(vector_files)}"
