@@ -64,9 +64,10 @@ class PullResult:
         files_downloaded: Number of files downloaded.
         files_skipped: Number of files skipped (already up to date).
         local_version: Local version before pull.
-        remote_version: Remote version.
+        remote_version: Remote version (None in dry-run mode since no network check).
         uncommitted_changes: List of files with uncommitted changes that blocked pull.
         up_to_date: True if already at remote version (nothing to pull).
+        dry_run: True if this was a dry-run operation (no network calls made).
     """
 
     success: bool
@@ -76,6 +77,7 @@ class PullResult:
     remote_version: str | None
     uncommitted_changes: list[str] = field(default_factory=list)
     up_to_date: bool = False
+    dry_run: bool = False
 
 
 @dataclass
@@ -564,6 +566,21 @@ def pull(
             spec_version="1.0.0",
             current_version=None,
             versions=[],
+        )
+
+    # Bug #137: dry-run must not make any network calls.
+    # Return early with a simulated "would pull" result before any I/O.
+    if dry_run:
+        info(f"[DRY RUN] Would pull from {remote_url}/{collection}")
+        info(f"[DRY RUN] Local version: {local_versions.current_version or '(none)'}")
+        warn("[DRY RUN] Remote conflict detection skipped (requires network)")
+        return PullResult(
+            success=True,
+            files_downloaded=0,
+            files_skipped=0,
+            local_version=local_versions.current_version,
+            remote_version=None,
+            dry_run=True,
         )
 
     # Fetch remote versions

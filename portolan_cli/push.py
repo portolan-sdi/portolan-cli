@@ -61,6 +61,9 @@ class PushResult:
         versions_pushed: Number of new versions pushed (from versions.json).
         conflicts: List of conflict descriptions.
         errors: List of error messages.
+        dry_run: True if this was a dry-run operation (no network calls made).
+        would_push_versions: In dry-run mode, max versions that would be pushed
+            (upper bound; actual count depends on remote state).
     """
 
     success: bool
@@ -68,6 +71,8 @@ class PushResult:
     versions_pushed: int
     conflicts: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    dry_run: bool = False
+    would_push_versions: int = 0
 
 
 @dataclass
@@ -461,6 +466,59 @@ def _upload_versions_json(
 
 
 # =============================================================================
+# Dry-Run Handling
+# =============================================================================
+
+
+def _handle_push_dry_run(
+    catalog_root: Path,
+    local_data: dict[str, Any],
+    local_versions: list[str],
+) -> PushResult:
+    """Handle push dry-run mode: show what would be pushed without network I/O.
+
+    This is extracted from push() to keep cyclomatic complexity manageable.
+
+    Args:
+        catalog_root: Resolved catalog root path.
+        local_data: Parsed versions.json data.
+        local_versions: List of version strings from local data.
+
+    Returns:
+        PushResult with dry_run=True and simulated counts.
+    """
+    # Try to get assets, but don't fail if some are missing (dry-run should be forgiving)
+    try:
+        assets = _get_assets_to_upload(catalog_root, local_data, local_versions)
+        asset_count = len(assets)
+        asset_paths = [asset.relative_to(catalog_root) for asset in assets]
+        missing_assets: list[str] = []
+    except FileNotFoundError as e:
+        # Asset file is missing - warn but continue with dry-run
+        warn(f"[DRY RUN] Warning: {e}")
+        asset_count = 0
+        asset_paths = []
+        missing_assets = [str(e)]
+
+    info(f"[DRY RUN] Would push up to {len(local_versions)} version(s): {local_versions}")
+    info(f"[DRY RUN] Would upload up to {asset_count} asset file(s)")
+    for rel_path in asset_paths:
+        detail(f"  {rel_path}")
+    warn("[DRY RUN] Remote conflict detection skipped (requires network)")
+    warn("[DRY RUN] Actual versions pushed may be fewer if remote already has some")
+
+    return PushResult(
+        success=True,
+        files_uploaded=0,
+        versions_pushed=0,
+        conflicts=[],
+        errors=missing_assets,
+        dry_run=True,
+        would_push_versions=len(local_versions),
+    )
+
+
+# =============================================================================
 # Main Push Function
 # =============================================================================
 
@@ -509,7 +567,15 @@ def push(
 
     # Read local versions
     local_data = _read_local_versions(catalog_root, collection)
-    local_versions = [v.get("version") for v in local_data.get("versions", [])]
+    # Filter out None values (malformed version entries)
+    local_versions: list[str] = [
+        v.get("version") for v in local_data.get("versions", []) if v.get("version") is not None
+    ]
+
+    # Bug #137: dry-run must not make any network calls.
+    # Return early with a simulated "would push" result before any I/O.
+    if dry_run:
+        return _handle_push_dry_run(catalog_root, local_data, local_versions)
 
     # Setup store
     store, prefix = _setup_store(destination, profile=profile)

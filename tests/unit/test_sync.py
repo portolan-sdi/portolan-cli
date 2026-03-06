@@ -959,3 +959,137 @@ class TestCloneFunction:
 
         assert result.pull_result == mock_pull_result
         assert result.pull_result.files_downloaded == 5
+
+
+# =============================================================================
+# Dry-Run Network Isolation Tests
+# =============================================================================
+
+
+class TestDryRunNetworkIsolation:
+    """Tests that sync dry-run mode never makes network calls.
+
+    Bug #137: sync --dry-run was indirectly making network calls through
+    pull() and push() subcommands. These tests verify end-to-end that
+    the dry_run flag correctly prevents all network I/O.
+    """
+
+    @pytest.fixture
+    def catalog_with_versions(self, tmp_path: Path) -> Path:
+        """Catalog with ADR-0023-compliant structure for dry-run tests.
+
+        push() needs versions.json at <catalog_root>/<collection>/versions.json.
+        The shared managed_catalog fixture puts it under .portolan/ instead.
+        """
+        catalog_dir = tmp_path / "catalog_dry_run"
+        catalog_dir.mkdir()
+
+        # .portolan sentinel: both config.yaml AND state.json required for MANAGED state
+        # (per detect_state() in catalog.py which checks for both files)
+        portolan_dir = catalog_dir / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("{}\n")
+        (portolan_dir / "state.json").write_text("{}\n")
+
+        # Per ADR-0023: versions.json at <catalog_root>/<collection>/versions.json
+        collection_dir = catalog_dir / "test-collection"
+        collection_dir.mkdir()
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-15T10:00:00Z",
+                    "breaking": False,
+                    "message": "Initial version",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": "abc123",
+                            "size_bytes": 1000,
+                            "href": "test-collection/data.parquet",
+                        }
+                    },
+                    "changes": ["data.parquet"],
+                }
+            ],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+        (collection_dir / "data.parquet").write_bytes(b"x" * 1000)
+
+        # catalog.json at root
+        catalog_json = {
+            "type": "Catalog",
+            "id": "test-catalog",
+            "stac_version": "1.0.0",
+            "description": "Test catalog",
+            "links": [],
+        }
+        (catalog_dir / "catalog.json").write_text(json.dumps(catalog_json, indent=2))
+
+        return catalog_dir
+
+    @pytest.mark.unit
+    def test_sync_dry_run_pull_step_makes_no_network_calls(
+        self, catalog_with_versions: Path
+    ) -> None:
+        """sync(dry_run=True) must not make network calls in the pull step.
+
+        Regression test for bug #137: pull() called _fetch_remote_versions
+        unconditionally even when dry_run=True.
+        """
+        from portolan_cli.sync import sync
+
+        with (
+            patch("portolan_cli.pull._fetch_remote_versions") as mock_pull_fetch,
+            patch("portolan_cli.push._setup_store") as mock_push_setup,
+            patch("portolan_cli.push._fetch_remote_versions") as mock_push_fetch,
+            patch("portolan_cli.sync.init_catalog"),
+            patch("portolan_cli.sync.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.check_directory") as mock_check,
+        ):
+            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
+            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
+
+            sync(
+                catalog_root=catalog_with_versions,
+                collection="test-collection",
+                destination="s3://bucket/catalog",
+                dry_run=True,
+            )
+
+        # The pull sub-step must not touch the network
+        mock_pull_fetch.assert_not_called()
+        # The push sub-step must not touch the network either
+        mock_push_setup.assert_not_called()
+        mock_push_fetch.assert_not_called()
+
+    @pytest.mark.unit
+    def test_sync_dry_run_push_step_makes_no_network_calls(
+        self, catalog_with_versions: Path
+    ) -> None:
+        """sync(dry_run=True) must not make network calls in the push step."""
+        from portolan_cli.sync import sync
+
+        with (
+            patch("portolan_cli.pull._fetch_remote_versions") as mock_pull_fetch,
+            patch("portolan_cli.push._setup_store") as mock_setup,
+            patch("portolan_cli.push._fetch_remote_versions") as mock_push_fetch,
+            patch("portolan_cli.sync.init_catalog"),
+            patch("portolan_cli.sync.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.check_directory") as mock_check,
+        ):
+            mock_scan.return_value = MagicMock(ready=[], has_errors=False)
+            mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
+
+            result = sync(
+                catalog_root=catalog_with_versions,
+                collection="test-collection",
+                destination="s3://bucket/catalog",
+                dry_run=True,
+            )
+
+        assert result.success is True
+        mock_setup.assert_not_called()
+        mock_push_fetch.assert_not_called()
+        mock_pull_fetch.assert_not_called()
