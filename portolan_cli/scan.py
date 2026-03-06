@@ -300,6 +300,7 @@ class ScanResult:
                     "extension": f.extension,
                     "format_type": f.format_type.value,
                     "size_bytes": f.size_bytes,
+                    "metadata": f.metadata,
                 }
                 for f in self.ready
             ],
