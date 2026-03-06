@@ -3,11 +3,16 @@
 These tests exercise the full add_dataset workflow with real fixtures,
 verifying that format conversion, metadata extraction, and STAC creation
 work end-to-end.
+
+Per ADR-0022 (track in-place design): Files must be INSIDE the catalog
+directory structure BEFORE calling add_dataset(). Tests copy fixtures
+into the catalog first, then call add_dataset() on the copied paths.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -25,7 +30,13 @@ from portolan_cli.formats import FormatType
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:
-    """Create an initialized Portolan catalog structure (per ADR-0023)."""
+    """Create an initialized Portolan catalog structure (per ADR-0023).
+
+    This creates all required files for a managed catalog:
+    - catalog.json at root (STAC entry point)
+    - .portolan/config.yaml (sentinel file for root detection)
+    - .portolan/state.json (tracking state)
+    """
     # Create .portolan for internal state
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
@@ -39,6 +50,12 @@ def initialized_catalog(tmp_path: Path) -> Path:
         "links": [],
     }
     (tmp_path / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+    # config.yaml is the sentinel for catalog root detection (per ADR-0029)
+    (portolan_dir / "config.yaml").write_text("version: 1\n")
+
+    # state.json for tracking state
+    (portolan_dir / "state.json").write_text(json.dumps({"collections": {}}))
 
     return tmp_path
 
@@ -190,15 +207,27 @@ class TestComputeChecksum:
 
 
 class TestAddDatasetIntegration:
-    """Integration tests for full add_dataset workflow."""
+    """Integration tests for full add_dataset workflow.
+
+    Per ADR-0022 (track in-place design): Files must be inside the catalog
+    directory BEFORE calling add_dataset(). Tests copy fixtures into the
+    collection/item directory structure first.
+    """
 
     @pytest.mark.integration
     def test_add_vector_dataset_end_to_end(
         self, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
         """add_dataset converts GeoJSON and creates STAC item."""
+        # Per ADR-0022: Copy file INTO catalog first (track in-place design)
+        collection_dir = initialized_catalog / "test-vectors"
+        item_dir = collection_dir / valid_points_geojson.stem
+        item_dir.mkdir(parents=True)
+        in_catalog_path = item_dir / valid_points_geojson.name
+        shutil.copy(valid_points_geojson, in_catalog_path)
+
         result = add_dataset(
-            path=valid_points_geojson,
+            path=in_catalog_path,
             catalog_root=initialized_catalog,
             collection_id="test-vectors",
             title="Test Points",
@@ -212,13 +241,11 @@ class TestAddDatasetIntegration:
         assert result.bbox != [0, 0, 0, 0]
 
         # Verify STAC structure was created (at root level per ADR-0023)
-        collection_dir = initialized_catalog / "test-vectors"
         assert collection_dir.exists()
         assert (collection_dir / "collection.json").exists()
         assert (collection_dir / "versions.json").exists()
 
         # Verify the converted file exists
-        item_dir = collection_dir / valid_points_geojson.stem
         assert item_dir.exists()
         assert (item_dir / f"{valid_points_geojson.stem}.parquet").exists()
 
@@ -227,8 +254,15 @@ class TestAddDatasetIntegration:
         self, initialized_catalog: Path, valid_rgb_cog: Path
     ) -> None:
         """add_dataset converts raster and creates STAC item."""
+        # Per ADR-0022: Copy file INTO catalog first
+        collection_dir = initialized_catalog / "imagery"
+        item_dir = collection_dir / valid_rgb_cog.stem
+        item_dir.mkdir(parents=True)
+        in_catalog_path = item_dir / valid_rgb_cog.name
+        shutil.copy(valid_rgb_cog, in_catalog_path)
+
         result = add_dataset(
-            path=valid_rgb_cog,
+            path=in_catalog_path,
             catalog_root=initialized_catalog,
             collection_id="imagery",
         )
@@ -238,7 +272,6 @@ class TestAddDatasetIntegration:
         assert len(result.bbox) == 4
 
         # Verify STAC structure (at root level per ADR-0023)
-        collection_dir = initialized_catalog / "imagery"
         assert (collection_dir / "collection.json").exists()
 
     @pytest.mark.integration
@@ -246,13 +279,28 @@ class TestAddDatasetIntegration:
         self, initialized_catalog: Path, valid_points_geojson: Path, valid_polygons_geojson: Path
     ) -> None:
         """Multiple datasets can be added to the same collection."""
+        # Per ADR-0022: Copy files INTO catalog first
+        collection_dir = initialized_catalog / "vectors"
+
+        # First file
+        item_dir_1 = collection_dir / valid_points_geojson.stem
+        item_dir_1.mkdir(parents=True)
+        path_1 = item_dir_1 / valid_points_geojson.name
+        shutil.copy(valid_points_geojson, path_1)
+
+        # Second file
+        item_dir_2 = collection_dir / valid_polygons_geojson.stem
+        item_dir_2.mkdir(parents=True)
+        path_2 = item_dir_2 / valid_polygons_geojson.name
+        shutil.copy(valid_polygons_geojson, path_2)
+
         add_dataset(
-            path=valid_points_geojson,
+            path=path_1,
             catalog_root=initialized_catalog,
             collection_id="vectors",
         )
         add_dataset(
-            path=valid_polygons_geojson,
+            path=path_2,
             catalog_root=initialized_catalog,
             collection_id="vectors",
         )
@@ -265,8 +313,15 @@ class TestAddDatasetIntegration:
         self, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
         """get_dataset_info returns correct info for added dataset."""
+        # Per ADR-0022: Copy file INTO catalog first
+        collection_dir = initialized_catalog / "test-col"
+        item_dir = collection_dir / valid_points_geojson.stem
+        item_dir.mkdir(parents=True)
+        in_catalog_path = item_dir / valid_points_geojson.name
+        shutil.copy(valid_points_geojson, in_catalog_path)
+
         add_result = add_dataset(
-            path=valid_points_geojson,
+            path=in_catalog_path,
             catalog_root=initialized_catalog,
             collection_id="test-col",
         )
@@ -295,10 +350,13 @@ class TestMultiAssetIntegration:
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """End-to-end: add geo file with thumbnail and readme tracks all."""
-        # Create source geojson
-        source_dir = tmp_path / "source"
-        source_dir.mkdir()
-        geojson_path = source_dir / "data.geojson"
+        # Per ADR-0022: Create file INSIDE catalog directory structure
+        collection_dir = initialized_catalog / "multi-asset-test"
+        item_dir = collection_dir / "data"
+        item_dir.mkdir(parents=True)
+
+        # Create geojson inside the catalog (not in tmp_path/source)
+        geojson_path = item_dir / "data.geojson"
         geojson_path.write_text(
             json.dumps(
                 {
@@ -484,7 +542,25 @@ class TestDatasetInfoDeprecationIntegration:
 
     These tests exercise the full CLI path to ensure the deprecation warning
     is emitted at the right point and doesn't break the command output.
+
+    Per ADR-0022: Files must be inside catalog before calling add_dataset().
     """
+
+    def _setup_test_dataset(
+        self, initialized_catalog: Path, valid_points_geojson: Path, collection_id: str
+    ) -> AddDatasetResult:  # noqa: F821
+        """Helper to set up a dataset inside the catalog per ADR-0022."""
+        collection_dir = initialized_catalog / collection_id
+        item_dir = collection_dir / valid_points_geojson.stem
+        item_dir.mkdir(parents=True)
+        in_catalog_path = item_dir / valid_points_geojson.name
+        shutil.copy(valid_points_geojson, in_catalog_path)
+
+        return add_dataset(
+            path=in_catalog_path,
+            catalog_root=initialized_catalog,
+            collection_id=collection_id,
+        )
 
     @pytest.mark.integration
     def test_dataset_info_cli_shows_deprecation_warning(
@@ -495,12 +571,8 @@ class TestDatasetInfoDeprecationIntegration:
 
         from portolan_cli.cli import cli
 
-        # Add a real dataset first
-        add_result = add_dataset(
-            path=valid_points_geojson,
-            catalog_root=initialized_catalog,
-            collection_id="test-col",
-        )
+        # Add a real dataset first (per ADR-0022: file must be inside catalog)
+        add_result = self._setup_test_dataset(initialized_catalog, valid_points_geojson, "test-col")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -527,11 +599,7 @@ class TestDatasetInfoDeprecationIntegration:
 
         from portolan_cli.cli import cli
 
-        add_result = add_dataset(
-            path=valid_points_geojson,
-            catalog_root=initialized_catalog,
-            collection_id="test-col",
-        )
+        add_result = self._setup_test_dataset(initialized_catalog, valid_points_geojson, "test-col")
 
         runner = CliRunner()
         result = runner.invoke(
@@ -561,11 +629,7 @@ class TestDatasetInfoDeprecationIntegration:
 
         from portolan_cli.cli import cli
 
-        add_result = add_dataset(
-            path=valid_points_geojson,
-            catalog_root=initialized_catalog,
-            collection_id="test-col",
-        )
+        add_result = self._setup_test_dataset(initialized_catalog, valid_points_geojson, "test-col")
 
         runner = CliRunner()
         result = runner.invoke(

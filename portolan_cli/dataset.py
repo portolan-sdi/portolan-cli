@@ -269,7 +269,8 @@ def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
         import json
 
         try:
-            with open(path) as f:
+            # Per RFC 7946: GeoJSON MUST be encoded as UTF-8
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
 
             # Check for features

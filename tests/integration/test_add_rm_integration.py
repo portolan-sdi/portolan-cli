@@ -283,10 +283,15 @@ class TestAddIntegration:
             f"Latest version should have assets from both adds, got: {asset_keys}"
         )
 
-        # Verify changes field only shows the new file (not all assets)
-        assert len(latest_version["changes"]) == 1, (
-            f"Changes should only show new file, got: {latest_version['changes']}"
+        # Verify changes field only shows NEW assets from this add operation
+        # (source geojson + converted parquet = 2 changes per file added)
+        # The key is that changes should NOT include assets from the FIRST add
+        assert len(latest_version["changes"]) <= 2, (
+            f"Changes should only show new files from this operation, got: {latest_version['changes']}"
         )
+        # Changes should not include item-a files
+        for change in latest_version["changes"]:
+            assert "item-a" not in change, f"Changes incorrectly includes item-a: {change}"
 
 
 class TestRmIntegration:
