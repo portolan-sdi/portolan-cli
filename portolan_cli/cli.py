@@ -1698,7 +1698,7 @@ def _handle_cmd_error(cmd: str, err_type: str, message: str, use_json: bool) -> 
 def _output_add_results(
     added: list[DatasetInfo],
     skipped: list[Path],
-    collection_id: str,
+    collection_id: str | None,
     verbose: bool,
     use_json: bool,
 ) -> None:
@@ -1723,7 +1723,7 @@ def _output_add_results(
     # Human-readable output
     if added:
         count = len(added)
-        coll = added[0].collection_id if added else collection_id
+        coll = added[0].collection_id if added else (collection_id or "catalog")
         info_output(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
         for ds in added:
             sidecars = get_sidecars(Path(ds.asset_paths[0])) if ds.asset_paths else []
@@ -1808,12 +1808,21 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
             detail("Run 'portolan init' to create a catalog")
         raise SystemExit(1)
 
-    # Determine collection ID from path
-    try:
-        collection_id = resolve_collection_id(target_path, catalog_root)
-    except ValueError as err:
-        _handle_cmd_error("add", "PathError", str(err), use_json)
-        raise SystemExit(1) from err
+    # Determine collection ID from path.
+    # Special case: when the user runs `add .` (or `add <catalog-root>`), target_path
+    # equals catalog_root. In this case we cannot determine a single collection—instead
+    # we let add_files infer the collection for each file individually by passing
+    # collection_id=None.  This implements Issue #137.
+    collection_id: str | None
+    if target_path == catalog_root:
+        # Catalog-root add: infer collection per-file from directory structure
+        collection_id = None
+    else:
+        try:
+            collection_id = resolve_collection_id(target_path, catalog_root)
+        except ValueError as err:
+            _handle_cmd_error("add", "PathError", str(err), use_json)
+            raise SystemExit(1) from err
 
     # Add files
     try:
