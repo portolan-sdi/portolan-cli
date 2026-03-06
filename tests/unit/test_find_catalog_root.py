@@ -221,7 +221,7 @@ class TestFindCatalogRoot:
         from portolan_cli.catalog import find_catalog_root
 
         # Act & Assert: Should not raise, returns None
-        result = find_catalog_root(Path("/nonexistent/path/that/doesnt/exist"))
+        result = find_catalog_root(Path("/nonexistent/path/that/does_not/exist"))
 
         # The behavior depends on implementation - either None or raises
         # We accept None as valid behavior for non-existent paths
