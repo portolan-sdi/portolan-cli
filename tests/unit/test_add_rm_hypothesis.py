@@ -17,10 +17,10 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from portolan_cli.catalog import find_catalog_root
 from portolan_cli.dataset import (
     GEOSPATIAL_EXTENSIONS,
     SIDECAR_PATTERNS,
-    find_catalog_root,
     get_sidecars,
     iter_geospatial_files,
     resolve_collection_id,
@@ -339,7 +339,11 @@ class TestGeospatialExtensionsProperties:
 
 
 class TestFindCatalogRootProperties:
-    """Property-based tests for find_catalog_root function."""
+    """Property-based tests for find_catalog_root function.
+
+    Per ADR-0029, find_catalog_root uses .portolan/config.yaml as the single sentinel,
+    unifying detection across all CLI commands.
+    """
 
     @pytest.mark.unit
     @given(collection=collection_name, subdir=safe_filename)
@@ -348,8 +352,10 @@ class TestFindCatalogRootProperties:
         """find_catalog_root finds catalog from nested subdirectory."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            # Create catalog with catalog.json
-            (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')
+            # Create managed catalog with .portolan/config.yaml (per ADR-0029)
+            portolan_dir = tmp_path / ".portolan"
+            portolan_dir.mkdir()
+            (portolan_dir / "config.yaml").write_text("# Portolan config\n")
 
             # Create nested directory
             nested_dir = tmp_path / collection / subdir
@@ -369,8 +375,10 @@ class TestFindCatalogRootProperties:
         """find_catalog_root finds catalog when starting at catalog root."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            # Create catalog with catalog.json
-            (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')
+            # Create managed catalog with .portolan/config.yaml (per ADR-0029)
+            portolan_dir = tmp_path / ".portolan"
+            portolan_dir.mkdir()
+            (portolan_dir / "config.yaml").write_text("# Portolan config\n")
             (tmp_path / collection).mkdir(exist_ok=True)
 
             result = find_catalog_root(tmp_path)
@@ -382,10 +390,10 @@ class TestFindCatalogRootProperties:
     @given(dirname=safe_filename)
     @settings(max_examples=30)
     def test_find_catalog_root_returns_none_when_not_found(self, dirname: str) -> None:
-        """find_catalog_root returns None when no catalog.json exists."""
+        """find_catalog_root returns None when no .portolan/config.yaml exists."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            # Create directory structure WITHOUT catalog.json
+            # Create directory structure WITHOUT .portolan/config.yaml
             search_dir = tmp_path / dirname
             search_dir.mkdir(exist_ok=True)
 
@@ -400,7 +408,9 @@ class TestFindCatalogRootProperties:
         """Calling find_catalog_root twice returns same result."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')
+            portolan_dir = tmp_path / ".portolan"
+            portolan_dir.mkdir()
+            (portolan_dir / "config.yaml").write_text("# Portolan config\n")
 
             nested_dir = tmp_path / collection / subdir
             nested_dir.mkdir(parents=True, exist_ok=True)
@@ -409,6 +419,23 @@ class TestFindCatalogRootProperties:
             result2 = find_catalog_root(nested_dir)
 
             assert result1 == result2, "find_catalog_root should be deterministic"
+
+    @pytest.mark.unit
+    @given(collection=collection_name)
+    @settings(max_examples=30)
+    def test_find_catalog_root_ignores_unmanaged_stac(self, collection: str) -> None:
+        """find_catalog_root ignores catalog.json-only directories (UNMANAGED_STAC)."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            # Create UNMANAGED_STAC structure (catalog.json only, no .portolan)
+            (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')
+            search_dir = tmp_path / collection
+            search_dir.mkdir(exist_ok=True)
+
+            result = find_catalog_root(search_dir)
+
+            # Per ADR-0029, should NOT find unmanaged STAC catalogs
+            assert result is None, f"Should ignore UNMANAGED_STAC, got {result}"
 
 
 # =============================================================================

@@ -13,11 +13,11 @@ from typing import Any
 
 import click
 
+from portolan_cli.catalog import find_catalog_root
 from portolan_cli.check import check_directory
 from portolan_cli.dataset import (
     DatasetInfo,
     add_files,
-    find_catalog_root,
     get_dataset_info,
     get_sidecars,
     list_datasets,
@@ -2805,30 +2805,6 @@ def clone(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _find_catalog_root(start_path: Path) -> Path | None:
-    """Find the catalog root by looking for .portolan directory.
-
-    Searches from start_path up to filesystem root. Only accepts directories
-    with .portolan/ present (not just catalog.json, to avoid false positives
-    with unmanaged STAC catalogs).
-
-    Args:
-        start_path: Starting directory for search.
-
-    Returns:
-        Path to catalog root, or None if not found.
-    """
-    current = start_path.resolve()
-    while current != current.parent:
-        if (current / ".portolan").exists():
-            return current
-        current = current.parent
-    # Check root directory too
-    if (current / ".portolan").exists():
-        return current
-    return None
-
-
 @cli.group()
 def config() -> None:
     """Manage catalog configuration.
@@ -2879,7 +2855,7 @@ def config_set(ctx: click.Context, key: str, value: str, collection: str | None)
     use_json = should_output_json(ctx)
 
     # Find catalog root
-    catalog_path = _find_catalog_root(Path.cwd())
+    catalog_path = find_catalog_root()
     if catalog_path is None:
         if use_json:
             envelope = error_envelope(
@@ -2946,7 +2922,7 @@ def config_get(ctx: click.Context, key: str, collection: str | None) -> None:
     use_json = should_output_json(ctx)
 
     # Find catalog root
-    catalog_path = _find_catalog_root(Path.cwd())
+    catalog_path = find_catalog_root()
     if catalog_path is None:
         if use_json:
             envelope = error_envelope(
@@ -3006,7 +2982,7 @@ def config_list(ctx: click.Context, collection: str | None) -> None:
     use_json = should_output_json(ctx)
 
     # Find catalog root
-    catalog_path = _find_catalog_root(Path.cwd())
+    catalog_path = find_catalog_root()
     if catalog_path is None:
         if use_json:
             envelope = error_envelope(
@@ -3069,7 +3045,7 @@ def config_unset(ctx: click.Context, key: str, collection: str | None) -> None:
     use_json = should_output_json(ctx)
 
     # Find catalog root
-    catalog_path = _find_catalog_root(Path.cwd())
+    catalog_path = find_catalog_root()
     if catalog_path is None:
         if use_json:
             envelope = error_envelope(

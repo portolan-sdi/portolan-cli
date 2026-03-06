@@ -37,7 +37,17 @@ from portolan_cli.status import (
 
 
 def make_catalog(tmp_path: Path, collection_links: list[str] | None = None) -> None:
-    """Write a minimal catalog.json to tmp_path."""
+    """Write a minimal managed catalog to tmp_path (per ADR-0023 and ADR-0029).
+
+    Creates both .portolan/config.yaml (the sentinel per ADR-0029) and catalog.json.
+    """
+    # Create .portolan sentinel files (per ADR-0029)
+    portolan_dir = tmp_path / ".portolan"
+    portolan_dir.mkdir(parents=True, exist_ok=True)
+    (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
+    (portolan_dir / "state.json").write_text("{}")
+
+    # Create catalog.json at root (STAC standard per ADR-0023)
     links = [{"rel": "child", "href": f"./{c}/collection.json"} for c in (collection_links or [])]
     (tmp_path / "catalog.json").write_text(
         json.dumps(

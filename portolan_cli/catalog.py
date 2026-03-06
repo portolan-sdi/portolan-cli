@@ -95,6 +95,63 @@ def detect_state(path: Path) -> CatalogState:
     return CatalogState.FRESH
 
 
+def find_catalog_root(start_path: Path | None = None) -> Path | None:
+    """Find the catalog root by walking up from the given path.
+
+    Searches for .portolan/config.yaml starting from start_path (or cwd if None)
+    and walking up parent directories. This provides git-style behavior
+    where commands work from any subdirectory within a catalog.
+
+    Per ADR-0029, this uses .portolan/config.yaml as the single sentinel,
+    unifying detection across all CLI commands. This replaces the previous
+    inconsistent behavior where some commands looked for catalog.json and
+    others looked for .portolan/.
+
+    Security: Limited to MAX_CATALOG_SEARCH_DEPTH levels to prevent
+    traversing to filesystem root where a malicious .portolan might exist.
+
+    Args:
+        start_path: Starting directory for search (defaults to cwd).
+
+    Returns:
+        Path to catalog root if found, None otherwise.
+
+    Examples:
+        >>> find_catalog_root(Path("/my-catalog/collection/item"))
+        PosixPath('/my-catalog')
+
+        >>> find_catalog_root(Path("/no-catalog-here"))
+        None
+
+        >>> find_catalog_root()  # Uses current working directory
+        PosixPath('/my-catalog')
+    """
+    from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+
+    # Handle non-existent paths gracefully
+    if start_path is not None and not start_path.exists():
+        return None
+
+    current = (start_path or Path.cwd()).resolve()
+    depth = 0
+
+    # Walk up until we find .portolan/config.yaml, hit filesystem root, or exceed depth
+    while current != current.parent and depth < MAX_CATALOG_SEARCH_DEPTH:
+        config_yaml = current / ".portolan" / "config.yaml"
+        if config_yaml.exists():
+            return current
+        current = current.parent
+        depth += 1
+
+    # Check the root directory itself (only if within depth limit)
+    if depth < MAX_CATALOG_SEARCH_DEPTH:
+        config_yaml = current / ".portolan" / "config.yaml"
+        if config_yaml.exists():
+            return current
+
+    return None
+
+
 # Keep legacy exception for backward compatibility
 class CatalogExistsError(Exception):
     """Raised when attempting to initialize a catalog that already exists.

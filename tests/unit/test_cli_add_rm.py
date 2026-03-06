@@ -30,9 +30,16 @@ def runner() -> CliRunner:
 
 
 def setup_catalog(path: Path) -> None:
-    """Create an initialized Portolan catalog (per ADR-0023)."""
+    """Create an initialized Portolan catalog (per ADR-0023 and ADR-0029).
+
+    Creates both .portolan/config.yaml (the sentinel per ADR-0029) and catalog.json.
+    """
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
+    # Create config.yaml as sentinel (per ADR-0029)
+    (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
+    (portolan_dir / "state.json").write_text("{}")
+    # Create catalog.json at root (STAC standard per ADR-0023)
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",
