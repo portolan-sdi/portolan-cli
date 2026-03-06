@@ -1163,7 +1163,11 @@ def add_files(
         paths: List of paths to add (files or directories).
         catalog_root: Root directory of the catalog.
         collection_id: Optional explicit collection ID.
-            If not provided, inferred from first path component.
+            If not provided (None), the collection is inferred per-file from
+            the first directory component relative to catalog_root. This is
+            used by `portolan add .` to process multiple collections at once.
+            Files at the catalog root level (not in a subdirectory) are skipped
+            with a warning when collection_id=None.
         verbose: If True, return skipped files info.
 
     Returns:
@@ -1208,7 +1212,21 @@ def add_files(
             # Determine collection ID
             coll_id = collection_id
             if coll_id is None:
-                coll_id = resolve_collection_id(file_path, catalog_root)
+                try:
+                    coll_id = resolve_collection_id(file_path, catalog_root)
+                except ValueError:
+                    # File is at catalog root level (not in a collection subdirectory).
+                    # During recursive add (collection_id=None), skip with a warning
+                    # rather than crashing the entire operation. Files must be inside
+                    # a collection subdirectory to be tracked.
+                    from portolan_cli.output import warn as warn_output
+
+                    warn_output(
+                        f"Skipping {file_path.name}: files at catalog root must be "
+                        "in a collection subdirectory"
+                    )
+                    skipped.append(file_path)
+                    continue
 
             # Check if unchanged
             versions_path = catalog_root / coll_id / "versions.json"

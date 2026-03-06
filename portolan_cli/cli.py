@@ -1772,7 +1772,7 @@ def _handle_cmd_error(cmd: str, err_type: str, message: str, use_json: bool) -> 
 def _output_add_results(
     added: list[DatasetInfo],
     skipped: list[Path],
-    collection_id: str,
+    collection_id: str | None,
     verbose: bool,
     use_json: bool,
 ) -> None:
@@ -1795,14 +1795,38 @@ def _output_add_results(
         return
 
     # Human-readable output
-    if added:
+    if not added:
+        # No files to add - don't print confusing "Adding 0 files to catalog"
+        if not skipped:
+            info_output("No geospatial files found to add")
+        return
+
+    # Group by collection for multi-collection catalog-root adds
+    collections: dict[str, list[DatasetInfo]] = {}
+    for ds in added:
+        collections.setdefault(ds.collection_id, []).append(ds)
+
+    if len(collections) == 1:
+        # Single collection - use compact output
+        coll = next(iter(collections))
         count = len(added)
-        coll = added[0].collection_id if added else collection_id
         info_output(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
         for ds in added:
             sidecars = get_sidecars(Path(ds.asset_paths[0])) if ds.asset_paths else []
             sidecar_note = f" (+ {len(sidecars)} sidecars)" if sidecars else ""
             success(f"  + {ds.item_id}{sidecar_note}")
+    else:
+        # Multiple collections - group output by collection
+        total = len(added)
+        info_output(
+            f"Adding {total} file{'s' if total != 1 else ''} to {len(collections)} collections"
+        )
+        for coll, datasets in sorted(collections.items()):
+            info_output(f"  {coll}:")
+            for ds in datasets:
+                sidecars = get_sidecars(Path(ds.asset_paths[0])) if ds.asset_paths else []
+                sidecar_note = f" (+ {len(sidecars)} sidecars)" if sidecars else ""
+                success(f"    + {ds.item_id}{sidecar_note}")
 
     if verbose and skipped:
         for p in skipped:
@@ -1882,12 +1906,26 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
             detail("Run 'portolan init' to create a catalog")
         raise SystemExit(1)
 
-    # Determine collection ID from path
-    try:
-        collection_id = resolve_collection_id(target_path, catalog_root)
-    except ValueError as err:
-        _handle_cmd_error("add", "PathError", str(err), use_json)
-        raise SystemExit(1) from err
+    # Determine collection ID from path.
+    # Special case: when the user runs `add .` (or `add <catalog-root>`), target_path
+    # equals catalog_root. In this case we cannot determine a single collection—instead
+    # we let add_files infer the collection for each file individually by passing
+    # collection_id=None.  This implements Issue #137.
+    #
+    # NOTE: Use samefile() not == for robust comparison across:
+    # - Case-insensitive filesystems (macOS HFS+, Windows NTFS)
+    # - Symlinks that resolve to the same path
+    # - Trailing slash inconsistencies
+    collection_id: str | None
+    if target_path.samefile(catalog_root):
+        # Catalog-root add: infer collection per-file from directory structure
+        collection_id = None
+    else:
+        try:
+            collection_id = resolve_collection_id(target_path, catalog_root)
+        except ValueError as err:
+            _handle_cmd_error("add", "PathError", str(err), use_json)
+            raise SystemExit(1) from err
 
     # Add files
     try:

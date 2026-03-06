@@ -1208,3 +1208,85 @@ class TestMultiAssetProperties:
 
             # But regular files should be
             assert "readme.txt" in asset_files or "data.parquet" in asset_files
+
+
+# =============================================================================
+# Property: catalog root detection for add . (Issue #137)
+# =============================================================================
+
+
+class TestCatalogRootAddProperties:
+    """Property-based tests for add . at catalog root behavior.
+
+    These tests verify the invariants of the fix for Issue #137:
+    - resolve_collection_id(path, catalog_root) raises ValueError when path == catalog_root
+    - When target_path == catalog_root, collection_id should be None (inferred per-file)
+    - When target_path != catalog_root, collection_id should be the first path component
+    """
+
+    @pytest.mark.unit
+    @given(collection=collection_name)
+    @settings(max_examples=30)
+    def test_resolve_collection_id_always_fails_at_root(self, collection: str) -> None:
+        """resolve_collection_id raises ValueError when path == catalog_root.
+
+        This documents the pre-condition that drove the fix: the root cause
+        of Issue #137 is that resolve_collection_id returns empty parts when
+        path equals catalog_root.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+            # path == catalog_root → empty relative parts → ValueError
+            import pytest as _pytest
+
+            with _pytest.raises(ValueError, match="Cannot determine collection"):
+                resolve_collection_id(catalog_root, catalog_root)
+
+    @pytest.mark.unit
+    @given(collection=collection_name, filename=safe_filename, ext=geospatial_ext)
+    @settings(max_examples=30)
+    def test_resolve_collection_id_returns_first_component_for_nested_path(
+        self, collection: str, filename: str, ext: str
+    ) -> None:
+        """resolve_collection_id returns the first directory component for nested paths.
+
+        This verifies the invariant that drives collection inference in add_files
+        when collection_id=None: for any file inside a collection directory,
+        the first component of the path relative to catalog_root is the collection.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+            # Create: catalog_root/<collection>/<filename><ext>
+            col_dir = catalog_root / collection
+            col_dir.mkdir(exist_ok=True)
+            geo_file = col_dir / f"{filename}{ext}"
+            geo_file.write_bytes(b"geo")
+
+            result = resolve_collection_id(geo_file, catalog_root)
+
+            assert result == collection, f"Expected collection '{collection}', got '{result}'"
+
+    @pytest.mark.unit
+    @given(collection=collection_name, sub=collection_name, filename=safe_filename)
+    @settings(max_examples=30)
+    def test_resolve_collection_id_first_component_only_for_deeply_nested(
+        self, collection: str, sub: str, filename: str
+    ) -> None:
+        """resolve_collection_id returns FIRST component, not full path, for deep nesting.
+
+        Per ADR-0022: the collection is always the first directory component.
+        For a/b/c.parquet relative to root, the collection is 'a', not 'a/b'.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+            # Create deep nesting: catalog_root/<collection>/<sub>/<file>.parquet
+            deep_dir = catalog_root / collection / sub
+            deep_dir.mkdir(parents=True, exist_ok=True)
+            geo_file = deep_dir / f"{filename}.parquet"
+            geo_file.write_bytes(b"parquet")
+
+            result = resolve_collection_id(geo_file, catalog_root)
+
+            assert result == collection, (
+                f"Expected first component '{collection}', got '{result}' for deeply nested path"
+            )
