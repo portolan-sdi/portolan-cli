@@ -1,3 +1,27 @@
+## v0.4.2 (2026-03-06)
+
+### Feat
+
+- full FileGDB support for scan and add workflows (#157)
+- **clone**: add git-style ergonomics to clone command (#156)
+- **assets**: track ALL files in item directories, not just geo files (#135)
+- **validation**: add collection ID validation and auto-fix (#132)
+- **ci**: add duplicate code detection with pylint R0801 (#130)
+- **config**: add conversion config for format handling overrides (#128)
+
+### Fix
+
+- detect FileGDB directories during scan (#153)
+- warn and skip non-geospatial CSV files during add (#152)
+- **cli**: remove contradictory dry-run output messages (#150)
+- normalize trailing slashes in S3 URLs (#151)
+- **versions**: merge assets with previous version for snapshot model (#149)
+- **versions**: use catalog-root-relative hrefs in versions.json (#126)
+
+### Refactor
+
+- **catalog**: unify config.json and config.yaml as sentinel (ADR-0027) (#131)
+
 ## v0.4.1 (2026-02-27)
 
 ### BREAKING CHANGE
