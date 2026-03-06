@@ -690,3 +690,127 @@ class TestCheckBackwardCompatibility:
         assert result.exit_code == 0
         # Output file should be created
         assert (input_dir / "points.parquet").exists()
+
+
+# =============================================================================
+# Test: Check --fix-metadata Flag
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestCheckFixMetadataFlag:
+    """Tests for check --fix-metadata flag.
+
+    Note: These tests verify that --fix-metadata flag is accepted and runs
+    without errors. Full end-to-end metadata fixing is tested in
+    test_metadata_fix.py (unit tests) since fix_metadata() only operates on
+    files that check_directory_metadata() reports, which typically requires
+    versions.json or existing STAC items.
+    """
+
+    def test_fix_metadata_flag_accepted(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """Check --fix-metadata flag is accepted without error."""
+        # Create minimal valid catalog
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+
+        catalog_file = catalog_dir / "catalog.json"
+        catalog_file.write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "stac_version": "1.0.0",
+                    "id": "test-catalog",
+                    "description": "Test",
+                    "links": [],
+                }
+            )
+        )
+
+        # Run check --fix-metadata (should not error even with empty catalog)
+        result = runner.invoke(
+            cli,
+            ["check", str(catalog_dir), "--fix-metadata"],
+        )
+
+        # Should succeed (no items to fix)
+        assert result.exit_code == 0
+        assert (
+            "created" in result.output.lower()
+            or "skipped" in result.output.lower()
+            or "updated" in result.output.lower()
+        )
+
+    def test_fix_metadata_dry_run_flag(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """Check --fix-metadata --dry-run is accepted."""
+        # Create minimal valid catalog
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+
+        catalog_file = catalog_dir / "catalog.json"
+        catalog_file.write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "stac_version": "1.0.0",
+                    "id": "test-catalog",
+                    "description": "Test",
+                    "links": [],
+                }
+            )
+        )
+
+        # Run check --fix-metadata --dry-run
+        result = runner.invoke(
+            cli,
+            ["check", str(catalog_dir), "--fix-metadata", "--dry-run"],
+        )
+
+        # Should succeed
+        assert result.exit_code == 0
+
+    def test_fix_metadata_json_output(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """Check --fix-metadata with --json produces valid JSON output."""
+        # Create minimal valid catalog
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+
+        catalog_file = catalog_dir / "catalog.json"
+        catalog_file.write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "stac_version": "1.0.0",
+                    "id": "test-catalog",
+                    "description": "Test",
+                    "links": [],
+                }
+            )
+        )
+
+        # Run check --fix-metadata --json
+        result = runner.invoke(
+            cli,
+            ["check", str(catalog_dir), "--fix-metadata", "--json"],
+        )
+
+        # Should succeed and produce valid JSON
+        assert result.exit_code == 0
+        try:
+            output = json.loads(result.output)
+            assert isinstance(output, dict)
+            assert "success" in output or "fix_results" in result.output
+        except json.JSONDecodeError:
+            pytest.fail(f"Invalid JSON output: {result.output[:200]}")

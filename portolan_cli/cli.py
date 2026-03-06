@@ -25,6 +25,7 @@ from portolan_cli.dataset import (
     resolve_collection_id,
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
+from portolan_cli.metadata import check_directory_metadata, fix_metadata
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.scan import (
@@ -778,6 +779,11 @@ def _output_combined_check_json(
     is_flag=True,
     help="Only check geospatial assets (cloud-native status, convertibility)",
 )
+@click.option(
+    "--fix-metadata",
+    is_flag=True,
+    help="Create or update missing/stale STAC metadata items",
+)
 @click.pass_context
 def check(
     ctx: click.Context,
@@ -788,17 +794,23 @@ def check(
     dry_run: bool,
     metadata: bool,
     geo_assets: bool,
+    fix_metadata: bool,
 ) -> None:
     """Validate a Portolan catalog or check files for cloud-native status.
 
     Runs validation rules against the catalog and reports any issues.
     With --fix, converts non-cloud-native files to GeoParquet (vectors) or COG (rasters).
+    With --fix-metadata, creates or updates missing/stale STAC metadata items.
 
     PATH is the directory to check (default: current directory).
 
     Use --metadata or --geo-assets to run only specific validations:
     - --metadata: Validate STAC catalog structure and metadata
     - --geo-assets: Check geospatial assets for cloud-native compliance
+
+    Use --fix or --fix-metadata to make changes:
+    - --fix: Convert non-cloud-native files
+    - --fix-metadata: Create/update STAC metadata items
 
     Examples:
 
@@ -810,9 +822,13 @@ def check(
 
         portolan check /data --fix            # Convert files to cloud-native
 
+        portolan check /data --fix-metadata   # Create/update STAC metadata
+
         portolan check /data --geo-assets --fix  # Convert only (no metadata validation)
 
         portolan check /data --fix --dry-run  # Preview conversions
+
+        portolan check /data --fix-metadata --dry-run  # Preview metadata fixes
     """
     use_json = should_output_json(ctx, json_output)
 
@@ -820,9 +836,19 @@ def check(
     if not path.exists():
         _handle_path_not_found(path, use_json)
 
-    # Warn if --dry-run is used without --fix
-    if dry_run and not fix:
-        warn("--dry-run has no effect without --fix")
+    # Warn if --dry-run is used without --fix or --fix-metadata
+    if dry_run and not fix and not fix_metadata:
+        warn("--dry-run has no effect without --fix or --fix-metadata")
+
+    # Handle --fix-metadata independently
+    if fix_metadata:
+        _handle_fix_metadata(
+            path=path,
+            dry_run=dry_run,
+            use_json=use_json,
+            verbose=verbose,
+        )
+        return
 
     # Determine which checks to run
     run_metadata, run_format, mode = _determine_check_mode(metadata, geo_assets, fix)
@@ -838,6 +864,92 @@ def check(
         use_json=use_json,
         verbose=verbose,
     )
+
+
+def _handle_fix_metadata(
+    path: Path,
+    dry_run: bool,
+    use_json: bool,
+    verbose: bool,
+) -> None:
+    """Handle --fix-metadata flag: validate and fix metadata issues.
+
+    Args:
+        path: Directory to check.
+        dry_run: If True, don't make changes.
+        use_json: If True, output JSON.
+        verbose: If True, show all results.
+    """
+    # Run metadata validation
+    metadata_report = check_directory_metadata(path)
+
+    # Run fix_metadata with the report
+    fix_report = fix_metadata(path, metadata_report, dry_run=dry_run)
+
+    # Output results
+    if use_json:
+        _output_fix_metadata_json(fix_report, metadata_report)
+    else:
+        _output_fix_metadata_human(fix_report, metadata_report, verbose, dry_run)
+
+    # Exit with error if there were failures
+    if fix_report.failure_count > 0:
+        raise SystemExit(1)
+
+
+def _output_fix_metadata_json(fix_report: Any, metadata_report: Any) -> None:
+    """Output fix metadata results as JSON."""
+    from portolan_cli.metadata.fix import FixReport
+
+    assert isinstance(fix_report, FixReport)
+
+    data = {
+        "fix_results": fix_report.to_dict(),
+        "metadata_issues": {
+            "total": len(metadata_report.results),
+            "missing": sum(1 for r in metadata_report.results if r.status.value == "missing"),
+            "stale": sum(1 for r in metadata_report.results if r.status.value == "stale"),
+            "breaking": sum(1 for r in metadata_report.results if r.status.value == "breaking"),
+        },
+    }
+
+    envelope = success_envelope("check", data)
+    output_json_envelope(envelope)
+
+
+def _output_fix_metadata_human(
+    fix_report: Any,
+    metadata_report: Any,
+    verbose: bool,
+    dry_run: bool,
+) -> None:
+    """Output fix metadata results in human-readable format."""
+    from portolan_cli.metadata.fix import FixReport
+
+    assert isinstance(fix_report, FixReport)
+
+    prefix = "Would create/update" if dry_run else "Created/updated"
+
+    # Show summary
+    if fix_report.total_count > 0:
+        success(
+            f"{prefix} {fix_report.total_count} metadata "
+            f"item{'s' if fix_report.total_count != 1 else ''}"
+        )
+    if fix_report.skipped_count > 0:
+        info_output(f"Skipped {fix_report.skipped_count} items (already fresh)")
+    if fix_report.failure_count > 0:
+        error(f"Failed to fix {fix_report.failure_count} items")
+
+    # Show details if verbose
+    if verbose or fix_report.failure_count > 0:
+        for result in fix_report.results:
+            status_char = "✓" if result.success else "✗"
+            msg = f"{status_char} {result.file_path}: {result.action.value} ({result.message})"
+            if result.success:
+                detail(msg)
+            else:
+                error(msg)
 
 
 def _handle_path_not_found(path: Path, use_json: bool) -> None:
