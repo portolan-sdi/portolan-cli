@@ -580,6 +580,7 @@ def status(ctx: click.Context, json_output: bool) -> None:
             output_json_envelope(envelope)
         else:
             error("No catalog found in current directory or parents")
+            detail("Run 'portolan init' to create a catalog, or cd into one")
         raise SystemExit(1)
 
     try:
@@ -1891,7 +1892,7 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
             _handle_cmd_error(
                 "add",
                 "NotACatalogError",
-                "Not inside a Portolan catalog (no catalog.json found)",
+                "Not inside a Portolan catalog (no .portolan/config.yaml found)",
                 use_json,
             )
             if not use_json:
@@ -1900,7 +1901,8 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
         catalog_root = detected_root
 
     # Validate catalog exists (when explicitly specified)
-    if catalog_path is not None and not (catalog_root / "catalog.json").exists():
+    # Per ADR-0029, use .portolan/config.yaml as the single sentinel
+    if catalog_path is not None and not (catalog_root / ".portolan" / "config.yaml").exists():
         _handle_cmd_error("add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json)
         if not use_json:
             detail("Run 'portolan init' to create a catalog")
@@ -2032,7 +2034,7 @@ def rm_cmd(
             _handle_cmd_error(
                 "rm",
                 "NotACatalogError",
-                "Not inside a Portolan catalog (no catalog.json found)",
+                "Not inside a Portolan catalog (no .portolan/config.yaml found)",
                 use_json,
             )
             if not use_json:

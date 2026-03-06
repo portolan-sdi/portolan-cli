@@ -31,9 +31,17 @@ def runner() -> CliRunner:
 
 
 def setup_catalog(path: Path) -> None:
-    """Create an initialized Portolan catalog (per ADR-0023)."""
+    """Create an initialized Portolan catalog (per ADR-0023, ADR-0029).
+
+    Creates full managed catalog structure with:
+    - .portolan/config.yaml (sentinel per ADR-0029)
+    - .portolan/state.json (operational file)
+    - catalog.json at root (STAC standard)
+    """
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
+    (portolan_dir / "state.json").write_text("{}")
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",
@@ -233,7 +241,7 @@ class TestAddAtCatalogRoot:
         """add . on non-catalog directory still fails with appropriate error."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
-            # No catalog.json - not a catalog
+            # No .portolan/config.yaml - not a managed catalog
 
             result = runner.invoke(
                 cli,
@@ -241,7 +249,8 @@ class TestAddAtCatalogRoot:
             )
 
             assert result.exit_code == 1
-            assert "no catalog.json found" in result.output.lower()
+            # Per ADR-0029, error message references .portolan/config.yaml sentinel
+            assert "no .portolan/config.yaml found" in result.output.lower()
 
     @pytest.mark.unit
     def test_add_subdirectory_still_infers_collection(self, runner: CliRunner) -> None:

@@ -48,10 +48,12 @@ This aligns with ADR-0027, which established `config.yaml` as the unified sentin
 | Command | Old Behavior | New Behavior |
 |---------|--------------|--------------|
 | `add` | Auto-creates catalog structure if missing | Fails with "run `portolan init`" message |
-| `list` | Finds parent catalog via `catalog.json` | Finds parent catalog via `.portolan/config.yaml` |
+| `list` | Uses explicit `--catalog` argument (default `.`) | *Unchanged* - uses `--catalog` arg, not `find_catalog_root()` |
 | `status` | Finds parent catalog via `catalog.json` | Finds parent catalog via `.portolan/config.yaml` |
 | `rm` | Finds parent catalog via `catalog.json` | Finds parent catalog via `.portolan/config.yaml` |
 | `config *` | Finds catalog via `.portolan/` directory | Finds catalog via `.portolan/config.yaml` |
+
+> **Note:** `list` is excluded from the unified `find_catalog_root()` treatment because it takes `--catalog` as an explicit argument. This is a separate issue to address in a future PR.
 
 ### UNMANAGED_STAC Impact
 

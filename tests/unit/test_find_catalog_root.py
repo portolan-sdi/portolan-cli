@@ -8,12 +8,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pytest
-
-if TYPE_CHECKING:
-    pass
 
 
 class TestFindCatalogRoot:
@@ -25,10 +21,11 @@ class TestFindCatalogRoot:
         # Import here to allow tests to fail before implementation exists
         from portolan_cli.catalog import find_catalog_root
 
-        # Setup: Create managed catalog structure
+        # Setup: Create full managed catalog structure (config.yaml + state.json)
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+        (portolan_dir / "state.json").write_text("{}")  # Operational file required
 
         # Act
         result = find_catalog_root(tmp_path)
@@ -45,6 +42,7 @@ class TestFindCatalogRoot:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+        (portolan_dir / "state.json").write_text("{}")  # Operational file required
 
         nested_dir = tmp_path / "collection" / "item" / "assets"
         nested_dir.mkdir(parents=True)
@@ -138,6 +136,7 @@ class TestFindCatalogRoot:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+        (portolan_dir / "state.json").write_text("{}")  # Operational file required
 
         # Create nested path exactly at MAX_CATALOG_SEARCH_DEPTH - 1 (should find)
         deep_path = tmp_path
@@ -162,6 +161,7 @@ class TestFindCatalogRoot:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+        (portolan_dir / "state.json").write_text("{}")  # Operational file required
 
         monkeypatch.chdir(tmp_path)
 
@@ -180,6 +180,7 @@ class TestFindCatalogRoot:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+        (portolan_dir / "state.json").write_text("{}")  # Operational file required
 
         # Act
         result = find_catalog_root(tmp_path)
@@ -201,6 +202,7 @@ class TestFindCatalogRoot:
         portolan_dir = catalog_dir / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+        (portolan_dir / "state.json").write_text("{}")  # Operational file required
 
         # Create symlink to catalog
         symlink_dir = tmp_path / "symlink_catalog"
@@ -234,6 +236,7 @@ class TestFindCatalogRoot:
         parent_portolan = tmp_path / ".portolan"
         parent_portolan.mkdir()
         (parent_portolan / "config.yaml").write_text("# Parent catalog\n")
+        (parent_portolan / "state.json").write_text("{}")  # Operational file required
 
         # Setup: Nested child catalog
         child_dir = tmp_path / "child"
@@ -241,6 +244,7 @@ class TestFindCatalogRoot:
         child_portolan = child_dir / ".portolan"
         child_portolan.mkdir()
         (child_portolan / "config.yaml").write_text("# Child catalog\n")
+        (child_portolan / "state.json").write_text("{}")  # Operational file required
 
         # Setup: Subdir inside child
         subdir = child_dir / "collection"
@@ -273,10 +277,11 @@ class TestFindCatalogRootEdgeCases:
         """find_catalog_root accepts empty config.yaml as valid sentinel."""
         from portolan_cli.catalog import find_catalog_root
 
-        # Setup: Empty config.yaml
+        # Setup: Empty config.yaml with operational file
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("")
+        (portolan_dir / "state.json").write_text("{}")  # Operational file required
 
         # Act
         result = find_catalog_root(tmp_path)
@@ -293,6 +298,7 @@ class TestFindCatalogRootEdgeCases:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("remote:\n  url: s3://my-bucket/catalog\n")
+        (portolan_dir / "state.json").write_text("{}")  # Operational file required
 
         # Act
         result = find_catalog_root(tmp_path)
@@ -352,3 +358,43 @@ class TestFindCatalogRootEdgeCases:
         # Assert: Should NOT find wrong case
         if not (portolan_dir / "config.yaml").exists():
             assert result is None
+
+    @pytest.mark.unit
+    def test_require_operational_false_for_init(self, tmp_path: Path) -> None:
+        """find_catalog_root with require_operational=False finds config.yaml-only repos.
+
+        This mode is used during init_catalog() when config.yaml is written
+        before catalog.json/state.json are created.
+        """
+        from portolan_cli.catalog import find_catalog_root
+
+        # Setup: Only config.yaml, no operational files (simulates mid-init state)
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+        # No state.json or catalog.json
+
+        # Act: With require_operational=True (default), should NOT find
+        result_default = find_catalog_root(tmp_path)
+        assert result_default is None, "Default should require operational files"
+
+        # Act: With require_operational=False, SHOULD find
+        result_init = find_catalog_root(tmp_path, require_operational=False)
+        assert result_init == tmp_path, "require_operational=False should find config.yaml-only"
+
+    @pytest.mark.unit
+    def test_operational_file_catalog_json_at_root(self, tmp_path: Path) -> None:
+        """find_catalog_root accepts catalog.json at root as operational file."""
+        from portolan_cli.catalog import find_catalog_root
+
+        # Setup: config.yaml + catalog.json (no state.json)
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+        (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # At root, not in .portolan
+
+        # Act
+        result = find_catalog_root(tmp_path)
+
+        # Assert: Should find - catalog.json at root is valid operational file
+        assert result == tmp_path

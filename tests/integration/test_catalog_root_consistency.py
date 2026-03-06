@@ -80,19 +80,26 @@ class TestCatalogRootConsistency:
         assert result.exit_code == 0, f"status failed: {result.output}"
 
     @pytest.mark.integration
-    def test_list_finds_catalog_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
-        """list command finds catalog from nested subdirectory."""
+    def test_list_succeeds_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
+        """list command succeeds from subdirectory (returns empty, doesn't walk up).
+
+        Note: 'list' uses --catalog with default="." rather than find_catalog_root(),
+        so it doesn't walk up to find the parent catalog. This test verifies the
+        command doesn't error when run from a subdirectory without a catalog.
+        See lines 176-178 for the full explanation.
+        """
         setup_managed_catalog(tmp_path)
 
         # Create nested subdirectory
         nested_dir = tmp_path / "collection"
         nested_dir.mkdir()
 
-        # Run list from nested directory
+        # Run list from nested directory - will return empty (no local catalog.json)
         with runner.isolated_filesystem(temp_dir=nested_dir):
             result = runner.invoke(cli, ["list"], catch_exceptions=False)
 
-        # Should succeed (exit code 0)
+        # Should succeed (exit code 0) but with empty results
+        # list doesn't use find_catalog_root, so it won't find the parent
         assert result.exit_code == 0, f"list failed: {result.output}"
 
     @pytest.mark.integration
@@ -131,7 +138,7 @@ class TestCatalogRootConsistency:
 
     @pytest.mark.integration
     def test_error_message_suggests_init(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Error message tells user to run 'portolan init'."""
+        """Error message explicitly tells user to run 'portolan init'."""
         # Empty directory, no catalog
         nested_dir = tmp_path / "no-catalog"
         nested_dir.mkdir()
@@ -139,22 +146,27 @@ class TestCatalogRootConsistency:
         with runner.isolated_filesystem(temp_dir=nested_dir):
             result = runner.invoke(cli, ["status"])
 
-        # Should fail and mention init
+        # Should fail and explicitly mention "portolan init" (not just "init" or "catalog")
         assert result.exit_code != 0
-        assert "init" in result.output.lower() or "catalog" in result.output.lower(), (
-            f"Error should mention init or catalog: {result.output}"
+        output_lower = result.output.lower()
+        assert "portolan init" in output_lower or "'portolan init'" in output_lower, (
+            f"Error should explicitly mention 'portolan init': {result.output}"
         )
 
     @pytest.mark.integration
     def test_nested_catalogs_finds_nearest(self, runner: CliRunner, tmp_path: Path) -> None:
         """Commands find the nearest catalog when nested catalogs exist."""
-        # Create parent catalog
+        # Create parent catalog with distinguishable config
         setup_managed_catalog(tmp_path)
+        parent_config = tmp_path / ".portolan" / "config.yaml"
+        parent_config.write_text("# Portolan configuration\nname: parent-catalog\n")
 
-        # Create child catalog inside parent
+        # Create child catalog inside parent with different config
         child_dir = tmp_path / "child-catalog"
         child_dir.mkdir()
         setup_managed_catalog(child_dir)
+        child_config = child_dir / ".portolan" / "config.yaml"
+        child_config.write_text("# Portolan configuration\nname: child-catalog\n")
 
         # Create subdirectory inside child
         nested_dir = child_dir / "collection"
@@ -164,8 +176,12 @@ class TestCatalogRootConsistency:
         with runner.isolated_filesystem(temp_dir=nested_dir):
             result = runner.invoke(cli, ["config", "list"], catch_exceptions=False)
 
-        # Should succeed and find child catalog (nearest)
+        # Should succeed and find child catalog (nearest), not parent
         assert result.exit_code == 0, f"config list failed: {result.output}"
+        # Verify the child catalog's config is returned (contains "child-catalog")
+        assert "child-catalog" in result.output, (
+            f"Expected child-catalog config, but got parent or no config: {result.output}"
+        )
 
     @pytest.mark.integration
     def test_all_commands_consistent_without_catalog(

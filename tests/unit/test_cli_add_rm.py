@@ -214,7 +214,8 @@ class TestAdd:
             result = runner.invoke(cli, ["add", str(test_file)])
 
             assert result.exit_code == 1
-            assert "no catalog.json found" in result.output.lower()
+            # Per ADR-0029, error message references .portolan/config.yaml sentinel
+            assert "no .portolan/config.yaml found" in result.output.lower()
 
 
 class TestRm:

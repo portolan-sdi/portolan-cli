@@ -345,17 +345,18 @@ class TestFindCatalogRootProperties:
     unifying detection across all CLI commands.
     """
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Uses filesystem I/O (tempfile.TemporaryDirectory)
     @given(collection=collection_name, subdir=safe_filename)
     @settings(max_examples=30)
     def test_find_catalog_root_from_nested_dir(self, collection: str, subdir: str) -> None:
         """find_catalog_root finds catalog from nested subdirectory."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            # Create managed catalog with .portolan/config.yaml (per ADR-0029)
+            # Create managed catalog with .portolan/config.yaml + state.json (per ADR-0029)
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+            (portolan_dir / "state.json").write_text("{}")  # Operational file required
 
             # Create nested directory
             nested_dir = tmp_path / collection / subdir
@@ -368,17 +369,18 @@ class TestFindCatalogRootProperties:
                 f"Should find catalog at {tmp_path.resolve()}, got {result}"
             )
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Uses filesystem I/O (tempfile.TemporaryDirectory)
     @given(collection=collection_name)
     @settings(max_examples=30)
     def test_find_catalog_root_from_root(self, collection: str) -> None:
         """find_catalog_root finds catalog when starting at catalog root."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            # Create managed catalog with .portolan/config.yaml (per ADR-0029)
+            # Create managed catalog with .portolan/config.yaml + state.json (per ADR-0029)
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+            (portolan_dir / "state.json").write_text("{}")  # Operational file required
             (tmp_path / collection).mkdir(exist_ok=True)
 
             result = find_catalog_root(tmp_path)
@@ -386,7 +388,7 @@ class TestFindCatalogRootProperties:
             # Use resolve() on both sides - macOS /var → /private/var, Windows short names
             assert result == tmp_path.resolve(), f"Should find catalog at {tmp_path.resolve()}"
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Uses filesystem I/O (tempfile.TemporaryDirectory)
     @given(dirname=safe_filename)
     @settings(max_examples=30)
     def test_find_catalog_root_returns_none_when_not_found(self, dirname: str) -> None:
@@ -401,7 +403,7 @@ class TestFindCatalogRootProperties:
 
             assert result is None, f"Should return None, got {result}"
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Uses filesystem I/O (tempfile.TemporaryDirectory)
     @given(collection=collection_name, subdir=safe_filename)
     @settings(max_examples=30)
     def test_find_catalog_root_is_deterministic(self, collection: str, subdir: str) -> None:
@@ -411,6 +413,7 @@ class TestFindCatalogRootProperties:
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
+            (portolan_dir / "state.json").write_text("{}")  # Operational file required
 
             nested_dir = tmp_path / collection / subdir
             nested_dir.mkdir(parents=True, exist_ok=True)
@@ -420,7 +423,7 @@ class TestFindCatalogRootProperties:
 
             assert result1 == result2, "find_catalog_root should be deterministic"
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Uses filesystem I/O (tempfile.TemporaryDirectory)
     @given(collection=collection_name)
     @settings(max_examples=30)
     def test_find_catalog_root_ignores_unmanaged_stac(self, collection: str) -> None:
