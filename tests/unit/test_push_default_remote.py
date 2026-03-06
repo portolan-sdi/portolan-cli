@@ -688,3 +688,70 @@ class TestSyncDefaultRemote:
 
         assert result.exit_code != 0
         assert "destination" in result.output.lower() or "remote" in result.output.lower()
+
+
+class TestSyncDefaultRemoteJSONOutput:
+    """Tests for JSON output mode with default remote for sync command."""
+
+    @pytest.mark.unit
+    def test_sync_json_output_uses_configured_remote(
+        self, runner: CliRunner, catalog_with_remote_config: Path
+    ) -> None:
+        """Sync with --json should work with configured remote."""
+        from portolan_cli.sync import SyncResult
+
+        with patch("portolan_cli.sync.sync") as mock_sync:
+            mock_sync.return_value = SyncResult(
+                success=True,
+                init_performed=False,
+                pull_result=None,
+                scan_result=None,
+                check_result=None,
+                push_result=None,
+                errors=[],
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--format",
+                    "json",
+                    "sync",
+                    "--collection",
+                    "test-collection",
+                    "--catalog",
+                    str(catalog_with_remote_config),
+                ],
+                catch_exceptions=False,
+            )
+
+            assert result.exit_code == 0, f"Failed: {result.output}"
+            output = json.loads(result.output)
+            assert output["success"] is True
+
+    @pytest.mark.unit
+    def test_sync_json_error_when_no_remote(
+        self, runner: CliRunner, catalog_without_remote_config: Path
+    ) -> None:
+        """Sync with --json should return error envelope when no remote configured."""
+        result = runner.invoke(
+            cli,
+            [
+                "--format",
+                "json",
+                "sync",
+                "--collection",
+                "test-collection",
+                "--catalog",
+                str(catalog_without_remote_config),
+            ],
+        )
+
+        assert result.exit_code != 0
+        output = json.loads(result.output)
+        assert output["success"] is False
+        # Error should mention missing destination/remote
+        error_messages = [e.get("message", "") for e in output.get("errors", [])]
+        assert any(
+            "destination" in msg.lower() or "remote" in msg.lower() for msg in error_messages
+        )
