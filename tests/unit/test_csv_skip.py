@@ -230,16 +230,18 @@ class TestMixedDirectoryProcessing:
         self, initialized_catalog: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Directory with only non-geo files should return empty without error."""
-        collection_dir = tmp_path / "catalog" / "collection"
-        collection_dir.mkdir(parents=True, exist_ok=True)
+        # Create collection/item structure inside initialized_catalog (Issue #163)
+        collection_dir = initialized_catalog / "collection"
+        item_dir = collection_dir / "data"
+        item_dir.mkdir(parents=True, exist_ok=True)
 
         # Create only non-geo CSVs
-        (collection_dir / "metadata.csv").write_text("name,value\nfield1,100\n")
-        (collection_dir / "config.csv").write_text("key,value\nsetting1,true\n")
+        (item_dir / "metadata.csv").write_text("name,value\nfield1,100\n")
+        (item_dir / "config.csv").write_text("key,value\nsetting1,true\n")
 
         with caplog.at_level(logging.WARNING):
             added, skipped = add_files(
-                paths=[collection_dir],
+                paths=[item_dir],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
             )

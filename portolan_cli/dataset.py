@@ -237,6 +237,73 @@ class DatasetInfo:
     datetime: datetime | None = None
 
 
+def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
+    """Pre-validate that a file has valid geometry BEFORE any filesystem operations.
+
+    Issue #163: Failed add operations should be atomic. This function checks for
+    geometry/features before any conversion or copying happens, preventing partial
+    artifacts from being created.
+
+    Args:
+        path: Path to the source file.
+        format_type: Detected format type (VECTOR or RASTER).
+
+    Raises:
+        ValueError: If the file has no valid geometry/features.
+    """
+    ext = path.suffix.lower()
+
+    # Parquet: check GeoParquet metadata
+    if ext == ".parquet":
+        from portolan_cli.scan import is_geoparquet
+
+        if not is_geoparquet(path):
+            raise ValueError(
+                f"Cannot create STAC item for '{path.stem}': "
+                "missing bounding box. The source file may have no valid geometry."
+            )
+        return
+
+    # GeoJSON: check for features with geometry
+    if ext in {".geojson", ".json"}:
+        import json
+
+        try:
+            # Per RFC 7946: GeoJSON MUST be encoded as UTF-8
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+
+            # Check for features
+            if data.get("type") == "FeatureCollection":
+                features = data.get("features", [])
+                if not features:
+                    raise ValueError(
+                        f"Cannot create STAC item for '{path.stem}': "
+                        "missing bounding box. The source file has no features."
+                    )
+                # Check that at least one feature has geometry
+                has_geometry = any(f.get("geometry") is not None for f in features)
+                if not has_geometry:
+                    raise ValueError(
+                        f"Cannot create STAC item for '{path.stem}': "
+                        "missing bounding box. No features have geometry."
+                    )
+            elif data.get("type") == "Feature":
+                if data.get("geometry") is None:
+                    raise ValueError(
+                        f"Cannot create STAC item for '{path.stem}': "
+                        "missing bounding box. Feature has no geometry."
+                    )
+        except json.JSONDecodeError as err:
+            raise ValueError(f"Invalid JSON in '{path}': {err}") from err
+        return
+
+    # Shapefile: existence of .shp implies geometry (inherent to format)
+    # Rasters: inherently have bbox (extent is required for geotiff)
+    # Other formats: let conversion handle validation
+    # (We can't easily pre-validate without heavy dependencies)
+
+
 def add_dataset(
     *,
     path: Path,
@@ -301,23 +368,38 @@ def add_dataset(
     if format_type == FormatType.UNKNOWN:
         raise ValueError(f"Unsupported format: {path.suffix}")
 
-    # Generate item ID from filename if not provided
+    # Step 2: Pre-validate BEFORE any filesystem operations (Issue #163 atomicity)
+    # Check for valid geometry/features before any conversion or copying
+    _pre_validate_geometry(path, format_type)
+
+    # Generate item ID from PARENT DIRECTORY name (Issue #163)
+    # Item boundaries are directories, not filenames.
+    # Example: collection/item_dir/file.parquet -> item_id = "item_dir"
     if item_id is None:
-        item_id = path.stem
+        item_id = path.parent.name
 
     # Validate IDs are safe single path segments
     for label, value in [("collection_id", collection_id), ("item_id", item_id)]:
         if not value or "/" in value or "\\" in value or value in {".", ".."}:
             raise ValueError(f"Invalid {label} '{value}': must be a single path segment")
 
-    # Set up paths (STAC at root, per ADR-0023)
+    # Set up paths - track files IN-PLACE (Issue #163)
+    # The file's parent directory IS the item directory.
+    # No copying needed; assets stay where they are.
     collection_dir = catalog_root / collection_id
-    item_dir = collection_dir / item_id
+    item_dir = path.parent  # Use existing directory, don't create new one
 
-    # Ensure directories exist
-    item_dir.mkdir(parents=True, exist_ok=True)
+    # Verify structural consistency: item_dir should be inside collection_dir
+    # Use .resolve() to prevent symlink bypass attacks (CodeRabbit review)
+    try:
+        item_dir.resolve().relative_to(collection_dir.resolve())
+    except ValueError as err:
+        raise ValueError(
+            f"File '{path}' is not inside collection '{collection_id}'. "
+            f"Expected path under '{collection_dir}'."
+        ) from err
 
-    # Step 2: Convert to cloud-native format
+    # Step 3: Convert to cloud-native format (in-place)
     metadata: GeoParquetMetadata | COGMetadata
     if format_type == FormatType.VECTOR:
         output_path = convert_vector(path, item_dir)
@@ -443,6 +525,9 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
 
     # Check if already a valid COG — skip conversion if so
     if source.suffix.lower() in (".tif", ".tiff") and is_cloud_optimized_geotiff(source):
+        # If source is already at the destination, no copy needed (CodeRabbit review)
+        if source.resolve() == output_path.resolve():
+            return output_path
         # Already a COG, just copy to destination
         shutil.copy2(source, output_path)
         return output_path

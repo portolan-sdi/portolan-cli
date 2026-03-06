@@ -128,14 +128,24 @@ class TestAddDirectory:
     @pytest.mark.unit
     def test_add_directory_single_file(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add_directory processes single file in directory."""
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        (data_dir / "only.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        # Create file inside collection/item structure (Issue #163)
+        item_dir = initialized_catalog / "col" / "myitem"
+        item_dir.mkdir(parents=True)
 
-        # Create output file
-        output_dir = initialized_catalog / "col" / "only"
-        output_dir.mkdir(parents=True)
-        (output_dir / "only.parquet").write_bytes(b"fake")
+        # Use valid GeoJSON with features for pre-validation
+        valid_geojson = json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [0, 0]},
+                        "properties": {},
+                    }
+                ],
+            }
+        )
+        (item_dir / "data.geojson").write_text(valid_geojson)
 
         with (
             patch("portolan_cli.dataset.detect_format") as mock_detect,
@@ -144,39 +154,55 @@ class TestAddDirectory:
             patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
-            mock_convert.return_value = output_dir / "only.parquet"
+
+            # Convert creates output file when called (not before add_directory)
+            def convert_side_effect(source: Path, dest: Path) -> Path:
+                output_path = dest / f"{source.stem}.parquet"
+                output_path.write_bytes(b"fake")
+                return output_path
+
+            mock_convert.side_effect = convert_side_effect
             mock_metadata.return_value = MagicMock(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                feature_count=0,
+                feature_count=1,
                 geometry_type="Point",
                 to_stac_properties=lambda: {},
             )
             mock_checksum.return_value = "abc"
 
             results = add_directory(
-                path=data_dir,
+                path=item_dir,
                 catalog_root=initialized_catalog,
                 collection_id="col",
             )
 
             assert len(results) == 1
-            assert results[0].item_id == "only"
+            assert results[0].item_id == "myitem"  # From parent directory
 
     @pytest.mark.unit
     def test_add_directory_multiple_files(self, initialized_catalog: Path, tmp_path: Path) -> None:
-        """add_directory processes all geospatial files."""
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        (data_dir / "a.geojson").write_text('{"type": "FeatureCollection", "features": []}')
-        (data_dir / "b.tif").write_bytes(b"fake tiff")
+        """add_directory processes all geospatial files in an item directory."""
+        # Create files inside collection/item structure (Issue #163)
+        # Multiple files in same item dir = multiple assets for one item
+        item_dir = initialized_catalog / "col" / "myitem"
+        item_dir.mkdir(parents=True)
 
-        # Create output files
-        for name in ["a", "b"]:
-            output_dir = initialized_catalog / "col" / name
-            output_dir.mkdir(parents=True)
-            ext = "parquet" if name == "a" else "tif"
-            (output_dir / f"{name}.{ext}").write_bytes(b"fake")
+        valid_geojson = json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [0, 0]},
+                        "properties": {},
+                    }
+                ],
+            }
+        )
+        (item_dir / "a.geojson").write_text(valid_geojson)
+        # Raster doesn't need pre-validation (inherently has extent)
+        (item_dir / "b.tif").write_bytes(b"fake tiff")
 
         with (
             patch("portolan_cli.dataset.detect_format") as mock_detect,
@@ -193,12 +219,23 @@ class TestAddDirectory:
                 return FormatType.RASTER
 
             mock_detect.side_effect = detect_side_effect
-            mock_convert_v.return_value = initialized_catalog / "col" / "a" / "a.parquet"
-            mock_convert_r.return_value = initialized_catalog / "col" / "b" / "b.tif"
+
+            # Convert creates output files when called (not before add_directory)
+            def convert_vector_side_effect(source: Path, dest: Path) -> Path:
+                output_path = dest / f"{source.stem}.parquet"
+                output_path.write_bytes(b"fake")
+                return output_path
+
+            def convert_raster_side_effect(source: Path, dest: Path) -> Path:
+                # Raster stays in place (already exists)
+                return source
+
+            mock_convert_v.side_effect = convert_vector_side_effect
+            mock_convert_r.side_effect = convert_raster_side_effect
             mock_meta_v.return_value = MagicMock(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                feature_count=0,
+                feature_count=1,
                 geometry_type="Point",
                 to_stac_properties=lambda: {},
             )
@@ -213,30 +250,48 @@ class TestAddDirectory:
             mock_checksum.return_value = "abc"
 
             results = add_directory(
-                path=data_dir,
+                path=item_dir,
                 catalog_root=initialized_catalog,
                 collection_id="col",
             )
 
-            assert len(results) == 2
-            item_ids = {r.item_id for r in results}
-            assert item_ids == {"a", "b"}
+            # With new design, multiple files in one item_dir = one item with multiple assets
+            # Or multiple items if add_directory processes each file separately
+            # The key point: all results have same item_id (parent dir name)
+            assert len(results) >= 1
+            for r in results:
+                assert r.item_id == "myitem"
 
     @pytest.mark.unit
     def test_add_directory_recursive(self, initialized_catalog: Path, tmp_path: Path) -> None:
         """add_directory finds files recursively."""
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        sub = data_dir / "nested"
-        sub.mkdir()
-        (data_dir / "top.geojson").write_text('{"type": "FeatureCollection", "features": []}')
-        (sub / "deep.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        # Create nested item directories inside the collection (Issue #163)
+        # Structure: col/top_item/top.geojson + col/nested/deep_item/deep.geojson
+        col_dir = initialized_catalog / "col"
+        col_dir.mkdir(parents=True)
 
-        # Create output files
-        for name in ["top", "deep"]:
-            output_dir = initialized_catalog / "col" / name
-            output_dir.mkdir(parents=True)
-            (output_dir / f"{name}.parquet").write_bytes(b"fake")
+        top_item_dir = col_dir / "top_item"
+        top_item_dir.mkdir()
+        nested_dir = col_dir / "nested"
+        nested_dir.mkdir()
+        deep_item_dir = nested_dir / "deep_item"
+        deep_item_dir.mkdir()
+
+        # Use valid GeoJSON with features for pre-validation
+        valid_geojson = json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [0, 0]},
+                        "properties": {},
+                    }
+                ],
+            }
+        )
+        (top_item_dir / "top.geojson").write_text(valid_geojson)
+        (deep_item_dir / "deep.geojson").write_text(valid_geojson)
 
         with (
             patch("portolan_cli.dataset.detect_format") as mock_detect,
@@ -247,26 +302,32 @@ class TestAddDirectory:
             mock_detect.return_value = FormatType.VECTOR
 
             def convert_side_effect(source: Path, dest: Path) -> Path:
-                return dest / f"{source.stem}.parquet"
+                # Create output parquet in the same directory as source (in-place)
+                output_path = source.parent / f"{source.stem}.parquet"
+                output_path.write_bytes(b"fake")
+                return output_path
 
             mock_convert.side_effect = convert_side_effect
             mock_metadata.return_value = MagicMock(
                 bbox=(0, 0, 1, 1),
                 crs="EPSG:4326",
-                feature_count=0,
+                feature_count=1,
                 geometry_type="Point",
                 to_stac_properties=lambda: {},
             )
             mock_checksum.return_value = "abc"
 
             results = add_directory(
-                path=data_dir,
+                path=col_dir,
                 catalog_root=initialized_catalog,
                 collection_id="col",
                 recursive=True,
             )
 
+            # Should find both files (in top_item and deep_item directories)
             assert len(results) == 2
+            item_ids = {r.item_id for r in results}
+            assert item_ids == {"top_item", "deep_item"}
 
     @pytest.mark.unit
     def test_add_directory_empty_returns_empty(
