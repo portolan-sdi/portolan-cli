@@ -65,6 +65,14 @@ _GEOPARQUET_IO_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
     "geometry columns in tsv",
 )
 
+# Error message patterns for parquet files without geometry (Issue #177).
+# These patterns indicate a parquet file lacks GeoParquet metadata (no 'geo' key),
+# meaning it's tabular data that should be tracked as an auxiliary asset.
+_PARQUET_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
+    "missing bounding box",
+    "no valid geometry",
+)
+
 # Files to ignore when scanning item directories for assets.
 # These are STAC/Portolan structural files, not user data.
 IGNORED_FILES: frozenset[str] = frozenset(
@@ -1183,6 +1191,23 @@ def _is_no_geometry_error(err: click.ClickException) -> bool:
     return any(pattern in err_msg for pattern in _GEOPARQUET_IO_NO_GEOMETRY_PATTERNS)
 
 
+def _is_parquet_no_geometry_error(err: ValueError) -> bool:
+    """Check if a ValueError indicates a parquet file lacks geometry (Issue #177).
+
+    This handles the case where a parquet file is valid but has no GeoParquet
+    metadata (no 'geo' key in schema). Such files should be tracked as auxiliary
+    assets per ADR-0028, not rejected.
+
+    Args:
+        err: The ValueError to check.
+
+    Returns:
+        True if the error is specifically about missing geometry in a parquet file.
+    """
+    err_msg = str(err).lower()
+    return any(pattern in err_msg for pattern in _PARQUET_NO_GEOMETRY_PATTERNS)
+
+
 def _copy_non_geo_to_item_dir(
     file_path: Path,
     item_dir: Path,
@@ -1349,10 +1374,21 @@ def add_files(
                 source_dir = file_path.parent
                 deferred_non_geo.append((file_path, source_dir, coll_id))
 
-            except (ValueError, FileNotFoundError) as err:
+            except ValueError as err:
+                # Handle parquet files without geometry (Issue #177)
+                # These should be treated as auxiliary/tabular assets per ADR-0028
+                if _is_parquet_no_geometry_error(err):
+                    # Only tabular formats can be non-geospatial assets
+                    if file_path.suffix.lower() in TABULAR_EXTENSIONS:
+                        # Defer non-geo parquet files until geo files are processed
+                        source_dir = file_path.parent
+                        deferred_non_geo.append((file_path, source_dir, coll_id))
+                        continue
+                # Other ValueErrors: record failure and continue (Issue #175)
+                failures.append(AddFailure(path=file_path, error=str(err)))
+
+            except FileNotFoundError as err:
                 # Record failure and continue processing (Issue #175)
-                # Previously this would stop the entire operation on first error.
-                # Now we collect all failures and report them at the end.
                 failures.append(AddFailure(path=file_path, error=str(err)))
 
             except Exception as err:
