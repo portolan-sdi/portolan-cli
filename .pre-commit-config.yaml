@@ -43,6 +43,16 @@ repos:
 
   - repo: local
     hooks:
+      # === SAFETY HOOKS ===
+      # Prevent accidental commits of temporary/generated content
+
+      - id: forbid-worktrees
+        name: forbid worktree files
+        entry: "bash -c 'echo ERROR - Worktree files should not be committed. Remove .claude/worktrees/ from staging. && exit 1'"
+        language: system
+        files: ^\.claude/worktrees/
+        pass_filenames: false
+
       # === AUTO-UPDATE HOOKS ===
       # These regenerate content from code - keeps docs in sync automatically
 
