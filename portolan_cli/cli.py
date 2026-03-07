@@ -23,7 +23,6 @@ from portolan_cli.dataset import (
     get_sidecars,
     list_datasets,
     remove_files,
-    resolve_collection_id,
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.metadata import check_directory_metadata, fix_metadata
@@ -1994,7 +1993,7 @@ def add_cmd(
     # Applying the same item_id to multiple geo files would cause them to overwrite
     # each other's STAC items. (Issue #136, Issue #176)
     if item_id is not None:
-        if len(paths) > 1:
+        if len(paths) != 1:
             _handle_cmd_error(
                 "add",
                 "ValueError",
@@ -2002,7 +2001,7 @@ def add_cmd(
                 use_json,
             )
             raise SystemExit(1)
-        # Single path case: check if it's a directory
+        # Exactly 1 path: check if it's a directory
         if paths[0].resolve().is_dir():
             _handle_cmd_error(
                 "add",
@@ -2012,52 +2011,36 @@ def add_cmd(
             )
             raise SystemExit(1)
 
-    # Process each path independently, aggregating results
-    all_added: list[DatasetInfo] = []
-    all_skipped: list[Path] = []
-    all_failures: list[AddFailure] = []
+    # Resolve all CLI paths upfront and deduplicate by resolved path.
+    # Using dict.fromkeys preserves order while deduplicating.
+    resolved_paths: list[Path] = list(dict.fromkeys(p.resolve() for p in paths))
 
-    for path in paths:
-        target_path = path.resolve()
-
-        # Determine collection ID from path.
-        # Special case: when the user runs `add .` (or `add <catalog-root>`), target_path
-        # equals catalog_root. In this case we cannot determine a single collection—instead
-        # we let add_files infer the collection for each file individually by passing
-        # collection_id=None.  This implements Issue #137.
-        #
-        # NOTE: Use samefile() not == for robust comparison across:
-        # - Case-insensitive filesystems (macOS HFS+, Windows NTFS)
-        # - Symlinks that resolve to the same path
-        # - Trailing slash inconsistencies
-        collection_id: str | None
-        if target_path.samefile(catalog_root):
-            # Catalog-root add: infer collection per-file from directory structure
-            collection_id = None
-        else:
-            try:
-                collection_id = resolve_collection_id(target_path, catalog_root)
-            except ValueError as err:
-                _handle_cmd_error("add", "PathError", str(err), use_json)
-                raise SystemExit(1) from err
-
-        # Add files for this path
-        try:
-            added, skipped, failures = add_files(
-                paths=[target_path],
-                catalog_root=catalog_root,
-                collection_id=collection_id,
-                item_id=item_id,
-                verbose=verbose,
-            )
-            all_added.extend(added)
-            all_skipped.extend(skipped)
-            all_failures.extend(failures)
-        except (ValueError, FileNotFoundError) as err:
-            err_type = type(err).__name__
-            _handle_cmd_error("add", err_type, str(err), use_json)
-            raise SystemExit(1) from err
-
+    # Call add_files once with all resolved paths.
+    # We pass collection_id=None so that add_files infers the collection per-file
+    # from directory structure. This handles:
+    # - `portolan add .` (catalog-root add, multiple collections)
+    # - `portolan add file1 file2` (files from different collections)
+    # - `portolan add file1 file2` (files from same collection)
+    # Per ADR-0028, add_files deduplicates paths internally.
+    #
+    # NOTE: We intentionally do NOT do per-path collection inference in the CLI.
+    # add_files already does this correctly when collection_id=None, and batching
+    # avoids duplicate item writes when the same item directory appears via
+    # multiple CLI arguments (e.g. `portolan add . foo/data.parquet`).
+    try:
+        all_added, all_skipped, all_failures = add_files(
+            paths=resolved_paths,
+            catalog_root=catalog_root,
+            collection_id=None,
+            item_id=item_id,
+            verbose=verbose,
+        )
+    except (ValueError, FileNotFoundError) as err:
+        err_type = type(err).__name__
+        # Include failed path context in error message when there's only one path
+        path_context = f"{resolved_paths[0]}: " if len(resolved_paths) == 1 else ""
+        _handle_cmd_error("add", err_type, f"{path_context}{err}", use_json)
+        raise SystemExit(1) from err
 
     # Output combined results
     _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)

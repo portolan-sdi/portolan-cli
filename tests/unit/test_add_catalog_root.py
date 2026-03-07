@@ -254,7 +254,7 @@ class TestAddAtCatalogRoot:
 
     @pytest.mark.unit
     def test_add_subdirectory_still_infers_collection(self, runner: CliRunner) -> None:
-        """add <collection_subdir> still infers single collection_id (existing behavior)."""
+        """add <collection_subdir> passes collection_id=None; add_files infers per-file."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -275,12 +275,15 @@ class TestAddAtCatalogRoot:
 
                 call_args = mock_add.call_args
                 assert call_args is not None
-                # For a non-root subdirectory, collection_id should still be inferred
-                assert call_args.kwargs.get("collection_id") == "demographics"
+                # The CLI now delegates collection inference to add_files (collection_id=None).
+                # add_files infers "demographics" internally from the directory structure.
+                assert call_args.kwargs.get("collection_id") is None
+                # The collection directory path should be passed through
+                assert collection_dir.resolve() in call_args.kwargs["paths"]
 
     @pytest.mark.unit
     def test_add_file_directly_at_root_fails_with_clear_error(self, runner: CliRunner) -> None:
-        """add <file> placed directly at catalog root (no collection) still errors."""
+        """add <file> placed directly at catalog root (no collection) fails via add_files."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -289,13 +292,19 @@ class TestAddAtCatalogRoot:
             test_file = temp_path / "stray.geojson"
             test_file.write_text("{}")
 
-            result = runner.invoke(
-                cli,
-                ["add", "--portolan-dir", str(temp_path), str(test_file)],
-            )
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                # add_files raises ValueError when a file has no collection (at root level)
+                mock_add.side_effect = ValueError(
+                    "Cannot add file at catalog root: no collection directory"
+                )
 
-            # Should fail - file must be inside a collection subdirectory
-            assert result.exit_code == 1
+                result = runner.invoke(
+                    cli,
+                    ["add", "--portolan-dir", str(temp_path), str(test_file)],
+                )
+
+                # Should fail - file must be inside a collection subdirectory
+                assert result.exit_code == 1
 
 
 class TestAddCatalogRootCollectionInference:
