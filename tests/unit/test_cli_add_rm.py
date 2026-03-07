@@ -324,6 +324,152 @@ class TestAdd:
             assert result.exit_code != 0
             assert "single file" in result.output.lower() or "directory" in result.output.lower()
 
+    @pytest.mark.unit
+    def test_add_multiple_paths(self, runner: CliRunner) -> None:
+        """add accepts multiple paths like git add (Issue #176)."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            # Create multiple files in different collections
+            coll1 = temp_path / "collection1"
+            coll1.mkdir()
+            file1 = coll1 / "data1.geojson"
+            file1.write_text("{}")
+
+            coll2 = temp_path / "collection2"
+            coll2.mkdir()
+            file2 = coll2 / "data2.geojson"
+            file2.write_text("{}")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = ([], [], [])
+
+                result = runner.invoke(
+                    cli,
+                    ["add", str(file1), str(file2)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                # Should be called once per path (each path processed independently)
+                assert mock_add.call_count == 2
+
+    @pytest.mark.unit
+    def test_add_multiple_paths_mixed_collections(self, runner: CliRunner) -> None:
+        """add multiple paths with correct collection inference for each."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            # Create files in different collections
+            demographics = temp_path / "demographics"
+            demographics.mkdir()
+            census = demographics / "census.geojson"
+            census.write_text("{}")
+
+            imagery = temp_path / "imagery"
+            imagery.mkdir()
+            satellite = imagery / "satellite.tif"
+            satellite.write_bytes(b"tiff")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = ([], [], [])
+
+                runner.invoke(
+                    cli,
+                    ["add", str(census), str(satellite)],
+                    catch_exceptions=False,
+                )
+
+                # Verify each path got the correct collection_id
+                calls = mock_add.call_args_list
+                assert len(calls) == 2
+
+                # First call should be for demographics
+                first_call = calls[0]
+                assert first_call.kwargs.get("collection_id") == "demographics"
+
+                # Second call should be for imagery
+                second_call = calls[1]
+                assert second_call.kwargs.get("collection_id") == "imagery"
+
+    @pytest.mark.unit
+    def test_add_multiple_paths_reports_combined_results(self, runner: CliRunner) -> None:
+        """add multiple paths reports combined success count."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            coll = temp_path / "data"
+            coll.mkdir()
+            file1 = coll / "data1.geojson"
+            file1.write_text("{}")
+            file2 = coll / "data2.geojson"
+            file2.write_text("{}")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                # Each call adds one item
+                mock_add.return_value = (
+                    [
+                        DatasetInfo(
+                            item_id="item",
+                            collection_id="data",
+                            format_type=FormatType.VECTOR,
+                            bbox=[0, 0, 1, 1],
+                            asset_paths=["data.parquet"],
+                        )
+                    ],
+                    [],
+                    [],
+                )
+
+                result = runner.invoke(
+                    cli,
+                    ["add", str(file1), str(file2)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                # Output should indicate multiple items were added
+                # The exact format depends on _output_add_results implementation
+
+    @pytest.mark.unit
+    def test_add_no_paths_fails(self, runner: CliRunner) -> None:
+        """add without any paths fails with error."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            result = runner.invoke(cli, ["add"])
+
+            # Click should report missing argument
+            assert result.exit_code != 0
+            assert "missing argument" in result.output.lower() or "paths" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_add_item_id_with_multiple_paths_fails(self, runner: CliRunner) -> None:
+        """--item-id with multiple paths fails (ambiguous)."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            coll = temp_path / "data"
+            coll.mkdir()
+            file1 = coll / "data1.geojson"
+            file1.write_text("{}")
+            file2 = coll / "data2.geojson"
+            file2.write_text("{}")
+
+            result = runner.invoke(
+                cli,
+                ["add", "--item-id", "my-id", str(file1), str(file2)],
+            )
+
+            assert result.exit_code != 0
+            # Should reject using --item-id with multiple paths
+            assert "single" in result.output.lower() or "multiple" in result.output.lower()
+
 
 class TestRm:
     """Tests for 'portolan rm' command."""

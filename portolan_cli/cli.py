@@ -1900,7 +1900,12 @@ def _output_add_results(
 
 
 @cli.command("add")
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument(
+    "paths",
+    type=click.Path(exists=True, path_type=Path),
+    nargs=-1,
+    required=True,
+)
 @click.option(
     "--verbose",
     "-v",
@@ -1922,16 +1927,15 @@ def _output_add_results(
 @click.pass_context
 def add_cmd(
     ctx: click.Context,
-    path: Path,
+    paths: tuple[Path, ...],
     verbose: bool,
     item_id: str | None,
     catalog_path: Path | None,
 ) -> None:
     """Track files in the catalog.
 
-    Adds files to the Portolan catalog with automatic collection inference.
-    The collection ID is determined from the first directory component of
-    the path relative to the catalog root.
+    Accepts multiple paths like git add. Each path is processed independently
+    with automatic collection inference based on directory structure.
 
     Works like git: run from anywhere inside a catalog and it auto-detects
     the catalog root. Use --portolan-dir to override.
@@ -1946,10 +1950,11 @@ def add_cmd(
 
     \b
     Examples:
-        cd my-catalog && portolan add demographics/census.parquet
+        portolan add demographics/census.parquet
+        portolan add file1.geojson file2.geojson   # Add multiple files
         portolan add imagery/                      # Add all files in directory
         portolan add .                             # Add all files in catalog
-        portolan add data.geojson --item-id my-custom-id  # Override item ID
+        portolan add data.geojson --item-id my-id  # Override item ID (single file only)
 
     Smart behavior:
     - Unchanged files are silently skipped (use --verbose to see them)
@@ -1958,7 +1963,6 @@ def add_cmd(
     - All files in the item directory are tracked, not just geo files (ADR-0028)
     """
     use_json = should_output_json(ctx)
-    target_path = path.resolve()
 
     # Auto-detect catalog root (git-style)
     catalog_root: Path
@@ -1986,51 +1990,80 @@ def add_cmd(
             detail("Run 'portolan init' to create a catalog")
         raise SystemExit(1)
 
-    # Validate --item-id is only used with single files, not directories.
-    # Applying the same item_id to multiple geo files in a directory would cause
-    # them to overwrite each other's STAC items. (Issue #136)
-    if item_id is not None and target_path.is_dir():
-        _handle_cmd_error(
-            "add",
-            "ValueError",
-            "--item-id can only be used with a single file, not a directory",
-            use_json,
-        )
-        raise SystemExit(1)
+    # Validate --item-id is only used with a single file, not multiple paths or directories.
+    # Applying the same item_id to multiple geo files would cause them to overwrite
+    # each other's STAC items. (Issue #136, Issue #176)
+    if item_id is not None:
+        if len(paths) > 1:
+            _handle_cmd_error(
+                "add",
+                "ValueError",
+                "--item-id can only be used with a single file, not multiple paths",
+                use_json,
+            )
+            raise SystemExit(1)
+        # Single path case: check if it's a directory
+        if paths[0].resolve().is_dir():
+            _handle_cmd_error(
+                "add",
+                "ValueError",
+                "--item-id can only be used with a single file, not a directory",
+                use_json,
+            )
+            raise SystemExit(1)
 
-    # Determine collection ID from path.
-    # Special case: when the user runs `add .` (or `add <catalog-root>`), target_path
-    # equals catalog_root. In this case we cannot determine a single collection—instead
-    # we let add_files infer the collection for each file individually by passing
-    # collection_id=None.  This implements Issue #137.
-    #
-    # NOTE: Use samefile() not == for robust comparison across:
-    # - Case-insensitive filesystems (macOS HFS+, Windows NTFS)
-    # - Symlinks that resolve to the same path
-    # - Trailing slash inconsistencies
-    collection_id: str | None
-    if target_path.samefile(catalog_root):
-        # Catalog-root add: infer collection per-file from directory structure
-        collection_id = None
-    else:
+    # Process each path independently, aggregating results
+    all_added: list[DatasetInfo] = []
+    all_skipped: list[Path] = []
+    all_failures: list[AddFailure] = []
+
+    for path in paths:
+        target_path = path.resolve()
+
+        # Determine collection ID from path.
+        # Special case: when the user runs `add .` (or `add <catalog-root>`), target_path
+        # equals catalog_root. In this case we cannot determine a single collection—instead
+        # we let add_files infer the collection for each file individually by passing
+        # collection_id=None.  This implements Issue #137.
+        #
+        # NOTE: Use samefile() not == for robust comparison across:
+        # - Case-insensitive filesystems (macOS HFS+, Windows NTFS)
+        # - Symlinks that resolve to the same path
+        # - Trailing slash inconsistencies
+        collection_id: str | None
+        if target_path.samefile(catalog_root):
+            # Catalog-root add: infer collection per-file from directory structure
+            collection_id = None
+        else:
+            try:
+                collection_id = resolve_collection_id(target_path, catalog_root)
+            except ValueError as err:
+                _handle_cmd_error("add", "PathError", str(err), use_json)
+                raise SystemExit(1) from err
+
+        # Add files for this path
         try:
-            collection_id = resolve_collection_id(target_path, catalog_root)
-        except ValueError as err:
-            _handle_cmd_error("add", "PathError", str(err), use_json)
+            added, skipped, failures = add_files(
+                paths=[target_path],
+                catalog_root=catalog_root,
+                collection_id=collection_id,
+                item_id=item_id,
+                verbose=verbose,
+            )
+            all_added.extend(added)
+            all_skipped.extend(skipped)
+            all_failures.extend(failures)
+        except (ValueError, FileNotFoundError) as err:
+            err_type = type(err).__name__
+            _handle_cmd_error("add", err_type, str(err), use_json)
             raise SystemExit(1) from err
 
-    # Add files
-    added, skipped, failures = add_files(
-        paths=[target_path],
-        catalog_root=catalog_root,
-        collection_id=collection_id,
-        item_id=item_id,
-        verbose=verbose,
-    )
-    _output_add_results(added, skipped, failures, verbose, use_json)
+
+    # Output combined results
+    _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
 
     # Exit with non-zero code if any failures occurred
-    if failures:
+    if all_failures:
         raise SystemExit(1)
 
 
