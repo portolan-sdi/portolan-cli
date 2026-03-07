@@ -294,6 +294,178 @@ class TestAddIntegration:
             assert "item-a" not in change, f"Changes incorrectly includes item-a: {change}"
 
 
+class TestAddItemIdOverrideIntegration:
+    """Integration tests for --item-id flag on 'portolan add' command.
+
+    Issue #136: Users should be able to override automatic item ID derivation.
+    """
+
+    @pytest.mark.integration
+    def test_add_with_item_id_creates_item_with_custom_id(
+        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """add --item-id creates STAC item with the custom ID."""
+        import json
+
+        # Set up: create collection and copy file
+        collection_dir = initialized_catalog / "demographics"
+        collection_dir.mkdir()
+        # Create item directory (required structure)
+        item_dir = collection_dir / "auto-derived"
+        item_dir.mkdir()
+        test_file = item_dir / "census.geojson"
+        shutil.copy(valid_points_geojson, test_file)
+
+        # Act: add with --item-id override
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                "--item-id",
+                "custom-census-2024",
+                str(test_file),
+            ],
+            catch_exceptions=False,
+        )
+
+        # Assert
+        assert result.exit_code == 0, f"Add failed: {result.output}"
+
+        # Check that versions.json uses the custom item ID
+        versions_path = collection_dir / "versions.json"
+        assert versions_path.exists(), "versions.json not created"
+        with open(versions_path) as f:
+            versions = json.load(f)
+
+        # The item_id in versions.json should be custom-census-2024
+        latest_version = versions["versions"][-1]
+        # Check assets are keyed by the custom item ID
+        asset_keys = list(latest_version["assets"].keys())
+        assert any("custom-census-2024" in key for key in asset_keys), (
+            f"Expected item with custom ID 'custom-census-2024' in assets, got: {asset_keys}"
+        )
+
+    @pytest.mark.integration
+    def test_add_with_item_id_stac_item_uses_custom_id(
+        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """add --item-id results in STAC item.json with custom ID field."""
+        import json
+
+        # Set up
+        collection_dir = initialized_catalog / "imagery"
+        item_dir = collection_dir / "original-dir"
+        item_dir.mkdir(parents=True)
+        test_file = item_dir / "satellite.geojson"
+        shutil.copy(valid_points_geojson, test_file)
+
+        # Act
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                "--item-id",
+                "my-custom-item",
+                str(test_file),
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, f"Add failed: {result.output}"
+
+        # Find and read the item.json
+        # STAC item structure: collection_dir/item_id/item_id.json
+        # But since we override item_id, we still create in original dir
+        item_json_files = list(collection_dir.rglob("*.json"))
+        item_json = None
+        for f in item_json_files:
+            if f.name not in ("collection.json", "versions.json", "catalog.json"):
+                try:
+                    with open(f) as fh:
+                        data = json.load(fh)
+                        if data.get("type") == "Feature":
+                            item_json = data
+                            break
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+        assert item_json is not None, "No STAC item found"
+        assert item_json.get("id") == "my-custom-item", (
+            f"STAC item ID should be 'my-custom-item', got '{item_json.get('id')}'"
+        )
+
+    @pytest.mark.integration
+    def test_add_without_item_id_derives_from_directory(
+        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """Without --item-id, item ID is derived from parent directory."""
+        import json
+
+        # Set up: file in directory named 'census-2020'
+        collection_dir = initialized_catalog / "demographics"
+        item_dir = collection_dir / "census-2020"
+        item_dir.mkdir(parents=True)
+        test_file = item_dir / "data.geojson"
+        shutil.copy(valid_points_geojson, test_file)
+
+        # Act: add WITHOUT --item-id
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                str(test_file),
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0, f"Add failed: {result.output}"
+
+        # The item ID should be 'census-2020' (parent directory name)
+        versions_path = collection_dir / "versions.json"
+        with open(versions_path) as f:
+            versions = json.load(f)
+
+        asset_keys = list(versions["versions"][-1]["assets"].keys())
+        assert any("census-2020" in key for key in asset_keys), (
+            f"Expected auto-derived item ID 'census-2020', got: {asset_keys}"
+        )
+
+    @pytest.mark.integration
+    def test_add_item_id_with_invalid_characters_fails(
+        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """add --item-id with path separators fails with clear error."""
+        # Set up
+        collection_dir = initialized_catalog / "vectors"
+        item_dir = collection_dir / "item"
+        item_dir.mkdir(parents=True)
+        test_file = item_dir / "data.geojson"
+        shutil.copy(valid_points_geojson, test_file)
+
+        # Act: try to use invalid item_id with path separator
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                "--item-id",
+                "invalid/item-id",
+                str(test_file),
+            ],
+        )
+
+        # Should fail
+        assert result.exit_code != 0, "Should fail for item_id with '/'"
+        assert "single path segment" in result.output.lower() or "invalid" in result.output.lower()
+
+
 class TestRmIntegration:
     """Integration tests for 'portolan rm' command."""
 

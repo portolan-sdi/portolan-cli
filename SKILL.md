@@ -25,6 +25,7 @@ Track files in the catalog.
 ```bash
 portolan add imagery/                      # Add all files in directory
 portolan add .                             # Add all files in catalog
+portolan add data.geojson --item-id my-custom-id  # Override item ID
 ```
 
 ### `portolan check`

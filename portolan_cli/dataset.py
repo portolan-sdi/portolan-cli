@@ -1198,6 +1198,7 @@ def add_files(
     paths: list[Path],
     catalog_root: Path,
     collection_id: str | None = None,
+    item_id: str | None = None,
     verbose: bool = False,
 ) -> tuple[list[DatasetInfo], list[Path]]:
     """Add files to a Portolan catalog.
@@ -1219,6 +1220,9 @@ def add_files(
             used by `portolan add .` to process multiple collections at once.
             Files at the catalog root level (not in a subdirectory) are skipped
             with a warning when collection_id=None.
+        item_id: Optional explicit item ID. If provided, overrides automatic
+            derivation from parent directory name. Must be a single path segment
+            (no '/', '\\', '.', or '..').
         verbose: If True, return skipped files info.
 
     Returns:
@@ -1291,6 +1295,7 @@ def add_files(
                     path=file_path,
                     catalog_root=catalog_root,
                     collection_id=coll_id,
+                    item_id=item_id,
                 )
                 added.append(result)
 

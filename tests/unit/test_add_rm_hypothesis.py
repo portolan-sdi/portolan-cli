@@ -1660,3 +1660,166 @@ class TestPreValidationAtomicityProperties:
             # State should be unchanged (pure function)
             files_after = set(catalog_root.rglob("*"))
             assert files_before == files_after, "_pre_validate_geometry should be pure"
+
+
+# =============================================================================
+# Property: item_id override (Issue #136)
+# =============================================================================
+
+
+# Strategies for invalid item IDs
+invalid_item_id_with_slash = st.builds(
+    lambda prefix, suffix: f"{prefix}/{suffix}",
+    safe_filename,
+    safe_filename,
+)
+invalid_item_id_with_backslash = st.builds(
+    lambda prefix, suffix: f"{prefix}\\{suffix}",
+    safe_filename,
+    safe_filename,
+)
+invalid_item_id_dot = st.just(".")
+invalid_item_id_dotdot = st.just("..")
+
+
+class TestItemIdOverrideProperties:
+    """Property-based tests for --item-id override functionality.
+
+    Issue #136: Users should be able to override automatic item ID derivation
+    via the --item-id flag. Invalid item IDs (containing path separators or
+    special values like '.' and '..') should be rejected.
+    """
+
+    @pytest.mark.integration
+    @given(
+        collection=collection_name,
+        custom_item_id=collection_name,
+    )
+    @settings(max_examples=5, deadline=30000)
+    def test_add_dataset_respects_item_id_override(
+        self, collection: str, custom_item_id: str
+    ) -> None:
+        """add_dataset() should use the provided item_id instead of deriving it.
+
+        Issue #136: When item_id is explicitly provided, it should override
+        the automatic derivation from parent directory name.
+        """
+        import json
+
+        from portolan_cli.dataset import add_dataset
+
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+            _setup_managed_catalog(catalog_root)
+
+            # Create structure where auto-derived item_id would differ
+            # Parent dir is "auto-derived-dir" but we pass custom_item_id
+            item_dir = catalog_root / collection / "auto-derived-dir"
+            item_dir.mkdir(parents=True, exist_ok=True)
+
+            geo_file = item_dir / "data.geojson"
+            geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
+
+            result = add_dataset(
+                path=geo_file,
+                catalog_root=catalog_root,
+                collection_id=collection,
+                item_id=custom_item_id,
+            )
+
+            # Item ID should be the custom one, not "auto-derived-dir"
+            assert result.item_id == custom_item_id, (
+                f"add_dataset() should use provided item_id='{custom_item_id}', "
+                f"not auto-derived '{result.item_id}'"
+            )
+
+    @pytest.mark.unit
+    @given(invalid_id=invalid_item_id_with_slash)
+    @settings(max_examples=10)
+    def test_add_dataset_rejects_item_id_with_slash(self, invalid_id: str) -> None:
+        """add_dataset() should reject item_ids containing forward slashes.
+
+        Issue #136: item_id must be a single path segment, not a path.
+        """
+        import json
+
+        from portolan_cli.dataset import add_dataset
+
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+            _setup_managed_catalog(catalog_root)
+
+            # Create minimal structure
+            item_dir = catalog_root / "test-collection" / "item-dir"
+            item_dir.mkdir(parents=True, exist_ok=True)
+
+            geo_file = item_dir / "data.geojson"
+            geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
+
+            with pytest.raises(ValueError, match="single path segment"):
+                add_dataset(
+                    path=geo_file,
+                    catalog_root=catalog_root,
+                    collection_id="test-collection",
+                    item_id=invalid_id,
+                )
+
+    @pytest.mark.unit
+    @given(invalid_id=invalid_item_id_with_backslash)
+    @settings(max_examples=10)
+    def test_add_dataset_rejects_item_id_with_backslash(self, invalid_id: str) -> None:
+        """add_dataset() should reject item_ids containing backslashes.
+
+        Issue #136: item_id must be a single path segment, not a path.
+        """
+        import json
+
+        from portolan_cli.dataset import add_dataset
+
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+            _setup_managed_catalog(catalog_root)
+
+            item_dir = catalog_root / "test-collection" / "item-dir"
+            item_dir.mkdir(parents=True, exist_ok=True)
+
+            geo_file = item_dir / "data.geojson"
+            geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
+
+            with pytest.raises(ValueError, match="single path segment"):
+                add_dataset(
+                    path=geo_file,
+                    catalog_root=catalog_root,
+                    collection_id="test-collection",
+                    item_id=invalid_id,
+                )
+
+    @pytest.mark.unit
+    @given(invalid_id=st.sampled_from([".", ".."]))
+    @settings(max_examples=2)
+    def test_add_dataset_rejects_dot_item_ids(self, invalid_id: str) -> None:
+        """add_dataset() should reject '.' and '..' as item_ids.
+
+        Issue #136: These are reserved path components and not valid item IDs.
+        """
+        import json
+
+        from portolan_cli.dataset import add_dataset
+
+        with tempfile.TemporaryDirectory() as tmp:
+            catalog_root = Path(tmp).resolve()
+            _setup_managed_catalog(catalog_root)
+
+            item_dir = catalog_root / "test-collection" / "item-dir"
+            item_dir.mkdir(parents=True, exist_ok=True)
+
+            geo_file = item_dir / "data.geojson"
+            geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
+
+            with pytest.raises(ValueError, match="single path segment"):
+                add_dataset(
+                    path=geo_file,
+                    catalog_root=catalog_root,
+                    collection_id="test-collection",
+                    item_id=invalid_id,
+                )

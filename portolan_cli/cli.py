@@ -1843,6 +1843,11 @@ def _output_add_results(
     help="Show detailed output including skipped unchanged files.",
 )
 @click.option(
+    "--item-id",
+    default=None,
+    help="Override automatic item ID derivation. Must be a single path segment.",
+)
+@click.option(
     "--portolan-dir",
     "catalog_path",
     type=click.Path(path_type=Path),
@@ -1850,7 +1855,13 @@ def _output_add_results(
     help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
-def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | None) -> None:
+def add_cmd(
+    ctx: click.Context,
+    path: Path,
+    verbose: bool,
+    item_id: str | None,
+    catalog_path: Path | None,
+) -> None:
     """Track files in the catalog.
 
     Adds files to the Portolan catalog with automatic collection inference.
@@ -1862,16 +1873,18 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
 
     \b
     Item ID derivation:
-        The item ID is derived from the filename stem of the geospatial file.
-        For example, adding 'census/data/radios.parquet' creates an item
-        named 'radios', not 'data'. All other files in the item directory
-        are tracked as companion assets (per ADR-0028).
+        By default, the item ID is derived from the parent directory name.
+        For example, adding 'census/2020/data.parquet' creates an item
+        named '2020'. Use --item-id to override this automatic derivation.
+        All other files in the item directory are tracked as companion
+        assets (per ADR-0028).
 
     \b
     Examples:
         cd my-catalog && portolan add demographics/census.parquet
         portolan add imagery/                      # Add all files in directory
         portolan add .                             # Add all files in catalog
+        portolan add data.geojson --item-id my-custom-id  # Override item ID
 
     Smart behavior:
     - Unchanged files are silently skipped (use --verbose to see them)
@@ -1935,6 +1948,7 @@ def add_cmd(ctx: click.Context, path: Path, verbose: bool, catalog_path: Path | 
             paths=[target_path],
             catalog_root=catalog_root,
             collection_id=collection_id,
+            item_id=item_id,
             verbose=verbose,
         )
         _output_add_results(added, skipped, collection_id, verbose, use_json)
