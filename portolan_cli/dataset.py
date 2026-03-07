@@ -66,6 +66,31 @@ _GEOPARQUET_IO_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
     "geometry columns in tsv",
 )
 
+# Error message patterns for parquet files without geometry (Issue #177).
+# These patterns indicate a parquet file lacks GeoParquet metadata (no 'geo' key),
+# meaning it's tabular data that should be tracked as an auxiliary asset.
+_PARQUET_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
+    "missing bounding box",
+    "no valid geometry",
+)
+
+
+def _is_parquet_no_geometry_error(err: ValueError) -> bool:
+    """Check if a ValueError indicates a parquet file lacks geometry (Issue #177).
+
+    This handles the case where a parquet file is valid but has no GeoParquet
+    metadata (no 'geo' key in schema). Such files should be tracked as auxiliary
+    assets per ADR-0028, not rejected.
+
+    Args:
+        err: The ValueError to check.
+
+    Returns:
+        True if the error is specifically about missing geometry in a parquet file.
+    """
+    err_msg = str(err).lower()
+    return any(pattern in err_msg for pattern in _PARQUET_NO_GEOMETRY_PATTERNS)
+
 
 # Files to ignore when scanning item directories for assets.
 # These are STAC/Portolan structural files, not user data.
@@ -1360,67 +1385,75 @@ def add_files(
 
             except click.ClickException as err:
                 # Handle ClickExceptions from add_dataset (Issues #140, #175).
-                #
-                # Geometry-related errors for tabular files (CSV/TSV) are
-                # deferred for non-geo asset tracking (ADR-0028).
-                # ALL other ClickExceptions are recorded as failures and
-                # processing continues to the next file.
-                if not _is_no_geometry_error(err):
-                    # Record as failure and continue (Issue #175)
+                # Defer geometry-related errors for tabular files (ADR-0028);
+                # record all other ClickExceptions as failures.
+                is_tabular = file_path.suffix.lower() in TABULAR_EXTENSIONS
+                if _is_no_geometry_error(err) and is_tabular:
+                    deferred_non_geo.append((file_path, file_path.parent, coll_id))
+                else:
                     failures.append(AddFailure(path=file_path, error=str(err)))
-                    continue
-
-                # Only tabular formats can be non-geospatial assets
-                if file_path.suffix.lower() not in TABULAR_EXTENSIONS:
-                    # Non-tabular format without geometry - record as failure (Issue #175)
-                    failures.append(AddFailure(path=file_path, error=str(err)))
-                    continue
-
-                # Defer non-geo tabular files until geo files are processed
-                # This ensures we have an item_dir to place them in
-                source_dir = file_path.parent
-                deferred_non_geo.append((file_path, source_dir, coll_id))
                 continue
 
-            except NoGeometryError:
+            except NoGeometryError as err:
                 # Handle files without geometry (Issue #177, parquet;
                 # also covers GeoJSON and post-conversion bbox failures).
-                # NoGeometryError is raised by _pre_validate_geometry and the
-                # post-conversion bbox check.  Tabular formats (.parquet, .csv,
-                # .tsv) are deferred for auxiliary-asset tracking (ADR-0028);
-                # other formats without geometry are real errors.
-                if file_path.suffix.lower() not in TABULAR_EXTENSIONS:
-                    raise
-                source_dir = file_path.parent
-                deferred_non_geo.append((file_path, source_dir, coll_id))
+                # Tabular formats are deferred for auxiliary-asset tracking;
+                # other formats without geometry are recorded as failures.
+                if file_path.suffix.lower() in TABULAR_EXTENSIONS:
+                    deferred_non_geo.append((file_path, file_path.parent, coll_id))
+                else:
+                    failures.append(AddFailure(path=file_path, error=str(err)))
                 continue
 
             except ValueError as err:
-                # Handle parquet files without geometry (Issue #177)
-                # These should be treated as auxiliary/tabular assets per ADR-0028
-                if _is_parquet_no_geometry_error(err):
-                    # Only tabular formats can be non-geospatial assets
-                    if file_path.suffix.lower() in TABULAR_EXTENSIONS:
-                        # Defer non-geo parquet files until geo files are processed
-                        source_dir = file_path.parent
-                        deferred_non_geo.append((file_path, source_dir, coll_id))
-                        continue
-                # Other ValueErrors: record failure and continue (Issue #175)
-                failures.append(AddFailure(path=file_path, error=str(err)))
-
-            except FileNotFoundError as err:
-                # Record failure and continue processing (Issue #175)
-                failures.append(AddFailure(path=file_path, error=str(err)))
+                # Handle parquet files without geometry (Issue #177) or other errors.
+                # Defer tabular files with no-geometry errors; record others as failures.
+                if (
+                    _is_parquet_no_geometry_error(err)
+                    and file_path.suffix.lower() in TABULAR_EXTENSIONS
+                ):
+                    deferred_non_geo.append((file_path, file_path.parent, coll_id))
+                else:
+                    failures.append(AddFailure(path=file_path, error=str(err)))
+                continue
 
             except Exception as err:
-                # Catch-all for unexpected errors (conversion, metadata, runtime).
-                # Without this, a single unexpected error type would abort the
-                # entire batch, defeating the purpose of Issue #175.
-                # We catch Exception (not BaseException) so KeyboardInterrupt
-                # and SystemExit propagate normally.
+                # Catch-all for unexpected errors (Issue #175).
+                # Record failure and continue so one bad file doesn't abort batch.
                 failures.append(AddFailure(path=file_path, error=str(err)))
 
     # Process deferred non-geo files (ADR-0028: track as assets, skip conversion)
+    _process_deferred_non_geo_files(
+        deferred_non_geo=deferred_non_geo,
+        source_to_item_dir=source_to_item_dir,
+        catalog_root=catalog_root,
+        skipped=skipped,
+        failures=failures,
+    )
+
+    return added, skipped, failures
+
+
+def _process_deferred_non_geo_files(
+    *,
+    deferred_non_geo: list[tuple[Path, Path, str]],
+    source_to_item_dir: dict[Path, tuple[Path, str, str]],
+    catalog_root: Path,
+    skipped: list[Path],
+    failures: list[AddFailure],
+) -> None:
+    """Process deferred non-geospatial files (ADR-0028).
+
+    These files were deferred during the main add loop because they lack
+    geometry. They are tracked as auxiliary assets alongside geo files.
+
+    Args:
+        deferred_non_geo: List of (file_path, source_dir, collection_id) tuples.
+        source_to_item_dir: Mapping from source dirs to (item_dir, coll_id, item_id).
+        catalog_root: Root directory of the catalog.
+        skipped: List to append skipped files to (modified in place).
+        failures: List to append failures to (modified in place).
+    """
     for file_path, source_dir, coll_id in deferred_non_geo:
         try:
             if source_dir in source_to_item_dir:
@@ -1462,11 +1495,7 @@ def add_files(
                 skipped.append(file_path)
         except Exception as err:
             # Record failure and continue (Issue #175).
-            # _copy_non_geo_to_item_dir / _update_item_with_asset can
-            # raise OSError, shutil.Error, etc.
             failures.append(AddFailure(path=file_path, error=str(err)))
-
-    return added, skipped, failures
 
 
 def _update_item_with_asset(

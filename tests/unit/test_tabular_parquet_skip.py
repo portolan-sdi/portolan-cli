@@ -107,7 +107,7 @@ class TestTabularParquetSkip:
     ) -> None:
         """add_files should skip parquet without geometry and emit a warning."""
         with caplog.at_level(logging.WARNING):
-            added, skipped = add_files(
+            added, skipped, failures = add_files(
                 paths=[tabular_parquet],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -131,7 +131,7 @@ class TestTabularParquetSkip:
         """add_files should NOT raise an exception for tabular parquet."""
         # This should NOT raise - it should handle gracefully
         try:
-            added, skipped = add_files(
+            added, skipped, failures = add_files(
                 paths=[tabular_parquet],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -196,7 +196,7 @@ class TestTabularParquetWithGeoAsset:
             patch("portolan_cli.dataset.add_dataset", side_effect=mock_add_side_effect) as mock_add,
             patch("portolan_cli.dataset._update_item_with_asset") as mock_update_item,
         ):
-            added, skipped = add_files(
+            added, skipped, failures = add_files(
                 paths=[item_dir],  # Add the entire item directory
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -243,7 +243,7 @@ class TestMixedParquetDirectory:
         pq.write_table(table2, item_dir / "data2.parquet")
 
         with caplog.at_level(logging.WARNING):
-            added, skipped = add_files(
+            added, skipped, failures = add_files(
                 paths=[item_dir],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -324,13 +324,13 @@ class TestNoGeometryError:
 
 
 class TestNonGeometryValueErrorsPropagation:
-    """Tests that non-geometry ValueErrors still propagate correctly."""
+    """Tests that non-geometry ValueErrors are captured in failures (Issue #175)."""
 
     @pytest.mark.unit
-    def test_non_geometry_valueerror_propagates_from_add_dataset(
+    def test_non_geometry_valueerror_captured_in_failures(
         self, initialized_catalog: Path, tabular_parquet: Path
     ) -> None:
-        """Non-geometry ValueErrors (e.g., invalid collection ID) should NOT be swallowed."""
+        """Non-geometry ValueErrors (e.g., invalid collection ID) should be in failures."""
         # Create a parquet file in a directory
         item_dir = initialized_catalog / "collection" / "item"
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -342,16 +342,19 @@ class TestNonGeometryValueErrorsPropagation:
         with patch("portolan_cli.dataset.add_dataset") as mock_add:
             mock_add.side_effect = ValueError("Unsupported format: .xyz")
 
-            with pytest.raises(ValueError, match="Unsupported format"):
-                add_files(
-                    paths=[item_dir / "data.parquet"],
-                    catalog_root=initialized_catalog,
-                    collection_id="collection",
-                )
+            # Per Issue #175, errors are collected in failures instead of raised
+            added, skipped, failures = add_files(
+                paths=[item_dir / "data.parquet"],
+                catalog_root=initialized_catalog,
+                collection_id="collection",
+            )
+
+            assert len(failures) == 1
+            assert "Unsupported format" in failures[0].error
 
     @pytest.mark.unit
-    def test_json_parse_error_propagates(self, initialized_catalog: Path) -> None:
-        """JSON parse errors should propagate (not be treated as no-geometry)."""
+    def test_json_parse_error_captured_in_failures(self, initialized_catalog: Path) -> None:
+        """JSON parse errors should be in failures (not treated as no-geometry)."""
         item_dir = initialized_catalog / "collection" / "item"
         item_dir.mkdir(parents=True, exist_ok=True)
 
@@ -359,12 +362,15 @@ class TestNonGeometryValueErrorsPropagation:
         bad_geojson = item_dir / "bad.geojson"
         bad_geojson.write_text("{invalid json content")
 
-        with pytest.raises(ValueError, match="Invalid JSON"):
-            add_files(
-                paths=[bad_geojson],
-                catalog_root=initialized_catalog,
-                collection_id="collection",
-            )
+        # Per Issue #175, errors are collected in failures instead of raised
+        added, skipped, failures = add_files(
+            paths=[bad_geojson],
+            catalog_root=initialized_catalog,
+            collection_id="collection",
+        )
+
+        assert len(failures) == 1
+        assert "Invalid JSON" in failures[0].error or "json" in failures[0].error.lower()
 
 
 # =============================================================================
@@ -420,7 +426,7 @@ class TestGeoParquetSuccessPath:
                 asset_paths=["boundaries.parquet"],
             )
 
-            added, skipped = add_files(
+            added, skipped, failures = add_files(
                 paths=[geo_parquet],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -445,7 +451,7 @@ class TestWarningMessages:
     ) -> None:
         """Warning should mention the file for debugging."""
         with caplog.at_level(logging.WARNING):
-            added, skipped = add_files(
+            added, skipped, failures = add_files(
                 paths=[tabular_parquet],
                 catalog_root=initialized_catalog,
                 collection_id="collection",
@@ -508,7 +514,7 @@ class TestTabularParquetHypothesis:
 
             # This should NOT raise - ever
             try:
-                added, skipped = add_files(
+                added, skipped, failures = add_files(
                     paths=[parquet_file],
                     catalog_root=tmp_path,
                     collection_id="collection",
@@ -576,7 +582,7 @@ class TestTabularParquetHypothesis:
 
                 # This should NOT raise
                 try:
-                    added, skipped = add_files(
+                    added, skipped, failures = add_files(
                         paths=[collection_dir],
                         catalog_root=tmp_path,
                         collection_id="collection",
@@ -629,7 +635,7 @@ class TestTabularParquetHypothesis:
 
             # Should not raise
             try:
-                added, skipped = add_files(
+                added, skipped, failures = add_files(
                     paths=[parquet_file],
                     catalog_root=tmp_path,
                     collection_id="collection",
