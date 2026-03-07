@@ -376,7 +376,7 @@ error("No geometry column (required)")     # ✗ Red X
 detail("Processing chunk 3/10...")         # Dimmed text
 ```
 
-<!-- freshness: last-verified: 2026-03-06 -->
+<!-- freshness: last-verified: 2026-03-07 -->
 ## Design Principles
 
 | Principle | Meaning | ADR |

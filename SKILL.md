@@ -37,6 +37,14 @@ portolan check --geo-assets           # Check geo-assets only
 portolan check --fix                  # Fix both metadata and geo-assets
 ```
 
+### `portolan clean`
+Remove all Portolan metadata while preserving data files.
+
+```bash
+portolan clean           # Remove all metadata
+portolan clean --dry-run # Preview what would be removed
+```
+
 ### `portolan clone`
 Clone a remote catalog to a local directory.
 
