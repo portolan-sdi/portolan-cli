@@ -16,7 +16,6 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import click
@@ -32,9 +31,6 @@ from portolan_cli.dataset import (
     add_files,
     iter_files_with_sidecars,
 )
-
-if TYPE_CHECKING:
-    pass
 
 
 @pytest.fixture

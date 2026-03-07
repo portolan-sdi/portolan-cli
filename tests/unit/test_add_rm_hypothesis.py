@@ -856,10 +856,9 @@ class TestAddFilesEdgeCases:
             # Per Issue #175: errors are now collected instead of raised
             added, skipped, failures = add_files(paths=[test_file], catalog_root=catalog)
 
-            # Should have one failure with context
+            # Should have one failure with the raw error message
             assert len(failures) == 1
-            assert "Failed to add" in failures[0].error
-            assert "original error" in failures[0].error
+            assert failures[0].error == "original error"
 
 
 class TestRemoveFilesEdgeCases:

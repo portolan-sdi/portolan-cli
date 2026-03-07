@@ -1868,7 +1868,6 @@ def _output_add_results(
     added: list[DatasetInfo],
     skipped: list[Path],
     failures: list[AddFailure],
-    collection_id: str | None,
     verbose: bool,
     use_json: bool,
 ) -> None:
@@ -2011,7 +2010,7 @@ def add_cmd(
         item_id=item_id,
         verbose=verbose,
     )
-    _output_add_results(added, skipped, failures, collection_id, verbose, use_json)
+    _output_add_results(added, skipped, failures, verbose, use_json)
 
     # Exit with non-zero code if any failures occurred
     if failures:

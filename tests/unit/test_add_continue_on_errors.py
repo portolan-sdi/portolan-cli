@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -27,9 +26,6 @@ from portolan_cli.dataset import (
     add_files,
 )
 from portolan_cli.formats import FormatType
-
-if TYPE_CHECKING:
-    pass
 
 
 @pytest.fixture
@@ -399,21 +395,17 @@ class TestCliOutputWithFailures:
                 assert result.exit_code == 0
 
 
-class TestAddFilesBackwardCompatibility:
-    """Ensure existing behavior is preserved for callers not expecting failures."""
+class TestAddFilesReturnContract:
+    """Verify add_files returns the 3-tuple (added, skipped, failures) contract."""
 
     @pytest.mark.unit
-    def test_existing_call_sites_work_with_two_value_unpack(self, tmp_path: Path) -> None:
-        """Existing code that unpacks 2 values should still work.
+    def test_add_files_returns_three_value_tuple(self, tmp_path: Path) -> None:
+        """add_files returns exactly 3 values: (added, skipped, failures).
 
-        This ensures backward compatibility - if code does:
-            added, skipped = add_files(...)
-
-        It should still work (failures list is an optional third return value).
+        This documents the return contract introduced in Issue #175.
+        Callers must unpack all three values:
+            added, skipped, failures = add_files(...)
         """
-        # This test documents the expectation that we maintain backward compat
-        # The actual implementation will return 3 values, but Python allows
-        # unpacking to work if the third is optional or we use *rest
         setup_catalog(tmp_path)
 
         collection_dir = tmp_path / "collection" / "item"
@@ -432,7 +424,6 @@ class TestAddFilesBackwardCompatibility:
             ),
         ):
             with patch("portolan_cli.dataset.is_current", return_value=False):
-                # This is the new interface - returns 3 values
                 result = add_files(
                     paths=[collection_dir],
                     catalog_root=tmp_path,
@@ -445,3 +436,134 @@ class TestAddFilesBackwardCompatibility:
                 assert isinstance(added, list)
                 assert isinstance(skipped, list)
                 assert isinstance(failures, list)
+
+
+class TestOutputEdgeCases:
+    """Test output formatting edge cases not covered by other test classes."""
+
+    @pytest.mark.unit
+    def test_human_output_zero_added_some_skipped_some_failures(self, runner: CliRunner) -> None:
+        """Human output when all files either skipped or failed (none added).
+
+        This is a realistic scenario: e.g., several files are unchanged
+        (skipped) and one has an error. The output should show failure
+        details without an 'Added 0 items' header.
+        """
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "collection"
+            collection_dir.mkdir()
+            test_file = collection_dir / "test.geojson"
+            test_file.write_text("{}")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = (
+                    [],  # no added
+                    [
+                        Path("unchanged1.parquet"),
+                        Path("unchanged2.parquet"),
+                    ],  # skipped
+                    [
+                        AddFailure(
+                            path=Path("broken.parquet"),
+                            error="invalid CRS",
+                        ),
+                    ],  # failures
+                )
+
+                result = runner.invoke(cli, ["add", str(collection_dir)])
+
+                # Should show failure details
+                assert "broken.parquet" in result.output
+                assert "invalid CRS" in result.output
+                assert "1 item failed" in result.output
+                # Should exit non-zero
+                assert result.exit_code == 1
+
+    @pytest.mark.unit
+    def test_click_exception_error_format_no_path_duplication(self, runner: CliRunner) -> None:
+        """ClickException errors should not duplicate the file path.
+
+        Bug #191 review: ClickException errors stored as str(err) produce
+        clean output like '- path: message' without repeating the path.
+        """
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "collection"
+            collection_dir.mkdir()
+            test_file = collection_dir / "test.geojson"
+            test_file.write_text("{}")
+
+            err_path = Path("census/data.parquet")
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = (
+                    [],
+                    [],
+                    [
+                        AddFailure(
+                            path=err_path,
+                            error="Permission denied: /some/path",
+                        ),
+                    ],
+                )
+
+                result = runner.invoke(cli, ["add", str(collection_dir)])
+
+                # The path should appear in '- path: error' format
+                # and NOT be duplicated inside the error message
+                assert "census/data.parquet: Permission denied" in result.output
+                # Verify no double-path pattern
+                assert "Failed to add" not in result.output
+                assert result.exit_code == 1
+
+    @pytest.mark.unit
+    def test_json_output_only_failures_no_successes(self, runner: CliRunner) -> None:
+        """JSON output with zero successes and only failures.
+
+        When all files fail, the envelope should have success=False,
+        an errors array at the top level, and data.added should be empty.
+        """
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "collection"
+            collection_dir.mkdir()
+            test_file = collection_dir / "test.geojson"
+            test_file.write_text("{}")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = (
+                    [],  # no successes
+                    [],  # no skipped
+                    [
+                        AddFailure(
+                            path=Path("file1.geojson"),
+                            error="missing bounding box",
+                        ),
+                        AddFailure(
+                            path=Path("file2.geojson"),
+                            error="invalid geometry type",
+                        ),
+                    ],
+                )
+
+                result = runner.invoke(
+                    cli,
+                    ["--format", "json", "add", str(collection_dir)],
+                )
+
+                envelope = json.loads(result.output)
+                assert envelope["success"] is False
+                assert envelope["data"]["added"] == []
+                assert len(envelope["data"]["failures"]) == 2
+                assert envelope["data"]["failures"][0]["error"] == "missing bounding box"
+                assert envelope["data"]["failures"][1]["error"] == "invalid geometry type"
+                # Top-level errors array should exist
+                assert "errors" in envelope
+                assert len(envelope["errors"]) == 2
+                assert result.exit_code == 1

@@ -1327,11 +1327,12 @@ def add_files(
                 source_to_item_dir[source_dir] = (item_dir, coll_id, result.item_id)
 
             except click.ClickException as err:
-                # Handle geometry detection errors from geoparquet-io gracefully
-                # for CSV/TSV files that don't have geometry columns (Issue #140)
+                # Handle ClickExceptions from add_dataset (Issues #140, #175).
                 #
-                # IMPORTANT: Only catch SPECIFIC geometry-related errors.
-                # Other ClickExceptions (permission, encoding, memory) should propagate.
+                # Geometry-related errors for tabular files (CSV/TSV) are
+                # deferred for non-geo asset tracking (ADR-0028).
+                # ALL other ClickExceptions are recorded as failures and
+                # processing continues to the next file.
                 if not _is_no_geometry_error(err):
                     # Record as failure and continue (Issue #175)
                     failures.append(AddFailure(path=file_path, error=str(err)))
@@ -1352,47 +1353,61 @@ def add_files(
                 # Record failure and continue processing (Issue #175)
                 # Previously this would stop the entire operation on first error.
                 # Now we collect all failures and report them at the end.
-                failures.append(
-                    AddFailure(path=file_path, error=f"Failed to add {file_path}: {err}")
-                )
+                failures.append(AddFailure(path=file_path, error=str(err)))
+
+            except Exception as err:
+                # Catch-all for unexpected errors (conversion, metadata, runtime).
+                # Without this, a single unexpected error type would abort the
+                # entire batch, defeating the purpose of Issue #175.
+                # We catch Exception (not BaseException) so KeyboardInterrupt
+                # and SystemExit propagate normally.
+                failures.append(AddFailure(path=file_path, error=str(err)))
 
     # Process deferred non-geo files (ADR-0028: track as assets, skip conversion)
     for file_path, source_dir, coll_id in deferred_non_geo:
-        if source_dir in source_to_item_dir:
-            resolved_item_dir, _, resolved_item_id = source_to_item_dir[source_dir]
+        try:
+            if source_dir in source_to_item_dir:
+                resolved_item_dir, _, resolved_item_id = source_to_item_dir[source_dir]
 
-            # Copy non-geo file to item directory as companion asset
-            dest_path = _copy_non_geo_to_item_dir(file_path, resolved_item_dir)
+                # Copy non-geo file to item directory as companion asset
+                dest_path = _copy_non_geo_to_item_dir(file_path, resolved_item_dir)
 
-            # Log info message (not warning - this is expected behavior per ADR-0028)
-            ext = file_path.suffix.upper().lstrip(".")
-            logger.info(
-                "Tracking %s as non-geospatial %s asset (no conversion): %s",
-                file_path,
-                ext,
-                dest_path.name,
-            )
+                # Log info message (expected behavior per ADR-0028)
+                ext = file_path.suffix.upper().lstrip(".")
+                logger.info(
+                    "Tracking %s as non-geospatial %s asset (no conversion): %s",
+                    file_path,
+                    ext,
+                    dest_path.name,
+                )
 
-            # Update the STAC item to include this new asset
-            _update_item_with_asset(
-                catalog_root=catalog_root,
-                collection_id=coll_id,
-                item_id=resolved_item_id,
-                asset_path=dest_path,
-            )
+                # Update the STAC item to include this new asset
+                _update_item_with_asset(
+                    catalog_root=catalog_root,
+                    collection_id=coll_id,
+                    item_id=resolved_item_id,
+                    asset_path=dest_path,
+                )
 
-            # Add to skipped (tracked but not converted)
-            skipped.append(file_path)
-        else:
-            # No geo file in same directory - cannot create item without bbox
-            ext = file_path.suffix.upper().lstrip(".")
-            logger.warning(
-                "Cannot track non-geospatial %s file %s: no geospatial file in same directory. "
-                "Non-geospatial files require a companion geospatial file to create a STAC item.",
-                ext,
-                file_path,
-            )
-            skipped.append(file_path)
+                # Add to skipped (tracked but not converted)
+                skipped.append(file_path)
+            else:
+                # No geo file in same dir - cannot create item without bbox
+                ext = file_path.suffix.upper().lstrip(".")
+                logger.warning(
+                    "Cannot track non-geospatial %s file %s: "
+                    "no geospatial file in same directory. "
+                    "Non-geospatial files require a companion "
+                    "geospatial file to create a STAC item.",
+                    ext,
+                    file_path,
+                )
+                skipped.append(file_path)
+        except Exception as err:
+            # Record failure and continue (Issue #175).
+            # _copy_non_geo_to_item_dir / _update_item_with_asset can
+            # raise OSError, shutil.Error, etc.
+            failures.append(AddFailure(path=file_path, error=str(err)))
 
     return added, skipped, failures
 
