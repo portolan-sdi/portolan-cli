@@ -69,7 +69,7 @@ class TestAddAtCatalogRoot:
             (temp_path / "imagery" / "satellite.tif").write_bytes(b"GeoTIFF")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
                     cli,
@@ -93,7 +93,7 @@ class TestAddAtCatalogRoot:
             (temp_path / "vectors" / "data.geojson").write_text("{}")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 runner.invoke(
                     cli,
@@ -120,7 +120,7 @@ class TestAddAtCatalogRoot:
             (temp_path / "col" / "data.geojson").write_text("{}")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 runner.invoke(
                     cli,
@@ -166,7 +166,7 @@ class TestAddAtCatalogRoot:
             ]
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = (added_datasets, [])
+                mock_add.return_value = (added_datasets, [], [])
 
                 result = runner.invoke(
                     cli,
@@ -193,7 +193,7 @@ class TestAddAtCatalogRoot:
             (temp_path / "col" / "data.geojson").write_text("{}")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
                     cli,
@@ -222,7 +222,7 @@ class TestAddAtCatalogRoot:
             # No geo files
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
                     cli,
@@ -265,7 +265,7 @@ class TestAddAtCatalogRoot:
             test_file.write_text("{}")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 runner.invoke(
                     cli,
@@ -312,7 +312,7 @@ class TestAddCatalogRootCollectionInference:
             (temp_path / "rivers" / "amazon.geojson").write_text("{}")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
                     cli,
@@ -341,7 +341,7 @@ class TestAddCatalogRootCollectionInference:
             (temp_path / "col" / "f.geojson").write_text("{}")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 # Use the absolute path (same as catalog root)
                 result = runner.invoke(

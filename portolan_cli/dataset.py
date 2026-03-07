@@ -237,6 +237,21 @@ class DatasetInfo:
     datetime: datetime | None = None
 
 
+@dataclass
+class AddFailure:
+    """Information about a failed add operation.
+
+    Used by add_files to report files that could not be processed.
+
+    Attributes:
+        path: Path to the file that failed to add.
+        error: Human-readable error message describing the failure.
+    """
+
+    path: Path
+    error: str
+
+
 def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
     """Pre-validate that a file has valid geometry BEFORE any filesystem operations.
 
@@ -1200,7 +1215,7 @@ def add_files(
     collection_id: str | None = None,
     item_id: str | None = None,
     verbose: bool = False,
-) -> tuple[list[DatasetInfo], list[Path]]:
+) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
     """Add files to a Portolan catalog.
 
     This is the main entry point for the `portolan add` command.
@@ -1210,6 +1225,11 @@ def add_files(
     - Geospatial files (with geometry) are converted to cloud-native format
     - Non-geospatial CSV/TSV files are tracked as companion assets (no conversion)
     - Files must be in a directory with at least one geospatial file to be tracked
+
+    Per Issue #175 ("Continue on errors and report all failures at end"):
+    - Continues processing all files even when some fail
+    - Collects all errors and reports them at the end
+    - Enables batch processing without stopping on first error
 
     Args:
         paths: List of paths to add (files or directories).
@@ -1226,12 +1246,14 @@ def add_files(
         verbose: If True, return skipped files info.
 
     Returns:
-        Tuple of (added_datasets, skipped_paths).
+        Tuple of (added_datasets, skipped_paths, failures).
         added_datasets: List of DatasetInfo for newly added/updated files.
         skipped_paths: List of paths that were skipped (unchanged or non-geospatial).
+        failures: List of AddFailure for files that could not be processed.
     """
     added: list[DatasetInfo] = []
     skipped: list[Path] = []
+    failures: list[AddFailure] = []
     processed_paths: set[Path] = set()
 
     # Track source_dir -> item_dir mappings for non-geo file placement (ADR-0028)
@@ -1305,18 +1327,22 @@ def add_files(
                 source_to_item_dir[source_dir] = (item_dir, coll_id, result.item_id)
 
             except click.ClickException as err:
-                # Handle geometry detection errors from geoparquet-io gracefully
-                # for CSV/TSV files that don't have geometry columns (Issue #140)
+                # Handle ClickExceptions from add_dataset (Issues #140, #175).
                 #
-                # IMPORTANT: Only catch SPECIFIC geometry-related errors.
-                # Other ClickExceptions (permission, encoding, memory) should propagate.
+                # Geometry-related errors for tabular files (CSV/TSV) are
+                # deferred for non-geo asset tracking (ADR-0028).
+                # ALL other ClickExceptions are recorded as failures and
+                # processing continues to the next file.
                 if not _is_no_geometry_error(err):
-                    raise
+                    # Record as failure and continue (Issue #175)
+                    failures.append(AddFailure(path=file_path, error=str(err)))
+                    continue
 
                 # Only tabular formats can be non-geospatial assets
                 if file_path.suffix.lower() not in TABULAR_EXTENSIONS:
-                    # Non-tabular format without geometry is a real error
-                    raise
+                    # Non-tabular format without geometry - record as failure (Issue #175)
+                    failures.append(AddFailure(path=file_path, error=str(err)))
+                    continue
 
                 # Defer non-geo tabular files until geo files are processed
                 # This ensures we have an item_dir to place them in
@@ -1324,48 +1350,66 @@ def add_files(
                 deferred_non_geo.append((file_path, source_dir, coll_id))
 
             except (ValueError, FileNotFoundError) as err:
-                # Re-raise with context
-                raise type(err)(f"Failed to add {file_path}: {err}") from err
+                # Record failure and continue processing (Issue #175)
+                # Previously this would stop the entire operation on first error.
+                # Now we collect all failures and report them at the end.
+                failures.append(AddFailure(path=file_path, error=str(err)))
+
+            except Exception as err:
+                # Catch-all for unexpected errors (conversion, metadata, runtime).
+                # Without this, a single unexpected error type would abort the
+                # entire batch, defeating the purpose of Issue #175.
+                # We catch Exception (not BaseException) so KeyboardInterrupt
+                # and SystemExit propagate normally.
+                failures.append(AddFailure(path=file_path, error=str(err)))
 
     # Process deferred non-geo files (ADR-0028: track as assets, skip conversion)
     for file_path, source_dir, coll_id in deferred_non_geo:
-        if source_dir in source_to_item_dir:
-            resolved_item_dir, _, resolved_item_id = source_to_item_dir[source_dir]
+        try:
+            if source_dir in source_to_item_dir:
+                resolved_item_dir, _, resolved_item_id = source_to_item_dir[source_dir]
 
-            # Copy non-geo file to item directory as companion asset
-            dest_path = _copy_non_geo_to_item_dir(file_path, resolved_item_dir)
+                # Copy non-geo file to item directory as companion asset
+                dest_path = _copy_non_geo_to_item_dir(file_path, resolved_item_dir)
 
-            # Log info message (not warning - this is expected behavior per ADR-0028)
-            ext = file_path.suffix.upper().lstrip(".")
-            logger.info(
-                "Tracking %s as non-geospatial %s asset (no conversion): %s",
-                file_path,
-                ext,
-                dest_path.name,
-            )
+                # Log info message (expected behavior per ADR-0028)
+                ext = file_path.suffix.upper().lstrip(".")
+                logger.info(
+                    "Tracking %s as non-geospatial %s asset (no conversion): %s",
+                    file_path,
+                    ext,
+                    dest_path.name,
+                )
 
-            # Update the STAC item to include this new asset
-            _update_item_with_asset(
-                catalog_root=catalog_root,
-                collection_id=coll_id,
-                item_id=resolved_item_id,
-                asset_path=dest_path,
-            )
+                # Update the STAC item to include this new asset
+                _update_item_with_asset(
+                    catalog_root=catalog_root,
+                    collection_id=coll_id,
+                    item_id=resolved_item_id,
+                    asset_path=dest_path,
+                )
 
-            # Add to skipped (tracked but not converted)
-            skipped.append(file_path)
-        else:
-            # No geo file in same directory - cannot create item without bbox
-            ext = file_path.suffix.upper().lstrip(".")
-            logger.warning(
-                "Cannot track non-geospatial %s file %s: no geospatial file in same directory. "
-                "Non-geospatial files require a companion geospatial file to create a STAC item.",
-                ext,
-                file_path,
-            )
-            skipped.append(file_path)
+                # Add to skipped (tracked but not converted)
+                skipped.append(file_path)
+            else:
+                # No geo file in same dir - cannot create item without bbox
+                ext = file_path.suffix.upper().lstrip(".")
+                logger.warning(
+                    "Cannot track non-geospatial %s file %s: "
+                    "no geospatial file in same directory. "
+                    "Non-geospatial files require a companion "
+                    "geospatial file to create a STAC item.",
+                    ext,
+                    file_path,
+                )
+                skipped.append(file_path)
+        except Exception as err:
+            # Record failure and continue (Issue #175).
+            # _copy_non_geo_to_item_dir / _update_item_with_asset can
+            # raise OSError, shutil.Error, etc.
+            failures.append(AddFailure(path=file_path, error=str(err)))
 
-    return added, skipped
+    return added, skipped, failures
 
 
 def _update_item_with_asset(

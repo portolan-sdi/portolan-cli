@@ -815,7 +815,7 @@ class TestAddFilesEdgeCases:
                 asset_paths=[],
             )
 
-            added, skipped = add_files(
+            added, skipped, failures = add_files(
                 paths=[link],
                 catalog_root=catalog,
             )
@@ -830,7 +830,11 @@ class TestAddFilesEdgeCases:
 
     @pytest.mark.unit
     def test_add_files_error_wraps_context(self, tmp_path: Path) -> None:
-        """add_files wraps errors with file path context."""
+        """add_files collects errors with file path context (Issue #175).
+
+        Previously this test verified errors were raised with context.
+        Now errors are collected in the failures list instead.
+        """
         from unittest.mock import patch
 
         from portolan_cli.dataset import add_files
@@ -849,8 +853,12 @@ class TestAddFilesEdgeCases:
         with patch("portolan_cli.dataset.add_dataset") as mock_add:
             mock_add.side_effect = ValueError("original error")
 
-            with pytest.raises(ValueError, match=r"Failed to add.*original error"):
-                add_files(paths=[test_file], catalog_root=catalog)
+            # Per Issue #175: errors are now collected instead of raised
+            added, skipped, failures = add_files(paths=[test_file], catalog_root=catalog)
+
+            # Should have one failure with the raw error message
+            assert len(failures) == 1
+            assert failures[0].error == "original error"
 
 
 class TestRemoveFilesEdgeCases:

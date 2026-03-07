@@ -78,6 +78,7 @@ class TestAdd:
                         )
                     ],
                     [],  # skipped
+                    [],  # failures
                 )
 
                 result = runner.invoke(
@@ -103,7 +104,7 @@ class TestAdd:
             test_file.write_bytes(b"GeoTIFF content")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 runner.invoke(
                     cli,
@@ -130,7 +131,7 @@ class TestAdd:
             (collection_dir / "file2.geojson").write_text("{}")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
                     cli,
@@ -155,7 +156,7 @@ class TestAdd:
 
             with patch("portolan_cli.cli.add_files") as mock_add:
                 # Return empty list to indicate nothing was added (all unchanged)
-                mock_add.return_value = ([], [test_file])
+                mock_add.return_value = ([], [test_file], [])
 
                 result = runner.invoke(
                     cli,
@@ -180,7 +181,7 @@ class TestAdd:
             test_file.write_text("{}")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [test_file])
+                mock_add.return_value = ([], [test_file], [])
 
                 result = runner.invoke(
                     cli,
@@ -240,7 +241,8 @@ class TestAdd:
                             asset_paths=["census.parquet"],
                         )
                     ],
-                    [],
+                    [],  # skipped
+                    [],  # failures
                 )
 
                 result = runner.invoke(
@@ -267,7 +269,7 @@ class TestAdd:
             test_file.write_bytes(b"GeoTIFF content")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 runner.invoke(
                     cli,
@@ -292,7 +294,7 @@ class TestAdd:
             test_file.write_text("{}")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 runner.invoke(
                     cli,
@@ -526,7 +528,7 @@ class TestAddSidecarDetection:
             (collection_dir / "data.prj").write_text("EPSG:4326")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
                     cli,
@@ -551,7 +553,7 @@ class TestAddSidecarDetection:
             (collection_dir / "image.tfw").write_text("1.0\n0.0\n0.0\n-1.0\n0.0\n0.0")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 result = runner.invoke(
                     cli,
@@ -579,7 +581,7 @@ class TestPathToCollectionResolution:
             test_file.write_text("{}")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 runner.invoke(
                     cli,
@@ -605,7 +607,7 @@ class TestPathToCollectionResolution:
             test_file.write_bytes(b"tiff")
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = ([], [])
+                mock_add.return_value = ([], [], [])
 
                 runner.invoke(
                     cli,
@@ -644,7 +646,8 @@ class TestAddJsonOutput:
                             asset_paths=["test.parquet"],
                         )
                     ],
-                    [],
+                    [],  # skipped
+                    [],  # failures
                 )
 
                 result = runner.invoke(
