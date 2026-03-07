@@ -62,7 +62,15 @@ from portolan_cli.scan_infer import CollectionSuggestion
 # Recognized geospatial file extensions (primary assets)
 # Note: .parquet is NOT here because we need to check metadata to distinguish
 # GeoParquet (geospatial) from regular Parquet (tabular data).
-RECOGNIZED_VECTOR_EXTENSIONS: frozenset[str] = frozenset({".geojson", ".shp", ".gpkg", ".fgb"})
+RECOGNIZED_VECTOR_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".geojson",
+        ".shp",
+        ".gpkg",
+        ".fgb",
+        ".pmtiles",  # PMTiles: cloud-native vector tiles (issue #198)
+    }
+)
 
 RECOGNIZED_RASTER_EXTENSIONS: frozenset[str] = frozenset({".tif", ".tiff", ".jp2"})
 
@@ -71,7 +79,9 @@ RECOGNIZED_EXTENSIONS: frozenset[str] = RECOGNIZED_VECTOR_EXTENSIONS | RECOGNIZE
 # Note: PARQUET_EXTENSION imported from portolan_cli.constants
 
 # Overview/derivative formats (not primary assets)
-OVERVIEW_EXTENSIONS: frozenset[str] = frozenset({".pmtiles"})
+# Note: .pmtiles was removed from here — PMTiles is a primary cloud-native
+# format, not a derivative. See issue #198 and formats.py CLOUD_NATIVE_EXTENSIONS.
+OVERVIEW_EXTENSIONS: frozenset[str] = frozenset()
 
 # Shapefile sidecar extensions
 SHAPEFILE_REQUIRED_SIDECARS: frozenset[str] = frozenset({".dbf", ".shx"})
@@ -1090,7 +1100,8 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         ctx.skipped.append(_make_skipped_file(ctx, path, size))
         return
 
-    # Handle overview/derivative formats (PMTiles, etc.) - skip, not primary assets
+    # Handle overview/derivative formats - skip, not primary assets
+    # (OVERVIEW_EXTENSIONS is currently empty; retained for future extension points)
     if _is_overview_extension(ext):
         ctx.skipped.append(_make_skipped_file(ctx, path, size))
         return

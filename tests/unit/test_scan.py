@@ -90,6 +90,49 @@ class TestEnums:
 
 
 @pytest.mark.unit
+class TestOverviewExtensions:
+    """Tests for OVERVIEW_EXTENSIONS constant.
+
+    OVERVIEW_EXTENSIONS should only contain derivative/overview formats
+    that are genuinely NOT primary assets (e.g., spatial index files).
+    PMTiles is a primary cloud-native format and must NOT be in this set.
+    """
+
+    def test_pmtiles_not_in_overview_extensions(self) -> None:
+        """.pmtiles must NOT be listed in OVERVIEW_EXTENSIONS.
+
+        Regression test for issue #198: PMTiles was incorrectly classified as
+        an overview/derivative format in scan.py, causing it to be skipped
+        during scanning. PMTiles is a primary cloud-native geospatial format.
+        """
+        from portolan_cli.scan import OVERVIEW_EXTENSIONS
+
+        assert ".pmtiles" not in OVERVIEW_EXTENSIONS
+
+    def test_pmtiles_scanned_as_ready_file(self, tmp_path: Path) -> None:
+        """.pmtiles files appear in scan results as ready files, not skipped.
+
+        Regression test for issue #198: PMTiles was skipped during scan,
+        preventing 'portolan add' from tracking them as primary assets.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+
+        collection_dir = tmp_path / "my-collection"
+        collection_dir.mkdir()
+        item_dir = collection_dir / "my-item"
+        item_dir.mkdir()
+        tiles = item_dir / "data.pmtiles"
+        tiles.write_bytes(b"\x00" * 16)  # Minimal non-empty content
+
+        result = scan_directory(tmp_path, ScanOptions())
+
+        ready_paths = [f.path for f in result.ready]
+        skipped_paths = [s.path for s in result.skipped if hasattr(s, "path")]
+        assert tiles in ready_paths, f".pmtiles was not in ready files. Skipped: {skipped_paths}"
+        assert tiles not in skipped_paths, ".pmtiles should not be in skipped files"
+
+
+@pytest.mark.unit
 class TestScanOptions:
     """Tests for ScanOptions dataclass."""
 
@@ -1384,44 +1427,56 @@ class TestGeoParquetDetection:
 class TestOverviewFormats:
     """Tests for overview/derivative format handling."""
 
-    def test_pmtiles_files_are_skipped(self, tmp_path: Path) -> None:
-        """PMTiles files are recognized as overviews and skipped (not primary assets)."""
+    def test_pmtiles_files_are_accepted_as_primary_assets(self, tmp_path: Path) -> None:
+        """PMTiles files are primary cloud-native assets, not overviews.
+
+        Regression test for issue #198: PMTiles was incorrectly classified as
+        an overview/derivative and skipped. It is now treated as a primary
+        GEO_ASSET alongside FlatGeobuf (.fgb).
+        """
         from portolan_cli.scan import scan_directory
 
         # Create a PMTiles file (just needs to exist for extension detection)
-        pmtiles_path = tmp_path / "overview.pmtiles"
+        pmtiles_path = tmp_path / "data.pmtiles"
         pmtiles_path.write_bytes(b"fake pmtiles content")
 
         result = scan_directory(tmp_path)
 
-        # Should NOT be in ready files
-        assert len(result.ready) == 0
-        # Should be in skipped files
-        assert len(result.skipped) == 1
-        assert result.skipped[0].path.name == "overview.pmtiles"
+        # Should be in ready files (primary asset, not skipped)
+        assert len(result.ready) == 1
+        assert result.ready[0].path.name == "data.pmtiles"
+        # Should NOT be in skipped files
+        assert len(result.skipped) == 0
 
-    def test_pmtiles_does_not_count_as_primary(self, tmp_path: Path) -> None:
-        """PMTiles should not trigger 'multiple primaries' warning."""
+    def test_pmtiles_counts_as_primary_alongside_geoparquet(self, tmp_path: Path) -> None:
+        """PMTiles is a primary asset and triggers 'multiple primaries' when alongside GeoParquet.
+
+        Regression test for issue #198: since PMTiles is now a primary cloud-native
+        format (not an overview/derivative), having both a GeoParquet and a PMTiles
+        file in the same flat directory correctly produces a MULTIPLE_PRIMARIES warning.
+        The canonical workflow stores PMTiles inside an item subdirectory, not
+        alongside the GeoParquet at the collection level.
+        """
         import pyarrow as pa
         import pyarrow.parquet as pq
 
         from portolan_cli.scan import IssueType, scan_directory
 
-        # Create one GeoParquet and one PMTiles
+        # Create one GeoParquet and one PMTiles in same directory
         geo_table = pa.table({"name": ["test"]})
         geo_metadata = b'{"version": "1.0.0", "primary_column": "geometry", "columns": {}}'
         geo_table = geo_table.replace_schema_metadata({b"geo": geo_metadata})
         pq.write_table(geo_table, tmp_path / "radios.parquet")
 
-        (tmp_path / "overview.pmtiles").write_bytes(b"fake pmtiles")
+        (tmp_path / "data.pmtiles").write_bytes(b"fake pmtiles")
 
         result = scan_directory(tmp_path)
 
-        # Only one primary asset (the GeoParquet)
-        assert len(result.ready) == 1
-        # No "multiple primaries" warning
+        # Both are primary assets now
+        assert len(result.ready) == 2
+        # Multiple primaries warning is expected
         multi_issues = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
-        assert len(multi_issues) == 0
+        assert len(multi_issues) == 1
 
 
 # =============================================================================

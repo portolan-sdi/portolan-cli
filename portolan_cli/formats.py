@@ -472,13 +472,16 @@ class FormatType(Enum):
 
 # Extensions that indicate vector formats (handled by geoparquet-io)
 # Note: .gdb is a directory extension (FileGDB) - handled specially in detect_format
+# Note: Cloud-native formats like .fgb and .pmtiles are included here so detect_format()
+# returns VECTOR, allowing convert_vector() to then check cloud-native status and skip.
 VECTOR_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".geojson",
         ".parquet",
         ".shp",
         ".gpkg",
-        ".fgb",  # FlatGeobuf
+        ".fgb",  # FlatGeobuf (cloud-native)
+        ".pmtiles",  # PMTiles (cloud-native vector tiles, issue #198)
         ".gdb",  # FileGDB directory (ESRI File Geodatabase)
         ".csv",
         ".tsv",  # Tab-separated values (may or may not have geometry)
