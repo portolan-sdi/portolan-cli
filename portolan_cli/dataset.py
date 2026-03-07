@@ -237,6 +237,21 @@ class DatasetInfo:
     datetime: datetime | None = None
 
 
+@dataclass
+class AddFailure:
+    """Information about a failed add operation.
+
+    Used by add_files to report files that could not be processed.
+
+    Attributes:
+        path: Path to the file that failed to add.
+        error: Human-readable error message describing the failure.
+    """
+
+    path: Path
+    error: str
+
+
 def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
     """Pre-validate that a file has valid geometry BEFORE any filesystem operations.
 
@@ -1200,7 +1215,7 @@ def add_files(
     collection_id: str | None = None,
     item_id: str | None = None,
     verbose: bool = False,
-) -> tuple[list[DatasetInfo], list[Path]]:
+) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
     """Add files to a Portolan catalog.
 
     This is the main entry point for the `portolan add` command.
@@ -1210,6 +1225,11 @@ def add_files(
     - Geospatial files (with geometry) are converted to cloud-native format
     - Non-geospatial CSV/TSV files are tracked as companion assets (no conversion)
     - Files must be in a directory with at least one geospatial file to be tracked
+
+    Per Issue #175 ("Continue on errors and report all failures at end"):
+    - Continues processing all files even when some fail
+    - Collects all errors and reports them at the end
+    - Enables batch processing without stopping on first error
 
     Args:
         paths: List of paths to add (files or directories).
@@ -1226,12 +1246,14 @@ def add_files(
         verbose: If True, return skipped files info.
 
     Returns:
-        Tuple of (added_datasets, skipped_paths).
+        Tuple of (added_datasets, skipped_paths, failures).
         added_datasets: List of DatasetInfo for newly added/updated files.
         skipped_paths: List of paths that were skipped (unchanged or non-geospatial).
+        failures: List of AddFailure for files that could not be processed.
     """
     added: list[DatasetInfo] = []
     skipped: list[Path] = []
+    failures: list[AddFailure] = []
     processed_paths: set[Path] = set()
 
     # Track source_dir -> item_dir mappings for non-geo file placement (ADR-0028)
@@ -1311,12 +1333,15 @@ def add_files(
                 # IMPORTANT: Only catch SPECIFIC geometry-related errors.
                 # Other ClickExceptions (permission, encoding, memory) should propagate.
                 if not _is_no_geometry_error(err):
-                    raise
+                    # Record as failure and continue (Issue #175)
+                    failures.append(AddFailure(path=file_path, error=str(err)))
+                    continue
 
                 # Only tabular formats can be non-geospatial assets
                 if file_path.suffix.lower() not in TABULAR_EXTENSIONS:
-                    # Non-tabular format without geometry is a real error
-                    raise
+                    # Non-tabular format without geometry - record as failure (Issue #175)
+                    failures.append(AddFailure(path=file_path, error=str(err)))
+                    continue
 
                 # Defer non-geo tabular files until geo files are processed
                 # This ensures we have an item_dir to place them in
@@ -1324,8 +1349,12 @@ def add_files(
                 deferred_non_geo.append((file_path, source_dir, coll_id))
 
             except (ValueError, FileNotFoundError) as err:
-                # Re-raise with context
-                raise type(err)(f"Failed to add {file_path}: {err}") from err
+                # Record failure and continue processing (Issue #175)
+                # Previously this would stop the entire operation on first error.
+                # Now we collect all failures and report them at the end.
+                failures.append(
+                    AddFailure(path=file_path, error=f"Failed to add {file_path}: {err}")
+                )
 
     # Process deferred non-geo files (ADR-0028: track as assets, skip conversion)
     for file_path, source_dir, coll_id in deferred_non_geo:
@@ -1365,7 +1394,7 @@ def add_files(
             )
             skipped.append(file_path)
 
-    return added, skipped
+    return added, skipped, failures
 
 
 def _update_item_with_asset(

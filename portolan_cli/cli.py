@@ -16,6 +16,7 @@ import click
 from portolan_cli.catalog import find_catalog_root
 from portolan_cli.check import check_directory
 from portolan_cli.dataset import (
+    AddFailure,
     DatasetInfo,
     add_files,
     get_dataset_info,
@@ -1770,68 +1771,116 @@ def _handle_cmd_error(cmd: str, err_type: str, message: str, use_json: bool) -> 
         error(message)
 
 
-def _output_add_results(
+def _output_add_json(
     added: list[DatasetInfo],
     skipped: list[Path],
-    collection_id: str | None,
-    verbose: bool,
-    use_json: bool,
+    failures: list[AddFailure],
 ) -> None:
-    """Output results for add command."""
-    if use_json:
-        data = {
-            "added": [
-                {
-                    "item_id": ds.item_id,
-                    "collection_id": ds.collection_id,
-                    "format_type": ds.format_type.value,
-                    "bbox": ds.bbox,
-                }
-                for ds in added
-            ],
-            "skipped": [str(p) for p in skipped],
-        }
+    """Output add command results as JSON."""
+    data = {
+        "added": [
+            {
+                "item_id": ds.item_id,
+                "collection_id": ds.collection_id,
+                "format_type": ds.format_type.value,
+                "bbox": ds.bbox,
+            }
+            for ds in added
+        ],
+        "skipped": [str(p) for p in skipped],
+        "failures": [{"path": str(f.path), "error": f.error} for f in failures],
+    }
+    if failures:
+        envelope = error_envelope(
+            "add",
+            [ErrorDetail(type="AddError", message=f"{str(f.path)}: {f.error}") for f in failures],
+            data=data,
+        )
+    else:
         envelope = success_envelope("add", data)
-        output_json_envelope(envelope)
-        return
+    output_json_envelope(envelope)
 
-    # Human-readable output
-    if not added:
-        # No files to add - don't print confusing "Adding 0 files to catalog"
-        if not skipped:
-            info_output("No geospatial files found to add")
-        return
 
-    # Group by collection for multi-collection catalog-root adds
+def _format_sidecar_note(ds: DatasetInfo) -> str:
+    """Format sidecar count note for dataset output."""
+    if not ds.asset_paths:
+        return ""
+    sidecars = get_sidecars(Path(ds.asset_paths[0]))
+    return f" (+ {len(sidecars)} sidecars)" if sidecars else ""
+
+
+def _output_added_single_collection(added: list[DatasetInfo]) -> None:
+    """Output added datasets for a single collection."""
+    coll = added[0].collection_id
+    count = len(added)
+    info_output(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
+    for ds in added:
+        success(f"  + {ds.item_id}{_format_sidecar_note(ds)}")
+
+
+def _output_added_multi_collection(added: list[DatasetInfo]) -> None:
+    """Output added datasets grouped by collection."""
     collections: dict[str, list[DatasetInfo]] = {}
     for ds in added:
         collections.setdefault(ds.collection_id, []).append(ds)
 
-    if len(collections) == 1:
-        # Single collection - use compact output
-        coll = next(iter(collections))
-        count = len(added)
-        info_output(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
-        for ds in added:
-            sidecars = get_sidecars(Path(ds.asset_paths[0])) if ds.asset_paths else []
-            sidecar_note = f" (+ {len(sidecars)} sidecars)" if sidecars else ""
-            success(f"  + {ds.item_id}{sidecar_note}")
-    else:
-        # Multiple collections - group output by collection
-        total = len(added)
-        info_output(
-            f"Adding {total} file{'s' if total != 1 else ''} to {len(collections)} collections"
-        )
-        for coll, datasets in sorted(collections.items()):
-            info_output(f"  {coll}:")
-            for ds in datasets:
-                sidecars = get_sidecars(Path(ds.asset_paths[0])) if ds.asset_paths else []
-                sidecar_note = f" (+ {len(sidecars)} sidecars)" if sidecars else ""
-                success(f"    + {ds.item_id}{sidecar_note}")
+    total = len(added)
+    info_output(f"Adding {total} file{'s' if total != 1 else ''} to {len(collections)} collections")
+    for coll, datasets in sorted(collections.items()):
+        info_output(f"  {coll}:")
+        for ds in datasets:
+            success(f"    + {ds.item_id}{_format_sidecar_note(ds)}")
+
+
+def _output_add_human(
+    added: list[DatasetInfo],
+    skipped: list[Path],
+    failures: list[AddFailure],
+    verbose: bool,
+) -> None:
+    """Output add command results as human-readable text."""
+    if not added and not failures:
+        if not skipped:
+            info_output("No geospatial files found to add")
+        return
+
+    # Output successful adds
+    if added:
+        unique_collections = {ds.collection_id for ds in added}
+        if len(unique_collections) == 1:
+            _output_added_single_collection(added)
+        else:
+            _output_added_multi_collection(added)
 
     if verbose and skipped:
         for p in skipped:
             detail(f"Skipping {p.name} (unchanged)")
+
+    # Output failures (Issue #175: report all failures at end)
+    if failures:
+        fail_count = len(failures)
+        error(f"{fail_count} item{'s' if fail_count != 1 else ''} failed:")
+        for f in failures:
+            error(f"  - {f.path}: {f.error}")
+
+
+def _output_add_results(
+    added: list[DatasetInfo],
+    skipped: list[Path],
+    failures: list[AddFailure],
+    collection_id: str | None,
+    verbose: bool,
+    use_json: bool,
+) -> None:
+    """Output results for add command.
+
+    Per Issue #175: Shows both successes and failures, enabling users to see
+    all issues at once rather than stopping on the first error.
+    """
+    if use_json:
+        _output_add_json(added, skipped, failures)
+    else:
+        _output_add_human(added, skipped, failures, verbose)
 
 
 @cli.command("add")
@@ -1955,19 +2004,18 @@ def add_cmd(
             raise SystemExit(1) from err
 
     # Add files
-    try:
-        added, skipped = add_files(
-            paths=[target_path],
-            catalog_root=catalog_root,
-            collection_id=collection_id,
-            item_id=item_id,
-            verbose=verbose,
-        )
-        _output_add_results(added, skipped, collection_id, verbose, use_json)
-    except (ValueError, FileNotFoundError) as err:
-        err_type = type(err).__name__
-        _handle_cmd_error("add", err_type, str(err), use_json)
-        raise SystemExit(1) from err
+    added, skipped, failures = add_files(
+        paths=[target_path],
+        catalog_root=catalog_root,
+        collection_id=collection_id,
+        item_id=item_id,
+        verbose=verbose,
+    )
+    _output_add_results(added, skipped, failures, collection_id, verbose, use_json)
+
+    # Exit with non-zero code if any failures occurred
+    if failures:
+        raise SystemExit(1)
 
 
 @cli.command("rm")
