@@ -167,13 +167,15 @@ class TestCleanFromSubdirectory:
     @pytest.mark.integration
     def test_clean_from_collection_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
         """Clean from collection subdirectory should find catalog root and clean."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
+        with runner.isolated_filesystem(temp_dir=tmp_path) as td:
+            catalog_root = Path(td)
+
             # Initialize
             result = runner.invoke(cli, ["init", "--auto"])
             assert result.exit_code == 0
 
             # Create collection structure
-            collection_dir = Path("census")
+            collection_dir = catalog_root / "census"
             collection_dir.mkdir()
             (collection_dir / "collection.json").write_text(
                 json.dumps(
@@ -192,45 +194,52 @@ class TestCleanFromSubdirectory:
                 )
             )
 
-            # Run clean from subdirectory
+            # Run clean from subdirectory using absolute path for os.chdir
+            # to avoid Windows path resolution issues with relative paths.
             import os
 
             original_cwd = os.getcwd()
             try:
-                os.chdir(collection_dir)
+                os.chdir(str(collection_dir))
                 result = runner.invoke(cli, ["clean"])
             finally:
                 os.chdir(original_cwd)
 
-            assert result.exit_code == 0
+            assert result.exit_code == 0, (
+                f"Expected exit code 0, got {result.exit_code}. Output: {result.output}"
+            )
             # Catalog should be cleaned
-            assert not Path("catalog.json").exists()
-            assert not Path(".portolan").exists()
+            assert not (catalog_root / "catalog.json").exists()
+            assert not (catalog_root / ".portolan").exists()
 
     @pytest.mark.integration
     def test_clean_from_deep_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
         """Clean from deeply nested subdirectory should find catalog root."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
+        with runner.isolated_filesystem(temp_dir=tmp_path) as td:
+            catalog_root = Path(td)
+
             # Initialize
             result = runner.invoke(cli, ["init", "--auto"])
             assert result.exit_code == 0
 
-            # Create deep directory structure
-            deep_dir = Path("census") / "2020" / "tracts" / "state01"
+            # Create deep directory structure using absolute path
+            deep_dir = catalog_root / "census" / "2020" / "tracts" / "state01"
             deep_dir.mkdir(parents=True)
 
-            # Run clean from deep subdirectory
+            # Run clean from deep subdirectory using absolute path for os.chdir
             import os
 
             original_cwd = os.getcwd()
             try:
-                os.chdir(deep_dir)
+                os.chdir(str(deep_dir))
                 result = runner.invoke(cli, ["clean"])
             finally:
                 os.chdir(original_cwd)
 
-            assert result.exit_code == 0
-            assert not Path("catalog.json").exists()
+            assert result.exit_code == 0, (
+                f"Expected exit code 0, got {result.exit_code}. Output: {result.output}"
+            )
+            assert not (catalog_root / "catalog.json").exists()
 
 
 class TestCleanDryRun:

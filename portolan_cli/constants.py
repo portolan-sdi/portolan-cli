@@ -45,6 +45,9 @@ SIDECAR_PATTERNS: dict[str, list[str]] = {
 # 2 second tolerance for NFS/CIFS compatibility where mtime resolution is coarse
 MTIME_TOLERANCE_SECONDS: float = 2.0
 
+# The .portolan directory name (Portolan internal metadata directory)
+PORTOLAN_DIR: str = ".portolan"
+
 # Maximum depth for catalog root discovery (prevent traversing to filesystem root)
 MAX_CATALOG_SEARCH_DEPTH: int = 20
 
