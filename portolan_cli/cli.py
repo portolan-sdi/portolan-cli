@@ -31,6 +31,7 @@ from portolan_cli.metadata.fix import FixReport
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.scan import (
+    IssueType,
     ScanIssue,
     ScanOptions,
     ScanResult,
@@ -1650,18 +1651,24 @@ def _print_scan_summary_enhanced(
 
 
 def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False) -> None:
-    """Print issues grouped by severity with fixability labels.
+    """Print issues grouped by severity and IssueType with fixability labels.
+
+    Issues that share the same severity AND IssueType are batched together so
+    that noisy repetitions (e.g. 265 uppercase-named directories) collapse into
+    a single summary line with up to 3 example paths.  The full list is shown
+    when ``show_all=True``.
 
     Args:
         result: The scan result containing issues.
-        show_all: If True, show all issues without truncation.
+        show_all: If True, show all example paths instead of truncating at 3.
     """
     if not result.issues:
         return
 
-    limit = None if show_all else DEFAULT_ISSUE_LIMIT
+    # Number of example paths to show per batch before truncating.
+    _EXAMPLES_LIMIT = 3
 
-    # Group by severity
+    # Iterate severity levels in display order so errors appear first.
     for severity, header_fn, label in [
         (ScanSeverity.ERROR, error, "error"),
         (ScanSeverity.WARNING, warn, "warning"),
@@ -1671,21 +1678,45 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
         if not severity_issues:
             continue
 
-        count = len(severity_issues)
-        header_fn(f"{count} {label}{'s' if count != 1 else ''}")
+        total = len(severity_issues)
+        header_fn(f"{total} {label}{'s' if total != 1 else ''}")
 
-        # Apply truncation if needed
-        displayed = severity_issues if limit is None else severity_issues[:limit]
-        truncated_count = len(severity_issues) - len(displayed)
+        # Group this severity's issues by IssueType so repeated warnings collapse.
+        # Preserve insertion order (Python 3.7+ dict) to keep a stable output order.
+        groups: dict[IssueType, list[ScanIssue]] = {}
+        for issue in severity_issues:
+            groups.setdefault(issue.issue_type, []).append(issue)
 
-        for issue in displayed:
-            fix_label = get_fixability(issue.issue_type).label
-            header_fn(f"  {fix_label} {issue.relative_path}: {issue.message}")
-            if issue.suggestion is not None:
-                detail(f"    Hint: {issue.suggestion}")
+        for issue_type, group in groups.items():
+            fix_label = get_fixability(issue_type).label
+            count = len(group)
 
-        if truncated_count > 0:
-            detail(f"  ... and {truncated_count} more (use --all to see all)")
+            if count == 1:
+                # Single issue: print normally (no batching overhead).
+                issue = group[0]
+                header_fn(f"  {fix_label} {issue.relative_path}: {issue.message}")
+                if issue.suggestion is not None:
+                    detail(f"    Hint: {issue.suggestion}")
+            else:
+                # Multiple issues of the same type: show count + example paths.
+                header_fn(f"  {fix_label} {count} files have {issue_type.value}")
+
+                # Decide how many examples to display.
+                examples = group if show_all else group[:_EXAMPLES_LIMIT]
+                remaining = count - len(examples)
+
+                paths = ", ".join(i.relative_path for i in examples)
+                if remaining > 0:
+                    detail(f"    Examples: {paths} (and {remaining} more)")
+                else:
+                    detail(f"    Examples: {paths}")
+
+                # Show the suggestion once per group (use first issue's suggestion).
+                first_suggestion = next(
+                    (i.suggestion for i in group if i.suggestion is not None), None
+                )
+                if first_suggestion is not None:
+                    detail(f"    Hint: {first_suggestion}")
 
 
 def _print_skipped_by_category(result: ScanResult, *, show_all: bool = False) -> None:

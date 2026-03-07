@@ -340,7 +340,12 @@ class TestScanOutputTruncation:
         assert "truncated" in result.output.lower() or "more" in result.output.lower()
 
     def test_scan_all_shows_all_issues(self, runner: CliRunner, tmp_path: Path) -> None:
-        """--all flag shows all issues without truncation."""
+        """--all flag shows all issues without truncation.
+
+        With batched output, issues of the same type are grouped together.
+        When --all is provided, all file paths appear in the Examples list
+        rather than being truncated after 3.
+        """
         # Create 15 files with invalid characters
         for i in range(15):
             (tmp_path / f"file with spaces {i}.geojson").write_text(
@@ -349,11 +354,15 @@ class TestScanOutputTruncation:
 
         result = runner.invoke(cli, ["scan", str(tmp_path), "--all"])
 
-        # Should NOT show truncation message
         assert result.exit_code == 0
-        assert "more" not in result.output.lower() or "use --all" not in result.output
-        # Should show all 15 invalid character warnings (message uses "problematic")
-        assert result.output.count("problematic") >= 15
+        # With batching + --all, all 15 file paths should appear in the Examples list
+        for i in range(15):
+            assert f"file with spaces {i}.geojson" in result.output, (
+                f"Expected 'file with spaces {i}.geojson' in --all output"
+            )
+        # Should NOT show truncation suffix "(and N more)" since --all shows everything
+        # (the truncation suffix only appears without --all)
+        assert "(and" not in result.output
 
     def test_scan_json_never_truncates(self, runner: CliRunner, tmp_path: Path) -> None:
         """JSON output never truncates regardless of --all flag."""
