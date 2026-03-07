@@ -1266,7 +1266,7 @@ def _handle_fix_mode(
 
 
 @cli.command()
-@click.argument("path", type=click.Path(path_type=Path), default=".", required=False)
+@click.argument("path", type=click.Path(path_type=Path), default=".")
 @click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
 @click.option(
     "--no-recursive",
@@ -1344,7 +1344,7 @@ def scan(
     Discovers files by extension, validates shapefile completeness,
     and reports issues that may cause problems during import.
 
-    PATH is the directory to scan.
+    PATH is the directory to scan (default: current directory).
 
     \b
     Fix Mode:
