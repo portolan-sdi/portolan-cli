@@ -1885,6 +1885,49 @@ def _output_added_multi_collection(added: list[DatasetInfo]) -> None:
             success(f"    + {ds.item_id}{_format_sidecar_note(ds)}")
 
 
+def _print_add_failures_batched(failures: list[AddFailure]) -> None:
+    """Print add failures grouped by error message.
+
+    Groups failures that share the same error message into a single batch
+    entry, showing up to ``BATCH_EXAMPLES_LIMIT`` example paths and an
+    ``(and N more)`` suffix when truncated.  Uses the same batching pattern
+    as :func:`_print_issues_with_fixability` so that large repetitive error
+    sets (e.g. 6 GDB files all missing CRS) collapse into one summary line
+    instead of six identical lines.
+
+    Per GitHub issue #199.
+
+    Args:
+        failures: List of failed add operations to display.
+    """
+    if not failures:
+        return
+
+    fail_count = len(failures)
+    error(f"{fail_count} item{'s' if fail_count != 1 else ''} failed:")
+
+    # Group by error message — same key strategy as scan issue batching.
+    groups: dict[str, list[AddFailure]] = {}
+    for f in failures:
+        groups.setdefault(f.error, []).append(f)
+
+    for error_msg, group in groups.items():
+        count = len(group)
+        if count == 1:
+            # Single failure: show inline (no batch overhead).
+            error(f"  - {group[0].path}: {error_msg}")
+        else:
+            # Multiple failures with same error: show count + examples.
+            error(f"  {error_msg} ({count} files):")
+            examples = group[:BATCH_EXAMPLES_LIMIT]
+            remaining = count - len(examples)
+            paths = ", ".join(str(f.path) for f in examples)
+            if remaining > 0:
+                detail(f"    Examples: {paths} (and {remaining} more)")
+            else:
+                detail(f"    Examples: {paths}")
+
+
 def _output_add_human(
     added: list[DatasetInfo],
     skipped: list[Path],
@@ -1909,12 +1952,9 @@ def _output_add_human(
         for p in skipped:
             detail(f"Skipping {p.name} (unchanged)")
 
-    # Output failures (Issue #175: report all failures at end)
+    # Output failures grouped by error message (Issue #199: batch repetitive errors).
     if failures:
-        fail_count = len(failures)
-        error(f"{fail_count} item{'s' if fail_count != 1 else ''} failed:")
-        for f in failures:
-            error(f"  - {f.path}: {f.error}")
+        _print_add_failures_batched(failures)
 
 
 def _output_add_results(
