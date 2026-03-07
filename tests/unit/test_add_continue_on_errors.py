@@ -515,7 +515,8 @@ class TestOutputEdgeCases:
 
                 # The path should appear in '- path: error' format
                 # and NOT be duplicated inside the error message
-                assert "census/data.parquet: Permission denied" in result.output
+                # Use str(err_path) for cross-platform compatibility (Windows uses \)
+                assert f"{err_path}: Permission denied" in result.output
                 # Verify no double-path pattern
                 assert "Failed to add" not in result.output
                 assert result.exit_code == 1
