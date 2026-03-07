@@ -23,6 +23,7 @@ from pathlib import Path
 
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
 from portolan_cli.dataset import is_current
+from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.versions import read_versions
 
 logger = logging.getLogger(__name__)
@@ -313,20 +314,35 @@ def _scan_item_dir_recursive(
                     modified.append(FileStatus(collection_id, item_id, relative_path_str))
 
             elif entry.is_dir():
-                # Recurse into subdirectories (for hive partitions)
-                _scan_item_dir_recursive(
-                    base_dir=base_dir,
-                    item_id=item_id,
-                    current_dir=entry,
-                    collection_id=collection_id,
-                    versions_path=versions_path,
-                    tracked_assets=tracked_assets,
-                    untracked=untracked,
-                    modified=modified,
-                    seen_keys=seen_keys,
-                    max_depth=max_depth - 1,
-                    _visited=_visited,
-                )
+                # Check for FileGDB directories (Issue #174)
+                # FileGDB (.gdb) is a directory format that should be treated
+                # as a single container asset, not recursed into.
+                if entry.suffix.lower() == ".gdb" and is_filegdb(entry):
+                    # Treat the .gdb directory as a single asset
+                    relative_path = entry.relative_to(base_dir)
+                    relative_path_str = relative_path.as_posix()
+                    relative_key = f"{item_id}/{relative_path_str}"
+                    seen_keys.add(relative_key)
+
+                    if relative_key not in tracked_assets:
+                        untracked.append(FileStatus(collection_id, item_id, relative_path_str))
+                    elif not is_current(entry, versions_path, asset_key=relative_key):
+                        modified.append(FileStatus(collection_id, item_id, relative_path_str))
+                else:
+                    # Recurse into subdirectories (for hive partitions)
+                    _scan_item_dir_recursive(
+                        base_dir=base_dir,
+                        item_id=item_id,
+                        current_dir=entry,
+                        collection_id=collection_id,
+                        versions_path=versions_path,
+                        tracked_assets=tracked_assets,
+                        untracked=untracked,
+                        modified=modified,
+                        seen_keys=seen_keys,
+                        max_depth=max_depth - 1,
+                        _visited=_visited,
+                    )
         except OSError as e:
             logger.debug("Cannot access %s: %s", entry, e)
             continue
