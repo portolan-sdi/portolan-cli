@@ -939,3 +939,92 @@ class TestScanFileGDB:
         assert len(gdbtable_files) == 0, (
             f"Nested FileGDB internal files should not be in skipped: {gdbtable_files}"
         )
+
+
+# =============================================================================
+# Issue #182: Default PATH to Current Directory
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScanDefaultPath:
+    """Tests for `portolan scan` defaulting to current directory when PATH not provided."""
+
+    def test_scan_no_path_defaults_to_current_directory(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """portolan scan with no PATH argument defaults to current directory."""
+        # Create a geo-asset in tmp_path
+        (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        # Use CliRunner's isolated_filesystem to change working directory
+        with runner.isolated_filesystem():
+            # Copy the file to the isolated filesystem
+            from pathlib import Path as PathlibPath
+
+            local_path = PathlibPath("data.geojson")
+            local_path.write_text('{"type": "FeatureCollection", "features": []}')
+
+            # Run scan without PATH argument
+            result = runner.invoke(cli, ["scan"])
+
+            # Should succeed and find the file
+            assert result.exit_code == 0
+            assert "1 geo-asset" in result.output.lower()
+
+    def test_scan_with_explicit_current_directory(self, runner: CliRunner, tmp_path: Path) -> None:
+        """portolan scan . still works when PATH is explicitly provided."""
+        # Create a geo-asset
+        (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        # Use isolated filesystem for clean test
+        with runner.isolated_filesystem():
+            from pathlib import Path as PathlibPath
+
+            local_path = PathlibPath("data.geojson")
+            local_path.write_text('{"type": "FeatureCollection", "features": []}')
+
+            result = runner.invoke(cli, ["scan", "."])
+
+            # Should work fine with explicit current directory path
+            assert result.exit_code == 0
+            assert "1 geo-asset" in result.output.lower()
+
+    def test_scan_with_explicit_path_still_works(self, runner: CliRunner, tmp_path: Path) -> None:
+        """portolan scan /some/path still works when PATH is provided."""
+        # Create a geo-asset
+        (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path)])
+
+        # Should work as before
+        assert result.exit_code == 0
+        assert "1 geo-asset" in result.output.lower()
+
+    def test_scan_no_path_accepts_json_option(self, runner: CliRunner) -> None:
+        """portolan scan with no PATH but with --json option should work."""
+        with runner.isolated_filesystem():
+            from pathlib import Path as PathlibPath
+
+            # Create a geo-asset
+            local_path = PathlibPath("data.geojson")
+            local_path.write_text('{"type": "FeatureCollection", "features": []}')
+
+            result = runner.invoke(cli, ["scan", "--json"])
+
+            # Should not fail due to missing PATH argument
+            assert result.exit_code == 0
+            # Should output valid JSON
+            output = json.loads(result.output)
+            assert "success" in output
+            assert "data" in output
+
+    def test_scan_no_path_no_files_exits_zero(self, runner: CliRunner) -> None:
+        """portolan scan with no PATH and no geo-assets exits with 0."""
+        with runner.isolated_filesystem():
+            # Don't create any files
+            result = runner.invoke(cli, ["scan"])
+
+            # Should succeed even with no files
+            assert result.exit_code == 0
+            assert "no geo-assets" in result.output.lower()

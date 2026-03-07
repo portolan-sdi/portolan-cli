@@ -1266,7 +1266,7 @@ def _handle_fix_mode(
 
 
 @cli.command()
-@click.argument("path", type=click.Path(path_type=Path))
+@click.argument("path", type=click.Path(path_type=Path), default=".", required=False)
 @click.option("--json", "json_output", is_flag=True, help="Output results as JSON")
 @click.option(
     "--no-recursive",
