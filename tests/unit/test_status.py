@@ -1737,3 +1737,71 @@ class TestSymlinkCycleDetection:
         # Should find the file and not hang
         assert len(result.untracked) == 1
         assert "year=2024/month=01/data.parquet" in result.untracked[0].filename
+
+    @pytest.mark.unit
+    def test_collection_symlink_to_sibling_collection_skipped(self, tmp_path: Path) -> None:
+        """A collection-level symlink pointing to a sibling collection is skipped.
+
+        True collection-level cycle: catalog_root/zzz-link -> catalog_root/aaa-real.
+        The real collection is sorted first (aaa-real < zzz-link), processed, added to
+        visited_col_dirs; when zzz-link resolves to the same physical directory it is
+        detected and skipped so files are never double-counted.
+        """
+        # Use names that guarantee sort order: aaa-real processed before zzz-link
+        make_catalog(tmp_path, ["aaa-real"])
+        real_col = tmp_path / "aaa-real"
+        make_collection(real_col)
+
+        item_dir = real_col / "boundaries"
+        item_dir.mkdir()
+        (item_dir / "data.parquet").write_bytes(b"parquet data")
+
+        # Create a peer symlink that sorts AFTER the real collection
+        link_col = tmp_path / "zzz-link"
+        link_col.symlink_to(real_col)
+
+        result = get_catalog_status(tmp_path)
+
+        # Files should appear exactly once under the first-processed name (aaa-real).
+        # zzz-link resolves to the same dir and must be skipped.
+        untracked_paths = [f.path for f in result.untracked]
+        assert len(result.untracked) == 1, (
+            f"Expected 1 untracked file, got {len(result.untracked)}: {untracked_paths}"
+        )
+        assert result.untracked[0].collection_id == "aaa-real"
+        assert result.untracked[0].filename == "data.parquet"
+
+    @pytest.mark.unit
+    def test_two_items_symlinking_to_same_physical_dir_both_reported(self, tmp_path: Path) -> None:
+        """Two item symlinks pointing to the same physical directory are both reported.
+
+        Regression for the silent data-loss bug where visited_dirs was global across
+        all collections/items.  If item-a and item-b both symlink to the same real
+        directory, both items must be reported as untracked - not just the first.
+        """
+        make_catalog(tmp_path, ["col"])
+        col_dir = tmp_path / "col"
+        make_collection(col_dir)
+
+        # A real data directory outside the collection
+        real_data = tmp_path / "shared-data"
+        real_data.mkdir()
+        (real_data / "data.parquet").write_bytes(b"shared parquet data")
+
+        # Two item directories that are both symlinks to the same real_data dir
+        item_a = col_dir / "item-a"
+        item_b = col_dir / "item-b"
+        item_a.symlink_to(real_data)
+        item_b.symlink_to(real_data)
+
+        result = get_catalog_status(tmp_path)
+
+        # Both items must be visible - neither should be silently skipped
+        collection_ids = {f.collection_id for f in result.untracked}
+        item_ids = {f.item_id for f in result.untracked}
+        assert "col" in collection_ids
+        assert "item-a" in item_ids, "item-a was silently skipped"
+        assert "item-b" in item_ids, "item-b was silently skipped"
+        assert len(result.untracked) == 2, (
+            f"Expected 2 untracked files (one per item), got {len(result.untracked)}"
+        )
