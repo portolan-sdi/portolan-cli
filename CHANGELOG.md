@@ -1,3 +1,23 @@
+## v0.4.4 (2026-03-07)
+
+### Feat
+
+- **scan**: batch and summarize repeated warnings (#194)
+- **add**: accept multiple paths like git add (#189)
+- **add**: support tabular parquet as auxiliary assets (#190)
+
+### Fix
+
+- **list**: show all assets grouped by item (#196) (#204)
+- **add**: batch repetitive failures by error message (#199) (#205)
+- **add**: accept PMTiles as cloud-native primary asset (#201)
+- **status**: treat FileGDB directories as single assets (#187)
+- **status**: detect and skip symlink cycles (#188)
+- **add**: continue on errors and report all failures at end (#191)
+- **scan**: list specific unrecognized files instead of just count (#185)
+- **scan**: make PATH argument optional, default to current directory (#184)
+- **scan**: remove non-existent --bundle flag reference from suggestion (#183)
+
 ## v0.4.3 (2026-03-07)
 
 ### BREAKING CHANGE
