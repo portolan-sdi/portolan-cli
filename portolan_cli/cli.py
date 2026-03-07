@@ -3105,3 +3105,128 @@ def config_unset(ctx: click.Context, key: str, collection: str | None) -> None:
                 info_output(f"{key} was not set in collection '{collection}' config")
             else:
                 info_output(f"{key} was not set in config")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Clean Command
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _print_clean_preview(
+    catalog_path: Path,
+    files_to_remove: list[Path],
+    dirs_to_remove: list[Path],
+    data_files: int,
+) -> None:
+    """Print clean preview in text mode (dry-run)."""
+    if files_to_remove or dirs_to_remove:
+        info_output("Would remove:", dry_run=True)
+        for dir_path in dirs_to_remove:
+            detail(f"  {dir_path.relative_to(catalog_path)}/", dry_run=True)
+        for file_path in files_to_remove:
+            detail(f"  {file_path.relative_to(catalog_path)}", dry_run=True)
+        click.echo()
+        dir_label = "directory" if len(dirs_to_remove) == 1 else "directories"
+        info_output(
+            f"{len(files_to_remove)} files, {len(dirs_to_remove)} {dir_label} would be removed.",
+            dry_run=True,
+        )
+        info_output(f"Data files preserved: {data_files}", dry_run=True)
+    else:
+        info_output("Nothing to clean - no metadata files found", dry_run=True)
+
+
+@cli.command()
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview what would be removed without actually deleting.",
+)
+@click.pass_context
+def clean(ctx: click.Context, dry_run: bool) -> None:
+    """Remove all Portolan metadata while preserving data files.
+
+    Removes catalog.json, collection.json, item.json (STAC metadata),
+    versions.json, and the .portolan/ directory. Preserves all data files
+    (.parquet, .tif, .gpkg, .geojson, etc.).
+
+    Use --dry-run to preview what would be removed without deleting anything.
+
+    \b
+    Examples:
+        portolan clean           # Remove all metadata
+        portolan clean --dry-run # Preview what would be removed
+    """
+    from portolan_cli.clean import clean_catalog
+
+    use_json = should_output_json(ctx)
+
+    # Find catalog root
+    catalog_path = find_catalog_root()
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "clean",
+                [
+                    ErrorDetail(
+                        type="CatalogNotFoundError",
+                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not inside a Portolan catalog")
+            info_output("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    try:
+        if dry_run:
+            # Preview mode - use clean_catalog with dry_run=True
+            files_to_remove, dirs_to_remove, data_files = clean_catalog(catalog_path, dry_run=True)
+
+            if use_json:
+                data: dict[str, Any] = {
+                    "would_remove_files": [
+                        str(f.relative_to(catalog_path)) for f in files_to_remove
+                    ],
+                    "would_remove_directories": [
+                        str(d.relative_to(catalog_path)) for d in dirs_to_remove
+                    ],
+                    "data_files_preserved": data_files,
+                    "dry_run": True,
+                }
+                envelope = success_envelope("clean", data)
+                output_json_envelope(envelope)
+            else:
+                _print_clean_preview(catalog_path, files_to_remove, dirs_to_remove, data_files)
+        else:
+            # Actually clean
+            files_removed, dirs_removed, data_files = clean_catalog(catalog_path)
+
+            if use_json:
+                data = {
+                    "files_removed": [str(f.relative_to(catalog_path)) for f in files_removed],
+                    "directories_removed": [str(d.relative_to(catalog_path)) for d in dirs_removed],
+                    "data_files_preserved": data_files,
+                }
+                envelope = success_envelope("clean", data)
+                output_json_envelope(envelope)
+            else:
+                if files_removed or dirs_removed:
+                    success(f"Removed {len(files_removed)} files, {len(dirs_removed)} directories")
+                    detail(f"  Data files preserved: {data_files}")
+                else:
+                    info_output("Nothing to clean - no metadata files found")
+
+    except OSError as e:
+        if use_json:
+            envelope = error_envelope(
+                "clean",
+                [ErrorDetail(type="OSError", message=str(e))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Failed to clean catalog: {e}")
+        raise SystemExit(1) from e
