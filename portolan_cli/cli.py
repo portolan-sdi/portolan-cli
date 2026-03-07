@@ -1706,7 +1706,9 @@ def _print_skipped_by_category(result: ScanResult, *, show_all: bool = False) ->
 
     unknown_files = grouped.get(FileCategory.UNKNOWN, [])
     unknown_count = len(unknown_files)
-    recognized_count = len(result.skipped) - unknown_count
+    # Calculate recognized count from grouped files only (excludes legacy Path objects)
+    total_categorized = sum(len(files) for files in grouped.values())
+    recognized_count = total_categorized - unknown_count
 
     # If all files are recognized (no unknowns), show a concise summary
     if unknown_count == 0:
@@ -1721,9 +1723,10 @@ def _print_skipped_by_category(result: ScanResult, *, show_all: bool = False) ->
         click.echo()
         if unknown_count > 0:
             warn(f"{unknown_count} files with unrecognized format:")
-            # List the specific unrecognized files
+            # List the specific unrecognized files (sorted for deterministic output)
+            sorted_unknown_files = sorted(unknown_files, key=lambda f: f.relative_path)
             max_files = unknown_count if show_all else min(10, unknown_count)
-            for skipped_file in unknown_files[:max_files]:
+            for skipped_file in sorted_unknown_files[:max_files]:
                 detail(f"  - {skipped_file.relative_path}")
 
             # Show truncation message if needed
