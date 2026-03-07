@@ -217,6 +217,111 @@ class TestAdd:
             # Per ADR-0029, error message references .portolan/config.yaml sentinel
             assert "no .portolan/config.yaml found" in result.output.lower()
 
+    @pytest.mark.unit
+    def test_add_with_item_id_override(self, runner: CliRunner) -> None:
+        """add --item-id overrides automatic item ID derivation."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "demographics"
+            collection_dir.mkdir()
+            test_file = collection_dir / "census.geojson"
+            test_file.write_text('{"type": "FeatureCollection", "features": []}')
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = (
+                    [
+                        DatasetInfo(
+                            item_id="custom-item-id",
+                            collection_id="demographics",
+                            format_type=FormatType.VECTOR,
+                            bbox=[-122.5, 37.5, -122.0, 38.0],
+                            asset_paths=["census.parquet"],
+                        )
+                    ],
+                    [],
+                )
+
+                result = runner.invoke(
+                    cli,
+                    ["add", "--item-id", "custom-item-id", str(test_file)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                mock_add.assert_called_once()
+                call_kwargs = mock_add.call_args.kwargs
+                assert call_kwargs.get("item_id") == "custom-item-id"
+
+    @pytest.mark.unit
+    def test_add_item_id_passed_to_add_files(self, runner: CliRunner) -> None:
+        """--item-id parameter is correctly passed through to add_files."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "imagery"
+            collection_dir.mkdir()
+            test_file = collection_dir / "satellite.tif"
+            test_file.write_bytes(b"GeoTIFF content")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = ([], [])
+
+                runner.invoke(
+                    cli,
+                    ["add", "--item-id", "my-custom-id", str(test_file)],
+                    catch_exceptions=False,
+                )
+
+                call_args = mock_add.call_args
+                assert call_args is not None
+                assert call_args.kwargs.get("item_id") == "my-custom-id"
+
+    @pytest.mark.unit
+    def test_add_without_item_id_passes_none(self, runner: CliRunner) -> None:
+        """Without --item-id, add_files receives item_id=None (auto-derive)."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "vectors"
+            collection_dir.mkdir()
+            test_file = collection_dir / "data.geojson"
+            test_file.write_text("{}")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = ([], [])
+
+                runner.invoke(
+                    cli,
+                    ["add", str(test_file)],
+                    catch_exceptions=False,
+                )
+
+                call_args = mock_add.call_args
+                assert call_args is not None
+                assert call_args.kwargs.get("item_id") is None
+
+    @pytest.mark.unit
+    def test_add_item_id_with_directory_fails(self, runner: CliRunner) -> None:
+        """--item-id with a directory path should fail (ambiguous for multiple files)."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "demographics"
+            collection_dir.mkdir()
+
+            result = runner.invoke(
+                cli,
+                ["add", "--item-id", "my-id", str(collection_dir)],
+            )
+
+            assert result.exit_code != 0
+            assert "single file" in result.output.lower() or "directory" in result.output.lower()
+
 
 class TestRm:
     """Tests for 'portolan rm' command."""

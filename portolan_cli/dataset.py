@@ -333,7 +333,7 @@ def add_dataset(
         collection_id: Collection to add the dataset to.
         title: Optional display title for the dataset.
         description: Optional description.
-        item_id: Optional item ID (defaults to filename stem).
+        item_id: Optional item ID (defaults to parent directory name).
 
     Returns:
         DatasetInfo with details about the added dataset.
@@ -1198,6 +1198,7 @@ def add_files(
     paths: list[Path],
     catalog_root: Path,
     collection_id: str | None = None,
+    item_id: str | None = None,
     verbose: bool = False,
 ) -> tuple[list[DatasetInfo], list[Path]]:
     """Add files to a Portolan catalog.
@@ -1219,6 +1220,9 @@ def add_files(
             used by `portolan add .` to process multiple collections at once.
             Files at the catalog root level (not in a subdirectory) are skipped
             with a warning when collection_id=None.
+        item_id: Optional explicit item ID. If provided, overrides automatic
+            derivation from parent directory name. Must be a single path segment
+            (no '/', '\\', '.', or '..').
         verbose: If True, return skipped files info.
 
     Returns:
@@ -1291,6 +1295,7 @@ def add_files(
                     path=file_path,
                     catalog_root=catalog_root,
                     collection_id=coll_id,
+                    item_id=item_id,
                 )
                 added.append(result)
 
@@ -1325,10 +1330,10 @@ def add_files(
     # Process deferred non-geo files (ADR-0028: track as assets, skip conversion)
     for file_path, source_dir, coll_id in deferred_non_geo:
         if source_dir in source_to_item_dir:
-            item_dir, _, item_id = source_to_item_dir[source_dir]
+            resolved_item_dir, _, resolved_item_id = source_to_item_dir[source_dir]
 
             # Copy non-geo file to item directory as companion asset
-            dest_path = _copy_non_geo_to_item_dir(file_path, item_dir)
+            dest_path = _copy_non_geo_to_item_dir(file_path, resolved_item_dir)
 
             # Log info message (not warning - this is expected behavior per ADR-0028)
             ext = file_path.suffix.upper().lstrip(".")
@@ -1343,7 +1348,7 @@ def add_files(
             _update_item_with_asset(
                 catalog_root=catalog_root,
                 collection_id=coll_id,
-                item_id=item_id,
+                item_id=resolved_item_id,
                 asset_path=dest_path,
             )
 
