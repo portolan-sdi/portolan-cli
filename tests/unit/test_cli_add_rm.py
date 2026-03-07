@@ -92,7 +92,7 @@ class TestAdd:
 
     @pytest.mark.unit
     def test_add_infers_collection_from_path(self, runner: CliRunner) -> None:
-        """add infers collection ID from first path component."""
+        """add passes collection_id=None and delegates per-file inference to add_files."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -112,10 +112,11 @@ class TestAdd:
                     catch_exceptions=False,
                 )
 
-                # Verify collection_id was inferred as "imagery"
+                # The CLI now always passes collection_id=None; add_files infers per-file.
                 call_args = mock_add.call_args
                 assert call_args is not None
-                assert call_args.kwargs.get("collection_id") == "imagery"
+                assert call_args.kwargs.get("collection_id") is None
+                assert test_file.resolve() in call_args.kwargs["paths"]
 
     @pytest.mark.unit
     def test_add_directory(self, runner: CliRunner) -> None:
@@ -323,6 +324,277 @@ class TestAdd:
 
             assert result.exit_code != 0
             assert "single file" in result.output.lower() or "directory" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_add_multiple_paths(self, runner: CliRunner) -> None:
+        """add accepts multiple paths and batches them into a single add_files call (Issue #176)."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            # Create multiple files in different collections
+            coll1 = temp_path / "collection1"
+            coll1.mkdir()
+            file1 = coll1 / "data1.geojson"
+            file1.write_text("{}")
+
+            coll2 = temp_path / "collection2"
+            coll2.mkdir()
+            file2 = coll2 / "data2.geojson"
+            file2.write_text("{}")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = ([], [], [])
+
+                result = runner.invoke(
+                    cli,
+                    ["add", str(file1), str(file2)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                # Should be called ONCE with all paths batched together
+                mock_add.assert_called_once()
+                call_args = mock_add.call_args
+                assert call_args is not None
+                # Both resolved paths should be in the single call
+                passed_paths = call_args.kwargs["paths"]
+                assert file1.resolve() in passed_paths
+                assert file2.resolve() in passed_paths
+
+    @pytest.mark.unit
+    def test_add_multiple_paths_mixed_collections(self, runner: CliRunner) -> None:
+        """add multiple paths from different collections uses a single add_files call with collection_id=None."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            # Create files in different collections
+            demographics = temp_path / "demographics"
+            demographics.mkdir()
+            census = demographics / "census.geojson"
+            census.write_text("{}")
+
+            imagery = temp_path / "imagery"
+            imagery.mkdir()
+            satellite = imagery / "satellite.tif"
+            satellite.write_bytes(b"tiff")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = ([], [], [])
+
+                runner.invoke(
+                    cli,
+                    ["add", str(census), str(satellite)],
+                    catch_exceptions=False,
+                )
+
+                # Should be called ONCE with collection_id=None (add_files infers per-file)
+                mock_add.assert_called_once()
+                call_args = mock_add.call_args
+                assert call_args is not None
+                assert call_args.kwargs.get("collection_id") is None
+                # Both files should be in the paths list
+                passed_paths = call_args.kwargs["paths"]
+                assert census.resolve() in passed_paths
+                assert satellite.resolve() in passed_paths
+
+    @pytest.mark.unit
+    def test_add_multiple_paths_reports_combined_results(self, runner: CliRunner) -> None:
+        """add multiple paths from the same collection shows single-collection output."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            coll = temp_path / "data"
+            coll.mkdir()
+            file1 = coll / "data1.geojson"
+            file1.write_text("{}")
+            file2 = coll / "data2.geojson"
+            file2.write_text("{}")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                # Two items added from the same collection
+                mock_add.return_value = (
+                    [
+                        DatasetInfo(
+                            item_id="item1",
+                            collection_id="data",
+                            format_type=FormatType.VECTOR,
+                            bbox=[0, 0, 1, 1],
+                            asset_paths=["data1.parquet"],
+                        ),
+                        DatasetInfo(
+                            item_id="item2",
+                            collection_id="data",
+                            format_type=FormatType.VECTOR,
+                            bbox=[0, 0, 1, 1],
+                            asset_paths=["data2.parquet"],
+                        ),
+                    ],
+                    [],
+                    [],
+                )
+
+                result = runner.invoke(
+                    cli,
+                    ["add", str(file1), str(file2)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                # Output should say "2 files to data" (single collection), not "2 collections"
+                assert "2 collection" not in result.output
+                assert "data" in result.output
+
+    @pytest.mark.unit
+    def test_add_multiple_paths_failure_on_nth_path(self, runner: CliRunner) -> None:
+        """If add_files raises an error, exit code is non-zero and a useful message is shown."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            coll = temp_path / "data"
+            coll.mkdir()
+            file1 = coll / "data1.geojson"
+            file1.write_text("{}")
+            file2 = coll / "data2.geojson"
+            file2.write_text("{}")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.side_effect = ValueError("invalid geometry")
+
+                result = runner.invoke(
+                    cli,
+                    ["add", str(file1), str(file2)],
+                )
+
+                assert result.exit_code != 0
+                assert "invalid geometry" in result.output
+
+    @pytest.mark.unit
+    def test_add_duplicate_paths_deduplicates(self, runner: CliRunner) -> None:
+        """Passing the same path twice should result in a single resolved path in the batch."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            coll = temp_path / "data"
+            coll.mkdir()
+            file1 = coll / "data1.geojson"
+            file1.write_text("{}")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = ([], [], [])
+
+                result = runner.invoke(
+                    cli,
+                    ["add", str(file1), str(file1)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                # add_files should be called once with deduplicated paths
+                mock_add.assert_called_once()
+                passed_paths = mock_add.call_args.kwargs["paths"]
+                # The same resolved path should appear only once
+                assert passed_paths.count(file1.resolve()) == 1
+
+    @pytest.mark.unit
+    def test_add_symlink_resolves_correctly(self, runner: CliRunner) -> None:
+        """Symlinks in multi-path add are resolved to real paths before deduplication."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            coll = temp_path / "data"
+            coll.mkdir()
+            real_file = coll / "data1.geojson"
+            real_file.write_text("{}")
+            symlink_file = coll / "link_to_data1.geojson"
+            symlink_file.symlink_to(real_file)
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = ([], [], [])
+
+                result = runner.invoke(
+                    cli,
+                    ["add", str(real_file), str(symlink_file)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                # Both paths resolve to the same file, so only one path in batch
+                mock_add.assert_called_once()
+                passed_paths = mock_add.call_args.kwargs["paths"]
+                assert len(passed_paths) == 1
+                assert passed_paths[0] == real_file.resolve()
+
+    @pytest.mark.unit
+    def test_add_mixed_relative_absolute_paths(self, runner: CliRunner) -> None:
+        """Mixed relative and absolute paths are both resolved and batched correctly."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            coll = temp_path / "data"
+            coll.mkdir()
+            file1 = coll / "data1.geojson"
+            file1.write_text("{}")
+            file2 = coll / "data2.geojson"
+            file2.write_text("{}")
+
+            with patch("portolan_cli.cli.add_files") as mock_add:
+                mock_add.return_value = ([], [], [])
+
+                # Pass one absolute path and one path that Click will resolve
+                result = runner.invoke(
+                    cli,
+                    ["add", str(file1.resolve()), str(file2)],
+                    catch_exceptions=False,
+                )
+
+                assert result.exit_code == 0
+                mock_add.assert_called_once()
+                passed_paths = mock_add.call_args.kwargs["paths"]
+                assert file1.resolve() in passed_paths
+                assert file2.resolve() in passed_paths
+
+    @pytest.mark.unit
+    def test_add_no_paths_fails(self, runner: CliRunner) -> None:
+        """add without any paths fails with error."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            result = runner.invoke(cli, ["add"])
+
+            # Click should report missing argument
+            assert result.exit_code != 0
+            assert "missing argument" in result.output.lower() or "paths" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_add_item_id_with_multiple_paths_fails(self, runner: CliRunner) -> None:
+        """--item-id with multiple paths fails (ambiguous)."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            coll = temp_path / "data"
+            coll.mkdir()
+            file1 = coll / "data1.geojson"
+            file1.write_text("{}")
+            file2 = coll / "data2.geojson"
+            file2.write_text("{}")
+
+            result = runner.invoke(
+                cli,
+                ["add", "--item-id", "my-id", str(file1), str(file2)],
+            )
+
+            assert result.exit_code != 0
+            # Should reject using --item-id with multiple paths
+            assert "single" in result.output.lower() or "multiple" in result.output.lower()
 
 
 class TestRm:
@@ -565,11 +837,16 @@ class TestAddSidecarDetection:
 
 
 class TestPathToCollectionResolution:
-    """Tests for path -> collection ID resolution."""
+    """Tests for path -> collection ID resolution.
+
+    With the batched add_files approach (ADR-0007: CLI wraps API), the CLI now
+    delegates collection inference entirely to add_files by passing collection_id=None.
+    These tests verify that paths are correctly resolved and passed through.
+    """
 
     @pytest.mark.unit
     def test_resolve_collection_from_nested_path(self, runner: CliRunner) -> None:
-        """First path component (relative to catalog) = collection ID."""
+        """Nested path is resolved and passed to add_files with collection_id=None."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -590,13 +867,14 @@ class TestPathToCollectionResolution:
                 )
 
                 call_args = mock_add.call_args
-                # Collection should be "demographics", not "demographics/2020"
                 assert call_args is not None
-                assert call_args.kwargs.get("collection_id") == "demographics"
+                # The CLI delegates collection inference to add_files (collection_id=None)
+                assert call_args.kwargs.get("collection_id") is None
+                assert test_file.resolve() in call_args.kwargs["paths"]
 
     @pytest.mark.unit
     def test_resolve_collection_from_direct_child(self, runner: CliRunner) -> None:
-        """Direct child directory = collection ID."""
+        """Direct child path is resolved and passed to add_files with collection_id=None."""
         with runner.isolated_filesystem() as temp_dir:
             temp_path = Path(temp_dir)
             setup_catalog(temp_path)
@@ -617,7 +895,9 @@ class TestPathToCollectionResolution:
 
                 call_args = mock_add.call_args
                 assert call_args is not None
-                assert call_args.kwargs.get("collection_id") == "imagery"
+                # The CLI delegates collection inference to add_files (collection_id=None)
+                assert call_args.kwargs.get("collection_id") is None
+                assert test_file.resolve() in call_args.kwargs["paths"]
 
 
 class TestAddJsonOutput:
