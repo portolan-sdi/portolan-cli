@@ -23,6 +23,7 @@ from portolan_cli.dataset import (
     get_sidecars,
     list_datasets,
     remove_files,
+    resolve_collection_id,
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.metadata import check_directory_metadata, fix_metadata
@@ -2014,6 +2015,16 @@ def add_cmd(
     # Resolve all CLI paths upfront and deduplicate by resolved path.
     # Using dict.fromkeys preserves order while deduplicating.
     resolved_paths: list[Path] = list(dict.fromkeys(p.resolve() for p in paths))
+
+    # For single-file adds, validate that the file is in a collection subdirectory.
+    # This catches the error early with a clear message, matching pre-batch behavior.
+    if len(resolved_paths) == 1 and not resolved_paths[0].is_dir():
+        single_path = resolved_paths[0]
+        try:
+            resolve_collection_id(single_path, catalog_root)
+        except ValueError as err:
+            _handle_cmd_error("add", "PathError", str(err), use_json)
+            raise SystemExit(1) from err
 
     # Call add_files once with all resolved paths.
     # We pass collection_id=None so that add_files infers the collection per-file
