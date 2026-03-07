@@ -1921,6 +1921,18 @@ def add_cmd(
             detail("Run 'portolan init' to create a catalog")
         raise SystemExit(1)
 
+    # Validate --item-id is only used with single files, not directories.
+    # Applying the same item_id to multiple geo files in a directory would cause
+    # them to overwrite each other's STAC items. (Issue #136)
+    if item_id is not None and target_path.is_dir():
+        _handle_cmd_error(
+            "add",
+            "ValueError",
+            "--item-id can only be used with a single file, not a directory",
+            use_json,
+        )
+        raise SystemExit(1)
+
     # Determine collection ID from path.
     # Special case: when the user runs `add .` (or `add <catalog-root>`), target_path
     # equals catalog_root. In this case we cannot determine a single collection—instead

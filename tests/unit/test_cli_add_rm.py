@@ -304,6 +304,24 @@ class TestAdd:
                 assert call_args is not None
                 assert call_args.kwargs.get("item_id") is None
 
+    @pytest.mark.unit
+    def test_add_item_id_with_directory_fails(self, runner: CliRunner) -> None:
+        """--item-id with a directory path should fail (ambiguous for multiple files)."""
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "demographics"
+            collection_dir.mkdir()
+
+            result = runner.invoke(
+                cli,
+                ["add", "--item-id", "my-id", str(collection_dir)],
+            )
+
+            assert result.exit_code != 0
+            assert "single file" in result.output.lower() or "directory" in result.output.lower()
+
 
 class TestRm:
     """Tests for 'portolan rm' command."""

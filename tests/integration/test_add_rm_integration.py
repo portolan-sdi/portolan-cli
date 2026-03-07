@@ -465,6 +465,35 @@ class TestAddItemIdOverrideIntegration:
         assert result.exit_code != 0, "Should fail for item_id with '/'"
         assert "single path segment" in result.output.lower() or "invalid" in result.output.lower()
 
+    @pytest.mark.integration
+    def test_add_item_id_with_directory_rejects(
+        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+    ) -> None:
+        """add --item-id with a directory path fails (ambiguous for multiple files)."""
+        # Set up: directory with a geo file
+        collection_dir = initialized_catalog / "vectors"
+        item_dir = collection_dir / "item"
+        item_dir.mkdir(parents=True)
+        test_file = item_dir / "data.geojson"
+        shutil.copy(valid_points_geojson, test_file)
+
+        # Act: use --item-id with a directory path
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--portolan-dir",
+                str(initialized_catalog),
+                "--item-id",
+                "my-custom-id",
+                str(collection_dir),
+            ],
+        )
+
+        # Should fail because --item-id is ambiguous with directories
+        assert result.exit_code != 0, "Should fail for --item-id with directory"
+        assert "single file" in result.output.lower() or "directory" in result.output.lower()
+
 
 class TestRmIntegration:
     """Integration tests for 'portolan rm' command."""

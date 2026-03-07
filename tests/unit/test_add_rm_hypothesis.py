@@ -1678,8 +1678,6 @@ invalid_item_id_with_backslash = st.builds(
     safe_filename,
     safe_filename,
 )
-invalid_item_id_dot = st.just(".")
-invalid_item_id_dotdot = st.just("..")
 
 
 class TestItemIdOverrideProperties:
