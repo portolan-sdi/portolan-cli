@@ -1520,3 +1520,288 @@ class TestPermissionErrors:
                 assert _has_geo_assets(col_dir) is True
             finally:
                 os.chmod(unreadable, 0o755)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestSymlinkCycleDetection - Issue #178: Detect and skip symlink cycles
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestSymlinkCycleDetection:
+    """Tests for symlink cycle detection in status scanning.
+
+    Issue #178: Self-referential symlinks cause path explosion in status output.
+    With a symlink like `ocha/ocha -> /path/to/ocha`, output shows infinite nesting:
+        # Untracked: ocha/ocha/ocha/ocha/latest/...
+
+    Solution: Track visited paths (via Path.resolve()) and skip cycles.
+    """
+
+    @pytest.mark.unit
+    def test_self_referential_symlink_in_item_dir_skipped(self, tmp_path: Path) -> None:
+        """A symlink pointing to its parent directory doesn't cause infinite recursion."""
+        make_catalog(tmp_path, ["demographics"])
+        col_dir = tmp_path / "demographics"
+        make_collection(col_dir)
+
+        # Create item directory with a geo file
+        item_dir = col_dir / "census-2020"
+        item_dir.mkdir()
+        (item_dir / "data.parquet").write_bytes(b"fake parquet data")
+
+        # Create self-referential symlink: census-2020/self -> census-2020
+        (item_dir / "self").symlink_to(item_dir)
+
+        result = get_catalog_status(tmp_path)
+
+        # Should find the geo file but not infinitely recurse
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "data.parquet"
+
+    @pytest.mark.unit
+    def test_symlink_cycle_at_collection_level_skipped(self, tmp_path: Path) -> None:
+        """A symlink cycle at collection level doesn't cause infinite recursion."""
+        make_catalog(tmp_path, ["ocha"])
+        col_dir = tmp_path / "ocha"
+        make_collection(col_dir)
+
+        # Create item directory with a geo file
+        item_dir = col_dir / "boundaries"
+        item_dir.mkdir()
+        (item_dir / "data.geojson").write_bytes(b"{}")
+
+        # Create symlink cycle: ocha/ocha -> /path/to/ocha
+        (col_dir / "ocha").symlink_to(col_dir)
+
+        result = get_catalog_status(tmp_path)
+
+        # Should find the geo file but not infinitely recurse
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "data.geojson"
+
+    @pytest.mark.unit
+    def test_has_geo_assets_handles_symlink_cycle(self, tmp_path: Path) -> None:
+        """_has_geo_assets handles symlink cycles without infinite recursion."""
+        col_dir = tmp_path / "col"
+        col_dir.mkdir()
+
+        # Create symlink cycle: col/self -> col
+        (col_dir / "self").symlink_to(col_dir)
+
+        # Create a geo file
+        (col_dir / "data.parquet").write_bytes(b"data")
+
+        # Should find the geo file and not hang
+        assert _has_geo_assets(col_dir) is True
+
+    @pytest.mark.unit
+    def test_has_geo_assets_with_only_symlink_cycle_returns_false(self, tmp_path: Path) -> None:
+        """_has_geo_assets returns False when directory only has symlink cycles."""
+        col_dir = tmp_path / "empty-with-cycle"
+        col_dir.mkdir()
+
+        # Create symlink cycle: empty-with-cycle/self -> empty-with-cycle
+        (col_dir / "self").symlink_to(col_dir)
+
+        # No geo files, only a cycle
+        assert _has_geo_assets(col_dir) is False
+
+    @pytest.mark.unit
+    def test_mutual_symlink_cycle_skipped(self, tmp_path: Path) -> None:
+        """Mutual symlink cycles (A -> B -> A) are detected and skipped."""
+        make_catalog(tmp_path, ["alpha"])
+        col_dir = tmp_path / "alpha"
+        make_collection(col_dir)
+
+        # Create two directories with mutual symlinks
+        dir_a = col_dir / "dir-a"
+        dir_b = col_dir / "dir-b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+
+        # Add geo file to dir_a
+        (dir_a / "data.parquet").write_bytes(b"data")
+
+        # Create mutual symlinks: dir-a/to-b -> dir-b, dir-b/to-a -> dir-a
+        (dir_a / "to-b").symlink_to(dir_b)
+        (dir_b / "to-a").symlink_to(dir_a)
+
+        result = get_catalog_status(tmp_path)
+
+        # Should find the file from dir-a directly, plus once through dir-b/to-a
+        # before the cycle is detected. The key is no infinite recursion.
+        # We expect 2 results: data.parquet from dir-a, and to-a/data.parquet from dir-b
+        assert len(result.untracked) == 2
+        filenames = [f.filename for f in result.untracked]
+        assert "data.parquet" in filenames
+        assert "to-a/data.parquet" in filenames
+
+    @pytest.mark.unit
+    def test_deep_symlink_cycle_skipped(self, tmp_path: Path) -> None:
+        """Deep symlink cycles (A -> B -> C -> A) are detected and skipped."""
+        make_catalog(tmp_path, ["deep"])
+        col_dir = tmp_path / "deep"
+        make_collection(col_dir)
+
+        # Create nested directories
+        # Note: "a" is the item directory, so b/c are nested within it
+        dir_a = col_dir / "a"
+        dir_b = dir_a / "b"
+        dir_c = dir_b / "c"
+        dir_a.mkdir()
+        dir_b.mkdir()
+        dir_c.mkdir()
+
+        # Add geo file at the deepest level
+        (dir_c / "data.parquet").write_bytes(b"data")
+
+        # Create symlink back to top: c/back-to-a -> a
+        (dir_c / "back-to-a").symlink_to(dir_a)
+
+        result = get_catalog_status(tmp_path)
+
+        # Should find the file and not hang
+        # The filename is relative to the item directory "a", so it includes "b/c/"
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "b/c/data.parquet"
+        assert result.untracked[0].item_id == "a"
+
+    @pytest.mark.unit
+    def test_valid_symlink_still_followed(self, tmp_path: Path) -> None:
+        """Non-cyclic symlinks are still followed correctly."""
+        make_catalog(tmp_path, ["linked"])
+        col_dir = tmp_path / "linked"
+        make_collection(col_dir)
+
+        # Create a real directory outside the collection with geo files
+        external_dir = tmp_path / "external-data"
+        external_dir.mkdir()
+        (external_dir / "external.parquet").write_bytes(b"external data")
+
+        # Create item directory with a symlink to external dir
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+        (item_dir / "linked-data").symlink_to(external_dir)
+        (item_dir / "local.parquet").write_bytes(b"local data")
+
+        result = get_catalog_status(tmp_path)
+
+        # Should find both files (local and through symlink)
+        filenames = sorted([f.filename for f in result.untracked])
+        assert "local.parquet" in filenames
+        assert "linked-data/external.parquet" in filenames
+
+    @pytest.mark.unit
+    def test_broken_symlink_skipped(self, tmp_path: Path) -> None:
+        """Broken symlinks are skipped without error."""
+        make_catalog(tmp_path, ["broken"])
+        col_dir = tmp_path / "broken"
+        make_collection(col_dir)
+
+        item_dir = col_dir / "item"
+        item_dir.mkdir()
+        (item_dir / "data.parquet").write_bytes(b"data")
+
+        # Create broken symlink
+        (item_dir / "broken-link").symlink_to(tmp_path / "nonexistent")
+
+        result = get_catalog_status(tmp_path)
+
+        # Should find the valid file and skip the broken link
+        assert len(result.untracked) == 1
+        assert result.untracked[0].filename == "data.parquet"
+
+    @pytest.mark.unit
+    def test_symlink_to_parent_in_hive_partition_skipped(self, tmp_path: Path) -> None:
+        """Symlink to parent in hive-partitioned structure doesn't cause recursion."""
+        make_catalog(tmp_path, ["hive"])
+        col_dir = tmp_path / "hive"
+        make_collection(col_dir)
+
+        # Create hive-partitioned structure
+        item_dir = col_dir / "dataset"
+        year_dir = item_dir / "year=2024"
+        month_dir = year_dir / "month=01"
+        item_dir.mkdir()
+        year_dir.mkdir()
+        month_dir.mkdir()
+
+        # Add geo file
+        (month_dir / "data.parquet").write_bytes(b"partitioned data")
+
+        # Create symlink back to item: month=01/back -> dataset
+        (month_dir / "back").symlink_to(item_dir)
+
+        result = get_catalog_status(tmp_path)
+
+        # Should find the file and not hang
+        assert len(result.untracked) == 1
+        assert "year=2024/month=01/data.parquet" in result.untracked[0].filename
+
+    @pytest.mark.unit
+    def test_collection_symlink_to_sibling_collection_skipped(self, tmp_path: Path) -> None:
+        """A collection-level symlink pointing to a sibling collection is skipped.
+
+        True collection-level cycle: catalog_root/zzz-link -> catalog_root/aaa-real.
+        The real collection is sorted first (aaa-real < zzz-link), processed, added to
+        visited_col_dirs; when zzz-link resolves to the same physical directory it is
+        detected and skipped so files are never double-counted.
+        """
+        # Use names that guarantee sort order: aaa-real processed before zzz-link
+        make_catalog(tmp_path, ["aaa-real"])
+        real_col = tmp_path / "aaa-real"
+        make_collection(real_col)
+
+        item_dir = real_col / "boundaries"
+        item_dir.mkdir()
+        (item_dir / "data.parquet").write_bytes(b"parquet data")
+
+        # Create a peer symlink that sorts AFTER the real collection
+        link_col = tmp_path / "zzz-link"
+        link_col.symlink_to(real_col)
+
+        result = get_catalog_status(tmp_path)
+
+        # Files should appear exactly once under the first-processed name (aaa-real).
+        # zzz-link resolves to the same dir and must be skipped.
+        untracked_paths = [f.path for f in result.untracked]
+        assert len(result.untracked) == 1, (
+            f"Expected 1 untracked file, got {len(result.untracked)}: {untracked_paths}"
+        )
+        assert result.untracked[0].collection_id == "aaa-real"
+        assert result.untracked[0].filename == "data.parquet"
+
+    @pytest.mark.unit
+    def test_two_items_symlinking_to_same_physical_dir_both_reported(self, tmp_path: Path) -> None:
+        """Two item symlinks pointing to the same physical directory are both reported.
+
+        Regression for the silent data-loss bug where visited_dirs was global across
+        all collections/items.  If item-a and item-b both symlink to the same real
+        directory, both items must be reported as untracked - not just the first.
+        """
+        make_catalog(tmp_path, ["col"])
+        col_dir = tmp_path / "col"
+        make_collection(col_dir)
+
+        # A real data directory outside the collection
+        real_data = tmp_path / "shared-data"
+        real_data.mkdir()
+        (real_data / "data.parquet").write_bytes(b"shared parquet data")
+
+        # Two item directories that are both symlinks to the same real_data dir
+        item_a = col_dir / "item-a"
+        item_b = col_dir / "item-b"
+        item_a.symlink_to(real_data)
+        item_b.symlink_to(real_data)
+
+        result = get_catalog_status(tmp_path)
+
+        # Both items must be visible - neither should be silently skipped
+        collection_ids = {f.collection_id for f in result.untracked}
+        item_ids = {f.item_id for f in result.untracked}
+        assert "col" in collection_ids
+        assert "item-a" in item_ids, "item-a was silently skipped"
+        assert "item-b" in item_ids, "item-b was silently skipped"
+        assert len(result.untracked) == 2, (
+            f"Expected 2 untracked files (one per item), got {len(result.untracked)}"
+        )
