@@ -46,7 +46,12 @@ _STAC_METADATA_FILES: frozenset[str] = frozenset({"item.json"})
 _MAX_GEO_SCAN_DEPTH: int = 5
 
 
-def _has_geo_assets(directory: Path, *, max_depth: int = _MAX_GEO_SCAN_DEPTH) -> bool:
+def _has_geo_assets(
+    directory: Path,
+    *,
+    max_depth: int = _MAX_GEO_SCAN_DEPTH,
+    _visited: set[Path] | None = None,
+) -> bool:
     """Check whether a directory subtree contains at least one geospatial file.
 
     Used to determine if an uninitialized directory (one without collection.json)
@@ -60,15 +65,36 @@ def _has_geo_assets(directory: Path, *, max_depth: int = _MAX_GEO_SCAN_DEPTH) ->
     but broken symlinks are logged and skipped. FileGDB directories (.gdb) are
     detected as geo-assets.
 
+    Symlink cycles are detected by tracking resolved paths. When a symlink points
+    to an already-visited directory, it is skipped with a warning log.
+
     Args:
         directory: Path to the candidate collection directory.
         max_depth: Maximum recursion depth (default: 5). Prevents runaway recursion.
+        _visited: Internal parameter to track visited resolved paths for cycle detection.
 
     Returns:
         True if any geospatial file or .gdb directory is found within the subtree.
     """
     if max_depth <= 0:
         return False
+
+    # Initialize visited set on first call
+    if _visited is None:
+        _visited = set()
+
+    # Resolve the directory to detect cycles
+    try:
+        resolved = directory.resolve()
+    except OSError as e:
+        logger.debug("Cannot resolve %s: %s", directory, e)
+        return False
+
+    # Check for symlink cycle
+    if resolved in _visited:
+        logger.warning("Skipping symlink cycle: %s -> %s", directory, resolved)
+        return False
+    _visited.add(resolved)
 
     try:
         for entry in directory.iterdir():
@@ -97,8 +123,8 @@ def _has_geo_assets(directory: Path, *, max_depth: int = _MAX_GEO_SCAN_DEPTH) ->
                     if entry.suffix.lower() in GEOSPATIAL_EXTENSIONS:
                         return True
                 elif entry.is_dir():
-                    # Recurse into subdirectories
-                    if _has_geo_assets(entry, max_depth=max_depth - 1):
+                    # Recurse into subdirectories, passing the visited set
+                    if _has_geo_assets(entry, max_depth=max_depth - 1, _visited=_visited):
                         return True
             except OSError as e:
                 # Handle broken symlinks, permission errors, etc.
@@ -206,11 +232,15 @@ def _scan_item_dir_recursive(
     seen_keys: set[str],
     *,
     max_depth: int = _MAX_GEO_SCAN_DEPTH,
+    _visited: set[Path] | None = None,
 ) -> None:
     """Recursively scan an item directory for status changes.
 
     Supports hive-partitioned datasets where geo files are nested
     in subdirectories (e.g., year=2024/month=01/data.parquet).
+
+    Symlink cycles are detected by tracking resolved paths. When a symlink
+    points to an already-visited directory, it is skipped with a warning log.
 
     Args:
         base_dir: Base item directory (used for relative path calculation).
@@ -223,9 +253,27 @@ def _scan_item_dir_recursive(
         modified: List to append modified files to.
         seen_keys: Set to add seen asset keys to.
         max_depth: Maximum recursion depth to prevent runaway recursion.
+        _visited: Internal parameter to track visited resolved paths for cycle detection.
     """
     if max_depth <= 0:
         return
+
+    # Initialize visited set on first call
+    if _visited is None:
+        _visited = set()
+
+    # Resolve the directory to detect cycles
+    try:
+        resolved = current_dir.resolve()
+    except OSError as e:
+        logger.debug("Cannot resolve %s: %s", current_dir, e)
+        return
+
+    # Check for symlink cycle
+    if resolved in _visited:
+        logger.warning("Skipping symlink cycle: %s -> %s", current_dir, resolved)
+        return
+    _visited.add(resolved)
 
     try:
         entries = sorted(current_dir.iterdir())
@@ -277,6 +325,7 @@ def _scan_item_dir_recursive(
                     modified=modified,
                     seen_keys=seen_keys,
                     max_depth=max_depth - 1,
+                    _visited=_visited,
                 )
         except OSError as e:
             logger.debug("Cannot access %s: %s", entry, e)
@@ -337,6 +386,10 @@ def get_catalog_status(catalog_root: Path) -> StatusResult:
     Per ADR-0023, versions.json lives at the collection root
     (collection/versions.json), NOT inside .portolan/.
 
+    Symlink cycles are detected at collection and item directory levels by
+    tracking resolved paths. When a symlink points to an already-visited
+    directory, it is skipped with a warning log.
+
     Args:
         catalog_root: Root directory of the catalog (contains catalog.json).
 
@@ -354,9 +407,24 @@ def get_catalog_status(catalog_root: Path) -> StatusResult:
     modified: list[FileStatus] = []
     deleted: list[FileStatus] = []
 
+    # Track visited directories to detect symlink cycles at collection/item level
+    visited_dirs: set[Path] = set()
+
     for col_dir in sorted(catalog_root.iterdir()):
         if not col_dir.is_dir() or col_dir.name.startswith("."):
             continue
+
+        # Check for symlink cycle at collection level
+        try:
+            col_resolved = col_dir.resolve()
+        except OSError as e:
+            logger.debug("Cannot resolve %s: %s", col_dir, e)
+            continue
+
+        if col_resolved in visited_dirs:
+            logger.warning("Skipping symlink cycle: %s -> %s", col_dir, col_resolved)
+            continue
+        visited_dirs.add(col_resolved)
 
         # Include directories that have collection.json (initialized collections)
         # OR directories that contain geo-assets (uninitialized potential collections).
@@ -375,6 +443,18 @@ def get_catalog_status(catalog_root: Path) -> StatusResult:
         for item_dir in sorted(col_dir.iterdir()):
             if not item_dir.is_dir() or item_dir.name.startswith("."):
                 continue
+
+            # Check for symlink cycle at item level
+            try:
+                item_resolved = item_dir.resolve()
+            except OSError as e:
+                logger.debug("Cannot resolve %s: %s", item_dir, e)
+                continue
+
+            if item_resolved in visited_dirs:
+                logger.warning("Skipping symlink cycle: %s -> %s", item_dir, item_resolved)
+                continue
+            visited_dirs.add(item_resolved)
 
             item_untracked, item_modified, item_seen = _scan_item_dir_status(
                 item_dir, collection_id, versions_path, tracked_assets
