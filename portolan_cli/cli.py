@@ -1519,29 +1519,6 @@ DEFAULT_ISSUE_LIMIT = 10
 # Maximum example paths to show per batched issue group
 BATCH_EXAMPLES_LIMIT = 3
 
-# Human-readable descriptions for batched issue types (plural form)
-_ISSUE_TYPE_DISPLAY_NAMES: dict[IssueType, str] = {
-    IssueType.INCOMPLETE_SHAPEFILE: "shapefiles missing required sidecars",
-    IssueType.ZERO_BYTE_FILE: "empty (zero-byte) files",
-    IssueType.SYMLINK_LOOP: "symlink loops detected",
-    IssueType.BROKEN_SYMLINK: "broken symlinks",
-    IssueType.PERMISSION_DENIED: "files with permission errors",
-    IssueType.INVALID_CHARACTERS: "files with problematic characters",
-    IssueType.MULTIPLE_PRIMARIES: "directories with multiple primary assets",
-    IssueType.LONG_PATH: "paths exceeding length limits",
-    IssueType.DUPLICATE_BASENAME: "duplicate basenames",
-    IssueType.MIXED_FORMATS: "directories with mixed raster/vector formats",
-    IssueType.FILEGDB_DETECTED: "FileGDB directories detected",
-    IssueType.HIVE_PARTITION_DETECTED: "Hive-partitioned datasets detected",
-    IssueType.EXISTING_CATALOG: "existing catalogs found",
-    IssueType.DUAL_FORMAT: "dual-format assets detected",
-    IssueType.WINDOWS_RESERVED_NAME: "Windows reserved names",
-    IssueType.PATH_TOO_LONG: "paths too long for Windows",
-    IssueType.MIXED_FLAT_MULTIITEM: "mixed flat/multi-item structures",
-    IssueType.ORPHAN_SIDECAR: "orphan sidecar files",
-    IssueType.INVALID_COLLECTION_ID: "directories with invalid collection IDs",
-}
-
 
 def _print_issue_group(
     issues: list[ScanIssue],
@@ -1704,13 +1681,16 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
         total = len(severity_issues)
         header_fn(f"{total} {label}{'s' if total != 1 else ''}")
 
-        # Group this severity's issues by IssueType so repeated warnings collapse.
-        # Preserve insertion order (Python 3.7+ dict) to keep a stable output order.
-        groups: dict[IssueType, list[ScanIssue]] = {}
+        # Group by (IssueType, message) so issues with the same problem description
+        # batch together, while distinct messages get separate groups.
+        # Preserves insertion order (Python 3.7+).
+        GroupKey = tuple[IssueType, str]
+        groups: dict[GroupKey, list[ScanIssue]] = {}
         for issue in severity_issues:
-            groups.setdefault(issue.issue_type, []).append(issue)
+            key: GroupKey = (issue.issue_type, issue.message)
+            groups.setdefault(key, []).append(issue)
 
-        for issue_type, group in groups.items():
+        for (issue_type, _message), group in groups.items():
             fix_label = get_fixability(issue_type).label
             count = len(group)
 
@@ -1721,11 +1701,10 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
                 if issue.suggestion is not None:
                     detail(f"    Hint: {issue.suggestion}")
             else:
-                # Multiple issues of the same type: show count + example paths.
-                display_name = _ISSUE_TYPE_DISPLAY_NAMES.get(
-                    issue_type, f"issues: {issue_type.value}"
-                )
-                header_fn(f"  {fix_label} {count} {display_name}")
+                # Multiple issues with same type+message+suggestion: show count + examples.
+                # Use the shared message directly since all issues in this group have it.
+                shared_message = group[0].message
+                header_fn(f"  {fix_label} {count} files: {shared_message}")
 
                 # Decide how many examples to display.
                 examples = group if show_all else group[:BATCH_EXAMPLES_LIMIT]
@@ -1737,7 +1716,7 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
                 else:
                     detail(f"    Examples: {paths}")
 
-                # Show the suggestion once per group (use first issue's suggestion).
+                # Show a representative suggestion (may vary per file, show first).
                 first_suggestion = next(
                     (i.suggestion for i in group if i.suggestion is not None), None
                 )

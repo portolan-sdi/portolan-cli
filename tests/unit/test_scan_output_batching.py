@@ -317,14 +317,10 @@ def _severity_strategy() -> st.SearchStrategy[ScanSeverity]:
 
 @st.composite
 def scan_issue_strategy(draw: st.DrawFn) -> ScanIssue:
-    """Hypothesis strategy that produces valid ScanIssue instances."""
-    name = draw(
-        st.text(
-            alphabet=st.characters(whitelist_categories=("Ll", "Lu", "Nd"), min_codepoint=65),
-            min_size=1,
-            max_size=20,
-        )
-    )
+    """Hypothesis strategy that produces valid ScanIssue instances with unique paths."""
+    # Use UUID to ensure unique relative_path values across all generated issues
+    unique_id = draw(st.uuids())
+    name = f"path_{unique_id.hex[:12]}"
     issue_type = draw(_issue_type_strategy())
     severity = draw(_severity_strategy())
     return make_issue(name, issue_type, severity)
