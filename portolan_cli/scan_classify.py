@@ -6,7 +6,7 @@ This module provides the 10-category file classification system:
 - TABULAR_DATA: Non-geo parquet, CSV, TSV, XLSX
 - STAC_METADATA: catalog.json, collection.json, STAC items
 - DOCUMENTATION: .md, .txt, README files
-- VISUALIZATION: .pmtiles, .mbtiles
+- VISUALIZATION: .mbtiles
 - THUMBNAIL: Small .png, .jpg, .jpeg, .webp (< 1MB)
 - STYLE: style.json, MapLibre style definitions
 - JUNK: .exe, __pycache__, .git, IDE directories
@@ -38,6 +38,7 @@ GEO_ASSET_EXTENSIONS: frozenset[str] = frozenset(
         ".tif",
         ".tiff",
         ".jp2",
+        ".pmtiles",  # PMTiles: cloud-native vector tiles (issue #198)
     }
 )
 
@@ -79,9 +80,10 @@ DOC_EXTENSIONS: frozenset[str] = frozenset(
 )
 
 # Visualization formats (VISUALIZATION)
+# Note: .pmtiles is NOT here — it is a primary cloud-native format (GEO_ASSET).
+# See issue #198 and formats.py CLOUD_NATIVE_EXTENSIONS.
 VIZ_EXTENSIONS: frozenset[str] = frozenset(
     {
-        ".pmtiles",
         ".mbtiles",
     }
 )

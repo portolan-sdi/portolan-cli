@@ -174,10 +174,50 @@ class TestClassifyFile:
         assert category == FileCategory.JUNK
         assert skip_type == SkipReasonType.JUNK_FILE
 
-    def test_pmtiles_classified_as_visualization(self, tmp_path: Path) -> None:
-        """.pmtiles files are classified as VISUALIZATION."""
+    def test_pmtiles_classified_as_geo_asset(self, tmp_path: Path) -> None:
+        """.pmtiles files are classified as GEO_ASSET, not VISUALIZATION.
 
+        Regression test for issue #198: PMTiles (.pmtiles) is a cloud-native
+        format listed in CLOUD_NATIVE_EXTENSIONS in formats.py. It should be
+        accepted during 'portolan add' like FlatGeobuf (.fgb), not rejected
+        as a visualization-only format.
+        """
         test_path = tmp_path / "tiles.pmtiles"
+        test_path.write_bytes(b"\x00")
+        category, skip_type, skip_msg = classify_file(test_path)
+        assert category == FileCategory.GEO_ASSET
+        assert skip_type is None
+        assert skip_msg is None
+
+    def test_pmtiles_in_geo_asset_extensions(self) -> None:
+        """.pmtiles must be listed in GEO_ASSET_EXTENSIONS.
+
+        Regression test for issue #198: PMTiles was missing from
+        GEO_ASSET_EXTENSIONS, causing scan to classify .pmtiles files as
+        VISUALIZATION and skip them instead of treating them as primary assets.
+        """
+        from portolan_cli.scan_classify import GEO_ASSET_EXTENSIONS
+
+        assert ".pmtiles" in GEO_ASSET_EXTENSIONS
+
+    def test_pmtiles_not_in_viz_extensions(self) -> None:
+        """.pmtiles must NOT be listed in VIZ_EXTENSIONS.
+
+        Regression test for issue #198: PMTiles was incorrectly placed in
+        VIZ_EXTENSIONS alongside .mbtiles. PMTiles is a primary cloud-native
+        geospatial format, not a visualization-only derivative.
+        """
+        from portolan_cli.scan_classify import VIZ_EXTENSIONS
+
+        assert ".pmtiles" not in VIZ_EXTENSIONS
+
+    def test_mbtiles_still_classified_as_visualization(self, tmp_path: Path) -> None:
+        """.mbtiles files remain classified as VISUALIZATION.
+
+        MBTiles is a visualization-only derivative format and should remain
+        in VIZ_EXTENSIONS. This guards against over-correcting the PMTiles fix.
+        """
+        test_path = tmp_path / "tiles.mbtiles"
         test_path.write_bytes(b"\x00")
         category, skip_type, skip_msg = classify_file(test_path)
         assert category == FileCategory.VISUALIZATION
