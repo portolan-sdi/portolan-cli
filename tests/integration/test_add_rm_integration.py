@@ -333,18 +333,31 @@ class TestAddItemIdOverrideIntegration:
         # Assert
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Check that versions.json uses the custom item ID
+        # Check versions.json exists and has a version entry
         versions_path = collection_dir / "versions.json"
         assert versions_path.exists(), "versions.json not created"
         with open(versions_path) as f:
             versions = json.load(f)
+        assert len(versions["versions"]) > 0, "No version entries created"
 
-        # The item_id in versions.json should be custom-census-2024
+        # Verify the STAC item JSON uses the custom item ID.
+        # Asset keys in versions.json are "{item_id}/{filename}" so checking
+        # asset keys is indirect; reading the Item JSON is the correct contract.
+        # Pick the first asset href to locate the item directory.
         latest_version = versions["versions"][-1]
-        # Check assets are keyed by the custom item ID
-        asset_keys = list(latest_version["assets"].keys())
-        assert any("custom-census-2024" in key for key in asset_keys), (
-            f"Expected item with custom ID 'custom-census-2024' in assets, got: {asset_keys}"
+        asset_hrefs = [a["href"] for a in latest_version["assets"].values()]
+        assert len(asset_hrefs) > 0, "No assets in version entry"
+
+        # Item JSON lives at collection_dir/{item_id}/{item_id}.json
+        # Use the href (format: "collection_id/item_id/filename") to find item_id
+        item_id_from_href = asset_hrefs[0].split("/")[1]
+        item_json_path = collection_dir / item_id_from_href / f"{item_id_from_href}.json"
+        assert item_json_path.exists(), f"Item JSON not found at {item_json_path}"
+
+        with open(item_json_path) as f:
+            item_json = json.load(f)
+        assert item_json["id"] == "custom-census-2024", (
+            f"STAC item ID should be 'custom-census-2024', got '{item_json['id']}'"
         )
 
     @pytest.mark.integration
@@ -426,14 +439,15 @@ class TestAddItemIdOverrideIntegration:
 
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # The item ID should be 'census-2020' (parent directory name)
-        versions_path = collection_dir / "versions.json"
-        with open(versions_path) as f:
-            versions = json.load(f)
+        # The item ID should be 'census-2020' (derived from parent directory name).
+        # Verify via the STAC item JSON, not versions.json asset keys.
+        item_json_path = collection_dir / "census-2020" / "census-2020.json"
+        assert item_json_path.exists(), f"Item JSON not found at {item_json_path}"
 
-        asset_keys = list(versions["versions"][-1]["assets"].keys())
-        assert any("census-2020" in key for key in asset_keys), (
-            f"Expected auto-derived item ID 'census-2020', got: {asset_keys}"
+        with open(item_json_path) as f:
+            item_json = json.load(f)
+        assert item_json["id"] == "census-2020", (
+            f"STAC item ID should be 'census-2020', got '{item_json['id']}'"
         )
 
     @pytest.mark.integration
