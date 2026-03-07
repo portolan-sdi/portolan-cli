@@ -39,7 +39,11 @@ from portolan_cli.collection_id import (
     normalize_collection_id,
     validate_collection_id,
 )
-from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
+from portolan_cli.constants import (
+    PARQUET_EXTENSION,
+    WINDOWS_RESERVED_NAMES,
+    is_valid_uppercase_id,
+)
 from portolan_cli.scan_classify import (
     FileCategory,
     SkippedFile,
@@ -743,6 +747,12 @@ def _check_collection_ids(ctx: _ScanContext) -> None:
         # Validate the collection ID (directory name)
         is_valid, error_msg = validate_collection_id(collection_dir_name)
         if not is_valid:
+            # Skip warning for valid ISO country codes and disputed territory patterns
+            # (e.g., USA, GBR, xAB, xJK) - these are uppercase by convention
+            # See ADR-0030 for rationale
+            if is_valid_uppercase_id(collection_dir_name):
+                continue
+
             # Generate suggested normalized name
             try:
                 normalized = normalize_collection_id(collection_dir_name)

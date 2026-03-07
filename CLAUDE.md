@@ -101,6 +101,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0027](context/shared/adr/0027-unified-config-yaml-sentinel.md) | Unified config.yaml as sentinel and user config (eliminates config.json) |
 | [0028](context/shared/adr/0028-all-files-as-assets.md) | Track ALL files in item directories as assets |
 | [0029](context/shared/adr/0029-unified-catalog-root-detection.md) | Unified catalog root detection via .portolan/config.yaml |
+| [0030](context/shared/adr/0030-iso-country-code-handling.md) | ISO 3166-1 alpha-3 codes exempt from uppercase warnings |
 
 ## Common Commands
 
