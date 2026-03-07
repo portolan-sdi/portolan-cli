@@ -16,18 +16,14 @@ from hypothesis import strategies as st
 from portolan_cli.scan_classify import FileCategory, SkipReasonType, classify_file
 
 # Strategy for generating unknown file extensions
-unknown_extensions = (
-    st.text(
-        alphabet=st.characters(
-            blacklist_characters="\x00\n\r/\\:",
-            blacklist_categories=("Cs",),
-        ),
-        min_size=1,
-        max_size=10,
-    )
-    .filter(lambda x: "." not in x)
-    .map(lambda x: f".{x}")
-)
+# Use ASCII alphanumeric only - cross-platform safe for filenames
+# (Unicode characters can cause "Illegal byte sequence" on macOS and
+# "Invalid argument" on Windows for control characters and surrogates)
+unknown_extensions = st.text(
+    alphabet="abcdefghijklmnopqrstuvwxyz0123456789",
+    min_size=1,
+    max_size=10,
+).map(lambda x: f".{x}")
 
 
 @pytest.mark.unit
