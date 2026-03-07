@@ -1,6 +1,7 @@
 """Invariant tests for format detection.
 
-Verifies invariants across all known extensions using parameterized tests.
+Verifies invariants across all known extensions using parameterized tests
+and hypothesis property-based testing.
 """
 
 from __future__ import annotations
@@ -9,14 +10,19 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from portolan_cli.formats import (
     CLOUD_NATIVE_EXTENSIONS,
     CONVERTIBLE_RASTER_EXTENSIONS,
     CONVERTIBLE_VECTOR_EXTENSIONS,
     UNSUPPORTED_EXTENSIONS,
+    VECTOR_EXTENSIONS,
     CloudNativeStatus,
     FormatInfo,
+    FormatType,
+    detect_format,
     get_cloud_native_status,
 )
 
@@ -152,3 +158,117 @@ class TestFormatInfoDataIntegrity:
         expected = {"cloud_native", "convertible", "unsupported"}
         actual = {status.value for status in CloudNativeStatus}
         assert actual == expected
+
+
+# =============================================================================
+# Hypothesis Property-Based Tests
+# =============================================================================
+
+
+class TestHypothesisPMTilesConsistency:
+    """Property-based tests for PMTiles format consistency.
+
+    Regression tests for issue #198: PMTiles must be treated consistently
+    across all format detection code paths.
+    """
+
+    @pytest.mark.unit
+    @given(
+        filename_base=st.text(
+            alphabet=st.sampled_from("abcdefghijklmnopqrstuvwxyz0123456789_-"),
+            min_size=1,
+            max_size=20,
+        )
+    )
+    @settings(max_examples=50)
+    def test_pmtiles_always_detected_as_vector(self, filename_base: str) -> None:
+        """PMTiles files with any valid filename are detected as VECTOR.
+
+        Property: For any valid filename base, {base}.pmtiles -> FormatType.VECTOR
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            test_file = Path(tmp_dir) / f"{filename_base}.pmtiles"
+            test_file.write_bytes(b"\x00" * 16)
+
+            result = detect_format(test_file)
+
+            assert result == FormatType.VECTOR, f"Failed for filename: {filename_base}.pmtiles"
+
+    @pytest.mark.unit
+    @given(
+        filename_base=st.text(
+            alphabet=st.sampled_from("abcdefghijklmnopqrstuvwxyz0123456789_-"),
+            min_size=1,
+            max_size=20,
+        )
+    )
+    @settings(max_examples=50)
+    def test_pmtiles_always_cloud_native(self, filename_base: str) -> None:
+        """PMTiles files are always classified as CLOUD_NATIVE.
+
+        Property: For any valid filename base, {base}.pmtiles -> CLOUD_NATIVE
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            test_file = Path(tmp_dir) / f"{filename_base}.pmtiles"
+            test_file.write_bytes(b"\x00" * 16)
+
+            result = get_cloud_native_status(test_file)
+
+            assert result.status == CloudNativeStatus.CLOUD_NATIVE
+            assert result.display_name == "PMTiles"
+            assert result.target_format is None
+            assert result.error_message is None
+
+
+class TestHypothesisCloudNativeVectorConsistency:
+    """Property-based tests for cloud-native vector format consistency.
+
+    Ensures PMTiles and FlatGeobuf (cloud-native vector formats) behave
+    identically across all detection code paths.
+    """
+
+    @pytest.mark.unit
+    @given(ext=st.sampled_from([".pmtiles", ".fgb"]))
+    @settings(max_examples=20)
+    def test_cloud_native_vectors_in_both_extension_sets(self, ext: str) -> None:
+        """Cloud-native vector formats are in both CLOUD_NATIVE and VECTOR extensions.
+
+        Property: .pmtiles and .fgb are in both CLOUD_NATIVE_EXTENSIONS and VECTOR_EXTENSIONS
+        This ensures detect_format() returns VECTOR, then convert_vector() skips conversion.
+        """
+        assert ext in CLOUD_NATIVE_EXTENSIONS, f"{ext} not in CLOUD_NATIVE_EXTENSIONS"
+        assert ext in VECTOR_EXTENSIONS, f"{ext} not in VECTOR_EXTENSIONS"
+
+    @pytest.mark.unit
+    @given(ext=st.sampled_from([".pmtiles", ".fgb"]))
+    @settings(max_examples=20)
+    def test_cloud_native_vectors_detect_as_vector(self, ext: str) -> None:
+        """Cloud-native vector formats are detected as VECTOR type.
+
+        Property: detect_format(path.{ext}) == FormatType.VECTOR
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            test_file = Path(tmp_dir) / f"test{ext}"
+            test_file.write_bytes(b"\x00" * 16)
+
+            result = detect_format(test_file)
+
+            assert result == FormatType.VECTOR
+
+    @pytest.mark.unit
+    @given(ext=st.sampled_from([".pmtiles", ".fgb"]))
+    @settings(max_examples=20)
+    def test_cloud_native_vectors_have_consistent_status(self, ext: str) -> None:
+        """Cloud-native vector formats have consistent FormatInfo structure.
+
+        Property: Both .pmtiles and .fgb produce CLOUD_NATIVE status with no conversion target.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            test_file = Path(tmp_dir) / f"test{ext}"
+            test_file.write_bytes(b"\x00" * 16)
+
+            result = get_cloud_native_status(test_file)
+
+            assert result.status == CloudNativeStatus.CLOUD_NATIVE
+            assert result.target_format is None
+            assert result.error_message is None

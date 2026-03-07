@@ -53,6 +53,33 @@ class TestDetectFormat:
         gpkg_file.write_bytes(b"")
         assert detect_format(gpkg_file) == FormatType.VECTOR
 
+    @pytest.mark.unit
+    def test_detect_pmtiles_by_extension(self, tmp_path: Path) -> None:
+        """PMTiles files are detected as vector.
+
+        Regression test for issue #198: PMTiles was missing from VECTOR_EXTENSIONS,
+        causing detect_format() to return UNKNOWN and add_dataset() to reject
+        PMTiles files with "Unsupported format: .pmtiles".
+
+        PMTiles is a cloud-native vector tile format that should be classified
+        as VECTOR (like FlatGeobuf), then convert_vector() will check cloud-native
+        status and skip conversion.
+        """
+        pmtiles_file = tmp_path / "test.pmtiles"
+        pmtiles_file.write_bytes(b"\x00" * 16)  # Minimal content
+        assert detect_format(pmtiles_file) == FormatType.VECTOR
+
+    @pytest.mark.unit
+    def test_detect_flatgeobuf_by_extension(self, tmp_path: Path) -> None:
+        """FlatGeobuf files are detected as vector.
+
+        Reference test: FlatGeobuf is the model cloud-native format that PMTiles
+        should behave identically to in terms of format detection.
+        """
+        fgb_file = tmp_path / "test.fgb"
+        fgb_file.write_bytes(b"")
+        assert detect_format(fgb_file) == FormatType.VECTOR
+
     # =========================================================================
     # Raster formats
     # =========================================================================
@@ -130,3 +157,25 @@ class TestDetectFormat:
         finally:
             # Restore permissions for cleanup
             json_file.chmod(0o644)
+
+
+@pytest.mark.unit
+class TestVectorExtensions:
+    """Tests for VECTOR_EXTENSIONS constant."""
+
+    def test_pmtiles_in_vector_extensions(self) -> None:
+        """.pmtiles must be in VECTOR_EXTENSIONS.
+
+        Regression test for issue #198: PMTiles was missing from VECTOR_EXTENSIONS,
+        causing detect_format() to return UNKNOWN. PMTiles is a cloud-native
+        vector tile format that must be included alongside FlatGeobuf (.fgb).
+        """
+        from portolan_cli.formats import VECTOR_EXTENSIONS
+
+        assert ".pmtiles" in VECTOR_EXTENSIONS
+
+    def test_flatgeobuf_in_vector_extensions(self) -> None:
+        """.fgb is in VECTOR_EXTENSIONS (reference for PMTiles behavior)."""
+        from portolan_cli.formats import VECTOR_EXTENSIONS
+
+        assert ".fgb" in VECTOR_EXTENSIONS
