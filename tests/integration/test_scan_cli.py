@@ -1034,35 +1034,36 @@ class TestScanDefaultPath:
             assert total_files >= 1
 
     def test_scan_default_path_permission_error_handled(
-        self, runner: CliRunner, tmp_path: Path
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """portolan scan handles permission errors gracefully when scanning default path."""
         import os
-        import stat
 
-        # Create a directory that we'll make unreadable
+        # Create a directory structure
         unreadable = tmp_path / "unreadable"
         unreadable.mkdir()
-        (unreadable / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
 
-        # Remove read permissions
-        original_mode = unreadable.stat().st_mode
-        try:
-            os.chmod(unreadable, stat.S_IWUSR)  # Write only, no read
+        # Store original scandir to call for other directories
+        original_scandir = os.scandir
 
-            # Scan the parent directory (should handle permission error gracefully)
-            result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
+        def mock_scandir(path: str):
+            """Raise PermissionError for the 'unreadable' directory."""
+            if Path(path).name == "unreadable":
+                raise PermissionError("Permission denied")
+            return original_scandir(path)
 
-            # Should not crash - exit code 0 even with permission issues
-            assert result.exit_code == 0
-            output = json.loads(result.output)
-            # Permission errors are reported as issues, not crashes
-            # success is False because there are errors in the scan
-            assert "data" in output
-            # Verify permission_denied issue is reported
-            issues = output["data"].get("issues", [])
-            permission_issues = [i for i in issues if i.get("type") == "permission_denied"]
-            assert len(permission_issues) == 1
-        finally:
-            # Restore permissions for cleanup
-            os.chmod(unreadable, original_mode)
+        # Patch os.scandir to simulate permission error (works cross-platform)
+        monkeypatch.setattr(os, "scandir", mock_scandir)
+
+        # Scan the parent directory (should handle permission error gracefully)
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
+
+        # Should not crash - exit code 0 even with permission issues
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        # Permission errors are reported as issues, not crashes
+        assert "data" in output
+        # Verify permission_denied issue is reported
+        issues = output["data"].get("issues", [])
+        permission_issues = [i for i in issues if i.get("type") == "permission_denied"]
+        assert len(permission_issues) == 1

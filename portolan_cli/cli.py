@@ -1357,9 +1357,11 @@ def scan(
 
     Examples:
 
-        portolan scan /data/geospatial
+        portolan scan                         # Scan current directory
 
-        portolan scan . --json
+        portolan scan --json                  # JSON output in current directory
+
+        portolan scan /data/geospatial
 
         portolan scan /large/tree --max-depth=2
 
