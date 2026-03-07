@@ -266,6 +266,25 @@ class ValidationError(PortolanError):
     code = "PRTLN-VAL000"
 
 
+class NoGeometryError(ValueError):
+    """Raised when a file lacks geometry needed to create a STAC item.
+
+    This is a ValueError subclass so it integrates naturally with existing
+    exception handling (callers catching ValueError will still catch this).
+    It replaces fragile string-pattern matching with a typed check:
+        ``isinstance(err, NoGeometryError)``
+
+    Used by ``_pre_validate_geometry`` and ``add_dataset`` when a file has
+    no geometry metadata (e.g., tabular parquet without ``geo`` key, GeoJSON
+    with no features, etc.).
+    """
+
+    def __init__(self, path: str, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"Cannot create STAC item for '{path}': missing bounding box. {reason}")
+
+
 class MissingGeometryError(ValidationError):
     """Raised when a GeoParquet file has no geometry column.
 

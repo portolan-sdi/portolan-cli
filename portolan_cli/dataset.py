@@ -32,6 +32,7 @@ from portolan_cli.constants import (
     SIDECAR_PATTERNS,
     TABULAR_EXTENSIONS,
 )
+from portolan_cli.errors import NoGeometryError
 from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
     extract_cog_metadata,
@@ -65,13 +66,6 @@ _GEOPARQUET_IO_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
     "geometry columns in tsv",
 )
 
-# Error message patterns for parquet files without geometry (Issue #177).
-# These patterns indicate a parquet file lacks GeoParquet metadata (no 'geo' key),
-# meaning it's tabular data that should be tracked as an auxiliary asset.
-_PARQUET_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
-    "missing bounding box",
-    "no valid geometry",
-)
 
 # Files to ignore when scanning item directories for assets.
 # These are STAC/Portolan structural files, not user data.
@@ -281,9 +275,9 @@ def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
         from portolan_cli.scan import is_geoparquet
 
         if not is_geoparquet(path):
-            raise ValueError(
-                f"Cannot create STAC item for '{path.stem}': "
-                "missing bounding box. The source file may have no valid geometry."
+            raise NoGeometryError(
+                path=path.stem,
+                reason="The source file may have no valid geometry.",
             )
         return
 
@@ -300,22 +294,22 @@ def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
             if data.get("type") == "FeatureCollection":
                 features = data.get("features", [])
                 if not features:
-                    raise ValueError(
-                        f"Cannot create STAC item for '{path.stem}': "
-                        "missing bounding box. The source file has no features."
+                    raise NoGeometryError(
+                        path=path.stem,
+                        reason="The source file has no features.",
                     )
                 # Check that at least one feature has geometry
                 has_geometry = any(f.get("geometry") is not None for f in features)
                 if not has_geometry:
-                    raise ValueError(
-                        f"Cannot create STAC item for '{path.stem}': "
-                        "missing bounding box. No features have geometry."
+                    raise NoGeometryError(
+                        path=path.stem,
+                        reason="No features have geometry.",
                     )
             elif data.get("type") == "Feature":
                 if data.get("geometry") is None:
-                    raise ValueError(
-                        f"Cannot create STAC item for '{path.stem}': "
-                        "missing bounding box. Feature has no geometry."
+                    raise NoGeometryError(
+                        path=path.stem,
+                        reason="Feature has no geometry.",
                     )
         except json.JSONDecodeError as err:
             raise ValueError(f"Invalid JSON in '{path}': {err}") from err
@@ -433,9 +427,9 @@ def add_dataset(
 
     # Step 4: Extract bbox (handle tuple -> list conversion)
     if not metadata.bbox:
-        raise ValueError(
-            f"Cannot create STAC item for '{metadata.id if hasattr(metadata, 'id') else path.stem}': "
-            f"missing bounding box. The source file may have no valid geometry."
+        raise NoGeometryError(
+            path=metadata.id if hasattr(metadata, "id") else path.stem,
+            reason="The source file may have no valid geometry.",
         )
     bbox = list(metadata.bbox)
 
@@ -1191,23 +1185,6 @@ def _is_no_geometry_error(err: click.ClickException) -> bool:
     return any(pattern in err_msg for pattern in _GEOPARQUET_IO_NO_GEOMETRY_PATTERNS)
 
 
-def _is_parquet_no_geometry_error(err: ValueError) -> bool:
-    """Check if a ValueError indicates a parquet file lacks geometry (Issue #177).
-
-    This handles the case where a parquet file is valid but has no GeoParquet
-    metadata (no 'geo' key in schema). Such files should be tracked as auxiliary
-    assets per ADR-0028, not rejected.
-
-    Args:
-        err: The ValueError to check.
-
-    Returns:
-        True if the error is specifically about missing geometry in a parquet file.
-    """
-    err_msg = str(err).lower()
-    return any(pattern in err_msg for pattern in _PARQUET_NO_GEOMETRY_PATTERNS)
-
-
 def _copy_non_geo_to_item_dir(
     file_path: Path,
     item_dir: Path,
@@ -1373,6 +1350,20 @@ def add_files(
                 # This ensures we have an item_dir to place them in
                 source_dir = file_path.parent
                 deferred_non_geo.append((file_path, source_dir, coll_id))
+                continue
+
+            except NoGeometryError:
+                # Handle files without geometry (Issue #177, parquet;
+                # also covers GeoJSON and post-conversion bbox failures).
+                # NoGeometryError is raised by _pre_validate_geometry and the
+                # post-conversion bbox check.  Tabular formats (.parquet, .csv,
+                # .tsv) are deferred for auxiliary-asset tracking (ADR-0028);
+                # other formats without geometry are real errors.
+                if file_path.suffix.lower() not in TABULAR_EXTENSIONS:
+                    raise
+                source_dir = file_path.parent
+                deferred_non_geo.append((file_path, source_dir, coll_id))
+                continue
 
             except ValueError as err:
                 # Handle parquet files without geometry (Issue #177)
