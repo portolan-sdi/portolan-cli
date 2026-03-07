@@ -321,6 +321,34 @@ def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
     # (We can't easily pre-validate without heavy dependencies)
 
 
+def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Path) -> None:
+    """Clean up orphaned conversion output when geometry extraction fails.
+
+    Called when conversion succeeds but produces no geometry (empty bbox).
+    Removes the output file and any associated sidecars to avoid leaving
+    orphaned files in the item directory.
+
+    Args:
+        output_path: Path to the converted output file.
+        item_dir: Directory containing the item files.
+        source_path: Original source file path (won't be deleted if same).
+    """
+    if not output_path.exists() or output_path == source_path:
+        return
+
+    try:
+        output_path.unlink()
+        logger.debug("Cleaned up orphaned conversion output: %s", output_path)
+        # Also clean up any sidecars that might have been created
+        for sidecar in item_dir.glob(f"{output_path.stem}.*"):
+            if sidecar != output_path and sidecar.suffix.lower() != ".json":
+                sidecar.unlink()
+                logger.debug("Cleaned up orphaned sidecar: %s", sidecar)
+    except OSError as cleanup_err:
+        # Log but don't swallow the original error
+        logger.warning("Failed to clean up orphaned file %s: %s", output_path, cleanup_err)
+
+
 def add_dataset(
     *,
     path: Path,
@@ -427,6 +455,8 @@ def add_dataset(
 
     # Step 4: Extract bbox (handle tuple -> list conversion)
     if not metadata.bbox:
+        # Clean up orphaned artifact before raising (Issue #190 review)
+        _cleanup_orphaned_output(output_path, item_dir, path)
         raise NoGeometryError(
             path=metadata.id if hasattr(metadata, "id") else path.stem,
             reason="The source file may have no valid geometry.",
@@ -1468,12 +1498,30 @@ def _update_item_with_asset(
     with open(item_json_path) as f:
         item_data = json.load(f)
 
-    # Find the primary data file (look for .parquet or .tif)
+    # Find the primary data file by checking existing assets first (Issue #190).
+    # Prefer the existing "data" asset to avoid reselecting a tabular parquet
+    # that was just copied as the primary geo-asset.
     primary_file: Path | None = None
-    for file in item_dir.iterdir():
-        if file.suffix.lower() in {".parquet", ".tif", ".tiff"}:
-            primary_file = file
-            break
+
+    # First: Check existing assets for one with "data" role
+    existing_assets = item_data.get("assets", {})
+    for _asset_key, asset_info in existing_assets.items():
+        roles = asset_info.get("roles", [])
+        if "data" in roles:
+            # Found existing primary asset - use its href
+            href = asset_info.get("href", "")
+            if href:
+                candidate = item_dir / href
+                if candidate.exists():
+                    primary_file = candidate
+                    break
+
+    # Fallback: scan directory for .parquet or .tif (original behavior)
+    if primary_file is None:
+        for file in item_dir.iterdir():
+            if file.suffix.lower() in {".parquet", ".tif", ".tiff"}:
+                primary_file = file
+                break
 
     if primary_file is None:
         # Use the first non-json file as primary
