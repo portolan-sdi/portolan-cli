@@ -40,6 +40,7 @@ from portolan_cli.metadata import (
 )
 from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
+from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
     add_item_to_collection,
     create_collection,
@@ -184,7 +185,8 @@ def _scan_item_assets(
     """Scan an item directory for all trackable assets.
 
     Per issue #133, ALL files in item directories are tracked as assets.
-    Skips: directories, symlinks, hidden files, STAC structural files.
+    FileGDB directories (.gdb) are treated as single container assets (Issue #174).
+    Skips: non-FileGDB directories, symlinks, hidden files, STAC structural files.
 
     Args:
         item_dir: Path to the item directory.
@@ -202,11 +204,7 @@ def _scan_item_assets(
     asset_paths: list[str] = []
 
     for file_path in item_dir.iterdir():
-        # Skip non-files, symlinks, hidden files, and structural files
-        if not file_path.is_file():
-            continue
-        if file_path.is_symlink():
-            continue
+        # Skip symlinks and hidden files unconditionally
         if file_path.name.startswith("."):
             continue
         if file_path.name in IGNORED_FILES:
@@ -214,9 +212,24 @@ def _scan_item_assets(
         if file_path.name == f"{item_id}.json":
             continue
 
-        file_checksum = compute_checksum(file_path)
-        file_media_type = _get_media_type(file_path)
-        file_role = _get_asset_role(file_path)
+        if file_path.is_dir():
+            # FileGDB directories are tracked as single container assets (Issue #174).
+            # Other directories are skipped.
+            if not is_filegdb(file_path):
+                continue
+            file_checksum = compute_dir_checksum(file_path)
+            # FileGDB is always a geospatial asset
+            file_media_type = "application/x-filegdb"
+            file_role = "data"
+        elif file_path.is_file():
+            if file_path.is_symlink():
+                continue
+            file_checksum = compute_checksum(file_path)
+            file_media_type = _get_media_type(file_path)
+            file_role = _get_asset_role(file_path)
+        else:
+            # Skip special files (sockets, devices, etc.)
+            continue
 
         # Primary geo file gets "data" key, others use stem with disambiguation
         if file_path == primary_file:
@@ -653,6 +666,57 @@ def compute_checksum(path: Path) -> str:
     return sha256.hexdigest()
 
 
+def compute_dir_checksum(path: Path) -> str:
+    """Compute a stable fingerprint for a directory by hashing its contents' metadata.
+
+    Used for directory-format assets such as FileGDB (.gdb). Rather than reading
+    all bytes (expensive for large datasets), hashes the sorted list of
+    (relative_path, size, mtime) tuples for every file inside the directory.
+    This detects file additions, removals, and modifications within the directory.
+
+    Directories are not checksummed by content — the fingerprint is based on the
+    metadata of all contained files (recursively). This is consistent with how
+    ``is_current()`` uses mtime as a fast-path gate before falling back to this
+    checksum.
+
+    Args:
+        path: Path to the directory.
+
+    Returns:
+        Hex-encoded SHA-256 fingerprint of the directory contents.
+
+    Raises:
+        ValueError: If path is not a directory.
+        FileNotFoundError: If path does not exist.
+    """
+    resolved = path.resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Directory not found: {path}")
+    if not resolved.is_dir():
+        raise ValueError(f"Not a directory: {path} (resolves to {resolved})")
+
+    sha256 = hashlib.sha256()
+    # Collect (relative_path, size, mtime) for all files, sorted for determinism.
+    entries: list[tuple[str, int, float]] = []
+    try:
+        for fpath in sorted(resolved.rglob("*")):
+            if not fpath.is_file():
+                continue
+            rel_path = fpath.relative_to(resolved).as_posix()
+            try:
+                stat = fpath.stat()
+                entries.append((rel_path, stat.st_size, stat.st_mtime))
+            except OSError:
+                # Skip files we can't stat (e.g., broken symlinks inside .gdb)
+                entries.append((rel_path, -1, -1.0))
+    except OSError as exc:
+        raise ValueError(f"Cannot read directory contents: {path}") from exc
+
+    for rel_path, size, mtime in entries:
+        sha256.update(f"{rel_path}\x00{size}\x00{mtime:.6f}\n".encode())
+    return sha256.hexdigest()
+
+
 def _get_or_create_collection(
     catalog_root: Path,
     collection_id: str,
@@ -768,10 +832,16 @@ def _update_versions(
         for filename, (file_path, file_checksum) in asset_files.items():
             href = f"{collection_id}/{item_id}/{filename}"
             asset_key = f"{item_id}/{filename}"
+            stat = file_path.stat()
+            # For directory-format assets (e.g., FileGDB), size_bytes is the inode
+            # size which is not meaningful. Store 0 and rely on sha256 fingerprint
+            # (compute_dir_checksum) and mtime for change detection.
+            size_bytes = stat.st_size if file_path.is_file() else 0
             assets[asset_key] = Asset(
                 sha256=file_checksum,
-                size_bytes=file_path.stat().st_size,
+                size_bytes=size_bytes,
                 href=href,
+                mtime=stat.st_mtime,
             )
     elif output_path is not None and checksum is not None:
         # Legacy single-file mode (backward compatibility)
@@ -996,20 +1066,9 @@ def remove_dataset(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Note: GEOSPATIAL_EXTENSIONS imported from portolan_cli.constants
-
-
-def _is_filegdb(path: Path) -> bool:
-    """Check if a path is a FileGDB directory.
-
-    A FileGDB is a directory with .gdb extension containing .gdbtable files.
-    """
-    if not path.is_dir() or path.suffix.lower() != ".gdb":
-        return False
-    # Check for at least one .gdbtable file (marker of valid FileGDB)
-    try:
-        return any(f.suffix.lower() == ".gdbtable" for f in path.iterdir())
-    except OSError:
-        return False
+# Note: is_filegdb is imported from portolan_cli.scan_detect (canonical implementation).
+# scan_detect.is_filegdb accepts either .gdbtable files OR a 'gdb' marker file, which
+# matches the full FileGDB spec. Do not reimplement here.
 
 
 def iter_geospatial_files(
@@ -1030,7 +1089,7 @@ def iter_geospatial_files(
         List of paths to geospatial files (including FileGDB directories).
     """
     # Special case: if path itself is a FileGDB, return it directly
-    if _is_filegdb(path):
+    if is_filegdb(path):
         return [path]
 
     if not path.is_dir():
@@ -1046,7 +1105,7 @@ def iter_geospatial_files(
                 continue
 
             # Check for FileGDB directory
-            if item.is_dir() and _is_filegdb(item):
+            if item.is_dir() and is_filegdb(item):
                 files.append(item)
                 seen_filegdbs.add(item)
             elif item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
@@ -1054,7 +1113,7 @@ def iter_geospatial_files(
     else:
         for item in path.iterdir():
             # Check for FileGDB directory
-            if item.is_dir() and _is_filegdb(item):
+            if item.is_dir() and is_filegdb(item):
                 files.append(item)
             elif item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
                 files.append(item)
@@ -1207,6 +1266,16 @@ def is_current(
 
     # Get file stats once (used for both mtime and size checks)
     file_stat = path.stat()
+
+    # For directory-format assets (e.g., FileGDB), skip the mtime fast-path and
+    # size comparison — neither is reliable for directories. A directory's mtime
+    # changes when its children change, but MTIME_TOLERANCE_SECONDS (2s, for
+    # NFS/CIFS compatibility) would mask rapid modifications. Instead, go
+    # directly to the content fingerprint (compute_dir_checksum), which hashes
+    # the sorted (path, size, mtime) tuples of all files inside the directory.
+    if path.is_dir():
+        current_checksum = compute_dir_checksum(path)
+        return current_checksum == asset.sha256
 
     # Fast path: check mtime (2s tolerance for NFS/CIFS compatibility)
     if asset.mtime is not None:
@@ -1607,7 +1676,7 @@ def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path
         List of geospatial file paths (including FileGDB directories) and their sidecars.
     """
     # Special case: if path itself is a FileGDB, return it directly
-    if _is_filegdb(path):
+    if is_filegdb(path):
         return [path]
 
     if not path.is_dir():
@@ -1625,7 +1694,7 @@ def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path
             continue
 
         # Check for FileGDB directory (treat as single asset)
-        if item.is_dir() and _is_filegdb(item):
+        if item.is_dir() and is_filegdb(item):
             if item not in seen:
                 files.append(item)
                 seen.add(item)
