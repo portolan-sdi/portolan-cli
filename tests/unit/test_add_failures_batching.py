@@ -63,7 +63,9 @@ class TestAddFailuresBatching:
         failures = [make_failure("historic/file1.gdb", "Reading failed: No CRS found")]
         output = capture_batched_output(failures)
 
-        assert "historic/file1.gdb" in output
+        # Normalize path separators for cross-platform comparison (Windows uses \)
+        normalized_output = output.replace("\\", "/")
+        assert "historic/file1.gdb" in normalized_output
         assert "Reading failed: No CRS found" in output
         # Single failure should show "1 item failed" (singular)
         assert "1 item failed:" in output
@@ -179,7 +181,9 @@ class TestAddFailuresBatching:
         """Path objects are properly converted to strings in output."""
         failures = [make_failure("subdir/data.shp", "Error")]
         output = capture_batched_output(failures)
-        assert "subdir/data.shp" in output
+        # Normalize path separators for cross-platform comparison (Windows uses \)
+        normalized_output = output.replace("\\", "/")
+        assert "subdir/data.shp" in normalized_output
 
 
 # =============================================================================
