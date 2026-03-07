@@ -31,6 +31,7 @@ from portolan_cli.metadata.fix import FixReport
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.scan import (
+    IssueType,
     ScanIssue,
     ScanOptions,
     ScanResult,
@@ -1515,6 +1516,9 @@ def _print_format_breakdown(result: ScanResult) -> None:
 # Default maximum issues to show per severity before truncation
 DEFAULT_ISSUE_LIMIT = 10
 
+# Maximum example paths to show per batched issue group
+BATCH_EXAMPLES_LIMIT = 3
+
 
 def _print_issue_group(
     issues: list[ScanIssue],
@@ -1650,18 +1654,21 @@ def _print_scan_summary_enhanced(
 
 
 def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False) -> None:
-    """Print issues grouped by severity with fixability labels.
+    """Print issues grouped by severity and IssueType with fixability labels.
+
+    Issues that share the same severity AND IssueType are batched together so
+    that noisy repetitions (e.g. 265 uppercase-named directories) collapse into
+    a single summary line with up to 3 example paths.  The full list is shown
+    when ``show_all=True``.
 
     Args:
         result: The scan result containing issues.
-        show_all: If True, show all issues without truncation.
+        show_all: If True, show all example paths instead of truncating at 3.
     """
     if not result.issues:
         return
 
-    limit = None if show_all else DEFAULT_ISSUE_LIMIT
-
-    # Group by severity
+    # Iterate severity levels in display order so errors appear first.
     for severity, header_fn, label in [
         (ScanSeverity.ERROR, error, "error"),
         (ScanSeverity.WARNING, warn, "warning"),
@@ -1671,21 +1678,50 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
         if not severity_issues:
             continue
 
-        count = len(severity_issues)
-        header_fn(f"{count} {label}{'s' if count != 1 else ''}")
+        total = len(severity_issues)
+        header_fn(f"{total} {label}{'s' if total != 1 else ''}")
 
-        # Apply truncation if needed
-        displayed = severity_issues if limit is None else severity_issues[:limit]
-        truncated_count = len(severity_issues) - len(displayed)
+        # Group by (IssueType, message) so issues with the same problem description
+        # batch together, while distinct messages get separate groups.
+        # Preserves insertion order (Python 3.7+).
+        GroupKey = tuple[IssueType, str]
+        groups: dict[GroupKey, list[ScanIssue]] = {}
+        for issue in severity_issues:
+            key: GroupKey = (issue.issue_type, issue.message)
+            groups.setdefault(key, []).append(issue)
 
-        for issue in displayed:
-            fix_label = get_fixability(issue.issue_type).label
-            header_fn(f"  {fix_label} {issue.relative_path}: {issue.message}")
-            if issue.suggestion is not None:
-                detail(f"    Hint: {issue.suggestion}")
+        for (issue_type, _message), group in groups.items():
+            fix_label = get_fixability(issue_type).label
+            count = len(group)
 
-        if truncated_count > 0:
-            detail(f"  ... and {truncated_count} more (use --all to see all)")
+            if count == 1:
+                # Single issue: print normally (no batching overhead).
+                issue = group[0]
+                header_fn(f"  {fix_label} {issue.relative_path}: {issue.message}")
+                if issue.suggestion is not None:
+                    detail(f"    Hint: {issue.suggestion}")
+            else:
+                # Multiple issues with same type+message+suggestion: show count + examples.
+                # Use the shared message directly since all issues in this group have it.
+                shared_message = group[0].message
+                header_fn(f"  {fix_label} {count} files: {shared_message}")
+
+                # Decide how many examples to display.
+                examples = group if show_all else group[:BATCH_EXAMPLES_LIMIT]
+                remaining = count - len(examples)
+
+                paths = ", ".join(i.relative_path for i in examples)
+                if remaining > 0:
+                    detail(f"    Examples: {paths} (and {remaining} more, use --all to see all)")
+                else:
+                    detail(f"    Examples: {paths}")
+
+                # Show a representative suggestion (may vary per file, show first).
+                first_suggestion = next(
+                    (i.suggestion for i in group if i.suggestion is not None), None
+                )
+                if first_suggestion is not None:
+                    detail(f"    Hint: {first_suggestion}")
 
 
 def _print_skipped_by_category(result: ScanResult, *, show_all: bool = False) -> None:
