@@ -1639,7 +1639,7 @@ def _print_scan_summary_enhanced(
     _print_issues_with_fixability(result, show_all=show_all)
 
     # Skipped files by category
-    _print_skipped_by_category(result)
+    _print_skipped_by_category(result, show_all=show_all)
 
     # Collection suggestions
     _print_collection_suggestions(result)
@@ -1687,11 +1687,12 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
             detail(f"  ... and {truncated_count} more (use --all to see all)")
 
 
-def _print_skipped_by_category(result: ScanResult) -> None:
+def _print_skipped_by_category(result: ScanResult, *, show_all: bool = False) -> None:
     """Print skipped files grouped by category.
 
     Args:
         result: The scan result containing skipped files.
+        show_all: If True, show all unrecognized files. If False, truncate after 10.
     """
     if not result.skipped:
         return
@@ -1705,8 +1706,11 @@ def _print_skipped_by_category(result: ScanResult) -> None:
     # Check if any files are truly unknown
     from portolan_cli.scan_classify import FileCategory
 
-    unknown_count = len(grouped.get(FileCategory.UNKNOWN, []))
-    recognized_count = len(result.skipped) - unknown_count
+    unknown_files = grouped.get(FileCategory.UNKNOWN, [])
+    unknown_count = len(unknown_files)
+    # Calculate recognized count from grouped files only (excludes legacy Path objects)
+    total_categorized = sum(len(files) for files in grouped.values())
+    recognized_count = total_categorized - unknown_count
 
     # If all files are recognized (no unknowns), show a concise summary
     if unknown_count == 0:
@@ -1717,14 +1721,25 @@ def _print_skipped_by_category(result: ScanResult) -> None:
             parts.append(f"{len(files)} {display_name}")
         detail(f"  {', '.join(parts)}")
     else:
-        # Some unknown files - show the detailed breakdown
+        # Some unknown files - show the detailed breakdown with file listing
         click.echo()
         if unknown_count > 0:
-            warn(f"{unknown_count} files with unrecognized format")
-        detail(f"Other files ({recognized_count} recognized):")
-        for category, files in sorted(grouped.items(), key=lambda x: len(x[1]), reverse=True):
-            display_name = get_category_display_name(category)
-            detail(f"  {len(files)} {display_name}")
+            warn(f"{unknown_count} files with unrecognized format:")
+            # List the specific unrecognized files (sorted for deterministic output)
+            sorted_unknown_files = sorted(unknown_files, key=lambda f: f.relative_path)
+            max_files = unknown_count if show_all else min(10, unknown_count)
+            for skipped_file in sorted_unknown_files[:max_files]:
+                detail(f"  - {skipped_file.relative_path}")
+
+            # Show truncation message if needed
+            if unknown_count > max_files and not show_all:
+                detail(f"  ... and {unknown_count - max_files} more (use --all to see all)")
+
+        if recognized_count > 0:
+            detail(f"Other files ({recognized_count} recognized):")
+            for category, files in sorted(grouped.items(), key=lambda x: len(x[1]), reverse=True):
+                display_name = get_category_display_name(category)
+                detail(f"  {len(files)} {display_name}")
 
 
 def _print_collection_suggestions(result: ScanResult) -> None:
