@@ -969,3 +969,131 @@ class TestScanFileGDB:
         assert len(gdbtable_files) == 0, (
             f"Nested FileGDB internal files should not be in skipped: {gdbtable_files}"
         )
+
+
+# =============================================================================
+# Issue #182: Default PATH to Current Directory
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScanDefaultPath:
+    """Tests for `portolan scan` defaulting to current directory when PATH not provided."""
+
+    def test_scan_no_path_defaults_to_current_directory(self, runner: CliRunner) -> None:
+        """portolan scan with no PATH argument defaults to current directory."""
+        with runner.isolated_filesystem():
+            # Create a geo-asset in isolated filesystem
+            Path("data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+            # Run scan without PATH argument (should use current directory)
+            result = runner.invoke(cli, ["scan", "--json"])
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            # Should find exactly 1 geo-asset
+            assert len(output["data"].get("ready", [])) == 1
+
+    def test_scan_with_explicit_current_directory(self, runner: CliRunner) -> None:
+        """portolan scan . still works when PATH is explicitly provided."""
+        with runner.isolated_filesystem():
+            # Create a geo-asset
+            Path("data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+            result = runner.invoke(cli, ["scan", ".", "--json"])
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            assert len(output["data"].get("ready", [])) == 1
+
+    def test_scan_with_explicit_path_still_works(self, runner: CliRunner, tmp_path: Path) -> None:
+        """portolan scan /some/path still works when PATH is provided."""
+        # Create a geo-asset in tmp_path
+        (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
+
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        assert output["success"] is True
+        assert len(output["data"].get("ready", [])) == 1
+
+    def test_scan_no_path_accepts_json_option(self, runner: CliRunner) -> None:
+        """portolan scan with no PATH but with --json option should work."""
+        with runner.isolated_filesystem():
+            # Create a geo-asset
+            Path("data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+            result = runner.invoke(cli, ["scan", "--json"])
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            assert "data" in output
+            assert len(output["data"].get("ready", [])) == 1
+
+    def test_scan_no_path_no_files_exits_zero(self, runner: CliRunner) -> None:
+        """portolan scan with no PATH and no geo-assets exits with 0."""
+        with runner.isolated_filesystem():
+            # Don't create any files
+            result = runner.invoke(cli, ["scan", "--json"])
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            # Should find no geo-assets
+            assert len(output["data"].get("ready", [])) == 0
+
+    def test_scan_default_path_with_issues_reports_correctly(self, runner: CliRunner) -> None:
+        """portolan scan with default path reports issues found in current directory."""
+        with runner.isolated_filesystem():
+            # Create a file with naming issues (spaces in filename)
+            Path("data file.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+            result = runner.invoke(cli, ["scan", "--json"])
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            # File should be found but have warnings
+            data = output["data"]
+            # The file should exist either in ready or in issues
+            total_files = len(data.get("ready", [])) + len(data.get("warnings", []))
+            assert total_files >= 1
+
+    def test_scan_default_path_permission_error_handled(
+        self, runner: CliRunner, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """portolan scan handles permission errors gracefully when scanning default path."""
+        import os
+
+        # Create a directory structure
+        unreadable = tmp_path / "unreadable"
+        unreadable.mkdir()
+
+        # Store original scandir to call for other directories
+        original_scandir = os.scandir
+
+        def mock_scandir(path: str):
+            """Raise PermissionError for the 'unreadable' directory."""
+            if Path(path).name == "unreadable":
+                raise PermissionError("Permission denied")
+            return original_scandir(path)
+
+        # Patch os.scandir to simulate permission error (works cross-platform)
+        monkeypatch.setattr(os, "scandir", mock_scandir)
+
+        # Scan the parent directory (should handle permission error gracefully)
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
+
+        # Should not crash - exit code 0 even with permission issues
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+        # Permission errors are reported as issues, not crashes
+        assert "data" in output
+        # Verify permission_denied issue is reported
+        issues = output["data"].get("issues", [])
+        permission_issues = [i for i in issues if i.get("type") == "permission_denied"]
+        assert len(permission_issues) == 1

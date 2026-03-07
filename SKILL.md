@@ -132,10 +132,10 @@ portolan rm -f vectors/                     # Force remove entire directory
 Scan a directory for geospatial files and potential issues.
 
 ```bash
+portolan scan                         # Scan current directory
+portolan scan --json                  # JSON output in current directory
 portolan scan /data/geospatial
-portolan scan . --json
 portolan scan /large/tree --max-depth=2
-portolan scan /data --no-recursive
 ```
 
 ### `portolan status`
