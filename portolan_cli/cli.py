@@ -269,6 +269,28 @@ def _get_format_display_name(format_type: Any) -> str:
         return "Unknown"
 
 
+def _get_asset_format_display_name(asset_href: str) -> str:
+    """Get human-readable format name for an individual asset based on extension.
+
+    Uses FORMAT_DISPLAY_NAMES from formats.py for known geospatial extensions,
+    falls back to the uppercase extension for unknown types.
+
+    Args:
+        asset_href: Asset href (e.g., "./data.parquet", "./thumb.png").
+
+    Returns:
+        Human-readable format name (e.g., "GeoParquet", "PMTiles", "PNG").
+    """
+    from portolan_cli.formats import FORMAT_DISPLAY_NAMES
+
+    ext = Path(asset_href).suffix.lower()
+    if ext in FORMAT_DISPLAY_NAMES:
+        return FORMAT_DISPLAY_NAMES[ext]
+    if ext:
+        return ext.upper().lstrip(".")
+    return "Unknown"
+
+
 def _get_asset_file_size(catalog_path: Path, collection_id: str, asset_href: str) -> int | None:
     """Get the file size for an asset.
 
@@ -300,14 +322,19 @@ def _get_asset_file_size(catalog_path: Path, collection_id: str, asset_href: str
 
 
 def _list_tree_output(datasets: list[DatasetInfo], catalog_path: Path) -> None:
-    """Output datasets in tree view format per ADR-0022.
+    """Output items in hierarchical tree view: collection -> item -> assets.
+
+    Shows ALL assets per item, grouped under their parent item directory
+    with asset counts.  Fixes #196 where only the first asset was displayed.
 
     Format:
-        demographics/
-          census.parquet (GeoParquet, 4.2MB)
-          boundaries.parquet (GeoParquet, 1.1MB)
-        imagery/
-          satellite.tif (COG, 120MB)
+        censo-2010/
+            data/ (3 assets)
+              metadata.parquet (GeoParquet, 1.2MB)
+              census-data.parquet (GeoParquet, 4.5MB)
+              overview.pmtiles (PMTiles, 800KB)
+            radios/ (1 asset)
+              radios.parquet (GeoParquet, 2.1MB)
 
     Args:
         datasets: List of DatasetInfo objects.
@@ -315,7 +342,7 @@ def _list_tree_output(datasets: list[DatasetInfo], catalog_path: Path) -> None:
     """
     from collections import defaultdict
 
-    # Group datasets by collection
+    # Group datasets (items) by collection
     by_collection: dict[str, list[DatasetInfo]] = defaultdict(list)
     for ds in datasets:
         by_collection[ds.collection_id].append(ds)
@@ -325,25 +352,26 @@ def _list_tree_output(datasets: list[DatasetInfo], catalog_path: Path) -> None:
         # Print collection header
         info_output(f"{collection_id}/")
 
-        # Print items under collection
+        # Print items under collection, sorted alphabetically
         items = by_collection[collection_id]
         for ds in sorted(items, key=lambda d: d.item_id):
-            # Get the primary asset (first one)
-            asset_name = ds.item_id
-            size_str = ""
+            # Item header with asset count
+            n_assets = len(ds.asset_paths)
+            asset_word = "asset" if n_assets == 1 else "assets"
+            detail(f"  {ds.item_id}/ ({n_assets} {asset_word})")
 
-            if ds.asset_paths:
-                # Get filename from first asset
-                first_asset = ds.asset_paths[0]
-                asset_name = Path(first_asset).name
+            # List each asset under the item
+            for asset_href in ds.asset_paths:
+                asset_name = Path(asset_href).name
+                format_name = _get_asset_format_display_name(asset_href)
 
                 # Try to get file size
-                file_size = _get_asset_file_size(catalog_path, ds.collection_id, first_asset)
+                size_str = ""
+                file_size = _get_asset_file_size(catalog_path, ds.collection_id, asset_href)
                 if file_size is not None:
                     size_str = f", {format_size(file_size)}"
 
-            format_name = _get_format_display_name(ds.format_type)
-            detail(f"  {asset_name} ({format_name}{size_str})")
+                detail(f"    {asset_name} ({format_name}{size_str})")
 
 
 @cli.command("list")
@@ -366,16 +394,19 @@ def list_cmd(
 ) -> None:
     """List items in the catalog.
 
-    Shows all items organized by collection in a tree view format.
-    Each item displays its filename, format type, and file size.
+    Shows all items organized by collection in a hierarchical tree view.
+    Items are grouped under their collection, and each item shows ALL
+    tracked assets with format type and file size.
 
     \b
     Example output:
-        demographics/
-          census.parquet (GeoParquet, 4.2MB)
-          boundaries.parquet (GeoParquet, 1.1MB)
-        imagery/
-          satellite.tif (COG, 120MB)
+        censo-2010/
+            data/ (3 assets)
+              metadata.parquet (GeoParquet, 1.2MB)
+              census-data.parquet (GeoParquet, 4.5MB)
+              overview.pmtiles (PMTiles, 800KB)
+            radios/ (1 asset)
+              radios.parquet (GeoParquet, 2.1MB)
 
     \b
     Examples:
