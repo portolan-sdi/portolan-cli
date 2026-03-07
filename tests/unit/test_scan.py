@@ -865,6 +865,19 @@ class TestIssueDetection:
         assert len(multi_issues) >= 1
         assert multi_issues[0].severity == Severity.WARNING
 
+    def test_multiple_primaries_suggestion_no_bundle_flag(self, fixtures_dir: Path) -> None:
+        """Multiple primaries suggestion should not mention --bundle flag."""
+        from portolan_cli.scan import IssueType, scan_directory
+
+        result = scan_directory(fixtures_dir / "multiple_primaries")
+
+        multi_issues = [i for i in result.issues if i.issue_type == IssueType.MULTIPLE_PRIMARIES]
+        assert len(multi_issues) >= 1
+        assert multi_issues[0].suggestion is not None
+        assert "--bundle" not in multi_issues[0].suggestion
+        assert "Split into separate directories" in multi_issues[0].suggestion
+        assert "separate item" in multi_issues[0].suggestion
+
     def test_detect_long_path(self, tmp_path: Path) -> None:
         """scan_directory detects very long paths (200+ chars)."""
         from portolan_cli.scan import IssueType, Severity, scan_directory
