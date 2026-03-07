@@ -182,6 +182,36 @@ class TestScanCLI:
             assert "severity" in issue
             assert "message" in issue
 
+    def test_multiple_primaries_suggestion_text(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Multiple primaries suggestion should not mention --bundle flag."""
+        # Create multiple primary files in same directory
+        (tmp_path / "data1.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "data2.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+
+        # Find the multiple_primaries issue (lowercase in JSON output)
+        issues = data.get("data", {}).get("issues", [])
+        multi_prim_issues = [i for i in issues if i.get("type") == "multiple_primaries"]
+
+        assert len(multi_prim_issues) >= 1, "Should detect multiple primary assets"
+        suggestion = multi_prim_issues[0].get("suggestion", "")
+
+        # Verify suggestion doesn't mention --bundle flag
+        assert "--bundle" not in suggestion, (
+            f"Suggestion should not mention --bundle flag: {suggestion}"
+        )
+        # Verify suggestion mentions both recommended approaches
+        assert "Split into separate directories" in suggestion, (
+            f"Suggestion should mention splitting into directories: {suggestion}"
+        )
+        assert "separate item" in suggestion, (
+            f"Suggestion should mention tracking as separate items: {suggestion}"
+        )
+
 
 # =============================================================================
 # Phase 12: Output Truncation Tests (US10)

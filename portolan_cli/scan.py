@@ -775,7 +775,7 @@ def _finalize_multi_asset_checks(ctx: _ScanContext) -> None:
                     issue_type=IssueType.MULTIPLE_PRIMARIES,
                     severity=Severity.WARNING,
                     message=f"Directory has {len(primaries)} primary assets: {names}",
-                    suggestion="Split into separate directories or use --bundle flag during import",
+                    suggestion="Split into separate directories, or track each asset as a separate item",
                 )
             )
 
