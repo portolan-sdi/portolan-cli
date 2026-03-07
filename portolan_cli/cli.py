@@ -1516,6 +1516,32 @@ def _print_format_breakdown(result: ScanResult) -> None:
 # Default maximum issues to show per severity before truncation
 DEFAULT_ISSUE_LIMIT = 10
 
+# Maximum example paths to show per batched issue group
+BATCH_EXAMPLES_LIMIT = 3
+
+# Human-readable descriptions for batched issue types (plural form)
+_ISSUE_TYPE_DISPLAY_NAMES: dict[IssueType, str] = {
+    IssueType.INCOMPLETE_SHAPEFILE: "shapefiles missing required sidecars",
+    IssueType.ZERO_BYTE_FILE: "empty (zero-byte) files",
+    IssueType.SYMLINK_LOOP: "symlink loops detected",
+    IssueType.BROKEN_SYMLINK: "broken symlinks",
+    IssueType.PERMISSION_DENIED: "files with permission errors",
+    IssueType.INVALID_CHARACTERS: "files with problematic characters",
+    IssueType.MULTIPLE_PRIMARIES: "directories with multiple primary assets",
+    IssueType.LONG_PATH: "paths exceeding length limits",
+    IssueType.DUPLICATE_BASENAME: "duplicate basenames",
+    IssueType.MIXED_FORMATS: "directories with mixed raster/vector formats",
+    IssueType.FILEGDB_DETECTED: "FileGDB directories detected",
+    IssueType.HIVE_PARTITION_DETECTED: "Hive-partitioned datasets detected",
+    IssueType.EXISTING_CATALOG: "existing catalogs found",
+    IssueType.DUAL_FORMAT: "dual-format assets detected",
+    IssueType.WINDOWS_RESERVED_NAME: "Windows reserved names",
+    IssueType.PATH_TOO_LONG: "paths too long for Windows",
+    IssueType.MIXED_FLAT_MULTIITEM: "mixed flat/multi-item structures",
+    IssueType.ORPHAN_SIDECAR: "orphan sidecar files",
+    IssueType.INVALID_COLLECTION_ID: "directories with invalid collection IDs",
+}
+
 
 def _print_issue_group(
     issues: list[ScanIssue],
@@ -1665,9 +1691,6 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
     if not result.issues:
         return
 
-    # Number of example paths to show per batch before truncating.
-    _EXAMPLES_LIMIT = 3
-
     # Iterate severity levels in display order so errors appear first.
     for severity, header_fn, label in [
         (ScanSeverity.ERROR, error, "error"),
@@ -1699,15 +1722,18 @@ def _print_issues_with_fixability(result: ScanResult, *, show_all: bool = False)
                     detail(f"    Hint: {issue.suggestion}")
             else:
                 # Multiple issues of the same type: show count + example paths.
-                header_fn(f"  {fix_label} {count} files have {issue_type.value}")
+                display_name = _ISSUE_TYPE_DISPLAY_NAMES.get(
+                    issue_type, f"issues: {issue_type.value}"
+                )
+                header_fn(f"  {fix_label} {count} {display_name}")
 
                 # Decide how many examples to display.
-                examples = group if show_all else group[:_EXAMPLES_LIMIT]
+                examples = group if show_all else group[:BATCH_EXAMPLES_LIMIT]
                 remaining = count - len(examples)
 
                 paths = ", ".join(i.relative_path for i in examples)
                 if remaining > 0:
-                    detail(f"    Examples: {paths} (and {remaining} more)")
+                    detail(f"    Examples: {paths} (and {remaining} more, use --all to see all)")
                 else:
                     detail(f"    Examples: {paths}")
 
