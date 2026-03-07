@@ -98,7 +98,7 @@ def _capture_list_output_with_sizes(
     def _collect(msg: str) -> None:
         lines.append(str(msg))
 
-    def _fake_size(_cat_path: Path, _col_id: str, asset_href: str) -> int | None:
+    def _fake_size(_cat_path: Path, _col_id: str, _item_id: str, asset_href: str) -> int | None:
         for key, size in size_map.items():
             if key in asset_href:
                 return size
@@ -516,7 +516,8 @@ class TestListOutputProperties:
             ds = _make_dataset("data", "col-a", paths)
             output = _capture_list_output([ds])
 
-            expected = f"{n_assets} asset" if n_assets != 1 else "1 asset"
+            # Pluralization: "1 asset" (singular) vs "N assets" (plural for 0, 2, 3, ...)
+            expected = "1 asset" if n_assets == 1 else f"{n_assets} assets"
             assert expected in output
 
         _check()

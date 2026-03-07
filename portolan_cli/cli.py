@@ -291,29 +291,26 @@ def _get_asset_format_display_name(asset_href: str) -> str:
     return "Unknown"
 
 
-def _get_asset_file_size(catalog_path: Path, collection_id: str, asset_href: str) -> int | None:
+def _get_asset_file_size(
+    catalog_path: Path, collection_id: str, item_id: str, asset_href: str
+) -> int | None:
     """Get the file size for an asset.
 
     Args:
         catalog_path: Path to catalog root.
         collection_id: Collection ID.
-        asset_href: Asset href (relative path).
+        item_id: Item ID (subdirectory under collection).
+        asset_href: Asset href (relative to item directory).
 
     Returns:
         File size in bytes, or None if file not found.
     """
-    # Asset hrefs are relative to the item, which is in collection/item/
-    # The href looks like "./data.parquet" or "../shared/data.parquet"
-    # Try to resolve it relative to the collection directory
+    # Asset hrefs are relative to the item directory: collection/item/
+    # The href looks like "./data.parquet" or just "data.parquet"
     clean_href = asset_href.removeprefix("./")
 
-    # Check if the href contains a subdirectory (e.g., "./item/data.parquet")
-    if "/" in clean_href:
-        # Full path from collection
-        asset_path = catalog_path / collection_id / clean_href
-    else:
-        # Just a filename, try different locations
-        asset_path = catalog_path / collection_id / clean_href
+    # Full path: catalog_root / collection / item / asset
+    asset_path = catalog_path / collection_id / item_id / clean_href
 
     if asset_path.exists():
         return asset_path.stat().st_size
@@ -367,7 +364,9 @@ def _list_tree_output(datasets: list[DatasetInfo], catalog_path: Path) -> None:
 
                 # Try to get file size
                 size_str = ""
-                file_size = _get_asset_file_size(catalog_path, ds.collection_id, asset_href)
+                file_size = _get_asset_file_size(
+                    catalog_path, ds.collection_id, ds.item_id, asset_href
+                )
                 if file_size is not None:
                     size_str = f", {format_size(file_size)}"
 
