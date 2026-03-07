@@ -32,6 +32,7 @@ from portolan_cli.constants import (
     SIDECAR_PATTERNS,
     TABULAR_EXTENSIONS,
 )
+from portolan_cli.errors import NoGeometryError
 from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
     extract_cog_metadata,
@@ -64,6 +65,32 @@ _GEOPARQUET_IO_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
     "geometry columns in csv",
     "geometry columns in tsv",
 )
+
+# Error message patterns for parquet files without geometry (Issue #177).
+# These patterns indicate a parquet file lacks GeoParquet metadata (no 'geo' key),
+# meaning it's tabular data that should be tracked as an auxiliary asset.
+_PARQUET_NO_GEOMETRY_PATTERNS: tuple[str, ...] = (
+    "missing bounding box",
+    "no valid geometry",
+)
+
+
+def _is_parquet_no_geometry_error(err: ValueError) -> bool:
+    """Check if a ValueError indicates a parquet file lacks geometry (Issue #177).
+
+    This handles the case where a parquet file is valid but has no GeoParquet
+    metadata (no 'geo' key in schema). Such files should be tracked as auxiliary
+    assets per ADR-0028, not rejected.
+
+    Args:
+        err: The ValueError to check.
+
+    Returns:
+        True if the error is specifically about missing geometry in a parquet file.
+    """
+    err_msg = str(err).lower()
+    return any(pattern in err_msg for pattern in _PARQUET_NO_GEOMETRY_PATTERNS)
+
 
 # Files to ignore when scanning item directories for assets.
 # These are STAC/Portolan structural files, not user data.
@@ -273,9 +300,9 @@ def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
         from portolan_cli.scan import is_geoparquet
 
         if not is_geoparquet(path):
-            raise ValueError(
-                f"Cannot create STAC item for '{path.stem}': "
-                "missing bounding box. The source file may have no valid geometry."
+            raise NoGeometryError(
+                path=path.stem,
+                reason="The source file may have no valid geometry.",
             )
         return
 
@@ -292,22 +319,22 @@ def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
             if data.get("type") == "FeatureCollection":
                 features = data.get("features", [])
                 if not features:
-                    raise ValueError(
-                        f"Cannot create STAC item for '{path.stem}': "
-                        "missing bounding box. The source file has no features."
+                    raise NoGeometryError(
+                        path=path.stem,
+                        reason="The source file has no features.",
                     )
                 # Check that at least one feature has geometry
                 has_geometry = any(f.get("geometry") is not None for f in features)
                 if not has_geometry:
-                    raise ValueError(
-                        f"Cannot create STAC item for '{path.stem}': "
-                        "missing bounding box. No features have geometry."
+                    raise NoGeometryError(
+                        path=path.stem,
+                        reason="No features have geometry.",
                     )
             elif data.get("type") == "Feature":
                 if data.get("geometry") is None:
-                    raise ValueError(
-                        f"Cannot create STAC item for '{path.stem}': "
-                        "missing bounding box. Feature has no geometry."
+                    raise NoGeometryError(
+                        path=path.stem,
+                        reason="Feature has no geometry.",
                     )
         except json.JSONDecodeError as err:
             raise ValueError(f"Invalid JSON in '{path}': {err}") from err
@@ -317,6 +344,34 @@ def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
     # Rasters: inherently have bbox (extent is required for geotiff)
     # Other formats: let conversion handle validation
     # (We can't easily pre-validate without heavy dependencies)
+
+
+def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Path) -> None:
+    """Clean up orphaned conversion output when geometry extraction fails.
+
+    Called when conversion succeeds but produces no geometry (empty bbox).
+    Removes the output file and any associated sidecars to avoid leaving
+    orphaned files in the item directory.
+
+    Args:
+        output_path: Path to the converted output file.
+        item_dir: Directory containing the item files.
+        source_path: Original source file path (won't be deleted if same).
+    """
+    if not output_path.exists() or output_path == source_path:
+        return
+
+    try:
+        output_path.unlink()
+        logger.debug("Cleaned up orphaned conversion output: %s", output_path)
+        # Also clean up any sidecars that might have been created
+        for sidecar in item_dir.glob(f"{output_path.stem}.*"):
+            if sidecar != output_path and sidecar.suffix.lower() != ".json":
+                sidecar.unlink()
+                logger.debug("Cleaned up orphaned sidecar: %s", sidecar)
+    except OSError as cleanup_err:
+        # Log but don't swallow the original error
+        logger.warning("Failed to clean up orphaned file %s: %s", output_path, cleanup_err)
 
 
 def add_dataset(
@@ -425,9 +480,11 @@ def add_dataset(
 
     # Step 4: Extract bbox (handle tuple -> list conversion)
     if not metadata.bbox:
-        raise ValueError(
-            f"Cannot create STAC item for '{metadata.id if hasattr(metadata, 'id') else path.stem}': "
-            f"missing bounding box. The source file may have no valid geometry."
+        # Clean up orphaned artifact before raising (Issue #190 review)
+        _cleanup_orphaned_output(output_path, item_dir, path)
+        raise NoGeometryError(
+            path=metadata.id if hasattr(metadata, "id") else path.stem,
+            reason="The source file may have no valid geometry.",
         )
     bbox = list(metadata.bbox)
 
@@ -1328,42 +1385,75 @@ def add_files(
 
             except click.ClickException as err:
                 # Handle ClickExceptions from add_dataset (Issues #140, #175).
-                #
-                # Geometry-related errors for tabular files (CSV/TSV) are
-                # deferred for non-geo asset tracking (ADR-0028).
-                # ALL other ClickExceptions are recorded as failures and
-                # processing continues to the next file.
-                if not _is_no_geometry_error(err):
-                    # Record as failure and continue (Issue #175)
+                # Defer geometry-related errors for tabular files (ADR-0028);
+                # record all other ClickExceptions as failures.
+                is_tabular = file_path.suffix.lower() in TABULAR_EXTENSIONS
+                if _is_no_geometry_error(err) and is_tabular:
+                    deferred_non_geo.append((file_path, file_path.parent, coll_id))
+                else:
                     failures.append(AddFailure(path=file_path, error=str(err)))
-                    continue
+                continue
 
-                # Only tabular formats can be non-geospatial assets
-                if file_path.suffix.lower() not in TABULAR_EXTENSIONS:
-                    # Non-tabular format without geometry - record as failure (Issue #175)
+            except NoGeometryError as err:
+                # Handle files without geometry (Issue #177, parquet;
+                # also covers GeoJSON and post-conversion bbox failures).
+                # Tabular formats are deferred for auxiliary-asset tracking;
+                # other formats without geometry are recorded as failures.
+                if file_path.suffix.lower() in TABULAR_EXTENSIONS:
+                    deferred_non_geo.append((file_path, file_path.parent, coll_id))
+                else:
                     failures.append(AddFailure(path=file_path, error=str(err)))
-                    continue
+                continue
 
-                # Defer non-geo tabular files until geo files are processed
-                # This ensures we have an item_dir to place them in
-                source_dir = file_path.parent
-                deferred_non_geo.append((file_path, source_dir, coll_id))
-
-            except (ValueError, FileNotFoundError) as err:
-                # Record failure and continue processing (Issue #175)
-                # Previously this would stop the entire operation on first error.
-                # Now we collect all failures and report them at the end.
-                failures.append(AddFailure(path=file_path, error=str(err)))
+            except ValueError as err:
+                # Handle parquet files without geometry (Issue #177) or other errors.
+                # Defer tabular files with no-geometry errors; record others as failures.
+                if (
+                    _is_parquet_no_geometry_error(err)
+                    and file_path.suffix.lower() in TABULAR_EXTENSIONS
+                ):
+                    deferred_non_geo.append((file_path, file_path.parent, coll_id))
+                else:
+                    failures.append(AddFailure(path=file_path, error=str(err)))
+                continue
 
             except Exception as err:
-                # Catch-all for unexpected errors (conversion, metadata, runtime).
-                # Without this, a single unexpected error type would abort the
-                # entire batch, defeating the purpose of Issue #175.
-                # We catch Exception (not BaseException) so KeyboardInterrupt
-                # and SystemExit propagate normally.
+                # Catch-all for unexpected errors (Issue #175).
+                # Record failure and continue so one bad file doesn't abort batch.
                 failures.append(AddFailure(path=file_path, error=str(err)))
 
     # Process deferred non-geo files (ADR-0028: track as assets, skip conversion)
+    _process_deferred_non_geo_files(
+        deferred_non_geo=deferred_non_geo,
+        source_to_item_dir=source_to_item_dir,
+        catalog_root=catalog_root,
+        skipped=skipped,
+        failures=failures,
+    )
+
+    return added, skipped, failures
+
+
+def _process_deferred_non_geo_files(
+    *,
+    deferred_non_geo: list[tuple[Path, Path, str]],
+    source_to_item_dir: dict[Path, tuple[Path, str, str]],
+    catalog_root: Path,
+    skipped: list[Path],
+    failures: list[AddFailure],
+) -> None:
+    """Process deferred non-geospatial files (ADR-0028).
+
+    These files were deferred during the main add loop because they lack
+    geometry. They are tracked as auxiliary assets alongside geo files.
+
+    Args:
+        deferred_non_geo: List of (file_path, source_dir, collection_id) tuples.
+        source_to_item_dir: Mapping from source dirs to (item_dir, coll_id, item_id).
+        catalog_root: Root directory of the catalog.
+        skipped: List to append skipped files to (modified in place).
+        failures: List to append failures to (modified in place).
+    """
     for file_path, source_dir, coll_id in deferred_non_geo:
         try:
             if source_dir in source_to_item_dir:
@@ -1405,11 +1495,7 @@ def add_files(
                 skipped.append(file_path)
         except Exception as err:
             # Record failure and continue (Issue #175).
-            # _copy_non_geo_to_item_dir / _update_item_with_asset can
-            # raise OSError, shutil.Error, etc.
             failures.append(AddFailure(path=file_path, error=str(err)))
-
-    return added, skipped, failures
 
 
 def _update_item_with_asset(
@@ -1441,12 +1527,30 @@ def _update_item_with_asset(
     with open(item_json_path) as f:
         item_data = json.load(f)
 
-    # Find the primary data file (look for .parquet or .tif)
+    # Find the primary data file by checking existing assets first (Issue #190).
+    # Prefer the existing "data" asset to avoid reselecting a tabular parquet
+    # that was just copied as the primary geo-asset.
     primary_file: Path | None = None
-    for file in item_dir.iterdir():
-        if file.suffix.lower() in {".parquet", ".tif", ".tiff"}:
-            primary_file = file
-            break
+
+    # First: Check existing assets for one with "data" role
+    existing_assets = item_data.get("assets", {})
+    for _asset_key, asset_info in existing_assets.items():
+        roles = asset_info.get("roles", [])
+        if "data" in roles:
+            # Found existing primary asset - use its href
+            href = asset_info.get("href", "")
+            if href:
+                candidate = item_dir / href
+                if candidate.exists():
+                    primary_file = candidate
+                    break
+
+    # Fallback: scan directory for .parquet or .tif (original behavior)
+    if primary_file is None:
+        for file in item_dir.iterdir():
+            if file.suffix.lower() in {".parquet", ".tif", ".tiff"}:
+                primary_file = file
+                break
 
     if primary_file is None:
         # Use the first non-json file as primary

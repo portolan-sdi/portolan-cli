@@ -28,7 +28,9 @@ GEOSPATIAL_EXTENSIONS: frozenset[str] = frozenset(
 # Extensions for tabular data that may or may not have geometry columns.
 # When these files lack geometry, they should be tracked as non-geospatial assets
 # (per ADR-0028) rather than causing errors.
-TABULAR_EXTENSIONS: frozenset[str] = frozenset({".csv", ".tsv"})
+# Includes .parquet per Issue #177: tabular parquet files without geometry
+# should be tracked as auxiliary assets when alongside a primary geo-asset.
+TABULAR_EXTENSIONS: frozenset[str] = frozenset({".csv", ".tsv", ".parquet"})
 
 # Cloud-native parquet extension
 PARQUET_EXTENSION: str = ".parquet"
