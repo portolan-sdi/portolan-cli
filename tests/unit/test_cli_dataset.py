@@ -457,14 +457,14 @@ class TestTopLevelList:
                     collection_id="demographics",
                     format_type=FormatType.VECTOR,
                     bbox=[0, 0, 1, 1],
-                    asset_paths=["./census/census.parquet"],
+                    asset_paths=["./census.parquet"],
                 ),
                 DatasetInfo(
                     item_id="boundaries",
                     collection_id="demographics",
                     format_type=FormatType.VECTOR,
                     bbox=[0, 0, 1, 1],
-                    asset_paths=["./boundaries/boundaries.parquet"],
+                    asset_paths=["./boundaries.parquet"],
                 ),
             ]
 
@@ -499,7 +499,7 @@ class TestTopLevelList:
                     collection_id="imagery",
                     format_type=FormatType.RASTER,
                     bbox=[0, 0, 1, 1],
-                    asset_paths=["./large-raster/satellite.tif"],
+                    asset_paths=["./satellite.tif"],
                 ),
             ]
 
@@ -528,14 +528,14 @@ class TestTopLevelList:
                     collection_id="data",
                     format_type=FormatType.VECTOR,
                     bbox=[0, 0, 1, 1],
-                    asset_paths=["./vector-item/data.parquet"],
+                    asset_paths=["./data.parquet"],
                 ),
                 DatasetInfo(
                     item_id="raster-item",
                     collection_id="imagery",
                     format_type=FormatType.RASTER,
                     bbox=[0, 0, 1, 1],
-                    asset_paths=["./raster-item/data.tif"],
+                    asset_paths=["./data.tif"],
                 ),
             ]
 
