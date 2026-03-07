@@ -2639,7 +2639,7 @@ wheels = [
 
 [[package]]
 name = "portolan-cli"
-version = "0.4.2"
+version = "0.4.3"
 source = { editable = "." }
 dependencies = [
     { name = "click" },

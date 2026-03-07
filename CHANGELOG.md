@@ -1,3 +1,24 @@
+## v0.4.3 (2026-03-07)
+
+### BREAKING CHANGE
+
+- Removes --fix-metadata flag; use --metadata --fix instead.
+
+### Feat
+
+- **cli**: add portolan clean command to remove metadata (#172)
+- **cli**: add --item-id flag to portolan add command (#171)
+- **check**: redesign --fix to work orthogonally with --metadata/--geo-assets (#164)
+
+### Fix
+
+- **dataset**: make add_dataset atomic and track files in-place (#170)
+- **catalog**: unify catalog root detection (#162) (#169)
+- **status**: detect untracked files in uninitialized collections (#167)
+- **dry-run**: prevent network calls in dry-run mode (#168)
+- **add**: support recursive add at catalog root (#166)
+- **list**: add guidance when no items found (#165)
+
 ## v0.4.2 (2026-03-06)
 
 ### Feat
