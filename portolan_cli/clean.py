@@ -52,9 +52,11 @@ def is_stac_metadata(path: Path) -> bool:
 
     try:
         data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            return False
         stac_type = data.get("type")
         return stac_type in ("Catalog", "Collection", "Feature")
-    except (json.JSONDecodeError, KeyError, OSError):
+    except (json.JSONDecodeError, OSError):
         return False
 
 
@@ -84,7 +86,6 @@ def collect_files_to_remove(catalog_root: Path) -> tuple[list[Path], list[Path]]
     Returns:
         Tuple of (files_to_remove, directories_to_remove).
         Files are sorted for deterministic output.
-        Directories are sorted with deepest first for safe removal.
     """
     files_to_remove: list[Path] = []
     directories_to_remove: list[Path] = []
@@ -171,10 +172,12 @@ def clean_catalog(
     files_to_remove, directories_to_remove = collect_files_to_remove(catalog_root)
 
     # Count data files (files that are NOT being removed)
+    # Use a set for O(1) membership checks instead of O(n) list scan
+    files_to_remove_set = set(files_to_remove)
     data_files = 0
     for path in catalog_root.rglob("*"):
         if path.is_file() and ".portolan" not in path.parts:
-            if path not in files_to_remove:
+            if path not in files_to_remove_set:
                 data_files += 1
 
     if dry_run:

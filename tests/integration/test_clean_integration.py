@@ -357,11 +357,8 @@ class TestCleanEmptyDirectories:
 
             # Empty directories should be removed
             assert not item_dir.exists()
-            # Census dir might also be empty now
-            if Path("census").exists():
-                # Should be empty or contain only user files
-                remaining = list(Path("census").iterdir())
-                assert len(remaining) == 0 or not Path("census").exists()
+            # Census dir should also be removed (it only contained metadata)
+            assert not Path("census").exists()
 
     @pytest.mark.integration
     def test_preserves_directories_with_data(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -583,5 +580,6 @@ class TestCleanEdgeCases:
             result = runner.invoke(cli, ["clean"])
 
             assert result.exit_code == 0
-            # For MVP, STAC-type JSON files are removed
-            # This is documented behavior - users can back up before cleaning
+            # For MVP, STAC-type JSON files are removed regardless of location.
+            # This is documented behavior - users can back up before cleaning.
+            assert not (user_data / "external-item.json").exists()

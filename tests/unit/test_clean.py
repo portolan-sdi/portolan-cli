@@ -106,6 +106,16 @@ class TestIsStacMetadata:
 
         assert is_stac_metadata(other_file) is False
 
+    @pytest.mark.unit
+    def test_handles_json_array(self, tmp_path: Path) -> None:
+        """is_stac_metadata should return False for JSON arrays (non-dict root)."""
+        from portolan_cli.clean import is_stac_metadata
+
+        array_file = tmp_path / "array.json"
+        array_file.write_text(json.dumps([{"type": "Feature"}]))
+
+        assert is_stac_metadata(array_file) is False
+
 
 class TestIsVersionsJson:
     """Tests for versions.json detection logic."""

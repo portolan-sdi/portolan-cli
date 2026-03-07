@@ -3100,8 +3100,9 @@ def _print_clean_preview(
         for file_path in files_to_remove:
             detail(f"  {file_path.relative_to(catalog_path)}", dry_run=True)
         click.echo()
+        dir_label = "directory" if len(dirs_to_remove) == 1 else "directories"
         info_output(
-            f"{len(files_to_remove)} files, {len(dirs_to_remove)} directory would be removed.",
+            f"{len(files_to_remove)} files, {len(dirs_to_remove)} {dir_label} would be removed.",
             dry_run=True,
         )
         info_output(f"Data files preserved: {data_files}", dry_run=True)
@@ -3131,7 +3132,7 @@ def clean(ctx: click.Context, dry_run: bool) -> None:
         portolan clean           # Remove all metadata
         portolan clean --dry-run # Preview what would be removed
     """
-    from portolan_cli.clean import clean_catalog, collect_files_to_remove
+    from portolan_cli.clean import clean_catalog
 
     use_json = should_output_json(ctx)
 
@@ -3156,15 +3157,8 @@ def clean(ctx: click.Context, dry_run: bool) -> None:
 
     try:
         if dry_run:
-            # Preview mode
-            files_to_remove, dirs_to_remove = collect_files_to_remove(catalog_path)
-
-            # Count data files
-            data_files = 0
-            for path in catalog_path.rglob("*"):
-                if path.is_file() and ".portolan" not in path.parts:
-                    if path not in files_to_remove:
-                        data_files += 1
+            # Preview mode - use clean_catalog with dry_run=True
+            files_to_remove, dirs_to_remove, data_files = clean_catalog(catalog_path, dry_run=True)
 
             if use_json:
                 data: dict[str, Any] = {
