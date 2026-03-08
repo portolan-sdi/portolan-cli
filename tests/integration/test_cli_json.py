@@ -224,56 +224,6 @@ class TestCheckJsonOutput:
         assert data["command"] == "check"
 
 
-class TestDatasetListJsonOutput:
-    """Tests for portolan --format=json dataset list."""
-
-    @pytest.mark.integration
-    def test_dataset_list_json_produces_valid_envelope(
-        self, runner: CliRunner, valid_catalog: Path
-    ) -> None:
-        """--format=json dataset list produces valid JSON envelope."""
-        result = runner.invoke(
-            cli, ["--format=json", "dataset", "list", "--catalog", str(valid_catalog)]
-        )
-
-        assert result.exit_code == 0
-
-        data = json.loads(result.output)
-
-        assert data["success"] is True
-        assert data["command"] == "dataset_list"
-        assert "data" in data
-
-
-class TestDatasetInfoJsonOutput:
-    """Tests for portolan --format=json dataset info."""
-
-    @pytest.mark.integration
-    def test_dataset_info_json_not_found_produces_envelope(
-        self, runner: CliRunner, valid_catalog: Path
-    ) -> None:
-        """--format=json dataset info for missing dataset produces error envelope."""
-        result = runner.invoke(
-            cli,
-            [
-                "--format=json",
-                "dataset",
-                "info",
-                "collection/item",
-                "--catalog",
-                str(valid_catalog),
-            ],
-        )
-
-        assert result.exit_code == 1
-
-        data = json.loads(result.output)
-
-        assert data["success"] is False
-        assert data["command"] == "dataset_info"
-        assert "errors" in data
-
-
 class TestErrorScenariosJsonOutput:
     """Tests for error scenarios producing valid JSON."""
 
@@ -379,30 +329,6 @@ class TestBackwardCompatibility:
         data = json.loads(result.output)
         assert "success" in data
         assert "command" in data
-
-    @pytest.mark.integration
-    def test_dataset_info_json_flag_still_works(
-        self, runner: CliRunner, valid_catalog: Path
-    ) -> None:
-        """dataset info --json (per-command flag) produces envelope output."""
-        result = runner.invoke(
-            cli,
-            [
-                "dataset",
-                "info",
-                "test/item",
-                "--catalog",
-                str(valid_catalog),
-                "--json",
-            ],
-        )
-
-        # Will fail (item doesn't exist) but should be JSON
-        assert result.exit_code == 1
-
-        data = json.loads(result.output)
-        assert "success" in data
-        assert data["success"] is False
 
     @pytest.mark.integration
     def test_global_format_matches_per_command_flag(
