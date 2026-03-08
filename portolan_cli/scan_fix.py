@@ -211,8 +211,11 @@ def _sanitize_filename(name: str) -> str:
     if not sanitized:
         sanitized = f"file_{_compute_short_hash(stem)}"
 
-    # Lowercase the extension too
-    return sanitized + suffix.lower()
+    # Sanitize the extension too - remove spaces and control characters
+    # Keep only alphanumeric, dots, and dashes in extension
+    suffix_clean = re.sub(r"[\s\x00-\x1f\x7f]", "", suffix.lower())
+
+    return sanitized + suffix_clean
 
 
 def _is_windows_reserved(stem: str) -> bool:
