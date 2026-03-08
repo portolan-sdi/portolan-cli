@@ -1,3 +1,11 @@
+## Unreleased
+
+### BREAKING CHANGE
+
+- **cli**: remove deprecated `portolan dataset` command group (#214)
+  - `portolan dataset list` removed → use `portolan list`
+  - `portolan dataset info` removed → use `portolan info`
+
 ## v0.4.4 (2026-03-07)
 
 ### Feat

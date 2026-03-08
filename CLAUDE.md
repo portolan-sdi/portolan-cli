@@ -26,7 +26,6 @@ Portolan doesn't do the heavy lifting—it orchestrates libraries like `geoparqu
 **Correct:** "Add files to a collection", "Track items", "Push a collection"
 **Wrong:** "Add a dataset", "Import datasets", "Dataset management"
 
-The CLI has a legacy `portolan dataset` command group for backward compatibility, but documentation and new code should use STAC terms.
 
 ## Documentation Accuracy (CRITICAL)
 
