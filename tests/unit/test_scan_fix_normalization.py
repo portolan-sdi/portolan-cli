@@ -183,9 +183,13 @@ class TestNormalizationUsesLowercaseAndDashes:
         """Windows reserved names should still use underscore prefix (not dash).
 
         This is intentional: _CON is a common convention, -CON looks wrong.
+
+        Note: We don't call path.touch() because Windows cannot create files
+        named CON, PRN, etc. The _compute_safe_rename function only inspects
+        the path string, not the filesystem.
         """
         path = tmp_path / "CON.txt"
-        path.touch()
+        # No touch() - Windows reserved names cannot be created on Windows
 
         result = _compute_safe_rename(path)
 
@@ -323,6 +327,24 @@ class TestNormalizationProperties:
 @pytest.mark.unit
 class TestIssue208Regression:
     """Regression tests for specific cases from issue #208."""
+
+    def test_reserved_name_after_normalization(self, tmp_path: Path) -> None:
+        """Edge case: 'CON ()' normalizes to 'con' which is still reserved.
+
+        The Windows reserved check must happen AFTER normalization, not before.
+        Otherwise 'CON ()' → 'con' instead of '_con'.
+
+        Note: No path.touch() - Windows cannot create files named CON.
+        """
+        path = tmp_path / "CON ().txt"
+        # No touch() - Windows reserved names cannot be created on Windows
+
+        result = _compute_safe_rename(path)
+
+        assert result is not None
+        new_path, _ = result
+        # Must get underscore prefix because 'con' is reserved
+        assert new_path.name == "_con.txt"
 
     def test_radios_2010_example(self, tmp_path: Path) -> None:
         """The exact example from issue #208."""

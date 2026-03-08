@@ -166,9 +166,13 @@ class TestComputeSafeRename:
     # -------------------------------------------------------------------------
 
     def test_windows_reserved_con(self, tmp_path: Path) -> None:
-        """CON.shp should become _con.shp (lowercase per issue #208)."""
+        """CON.shp should become _con.shp (lowercase per issue #208).
+
+        Note: No path.touch() - Windows cannot create files named CON, PRN, etc.
+        _compute_safe_rename only inspects the path string, not the filesystem.
+        """
         path = tmp_path / "CON.shp"
-        path.touch()
+        # No touch() - Windows reserved names cannot be created on Windows
 
         result = _compute_safe_rename(path)
 
@@ -178,10 +182,13 @@ class TestComputeSafeRename:
         assert "_con.shp" in preview
 
     def test_windows_reserved_case_insensitive(self, tmp_path: Path) -> None:
-        """Windows reserved names should be case-insensitive."""
+        """Windows reserved names should be case-insensitive.
+
+        Note: No path.touch() - Windows cannot create these files.
+        """
         for name in ["con.shp", "Con.shp", "CON.shp", "prn.tif", "AUX.geojson"]:
             path = tmp_path / name
-            path.touch()
+            # No touch() - Windows reserved names cannot be created on Windows
 
             result = _compute_safe_rename(path)
 
@@ -190,9 +197,12 @@ class TestComputeSafeRename:
             assert new_path.name.startswith("_"), f"Expected _ prefix for {name}"
 
     def test_windows_reserved_nul(self, tmp_path: Path) -> None:
-        """NUL should get underscore prefix."""
+        """NUL should get underscore prefix.
+
+        Note: No path.touch() - Windows cannot create files named NUL.
+        """
         path = tmp_path / "nul.gpkg"
-        path.touch()
+        # No touch() - Windows reserved names cannot be created on Windows
 
         result = _compute_safe_rename(path)
 
@@ -557,9 +567,13 @@ class TestPreviewFix:
         assert "my-file.geojson" in fix.preview  # dashes per issue #208
 
     def test_preview_windows_reserved(self, tmp_path: Path) -> None:
-        """preview_fix should generate ProposedFix for Windows reserved names."""
+        """preview_fix should generate ProposedFix for Windows reserved names.
+
+        Note: Windows cannot create files named CON, so we mock Path.exists().
+        """
+        from unittest.mock import patch
+
         path = tmp_path / "CON.shp"
-        path.touch()
 
         issue = ScanIssue(
             path=path,
@@ -569,7 +583,9 @@ class TestPreviewFix:
             message="Windows reserved name",
         )
 
-        fix = preview_fix(issue)
+        # Mock exists() because Windows cannot create files named CON
+        with patch.object(type(path), "exists", return_value=True):
+            fix = preview_fix(issue)
 
         assert fix is not None
         assert fix.category == FixCategory.SAFE
@@ -716,9 +732,13 @@ class TestProposedFixToDict:
         assert isinstance(result["category"], str)
 
     def test_to_dict_path_is_string(self, tmp_path: Path) -> None:
-        """ProposedFix.to_dict() should convert path to string."""
+        """ProposedFix.to_dict() should convert path to string.
+
+        Note: Windows cannot create files named CON, so we mock Path.exists().
+        """
+        from unittest.mock import patch
+
         path = tmp_path / "CON.shp"
-        path.touch()
 
         issue = ScanIssue(
             path=path,
@@ -728,7 +748,9 @@ class TestProposedFixToDict:
             message="Windows reserved",
         )
 
-        fix = preview_fix(issue)
+        # Mock exists() because Windows cannot create files named CON
+        with patch.object(type(path), "exists", return_value=True):
+            fix = preview_fix(issue)
         assert fix is not None
 
         result = fix.to_dict()

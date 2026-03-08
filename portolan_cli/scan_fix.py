@@ -343,8 +343,11 @@ def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:
         # No invalid chars but needs lowercase - just lowercase the stem
         new_stem = stem.lower()
 
-    # Fix Windows reserved names (add underscore prefix, lowercase)
-    if is_reserved:
+    # Re-check if normalized stem is a Windows reserved name
+    # Example: "CON ()" normalizes to "con" which is still reserved
+    # Must check AFTER normalization, not just the original stem
+    if is_reserved or _is_windows_reserved(new_stem):
+        # Ensure lowercase and add underscore prefix
         new_stem = f"_{new_stem.lower()}"
 
     # Truncate for long paths
