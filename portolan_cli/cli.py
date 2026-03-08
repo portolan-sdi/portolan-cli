@@ -15,6 +15,7 @@ import click
 
 from portolan_cli.catalog import find_catalog_root
 from portolan_cli.check import check_directory
+from portolan_cli.convert import ConversionResult
 from portolan_cli.dataset import (
     AddFailure,
     DatasetInfo,
@@ -1112,11 +1113,17 @@ def _run_fix_workflow(
 
     # Fix geo-assets if in scope
     if run_geo_assets:
+        # Progress callback for conversion (skip for JSON mode)
+        def show_conversion_progress(result: ConversionResult) -> None:
+            if not use_json and result.source:
+                info_output(f"Converting: {result.source.name}")
+
         format_fix_report = check_directory(
             path,
             fix=True,
             dry_run=dry_run,
             remove_legacy=remove_legacy,
+            on_progress=show_conversion_progress,
             catalog_path=path,
         )
 
@@ -2174,6 +2181,11 @@ def add_cmd(
     # add_files already does this correctly when collection_id=None, and batching
     # avoids duplicate item writes when the same item directory appears via
     # multiple CLI arguments (e.g. `portolan add . foo/data.parquet`).
+    # Progress callback for human-readable output (skip for JSON mode)
+    def show_add_progress(file_path: Path) -> None:
+        if not use_json:
+            info_output(f"Adding: {file_path.name}")
+
     try:
         all_added, all_skipped, all_failures = add_files(
             paths=resolved_paths,
@@ -2181,6 +2193,7 @@ def add_cmd(
             collection_id=None,
             item_id=item_id,
             verbose=verbose,
+            on_progress=show_add_progress,
         )
     except (ValueError, FileNotFoundError) as err:
         err_type = type(err).__name__
