@@ -205,13 +205,17 @@ class TestListAllAssets:
     def test_asset_counts_in_item_headers(
         self, runner: CliRunner, multi_asset_catalog: Path
     ) -> None:
-        """Item headers show correct asset counts."""
+        """Item headers show correct asset counts.
+
+        Note: Per issue #210, counts now show status (e.g., "3 untracked").
+        """
         result = runner.invoke(cli, ["list", "--catalog", str(multi_asset_catalog)])
 
         assert result.exit_code == 0
-        assert "3 assets" in result.output  # censo-2010/data
-        assert "1 asset)" in result.output  # censo-2010/radios (singular)
-        assert "2 assets" in result.output  # censo-2022/data
+        # Updated for #210: counts show status, not just "assets"
+        assert "3 untracked" in result.output  # censo-2010/data
+        assert "1 untracked" in result.output  # censo-2010/radios
+        assert "2 untracked" in result.output  # censo-2022/data
 
     def test_format_types_per_asset(self, runner: CliRunner, multi_asset_catalog: Path) -> None:
         """Each asset shows its own format type."""
@@ -279,10 +283,14 @@ class TestListEdgeCases:
         assert "boundaries/" in result.output
         assert "regions/" in result.output
         assert "regions.parquet" in result.output
-        assert "1 asset" in result.output
+        # Updated for #210: counts now show status
+        assert "1 untracked" in result.output
 
     def test_json_output_still_works(self, runner: CliRunner, multi_asset_catalog: Path) -> None:
-        """JSON output mode is unaffected by the tree output changes."""
+        """JSON output mode is unaffected by the tree output changes.
+
+        Note: Per issue #210, JSON structure changed to collections with nested items.
+        """
         result = runner.invoke(
             cli,
             ["list", "--catalog", str(multi_asset_catalog), "--json"],
@@ -293,12 +301,18 @@ class TestListEdgeCases:
         assert data["success"] is True
         assert data["command"] == "list"
 
-        # All items should be in JSON output
-        items = data["data"]["items"]
-        assert len(items) == 3  # 3 items total
+        # Updated for #210: collections with nested items
+        collections = data["data"]["collections"]
+        assert len(collections) == 2  # censo-2010, censo-2022
+
+        # Count all items across collections
+        all_items = []
+        for col in collections:
+            all_items.extend(col.get("items", []))
+        assert len(all_items) == 3  # 3 items total
 
         # Check that assets are included
         all_assets = []
-        for item in items:
+        for item in all_items:
             all_assets.extend(item.get("assets", []))
         assert len(all_assets) == 6  # 6 total assets

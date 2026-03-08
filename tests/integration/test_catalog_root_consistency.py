@@ -62,22 +62,23 @@ class TestCatalogRootConsistency:
         return CliRunner()
 
     @pytest.mark.integration
-    def test_status_finds_catalog_from_subdirectory(
-        self, runner: CliRunner, tmp_path: Path
-    ) -> None:
-        """status command finds catalog from nested subdirectory."""
+    def test_list_finds_catalog_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
+        """list command finds catalog from nested subdirectory.
+
+        Note: Per issue #210, status was merged into list.
+        """
         setup_managed_catalog(tmp_path)
 
         # Create nested subdirectory
         nested_dir = tmp_path / "collection" / "item"
         nested_dir.mkdir(parents=True)
 
-        # Run status from nested directory
+        # Run list from nested directory
         with runner.isolated_filesystem(temp_dir=nested_dir):
-            result = runner.invoke(cli, ["status"], catch_exceptions=False)
+            result = runner.invoke(cli, ["list"], catch_exceptions=False)
 
         # Should succeed (exit code 0) because it finds the parent catalog
-        assert result.exit_code == 0, f"status failed: {result.output}"
+        assert result.exit_code == 0, f"list failed: {result.output}"
 
     @pytest.mark.integration
     def test_list_succeeds_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -122,29 +123,37 @@ class TestCatalogRootConsistency:
 
     @pytest.mark.integration
     def test_unmanaged_stac_catalog_rejected(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Commands fail gracefully for catalog.json-only directories (UNMANAGED_STAC)."""
+        """Commands fail gracefully for catalog.json-only directories (UNMANAGED_STAC).
+
+        Note: 'config list' fails without a managed catalog.
+        'list' now shows "No tracked items" with guidance per issue #210.
+        """
         setup_unmanaged_stac(tmp_path)
 
         # Create nested subdirectory
         nested_dir = tmp_path / "collection"
         nested_dir.mkdir()
 
-        # Run status from nested directory (should fail)
+        # Run config list from nested directory (should fail)
         with runner.isolated_filesystem(temp_dir=nested_dir):
-            result = runner.invoke(cli, ["status"])
+            result = runner.invoke(cli, ["config", "list"])
 
         # Should fail because UNMANAGED_STAC is not detected as a catalog
-        assert result.exit_code != 0, "status should fail for UNMANAGED_STAC"
+        assert result.exit_code != 0, "config list should fail for UNMANAGED_STAC"
 
     @pytest.mark.integration
     def test_error_message_suggests_init(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Error message explicitly tells user to run 'portolan init'."""
+        """Error message explicitly tells user to run 'portolan init'.
+
+        Note: 'config list' is used to test error handling as 'list' now
+        gracefully handles missing catalogs with helpful guidance per #210.
+        """
         # Empty directory, no catalog
         nested_dir = tmp_path / "no-catalog"
         nested_dir.mkdir()
 
         with runner.isolated_filesystem(temp_dir=nested_dir):
-            result = runner.invoke(cli, ["status"])
+            result = runner.invoke(cli, ["config", "list"])
 
         # Should fail and explicitly mention "portolan init" (not just "init" or "catalog")
         assert result.exit_code != 0
@@ -191,13 +200,13 @@ class TestCatalogRootConsistency:
 
         Note: 'list' is excluded because it takes --catalog as explicit argument
         rather than using find_catalog_root. That's a separate issue to address.
+        Note: 'status' was removed per issue #210 (merged into 'list').
         """
         nested_dir = tmp_path / "no-catalog" / "nested"
         nested_dir.mkdir(parents=True)
 
         # Commands that use find_catalog_root internally
         commands = [
-            ["status"],
             ["config", "list"],
         ]
 
@@ -212,6 +221,7 @@ class TestCatalogRootConsistency:
 
         Note: 'list' is excluded because it takes --catalog as explicit argument
         rather than using find_catalog_root. That's a separate issue to address.
+        Note: 'status' was removed per issue #210 (merged into 'list').
         """
         setup_managed_catalog(tmp_path)
 
@@ -220,7 +230,6 @@ class TestCatalogRootConsistency:
 
         # Commands that use find_catalog_root internally
         commands = [
-            ["status"],
             ["config", "list"],
         ]
 

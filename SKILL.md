@@ -88,12 +88,13 @@ portolan init /path/to/data --auto  # Initialize in specific directory
 ```
 
 ### `portolan list`
-List items in the catalog.
+List all files in the catalog with tracking status.
 
 ```bash
-portolan list                           # List all items
+portolan list                           # List all files with status
 portolan list --collection demographics # Filter by collection
-portolan list --json                    # JSON output
+portolan list --tracked-only            # Show only tracked files
+portolan list --untracked-only          # Show only untracked files
 ```
 
 ### `portolan pull`
@@ -134,14 +135,6 @@ portolan scan                         # Scan current directory
 portolan scan --json                  # JSON output in current directory
 portolan scan /data/geospatial
 portolan scan /large/tree --max-depth=2
-```
-
-### `portolan status`
-Show tracking status of files in the catalog.
-
-```bash
-portolan status                     # Show status from current directory
-portolan status --json              # Output as JSON
 ```
 
 ### `portolan sync`

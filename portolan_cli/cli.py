@@ -14,6 +14,11 @@ from typing import Any
 import click
 
 from portolan_cli.catalog import find_catalog_root
+from portolan_cli.catalog_list import (
+    AssetStatus,
+    CatalogListResult,
+    list_catalog_contents,
+)
 from portolan_cli.check import check_directory
 from portolan_cli.convert import ConversionResult
 from portolan_cli.dataset import (
@@ -21,7 +26,6 @@ from portolan_cli.dataset import (
     DatasetInfo,
     add_files,
     get_sidecars,
-    list_datasets,
     remove_files,
     resolve_collection_id,
 )
@@ -50,7 +54,6 @@ from portolan_cli.scan_output import (
     group_skipped_files,
     render_tree_view,
 )
-from portolan_cli.status import get_catalog_status
 from portolan_cli.validation import Severity
 from portolan_cli.validation import check as validate_catalog
 
@@ -318,59 +321,74 @@ def _get_asset_file_size(
     return None
 
 
-def _list_tree_output(datasets: list[DatasetInfo], catalog_path: Path) -> None:
-    """Output items in hierarchical tree view: collection -> item -> assets.
+def _list_tree_output_with_status(result: CatalogListResult) -> None:
+    """Output items in hierarchical tree view with status indicators.
 
-    Shows ALL assets per item, grouped under their parent item directory
-    with asset counts.  Fixes #196 where only the first asset was displayed.
+    Shows ALL files per item, grouped under their parent item directory
+    with status counts. Per issue #210, everything in a catalog is tracked.
 
     Format:
         censo-2010/
-            data/ (3 assets)
-              metadata.parquet (GeoParquet, 1.2MB)
-              census-data.parquet (GeoParquet, 4.5MB)
-              overview.pmtiles (PMTiles, 800KB)
-            radios/ (1 asset)
-              radios.parquet (GeoParquet, 2.1MB)
+            data/ (3 tracked, 2 untracked)
+              + census-data.parquet (GeoParquet, 4.5MB)
+              + metadata.parquet (GeoParquet, 1.2MB)
+              + README.md (2KB)
+              + style.json (1KB)
+
+    Status indicators:
+        + = tracked (in versions.json, unchanged)
+        + = untracked (on disk, not in versions.json)
+        ~ = modified (in versions.json, checksum changed)
+        ! = deleted (in versions.json, missing from disk)
 
     Args:
-        datasets: List of DatasetInfo objects.
-        catalog_path: Path to catalog root for file size lookups.
+        result: CatalogListResult with all collections and items.
     """
-    from collections import defaultdict
+    # Status indicator symbols and colors
+    status_symbols = {
+        AssetStatus.TRACKED: "\u2713",  # Checkmark
+        AssetStatus.UNTRACKED: "+",
+        AssetStatus.MODIFIED: "~",
+        AssetStatus.DELETED: "!",
+    }
 
-    # Group datasets (items) by collection
-    by_collection: dict[str, list[DatasetInfo]] = defaultdict(list)
-    for ds in datasets:
-        by_collection[ds.collection_id].append(ds)
-
-    # Sort collections alphabetically
-    for collection_id in sorted(by_collection.keys()):
+    for col in result.collections:
         # Print collection header
-        info_output(f"{collection_id}/")
+        info_output(f"{col.collection_id}/")
 
-        # Print items under collection, sorted alphabetically
-        items = by_collection[collection_id]
-        for ds in sorted(items, key=lambda d: d.item_id):
-            # Item header with asset count
-            n_assets = len(ds.asset_paths)
-            asset_word = "asset" if n_assets == 1 else "assets"
-            detail(f"  {ds.item_id}/ ({n_assets} {asset_word})")
+        for item in col.items:
+            # Build status summary
+            parts = []
+            if item.tracked_count > 0:
+                parts.append(f"{item.tracked_count} tracked")
+            if item.untracked_count > 0:
+                parts.append(f"{item.untracked_count} untracked")
+            if item.modified_count > 0:
+                parts.append(f"{item.modified_count} modified")
+            if item.deleted_count > 0:
+                parts.append(f"{item.deleted_count} deleted")
 
-            # List each asset under the item
-            for asset_href in ds.asset_paths:
-                asset_name = Path(asset_href).name
-                format_name = _get_asset_format_display_name(asset_href)
+            status_summary = ", ".join(parts) if parts else "empty"
+            detail(f"  {item.item_id}/ ({status_summary})")
 
-                # Try to get file size
+            # List each asset with status indicator
+            for asset in item.assets:
+                symbol = status_symbols.get(asset.status, "?")
+                format_name = asset.format_name or "Unknown"
+
+                # Build size string
                 size_str = ""
-                file_size = _get_asset_file_size(
-                    catalog_path, ds.collection_id, ds.item_id, asset_href
-                )
-                if file_size is not None:
-                    size_str = f", {format_size(file_size)}"
+                if asset.size_bytes is not None:
+                    size_str = f", {format_size(asset.size_bytes)}"
 
-                detail(f"    {asset_name} ({format_name}{size_str})")
+                # Add status label for non-tracked
+                status_label = ""
+                if asset.status == AssetStatus.MODIFIED:
+                    status_label = ", modified"
+                elif asset.status == AssetStatus.DELETED:
+                    status_label = ", deleted"
+
+                detail(f"    {symbol} {asset.path} ({format_name}{size_str}{status_label})")
 
 
 @cli.command("list")
@@ -387,56 +405,120 @@ def _list_tree_output(datasets: list[DatasetInfo], catalog_path: Path) -> None:
     help="Path to catalog root (default: current directory).",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.option(
+    "--tracked-only",
+    is_flag=True,
+    help="Show only tracked files (hide untracked).",
+)
+@click.option(
+    "--untracked-only",
+    is_flag=True,
+    help="Show only untracked files.",
+)
 @click.pass_context
 def list_cmd(
-    ctx: click.Context, collection: str | None, catalog_path: Path, json_output: bool
+    ctx: click.Context,
+    collection: str | None,
+    catalog_path: Path,
+    json_output: bool,
+    tracked_only: bool,
+    untracked_only: bool,
 ) -> None:
-    """List items in the catalog.
+    """List all files in the catalog with tracking status.
 
-    Shows all items organized by collection in a hierarchical tree view.
-    Items are grouped under their collection, and each item shows ALL
-    tracked assets with format type and file size.
+    Shows all files organized by collection in a hierarchical tree view.
+    Each file shows its tracking status, format type, and file size.
+
+    \b
+    Status indicators:
+        + = tracked (in versions.json, unchanged)
+        + = untracked (on disk, not in versions.json)
+        ~ = modified (in versions.json, checksum changed)
+        ! = deleted (in versions.json, missing from disk)
 
     \b
     Example output:
         censo-2010/
-            data/ (3 assets)
-              metadata.parquet (GeoParquet, 1.2MB)
-              census-data.parquet (GeoParquet, 4.5MB)
-              overview.pmtiles (PMTiles, 800KB)
-            radios/ (1 asset)
-              radios.parquet (GeoParquet, 2.1MB)
+            data/ (3 tracked, 2 untracked)
+              + census-data.parquet (GeoParquet, 4.5MB)
+              + metadata.parquet (GeoParquet, 1.2MB)
+              + README.md (2KB)
+              + style.json (1KB)
 
     \b
     Examples:
-        portolan list                           # List all items
+        portolan list                           # List all files with status
         portolan list --collection demographics # Filter by collection
+        portolan list --tracked-only            # Show only tracked files
+        portolan list --untracked-only          # Show only untracked files
         portolan list --json                    # JSON output
     """
     use_json = should_output_json(ctx, json_output)
 
-    datasets = list_datasets(catalog_path, collection_id=collection)
+    # Get all catalog contents with status
+    result = list_catalog_contents(catalog_path, collection_id=collection)
+
+    # Apply filters
+    if tracked_only or untracked_only:
+        for col in result.collections:
+            for item in col.items:
+                if tracked_only:
+                    item.assets = [a for a in item.assets if a.status == AssetStatus.TRACKED]
+                elif untracked_only:
+                    item.assets = [a for a in item.assets if a.status == AssetStatus.UNTRACKED]
+            # Remove empty items after filtering
+            col.items = [item for item in col.items if item.assets]
+        # Remove empty collections after filtering
+        result.collections = [col for col in result.collections if col.items]
 
     if use_json:
+        # Build JSON output with status information
+        collections_data = []
+        for col in result.collections:
+            items_data = []
+            for item in col.items:
+                assets_data = [
+                    {
+                        "path": a.path,
+                        "status": a.status.value,
+                        "format": a.format_name,
+                        "size": a.size_bytes,
+                    }
+                    for a in item.assets
+                ]
+                items_data.append(
+                    {
+                        "id": item.item_id,
+                        "tracked": item.tracked_count,
+                        "untracked": item.untracked_count,
+                        "modified": item.modified_count,
+                        "deleted": item.deleted_count,
+                        "assets": assets_data,
+                    }
+                )
+            collections_data.append(
+                {
+                    "id": col.collection_id,
+                    "is_initialized": col.is_initialized,
+                    "items": items_data,
+                }
+            )
+
         envelope = success_envelope(
             "list",
             {
-                "items": [
-                    {
-                        "item_id": ds.item_id,
-                        "collection_id": ds.collection_id,
-                        "format": ds.format_type.value,
-                        "title": ds.title,
-                        "assets": ds.asset_paths,
-                    }
-                    for ds in datasets
-                ],
-                "count": len(datasets),
+                "collections": collections_data,
+                "summary": {
+                    "total_tracked": result.total_tracked,
+                    "total_untracked": result.total_untracked,
+                    "total_modified": result.total_modified,
+                    "total_deleted": result.total_deleted,
+                },
             },
         )
         output_json_envelope(envelope)
     else:
-        if not datasets:
+        if result.is_empty():
             info_output("No tracked items")
             info_output("")
             detail("To get started:")
@@ -444,7 +526,7 @@ def list_cmd(
             detail("  portolan add <path>  Track a specific file or directory")
             return
 
-        _list_tree_output(datasets, catalog_path)
+        _list_tree_output_with_status(result)
 
 
 # =============================================================================
@@ -565,93 +647,6 @@ def _output_catalog_info(result: Any, *, use_json: bool) -> None:
     else:
         for line in result.format_human():
             info_output(line)
-
-
-# =============================================================================
-# Status command (top-level, ADR-0022)
-# =============================================================================
-
-
-@cli.command()
-@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
-@click.pass_context
-def status(ctx: click.Context, json_output: bool) -> None:
-    """Show tracking status of files in the catalog.
-
-    Compares filesystem contents against versions.json for each collection
-    to show which files are untracked, modified, or deleted.
-
-    \b
-    Output format (per ADR-0022):
-        # Untracked: demographics/new-file.parquet
-        # Modified: imagery/satellite.tif
-        # Deleted: boundaries/old-data.parquet
-        (or "Nothing to commit, working tree clean" if all synced)
-
-    \b
-    Examples:
-        portolan status                     # Show status from current directory
-        portolan status --json              # Output as JSON
-    """
-    use_json = should_output_json(ctx, json_output)
-
-    # Find catalog root from current directory
-    catalog_root = find_catalog_root(Path.cwd())
-
-    if catalog_root is None:
-        if use_json:
-            envelope = error_envelope(
-                "status",
-                [
-                    ErrorDetail(
-                        type="NoCatalogError",
-                        message="No catalog found in current directory or parents",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("No catalog found in current directory or parents")
-            detail("Run 'portolan init' to create a catalog, or cd into one")
-        raise SystemExit(1)
-
-    try:
-        result = get_catalog_status(catalog_root)
-
-        if use_json:
-            data = {
-                "catalog_root": str(catalog_root),
-                "untracked": [f.path for f in result.untracked],
-                "modified": [f.path for f in result.modified],
-                "deleted": [f.path for f in result.deleted],
-                "is_clean": result.is_clean(),
-            }
-            envelope = success_envelope("status", data)
-            output_json_envelope(envelope)
-        else:
-            if result.is_clean():
-                success("Nothing to commit, working tree clean")
-            else:
-                if result.untracked:
-                    for f in result.untracked:
-                        detail(f"# Untracked: {f.path}")
-                if result.modified:
-                    for f in result.modified:
-                        detail(f"# Modified: {f.path}")
-                if result.deleted:
-                    for f in result.deleted:
-                        detail(f"# Deleted: {f.path}")
-
-    except FileNotFoundError as err:
-        if use_json:
-            envelope = error_envelope(
-                "status",
-                [ErrorDetail(type="FileNotFoundError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
-        raise SystemExit(1) from err
 
 
 def _output_check_json(report: Any, *, mode: str = "all") -> None:
