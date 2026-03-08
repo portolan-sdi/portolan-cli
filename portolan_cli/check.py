@@ -4,19 +4,24 @@ This module provides the check command functionality:
 - Identifying files that need conversion to cloud-native formats
 - Converting files with --fix flag
 - Dry-run mode for previewing changes
+- Removing legacy files after successful conversion (--remove-legacy)
 
 Per ADR-0007, this module contains the logic; CLI commands are thin wrappers.
+
+See Also:
+    - GitHub Issue #209: Add --remove-legacy flag to check --fix
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, PARQUET_EXTENSION
+from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, PARQUET_EXTENSION, SIDECAR_PATTERNS
 from portolan_cli.conversion_config import ConversionOverrides, get_conversion_overrides
 from portolan_cli.convert import (
     ConversionReport,
@@ -30,6 +35,7 @@ from portolan_cli.formats import (
     get_effective_status,
     is_geoparquet,
 )
+from portolan_cli.scan_detect import is_filegdb
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +63,43 @@ class FileStatus:
 
 
 @dataclass
+class LegacyRemovalReport:
+    """Report from removing legacy files after conversion.
+
+    Attributes:
+        removed: List of paths that were successfully removed.
+        errors: Dict mapping paths to error messages for failed removals.
+
+    See Also:
+        GitHub Issue #209: Add --remove-legacy flag to check --fix
+    """
+
+    removed: list[Path] = field(default_factory=list)
+    errors: dict[Path, str] = field(default_factory=dict)
+
+    @property
+    def success_count(self) -> int:
+        """Number of files successfully removed."""
+        return len(self.removed)
+
+    @property
+    def error_count(self) -> int:
+        """Number of files that failed to be removed."""
+        return len(self.errors)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dictionary."""
+        return {
+            "removed": [str(p) for p in self.removed],
+            "errors": {str(p): msg for p, msg in self.errors.items()},
+            "summary": {
+                "removed_count": self.success_count,
+                "error_count": self.error_count,
+            },
+        }
+
+
+@dataclass
 class CheckReport:
     """Report from checking a directory for cloud-native status.
 
@@ -64,11 +107,13 @@ class CheckReport:
         root: Directory that was checked.
         files: List of FileStatus for each file found.
         conversion_report: Results from --fix conversion (None if not run).
+        legacy_removal_report: Results from --remove-legacy (None if not run).
     """
 
     root: Path
     files: list[FileStatus]
     conversion_report: ConversionReport | None = None
+    legacy_removal_report: LegacyRemovalReport | None = None
 
     @property
     def cloud_native_count(self) -> int:
@@ -113,7 +158,144 @@ class CheckReport:
         }
         if self.conversion_report is not None:
             result["conversion"] = self.conversion_report.to_dict()
+        if self.legacy_removal_report is not None:
+            result["legacy_removed"] = self.legacy_removal_report.to_dict()
         return result
+
+
+# =============================================================================
+# Legacy File Removal Functions (Issue #209)
+# =============================================================================
+
+
+def get_legacy_files_to_remove(report: ConversionReport) -> list[Path]:
+    """Identify legacy source files that can be safely removed after conversion.
+
+    Only returns source files from successful conversions where the output
+    file exists. This ensures we never delete source files unless the
+    conversion actually produced a valid output.
+
+    Args:
+        report: ConversionReport from a completed conversion run.
+
+    Returns:
+        List of source file paths that can be safely removed.
+
+    Note:
+        This function does NOT return sidecar files - those are handled by
+        remove_legacy_files() which uses get_sidecars() for each source.
+
+    See Also:
+        GitHub Issue #209: Add --remove-legacy flag to check --fix
+    """
+    files_to_remove: list[Path] = []
+
+    for result in report.results:
+        # Only include successful conversions
+        if result.status != ConversionStatus.SUCCESS:
+            continue
+
+        # Safety: verify output actually exists
+        if result.output is None or not result.output.exists():
+            logger.warning("Skipping legacy removal for %s: output file missing", result.source)
+            continue
+
+        files_to_remove.append(result.source)
+
+    return files_to_remove
+
+
+def get_sidecars_for_file(path: Path) -> list[Path]:
+    """Get sidecar files for a given primary file.
+
+    Uses SIDECAR_PATTERNS to find associated files (e.g., .dbf/.shx for shapefiles).
+
+    Args:
+        path: Path to the primary file.
+
+    Returns:
+        List of existing sidecar file paths.
+    """
+    suffix_lower = path.suffix.lower()
+    patterns = SIDECAR_PATTERNS.get(suffix_lower, [])
+
+    sidecars: list[Path] = []
+    stem = path.stem
+    parent = path.parent
+
+    for ext in patterns:
+        sidecar_path = parent / f"{stem}{ext}"
+        if sidecar_path.exists():
+            sidecars.append(sidecar_path)
+
+    return sidecars
+
+
+def remove_legacy_files(files: list[Path]) -> tuple[list[Path], dict[Path, str]]:
+    """Remove legacy source files and their sidecars.
+
+    Handles:
+    - Single files (GeoJSON, etc.)
+    - Shapefiles with sidecars (.dbf, .shx, .prj, .cpg, etc.)
+    - FileGDB directories (.gdb)
+
+    Args:
+        files: List of primary file paths to remove.
+
+    Returns:
+        Tuple of:
+        - List of successfully removed primary files
+        - Dict mapping failed paths to error messages
+
+    Note:
+        This function is idempotent - missing files are silently skipped.
+        Sidecar removal failures are logged but don't prevent primary removal.
+
+    See Also:
+        GitHub Issue #209: Add --remove-legacy flag to check --fix
+    """
+    removed: list[Path] = []
+    errors: dict[Path, str] = {}
+
+    for file_path in files:
+        try:
+            # Check if file exists (idempotent - skip if already gone)
+            if not file_path.exists():
+                logger.debug("File already removed, skipping: %s", file_path)
+                continue
+
+            # Handle FileGDB directories
+            if file_path.is_dir() and is_filegdb(file_path):
+                shutil.rmtree(file_path)
+                logger.info("Removed FileGDB directory: %s", file_path)
+                removed.append(file_path)
+                continue
+
+            # Get and remove sidecars first
+            sidecars = get_sidecars_for_file(file_path)
+            for sidecar in sidecars:
+                try:
+                    sidecar.unlink(missing_ok=True)
+                    logger.debug("Removed sidecar: %s", sidecar)
+                except OSError as e:
+                    # Log but continue - don't fail primary removal for sidecar issues
+                    logger.warning("Failed to remove sidecar %s: %s", sidecar, e)
+
+            # Remove primary file
+            file_path.unlink()
+            logger.info("Removed legacy file: %s", file_path)
+            removed.append(file_path)
+
+        except PermissionError as e:
+            error_msg = f"Permission denied: {e}"
+            logger.error("Failed to remove %s: %s", file_path, error_msg)
+            errors[file_path] = error_msg
+        except OSError as e:
+            error_msg = f"OS error: {e}"
+            logger.error("Failed to remove %s: %s", file_path, error_msg)
+            errors[file_path] = error_msg
+
+    return removed, errors
 
 
 def check_directory(
@@ -121,6 +303,7 @@ def check_directory(
     *,
     fix: bool = False,
     dry_run: bool = False,
+    remove_legacy: bool = False,
     on_progress: Callable[[ConversionResult], None] | None = None,
     catalog_path: Path | None = None,
 ) -> CheckReport:
@@ -139,21 +322,30 @@ def check_directory(
         path: Directory to check.
         fix: If True, convert convertible files to cloud-native formats.
         dry_run: If True, preview what would be converted without changes.
+        remove_legacy: If True, delete source files after successful conversion.
+            Requires fix=True. Handles sidecars (.dbf, .shx, etc.) and
+            FileGDB directories (.gdb). Only removes files converted in THIS run.
         on_progress: Optional callback for conversion progress (--fix mode).
         catalog_path: Optional catalog root for loading conversion config.
             If provided, loads conversion overrides from .portolan/config.yaml.
 
     Returns:
-        CheckReport with file statuses and conversion results (if fix=True).
+        CheckReport with file statuses, conversion results, and removal results.
 
     Raises:
         FileNotFoundError: If the directory does not exist.
         NotADirectoryError: If the path is not a directory.
+        ValueError: If remove_legacy=True but fix=False.
 
     See Also:
         - GitHub Issue #75: FlatGeobuf cloud-native status
         - GitHub Issue #103: Config for non-cloud-native file handling
+        - GitHub Issue #209: Add --remove-legacy flag to check --fix
     """
+    # Validate parameter combinations
+    if remove_legacy and not fix:
+        raise ValueError("remove_legacy requires fix=True")
+
     if not path.exists():
         raise FileNotFoundError(f"Directory not found: {path}")
 
@@ -200,6 +392,17 @@ def check_directory(
             file_paths=convertible_files,
         )
         report.conversion_report = conversion_report
+
+        # Handle legacy file removal (only after actual conversions, not dry run)
+        if remove_legacy and conversion_report is not None:
+            files_to_remove = get_legacy_files_to_remove(conversion_report)
+            if files_to_remove:
+                removed, errors = remove_legacy_files(files_to_remove)
+                report.legacy_removal_report = LegacyRemovalReport(
+                    removed=removed,
+                    errors=errors,
+                )
+
     elif fix and dry_run:
         # Preview mode - create results showing what would be converted
         preview_results = [
@@ -218,6 +421,7 @@ def check_directory(
             if f.status == CloudNativeStatus.CONVERTIBLE
         ]
         report.conversion_report = ConversionReport(results=preview_results)
+        # Note: remove_legacy is ignored in dry_run mode (no actual removal)
 
     return report
 
