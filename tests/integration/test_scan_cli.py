@@ -665,11 +665,11 @@ class TestScanFixFlag:
         assert result.exit_code == 0
         # Should show dry run message
         assert "dry run" in result.output.lower()
-        # Should preview the rename
-        assert "file_with_spaces" in result.output
+        # Should preview the rename (dashes per issue #208)
+        assert "file-with-spaces" in result.output
         # File should NOT be renamed
         assert bad_file.exists()
-        assert not (tmp_path / "file_with_spaces.geojson").exists()
+        assert not (tmp_path / "file-with-spaces.geojson").exists()
 
     def test_fix_applies_immediately(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix applies fixes immediately without prompting."""
@@ -681,9 +681,9 @@ class TestScanFixFlag:
         assert result.exit_code == 0
         # Should show success message
         assert "applied" in result.output.lower()
-        # File should be renamed
+        # File should be renamed (dashes per issue #208)
         assert not bad_file.exists()
-        assert (tmp_path / "file_with_spaces.geojson").exists()
+        assert (tmp_path / "file-with-spaces.geojson").exists()
 
     def test_fix_renames_windows_reserved(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix renames Windows reserved names."""
@@ -693,9 +693,9 @@ class TestScanFixFlag:
         result = runner.invoke(cli, ["scan", str(tmp_path), "--fix"])
 
         assert result.exit_code == 0
-        # Should rename to _CON.geojson
+        # Should rename to _con.geojson (lowercase per issue #208)
         assert not bad_file.exists()
-        assert (tmp_path / "_CON.geojson").exists()
+        assert (tmp_path / "_con.geojson").exists()
 
     def test_fix_renames_shapefile_sidecars(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix renames shapefile sidecars along with primary file."""
@@ -747,9 +747,9 @@ class TestScanFixFlag:
 
     def test_fix_collision_detection(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix detects collisions and doesn't overwrite existing files."""
-        # Create both source and would-be target
+        # Create both source and would-be target (dashes per issue #208)
         source = tmp_path / "file with spaces.geojson"
-        target = tmp_path / "file_with_spaces.geojson"
+        target = tmp_path / "file-with-spaces.geojson"
         source.write_text('{"type": "source"}')
         target.write_text('{"type": "target"}')
 
@@ -828,9 +828,9 @@ class TestScanFixFlag:
 
     def test_fix_with_collision_shows_failed_count(self, runner: CliRunner, tmp_path: Path) -> None:
         """--fix shows count of fixes that couldn't be applied."""
-        # Create source with invalid chars and conflicting target
+        # Create source with invalid chars and conflicting target (dashes per issue #208)
         source = tmp_path / "file one.geojson"
-        target = tmp_path / "file_one.geojson"
+        target = tmp_path / "file-one.geojson"
         source.write_text('{"type": "source"}')
         target.write_text('{"type": "target"}')
 
