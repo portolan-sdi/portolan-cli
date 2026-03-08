@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -132,6 +133,10 @@ class TestRemoveLegacyConversion:
         assert (input_dir / "points.parquet").exists()
         assert geojson.exists()
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
+    )
     def test_preserves_source_on_failed_conversion(
         self,
         runner: CliRunner,

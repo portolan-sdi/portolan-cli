@@ -54,6 +54,34 @@ def shapefile_with_sidecars(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def shapefile_with_all_sidecars(tmp_path: Path) -> Path:
+    """Create a shapefile with ALL possible sidecar files including XML metadata."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    # Primary .shp file
+    shp = data_dir / "test.shp"
+    shp.write_bytes(b"fake shapefile data")
+
+    # Required sidecars
+    (data_dir / "test.dbf").write_bytes(b"fake dbf")
+    (data_dir / "test.shx").write_bytes(b"fake shx")
+
+    # Optional sidecars
+    (data_dir / "test.prj").write_text("GEOGCS[...]")
+    (data_dir / "test.cpg").write_text("UTF-8")
+    (data_dir / "test.sbn").write_bytes(b"fake sbn")
+    (data_dir / "test.sbx").write_bytes(b"fake sbx")
+    (data_dir / "test.qix").write_bytes(b"fake qix")
+
+    # XML metadata sidecars (ArcGIS/ESRI)
+    (data_dir / "test.xml").write_text("<metadata>test</metadata>")
+    (data_dir / "test.shp.xml").write_text("<metadata>shapefile</metadata>")
+
+    return shp
+
+
+@pytest.fixture
 def filegdb_directory(tmp_path: Path) -> Path:
     """Create a FileGDB directory structure."""
     data_dir = tmp_path / "data"
@@ -289,6 +317,43 @@ class TestRemoveLegacyFiles:
         assert not (parent / "test.shx").exists()
         assert not (parent / "test.prj").exists()
         assert not (parent / "test.cpg").exists()
+
+        # Primary file should be in removed list
+        assert shp in removed
+        assert len(errors) == 0
+
+    def test_removes_shapefile_with_xml_sidecars(
+        self,
+        shapefile_with_all_sidecars: Path,
+    ) -> None:
+        """Should remove shapefile with ALL sidecars including XML metadata files."""
+        shp = shapefile_with_all_sidecars
+        parent = shp.parent
+
+        # Verify all sidecars exist (including XML metadata)
+        assert (parent / "test.dbf").exists()
+        assert (parent / "test.shx").exists()
+        assert (parent / "test.prj").exists()
+        assert (parent / "test.cpg").exists()
+        assert (parent / "test.sbn").exists()
+        assert (parent / "test.sbx").exists()
+        assert (parent / "test.qix").exists()
+        assert (parent / "test.xml").exists()
+        assert (parent / "test.shp.xml").exists()
+
+        removed, errors = remove_legacy_files([shp])
+
+        # ALL files should be gone, including XML metadata
+        assert not shp.exists()
+        assert not (parent / "test.dbf").exists()
+        assert not (parent / "test.shx").exists()
+        assert not (parent / "test.prj").exists()
+        assert not (parent / "test.cpg").exists()
+        assert not (parent / "test.sbn").exists()
+        assert not (parent / "test.sbx").exists()
+        assert not (parent / "test.qix").exists()
+        assert not (parent / "test.xml").exists(), ".xml metadata should be removed"
+        assert not (parent / "test.shp.xml").exists(), ".shp.xml metadata should be removed"
 
         # Primary file should be in removed list
         assert shp in removed
