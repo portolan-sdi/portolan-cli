@@ -1,10 +1,15 @@
-## Unreleased
+## v0.5.0 (2026-03-08)
 
-### BREAKING CHANGE
+### Feat
 
-- **cli**: remove deprecated `portolan dataset` command group (#214)
-  - `portolan dataset list` removed → use `portolan list`
-  - `portolan dataset info` removed → use `portolan info`
+- **cli**: unify list and status commands (#215)
+- **cli**: remove deprecated dataset command group (#214)
+- **cli**: add file-level progress output for add and check --fix (#213)
+- **check**: add --remove-legacy flag to delete source files after conversion (#212)
+
+### Fix
+
+- **scan**: normalize filenames to lowercase with dashes (#211)
 
 ## v0.4.4 (2026-03-07)
 
