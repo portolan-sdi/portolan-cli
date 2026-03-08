@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -1341,6 +1342,7 @@ def add_files(
     collection_id: str | None = None,
     item_id: str | None = None,
     verbose: bool = False,
+    on_progress: Callable[[Path], None] | None = None,
 ) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
     """Add files to a Portolan catalog.
 
@@ -1370,6 +1372,8 @@ def add_files(
             derivation from parent directory name. Must be a single path segment
             (no '/', '\\', '.', or '..').
         verbose: If True, return skipped files info.
+        on_progress: Optional callback invoked before processing each geo file.
+            Receives the file path being processed. Use for progress display.
 
     Returns:
         Tuple of (added_datasets, skipped_paths, failures).
@@ -1436,6 +1440,10 @@ def add_files(
             if is_current(file_path, versions_path):
                 skipped.append(file_path)
                 continue
+
+            # Invoke progress callback before processing
+            if on_progress is not None:
+                on_progress(file_path)
 
             # Add the file
             try:

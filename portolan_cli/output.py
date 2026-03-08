@@ -41,6 +41,7 @@ Combined Modes:
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import TextIO
 
 import click
@@ -226,3 +227,45 @@ def detail(
           [DRY RUN] Would process chunk
     """
     _output(message, "detail", file=file, nl=nl, dry_run=dry_run, verbose=verbose)
+
+
+def progress(
+    filename: str | Path,
+    *,
+    current: int,
+    total: int,
+    context: str | None = None,
+    file: TextIO | None = None,
+) -> None:
+    """Print a progress message showing file N of M.
+
+    Use this for long-running batch operations (conversion, add, etc.)
+    to show users that work is happening.
+
+    Args:
+        filename: The file being processed (Path or string).
+        current: Current file number (1-indexed).
+        total: Total number of files to process.
+        context: Optional context string (e.g., "Converting to GeoParquet").
+        file: File to write to (default: stdout).
+
+    Example:
+        >>> progress("census.shp", current=3, total=10)
+        → Processing file 3 of 10: census.shp
+
+        >>> progress("data.tif", current=1, total=5, context="Converting to COG")
+        → Converting to COG (1 of 5): data.tif
+    """
+    # Extract just the filename, not the full path
+    if isinstance(filename, Path):
+        name = filename.name
+    else:
+        name = Path(filename).name
+
+    # Build the message
+    if context:
+        message = f"{context} ({current} of {total}): {name}"
+    else:
+        message = f"Processing file {current} of {total}: {name}"
+
+    _output(message, "info", file=file, nl=True, dry_run=False, verbose=False)
