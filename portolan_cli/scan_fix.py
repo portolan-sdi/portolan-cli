@@ -165,23 +165,25 @@ def _transliterate_to_ascii(text: str) -> str:
 
 
 def _sanitize_filename(name: str) -> str:
-    """Sanitize a filename by replacing problematic characters.
+    """Sanitize a filename to lowercase with dashes.
 
-    - Replaces spaces, parentheses, brackets, braces with underscores
+    Normalization rules (issue #208):
+    - Converts to lowercase
+    - Replaces spaces, parentheses, brackets, braces with dashes
     - Removes path separators (defense-in-depth against traversal)
     - Transliterates non-ASCII to ASCII
-    - Collapses multiple consecutive underscores
+    - Collapses multiple consecutive dashes
     - Falls back to hash-based name if result would be empty
 
     Args:
-        name: Original filename (without extension).
+        name: Original filename (with or without extension).
 
     Returns:
-        Sanitized filename (never empty).
+        Sanitized filename (never empty), all lowercase with dashes.
     """
     # FIRST: Sanitize path separators BEFORE using Path() to avoid misinterpretation
     # This is defense-in-depth against path traversal attacks
-    name_safe = re.sub(r"[/\\]", "_", name)
+    name_safe = re.sub(r"[/\\]", "-", name)
 
     # Split stem and extension
     # Handle multiple extensions like .tar.gz properly
@@ -191,22 +193,26 @@ def _sanitize_filename(name: str) -> str:
     # Transliterate non-ASCII characters
     sanitized = _transliterate_to_ascii(stem)
 
-    # Replace problematic characters with underscores
+    # Convert to lowercase BEFORE character replacement
+    sanitized = sanitized.lower()
+
+    # Replace problematic characters with dashes (not underscores)
     # Matches: spaces, parentheses, brackets, braces, control chars
-    sanitized = re.sub(r"[\s()\[\]{}\x00-\x1f\x7f]", "_", sanitized)
+    sanitized = re.sub(r"[\s()\[\]{}\x00-\x1f\x7f]", "-", sanitized)
 
-    # Collapse multiple consecutive underscores
-    sanitized = re.sub(r"_+", "_", sanitized)
+    # Collapse multiple consecutive dashes
+    sanitized = re.sub(r"-+", "-", sanitized)
 
-    # Remove leading/trailing underscores
-    sanitized = sanitized.strip("_")
+    # Remove leading/trailing dashes
+    sanitized = sanitized.strip("-")
 
     # CRITICAL: Handle case where sanitization produces empty string
     # This can happen with filenames containing only non-ASCII chars (e.g., "日本語.shp")
     if not sanitized:
         sanitized = f"file_{_compute_short_hash(stem)}"
 
-    return sanitized + suffix
+    # Lowercase the extension too
+    return sanitized + suffix.lower()
 
 
 def _is_windows_reserved(stem: str) -> bool:
@@ -219,6 +225,7 @@ def _needs_rename(path: Path) -> bool:
 
     Returns True if:
     - Filename contains invalid characters (spaces, non-ASCII, etc.)
+    - Filename contains uppercase letters (should be lowercase)
     - Filename is a Windows reserved name
     - Full path exceeds length threshold
     """
@@ -227,6 +234,10 @@ def _needs_rename(path: Path) -> bool:
 
     # Check for invalid characters
     if INVALID_CHAR_PATTERN.search(name):
+        return True
+
+    # Check for uppercase letters (filenames should be lowercase)
+    if name != name.lower():
         return True
 
     # Check for Windows reserved names
@@ -292,15 +303,16 @@ def _find_sidecars(shp_path: Path) -> list[Path]:
 
 
 def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:
-    """Compute safe rename for a file with invalid characters.
+    """Compute safe rename for a file with normalization issues.
 
-    Handles three types of issues:
-    1. INVALID_CHARACTERS: spaces, parentheses, non-ASCII → sanitized
-    2. WINDOWS_RESERVED_NAME: CON, PRN, etc. → _CON, _PRN
-    3. LONG_PATH: truncate filename with hash suffix
+    Handles four types of issues:
+    1. INVALID_CHARACTERS: spaces, parentheses, non-ASCII → dashes
+    2. UPPERCASE: uppercase letters → lowercase
+    3. WINDOWS_RESERVED_NAME: CON, PRN, etc. → _con, _prn
+    4. LONG_PATH: truncate filename with hash suffix
 
     Args:
-        path: Path to the file with invalid characters.
+        path: Path to the file needing normalization.
 
     Returns:
         Tuple of (new_path, preview_message) or None if no rename needed.
@@ -317,17 +329,23 @@ def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:
     is_reserved = _is_windows_reserved(stem)
     is_long = len(str(path)) > LONG_PATH_THRESHOLD
     has_invalid_chars = bool(INVALID_CHAR_PATTERN.search(name))
+    needs_lowercase = name != name.lower()
 
-    # Start with the original name
+    # Start with the original stem
     new_stem = stem
+    # Always lowercase the suffix
+    new_suffix = suffix.lower()
 
-    # Fix invalid characters first
+    # Fix invalid characters first (handles spaces, special chars, non-ASCII)
     if has_invalid_chars:
         new_stem = _sanitize_filename(stem)
+    elif needs_lowercase:
+        # No invalid chars but needs lowercase - just lowercase the stem
+        new_stem = stem.lower()
 
-    # Fix Windows reserved names (add underscore prefix)
+    # Fix Windows reserved names (add underscore prefix, lowercase)
     if is_reserved:
-        new_stem = f"_{new_stem}"
+        new_stem = f"_{new_stem.lower()}"
 
     # Truncate for long paths
     if is_long:
@@ -337,7 +355,7 @@ def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:
         # Calculate minimum possible path length:
         # parent + "/" + "x" (1-char stem) + hash_suffix + suffix
         hash_suffix = f"_{_compute_short_hash(name)}"
-        min_filename = f"x{hash_suffix}{suffix}"
+        min_filename = f"x{hash_suffix}{new_suffix}"
         min_possible_len = len(str(parent / min_filename))
 
         # CRITICAL: If directory path alone is too long, we cannot fix this
@@ -345,7 +363,7 @@ def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:
         if min_possible_len > target_path_len:
             return None
 
-        current_len = len(str(parent / f"{new_stem}{suffix}"))
+        current_len = len(str(parent / f"{new_stem}{new_suffix}"))
         excess = current_len - target_path_len
 
         if excess > 0:
@@ -355,14 +373,14 @@ def _compute_safe_rename(path: Path) -> tuple[Path, str] | None:
                 max_stem_len = 1
             new_stem = new_stem[:max_stem_len] + hash_suffix
 
-    new_name = f"{new_stem}{suffix}"
+    new_name = f"{new_stem}{new_suffix}"
     new_path = parent / new_name
 
     # Build preview message
     preview_parts = [f"Rename: {name} → {new_name}"]
 
     # Check for sidecars if it's a shapefile
-    if suffix.lower() == ".shp":
+    if new_suffix == ".shp":
         sidecars = _find_sidecars(path)
         if sidecars:
             sidecar_exts = ", ".join(s.suffix for s in sidecars)

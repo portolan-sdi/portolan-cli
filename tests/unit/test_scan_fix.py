@@ -50,11 +50,11 @@ class TestComputeSafeRename:
     """Tests for _compute_safe_rename function."""
 
     # -------------------------------------------------------------------------
-    # INVALID_CHARACTERS: spaces → underscores, non-ASCII → transliterated
+    # INVALID_CHARACTERS: spaces → dashes, uppercase → lowercase (issue #208)
     # -------------------------------------------------------------------------
 
-    def test_spaces_replaced_with_underscores(self, tmp_path: Path) -> None:
-        """Spaces in filename should be replaced with underscores."""
+    def test_spaces_replaced_with_dashes(self, tmp_path: Path) -> None:
+        """Spaces in filename should be replaced with dashes (issue #208)."""
         path = tmp_path / "my file.geojson"
         path.touch()
 
@@ -62,9 +62,9 @@ class TestComputeSafeRename:
 
         assert result is not None
         new_path, preview = result
-        assert new_path.name == "my_file.geojson"
+        assert new_path.name == "my-file.geojson"
         assert new_path.parent == path.parent
-        assert "my_file.geojson" in preview
+        assert "my-file.geojson" in preview
 
     def test_multiple_spaces_and_special_chars(self, tmp_path: Path) -> None:
         """Multiple spaces and special chars should all be replaced."""
@@ -162,11 +162,11 @@ class TestComputeSafeRename:
         assert "/" not in result
 
     # -------------------------------------------------------------------------
-    # WINDOWS_RESERVED_NAME: CON, PRN, etc. → _CON, _PRN
+    # WINDOWS_RESERVED_NAME: CON, PRN, etc. → _con, _prn (lowercase per issue #208)
     # -------------------------------------------------------------------------
 
     def test_windows_reserved_con(self, tmp_path: Path) -> None:
-        """CON.shp should become _CON.shp."""
+        """CON.shp should become _con.shp (lowercase per issue #208)."""
         path = tmp_path / "CON.shp"
         path.touch()
 
@@ -174,8 +174,8 @@ class TestComputeSafeRename:
 
         assert result is not None
         new_path, preview = result
-        assert new_path.name == "_CON.shp"
-        assert "_CON.shp" in preview
+        assert new_path.name == "_con.shp"
+        assert "_con.shp" in preview
 
     def test_windows_reserved_case_insensitive(self, tmp_path: Path) -> None:
         """Windows reserved names should be case-insensitive."""
@@ -403,7 +403,7 @@ class TestApplySafeFixes:
 
         # Original should be gone, new should exist
         assert not path.exists()
-        new_path = tmp_path / "my_file.geojson"
+        new_path = tmp_path / "my-file.geojson"  # dashes per issue #208
         assert new_path.exists()
         # Content should be preserved
         assert new_path.read_text() == '{"type": "FeatureCollection"}'
@@ -436,7 +436,7 @@ class TestApplySafeFixes:
     def test_collision_detection_fails_gracefully(self, tmp_path: Path) -> None:
         """If target filename already exists, should not overwrite."""
         source = tmp_path / "my file.geojson"
-        target = tmp_path / "my_file.geojson"
+        target = tmp_path / "my-file.geojson"  # dashes per issue #208
         source.write_text("source content")
         target.write_text("target content")
 
@@ -554,7 +554,7 @@ class TestPreviewFix:
         assert fix is not None
         assert fix.category == FixCategory.SAFE
         assert fix.action == "rename"
-        assert "my_file.geojson" in fix.preview
+        assert "my-file.geojson" in fix.preview  # dashes per issue #208
 
     def test_preview_windows_reserved(self, tmp_path: Path) -> None:
         """preview_fix should generate ProposedFix for Windows reserved names."""
@@ -574,7 +574,7 @@ class TestPreviewFix:
         assert fix is not None
         assert fix.category == FixCategory.SAFE
         assert fix.action == "rename"
-        assert "_CON.shp" in fix.preview
+        assert "_con.shp" in fix.preview  # lowercase per issue #208
 
     def test_preview_manual_issue_returns_none(self, tmp_path: Path) -> None:
         """preview_fix should return None for manual-only issues."""

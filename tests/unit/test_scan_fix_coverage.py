@@ -77,28 +77,29 @@ class TestTransliterateToAscii:
 
 @pytest.mark.unit
 class TestSanitizeFilename:
-    """Tests for _sanitize_filename function."""
+    """Tests for _sanitize_filename function (issue #208: dashes + lowercase)."""
 
-    def test_spaces_replaced(self) -> None:
-        """Spaces should be replaced with underscores."""
+    def test_spaces_replaced_with_dashes(self) -> None:
+        """Spaces should be replaced with dashes (issue #208)."""
         result = _sanitize_filename("file name.txt")
         assert " " not in result
-        assert "_" in result
+        assert "-" in result
+        assert result == "file-name.txt"
 
     def test_parentheses_replaced(self) -> None:
-        """Parentheses should be replaced."""
+        """Parentheses should be replaced with dashes."""
         result = _sanitize_filename("file(1).txt")
         assert "(" not in result
         assert ")" not in result
 
     def test_brackets_replaced(self) -> None:
-        """Brackets should be replaced."""
+        """Brackets should be replaced with dashes."""
         result = _sanitize_filename("file[version].txt")
         assert "[" not in result
         assert "]" not in result
 
     def test_braces_replaced(self) -> None:
-        """Braces should be replaced."""
+        """Braces should be replaced with dashes."""
         result = _sanitize_filename("file{id}.txt")
         assert "{" not in result
         assert "}" not in result
@@ -109,18 +110,18 @@ class TestSanitizeFilename:
         assert "é" not in result
         assert "donnees" in result
 
-    def test_consecutive_underscores_collapsed(self) -> None:
-        """Multiple consecutive underscores should be collapsed."""
+    def test_consecutive_dashes_collapsed(self) -> None:
+        """Multiple consecutive dashes should be collapsed (issue #208)."""
         result = _sanitize_filename("file   name.txt")  # Multiple spaces
-        assert "___" not in result
-        assert "__" not in result
+        assert "---" not in result
+        assert "--" not in result
 
-    def test_leading_trailing_underscores_removed(self) -> None:
-        """Leading and trailing underscores should be removed."""
+    def test_leading_trailing_dashes_removed(self) -> None:
+        """Leading and trailing dashes should be removed (issue #208)."""
         result = _sanitize_filename(" file .txt")
         stem = result.rsplit(".", 1)[0]
-        assert not stem.startswith("_")
-        assert not stem.endswith("_")
+        assert not stem.startswith("-")
+        assert not stem.endswith("-")
 
     def test_extension_preserved(self) -> None:
         """File extension should be preserved."""
@@ -132,7 +133,7 @@ class TestSanitizeFilename:
         result = _sanitize_filename("../../../etc/passwd")
         assert "/" not in result
         assert "\\" not in result
-        assert ".." not in result or "_" in result
+        assert ".." not in result or "-" in result
 
     def test_empty_result_uses_hash(self) -> None:
         """If sanitization produces empty string, use hash-based name."""
