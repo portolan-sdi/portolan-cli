@@ -302,36 +302,3 @@ class TestInfoCommandCatalog:
         data = json.loads(result.output)
         assert data["success"] is True
         assert "catalog_id" in data["data"]
-
-
-# =============================================================================
-# Test: Deprecated dataset info alias
-# =============================================================================
-
-
-class TestDatasetInfoDeprecated:
-    """Tests for deprecated `portolan dataset info` command."""
-
-    @pytest.mark.unit
-    def test_dataset_info_shows_deprecation_warning(
-        self, cli_runner: CliRunner, catalog_with_tracked_file: Path
-    ) -> None:
-        """Test that dataset info shows deprecation warning."""
-        from portolan_cli.cli import cli
-
-        result = cli_runner.invoke(
-            cli,
-            [
-                "dataset",
-                "info",
-                "demographics/census",
-                "--catalog",
-                str(catalog_with_tracked_file),
-            ],
-        )
-
-        # Should still work but show deprecation
-        # Note: Existing dataset info expects collection/item format
-        assert result.exit_code == 0, f"Command failed: {result.output}"
-        # If we want to check for deprecation warning, do so separately:
-        # assert "deprecated" in result.output.lower()

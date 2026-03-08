@@ -702,22 +702,18 @@ class TestAddRmRoundtrip:
 
 
 class TestOldCommandsRemoved:
-    """Tests to verify old dataset add/remove commands are removed."""
+    """Tests to verify deprecated dataset command group is removed."""
 
     @pytest.mark.integration
-    def test_dataset_add_no_longer_exists(self, runner: CliRunner) -> None:
-        """'portolan dataset add' command should not exist."""
-        result = runner.invoke(cli, ["dataset", "add", "dummy"])
+    def test_dataset_command_group_no_longer_exists(self, runner: CliRunner) -> None:
+        """'portolan dataset' command group should not exist.
 
-        # Should fail because command doesn't exist
-        assert result.exit_code != 0
-        assert "no such command" in result.output.lower()
+        The entire `dataset` command group was deprecated in favor of
+        top-level commands: `portolan list`, `portolan info`, `portolan add`,
+        and `portolan rm`.
+        """
+        result = runner.invoke(cli, ["dataset", "--help"])
 
-    @pytest.mark.integration
-    def test_dataset_remove_no_longer_exists(self, runner: CliRunner) -> None:
-        """'portolan dataset remove' command should not exist."""
-        result = runner.invoke(cli, ["dataset", "remove", "dummy"])
-
-        # Should fail because command doesn't exist
+        # Should fail because the command group doesn't exist
         assert result.exit_code != 0
         assert "no such command" in result.output.lower()

@@ -67,9 +67,6 @@ portolan config list
 portolan config unset remote
 ```
 
-### `portolan dataset`
-Manage datasets in the catalog.
-
 ### `portolan info`
 Show information about a file, collection, or catalog.
 
