@@ -330,30 +330,31 @@ class TestRemoveLegacyFiles:
         shp = shapefile_with_all_sidecars
         parent = shp.parent
 
-        # Verify all sidecars exist (including XML metadata)
-        assert (parent / "test.dbf").exists()
-        assert (parent / "test.shx").exists()
-        assert (parent / "test.prj").exists()
-        assert (parent / "test.cpg").exists()
-        assert (parent / "test.sbn").exists()
-        assert (parent / "test.sbx").exists()
-        assert (parent / "test.qix").exists()
-        assert (parent / "test.xml").exists()
-        assert (parent / "test.shp.xml").exists()
+        # All expected sidecars (including XML metadata)
+        sidecars = [
+            "test.dbf",
+            "test.shx",
+            "test.prj",
+            "test.cpg",
+            "test.sbn",
+            "test.sbx",
+            "test.qix",
+            "test.xml",
+            "test.shp.xml",
+        ]
+
+        # Verify all sidecars exist before removal
+        for sidecar in sidecars:
+            assert (parent / sidecar).exists(), f"{sidecar} should exist before removal"
 
         removed, errors = remove_legacy_files([shp])
 
-        # ALL files should be gone, including XML metadata
+        # Primary file should be gone
         assert not shp.exists()
-        assert not (parent / "test.dbf").exists()
-        assert not (parent / "test.shx").exists()
-        assert not (parent / "test.prj").exists()
-        assert not (parent / "test.cpg").exists()
-        assert not (parent / "test.sbn").exists()
-        assert not (parent / "test.sbx").exists()
-        assert not (parent / "test.qix").exists()
-        assert not (parent / "test.xml").exists(), ".xml metadata should be removed"
-        assert not (parent / "test.shp.xml").exists(), ".shp.xml metadata should be removed"
+
+        # ALL sidecars should be gone (including XML metadata)
+        for sidecar in sidecars:
+            assert not (parent / sidecar).exists(), f"{sidecar} should be removed"
 
         # Primary file should be in removed list
         assert shp in removed

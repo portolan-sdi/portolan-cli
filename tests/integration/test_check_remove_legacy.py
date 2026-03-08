@@ -358,6 +358,10 @@ class TestRemoveLegacyJsonOutput:
 class TestRemoveLegacyEdgeCases:
     """Edge case tests for --remove-legacy."""
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="geoparquet-io segfaults on malformed input on Windows (upstream bug)",
+    )
     def test_mixed_success_failure(
         self,
         runner: CliRunner,
