@@ -118,10 +118,12 @@ class TestGetSidecarsProperties:
             result = get_sidecars(primary)
 
             for sidecar_path in result:
-                # Handle compound extensions like .aux.xml
+                # Handle compound extensions like .aux.xml and .shp.xml
                 sidecar_stem = sidecar_path.stem
                 if sidecar_stem.endswith(".aux"):
                     sidecar_stem = sidecar_stem[:-4]  # Remove .aux part
+                elif sidecar_stem.endswith(".shp"):
+                    sidecar_stem = sidecar_stem[:-4]  # Remove .shp part (for .shp.xml)
                 assert sidecar_stem == filename, f"Sidecar {sidecar_path} has different stem"
 
     @pytest.mark.unit

@@ -807,6 +807,11 @@ def _output_combined_check_json(
     help="Preview what would be fixed (use with --fix)",
 )
 @click.option(
+    "--remove-legacy",
+    is_flag=True,
+    help="Remove source files after successful conversion (use with --fix)",
+)
+@click.option(
     "--metadata",
     is_flag=True,
     help="Only check/fix STAC metadata (links, schema, staleness)",
@@ -825,6 +830,7 @@ def check(
     verbose: bool,
     fix: bool,
     dry_run: bool,
+    remove_legacy: bool,
     metadata: bool,
     geo_assets: bool,
 ) -> None:
@@ -866,6 +872,10 @@ def check(
     if dry_run and not fix:
         warn("--dry-run has no effect without --fix")
 
+    # Warn if --remove-legacy is used without --fix
+    if remove_legacy and not fix:
+        warn("--remove-legacy requires --fix")
+
     # Determine which checks to run based on scope flags
     run_metadata, run_geo_assets, mode = _determine_check_mode(metadata, geo_assets)
 
@@ -877,6 +887,7 @@ def check(
         mode=mode,
         fix=fix,
         dry_run=dry_run,
+        remove_legacy=remove_legacy,
         use_json=use_json,
         verbose=verbose,
     )
@@ -1027,6 +1038,7 @@ def _execute_check_workflow(
     mode: str,
     fix: bool,
     dry_run: bool,
+    remove_legacy: bool,
     use_json: bool,
     verbose: bool,
 ) -> None:
@@ -1044,6 +1056,7 @@ def _execute_check_workflow(
             run_geo_assets=run_geo_assets,
             mode=mode,
             dry_run=dry_run,
+            remove_legacy=remove_legacy,
             use_json=use_json,
             verbose=verbose,
         )
@@ -1070,6 +1083,7 @@ def _run_fix_workflow(
     run_geo_assets: bool,
     mode: str,
     dry_run: bool,
+    remove_legacy: bool,
     use_json: bool,
     verbose: bool,
 ) -> None:
@@ -1081,6 +1095,7 @@ def _run_fix_workflow(
         run_geo_assets: Whether to fix geo-asset format issues.
         mode: Mode string for JSON output.
         dry_run: Preview changes without applying them.
+        remove_legacy: Remove source files after successful conversion.
         use_json: Output JSON envelope.
         verbose: Show detailed output.
     """
@@ -1097,7 +1112,13 @@ def _run_fix_workflow(
 
     # Fix geo-assets if in scope
     if run_geo_assets:
-        format_fix_report = check_directory(path, fix=True, dry_run=dry_run, catalog_path=path)
+        format_fix_report = check_directory(
+            path,
+            fix=True,
+            dry_run=dry_run,
+            remove_legacy=remove_legacy,
+            catalog_path=path,
+        )
 
     # Output results
     if use_json:
@@ -1239,6 +1260,19 @@ def _print_check_fix_results(report: Any, *, verbose: bool = False) -> None:
             detail(f"  {r.source.name} -> {r.output.name if r.output else 'N/A'}")
         elif verbose and r.status == ConversionStatus.SKIPPED:
             detail(f"  {r.source.name} (skipped - already cloud-native)")
+
+    # Print legacy removal results if present
+    removal = report.legacy_removal_report
+    if removal is not None:
+        if removal.success_count > 0:
+            success(f"Removed {removal.success_count} legacy file(s)")
+            if verbose:
+                for removed_path in removal.removed:
+                    detail(f"  {removed_path.name}")
+        if removal.error_count > 0:
+            error(f"Failed to remove {removal.error_count} file(s)")
+            for failed_path, err_msg in removal.errors.items():
+                error(f"  {failed_path.name}: {err_msg}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

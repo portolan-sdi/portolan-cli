@@ -36,8 +36,13 @@ TABULAR_EXTENSIONS: frozenset[str] = frozenset({".csv", ".tsv", ".parquet"})
 PARQUET_EXTENSION: str = ".parquet"
 
 # Sidecar file patterns by primary file extension
+# Shapefile sidecars include:
+#   Required: .dbf (attributes), .shx (index)
+#   Optional: .prj (projection), .cpg (code page),
+#             .sbn/.sbx (ESRI spatial index), .qix (QGIS spatial index),
+#             .xml (metadata), .shp.xml (ESRI shapefile metadata)
 SIDECAR_PATTERNS: dict[str, list[str]] = {
-    ".shp": [".dbf", ".shx", ".prj", ".cpg", ".sbn", ".sbx", ".qix"],
+    ".shp": [".dbf", ".shx", ".prj", ".cpg", ".sbn", ".sbx", ".qix", ".xml", ".shp.xml"],
     ".tif": [".tfw", ".xml", ".aux.xml", ".ovr"],
     ".tiff": [".tfw", ".xml", ".aux.xml", ".ovr"],
     ".img": [".ige", ".rrd", ".rde", ".xml"],
