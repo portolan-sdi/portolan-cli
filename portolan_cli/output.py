@@ -52,7 +52,7 @@ _STYLES = {
     "info": {"fg": "blue"},
     "warn": {"fg": "yellow"},
     "error": {"fg": "red"},
-    "detail": {"fg": "bright_black"},  # Dimmed/gray
+    "detail": {"dim": True},  # Dimmed (universally readable)
 }
 
 _PREFIXES = {
@@ -88,9 +88,9 @@ def _output(
         message = f"[DRY RUN] {message}"
 
     prefix = _PREFIXES[style]
-    fg_color = _STYLES[style]["fg"]
-    styled_prefix = click.style(prefix, fg=fg_color)
-    styled_message = click.style(message, fg=fg_color)
+    style_kwargs = _STYLES[style]
+    styled_prefix = click.style(prefix, **style_kwargs)
+    styled_message = click.style(message, **style_kwargs)
     click.echo(f"{styled_prefix} {styled_message}", file=file, nl=nl)
 
 
