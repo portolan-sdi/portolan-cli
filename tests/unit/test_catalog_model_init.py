@@ -470,5 +470,3 @@ class TestInitCatalogFilesystemErrors:
             with pytest.raises(CatalogInitError) as exc_info:
                 init_catalog(catalog_dir)
             assert "Cannot parse catalog.json" in exc_info.value.message
-
-
