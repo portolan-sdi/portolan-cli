@@ -3,11 +3,7 @@
 Primary API (v2, per ADR-0023):
 - init_catalog(): Initialize catalog with STAC catalog.json at root level
 - detect_state(): Detect catalog state (MANAGED, UNMANAGED_STAC, FRESH)
-
-Legacy API (v1, unused — candidates for removal):
 - create_catalog(): Create a CatalogModel with auto-extracted fields
-- write_catalog_json(): Serialize CatalogModel to .portolan/catalog.json
-- read_catalog_json(): Load CatalogModel from .portolan/catalog.json
 """
 
 from __future__ import annotations
@@ -293,45 +289,6 @@ def create_catalog(
     if return_warnings:
         return catalog, warnings
     return catalog
-
-
-def write_catalog_json(catalog: CatalogModel, path: Path) -> Path:
-    """Write CatalogModel to .portolan/catalog.json.
-
-    Creates the .portolan directory if it doesn't exist.
-
-    Args:
-        catalog: CatalogModel to serialize.
-        path: Root directory containing .portolan.
-
-    Returns:
-        Path to the written catalog.json file.
-    """
-    portolan_path = path / ".portolan"
-    portolan_path.mkdir(parents=True, exist_ok=True)
-
-    catalog_file = portolan_path / "catalog.json"
-    data = catalog.to_dict()
-    catalog_file.write_text(json.dumps(data, indent=2))
-
-    return catalog_file
-
-
-def read_catalog_json(path: Path) -> CatalogModel:
-    """Read CatalogModel from .portolan/catalog.json.
-
-    Args:
-        path: Root directory containing .portolan.
-
-    Returns:
-        CatalogModel loaded from JSON.
-
-    Raises:
-        FileNotFoundError: If catalog.json doesn't exist.
-    """
-    catalog_file = path / ".portolan" / "catalog.json"
-    data = json.loads(catalog_file.read_text())
-    return CatalogModel.from_dict(data)
 
 
 class CatalogInitError(Exception):
