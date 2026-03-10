@@ -47,12 +47,12 @@ from typing import TextIO
 import click
 
 # ANSI color codes via click's style system
-_STYLES = {
+_STYLES: dict[str, dict[str, str | bool]] = {
     "success": {"fg": "green"},
     "info": {"fg": "blue"},
     "warn": {"fg": "yellow"},
     "error": {"fg": "red"},
-    "detail": {"fg": "bright_black"},  # Dimmed/gray
+    "detail": {"dim": True},
 }
 
 _PREFIXES = {
@@ -88,9 +88,11 @@ def _output(
         message = f"[DRY RUN] {message}"
 
     prefix = _PREFIXES[style]
-    fg_color = _STYLES[style]["fg"]
-    styled_prefix = click.style(prefix, fg=fg_color)
-    styled_message = click.style(message, fg=fg_color)
+    style_kwargs = _STYLES[style]
+    fg = str(style_kwargs["fg"]) if "fg" in style_kwargs else None
+    dim = bool(style_kwargs.get("dim", False))
+    styled_prefix = click.style(prefix, fg=fg, dim=dim)
+    styled_message = click.style(message, fg=fg, dim=dim)
     click.echo(f"{styled_prefix} {styled_message}", file=file, nl=nl)
 
 
