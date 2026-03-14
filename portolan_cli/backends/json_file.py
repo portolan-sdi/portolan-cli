@@ -126,6 +126,7 @@ class JsonFileBackend:
         schema: SchemaFingerprint,
         breaking: bool,
         message: str,
+        removed: set[str] | None = None,
     ) -> Version:
         """Publish a new version of a collection.
 
@@ -166,15 +167,19 @@ class JsonFileBackend:
             asset_path = Path(path_str)
             if asset_path.exists():
                 checksum = compute_checksum(asset_path)
-                size_bytes = asset_path.stat().st_size
+                stat = asset_path.stat()
+                size_bytes = stat.st_size if asset_path.is_file() else 0
+                mtime = stat.st_mtime
             else:
                 # Remote asset - no local checksum available
                 checksum = ""
                 size_bytes = 0
+                mtime = None
             asset_objects[name] = Asset(
                 sha256=checksum,
                 size_bytes=size_bytes,
-                href=path_str,
+                href=f"{collection}/{name}",
+                mtime=mtime,
             )
 
         # Convert protocol SchemaFingerprint to internal SchemaInfo (CRITICAL #1)
@@ -194,6 +199,7 @@ class JsonFileBackend:
             breaking=breaking,
             schema=schema_info,
             message=message,
+            removed=removed,
         )
 
         # Atomic write (CRITICAL #2)

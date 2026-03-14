@@ -39,6 +39,7 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "profile",  # Alias for aws_profile (more intuitive)
         "region",  # AWS region for S3
         "ignored_files",
+        "backend",
         "statistics.enabled",
         "statistics.raster_mode",
     }

@@ -110,6 +110,7 @@ class VersioningBackend(Protocol):
         schema: SchemaFingerprint,
         breaking: bool,
         message: str,
+        removed: set[str] | None = None,
     ) -> Version:
         """Publish a new version of a collection.
 
@@ -119,6 +120,7 @@ class VersioningBackend(Protocol):
             schema: Schema fingerprint for change detection.
             breaking: Whether this is a breaking change.
             message: Human-readable description of the change.
+            removed: Set of asset keys to remove from the version.
 
         Returns:
             The newly created Version object.

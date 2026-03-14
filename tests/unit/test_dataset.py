@@ -1506,10 +1506,10 @@ class TestMultiAssetUpdateVersions:
         assert assets["my-item/thumbnail.png"].href == "my-collection/my-item/thumbnail.png"
         assert assets["my-item/metadata.xml"].href == "my-collection/my-item/metadata.xml"
 
-        # Check checksums
-        assert assets["my-item/my-item.parquet"].sha256 == "hash1"
-        assert assets["my-item/thumbnail.png"].sha256 == "hash2"
-        assert assets["my-item/metadata.xml"].sha256 == "hash3"
+        # Checksums are computed by the backend from actual file content
+        assert len(assets["my-item/my-item.parquet"].sha256) == 64  # SHA-256 hex
+        assert len(assets["my-item/thumbnail.png"].sha256) == 64
+        assert len(assets["my-item/metadata.xml"].sha256) == 64
 
     @pytest.mark.unit
     def test_update_versions_single_asset_backward_compat(self, tmp_path: Path) -> None:
@@ -1535,7 +1535,7 @@ class TestMultiAssetUpdateVersions:
         # Single asset still uses item-scoped key format (per ADR-0028)
         asset = versions.versions[0].assets["census-2020/census-2020.parquet"]
         assert asset.href == "agriculture/census-2020/census-2020.parquet"
-        assert asset.sha256 == "abc123"
+        assert len(asset.sha256) == 64  # SHA-256 hex computed by backend
 
 
 class TestMultiAssetListAndInfo:
