@@ -291,6 +291,97 @@ class TestAutoFlag:
         assert len(catalog.description) > 0
 
 
+class TestInitCatalogBackendOption:
+    """Tests for init_catalog(backend=...) parameter."""
+
+    @pytest.mark.unit
+    def test_init_with_iceberg_backend_creates_config_with_backend(self, tmp_path: Path) -> None:
+        """init_catalog(backend='iceberg') writes 'backend: iceberg' in config.yaml."""
+        from unittest.mock import MagicMock, patch
+
+        import yaml
+
+        from portolan_cli.catalog import init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        with patch("portolan_cli.backends.get_backend", return_value=MagicMock()):
+            init_catalog(catalog_dir, backend="iceberg")
+
+        config = yaml.safe_load((catalog_dir / ".portolan" / "config.yaml").read_text())
+        assert config["backend"] == "iceberg"
+
+    @pytest.mark.unit
+    def test_init_with_iceberg_backend_skips_versions_json(self, tmp_path: Path) -> None:
+        """init_catalog(backend='iceberg') should NOT create versions.json."""
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.catalog import init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        with patch("portolan_cli.backends.get_backend", return_value=MagicMock()):
+            init_catalog(catalog_dir, backend="iceberg")
+
+        assert not (catalog_dir / "versions.json").exists()
+
+    @pytest.mark.unit
+    def test_init_with_iceberg_backend_skips_state_json(self, tmp_path: Path) -> None:
+        """init_catalog(backend='iceberg') should NOT create state.json."""
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.catalog import init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        with patch("portolan_cli.backends.get_backend", return_value=MagicMock()):
+            init_catalog(catalog_dir, backend="iceberg")
+
+        assert not (catalog_dir / ".portolan" / "state.json").exists()
+
+    @pytest.mark.unit
+    def test_init_with_iceberg_backend_creates_catalog_json(self, tmp_path: Path) -> None:
+        """init_catalog(backend='iceberg') still creates catalog.json (STAC)."""
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.catalog import init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        with patch("portolan_cli.backends.get_backend", return_value=MagicMock()):
+            init_catalog(catalog_dir, backend="iceberg")
+
+        assert (catalog_dir / "catalog.json").exists()
+
+    @pytest.mark.unit
+    def test_init_with_file_backend_is_default_behavior(self, tmp_path: Path) -> None:
+        """init_catalog(backend='file') should behave like init_catalog()."""
+        from portolan_cli.catalog import init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        init_catalog(catalog_dir, backend="file")
+
+        assert (catalog_dir / "versions.json").exists()
+        assert (catalog_dir / ".portolan" / "state.json").exists()
+
+    @pytest.mark.unit
+    def test_init_with_unavailable_backend_raises_error(self, tmp_path: Path) -> None:
+        """init_catalog with unavailable backend should raise CatalogInitError."""
+        from portolan_cli.catalog import CatalogInitError, init_catalog
+
+        catalog_dir = tmp_path / "test"
+        catalog_dir.mkdir()
+
+        with pytest.raises(CatalogInitError, match="Unknown backend"):
+            init_catalog(catalog_dir, backend="nonexistent")
+
+
 class TestInitCatalogFilesystemErrors:
     """Tests for CatalogInitError when filesystem operations fail."""
 

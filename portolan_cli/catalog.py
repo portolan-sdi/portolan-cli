@@ -299,14 +299,16 @@ def init_catalog(
     *,
     title: str | None = None,
     description: str | None = None,
+    backend: str = "file",
 ) -> tuple[Path, list[str]]:
     """Initialize a new Portolan catalog with the v2 file structure.
 
     Creates (in order for partial failure recovery):
     1. .portolan/ directory
-    2. .portolan/config.yaml (sentinel file, per issue #290)
-    3. versions.json at ROOT level (consumer-visible per ADR-0023)
-    4. catalog.json at ROOT level (valid STAC catalog via pystac)
+    2. versions.json at ROOT level (file backend only, consumer-visible per ADR-0023)
+    3. catalog.json at ROOT level (valid STAC catalog via pystac)
+    4. Self link in catalog.json
+    5. .portolan/config.yaml — sentinel file, written LAST (per issue #290)
 
     Write order ensures failed runs stay in FRESH state (retry-safe).
     Per ADR-0023: versions.json is user-visible metadata and lives at the
@@ -347,6 +349,15 @@ def init_catalog(
     if state == CatalogState.UNMANAGED_STAC:
         raise UnmanagedStacCatalogError(str(path))
 
+    # Validate non-file backends are available before creating any files
+    if backend != "file":
+        from portolan_cli.backends import get_backend
+
+        try:
+            get_backend(backend)
+        except ValueError as e:
+            raise CatalogInitError(str(e)) from e
+
     warnings: list[str] = []
 
     # Auto-extract id from directory name
@@ -373,22 +384,23 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot create .portolan directory: {e}") from e
 
-    # Step 2: versions.json - minimal catalog-level versioning
+    # Step 2: versions.json - only for file backend
     # Per ADR-0023: versions.json is consumer-visible metadata and must live at
     # the catalog root alongside STAC files, NOT inside .portolan/ (which is
     # reserved for internal tooling state only).
     # Written early so failure here leaves directory in FRESH state.
-    now = datetime.now(timezone.utc)
-    versions_data = {
-        "schema_version": "1.0.0",
-        "catalog_id": catalog_id,
-        "created": now.isoformat(),
-        "collections": {},
-    }
-    try:
-        (path / "versions.json").write_text(json.dumps(versions_data, indent=2) + "\n")
-    except OSError as e:
-        raise CatalogInitError(f"Cannot write versions.json: {e}") from e
+    if backend == "file":
+        now = datetime.now(timezone.utc)
+        versions_data = {
+            "schema_version": "1.0.0",
+            "catalog_id": catalog_id,
+            "created": now.isoformat(),
+            "collections": {},
+        }
+        try:
+            (path / "versions.json").write_text(json.dumps(versions_data, indent=2) + "\n")
+        except OSError as e:
+            raise CatalogInitError(f"Cannot write versions.json: {e}") from e
 
     # Step 3: Create STAC catalog using pystac
     catalog = pystac.Catalog(
@@ -426,8 +438,11 @@ def init_catalog(
     # Written LAST for atomicity: if any previous step fails, directory stays FRESH
     # and init can be safely retried. Also serves as user configuration file for
     # settings like remote, aws_profile, etc.
+    config_content = "# Portolan configuration\n"
+    if backend != "file":
+        config_content = f"# Portolan configuration\nbackend: {backend}\n"
     try:
-        (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
+        (portolan_dir / "config.yaml").write_text(config_content)
     except OSError as e:
         raise CatalogInitError(f"Cannot write config.yaml: {e}") from e
 
