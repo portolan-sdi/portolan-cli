@@ -2381,6 +2381,7 @@ def rm_cmd(
 )
 @click.option(
     "--profile",
+    default="default",
     help="AWS profile name (for S3 destinations).",
 )
 @click.option(
@@ -2556,7 +2557,7 @@ def push(
 @click.option(
     "--profile",
     type=str,
-    default=None,
+    default="default",
     help="AWS profile name (for S3).",
 )
 @click.pass_context
@@ -2677,6 +2678,7 @@ def pull_command(
 )
 @click.option(
     "--profile",
+    default="default",
     help="AWS profile name (for S3 destinations).",
 )
 @click.option(
@@ -2826,6 +2828,7 @@ def sync(
 )
 @click.option(
     "--profile",
+    default="default",
     help="AWS profile name (for S3 sources).",
 )
 @click.pass_context
