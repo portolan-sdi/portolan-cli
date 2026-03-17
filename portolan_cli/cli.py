@@ -54,7 +54,9 @@ from portolan_cli.scan_output import (
     group_skipped_files,
     render_tree_view,
 )
-from portolan_cli.validation import Severity
+from portolan_cli.validation import (
+    Severity,
+)
 from portolan_cli.validation import check as validate_catalog
 
 
@@ -127,6 +129,7 @@ def cli(ctx: click.Context, output_format: str) -> None:
 
 @cli.command()
 @click.argument("path", type=click.Path(path_type=Path), default=".")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 @click.option(
     "--auto",
     "auto_mode",  # Rename to avoid vulture unused variable warning
@@ -150,7 +153,12 @@ def cli(ctx: click.Context, output_format: str) -> None:
 )
 @click.pass_context
 def init(
-    ctx: click.Context, path: Path, auto_mode: bool, title: str | None, description: str | None
+    ctx: click.Context,
+    path: Path,
+    json_output: bool,
+    auto_mode: bool,
+    title: str | None,
+    description: str | None,
 ) -> None:
     """Initialize a new Portolan catalog.
 
@@ -171,12 +179,11 @@ def init(
         portolan init --title "My Catalog"  # Set title
         portolan init /path/to/data --auto  # Initialize in specific directory
     """
-    import json
 
     from portolan_cli.catalog import init_catalog
     from portolan_cli.errors import CatalogAlreadyExistsError, UnmanagedStacCatalogError
 
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Interactive prompting (unless --auto or JSON mode)
     if not auto_mode and not use_json:
@@ -2062,8 +2069,10 @@ def _output_add_results(
     help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
     ctx: click.Context,
+    json_output: bool,
     paths: tuple[Path, ...],
     verbose: bool,
     item_id: str | None,
@@ -2099,7 +2108,7 @@ def add_cmd(
     - Sidecar files (.dbf, .shx, .prj for shapefiles) are auto-detected
     - All files in the item directory are tracked, not just geo files (ADR-0028)
     """
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Auto-detect catalog root (git-style)
     catalog_root: Path
@@ -2237,8 +2246,10 @@ def add_cmd(
     help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def rm_cmd(
     ctx: click.Context,
+    json_output: bool,
     path: Path,
     keep: bool,
     force: bool,
@@ -2267,7 +2278,7 @@ def rm_cmd(
         portolan rm -f demographics/census.parquet  # Force delete and untrack
         portolan rm -f vectors/                     # Force remove entire directory
     """
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Require --force for destructive operations (unless --keep or --dry-run)
     if not keep and not dry_run and not force:
@@ -2380,8 +2391,10 @@ def rm_cmd(
     help="Path to catalog root (default: current directory).",
 )
 @click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def push(
     ctx: click.Context,
+    json_output: bool,
     destination: str | None,
     collection: str,
     force: bool,
@@ -2408,7 +2421,7 @@ def push(
     from portolan_cli.push import PushConflictError
     from portolan_cli.push import push as push_fn
 
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Resolve destination: CLI arg > env var > config file
     resolved_destination = get_setting(
@@ -2547,8 +2560,10 @@ def push(
     help="AWS profile name (for S3).",
 )
 @click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def pull_command(
     ctx: click.Context,
+    json_output: bool,
     remote_url: str,
     collection: str,
     catalog_path: Path,
@@ -2573,7 +2588,7 @@ def pull_command(
     """
     from portolan_cli.pull import pull as pull_fn
 
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     result = pull_fn(
         remote_url=remote_url,
@@ -2672,8 +2687,10 @@ def pull_command(
     help="Path to catalog root (default: current directory).",
 )
 @click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def sync(
     ctx: click.Context,
+    json_output: bool,
     destination: str | None,
     collection: str,
     force: bool,
@@ -2700,7 +2717,7 @@ def sync(
     from portolan_cli.config import get_setting
     from portolan_cli.sync import sync as sync_fn
 
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Resolve destination: CLI arg > env var > config file
     resolved_destination = get_setting(
@@ -2812,8 +2829,10 @@ def sync(
     help="AWS profile name (for S3 sources).",
 )
 @click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def clone(
     ctx: click.Context,
+    json_output: bool,
     remote_url: str,
     local_path: Path | None,
     collection: str | None,
@@ -2852,7 +2871,7 @@ def clone(
     from portolan_cli.sync import clone as clone_fn
     from portolan_cli.sync import infer_local_path_from_url
 
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Infer local_path from URL if not provided
     if local_path is None:
@@ -2866,7 +2885,7 @@ def clone(
                     "clone",
                     [ErrorDetail(type="CloneError", message=str(e), code="INVALID_URL")],
                 )
-                click.echo(json.dumps(envelope, indent=2))
+                output_json_envelope(envelope)
             else:
                 error(str(e))
             raise SystemExit(1) from None
@@ -2900,7 +2919,7 @@ def clone(
             ]
             envelope = error_envelope("clone", errors)
 
-        click.echo(json.dumps(envelope, indent=2))
+        output_json_envelope(envelope)
     else:
         if result.success:
             if result.collections_cloned:
@@ -2959,7 +2978,10 @@ def config() -> None:
     help="Set config for a specific collection instead of catalog-level.",
 )
 @click.pass_context
-def config_set(ctx: click.Context, key: str, value: str, collection: str | None) -> None:
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def config_set(
+    ctx: click.Context, json_output: bool, key: str, value: str, collection: str | None
+) -> None:
     """Set a configuration value.
 
     KEY is the setting name (e.g., remote, aws_profile).
@@ -2973,7 +2995,7 @@ def config_set(ctx: click.Context, key: str, value: str, collection: str | None)
     """
     from portolan_cli.config import set_setting
 
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Find catalog root
     catalog_path = find_catalog_root()
@@ -3026,7 +3048,8 @@ def config_set(ctx: click.Context, key: str, value: str, collection: str | None)
     help="Get config for a specific collection.",
 )
 @click.pass_context
-def config_get(ctx: click.Context, key: str, collection: str | None) -> None:
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def config_get(ctx: click.Context, json_output: bool, key: str, collection: str | None) -> None:
     """Get a configuration value.
 
     Shows the resolved value and its source (env, catalog, collection, or not set).
@@ -3040,7 +3063,7 @@ def config_get(ctx: click.Context, key: str, collection: str | None) -> None:
     """
     from portolan_cli.config import get_setting, get_setting_source
 
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Find catalog root
     catalog_path = find_catalog_root()
@@ -3088,7 +3111,8 @@ def config_get(ctx: click.Context, key: str, collection: str | None) -> None:
     help="Show config for a specific collection.",
 )
 @click.pass_context
-def config_list(ctx: click.Context, collection: str | None) -> None:
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def config_list(ctx: click.Context, json_output: bool, collection: str | None) -> None:
     """List all configuration settings.
 
     Shows all settings with their values and sources.
@@ -3100,7 +3124,7 @@ def config_list(ctx: click.Context, collection: str | None) -> None:
     """
     from portolan_cli.config import list_settings
 
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Find catalog root
     catalog_path = find_catalog_root()
@@ -3149,7 +3173,8 @@ def config_list(ctx: click.Context, collection: str | None) -> None:
     help="Unset config for a specific collection.",
 )
 @click.pass_context
-def config_unset(ctx: click.Context, key: str, collection: str | None) -> None:
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def config_unset(ctx: click.Context, json_output: bool, key: str, collection: str | None) -> None:
     """Remove a configuration value.
 
     Removes the setting from the config file. Does not affect environment variables.
@@ -3163,7 +3188,7 @@ def config_unset(ctx: click.Context, key: str, collection: str | None) -> None:
     """
     from portolan_cli.config import unset_setting
 
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Find catalog root
     catalog_path = find_catalog_root()
@@ -3237,7 +3262,8 @@ def _print_clean_preview(
     help="Preview what would be removed without actually deleting.",
 )
 @click.pass_context
-def clean(ctx: click.Context, dry_run: bool) -> None:
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
     """Remove all Portolan metadata while preserving data files.
 
     Removes catalog.json, collection.json, item.json (STAC metadata),
@@ -3253,7 +3279,7 @@ def clean(ctx: click.Context, dry_run: bool) -> None:
     """
     from portolan_cli.clean import clean_catalog
 
-    use_json = should_output_json(ctx)
+    use_json = should_output_json(ctx, json_output)
 
     # Find catalog root
     catalog_path = find_catalog_root()
