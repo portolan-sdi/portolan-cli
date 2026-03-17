@@ -2366,8 +2366,9 @@ def rm_cmd(
 @click.option(
     "--collection",
     "-c",
-    required=True,
-    help="Collection to push (required).",
+    required=False,
+    default=None,
+    help="Collection to push. If not specified, pushes all collections.",
 )
 @click.option(
     "--force",
@@ -2397,7 +2398,7 @@ def push(
     ctx: click.Context,
     json_output: bool,
     destination: str | None,
-    collection: str,
+    collection: str | None,
     force: bool,
     dry_run: bool,
     profile: str | None,
@@ -2405,21 +2406,27 @@ def push(
 ) -> None:
     """Push local catalog changes to cloud object storage.
 
-    Syncs a collection's versions to a remote destination (S3, GCS, Azure).
+    Syncs collection(s) to a remote destination (S3, GCS, Azure).
     Uses optimistic locking to detect concurrent modifications.
 
     DESTINATION is the object store URL (e.g., s3://mybucket/my-catalog).
     If not provided, uses the 'remote' configured via `portolan config set remote`.
 
+    If --collection is specified, pushes that collection only.
+    If --collection is omitted, pushes all collections in the catalog.
+
     \b
     Examples:
+        # Push a single collection
         portolan push s3://mybucket/catalog --collection demographics
         portolan push gs://mybucket/catalog -c imagery --dry-run
-        portolan push s3://mybucket/catalog -c data --force --profile prod
-        portolan push --collection demographics  # Uses configured remote
+
+        # Push all collections
+        portolan push s3://mybucket/catalog
+        portolan push --dry-run  # Uses configured remote
     """
     from portolan_cli.config import get_setting
-    from portolan_cli.push import PushConflictError
+    from portolan_cli.push import PushConflictError, push_all_collections
     from portolan_cli.push import push as push_fn
 
     use_json = should_output_json(ctx, json_output)
@@ -2451,6 +2458,48 @@ def push(
                 "Provide a DESTINATION argument or run: portolan config set remote <url>"
             )
         raise SystemExit(1)
+
+    # If no collection specified, push all collections
+    if collection is None:
+        try:
+            all_result = push_all_collections(
+                catalog_root=catalog_path,
+                destination=resolved_destination,
+                force=force,
+                dry_run=dry_run,
+                profile=profile,
+            )
+
+            if use_json:
+                envelope = success_envelope(
+                    "push",
+                    {
+                        "total_collections": all_result.total_collections,
+                        "successful_collections": all_result.successful_collections,
+                        "failed_collections": all_result.failed_collections,
+                        "total_files_uploaded": all_result.total_files_uploaded,
+                        "total_versions_pushed": all_result.total_versions_pushed,
+                        "collection_errors": all_result.collection_errors,
+                    },
+                )
+                output_json_envelope(envelope)
+            # Terminal output is handled by push_all_collections()
+
+            if not all_result.success:
+                raise SystemExit(1)
+
+            return
+
+        except Exception as err:
+            if use_json:
+                envelope = error_envelope(
+                    "push",
+                    [ErrorDetail(type=type(err).__name__, message=str(err))],
+                )
+                output_json_envelope(envelope)
+            else:
+                error(str(err))
+            raise SystemExit(1) from err
 
     try:
         result = push_fn(

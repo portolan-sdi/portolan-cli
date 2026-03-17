@@ -684,3 +684,169 @@ def push(
         conflicts=[],
         errors=[],
     )
+
+
+# =============================================================================
+# Catalog-Wide Push (Issue #224)
+# =============================================================================
+
+
+@dataclass
+class PushAllResult:
+    """Result of pushing all collections in a catalog.
+
+    Attributes:
+        success: True if all collections pushed without errors.
+        total_collections: Total number of collections found.
+        successful_collections: Number of collections successfully pushed.
+        failed_collections: Number of collections that failed to push.
+        total_files_uploaded: Aggregate count of files uploaded across all collections.
+        total_versions_pushed: Aggregate count of versions pushed across all collections.
+        collection_errors: Dict mapping collection name to error messages.
+    """
+
+    success: bool
+    total_collections: int
+    successful_collections: int
+    failed_collections: int
+    total_files_uploaded: int
+    total_versions_pushed: int
+    collection_errors: dict[str, list[str]] = field(default_factory=dict)
+
+
+def discover_collections(catalog_root: Path) -> list[str]:
+    """Discover all collections in a catalog by finding directories with versions.json.
+
+    Collections are subdirectories of the catalog root that contain a versions.json file.
+    Hidden directories (starting with '.') are excluded.
+
+    Args:
+        catalog_root: Path to the catalog root directory.
+
+    Returns:
+        Sorted list of collection names (directory names).
+    """
+    if not catalog_root.exists():
+        return []
+
+    collections: list[str] = []
+
+    for item in catalog_root.iterdir():
+        # Skip non-directories
+        if not item.is_dir():
+            continue
+
+        # Skip hidden directories (including .portolan)
+        if item.name.startswith("."):
+            continue
+
+        # Check for versions.json
+        versions_path = item / "versions.json"
+        if versions_path.exists():
+            collections.append(item.name)
+
+    return sorted(collections)
+
+
+def push_all_collections(
+    catalog_root: Path,
+    destination: str,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    profile: str | None = None,
+) -> PushAllResult:
+    """Push all collections in a catalog to cloud storage.
+
+    Processes collections sequentially with progress reporting.
+    Continues on individual failures and reports all errors at the end.
+
+    Args:
+        catalog_root: Path to the catalog root directory.
+        destination: Object store URL (e.g., s3://bucket/prefix).
+        force: If True, overwrite remote even if diverged.
+        dry_run: If True, show what would be uploaded without uploading.
+        profile: AWS profile name (for S3 only).
+
+    Returns:
+        PushAllResult with aggregate statistics and per-collection errors.
+    """
+    collections = discover_collections(catalog_root)
+    total = len(collections)
+
+    if total == 0:
+        info("No collections found in catalog")
+        return PushAllResult(
+            success=True,
+            total_collections=0,
+            successful_collections=0,
+            failed_collections=0,
+            total_files_uploaded=0,
+            total_versions_pushed=0,
+        )
+
+    info(f"Found {total} collection(s) to push")
+
+    # Track aggregate stats
+    successful = 0
+    failed = 0
+    total_files = 0
+    total_versions = 0
+    collection_errors: dict[str, list[str]] = {}
+
+    # Process collections sequentially
+    for i, collection in enumerate(collections, 1):
+        info(f"→ Pushing collection {i}/{total}: {collection}")
+
+        try:
+            result = push(
+                catalog_root=catalog_root,
+                collection=collection,
+                destination=destination,
+                force=force,
+                dry_run=dry_run,
+                profile=profile,
+            )
+
+            if result.success:
+                successful += 1
+                total_files += result.files_uploaded
+                total_versions += result.versions_pushed
+                success(
+                    f"✓ Pushed {collection}: {result.versions_pushed} version(s), {result.files_uploaded} file(s)"
+                )
+            else:
+                failed += 1
+                errors = result.errors + result.conflicts
+                collection_errors[collection] = errors
+                error(f"✗ Failed {collection}: {', '.join(errors)}")
+
+        except PushConflictError as e:
+            failed += 1
+            collection_errors[collection] = [str(e)]
+            error(f"✗ Failed {collection}: {e}")
+        except Exception as e:
+            failed += 1
+            collection_errors[collection] = [str(e)]
+            error(f"✗ Failed {collection}: {e}")
+
+    # Summary report
+    info(f"\n{'=' * 60}")
+    if failed == 0:
+        success(
+            f"✓ Pushed {successful} collection(s), {total_versions} version(s), {total_files} file(s) total"
+        )
+    else:
+        warn(f"Completed with errors: {successful} succeeded, {failed} failed")
+        for collection, errors in collection_errors.items():
+            warn(f"  {collection}: {', '.join(errors)}")
+
+    return PushAllResult(
+        success=(failed == 0),
+        total_collections=total,
+        successful_collections=successful,
+        failed_collections=failed,
+        total_files_uploaded=total_files,
+        total_versions_pushed=total_versions,
+        collection_errors=collection_errors,
+    )

@@ -113,8 +113,8 @@ Push local catalog changes to cloud object storage.
 ```bash
 portolan push s3://mybucket/catalog --collection demographics
 portolan push gs://mybucket/catalog -c imagery --dry-run
-portolan push s3://mybucket/catalog -c data --force --profile prod
-portolan push --collection demographics  # Uses configured remote
+portolan push s3://mybucket/catalog
+portolan push --dry-run  # Uses configured remote
 ```
 
 ### `portolan rm`
