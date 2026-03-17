@@ -59,8 +59,13 @@ def validate_safe_path(path: Path, base_dir: Path | None = None) -> Path:
 
     # Resolve to absolute path (follows symlinks, resolves ..)
     try:
-        resolved = path.resolve()
         base_resolved = base_dir.resolve()
+        # If path is relative, join with base_dir before resolving
+        # If path is absolute, resolve() will use it as-is
+        if not path.is_absolute():
+            resolved = (base_resolved / path).resolve()
+        else:
+            resolved = path.resolve()
     except (OSError, RuntimeError) as e:
         raise InputValidationError(f"Cannot resolve path {path}: {e}") from e
 
@@ -213,6 +218,13 @@ def validate_remote_url(url: str) -> str:
         raise InputValidationError(
             f"Unsupported URL scheme '{parsed.scheme}'. "
             f"Allowed: {', '.join(sorted(allowed_schemes))}"
+        )
+
+    # Validate that host/bucket/container is present
+    if not parsed.netloc:
+        raise InputValidationError(
+            f"URL missing host/bucket/container: {url}. "
+            "URLs must include a destination (e.g., s3://bucket/path, https://host/path)"
         )
 
     # Reject path traversals in URL path

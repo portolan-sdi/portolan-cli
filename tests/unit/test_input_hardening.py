@@ -21,6 +21,7 @@ from portolan_cli.validation import (
 )
 
 
+@pytest.mark.unit
 class TestValidateSafePath:
     """Tests for path traversal protection."""
 
@@ -67,6 +68,7 @@ class TestValidateSafePath:
         assert safe_path.is_absolute()
 
 
+@pytest.mark.unit
 class TestValidateCollectionId:
     """Tests for collection ID validation."""
 
@@ -125,6 +127,7 @@ class TestValidateCollectionId:
             validate_collection_id("census data")  # Space
 
 
+@pytest.mark.unit
 class TestValidateItemId:
     """Tests for item ID validation."""
 
@@ -162,6 +165,7 @@ class TestValidateItemId:
             validate_item_id("parent/child")
 
 
+@pytest.mark.unit
 class TestValidateRemoteUrl:
     """Tests for remote URL validation."""
 
@@ -211,12 +215,16 @@ class TestValidateRemoteUrl:
 
     def test_malformed_url_rejected(self) -> None:
         """Malformed URLs are rejected."""
-        # urlparse is very permissive, so this test documents that fact
-        # Most malformed URLs will pass urlparse but fail in actual usage
-        # We rely on scheme validation and path validation instead
-        pass
+        # Test empty netloc (no bucket/host)
+        with pytest.raises(InputValidationError, match="missing host/bucket"):
+            validate_remote_url("s3://")
+        with pytest.raises(InputValidationError, match="missing host/bucket"):
+            validate_remote_url("https:///path")
+        with pytest.raises(InputValidationError, match="missing host/bucket"):
+            validate_remote_url("gs://")
 
 
+@pytest.mark.unit
 class TestValidateConfigKey:
     """Tests for config key validation."""
 
@@ -254,6 +262,7 @@ class TestValidateConfigKey:
             validate_config_key("3d_mode")
 
 
+@pytest.mark.unit
 class TestValidateConfigValue:
     """Tests for config value validation."""
 
@@ -284,6 +293,7 @@ class TestValidateConfigValue:
             validate_config_value("s3://bucket/../escape", "remote")
 
 
+@pytest.mark.unit
 class TestAgentHallucinationScenarios:
     """Integration tests for realistic agent hallucination scenarios."""
 

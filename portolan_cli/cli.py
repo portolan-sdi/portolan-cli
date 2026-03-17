@@ -179,7 +179,6 @@ def init(
         portolan init --title "My Catalog"  # Set title
         portolan init /path/to/data --auto  # Initialize in specific directory
     """
-    import json
 
     from portolan_cli.catalog import init_catalog
     from portolan_cli.errors import CatalogAlreadyExistsError, UnmanagedStacCatalogError
@@ -2886,7 +2885,7 @@ def clone(
                     "clone",
                     [ErrorDetail(type="CloneError", message=str(e), code="INVALID_URL")],
                 )
-                click.echo(json.dumps(envelope, indent=2))
+                output_json_envelope(envelope)
             else:
                 error(str(e))
             raise SystemExit(1) from None
@@ -2920,7 +2919,7 @@ def clone(
             ]
             envelope = error_envelope("clone", errors)
 
-        click.echo(json.dumps(envelope, indent=2))
+        output_json_envelope(envelope)
     else:
         if result.success:
             if result.collections_cloned:
