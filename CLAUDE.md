@@ -374,9 +374,15 @@ info("Reading data.shp (4,231 features)")  # → Blue arrow
 warn("Missing thumbnail (recommended)")    # ⚠ Yellow warning
 error("No geometry column (required)")     # ✗ Red X
 detail("Processing chunk 3/10...")         # Dimmed text
+
+# Dry-run mode: prefix with [DRY RUN] for preview operations
+success("Would write output.parquet", dry_run=True)  # [DRY RUN] ✓ ...
+
+# Verbose mode: reserved for detailed output (currently same as default)
+info("Reading data.shp", verbose=True)
 ```
 
-<!-- freshness: last-verified: 2026-03-08 -->
+<!-- freshness: last-verified: 2026-03-17 -->
 ## Design Principles
 
 | Principle | Meaning | ADR |
