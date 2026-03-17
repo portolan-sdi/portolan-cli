@@ -1,0 +1,19 @@
+# .docsync/donttouch
+# Protected content that should not change without explicit review
+# Run 'docsync check-protected' to verify
+
+# License sections must not change without explicit decision
+README.md#License
+docs/contributing.md#License
+
+# Code of Conduct is policy
+docs/contributing.md#Code of Conduct
+
+# Terminology is enforced project-wide (see CLAUDE.md)
+CLAUDE.md#Terminology (ENFORCED)
+
+# Brand identity - colors must be consistent
+docs/BRANDING.md#Color Palette
+
+# Version requirements (should match pyproject.toml)
+"Python 3.10+"

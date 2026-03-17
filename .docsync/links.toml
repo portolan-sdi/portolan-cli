@@ -1,0 +1,97 @@
+# .docsync/links.toml
+# Code-to-documentation links for Portolan CLI
+#
+# When code changes, docsync checks if linked docs are stale.
+# Run 'docsync check' to verify, 'docsync list-stale' to see stale docs.
+
+# CLI reference is auto-generated from cli.py via mkdocs-click
+[[link]]
+code = "portolan_cli/cli.py"
+docs = ["docs/reference/cli.md"]
+
+# Configuration docs track config module changes
+[[link]]
+code = "portolan_cli/config.py"
+docs = ["docs/reference/configuration.md"]
+
+[[link]]
+code = "portolan_cli/conversion_config.py"
+docs = ["docs/reference/configuration.md#Conversion Configuration"]
+
+# Output module is documented in contributing guide
+[[link]]
+code = "portolan_cli/output.py"
+docs = ["docs/contributing.md#Code Standards"]
+
+# Core workflow modules - documented in CLAUDE.md design principles
+[[link]]
+code = "portolan_cli/scan.py"
+docs = ["CLAUDE.md#Design Principles"]
+
+[[link]]
+code = "portolan_cli/versions.py"
+docs = ["CLAUDE.md#Design Principles"]
+
+[[link]]
+code = "portolan_cli/sync.py"
+docs = ["CLAUDE.md#Design Principles"]
+
+# Format handlers - plugin architecture documented in ADR
+[[link]]
+code = "portolan_cli/formats.py"
+docs = ["context/shared/adr/0003-plugin-architecture.md"]
+
+# Catalog operations - STAC structure in ADR
+[[link]]
+code = "portolan_cli/catalog.py"
+docs = ["context/shared/adr/0023-stac-structure-separation.md"]
+
+# Error handling - central error module
+[[link]]
+code = "portolan_cli/errors.py"
+docs = ["docs/contributing.md#Code Standards"]
+
+# === AUDIT-SUGGESTED ADDITIONS ===
+
+# Output module also documented in CLAUDE.md
+[[link]]
+code = "portolan_cli/output.py"
+docs = ["CLAUDE.md#Standardized Terminal Output"]
+
+# JSON output for machine-readable CLI
+[[link]]
+code = "portolan_cli/json_output.py"
+docs = ["CLAUDE.md#Design Principles"]
+
+# Status introspection
+[[link]]
+code = "portolan_cli/status.py"
+docs = ["docs/reference/cli.md"]
+
+# Dataset handling (core data model)
+[[link]]
+code = "portolan_cli/dataset.py"
+docs = ["CLAUDE.md#Design Principles"]
+
+# Inspect command
+[[link]]
+code = "portolan_cli/inspect.py"
+docs = ["docs/reference/cli.md"]
+
+# Remote operations
+[[link]]
+code = "portolan_cli/pull.py"
+docs = ["CLAUDE.md#Design Principles"]
+
+[[link]]
+code = "portolan_cli/push.py"
+docs = ["CLAUDE.md#Design Principles"]
+
+# Branding documentation
+[[link]]
+code = "mkdocs.yml"
+docs = ["docs/BRANDING.md#MkDocs Configuration"]
+
+[[link]]
+code = "docs/assets/stylesheets/extra.css"
+docs = ["docs/BRANDING.md#Color Palette"]

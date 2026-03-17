@@ -228,3 +228,11 @@ dev = [
     "pylint>=4.0.5",
     "types-pyyaml>=6.0.12.20250915",
 ]
+
+[tool.docsync]
+mode = "block"
+transitive_depth = 1
+enforce_symmetry = true
+require_links = ["portolan_cli/**/*.py"]
+exempt = ["tests/**", "portolan_cli/__pycache__/**"]
+doc_paths = ["docs/**/*.md", "README.md", "CLAUDE.md"]
