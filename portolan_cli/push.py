@@ -719,17 +719,28 @@ def discover_collections(catalog_root: Path) -> list[str]:
 
     Collections are subdirectories of the catalog root that contain a versions.json file.
     Hidden directories (starting with '.') are excluded.
+    Symlinks are followed but cycles are detected and skipped.
 
     Args:
         catalog_root: Path to the catalog root directory.
 
     Returns:
         Sorted list of collection names (directory names).
+
+    Raises:
+        ValueError: If catalog_root is not a valid catalog directory.
     """
     if not catalog_root.exists():
-        return []
+        raise ValueError(f"Catalog root does not exist: {catalog_root}")
+
+    # Validate this is actually a catalog (has sentinel file per ADR-0029)
+    portolan_dir = catalog_root / ".portolan"
+    config_yaml = portolan_dir / "config.yaml"
+    if not config_yaml.exists():
+        raise ValueError(f"Not a portolan catalog (missing .portolan/config.yaml): {catalog_root}")
 
     collections: list[str] = []
+    visited_paths: set[Path] = set()
 
     for item in catalog_root.iterdir():
         # Skip non-directories
@@ -739,6 +750,21 @@ def discover_collections(catalog_root: Path) -> list[str]:
         # Skip hidden directories (including .portolan)
         if item.name.startswith("."):
             continue
+
+        # Resolve symlinks and detect cycles
+        try:
+            resolved = item.resolve()
+        except OSError:
+            # Cannot resolve (broken symlink or permission error)
+            warn(f"Cannot resolve path {item}, skipping")
+            continue
+
+        # Skip if we've already seen this resolved path (symlink cycle)
+        if resolved in visited_paths:
+            warn(f"Symlink cycle detected at {item}, skipping")
+            continue
+
+        visited_paths.add(resolved)
 
         # Check for versions.json
         versions_path = item / "versions.json"
@@ -770,14 +796,19 @@ def push_all_collections(
 
     Returns:
         PushAllResult with aggregate statistics and per-collection errors.
+
+    Raises:
+        ValueError: If catalog_root is not a valid catalog.
     """
+    # discover_collections validates catalog and raises ValueError if invalid
     collections = discover_collections(catalog_root)
     total = len(collections)
 
     if total == 0:
-        info("No collections found in catalog")
+        warn("No initialized collections found in catalog")
+        warn("Collections need a versions.json file to be pushable")
         return PushAllResult(
-            success=True,
+            success=False,  # Changed from True - empty catalog is not success
             total_collections=0,
             successful_collections=0,
             failed_collections=0,
@@ -825,10 +856,12 @@ def push_all_collections(
             failed += 1
             collection_errors[collection] = [str(e)]
             error(f"✗ Failed {collection}: {e}")
-        except Exception as e:
+        except (FileNotFoundError, ValueError, OSError) as e:
+            # Catch expected errors from push operations
             failed += 1
             collection_errors[collection] = [str(e)]
             error(f"✗ Failed {collection}: {e}")
+        # Don't catch Exception - let programming errors (AttributeError, etc.) bubble up
 
     # Summary report
     info(f"\n{'=' * 60}")

@@ -17,16 +17,23 @@ from portolan_cli.push import (
 )
 
 
+def _setup_valid_catalog(catalog_root: Path) -> None:
+    """Helper to create a valid catalog with .portolan/config.yaml."""
+    portolan_dir = catalog_root / ".portolan"
+    portolan_dir.mkdir(parents=True, exist_ok=True)
+    (portolan_dir / "config.yaml").write_text("version: '1.0'\n")
+
+
 class TestDiscoverCollections:
     """Tests for discover_collections() function."""
 
     def test_finds_single_collection(self, tmp_path: Path) -> None:
         """discover_collections finds a single collection with versions.json."""
-        # Setup: create a collection directory with versions.json
+        _setup_valid_catalog(tmp_path)
+
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
-        versions_json = collection_dir / "versions.json"
-        versions_json.write_text(json.dumps({"versions": []}))
+        (collection_dir / "versions.json").write_text(json.dumps({"versions": []}))
 
         collections = discover_collections(tmp_path)
 
@@ -34,7 +41,8 @@ class TestDiscoverCollections:
 
     def test_finds_multiple_collections(self, tmp_path: Path) -> None:
         """discover_collections finds all collections in catalog."""
-        # Setup: create multiple collections
+        _setup_valid_catalog(tmp_path)
+
         for name in ["nature", "climate", "environment"]:
             collection_dir = tmp_path / name
             collection_dir.mkdir()
@@ -46,11 +54,11 @@ class TestDiscoverCollections:
 
     def test_ignores_directories_without_versions_json(self, tmp_path: Path) -> None:
         """discover_collections ignores dirs without versions.json."""
-        # Setup: mix of initialized and uninitialized collections
+        _setup_valid_catalog(tmp_path)
+
         (tmp_path / "initialized").mkdir()
         (tmp_path / "initialized" / "versions.json").write_text(json.dumps({"versions": []}))
-
-        (tmp_path / "uninitialized").mkdir()  # No versions.json
+        (tmp_path / "uninitialized").mkdir()
 
         collections = discover_collections(tmp_path)
 
@@ -58,14 +66,11 @@ class TestDiscoverCollections:
 
     def test_ignores_dotfiles_and_hidden_dirs(self, tmp_path: Path) -> None:
         """discover_collections ignores .portolan and other hidden directories."""
-        # Setup: create hidden directories with versions.json
-        (tmp_path / ".portolan").mkdir()
-        (tmp_path / ".portolan" / "versions.json").write_text(json.dumps({"versions": []}))
+        _setup_valid_catalog(tmp_path)
 
         (tmp_path / ".hidden").mkdir()
         (tmp_path / ".hidden" / "versions.json").write_text(json.dumps({"versions": []}))
 
-        # Setup: create a valid collection
         (tmp_path / "valid").mkdir()
         (tmp_path / "valid" / "versions.json").write_text(json.dumps({"versions": []}))
 
@@ -73,15 +78,17 @@ class TestDiscoverCollections:
 
         assert collections == ["valid"]
 
-    def test_returns_empty_list_for_empty_catalog(self, tmp_path: Path) -> None:
-        """discover_collections returns empty list if no collections found."""
-        collections = discover_collections(tmp_path)
+    def test_raises_for_non_catalog_directory(self, tmp_path: Path) -> None:
+        """discover_collections raises ValueError if not a portolan catalog."""
+        import pytest
 
-        assert collections == []
+        with pytest.raises(ValueError, match="Not a portolan catalog"):
+            discover_collections(tmp_path)
 
     def test_returns_sorted_collections(self, tmp_path: Path) -> None:
         """discover_collections returns collections in sorted order."""
-        # Setup: create collections in non-alphabetical order
+        _setup_valid_catalog(tmp_path)
+
         for name in ["zebra", "apple", "mango"]:
             collection_dir = tmp_path / name
             collection_dir.mkdir()
@@ -98,7 +105,8 @@ class TestPushAllCollections:
     @patch("portolan_cli.push.push")
     def test_pushes_single_collection(self, mock_push: MagicMock, tmp_path: Path) -> None:
         """push_all_collections pushes a single collection successfully."""
-        # Setup
+        _setup_valid_catalog(tmp_path)
+
         (tmp_path / "col1").mkdir()
         (tmp_path / "col1" / "versions.json").write_text(json.dumps({"versions": []}))
 
@@ -110,7 +118,6 @@ class TestPushAllCollections:
             errors=[],
         )
 
-        # Execute
         result = push_all_collections(
             catalog_root=tmp_path,
             destination="s3://bucket/catalog",
@@ -119,7 +126,6 @@ class TestPushAllCollections:
             profile=None,
         )
 
-        # Assert
         assert result.success is True
         assert result.total_collections == 1
         assert result.successful_collections == 1
@@ -141,7 +147,8 @@ class TestPushAllCollections:
         self, mock_push: MagicMock, tmp_path: Path
     ) -> None:
         """push_all_collections processes multiple collections in sequence."""
-        # Setup: create multiple collections
+        _setup_valid_catalog(tmp_path)
+
         for name in ["col1", "col2", "col3"]:
             (tmp_path / name).mkdir()
             (tmp_path / name / "versions.json").write_text(json.dumps({"versions": []}))
@@ -154,7 +161,6 @@ class TestPushAllCollections:
             errors=[],
         )
 
-        # Execute
         result = push_all_collections(
             catalog_root=tmp_path,
             destination="s3://bucket/catalog",
@@ -163,13 +169,12 @@ class TestPushAllCollections:
             profile=None,
         )
 
-        # Assert
         assert result.success is True
         assert result.total_collections == 3
         assert result.successful_collections == 3
         assert result.failed_collections == 0
-        assert result.total_files_uploaded == 6  # 2 * 3
-        assert result.total_versions_pushed == 3  # 1 * 3
+        assert result.total_files_uploaded == 6
+        assert result.total_versions_pushed == 3
 
         assert mock_push.call_count == 3
 
@@ -178,12 +183,12 @@ class TestPushAllCollections:
         self, mock_push: MagicMock, tmp_path: Path
     ) -> None:
         """push_all_collections continues processing after individual failures."""
-        # Setup
+        _setup_valid_catalog(tmp_path)
+
         for name in ["col1", "col2", "col3"]:
             (tmp_path / name).mkdir()
             (tmp_path / name / "versions.json").write_text(json.dumps({"versions": []}))
 
-        # Mock: col2 fails, others succeed
         def push_side_effect(**kwargs):  # type: ignore[no-untyped-def]
             if kwargs["collection"] == "col2":
                 return PushResult(
@@ -203,7 +208,6 @@ class TestPushAllCollections:
 
         mock_push.side_effect = push_side_effect
 
-        # Execute
         result = push_all_collections(
             catalog_root=tmp_path,
             destination="s3://bucket/catalog",
@@ -212,13 +216,12 @@ class TestPushAllCollections:
             profile=None,
         )
 
-        # Assert: overall failure, but processed all collections
         assert result.success is False
         assert result.total_collections == 3
         assert result.successful_collections == 2
         assert result.failed_collections == 1
-        assert result.total_files_uploaded == 4  # 2 * 2 (col1 + col3)
-        assert result.total_versions_pushed == 2  # 1 * 2
+        assert result.total_files_uploaded == 4
+        assert result.total_versions_pushed == 2
         assert len(result.collection_errors) == 1
         assert "col2" in result.collection_errors
 
@@ -227,12 +230,12 @@ class TestPushAllCollections:
     @patch("portolan_cli.push.push")
     def test_reports_all_errors_at_end(self, mock_push: MagicMock, tmp_path: Path) -> None:
         """push_all_collections collects and reports all errors."""
-        # Setup
+        _setup_valid_catalog(tmp_path)
+
         for name in ["col1", "col2"]:
             (tmp_path / name).mkdir()
             (tmp_path / name / "versions.json").write_text(json.dumps({"versions": []}))
 
-        # Mock: both fail with different errors
         def push_side_effect(**kwargs):  # type: ignore[no-untyped-def]
             if kwargs["collection"] == "col1":
                 return PushResult(
@@ -252,7 +255,6 @@ class TestPushAllCollections:
 
         mock_push.side_effect = push_side_effect
 
-        # Execute
         result = push_all_collections(
             catalog_root=tmp_path,
             destination="s3://bucket/catalog",
@@ -261,7 +263,6 @@ class TestPushAllCollections:
             profile=None,
         )
 
-        # Assert
         assert result.success is False
         assert result.failed_collections == 2
         assert len(result.collection_errors) == 2
@@ -270,7 +271,9 @@ class TestPushAllCollections:
 
     @patch("portolan_cli.push.push")
     def test_handles_empty_catalog(self, mock_push: MagicMock, tmp_path: Path) -> None:
-        """push_all_collections handles empty catalog gracefully."""
+        """push_all_collections handles empty catalog with warning."""
+        _setup_valid_catalog(tmp_path)
+
         result = push_all_collections(
             catalog_root=tmp_path,
             destination="s3://bucket/catalog",
@@ -279,7 +282,7 @@ class TestPushAllCollections:
             profile=None,
         )
 
-        assert result.success is True
+        assert result.success is False  # Changed: empty catalog is not success
         assert result.total_collections == 0
         assert result.successful_collections == 0
         assert result.failed_collections == 0
@@ -289,7 +292,8 @@ class TestPushAllCollections:
     @patch("portolan_cli.push.push")
     def test_dry_run_mode(self, mock_push: MagicMock, tmp_path: Path) -> None:
         """push_all_collections passes dry_run flag to individual pushes."""
-        # Setup
+        _setup_valid_catalog(tmp_path)
+
         (tmp_path / "col1").mkdir()
         (tmp_path / "col1" / "versions.json").write_text(json.dumps({"versions": []}))
 
@@ -303,7 +307,6 @@ class TestPushAllCollections:
             would_push_versions=5,
         )
 
-        # Execute
         result = push_all_collections(
             catalog_root=tmp_path,
             destination="s3://bucket/catalog",
@@ -312,7 +315,6 @@ class TestPushAllCollections:
             profile=None,
         )
 
-        # Assert
         assert result.success is True
         mock_push.assert_called_once_with(
             catalog_root=tmp_path,
