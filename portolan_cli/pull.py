@@ -822,3 +822,94 @@ def pull_all_collections(
         total_files_downloaded=total_files,
         collection_errors=collection_errors,
     )
+
+
+# =============================================================================
+# Iceberg-aware Pull
+# =============================================================================
+
+
+def pull_iceberg(
+    remote_url: str,
+    local_root: Path,
+    collection: str,
+    backend: object,
+    *,
+    dry_run: bool = False,
+) -> PullResult:
+    """Pull files from remote using Iceberg backend for version info.
+
+    Instead of reading versions.json, queries the backend's
+    get_current_version() to get the asset list, then downloads
+    each asset from {remote_url}/{href} to {local_root}/{href}.
+
+    Args:
+        remote_url: Remote URL (e.g., gs://bucket/catalog).
+        local_root: Local catalog root directory.
+        collection: Collection name to pull.
+        backend: Iceberg backend instance (has get_current_version).
+        dry_run: If True, show what would happen without downloading.
+
+    Returns:
+        PullResult with operation results.
+    """
+    remote_url = remote_url.rstrip("/")
+
+    try:
+        version = backend.get_current_version(collection)
+    except FileNotFoundError:
+        info(f"No versions found for collection '{collection}'")
+        return PullResult(
+            success=True,
+            files_downloaded=0,
+            files_skipped=0,
+            local_version=None,
+            remote_version=None,
+            up_to_date=True,
+        )
+
+    if dry_run:
+        info(f"[DRY RUN] Would pull {len(version.assets)} file(s) from {remote_url}")
+        for asset_key in version.assets:
+            detail(f"  {asset_key}")
+        return PullResult(
+            success=True,
+            files_downloaded=len(version.assets),
+            files_skipped=0,
+            local_version=None,
+            remote_version=version.version,
+            dry_run=True,
+        )
+
+    downloaded = 0
+    failed = 0
+    for _asset_key, asset in version.assets.items():
+        source = f"{remote_url}/{asset.href}"
+        dest = local_root / Path(asset.href)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        result = download_file(source=source, destination=dest)
+        if result.success:
+            downloaded += result.files_downloaded
+        else:
+            failed += 1
+
+    if failed > 0:
+        error(f"Failed to download {failed} file(s)")
+        return PullResult(
+            success=False,
+            files_downloaded=downloaded,
+            files_skipped=0,
+            local_version=None,
+            remote_version=version.version,
+        )
+
+    success(f"Pulled {downloaded} file(s) (version {version.version})")
+
+    return PullResult(
+        success=True,
+        files_downloaded=downloaded,
+        files_skipped=0,
+        local_version=None,
+        remote_version=version.version,
+    )

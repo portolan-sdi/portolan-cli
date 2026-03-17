@@ -73,6 +73,7 @@ from portolan_cli.stac import (
     load_catalog,
     update_collection_summaries,
 )
+from portolan_cli.upload import upload_file
 from portolan_cli.versions import (
     read_versions,
 )
@@ -1411,6 +1412,58 @@ def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
         catalog.add_link(pystac.Link(rel="child", target=collection_href))
         # Re-save catalog
         catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+
+
+def _upload_to_remote_if_configured(
+    *,
+    catalog_root: Path,
+    collection_id: str,
+    item_id: str,
+    item_dir: Path,
+    asset_files: dict[str, tuple[Path, str]],
+    remote: str | None,
+) -> None:
+    """Upload converted files and STAC metadata to remote if configured.
+
+    Called after local processing when backend=iceberg and remote is set.
+    Uploads: data files, STAC item JSON, collection JSON, and catalog.json.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_id: Collection identifier.
+        item_id: Item identifier.
+        item_dir: Path to the item directory containing data files.
+        asset_files: Dict mapping filename to (path, checksum) tuples.
+        remote: Remote URL (e.g., gs://bucket/catalog). None means skip upload.
+    """
+    if remote is None:
+        return
+
+    remote = remote.rstrip("/")
+
+    # Upload data files
+    for filename, (file_path, _checksum) in asset_files.items():
+        if file_path.exists():
+            dest = f"{remote}/{collection_id}/{item_id}/{filename}"
+            upload_file(source=file_path, destination=dest)
+
+    # Upload STAC item JSON
+    item_json = item_dir / f"{item_id}.json"
+    if item_json.exists():
+        dest = f"{remote}/{collection_id}/{item_id}/{item_id}.json"
+        upload_file(source=item_json, destination=dest)
+
+    # Upload STAC collection JSON
+    collection_json = catalog_root / collection_id / "collection.json"
+    if collection_json.exists():
+        dest = f"{remote}/{collection_id}/collection.json"
+        upload_file(source=collection_json, destination=dest)
+
+    # Upload root catalog.json
+    catalog_json = catalog_root / "catalog.json"
+    if catalog_json.exists():
+        dest = f"{remote}/catalog.json"
+        upload_file(source=catalog_json, destination=dest)
 
 
 def _update_versions(
@@ -2829,11 +2882,7 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
     filename = file_path.name
     parquet_name = f"{file_path.stem}.parquet"
 
-    removed_keys = {
-        name
-        for name in current.assets
-        if name == filename or name == parquet_name
-    }
+    removed_keys = {name for name in current.assets if name == filename or name == parquet_name}
 
     if not removed_keys:
         # File wasn't tracked, nothing to do
