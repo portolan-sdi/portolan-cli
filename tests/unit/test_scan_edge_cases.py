@@ -2,10 +2,15 @@
 
 from pathlib import Path
 
+import pytest
+
 from portolan_cli.scan_detect import detect_stac_catalogs
 
+pytestmark = pytest.mark.unit
 
-def test_error_on_catalog_and_collection_in_same_directory(tmp_path: Path):
+
+@pytest.mark.unit
+def test_error_on_catalog_and_collection_in_same_directory(tmp_path: Path) -> None:
     """Test that directories with both catalog.json and collection.json are detected as errors."""
     # Create a directory with both files
     mixed_dir = tmp_path / "mixed"
@@ -27,7 +32,8 @@ def test_error_on_catalog_and_collection_in_same_directory(tmp_path: Path):
     assert catalog_files[0].path.parent == collection_files[0].path.parent
 
 
-def test_nested_catalogs_are_detected(tmp_path: Path):
+@pytest.mark.unit
+def test_nested_catalogs_are_detected(tmp_path: Path) -> None:
     """Test that nested catalog.json files are detected."""
     # Create nested structure
     root_catalog = tmp_path / "catalog.json"
@@ -48,7 +54,8 @@ def test_nested_catalogs_are_detected(tmp_path: Path):
     assert len(catalog_files) == 3
 
 
-def test_nested_collections_are_detected(tmp_path: Path):
+@pytest.mark.unit
+def test_nested_collections_are_detected(tmp_path: Path) -> None:
     """Test that collections at any depth are detected."""
     # Create nested structure with collections
     root_catalog = tmp_path / "catalog.json"

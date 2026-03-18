@@ -107,11 +107,13 @@ class TestValidateCollectionId:
         with pytest.raises(InputValidationError, match="URL-encoded"):
             validate_collection_id("%2e%2e")  # Encoded ../
 
-    def test_rejects_path_separators(self) -> None:
-        """Path separators are rejected (collections are flat)."""
-        with pytest.raises(InputValidationError, match="Path separators"):
-            validate_collection_id("parent/child")
-        with pytest.raises(InputValidationError, match="Path separators"):
+    def test_allows_forward_slashes_rejects_backslashes(self) -> None:
+        """Forward slashes allowed for nested catalogs (ADR-0032), backslashes rejected."""
+        # Forward slashes are allowed (nested catalog paths)
+        validate_collection_id("environment/air-quality")  # Should not raise
+
+        # Backslashes are still rejected
+        with pytest.raises(InputValidationError, match="Backslashes"):
             validate_collection_id("parent\\child")
 
     def test_rejects_uppercase(self) -> None:

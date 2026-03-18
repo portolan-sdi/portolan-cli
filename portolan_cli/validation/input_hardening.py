@@ -128,17 +128,15 @@ def validate_collection_id(collection_id: str) -> str:
             "URL-encoded characters not allowed in collection ID (provide raw ID, not encoded)"
         )
 
-    # Reject path separators (collections are flat, not nested)
-    if "/" in collection_id or "\\" in collection_id:
-        raise InputValidationError(
-            "Path separators not allowed in collection ID (collections are flat)"
-        )
+    # Reject backslashes (forward slashes allowed for nested catalogs per ADR-0032)
+    if "\\" in collection_id:
+        raise InputValidationError("Backslashes not allowed in collection ID")
 
-    # STAC recommendation: use lowercase with hyphens
-    if not re.match(r"^[a-z0-9][a-z0-9\-_]*$", collection_id):
+    # STAC recommendation: use lowercase with hyphens (and forward slashes for paths per ADR-0032)
+    if not re.match(r"^[a-z][a-z0-9\-_/]*$", collection_id):
         raise InputValidationError(
-            f"Collection ID '{collection_id}' should match pattern: lowercase alphanumeric, "
-            "hyphens, underscores (STAC best practice)"
+            f"Collection ID '{collection_id}' should match pattern: lowercase letters, numbers, "
+            "hyphens, underscores, forward slashes (STAC best practice + ADR-0032)"
         )
 
     return collection_id
