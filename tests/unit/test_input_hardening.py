@@ -67,6 +67,26 @@ class TestValidateSafePath:
         safe_path = validate_safe_path(Path("relative.txt"))
         assert safe_path.is_absolute()
 
+    def test_rejects_path_with_excessive_nesting(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test handling of OSError from path.resolve() for deeply nested paths."""
+
+        class PathWithOSError(type(tmp_path)):
+            """Path subclass that raises OSError on resolve()."""
+
+            def resolve(self, strict: bool = False) -> Path:
+                """Simulate OSError during path resolution."""
+                if "trigger_error" in str(self):
+                    raise OSError("Path too deep or filesystem error")
+                return super().resolve(strict=strict)
+
+        # Create a path that will trigger the error
+        error_path = PathWithOSError(tmp_path / "trigger_error" / "file.txt")
+
+        with pytest.raises(InputValidationError, match="Cannot resolve path"):
+            validate_safe_path(error_path, tmp_path)
+
 
 @pytest.mark.unit
 class TestValidateCollectionId:
@@ -245,6 +265,23 @@ class TestValidateRemoteUrl:
             validate_remote_url("https:///path")
         with pytest.raises(InputValidationError, match="missing host/bucket"):
             validate_remote_url("gs://")
+
+    def test_handles_urlparse_value_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test handling of ValueError from urlparse (rare edge case)."""
+        from urllib import parse as urllib_parse
+
+        original_urlparse = urllib_parse.urlparse
+
+        def mock_urlparse(url: str, *args, **kwargs):
+            """Mock urlparse that raises ValueError for specific input."""
+            if "trigger_value_error" in url:
+                raise ValueError("Invalid URL characters")
+            return original_urlparse(url, *args, **kwargs)
+
+        monkeypatch.setattr("portolan_cli.validation.input_hardening.urlparse", mock_urlparse)
+
+        with pytest.raises(InputValidationError, match="Malformed URL"):
+            validate_remote_url("s3://trigger_value_error/path")
 
 
 @pytest.mark.unit
