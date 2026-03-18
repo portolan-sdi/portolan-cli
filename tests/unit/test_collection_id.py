@@ -76,14 +76,13 @@ class TestValidateCollectionId:
         assert error is not None
         assert "invalid character" in error.lower() or "space" in error.lower()
 
-    # Invalid: contains special characters
+    # Invalid: contains special characters (note: forward slash is now valid for paths)
     @pytest.mark.parametrize(
         "collection_id",
         [
             "my@data",
             "census!2020",
             "data.set",
-            "path/traversal",
             "back\\slash",
         ],
     )
@@ -158,14 +157,13 @@ class TestNormalizeCollectionId:
         """Basic normalization should lowercase and replace spaces."""
         assert normalize_collection_id(input_id) == expected
 
-    # Special character replacement
+    # Special character replacement (note: forward slash preserved for paths)
     @pytest.mark.parametrize(
         ("input_id", "expected"),
         [
             ("my@data", "my-data"),
             ("census!2020", "census-2020"),
             ("data.set", "data-set"),
-            ("path/traversal", "path-traversal"),
         ],
     )
     def test_special_char_replacement(self, input_id: str, expected: str) -> None:

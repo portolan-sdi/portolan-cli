@@ -16,13 +16,17 @@ from __future__ import annotations
 import re
 import unicodedata
 
-# Pattern for valid collection IDs:
+# Pattern for valid collection IDs (supports path syntax per ADR-0032):
 # - Start with lowercase letter
-# - Followed by lowercase letters, numbers, hyphens, or underscores
-VALID_COLLECTION_ID_PATTERN: re.Pattern[str] = re.compile(r"^[a-z][a-z0-9_-]*$")
+# - Followed by lowercase letters, numbers, hyphens, underscores, or forward slashes
+# - No leading/trailing/double slashes
+# - Each segment must start with a letter
+VALID_COLLECTION_ID_PATTERN: re.Pattern[str] = re.compile(
+    r"^[a-z][a-z0-9_-]*(?:/[a-z][a-z0-9_-]*)*$"
+)
 
-# Pattern for invalid characters (anything not lowercase letter, number, hyphen, underscore)
-INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[^a-z0-9_-]")
+# Pattern for invalid characters (anything not lowercase letter, number, hyphen, underscore, slash)
+INVALID_CHAR_PATTERN: re.Pattern[str] = re.compile(r"[^a-z0-9_/-]")
 
 
 class CollectionIdError(ValueError):
@@ -98,10 +102,11 @@ def normalize_collection_id(collection_id: str) -> str:
     Transformations applied:
     1. Lowercase
     2. Transliterate non-ASCII to ASCII
-    3. Replace invalid characters (spaces, special chars) with hyphens
+    3. Replace invalid characters (spaces, special chars) with hyphens (preserves slashes)
     4. Collapse multiple consecutive hyphens
-    5. Strip leading/trailing hyphens
-    6. Prefix with 'n' if starts with a number
+    5. Strip leading/trailing hyphens and slashes
+    6. Collapse double slashes
+    7. Prefix segments with 'n' if they start with a number
 
     Args:
         collection_id: The collection ID to normalize.
@@ -122,14 +127,17 @@ def normalize_collection_id(collection_id: str) -> str:
     # Step 2: Transliterate non-ASCII
     result = _transliterate_to_ascii(result)
 
-    # Step 3: Replace invalid characters with hyphens
+    # Step 3: Replace invalid characters with hyphens (preserves slashes)
     result = INVALID_CHAR_PATTERN.sub("-", result)
 
     # Step 4: Collapse multiple consecutive hyphens
     result = re.sub(r"-+", "-", result)
 
-    # Step 5: Strip leading/trailing hyphens
-    result = result.strip("-")
+    # Step 5: Strip leading/trailing hyphens and slashes
+    result = result.strip("-/")
+
+    # Step 6: Collapse double slashes
+    result = re.sub(r"/+", "/", result)
 
     # Check if result is empty after normalization
     if not result:
@@ -137,9 +145,22 @@ def normalize_collection_id(collection_id: str) -> str:
             f"Collection ID '{collection_id}' cannot be normalized - no valid characters remain"
         )
 
-    # Step 6: Prefix with 'n' if doesn't start with a letter
-    # (handles digits, underscores, or hyphens that survived stripping)
-    if not result[0].isalpha():
-        result = f"n{result}"
+    # Step 7: Prefix segments with 'n' if they start with a number
+    # Split by slash, fix each segment, rejoin
+    segments = result.split("/")
+    fixed_segments = []
+    for segment in segments:
+        # Strip hyphens from segment boundaries
+        segment = segment.strip("-")
+        if segment:  # Skip empty segments
+            # Prefix with 'n' if doesn't start with a letter
+            if not segment[0].isalpha():
+                segment = f"n{segment}"
+            fixed_segments.append(segment)
 
-    return result
+    if not fixed_segments:
+        raise CollectionIdError(
+            f"Collection ID '{collection_id}' cannot be normalized - no valid characters remain"
+        )
+
+    return "/".join(fixed_segments)
