@@ -501,3 +501,147 @@ class Catalog:
         init_catalog(root)
 
         return cls(root)
+
+
+def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None:
+    """Create intermediate catalog.json files for nested collection paths (ADR-0032).
+
+    For a nested collection ID like "climate/hittekaart", this creates:
+    - climate/catalog.json (intermediate catalog)
+
+    For deeper nesting like "env/air/quality", this creates:
+    - env/catalog.json
+    - env/air/catalog.json
+
+    Single-level collection IDs (e.g., "demographics") create no intermediate catalogs
+    since the directory will contain collection.json directly.
+
+    Args:
+        collection_id: The nested collection ID (e.g., "climate/hittekaart").
+        catalog_root: Root directory of the catalog.
+    """
+    parts = collection_id.split("/")
+
+    # No intermediates needed for single-level collections
+    if len(parts) <= 1:
+        return
+
+    # Create catalog.json at each intermediate level (all but the last)
+    for i in range(len(parts) - 1):
+        intermediate_path = "/".join(parts[: i + 1])
+        catalog_dir = catalog_root / intermediate_path
+        catalog_file = catalog_dir / "catalog.json"
+
+        # Skip if already exists
+        if catalog_file.exists():
+            continue
+
+        # Create directory if needed
+        catalog_dir.mkdir(parents=True, exist_ok=True)
+
+        # Calculate relative path depth for links
+        depth = i + 1  # How many levels deep from root
+        parent_href = "../" * depth + "catalog.json"
+
+        # Create intermediate catalog
+        catalog_data = {
+            "type": "Catalog",
+            "id": intermediate_path,
+            "stac_version": "1.1.0",
+            "description": f"Catalog: {intermediate_path}",
+            "links": [
+                {"rel": "root", "href": parent_href, "type": "application/json"},
+                {"rel": "parent", "href": parent_href, "type": "application/json"},
+                {"rel": "self", "href": "./catalog.json", "type": "application/json"},
+            ],
+        }
+
+        catalog_file.write_text(json.dumps(catalog_data, indent=2))
+
+
+def update_catalog_links_for_nested(catalog_root: Path, collection_id: str) -> None:
+    """Update catalog links for nested collection structure (ADR-0032).
+
+    Ensures:
+    - Root catalog links to intermediate catalogs (not directly to leaf collections)
+    - Intermediate catalogs link to their child catalogs/collections
+
+    For "climate/hittekaart":
+    - Root catalog links to ./climate/catalog.json
+    - climate/catalog.json links to ./hittekaart/collection.json
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_id: The nested collection ID (e.g., "climate/hittekaart").
+    """
+    parts = collection_id.split("/")
+
+    # For single-level collections, just ensure root links to collection
+    if len(parts) == 1:
+        _ensure_root_links_to_child(catalog_root, f"./{parts[0]}/collection.json")
+        return
+
+    # For nested collections:
+    # 1. Root links to first-level catalog
+    first_level = parts[0]
+    _ensure_root_links_to_child(catalog_root, f"./{first_level}/catalog.json")
+
+    # 2. Each intermediate catalog links to next level
+    for i in range(len(parts) - 1):
+        intermediate_path = "/".join(parts[: i + 1])
+        catalog_file = catalog_root / intermediate_path / "catalog.json"
+
+        if not catalog_file.exists():
+            continue
+
+        # Determine what the intermediate should link to
+        next_part = parts[i + 1]
+        is_last_intermediate = i == len(parts) - 2
+
+        if is_last_intermediate:
+            # Link to leaf collection
+            child_href = f"./{next_part}/collection.json"
+        else:
+            # Link to next intermediate catalog
+            child_href = f"./{next_part}/catalog.json"
+
+        _ensure_catalog_links_to_child(catalog_file, child_href)
+
+
+def _ensure_root_links_to_child(catalog_root: Path, child_href: str) -> None:
+    """Ensure root catalog has a child link."""
+    catalog_file = catalog_root / "catalog.json"
+    if not catalog_file.exists():
+        return
+
+    content = json.loads(catalog_file.read_text())
+    links = content.get("links", [])
+
+    # Check if link already exists
+    existing_hrefs = {link.get("href") for link in links if link.get("rel") == "child"}
+    if child_href in existing_hrefs:
+        return
+
+    # Add the child link
+    links.append({"rel": "child", "href": child_href, "type": "application/json"})
+    content["links"] = links
+    catalog_file.write_text(json.dumps(content, indent=2))
+
+
+def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
+    """Ensure a catalog file has a child link."""
+    if not catalog_file.exists():
+        return
+
+    content = json.loads(catalog_file.read_text())
+    links = content.get("links", [])
+
+    # Check if link already exists
+    existing_hrefs = {link.get("href") for link in links if link.get("rel") == "child"}
+    if child_href in existing_hrefs:
+        return
+
+    # Add the child link
+    links.append({"rel": "child", "href": child_href, "type": "application/json"})
+    content["links"] = links
+    catalog_file.write_text(json.dumps(content, indent=2))

@@ -426,14 +426,17 @@ def add_dataset(
         ValueError: If the format is unsupported or collection_id is invalid.
         FileNotFoundError: If the source file doesn't exist.
     """
-    # First check: reject path-like collection IDs (security check)
+    # First check: reject unsafe collection IDs (security check)
+    # Per ADR-0032: forward slashes allowed for nested catalogs
     if (
         not collection_id
-        or "/" in collection_id
         or "\\" in collection_id
         or collection_id in {".", ".."}
+        or any(part in {".", ".."} for part in collection_id.split("/"))
     ):
-        raise ValueError(f"Invalid collection_id '{collection_id}': must be a single path segment")
+        raise ValueError(
+            f"Invalid collection_id '{collection_id}': backslashes and . or .. segments not allowed"
+        )
 
     # Second check: validate collection ID format per STAC spec
     is_valid, error_msg = validate_collection_id(collection_id)
@@ -462,15 +465,16 @@ def add_dataset(
     if item_id is None:
         item_id = path.parent.name
 
-    # Validate IDs are safe single path segments
-    for label, value in [("collection_id", collection_id), ("item_id", item_id)]:
-        if not value or "/" in value or "\\" in value or value in {".", ".."}:
-            raise ValueError(f"Invalid {label} '{value}': must be a single path segment")
+    # Validate item_id is a safe single path segment
+    # (collection_id can be nested per ADR-0032, validated above)
+    if not item_id or "/" in item_id or "\\" in item_id or item_id in {".", ".."}:
+        raise ValueError(f"Invalid item_id '{item_id}': must be a single path segment")
 
     # Set up paths - track files IN-PLACE (Issue #163)
     # The file's parent directory IS the item directory.
     # No copying needed; assets stay where they are.
-    collection_dir = catalog_root / collection_id
+    # Handle nested collection IDs (ADR-0032)
+    collection_dir = catalog_root / Path(*collection_id.split("/"))
     item_dir = path.parent  # Use existing directory, don't create new one
 
     # Verify structural consistency: item_dir should be inside collection_dir
@@ -727,14 +731,14 @@ def _get_or_create_collection(
 
     Args:
         catalog_root: Root directory of the catalog.
-        collection_id: Collection identifier.
+        collection_id: Collection identifier (may be nested path like "climate/hittekaart").
         initial_bbox: Initial bounding box for new collections.
 
     Returns:
         pystac.Collection object.
     """
-    # STAC at root level (per ADR-0023)
-    collection_path = catalog_root / collection_id / "collection.json"
+    # STAC at root level (per ADR-0023), handle nested paths (per ADR-0032)
+    collection_path = catalog_root / Path(*collection_id.split("/")) / "collection.json"
 
     if collection_path.exists():
         return pystac.Collection.from_file(str(collection_path))
@@ -750,11 +754,21 @@ def _get_or_create_collection(
 def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
     """Ensure catalog has link to collection.
 
+    For nested collection IDs (ADR-0032), delegates to update_catalog_links_for_nested
+    which properly links through the catalog hierarchy.
+
     Args:
         catalog_root: Root directory of the catalog.
-        collection_id: Collection identifier.
+        collection_id: Collection identifier (may be nested like "climate/hittekaart").
     """
-    # Catalog at root level (per ADR-0023)
+    # For nested collection IDs, use the nested catalog link updater (ADR-0032)
+    if "/" in collection_id:
+        from portolan_cli.catalog import update_catalog_links_for_nested
+
+        update_catalog_links_for_nested(catalog_root, collection_id)
+        return
+
+    # For single-level collections, add direct link from root
     catalog_path = catalog_root / "catalog.json"
     catalog = load_catalog(catalog_path)
 
@@ -1221,6 +1235,54 @@ def resolve_collection_id(path: Path, catalog_root: Path) -> str:
     return parts[0]
 
 
+def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
+    """Infer nested collection ID from a file path (ADR-0032).
+
+    Unlike resolve_collection_id() which returns only the first component,
+    this returns the full nested path representing the leaf collection.
+
+    Per ADR-0032: Nested catalogs with flat collections means:
+    - Intermediate directories become catalogs (organizational)
+    - The parent directory of the data file is the collection
+
+    Examples:
+        climate/hittekaart/data.parquet -> "climate/hittekaart"
+        env/air/quality/pm25.parquet -> "env/air/quality"
+        demographics/data.parquet -> "demographics"
+
+    Args:
+        path: Path to the file.
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        Collection ID (full path of parent directory relative to catalog root).
+
+    Raises:
+        ValueError: If path is not inside catalog root or at root level.
+    """
+    # Get path relative to catalog root
+    try:
+        relative = path.resolve().relative_to(catalog_root.resolve())
+    except ValueError as err:
+        raise ValueError(f"Path {path} is outside catalog root {catalog_root}") from err
+
+    # Get parent directory path (all components except filename)
+    parts = relative.parts
+    if not parts:
+        raise ValueError(f"Cannot determine collection from path: {path}")
+
+    # File must be in at least one subdirectory
+    if path.is_file() and len(parts) == 1:
+        raise ValueError(f"File {path} must be in a subdirectory (collection)")
+
+    # Return parent directory path as collection ID (all but last component)
+    parent_parts = parts[:-1] if path.is_file() else parts
+    if not parent_parts:
+        raise ValueError(f"File {path} must be in a subdirectory (collection)")
+
+    return "/".join(parent_parts)
+
+
 def is_current(
     path: Path,
     versions_path: Path,
@@ -1335,6 +1397,25 @@ def _copy_non_geo_to_item_dir(
     return dest_path
 
 
+def _ensure_nested_catalogs(
+    collection_id: str, catalog_root: Path, setup_collections: set[str]
+) -> None:
+    """Ensure intermediate catalogs exist for nested collection IDs (ADR-0032).
+
+    Args:
+        collection_id: The collection ID (may be nested like "climate/hittekaart").
+        catalog_root: Root directory of the catalog.
+        setup_collections: Set of already-setup collection IDs (mutated).
+    """
+    if collection_id in setup_collections:
+        return
+
+    from portolan_cli.catalog import create_intermediate_catalogs
+
+    create_intermediate_catalogs(collection_id, catalog_root)
+    setup_collections.add(collection_id)
+
+
 def add_files(
     *,
     paths: list[Path],
@@ -1386,6 +1467,10 @@ def add_files(
     failures: list[AddFailure] = []
     processed_paths: set[Path] = set()
 
+    # Track which nested collections have had their catalogs set up (ADR-0032)
+    # Avoids redundant intermediate catalog creation
+    setup_collections: set[str] = set()
+
     # Track source_dir -> item_dir mappings for non-geo file placement (ADR-0028)
     # Key: source directory, Value: (item_dir, collection_id, item_id)
     source_to_item_dir: dict[Path, tuple[Path, str, str]] = {}
@@ -1416,11 +1501,11 @@ def add_files(
             if file_path.suffix.lower() not in GEOSPATIAL_EXTENSIONS:
                 continue
 
-            # Determine collection ID
+            # Determine collection ID (ADR-0032: use full nested path)
             coll_id = collection_id
             if coll_id is None:
                 try:
-                    coll_id = resolve_collection_id(file_path, catalog_root)
+                    coll_id = infer_nested_collection_id(file_path, catalog_root)
                 except ValueError:
                     # File is at catalog root level (not in a collection subdirectory).
                     # During recursive add (collection_id=None), skip with a warning
@@ -1435,8 +1520,8 @@ def add_files(
                     skipped.append(file_path)
                     continue
 
-            # Check if unchanged
-            versions_path = catalog_root / coll_id / "versions.json"
+            # Check if unchanged (handle nested paths per ADR-0032)
+            versions_path = catalog_root / Path(*coll_id.split("/")) / "versions.json"
             if is_current(file_path, versions_path):
                 skipped.append(file_path)
                 continue
@@ -1444,6 +1529,9 @@ def add_files(
             # Invoke progress callback before processing
             if on_progress is not None:
                 on_progress(file_path)
+
+            # Set up nested catalog structure if not already done (ADR-0032)
+            _ensure_nested_catalogs(coll_id, catalog_root, setup_collections)
 
             # Add the file
             try:
@@ -1457,7 +1545,7 @@ def add_files(
 
                 # Track source_dir -> item_dir mapping for non-geo file placement
                 source_dir = file_path.parent
-                item_dir = catalog_root / coll_id / result.item_id
+                item_dir = catalog_root / Path(*coll_id.split("/")) / result.item_id
                 source_to_item_dir[source_dir] = (item_dir, coll_id, result.item_id)
 
             except click.ClickException as err:

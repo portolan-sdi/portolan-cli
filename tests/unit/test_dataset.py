@@ -935,12 +935,26 @@ class TestAddDatasetItemIdDerivation:
 class TestPathSegmentValidation:
     """Tests for item_id and collection_id path traversal prevention."""
 
-    _UNSAFE_IDS = [
+    # item_id must always be a single segment (no slashes)
+    _UNSAFE_ITEM_IDS = [
         pytest.param("../etc", id="traversal"),
         pytest.param("a/b", id="slash"),
         pytest.param("a\\b", id="backslash"),
         pytest.param(".", id="dot"),
         pytest.param("..", id="dotdot"),
+        pytest.param("", id="empty"),
+    ]
+
+    # collection_id allows slashes per ADR-0032 (nested catalogs),
+    # but still rejects traversal, backslashes, and special segments
+    _UNSAFE_COLLECTION_IDS = [
+        pytest.param("../etc", id="traversal"),
+        pytest.param("a/../b", id="traversal_in_path"),
+        pytest.param("a\\b", id="backslash"),
+        pytest.param(".", id="dot"),
+        pytest.param("..", id="dotdot"),
+        pytest.param("a/./b", id="dot_in_path"),
+        pytest.param("a/../b", id="dotdot_in_path"),
         pytest.param("", id="empty"),
     ]
 
@@ -951,7 +965,7 @@ class TestPathSegmentValidation:
     )
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("bad_id", _UNSAFE_IDS)
+    @pytest.mark.parametrize("bad_id", _UNSAFE_ITEM_IDS)
     def test_rejects_unsafe_item_id(
         self, initialized_catalog: Path, tmp_path: Path, bad_id: str
     ) -> None:
@@ -968,15 +982,19 @@ class TestPathSegmentValidation:
             )
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("bad_id", _UNSAFE_IDS)
+    @pytest.mark.parametrize("bad_id", _UNSAFE_COLLECTION_IDS)
     def test_rejects_unsafe_collection_id(
         self, initialized_catalog: Path, tmp_path: Path, bad_id: str
     ) -> None:
-        """add_dataset rejects collection_id values with path separators or traversal."""
+        """add_dataset rejects collection_id values with traversal or backslashes.
+
+        Per ADR-0032, forward slashes ARE allowed for nested catalog paths
+        (e.g., 'climate/hittekaart'), but traversal segments are rejected.
+        """
         geojson_path = tmp_path / "data.geojson"
         geojson_path.write_text(self._GEOJSON)
 
-        with pytest.raises(ValueError, match="must be a single path segment"):
+        with pytest.raises(ValueError, match="not allowed"):
             add_dataset(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
