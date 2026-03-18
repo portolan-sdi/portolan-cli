@@ -132,10 +132,12 @@ def validate_collection_id(collection_id: str) -> str:
     if "\\" in collection_id:
         raise InputValidationError("Backslashes not allowed in collection ID")
 
-    # STAC recommendation: use lowercase with hyphens (and forward slashes for paths per ADR-0032)
-    if not re.match(r"^[a-z][a-z0-9\-_/]*$", collection_id):
+    # STAC recommendation: lowercase with hyphens, each segment must start with letter (ADR-0032)
+    # Pattern: segments separated by /, each segment starts with letter, followed by letters/numbers/hyphens/underscores
+    if not re.match(r"^[a-z][a-z0-9_-]*(?:/[a-z][a-z0-9_-]*)*$", collection_id):
         raise InputValidationError(
-            f"Collection ID '{collection_id}' should match pattern: lowercase letters, numbers, "
+            f"Collection ID '{collection_id}' invalid: must start with lowercase letter, "
+            "each path segment must start with letter, use only lowercase letters, numbers, "
             "hyphens, underscores, forward slashes (STAC best practice + ADR-0032)"
         )
 

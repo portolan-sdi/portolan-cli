@@ -116,6 +116,27 @@ class TestValidateCollectionId:
         with pytest.raises(InputValidationError, match="Backslashes"):
             validate_collection_id("parent\\child")
 
+    def test_rejects_path_segments_starting_with_numbers(self) -> None:
+        """Path segments starting with numbers are rejected (ADR-0032)."""
+        with pytest.raises(InputValidationError, match="must start with"):
+            validate_collection_id("environment/2024")
+        with pytest.raises(InputValidationError, match="must start with"):
+            validate_collection_id("2024/january")
+
+    def test_rejects_path_segments_starting_with_hyphen(self) -> None:
+        """Path segments starting with hyphens are rejected (ADR-0032)."""
+        with pytest.raises(InputValidationError, match="must start with"):
+            validate_collection_id("environment/-air")
+        with pytest.raises(InputValidationError, match="must start with"):
+            validate_collection_id("-environment/air")
+
+    def test_rejects_path_segments_starting_with_underscore(self) -> None:
+        """Path segments starting with underscores are rejected (ADR-0032)."""
+        with pytest.raises(InputValidationError, match="must start with"):
+            validate_collection_id("environment/_quality")
+        with pytest.raises(InputValidationError, match="must start with"):
+            validate_collection_id("_environment/quality")
+
     def test_rejects_uppercase(self) -> None:
         """Uppercase characters violate STAC best practice."""
         with pytest.raises(InputValidationError, match="lowercase"):

@@ -80,6 +80,27 @@ class TestCollectionIdPathSyntax:
         is_valid, error = validate_collection_id("environment//air-quality")
         assert not is_valid
 
+    def test_validate_path_rejects_segment_starting_with_number(self) -> None:
+        """Test that path segments starting with numbers are rejected."""
+        is_valid, error = validate_collection_id("environment/2024")
+        assert not is_valid
+        is_valid, error = validate_collection_id("2024/january")
+        assert not is_valid
+
+    def test_validate_path_rejects_segment_starting_with_hyphen(self) -> None:
+        """Test that path segments starting with hyphens are rejected."""
+        is_valid, error = validate_collection_id("environment/-air")
+        assert not is_valid
+        is_valid, error = validate_collection_id("-environment/air")
+        assert not is_valid
+
+    def test_validate_path_rejects_segment_starting_with_underscore(self) -> None:
+        """Test that path segments starting with underscores are rejected."""
+        is_valid, error = validate_collection_id("environment/_quality")
+        assert not is_valid
+        is_valid, error = validate_collection_id("_environment/quality")
+        assert not is_valid
+
     def test_normalize_path_with_uppercase(self) -> None:
         """Test normalizing path with uppercase letters."""
         result = normalize_collection_id("Environment/Air-Quality")
@@ -114,6 +135,27 @@ class TestCollectionIdPathSyntax:
         """Test that path with only slashes raises error."""
         with pytest.raises(CollectionIdError, match="no valid characters remain"):
             normalize_collection_id("///")
+
+    def test_normalize_path_with_numeric_segment(self) -> None:
+        """Test normalizing path with segment starting with number."""
+        result = normalize_collection_id("environment/2024")
+        assert result == "environment/n2024"
+
+    def test_normalize_path_with_hyphen_segment(self) -> None:
+        """Test normalizing path with segment starting with hyphen."""
+        result = normalize_collection_id("environment/-air")
+        assert result == "environment/air"  # Leading hyphen stripped from segment
+
+    def test_normalize_path_with_underscore_segment(self) -> None:
+        """Test normalizing path with segment starting with underscore."""
+        result = normalize_collection_id("environment/_quality")
+        # Underscore is preserved, segment prefixed with 'n' since doesn't start with letter
+        assert result == "environment/n_quality"
+
+    def test_normalize_numeric_first_segment(self) -> None:
+        """Test normalizing path where first segment starts with number."""
+        result = normalize_collection_id("2024/january")
+        assert result == "n2024/january"
 
 
 @pytest.mark.unit
