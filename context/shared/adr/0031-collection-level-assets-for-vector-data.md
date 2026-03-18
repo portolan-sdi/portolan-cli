@@ -37,27 +37,35 @@ A vector file contains **many features** (rows in a table), not a single spatiot
 
 ## Decision
 
-**Vector datasets (GeoParquet, Shapefile, GeoPackage, FlatGeobuf) are collection-level assets by default.**
+**Vector datasets are collection-level assets by default.**
 
-**Raster datasets (GeoTIFF, COG, NetCDF) are item-level assets (unchanged from current behavior).**
+**Exception: Partitioned vector datasets use items per partition.**
 
-### Decision Criteria
+**Raster datasets are item-level assets (unchanged from current behavior).**
 
-When `portolan add` encounters a file:
+### Decision Criteria (from Chris Holmes)
 
-| File Type | Detection | Recommended Organization |
-|-----------|-----------|--------------------------|
-| GeoParquet (`.parquet` with `geo` metadata) | Via geoparquet-io | **Collection-level asset** |
-| Shapefile (`.shp`) | File extension | **Collection-level asset** |
-| GeoPackage (`.gpkg`) | File signature | **Collection-level asset** |
-| FlatGeobuf (`.fgb`) | File extension | **Collection-level asset** |
-| GeoTIFF (`.tif` with georeferencing) | Via rasterio | **Item-level asset** |
-| COG (cloud-optimized GeoTIFF) | Via rasterio | **Item-level asset** |
+**Rule 1: Default to single file**
+- If dataset < 2GB: One GeoParquet file = one collection-level asset
 
-**Exceptions:**
+**Rule 2: Respect provider's intent**
+- If provider splits by year/theme and treats each as separate dataset: Each becomes its own collection (even if same schema)
 
-- **Time-series vector data** (e.g., daily traffic observations in GeoParquet) → Use items (one per time slice)
-- **User override** → Allow `--item` flag to force item-level organization if user has a specific reason
+**Rule 3: Partitioned datasets**
+- When vector data is partitioned (typically for datasets > 2GB): **Items per partition**
+- This is the **one valid case for using STAC items with vector data**
+- Partitions can be Hive-style (`date=2024-01-15/`) or simple file splits
+
+**Rule 4: Raster data**
+- Always item-level (unchanged)
+
+### Organization Patterns
+
+| Pattern | Detection | Organization |
+|---------|-----------|--------------|
+| Single GeoParquet/Shapefile/GeoPackage | Via format detection | **Collection-level asset** |
+| Partitioned GeoParquet (Hive or file splits) | Detect partition structure | **Item per partition** |
+| GeoTIFF/COG | Via rasterio | **Item-level asset** |
 
 ### Collection Metadata
 
@@ -94,13 +102,27 @@ Metadata is extracted from:
 
 ### Example Structures
 
-**Vector data (collection-level):**
+**Small vector dataset (collection-level):**
 ```
 catalog-root/
 ├── catalog.json
 └── municipalities/
     ├── collection.json          ← table:columns metadata
-    └── boundaries.parquet       ← Collection-level asset
+    └── boundaries.parquet       ← Collection-level asset (< 2GB)
+```
+
+**Large partitioned vector dataset (items per partition):**
+```
+catalog-root/
+├── catalog.json
+└── traffic-observations/
+    ├── collection.json          ← Describes whole dataset
+    ├── date=2024-01-15/
+    │   ├── item.json            ← Item for this partition
+    │   └── data.parquet
+    └── date=2024-01-16/
+        ├── item.json            ← Item for this partition
+        └── data.parquet
 ```
 
 **Raster data (item-level, unchanged):**
@@ -112,20 +134,6 @@ catalog-root/
     └── scene-2024-01-15/
         ├── item.json
         └── B1.tif               ← Item-level asset
-```
-
-**Mixed (vector collection + raster items):**
-```
-catalog-root/
-├── catalog.json
-├── boundaries/
-│   ├── collection.json
-│   └── admin.parquet            ← Vector (collection-level)
-└── imagery/
-    ├── collection.json
-    └── scene-2024-01-15/
-        ├── item.json
-        └── red.tif              ← Raster (item-level)
 ```
 
 ## Consequences
@@ -168,24 +176,20 @@ catalog-root/
 - Can't use Table Extension at collection level
 - User confusion (why does a single GeoParquet file need an item directory?)
 
-### Alternative 2: User-Specified on Every Add
+### Alternative 2: Always Use Items for Partitioned Data
 
-Force users to explicitly choose:
-```bash
-portolan add boundaries.parquet --as-collection
-portolan add scene.tif --as-item
-```
+Treat each partition file as collection-level asset (not item).
 
-**Rejected.**
+**Rejected per Chris Holmes' guidance.**
 
 **Pros:**
-- Maximum user control
-- No auto-detection errors
+- Simpler (no items for vector data ever)
+- Matches "vector = collection" rule strictly
 
 **Cons:**
-- Poor UX (extra flag on every operation)
-- Users must understand STAC semantics
-- Violates "interactive + automatable" principle (should have smart defaults)
+- Loses spatiotemporal discovery (can't search by date/region)
+- Partitions are conceptually "slices" of the dataset (items)
+- Makes STAC API search impossible for partitioned data
 
 ### Alternative 3: Collection-Level for Everything
 

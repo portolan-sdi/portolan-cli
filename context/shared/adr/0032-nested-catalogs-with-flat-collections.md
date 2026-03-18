@@ -64,40 +64,56 @@ catalog/
 
 ## Decision
 
-**Use nested catalogs for hierarchy. Keep collections flat at leaf level.**
+**Use nested catalogs for hierarchy. Catalogs can be above and below collections.**
 
-### Catalog vs Collection Usage
+### Catalog vs Collection Usage (from Chris Holmes)
 
 | STAC Entity | Purpose | Required Metadata | When to Use |
 |-------------|---------|-------------------|-------------|
-| **Catalog** | Organizational grouping | `id`, `description`, `links` (minimal) | Intermediate directories |
-| **Collection** | Dataset with discoverable metadata | `extent`, `license`, `summaries`, `providers` (extensive) | Leaf directories with data |
+| **Catalog** | Organizational grouping | `id`, `description`, `links` (minimal) | Above collections (themes), below collections (organizing items) |
+| **Collection** | Dataset with discoverable metadata | `extent`, `license`, `summaries`, `providers` (extensive) | Where data exists (vector files or raster items) |
 
-### Structure Pattern
+**Key insight:** "Catalogs can be above and below collections. So catalog for theme makes lots of sense. And then also have catalogs within a raster collection to organize the items."
 
-**Nested catalogs with leaf collections:**
+### Structure Patterns
+
+**Pattern 1: Catalogs above collections (thematic organization):**
 ```
 catalog-root/
 ├── catalog.json                    ← Root catalog
 ├── environment/
-│   ├── catalog.json                ← Sub-catalog (domain)
+│   ├── catalog.json                ← Theme catalog
 │   ├── air-quality/
 │   │   ├── collection.json         ← Collection (has data)
 │   │   └── pm25.parquet
 │   └── water-quality/
 │       ├── collection.json         ← Collection (has data)
 │       └── turbidity.parquet
-└── infrastructure/
-    ├── catalog.json                ← Sub-catalog (domain)
-    └── roads/
-        ├── collection.json         ← Collection (has data)
-        └── network.parquet
+```
+
+**Pattern 2: Catalogs below collections (organizing items within raster collection):**
+```
+catalog-root/
+├── catalog.json
+└── landsat/
+    ├── collection.json             ← Collection
+    ├── 2024/
+    │   ├── catalog.json            ← Sub-catalog organizing items by year
+    │   ├── 01-15/
+    │   │   ├── item.json
+    │   │   └── scene.tif
+    │   └── 01-16/
+    │       ├── item.json
+    │       └── scene.tif
+    └── 2023/
+        └── catalog.json            ← Sub-catalog organizing items by year
 ```
 
 **Directory mapping:**
 - **Root directory** → `catalog.json` (root catalog)
-- **Intermediate directories** → `catalog.json` (sub-catalog for organization)
-- **Leaf directories with data** → `collection.json` (full metadata)
+- **Theme/domain directories** → `catalog.json` (above collections)
+- **Data directories** → `collection.json` (where vector files or raster items exist)
+- **Organizational subdirectories within collections** → `catalog.json` (below collections, for organizing many items)
 
 ### Link Structure
 
