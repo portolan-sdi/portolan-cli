@@ -1,43 +1,12 @@
 # ADR-0032: Nested Catalogs with Flat Collections
 
 ## Status
-Proposed
+Adopted
 
 ## Context
 
-Portolan needs to support hierarchical organization of geospatial datasets (e.g., `environment → air-quality → pm25.parquet`), but the STAC specification has limitations around nested collections.
+Portolan needs to support hierarchical organization of geospatial datasets (e.g., `environment → air-quality → pm25.parquet`), but STAC APIs are flat at the collection level. Instead of using nested _collections_ for thematic or other logical groupings (theme, region, etc.), we will use nested catalogs. This is consistent, e.g., with how Planet Labs organizes their public STAC catalog, and will make it easier to expose a STAC API.
 
-**Current constraints (ADR-0012: Flat Catalog Hierarchy):**
-- Catalog has only one level: `catalog.json → collection.json → item.json`
-- No support for logical groupings (domains, subdomains, themes)
-- Users organize data in nested directories but Portolan flattens them
-
-**STAC specification allows nested collections:**
-
-> "A Collection can have parent Catalog and Collection objects, as well as child Item, Catalog, and Collection objects."
-
-**BUT with critical limitation:**
-
-> "STAC APIs are **flat at the collection level**" — nested collection hierarchies work in static file-based catalogs but have **limited support in STAC API implementations**.
-
-([Source: STAC Best Practices](https://github.com/radiantearth/stac-spec/blob/master/best-practices.md))
-
-**Real-world evidence:**
-
-We analyzed three production STAC catalogs:
-
-| Catalog | Collections | Nested Collections | Nested Catalogs |
-|---------|-------------|--------------------|-----------------|
-| **Canadian Government** | 42 | No (0%) | No (flat) |
-| **Swiss Government** | 39 | No (0%) | No (flat) |
-| **Planet Labs** | 31 | No (0%) | Yes (geographic hierarchy) |
-
-**Key findings:**
-- **Zero catalogs** use nested collections in production
-- **Planet Labs** uses nested **catalogs** (not collections) for geographic organization
-- **STAC APIs** (stac-fastapi, Franklin) don't index nested collections properly
-
-**The pattern that works:**
 ```
 catalog/
 ├── catalog.json                    ← Root catalog
@@ -51,29 +20,14 @@ catalog/
 │       └── data.parquet
 ```
 
-**NOT this (nested collections):**
-```
-catalog/
-├── catalog.json
-└── north-america/
-    ├── collection.json             ← ❌ Parent collection
-    ├── canada/
-    │   ├── collection.json         ← ❌ Child collection
-    │   └── data.parquet
-```
+([Source: STAC Best Practices](https://github.com/radiantearth/stac-spec/blob/master/best-practices.md))
+
+Catalogs can also be both above and below collections, and can, for example, be used within a raster collection to organize items.
 
 ## Decision
 
-**Use nested catalogs for hierarchy. Catalogs can be above and below collections.**
+Use nested catalogs, not collections, for hierarchy. Nested catalogs above collections are for thematic organization, while nested catalogs below collections are for organizing items.
 
-### Catalog vs Collection Usage (from Chris Holmes)
-
-| STAC Entity | Purpose | Required Metadata | When to Use |
-|-------------|---------|-------------------|-------------|
-| **Catalog** | Organizational grouping | `id`, `description`, `links` (minimal) | Above collections (themes), below collections (organizing items) |
-| **Collection** | Dataset with discoverable metadata | `extent`, `license`, `summaries`, `providers` (extensive) | Where data exists (vector files or raster items) |
-
-**Key insight:** "Catalogs can be above and below collections. So catalog for theme makes lots of sense. And then also have catalogs within a raster collection to organize the items."
 
 ### Structure Patterns
 
@@ -170,63 +124,8 @@ catalog-root/
 }
 ```
 
-### Portolan Commands
-
-**Initialize catalog with hierarchy:**
-```bash
-portolan init data/
-
-# Scans directory structure:
-# data/
-# ├── environment/
-# │   ├── air-quality/pm25.parquet
-# │   └── water-quality/turbidity.parquet
-
-# Creates:
-# - data/catalog.json (root)
-# - data/environment/catalog.json (sub-catalog)
-# - data/environment/air-quality/collection.json (leaf)
-# - data/environment/water-quality/collection.json (leaf)
-
-✓ Created 1 root catalog
-✓ Created 1 sub-catalog
-✓ Created 2 collections
-```
-
-**Add to nested catalog:**
-```bash
-cd data/environment/noise
-portolan add traffic-noise.parquet
-
-# Detects existing catalog hierarchy
-# Creates collection.json in noise/ directory
-# Updates parent catalog links
-```
-
 ## Consequences
-
-### Positive
-
-1. **STAC API compatibility**: Flat collections work with all STAC API implementations (stac-fastapi, Franklin)
-2. **Hierarchical organization**: Users can organize data logically (domains → subdomains → datasets)
-3. **Lightweight intermediate levels**: Catalogs require minimal metadata (just `id`, `description`, `links`)
-4. **Real-world validation**: Matches Planet Labs' production pattern
-5. **Clear semantics**: Catalogs = organization, Collections = data
-6. **Easier migration**: Existing flat catalogs just add intermediate `catalog.json` files (collections unchanged)
-7. **Filesystem alignment**: Directory structure mirrors STAC structure naturally
-
-### Negative
-
-1. **More files**: Intermediate directories get `catalog.json` files (adds file count)
-2. **Link maintenance**: Parent/child links must be kept in sync
-3. **Depth complexity**: Unlimited nesting could create very deep hierarchies (mitigated by validation)
-4. **Discovery UX**: STAC Browser may not highlight catalog hierarchy prominently (depends on tool)
-
-### Neutral
-
-1. **Versioning**: Both catalogs and collections can be versioned in `versions.json`
-2. **Cloud sync**: S3/GCS sync works identically for both entity types
-3. **Validation**: Catalogs have simpler validation (fewer required fields) than collections
+This provides for more logical organization of Portolan catalogs and makes STAC API implementations easier, too. Catalog metadata is also simpler and easier to maintain.
 
 ## Alternatives Considered
 
@@ -301,122 +200,6 @@ Use nested collections in static catalogs, flatten for STAC API indexing.
 **Cons:**
 - More files (catalogs at intermediate levels)
 - Link maintenance (parent/child links)
-
-## Implementation Notes
-
-### Catalog vs Collection Detection
-
-When `portolan init` scans a directory:
-
-```python
-def should_create_catalog_or_collection(directory: Path) -> str:
-    """Determine whether directory should be catalog or collection."""
-
-    # Check for data files in this directory
-    has_data_files = any(
-        f.suffix in ['.parquet', '.tif', '.shp', '.gpkg']
-        for f in directory.iterdir()
-        if f.is_file()
-    )
-
-    if has_data_files:
-        return "collection"  # Leaf level: has data
-    else:
-        return "catalog"     # Intermediate level: organizational
-```
-
-### Link Generation
-
-**Parent → Child links:**
-```python
-# In parent catalog.json
-"links": [
-    {
-        "rel": "child",
-        "href": "./air-quality/collection.json",
-        "title": "Air Quality"
-    }
-]
-```
-
-**Child → Parent links:**
-```python
-# In child collection.json
-"links": [
-    {
-        "rel": "parent",
-        "href": "../catalog.json"
-    }
-]
-```
-
-**Root links (all entities):**
-```python
-# Point to root catalog
-"links": [
-    {
-        "rel": "root",
-        "href": "../../catalog.json"  # Relative to entity
-    }
-]
-```
-
-### Depth Limits
-
-Prevent excessive nesting:
-```python
-MAX_CATALOG_DEPTH = 5  # e.g., root → domain → subdomain → theme → collection
-
-def validate_catalog_depth(catalog_path: Path) -> None:
-    """Ensure catalog hierarchy doesn't exceed maximum depth."""
-    depth = len(catalog_path.relative_to(catalog_root).parts)
-    if depth > MAX_CATALOG_DEPTH:
-        raise ValueError(f"Catalog depth {depth} exceeds maximum {MAX_CATALOG_DEPTH}")
-```
-
-### Migration from Flat Catalogs
-
-Existing flat catalogs can adopt nested structure incrementally:
-
-**Before (flat):**
-```
-catalog/
-├── catalog.json
-├── air-quality/
-│   ├── collection.json
-│   └── pm25.parquet
-└── water-quality/
-    ├── collection.json
-    └── turbidity.parquet
-```
-
-**After (nested):**
-```
-catalog/
-├── catalog.json             ← Updated with child link
-├── environment/
-│   ├── catalog.json         ← New sub-catalog
-│   ├── air-quality/
-│   │   ├── collection.json  ← Unchanged
-│   │   └── pm25.parquet
-│   └── water-quality/
-│       ├── collection.json  ← Unchanged
-│       └── turbidity.parquet
-```
-
-**Migration steps:**
-1. Create intermediate `catalog.json` files
-2. Update parent catalog with `child` links
-3. Update collections with new `parent` links (now point to sub-catalog)
-4. Collections themselves unchanged (no breaking change)
-
-### Testing
-
-- **Unit tests**: Catalog vs collection detection logic
-- **Integration tests**: `portolan init` with nested directories
-- **Link validation**: Ensure parent/child/root links are correct
-- **STAC validation**: Validate catalogs and collections with pystac
-- **Real-world tests**: Den Haag datasets, multi-domain structures
 
 ## Related
 
