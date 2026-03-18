@@ -143,19 +143,26 @@ Treat all data as collection-level assets.
 
 ### Alternative 4: Hybrid with Manual Override
 
-Auto-detect vector vs raster, recommend pattern, allow override.
+Auto-detect vector vs raster, recommend pattern, allow user override flags.
 
-**Accepted (this is the decision).**
+**Considered but rejected in favor of automatic detection only.**
 
-**Pros:**
-- Smart defaults reduce cognitive load
-- Users can override for edge cases
-- Aligns with STAC best practices
-- Supports both patterns when needed (e.g., time-series vector data)
+During design, we considered adding flags like `--collection-level` or `--item-level` to allow users to override automatic detection. However, this was intentionally removed (see Decision section) because:
 
-**Cons:**
-- Format detection can fail (mitigated by clear error messages)
-- Adds complexity to `portolan add` (acceptable trade-off)
+1. STAC best practices are clear and unambiguous for most cases
+2. The four rules (single file → collection, partitioned → items per partition, raster → items, provider splits → separate collections) cover the valid patterns
+3. Manual overrides would allow STAC-non-compliant catalogs
+4. Edge cases should be resolved through better detection logic, not user flags
+
+**Pros (if implemented):**
+- Could handle ambiguous edge cases
+- Gives users explicit control
+
+**Cons (why rejected):**
+- Violates STAC spec clarity (the patterns are well-defined)
+- Creates maintenance burden (support invalid structures)
+- Detection logic should be improved instead of bypassed
+- No legitimate use case identified that Rules 1-4 don't cover
 
 ## Related
 
