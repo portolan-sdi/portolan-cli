@@ -101,6 +101,8 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0028](context/shared/adr/0028-all-files-as-assets.md) | Track ALL files in item directories as assets |
 | [0029](context/shared/adr/0029-unified-catalog-root-detection.md) | Unified catalog root detection via .portolan/config.yaml |
 | [0030](context/shared/adr/0030-agent-native-cli-design.md) | Agent-native CLI design with JSON output and input hardening |
+| [0031](context/shared/adr/0031-collection-level-assets-for-vector-data.md) | Collection-level assets for vector data (GeoParquet, Shapefile, GeoPackage) |
+| [0032](context/shared/adr/0032-nested-catalogs-with-flat-collections.md) | Nested catalogs with flat collections (supersedes ADR-0012) |
 
 ## Common Commands
 
