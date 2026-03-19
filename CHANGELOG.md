@@ -1,3 +1,27 @@
+## v0.6.0 (2026-03-19)
+
+### BREAKING CHANGE
+
+- Collection IDs now use nested paths (e.g., "climate/hittekaart")
+
+### Feat
+
+- **push**: add parallel push with --workers flag (#244)
+- **cli**: git-style command scoping for list, push, pull (#243)
+- **scan**: nested catalog support with structure recommendations (#242)
+- nested catalog support (#237) (#240)
+- **push**: add catalog-wide push without --collection flag (#228)
+- **cli**: agent-native improvements with JSON output and input hardening (#223)
+
+### Fix
+
+- **cli**: default AWS profile to 'default' for S3 commands (#227)
+- **output**: improve detail text readability across terminal themes (#219)
+
+### Refactor
+
+- **catalog**: remove dead write/read_catalog_json helpers (#217)
+
 ## v0.5.0 (2026-03-08)
 
 ### Feat
