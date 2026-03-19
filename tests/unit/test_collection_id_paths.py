@@ -80,12 +80,12 @@ class TestCollectionIdPathSyntax:
         is_valid, error = validate_collection_id("environment//air-quality")
         assert not is_valid
 
-    def test_validate_path_rejects_segment_starting_with_number(self) -> None:
-        """Test that path segments starting with numbers are rejected."""
+    def test_validate_path_allows_segment_starting_with_number(self) -> None:
+        """Test that path segments starting with numbers are valid (ADR-0032)."""
         is_valid, error = validate_collection_id("environment/2024")
-        assert not is_valid
+        assert is_valid
         is_valid, error = validate_collection_id("2024/january")
-        assert not is_valid
+        assert is_valid
 
     def test_validate_path_rejects_segment_starting_with_hyphen(self) -> None:
         """Test that path segments starting with hyphens are rejected."""
@@ -137,9 +137,10 @@ class TestCollectionIdPathSyntax:
             normalize_collection_id("///")
 
     def test_normalize_path_with_numeric_segment(self) -> None:
-        """Test normalizing path with segment starting with number."""
+        """Test normalizing path with segment starting with number (ADR-0032)."""
+        # Numbers at segment start are now valid - no 'n' prefix
         result = normalize_collection_id("environment/2024")
-        assert result == "environment/n2024"
+        assert result == "environment/2024"
 
     def test_normalize_path_with_hyphen_segment(self) -> None:
         """Test normalizing path with segment starting with hyphen."""
@@ -153,9 +154,10 @@ class TestCollectionIdPathSyntax:
         assert result == "environment/n_quality"
 
     def test_normalize_numeric_first_segment(self) -> None:
-        """Test normalizing path where first segment starts with number."""
+        """Test normalizing path where first segment starts with number (ADR-0032)."""
+        # Numbers at segment start are now valid - no 'n' prefix
         result = normalize_collection_id("2024/january")
-        assert result == "n2024/january"
+        assert result == "2024/january"
 
 
 @pytest.mark.unit

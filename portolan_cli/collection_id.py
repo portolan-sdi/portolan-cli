@@ -1,9 +1,10 @@
 """Collection ID validation and normalization.
 
-Per portolan-spec/structure.md, collection IDs SHOULD:
-- Contain only lowercase letters, numbers, hyphens, and underscores
-- Start with a letter
+Per portolan-spec/structure.md and ADR-0032, collection IDs SHOULD:
+- Contain only lowercase letters, numbers, hyphens, underscores, and forward slashes
+- Start with a letter or number (not hyphen/underscore)
 - Be unique within the catalog
+- Support nested paths (e.g., climate/hittekaart, rivers/2020/q1)
 
 This module provides:
 - validate_collection_id(): Check if an ID is valid
@@ -17,12 +18,12 @@ import re
 import unicodedata
 
 # Pattern for valid collection IDs (supports path syntax per ADR-0032):
-# - Start with lowercase letter
+# - Start with lowercase letter or number (year-based organization like 2020/)
 # - Followed by lowercase letters, numbers, hyphens, underscores, or forward slashes
 # - No leading/trailing/double slashes
-# - Each segment must start with a letter
+# - Each segment starts with letter or number (not hyphen/underscore)
 VALID_COLLECTION_ID_PATTERN: re.Pattern[str] = re.compile(
-    r"^[a-z][a-z0-9_-]*(?:/[a-z][a-z0-9_-]*)*$"
+    r"^[a-z0-9][a-z0-9_-]*(?:/[a-z0-9][a-z0-9_-]*)*$"
 )
 
 # Pattern for invalid characters (anything not lowercase letter, number, hyphen, underscore, slash)
@@ -58,9 +59,9 @@ def validate_collection_id(collection_id: str) -> tuple[bool, str | None]:
     if collection_id != collection_id.lower():
         return False, "Collection ID contains uppercase letters - must be lowercase"
 
-    # Check first character
-    if not collection_id[0].isalpha():
-        return False, "Collection ID must start with a letter"
+    # Check first character (must be letter or number, not hyphen/underscore)
+    if not collection_id[0].isalnum():
+        return False, "Collection ID must start with a letter or number"
 
     # Check for invalid characters
     invalid_match = INVALID_CHAR_PATTERN.search(collection_id)
@@ -106,7 +107,9 @@ def normalize_collection_id(collection_id: str) -> str:
     4. Collapse multiple consecutive hyphens
     5. Strip leading/trailing hyphens and slashes
     6. Collapse double slashes
-    7. Prefix segments with 'n' if they start with a number
+    7. Clean up segment boundaries (strip hyphens)
+
+    Note: Segments CAN start with numbers (year-based organization like 2020/).
 
     Args:
         collection_id: The collection ID to normalize.
@@ -145,16 +148,18 @@ def normalize_collection_id(collection_id: str) -> str:
             f"Collection ID '{collection_id}' cannot be normalized - no valid characters remain"
         )
 
-    # Step 7: Prefix segments with 'n' if they start with a number
-    # Split by slash, fix each segment, rejoin
+    # Step 7: Clean up segments
+    # Numbers at segment start are valid (year-based organization like 2020/)
+    # But hyphens/underscores at start still need fixing
     segments = result.split("/")
     fixed_segments = []
     for segment in segments:
         # Strip hyphens from segment boundaries
         segment = segment.strip("-")
         if segment:  # Skip empty segments
-            # Prefix with 'n' if doesn't start with a letter
-            if not segment[0].isalpha():
+            # Prefix with 'n' if starts with non-alphanumeric (e.g., underscore)
+            # Numbers are now valid at start, so only check isalnum()
+            if segment and not segment[0].isalnum():
                 segment = f"n{segment}"
             fixed_segments.append(segment)
 

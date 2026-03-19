@@ -124,13 +124,13 @@ class TestAddCatalogRootIntegration:
         )
 
     @pytest.mark.integration
-    def test_add_catalog_root_infers_collection_from_first_path_component(
+    def test_add_catalog_root_infers_nested_collection_id(
         self,
         runner: CliRunner,
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . infers collection from first directory component (ADR-0022)."""
+        """add . infers full nested collection ID (ADR-0032 supersedes ADR-0022)."""
         # Set up: deeply nested file
         nested_dir = initialized_catalog / "rivers" / "2020" / "q1"
         nested_dir.mkdir(parents=True)
@@ -143,9 +143,16 @@ class TestAddCatalogRootIntegration:
         )
 
         assert result.exit_code == 0, f"Add failed: {result.output}"
-        # Collection should be "rivers" (first component), not "rivers/2020/q1"
-        assert (initialized_catalog / "rivers" / "collection.json").exists(), (
-            "Collection 'rivers' was not created"
+        # Per ADR-0032: collection at leaf level with full nested path
+        assert (initialized_catalog / "rivers" / "2020" / "q1" / "collection.json").exists(), (
+            "Collection 'rivers/2020/q1' was not created at leaf directory"
+        )
+        # Intermediate catalogs should exist
+        assert (initialized_catalog / "rivers" / "catalog.json").exists(), (
+            "Intermediate catalog 'rivers/catalog.json' was not created"
+        )
+        assert (initialized_catalog / "rivers" / "2020" / "catalog.json").exists(), (
+            "Intermediate catalog 'rivers/2020/catalog.json' was not created"
         )
 
     @pytest.mark.integration
