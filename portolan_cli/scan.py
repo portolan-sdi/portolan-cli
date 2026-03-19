@@ -190,6 +190,9 @@ class ScanOptions:
     # NEW: Collection inference
     suggest_collections: bool = False  # Suggest collection groupings
 
+    # NEW: Strict mode (Phase 4)
+    strict: bool = False  # Treat warnings as errors
+
     def __post_init__(self) -> None:
         """Validate options."""
         if self.unsafe_fix and not self.fix:

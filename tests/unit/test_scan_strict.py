@@ -3,9 +3,6 @@
 These tests verify that --strict elevates warnings to errors,
 causing the command to exit with code 1 when warnings are present.
 
-Per TDD: tests written FIRST, verified to FAIL, then implementation added.
-Tests that require --strict are marked xfail until implementation is complete.
-
 Test cases:
 1. No --strict + warnings → exit 0 (warnings don't fail)
 2. --strict + warnings → exit 1 (warnings elevated to errors)
@@ -114,7 +111,6 @@ class TestScanWithoutStrict:
 class TestScanWithStrict:
     """Tests for scan command with --strict flag."""
 
-    @pytest.mark.xfail(reason="--strict flag not yet implemented")
     def test_strict_with_warnings_exits_1(self, runner: CliRunner, dir_with_warnings: Path) -> None:
         """Scan --strict with warnings should exit 1.
 
@@ -126,7 +122,6 @@ class TestScanWithStrict:
             f"Expected exit 1 (warnings elevated), got {result.exit_code}: {result.output}"
         )
 
-    @pytest.mark.xfail(reason="--strict flag not yet implemented")
     def test_strict_clean_exits_0(self, runner: CliRunner, dir_clean: Path) -> None:
         """Scan --strict with no issues should exit 0.
 
@@ -136,7 +131,6 @@ class TestScanWithStrict:
 
         assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}: {result.output}"
 
-    @pytest.mark.xfail(reason="--strict flag not yet implemented")
     def test_strict_with_errors_exits_1(self, runner: CliRunner, dir_with_errors: Path) -> None:
         """Scan --strict with errors should exit 1.
 
@@ -156,7 +150,6 @@ class TestScanWithStrict:
 class TestScanStrictJsonOutput:
     """Tests for JSON output with --strict flag."""
 
-    @pytest.mark.xfail(reason="--strict flag not yet implemented")
     def test_strict_json_success_false_on_warnings(
         self, runner: CliRunner, dir_with_warnings: Path
     ) -> None:
@@ -170,7 +163,6 @@ class TestScanStrictJsonOutput:
         output = json.loads(result.output)
         assert output["success"] is False, "Expected success=false with --strict + warnings"
 
-    @pytest.mark.xfail(reason="--strict flag not yet implemented")
     def test_strict_json_success_true_when_clean(self, runner: CliRunner, dir_clean: Path) -> None:
         """JSON output should have success=true when --strict + no issues."""
         result = runner.invoke(cli, ["scan", "--strict", "--json", str(dir_clean)])
@@ -179,7 +171,6 @@ class TestScanStrictJsonOutput:
         output = json.loads(result.output)
         assert output["success"] is True, "Expected success=true with --strict + clean"
 
-    @pytest.mark.xfail(reason="fix_commands structure not yet implemented")
     def test_json_includes_fix_commands_structure(
         self, runner: CliRunner, dir_with_warnings: Path
     ) -> None:
@@ -197,7 +188,6 @@ class TestScanStrictJsonOutput:
         assert "fix_commands" in data, "Expected fix_commands in JSON data"
         assert isinstance(data["fix_commands"], list), "fix_commands should be a list"
 
-    @pytest.mark.xfail(reason="fix_commands structure not yet implemented")
     def test_fix_commands_structure_has_required_fields(
         self, runner: CliRunner, dir_with_warnings: Path
     ) -> None:
@@ -229,7 +219,6 @@ class TestScanStrictJsonOutput:
 class TestScanStrictHumanOutput:
     """Tests for human-readable output with --strict flag."""
 
-    @pytest.mark.xfail(reason="--strict flag not yet implemented")
     def test_strict_shows_elevated_warning_message(
         self, runner: CliRunner, dir_with_warnings: Path
     ) -> None:
@@ -253,7 +242,6 @@ class TestScanStrictHumanOutput:
 class TestScanStrictWithFix:
     """Tests for --strict combined with --fix flag."""
 
-    @pytest.mark.xfail(reason="--strict flag not yet implemented")
     def test_strict_fix_dryrun_exits_1_with_warnings(
         self, runner: CliRunner, dir_with_warnings: Path
     ) -> None:
