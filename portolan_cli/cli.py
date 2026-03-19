@@ -55,6 +55,7 @@ from portolan_cli.scan_output import (
     group_skipped_files,
     render_tree_view,
 )
+from portolan_cli.scan_progress import ScanProgressReporter, count_directories
 from portolan_cli.validation import (
     Severity,
 )
@@ -1496,8 +1497,23 @@ def scan(
         strict=strict,
     )
 
+    # Pre-count directories for progress reporting (fast, < 100ms)
+    total_dirs = count_directories(
+        path,
+        include_hidden=include_hidden,
+        max_depth=max_depth,
+        recursive=not no_recursive,
+    )
+
+    # Create progress reporter (suppressed in JSON mode)
+    progress_reporter = ScanProgressReporter(
+        total_directories=total_dirs,
+        json_mode=use_json,
+    )
+
     try:
-        result = scan_directory(path, options)
+        with progress_reporter:
+            result = scan_directory(path, options, progress_callback=progress_reporter.advance)
     except FileNotFoundError as err:
         if use_json:
             envelope = error_envelope(
@@ -1551,6 +1567,7 @@ def scan(
         show_tree=show_tree,
         strict=strict,
         has_strict_failure=has_strict_failure,
+        elapsed_seconds=progress_reporter.elapsed_seconds,
     )
 
     # Handle strict mode exit code
@@ -1592,6 +1609,7 @@ def _output_scan_results(
     show_tree: bool,
     strict: bool,
     has_strict_failure: bool,
+    elapsed_seconds: float = 0.0,
 ) -> None:
     """Output scan results in the appropriate format.
 
@@ -1603,6 +1621,7 @@ def _output_scan_results(
         show_tree: If True, show directory tree view.
         strict: If True, treat warnings as errors in JSON output.
         has_strict_failure: If True, the scan has failed in strict mode.
+        elapsed_seconds: Time elapsed during scan (for progress reporting).
     """
     if use_json:
         _output_scan_json(result, strict=strict, has_strict_failure=has_strict_failure)
@@ -1612,7 +1631,12 @@ def _output_scan_results(
         output = format_scan_output(result, manual_only=True)
         click.echo(output)
     else:
-        _print_scan_summary_enhanced(result, show_all=show_all, show_tree=show_tree)
+        _print_scan_summary_enhanced(
+            result,
+            show_all=show_all,
+            show_tree=show_tree,
+            elapsed_seconds=elapsed_seconds,
+        )
 
 
 def _output_scan_json(result: ScanResult, *, strict: bool, has_strict_failure: bool) -> None:
@@ -1649,11 +1673,23 @@ def _output_scan_json(result: ScanResult, *, strict: bool, has_strict_failure: b
     output_json_envelope(envelope)
 
 
-def _print_scan_header(result: ScanResult) -> None:
-    """Print scan header with file counts."""
+def _print_scan_header(result: ScanResult, *, elapsed_seconds: float = 0.0) -> None:
+    """Print scan header with file counts and timing.
+
+    Args:
+        result: The scan result.
+        elapsed_seconds: Time elapsed during scan.
+    """
     ready_count = len(result.ready)
+    dirs_scanned = result.directories_scanned
+
+    # Format timing string
+    time_str = f" in {elapsed_seconds:.1f}s" if elapsed_seconds > 0 else ""
+
+    # Show directories scanned with timing
+    detail(f"Scanned {dirs_scanned} director{'y' if dirs_scanned == 1 else 'ies'}{time_str}")
+
     if ready_count == 0:
-        info_output(f"Scanned {result.directories_scanned} directories")
         warn("No geo-assets found")
     else:
         success(f"{ready_count} geo-asset{'s' if ready_count != 1 else ''} found")
@@ -1770,11 +1806,12 @@ def _print_scan_summary_enhanced(
     *,
     show_all: bool = False,
     show_tree: bool = False,
+    elapsed_seconds: float = 0.0,
 ) -> None:
     """Print enhanced human-readable scan summary.
 
     Includes:
-    - Summary header
+    - Summary header with timing
     - Format breakdown
     - Tree view (if --tree)
     - Issues with fixability labels
@@ -1786,9 +1823,10 @@ def _print_scan_summary_enhanced(
         result: The scan result to print.
         show_all: If True, show all issues without truncation.
         show_tree: If True, show directory tree view.
+        elapsed_seconds: Time elapsed during scan.
     """
-    # Header
-    _print_scan_header(result)
+    # Header with timing info
+    _print_scan_header(result, elapsed_seconds=elapsed_seconds)
     _print_format_breakdown(result)
 
     # Tree view (if requested)

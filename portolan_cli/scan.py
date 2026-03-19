@@ -27,11 +27,15 @@ from __future__ import annotations
 import os
 import re
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Type alias for progress callback
+    ProgressCallback = Callable[[], None]
 
 # Import new types from scan modules
 from portolan_cli.collection_id import (
@@ -402,6 +406,8 @@ class _ScanContext:
     shapefile_sidecars: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     # Track special formats (FileGDB, etc.)
     special_formats: list[SpecialFormat] = field(default_factory=list)
+    # Progress callback (called for each directory scanned)
+    progress_callback: Callable[[], None] | None = None
 
 
 # =============================================================================
@@ -1066,6 +1072,9 @@ def _discover_files(
             return
 
         ctx.directories_scanned += 1
+        # Call progress callback if provided
+        if ctx.progress_callback is not None:
+            ctx.progress_callback()
 
         try:
             entries = list(os.scandir(start))
@@ -1277,6 +1286,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
 def scan_directory(
     path: Path,
     options: ScanOptions | None = None,
+    progress_callback: Callable[[], None] | None = None,
 ) -> ScanResult:
     """Scan a directory for geospatial files and issues.
 
@@ -1285,6 +1295,8 @@ def scan_directory(
     Args:
         path: Directory path to scan.
         options: Scan configuration options. Defaults to ScanOptions().
+        progress_callback: Optional callback called for each directory scanned.
+            Used for progress reporting. Called with no arguments.
 
     Returns:
         ScanResult containing ready files, issues, and skipped files.
@@ -1311,7 +1323,7 @@ def scan_directory(
         options = ScanOptions()
 
     # Create scan context
-    ctx = _ScanContext(root=path, options=options)
+    ctx = _ScanContext(root=path, options=options, progress_callback=progress_callback)
 
     # Discover and process files
     for file_path, file_size in _discover_files(ctx):
