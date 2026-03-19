@@ -103,6 +103,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0030](context/shared/adr/0030-agent-native-cli-design.md) | Agent-native CLI design with JSON output and input hardening |
 | [0031](context/shared/adr/0031-collection-level-assets-for-vector-data.md) | Collection-level assets for vector data (GeoParquet, Shapefile, GeoPackage) |
 | [0032](context/shared/adr/0032-nested-catalogs-with-flat-collections.md) | Nested catalogs with flat collections (supersedes ADR-0012) |
+| [0033](context/shared/adr/0033-esri-gdb-raster-gdal-requirement.md) | ESRI GDB rasters require external GDAL (no bundled support) |
 
 ## Common Commands
 
