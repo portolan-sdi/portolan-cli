@@ -2793,8 +2793,8 @@ def push(
 @click.option(
     "--collection",
     "-c",
-    required=True,
-    help="Collection to pull.",
+    default=None,
+    help="Collection to pull. If not specified, pulls all collections.",
 )
 @click.option(
     "--catalog",
@@ -2819,17 +2819,28 @@ def push(
     default="default",
     help="AWS profile name (for S3).",
 )
+@click.option(
+    "--workers",
+    "-w",
+    type=click.IntRange(min=1),
+    default=None,
+    help=(
+        "Parallel workers for catalog-wide pull (default: auto-detect based on "
+        "CPU count, capped at 16; use 1 for sequential). Ignored when --collection is specified."
+    ),
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def pull_command(
     ctx: click.Context,
     json_output: bool,
     remote_url: str,
-    collection: str,
+    collection: str | None,
     catalog_path: Path | None,
     force: bool,
     dry_run: bool,
     profile: str | None,
+    workers: int | None,
 ) -> None:
     """Pull updates from a remote catalog.
 
@@ -2843,14 +2854,21 @@ def pull_command(
 
     REMOTE_URL is the remote catalog URL (e.g., s3://bucket/catalog).
 
+    If --collection is specified, pulls that collection only. If --collection
+    is omitted, pulls all collections in the catalog.
+
     \b
     Examples:
+        # Pull a single collection
         portolan pull s3://mybucket/my-catalog --collection demographics
         portolan pull s3://mybucket/catalog -c imagery --dry-run
-        portolan pull s3://bucket/catalog -c data --force
-        portolan pull s3://bucket/catalog -c data --profile myprofile
+
+        # Pull all collections
+        portolan pull s3://mybucket/catalog
+        portolan pull s3://mybucket/catalog --workers 4
     """
     from portolan_cli.pull import pull as pull_fn
+    from portolan_cli.pull import pull_all_collections
 
     use_json = should_output_json(ctx, json_output)
 
@@ -2859,7 +2877,46 @@ def pull_command(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "pull")
 
-    result = pull_fn(
+    # Catalog-wide pull (no --collection specified)
+    if collection is None:
+        all_result = pull_all_collections(
+            remote_url=remote_url,
+            local_root=catalog_path,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+            workers=workers,
+        )
+
+        if use_json:
+            data = {
+                "total_collections": all_result.total_collections,
+                "successful_collections": all_result.successful_collections,
+                "failed_collections": all_result.failed_collections,
+                "total_files_downloaded": all_result.total_files_downloaded,
+                "collection_errors": all_result.collection_errors,
+            }
+
+            if all_result.success:
+                envelope = success_envelope("pull", data)
+            else:
+                errors = [
+                    ErrorDetail(
+                        type="PullError",
+                        message=f"{coll}: {', '.join(errs)}",
+                    )
+                    for coll, errs in all_result.collection_errors.items()
+                ]
+                envelope = error_envelope("pull", errors, data=data)
+
+            output_json_envelope(envelope)
+
+        if not all_result.success:
+            raise SystemExit(1)
+        return
+
+    # Single collection pull
+    single_result = pull_fn(
         remote_url=remote_url,
         local_root=catalog_path,
         collection=collection,
@@ -2870,22 +2927,22 @@ def pull_command(
 
     if use_json:
         data = {
-            "files_downloaded": result.files_downloaded,
-            "files_skipped": result.files_skipped,
-            "local_version": result.local_version,
-            "remote_version": result.remote_version,
-            "up_to_date": result.up_to_date,
+            "files_downloaded": single_result.files_downloaded,
+            "files_skipped": single_result.files_skipped,
+            "local_version": single_result.local_version,
+            "remote_version": single_result.remote_version,
+            "up_to_date": single_result.up_to_date,
         }
 
-        if result.success:
+        if single_result.success:
             envelope = success_envelope("pull", data)
         else:
             errors = []
-            if result.uncommitted_changes:
+            if single_result.uncommitted_changes:
                 errors.append(
                     ErrorDetail(
                         type="UncommittedChangesError",
-                        message=f"Uncommitted changes: {', '.join(result.uncommitted_changes)}",
+                        message=f"Uncommitted changes: {', '.join(single_result.uncommitted_changes)}",
                     )
                 )
             else:
@@ -2895,24 +2952,24 @@ def pull_command(
         output_json_envelope(envelope)
     else:
         # Human-readable output
-        if result.up_to_date:
+        if single_result.up_to_date:
             info_output("Already up to date")
-        elif result.success:
+        elif single_result.success:
             if dry_run:
-                info_output(f"[DRY RUN] Would pull {result.files_downloaded} file(s)")
+                info_output(f"[DRY RUN] Would pull {single_result.files_downloaded} file(s)")
             else:
-                success(f"Pulled {result.files_downloaded} file(s)")
-                detail(f"  Local: {result.local_version} -> {result.remote_version}")
+                success(f"Pulled {single_result.files_downloaded} file(s)")
+                detail(f"  Local: {single_result.local_version} -> {single_result.remote_version}")
         else:
-            if result.uncommitted_changes:
+            if single_result.uncommitted_changes:
                 error("Pull blocked by uncommitted changes:")
-                for filename in result.uncommitted_changes:
+                for filename in single_result.uncommitted_changes:
                     detail(f"  {filename}")
                 warn("Use --force to discard local changes")
             else:
                 error("Pull failed")
 
-    if not result.success:
+    if not single_result.success:
         raise SystemExit(1)
 
 
