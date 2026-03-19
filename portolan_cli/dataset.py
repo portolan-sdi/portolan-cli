@@ -17,11 +17,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import click
 import pystac
@@ -242,8 +244,26 @@ def _scan_item_assets(
             if asset_key in stac_assets or asset_key == "data":
                 # Collision: use full filename instead
                 asset_key = file_path.name
+        # Asset href must be relative to item JSON location.
+        # PySTAC places item JSON at: {collection}/{item_id}/{item_id}.json
+        #
+        # Case 1: Data at {collection}/data.parquet (item_dir.name != item_id)
+        #   - Item JSON at {collection}/{item_id}/item.json
+        #   - Href needs ../{filename} to reach parent directory
+        #
+        # Case 2: Data at {collection}/{item_id}/data.parquet (item_dir.name == item_id)
+        #   - Item JSON at same level: {collection}/{item_id}/item.json
+        #   - Href just needs {filename} (same directory)
+        #
+        if item_dir.name == item_id:
+            # Assets and item JSON are in the same directory
+            asset_href = file_path.name
+        else:
+            # Item JSON will be in a subdirectory, need to go up one level
+            asset_href = f"../{file_path.name}"
+
         stac_assets[asset_key] = pystac.Asset(
-            href=file_path.name,
+            href=asset_href,
             media_type=file_media_type,
             roles=[file_role],
         )
@@ -386,6 +406,80 @@ def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Pat
     except OSError as cleanup_err:
         # Log but don't swallow the original error
         logger.warning("Failed to clean up orphaned file %s: %s", output_path, cleanup_err)
+
+
+def _deduplicate_collection_item_links(collection: pystac.Collection) -> None:
+    """De-duplicate item links in a PySTAC collection.
+
+    PySTAC adds duplicate links when the same item is added multiple times.
+    This modifies collection.links in place.
+    """
+    seen_item_ids: set[str] = set()
+    unique_links: list[pystac.Link] = []
+    for link in collection.links:
+        if link.rel == "item":
+            # For item links, de-duplicate by target item's ID
+            target = link.target
+            if isinstance(target, pystac.Item):
+                item_id_key = target.id
+            else:
+                # If target is a string (href), use it directly
+                item_id_key = str(target) if target else ""
+            if item_id_key in seen_item_ids:
+                continue
+            seen_item_ids.add(item_id_key)
+        unique_links.append(link)
+    collection.links = unique_links
+
+
+def _fix_collection_links(
+    collection_json_path: Path,
+    catalog_root: Path,
+    collection_dir: Path,
+) -> None:
+    """Fix root/parent links and deduplicate item links in collection JSON.
+
+    PySTAC sets root to self by default; we need to point to catalog root.
+    Also deduplicates item links that can occur when add_dataset is called
+    multiple times on the same collection.
+    """
+    if not collection_json_path.exists():
+        return
+
+    collection_data = json.loads(collection_json_path.read_text())
+    relative_root = os.path.relpath(catalog_root / "catalog.json", collection_dir)
+
+    # Update root link to point to catalog
+    for link in collection_data.get("links", []):
+        if link.get("rel") == "root":
+            link["href"] = relative_root
+            break
+    else:
+        # No root link found, add one
+        collection_data.setdefault("links", []).append(
+            {"rel": "root", "href": relative_root, "type": "application/json"}
+        )
+
+    # Add parent link if missing
+    has_parent = any(link.get("rel") == "parent" for link in collection_data.get("links", []))
+    if not has_parent:
+        collection_data["links"].append(
+            {"rel": "parent", "href": relative_root, "type": "application/json"}
+        )
+
+    # Deduplicate item links (can occur when add_dataset is called multiple times)
+    seen_item_hrefs: set[str] = set()
+    deduped_links: list[dict[str, Any]] = []
+    for link in collection_data.get("links", []):
+        if link.get("rel") == "item":
+            href = link.get("href", "")
+            if href in seen_item_hrefs:
+                continue
+            seen_item_hrefs.add(href)
+        deduped_links.append(link)
+    collection_data["links"] = deduped_links
+
+    collection_json_path.write_text(json.dumps(collection_data, indent=2))
 
 
 def add_dataset(
@@ -534,12 +628,19 @@ def add_dataset(
         initial_bbox=bbox,
     )
 
-    # Add item to collection
+    # Add item to collection (PySTAC may add duplicate links if called multiple times)
     add_item_to_collection(collection, item, update_extent=True)
 
-    # Step 8: Save collection
+    # Step 8: De-duplicate item links before saving
+    _deduplicate_collection_item_links(collection)
+
+    # Save collection (normalize_hrefs sets self link and relative paths)
     collection.normalize_hrefs(str(collection_dir))
     collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+
+    # Step 8b: Fix root/parent links in saved JSON
+    collection_json_path = collection_dir / "collection.json"
+    _fix_collection_links(collection_json_path, catalog_root, collection_dir)
 
     # Step 9: Update catalog to link to collection (if new)
     _update_catalog_links(catalog_root, collection_id)
@@ -1313,17 +1414,35 @@ def is_current(
     current_version = versions_file.versions[-1]
 
     # Look for this file in current version assets
-    # Try explicit key first, then filename, then converted name
+    # Try explicit key first, then item-scoped key, then filename, then converted name
     asset = None
+    filename = path.name
+
     if asset_key is not None:
         asset = current_version.assets.get(asset_key)
+
     if asset is None:
-        filename = path.name
+        # Try item-scoped key format: {item_id}/{filename}
+        # This is how _update_versions stores multi-asset items
+        item_id = path.parent.name
+        item_scoped_key = f"{item_id}/{filename}"
+        asset = current_version.assets.get(item_scoped_key)
+
+    if asset is None:
+        # Try bare filename (legacy format)
         asset = current_version.assets.get(filename)
+
     if asset is None:
         # Also check for stem.parquet (converted name)
         parquet_name = f"{path.stem}.parquet"
         asset = current_version.assets.get(parquet_name)
+
+    if asset is None:
+        # Try item-scoped with converted name
+        item_id = path.parent.name
+        item_scoped_parquet = f"{item_id}/{parquet_name}"
+        asset = current_version.assets.get(item_scoped_parquet)
+
     if asset is None:
         return False
 

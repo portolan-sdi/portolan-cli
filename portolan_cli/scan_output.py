@@ -1246,29 +1246,29 @@ def format_fix_commands_json(result: ScanResult) -> list[dict[str, Any]]:
         )
 
     # Add fix commands for issues that can be auto-fixed
-    # Deduplicate by path - one scan --fix per unique directory
-    seen_paths: set[str] = set()
-    fix_reasons: dict[str, list[str]] = {}  # path -> list of reasons
+    # Deduplicate by DIRECTORY - one scan --fix per unique directory
+    # (scan --fix requires a directory, not a file path)
+    fix_reasons: dict[str, list[str]] = {}  # directory -> list of reasons
 
     for issue in result.issues:
         fix = get_fixability(issue.issue_type)
         if fix == Fixability.FIX_FLAG:
-            path = issue.relative_path
-            if path not in fix_reasons:
-                fix_reasons[path] = []
-            fix_reasons[path].append(issue.message)
+            # Get the parent directory of the file
+            # issue.relative_path is a file path; we need its directory
+            file_path = Path(issue.relative_path)
+            dir_path = str(file_path.parent) if file_path.parent.parts else "."
+            if dir_path not in fix_reasons:
+                fix_reasons[dir_path] = []
+            fix_reasons[dir_path].append(issue.message)
 
-    # Emit one command per unique path with aggregated reasons
-    for path in sorted(fix_reasons.keys()):
-        if path in seen_paths:
-            continue
-        seen_paths.add(path)
-        reasons = fix_reasons[path]
-        # Use positional arg format: scan --fix <path>
+    # Emit one command per unique directory with aggregated reasons
+    for dir_path in sorted(fix_reasons.keys()):
+        reasons = fix_reasons[dir_path]
+        # Use positional arg format: scan --fix <directory>
         commands.append(
             {
                 "command": "scan",
-                "args": ["--fix", path],
+                "args": ["--fix", dir_path],
                 "reason": reasons[0] if len(reasons) == 1 else f"{len(reasons)} issues",
             }
         )

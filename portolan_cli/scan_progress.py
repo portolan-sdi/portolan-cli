@@ -66,6 +66,15 @@ def count_directories(
     if not recursive:
         return count
 
+    # Track visited directories by (device, inode) to prevent symlink loops
+    visited: set[tuple[int, int]] = set()
+    if follow_symlinks:
+        try:
+            root_stat = os.stat(root, follow_symlinks=True)
+            visited.add((root_stat.st_dev, root_stat.st_ino))
+        except OSError:
+            pass
+
     def _count_recursive(path: Path, current_depth: int) -> int:
         """Recursively count directories."""
         nonlocal count
@@ -83,6 +92,17 @@ def count_directories(
 
                     try:
                         if entry.is_dir(follow_symlinks=follow_symlinks):
+                            # Check for symlink loops when following symlinks
+                            if follow_symlinks:
+                                try:
+                                    entry_stat = os.stat(entry.path, follow_symlinks=True)
+                                    inode_key = (entry_stat.st_dev, entry_stat.st_ino)
+                                    if inode_key in visited:
+                                        continue  # Skip already-visited directory
+                                    visited.add(inode_key)
+                                except OSError:
+                                    continue  # Skip inaccessible entries
+
                             count += 1
                             _count_recursive(Path(entry.path), current_depth + 1)
                     except (PermissionError, OSError):
