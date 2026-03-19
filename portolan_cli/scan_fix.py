@@ -203,8 +203,8 @@ def _sanitize_filename(name: str) -> str:
     # Collapse multiple consecutive dashes
     sanitized = re.sub(r"-+", "-", sanitized)
 
-    # Remove leading/trailing dashes
-    sanitized = sanitized.strip("-")
+    # Remove leading/trailing dashes AND dots (dots can leak into stem from malformed input)
+    sanitized = sanitized.strip("-.")
 
     # CRITICAL: Handle case where sanitization produces empty string
     # This can happen with filenames containing only non-ASCII chars (e.g., "日本語.shp")

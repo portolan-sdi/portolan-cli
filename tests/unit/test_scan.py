@@ -1777,11 +1777,12 @@ class TestCollectionIdValidation:
         assert len(collection_id_issues) == 1
         assert "space" in collection_id_issues[0].message.lower()
 
-    def test_scan_detects_invalid_collection_id_starts_with_number(self, tmp_path: Path) -> None:
-        """Scan should detect collection IDs starting with numbers."""
+    def test_scan_allows_collection_id_starting_with_number(self, tmp_path: Path) -> None:
+        """Scan should NOT flag collection IDs starting with numbers (ADR-0032)."""
         from portolan_cli.scan import IssueType, scan_directory
 
         # Create directory structure: 2020-census/data.geojson
+        # Per ADR-0032: numeric starts are valid for year-based organization
         collection_dir = tmp_path / "2020-census"
         collection_dir.mkdir()
         (collection_dir / "data.geojson").write_text(
@@ -1793,8 +1794,8 @@ class TestCollectionIdValidation:
         collection_id_issues = [
             i for i in result.issues if i.issue_type == IssueType.INVALID_COLLECTION_ID
         ]
-        assert len(collection_id_issues) == 1
-        assert "start with a letter" in collection_id_issues[0].message.lower()
+        # Numbers at start are now valid - no issues expected
+        assert len(collection_id_issues) == 0
 
     def test_scan_valid_collection_id_no_issue(self, tmp_path: Path) -> None:
         """Scan should not flag valid collection IDs."""

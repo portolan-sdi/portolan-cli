@@ -1,10 +1,10 @@
 # ADR-0012: Flat Catalog Hierarchy
 
 ## Status
-Accepted
-Superseded-By: ADR-0023
+Superseded
+Superseded-By: ADR-0032
 
-> Note: Directory structure superseded by ADR-0023. Flat hierarchy principle remains.
+> Note: This ADR is superseded by ADR-0032 (Nested Catalogs with Flat Collections), which allows nested catalogs for thematic organization while keeping collections as leaf nodes.
 
 ## Context
 

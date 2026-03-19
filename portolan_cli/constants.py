@@ -58,6 +58,10 @@ PORTOLAN_DIR: str = ".portolan"
 # Maximum depth for catalog root discovery (prevent traversing to filesystem root)
 MAX_CATALOG_SEARCH_DEPTH: int = 20
 
+# Maximum depth for nested catalogs (per ADR-0032)
+# Prevents excessive nesting which likely indicates misconfiguration
+MAX_CATALOG_DEPTH: int = 10
+
 # Windows reserved device names (case-insensitive)
 # Files with these names (with any extension) are problematic on Windows.
 # Used by scan.py and scan_fix.py for cross-platform compatibility checks.

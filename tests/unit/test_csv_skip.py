@@ -1225,19 +1225,20 @@ class TestAddFilesCodePaths:
 
         with patch("portolan_cli.dataset.add_dataset") as mock_add:
             with patch(
-                "portolan_cli.dataset.resolve_collection_id", return_value="my-collection"
-            ) as mock_resolve:
+                "portolan_cli.dataset.infer_nested_collection_id",
+                return_value="my-collection",
+            ) as mock_infer:
                 mock_add.return_value = MagicMock(item_id="data", collection_id="my-collection")
 
-                # Don't pass collection_id - should be resolved
+                # Don't pass collection_id - should be inferred (ADR-0032)
                 added, skipped, failures = add_files(
                     paths=[geojson],
                     catalog_root=initialized_catalog,
                     collection_id=None,
                 )
 
-                # Should have resolved collection_id
-                mock_resolve.assert_called_once()
+                # Should have inferred collection_id using nested inference
+                mock_infer.assert_called_once()
 
     @pytest.mark.unit
     def test_deferred_non_geo_processing_with_geo_file(

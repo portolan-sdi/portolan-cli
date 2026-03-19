@@ -67,6 +67,26 @@ class TestValidateSafePath:
         safe_path = validate_safe_path(Path("relative.txt"))
         assert safe_path.is_absolute()
 
+    def test_rejects_path_with_excessive_nesting(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test handling of OSError from path.resolve() for deeply nested paths."""
+
+        class PathWithOSError(type(tmp_path)):
+            """Path subclass that raises OSError on resolve()."""
+
+            def resolve(self, strict: bool = False) -> Path:
+                """Simulate OSError during path resolution."""
+                if "trigger_error" in str(self):
+                    raise OSError("Path too deep or filesystem error")
+                return super().resolve(strict=strict)
+
+        # Create a path that will trigger the error
+        error_path = PathWithOSError(tmp_path / "trigger_error" / "file.txt")
+
+        with pytest.raises(InputValidationError, match="Cannot resolve path"):
+            validate_safe_path(error_path, tmp_path)
+
 
 @pytest.mark.unit
 class TestValidateCollectionId:
@@ -107,12 +127,35 @@ class TestValidateCollectionId:
         with pytest.raises(InputValidationError, match="URL-encoded"):
             validate_collection_id("%2e%2e")  # Encoded ../
 
-    def test_rejects_path_separators(self) -> None:
-        """Path separators are rejected (collections are flat)."""
-        with pytest.raises(InputValidationError, match="Path separators"):
-            validate_collection_id("parent/child")
-        with pytest.raises(InputValidationError, match="Path separators"):
+    def test_allows_forward_slashes_rejects_backslashes(self) -> None:
+        """Forward slashes allowed for nested catalogs (ADR-0032), backslashes rejected."""
+        # Forward slashes are allowed (nested catalog paths)
+        validate_collection_id("environment/air-quality")  # Should not raise
+
+        # Backslashes are still rejected
+        with pytest.raises(InputValidationError, match="Backslashes"):
             validate_collection_id("parent\\child")
+
+    def test_allows_path_segments_starting_with_numbers(self) -> None:
+        """Path segments CAN start with numbers for year-based organization (ADR-0032)."""
+        # These should NOT raise - numbers at segment start are valid
+        validate_collection_id("environment/2024")
+        validate_collection_id("2024/january")
+        validate_collection_id("rivers/2020/q1")
+
+    def test_rejects_path_segments_starting_with_hyphen(self) -> None:
+        """Path segments starting with hyphens are rejected (ADR-0032)."""
+        with pytest.raises(InputValidationError, match="invalid"):
+            validate_collection_id("environment/-air")
+        with pytest.raises(InputValidationError, match="invalid"):
+            validate_collection_id("-environment/air")
+
+    def test_rejects_path_segments_starting_with_underscore(self) -> None:
+        """Path segments starting with underscores are rejected (ADR-0032)."""
+        with pytest.raises(InputValidationError, match="invalid"):
+            validate_collection_id("environment/_quality")
+        with pytest.raises(InputValidationError, match="invalid"):
+            validate_collection_id("_environment/quality")
 
     def test_rejects_uppercase(self) -> None:
         """Uppercase characters violate STAC best practice."""
@@ -222,6 +265,23 @@ class TestValidateRemoteUrl:
             validate_remote_url("https:///path")
         with pytest.raises(InputValidationError, match="missing host/bucket"):
             validate_remote_url("gs://")
+
+    def test_handles_urlparse_value_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test handling of ValueError from urlparse (rare edge case)."""
+        from urllib import parse as urllib_parse
+
+        original_urlparse = urllib_parse.urlparse
+
+        def mock_urlparse(url: str, *args, **kwargs):
+            """Mock urlparse that raises ValueError for specific input."""
+            if "trigger_value_error" in url:
+                raise ValueError("Invalid URL characters")
+            return original_urlparse(url, *args, **kwargs)
+
+        monkeypatch.setattr("portolan_cli.validation.input_hardening.urlparse", mock_urlparse)
+
+        with pytest.raises(InputValidationError, match="Malformed URL"):
+            validate_remote_url("s3://trigger_value_error/path")
 
 
 @pytest.mark.unit

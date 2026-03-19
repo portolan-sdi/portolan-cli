@@ -193,7 +193,7 @@ class TestAddIntegration:
     def test_add_infers_collection_from_path(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """add infers collection ID from first path component."""
+        """add infers full nested collection ID from path (ADR-0032)."""
         # Set up: deeply nested file
         nested_dir = initialized_catalog / "demographics" / "census" / "2020"
         nested_dir.mkdir(parents=True)
@@ -210,9 +210,14 @@ class TestAddIntegration:
         # Assert
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Collection should be "demographics" (first component)
-        collection_json = initialized_catalog / "demographics" / "collection.json"
-        assert collection_json.exists(), "Collection not created at 'demographics'"
+        # Per ADR-0032: collection at leaf level with full nested path
+        collection_json = (
+            initialized_catalog / "demographics" / "census" / "2020" / "collection.json"
+        )
+        assert collection_json.exists(), "Collection not created at 'demographics/census/2020'"
+        # Intermediate catalogs should exist
+        assert (initialized_catalog / "demographics" / "catalog.json").exists()
+        assert (initialized_catalog / "demographics" / "census" / "catalog.json").exists()
 
     @pytest.mark.integration
     def test_add_multiple_files_creates_snapshot_with_all_assets(
@@ -230,12 +235,12 @@ class TestAddIntegration:
         """
         import json
 
-        # Set up: create collection with two files in separate item directories
+        # Set up: create collection with two files in SAME directory
+        # Per ADR-0032: leaf directory = one collection
         collection_dir = initialized_catalog / "snapshot-test"
-        (collection_dir / "item-a").mkdir(parents=True)
-        (collection_dir / "item-b").mkdir(parents=True)
-        shutil.copy(valid_points_geojson, collection_dir / "item-a" / "file-a.geojson")
-        shutil.copy(valid_points_geojson, collection_dir / "item-b" / "file-b.geojson")
+        collection_dir.mkdir(parents=True)
+        shutil.copy(valid_points_geojson, collection_dir / "file-a.geojson")
+        shutil.copy(valid_points_geojson, collection_dir / "file-b.geojson")
 
         # Act 1: Add first file
         result1 = runner.invoke(
@@ -244,7 +249,7 @@ class TestAddIntegration:
                 "add",
                 "--portolan-dir",
                 str(initialized_catalog),
-                str(collection_dir / "item-a" / "file-a.geojson"),
+                str(collection_dir / "file-a.geojson"),
             ],
             catch_exceptions=False,
         )
@@ -257,14 +262,14 @@ class TestAddIntegration:
         assert len(v1["versions"]) == 1
         assert len(v1["versions"][0]["assets"]) >= 1  # At least file-a
 
-        # Act 2: Add second file
+        # Act 2: Add second file (same collection directory)
         result2 = runner.invoke(
             cli,
             [
                 "add",
                 "--portolan-dir",
                 str(initialized_catalog),
-                str(collection_dir / "item-b" / "file-b.geojson"),
+                str(collection_dir / "file-b.geojson"),
             ],
             catch_exceptions=False,
         )
@@ -289,9 +294,9 @@ class TestAddIntegration:
         assert len(latest_version["changes"]) <= 2, (
             f"Changes should only show new files from this operation, got: {latest_version['changes']}"
         )
-        # Changes should not include item-a files
+        # Changes should not include file-a
         for change in latest_version["changes"]:
-            assert "item-a" not in change, f"Changes incorrectly includes item-a: {change}"
+            assert "file-a" not in change, f"Changes incorrectly includes file-a: {change}"
 
 
 class TestAddItemIdOverrideIntegration:
@@ -307,13 +312,11 @@ class TestAddItemIdOverrideIntegration:
         """add --item-id creates STAC item with the custom ID."""
         import json
 
-        # Set up: create collection and copy file
+        # Set up: create collection directory (leaf level per ADR-0032)
+        # Per ADR-0032: file's parent directory is the leaf collection
         collection_dir = initialized_catalog / "demographics"
         collection_dir.mkdir()
-        # Create item directory (required structure)
-        item_dir = collection_dir / "auto-derived"
-        item_dir.mkdir()
-        test_file = item_dir / "census.geojson"
+        test_file = collection_dir / "census.geojson"
         shutil.copy(valid_points_geojson, test_file)
 
         # Act: add with --item-id override
@@ -415,14 +418,14 @@ class TestAddItemIdOverrideIntegration:
     def test_add_without_item_id_derives_from_directory(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """Without --item-id, item ID is derived from parent directory."""
+        """Without --item-id, item ID is derived from collection directory (ADR-0032)."""
         import json
 
-        # Set up: file in directory named 'census-2020'
-        collection_dir = initialized_catalog / "demographics"
-        item_dir = collection_dir / "census-2020"
-        item_dir.mkdir(parents=True)
-        test_file = item_dir / "data.geojson"
+        # Per ADR-0032: file's parent directory is the leaf collection
+        # Using single-level collection to avoid nested catalog complexity
+        collection_dir = initialized_catalog / "census-2020"
+        collection_dir.mkdir(parents=True)
+        test_file = collection_dir / "data.geojson"
         shutil.copy(valid_points_geojson, test_file)
 
         # Act: add WITHOUT --item-id
@@ -439,15 +442,17 @@ class TestAddItemIdOverrideIntegration:
 
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # The item ID should be 'census-2020' (derived from parent directory name).
-        # Verify via the STAC item JSON, not versions.json asset keys.
-        item_json_path = collection_dir / "census-2020" / "census-2020.json"
-        assert item_json_path.exists(), f"Item JSON not found at {item_json_path}"
+        # Per ADR-0032: collection.json and versions.json at collection level
+        collection_json_path = collection_dir / "collection.json"
+        assert collection_json_path.exists(), f"Collection JSON not found at {collection_json_path}"
 
-        with open(item_json_path) as f:
-            item_json = json.load(f)
-        assert item_json["id"] == "census-2020", (
-            f"STAC item ID should be 'census-2020', got '{item_json['id']}'"
+        versions_path = collection_dir / "versions.json"
+        assert versions_path.exists(), f"versions.json not found at {versions_path}"
+
+        with open(collection_json_path) as f:
+            collection_json = json.load(f)
+        assert collection_json["id"] == "census-2020", (
+            f"Collection ID should be 'census-2020', got '{collection_json['id']}'"
         )
 
     @pytest.mark.integration
