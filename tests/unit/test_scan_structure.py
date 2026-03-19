@@ -354,3 +354,59 @@ class TestStructureValidationEdgeCases:
 
         mixed_issues = [i for i in result.issues if i.issue_type == IssueType.MIXED_FLAT_MULTIITEM]
         assert len(mixed_issues) == 0
+
+
+class TestCorruptedParquetScan:
+    """Tests for scan behavior with corrupted Parquet files."""
+
+    @pytest.mark.unit
+    def test_corrupted_parquet_skipped_with_error(self, tmp_path: Path) -> None:
+        """Corrupted .parquet file is skipped with INVALID_FORMAT reason."""
+        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan_classify import FileCategory, SkipReasonType
+
+        # Create a fake parquet file
+        data_dir = tmp_path / "collection"
+        data_dir.mkdir()
+        bad_parquet = data_dir / "corrupted.parquet"
+        bad_parquet.write_text("this is not a valid parquet file")
+
+        # Scan
+        result = scan_directory(tmp_path, ScanOptions())
+
+        # Should be in skipped, not ready
+        assert len(result.ready) == 0
+        assert len(result.skipped) == 1
+
+        skipped = result.skipped[0]
+        assert skipped.category == FileCategory.UNKNOWN
+        assert skipped.reason_type == SkipReasonType.INVALID_FORMAT
+        assert "not a valid Parquet file" in skipped.reason_message
+
+    @pytest.mark.unit
+    def test_valid_non_geo_parquet_is_tabular(self, tmp_path: Path, fixtures_dir: Path) -> None:
+        """Valid Parquet without geo metadata is skipped as TABULAR_DATA."""
+        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan_classify import FileCategory, SkipReasonType
+
+        # Use one of our companion fixtures (plain Parquet)
+        src = fixtures_dir / "scan" / "geoparquet_with_companions" / "lookup.parquet"
+        if not src.exists():
+            pytest.skip("Test fixture not found")
+
+        data_dir = tmp_path / "collection"
+        data_dir.mkdir()
+        import shutil
+
+        shutil.copy(src, data_dir / "lookup.parquet")
+
+        # Scan
+        result = scan_directory(tmp_path, ScanOptions())
+
+        # Should be skipped as tabular data
+        assert len(result.ready) == 0
+        assert len(result.skipped) == 1
+
+        skipped = result.skipped[0]
+        assert skipped.category == FileCategory.TABULAR_DATA
+        assert skipped.reason_type == SkipReasonType.NOT_GEOSPATIAL

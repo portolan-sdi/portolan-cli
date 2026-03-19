@@ -51,6 +51,7 @@ from portolan_cli.formats import (
     FormatInfo,
     get_cloud_native_status,
     is_geoparquet,
+    is_valid_parquet,
 )
 from portolan_cli.scan_classify import (
     FileCategory,
@@ -1229,6 +1230,19 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
 
     # Handle .parquet specially - must check if it's GeoParquet
     if ext == PARQUET_EXTENSION:
+        # First check if it's a valid Parquet file at all (not corrupted)
+        if not is_valid_parquet(path):
+            # File has .parquet extension but is corrupted or not a valid Parquet
+            ctx.skipped.append(
+                SkippedFile(
+                    path=path,
+                    relative_path=_get_relative_path(path, ctx.root),
+                    category=FileCategory.UNKNOWN,
+                    reason_type=SkipReasonType.INVALID_FORMAT,
+                    reason_message="File has .parquet extension but is not a valid Parquet file (corrupted or wrong format)",
+                )
+            )
+            return
         if not is_geoparquet(path):
             # Regular Parquet (tabular data), not a geospatial asset
             # Create SkippedFile directly since classify_file can't detect non-geo parquet

@@ -165,3 +165,38 @@ class TestCaseInsensitivity:
         result = get_cloud_native_status(copc_file)
         assert result.status == CloudNativeStatus.CLOUD_NATIVE
         assert result.display_name == "COPC"
+
+
+class TestCorruptedParquet:
+    """Tests for corrupted/invalid Parquet file handling.
+
+    When a file has .parquet extension but is not a valid Parquet file,
+    it should be detected as UNSUPPORTED (not silently treated as tabular).
+    """
+
+    @pytest.mark.unit
+    def test_corrupted_parquet_detected_as_unsupported(self, tmp_path: Path) -> None:
+        """Corrupted .parquet file returns UNSUPPORTED with error message."""
+        bad_parquet = tmp_path / "corrupted.parquet"
+        bad_parquet.write_text("this is not a valid parquet file")
+        result = get_cloud_native_status(bad_parquet)
+        assert result.status == CloudNativeStatus.UNSUPPORTED
+        assert result.display_name == "Corrupted Parquet"
+        assert "not a valid Parquet file" in (result.error_message or "")
+
+    @pytest.mark.unit
+    def test_empty_parquet_detected_as_unsupported(self, tmp_path: Path) -> None:
+        """Empty .parquet file returns UNSUPPORTED."""
+        empty_parquet = tmp_path / "empty.parquet"
+        empty_parquet.write_bytes(b"")
+        result = get_cloud_native_status(empty_parquet)
+        assert result.status == CloudNativeStatus.UNSUPPORTED
+        assert "Corrupted" in result.display_name
+
+    @pytest.mark.unit
+    def test_wrong_magic_bytes_parquet(self, tmp_path: Path) -> None:
+        """File with wrong magic bytes (not PAR1) is UNSUPPORTED."""
+        wrong_magic = tmp_path / "wrong_magic.parquet"
+        wrong_magic.write_bytes(b"FAKE1234")
+        result = get_cloud_native_status(wrong_magic)
+        assert result.status == CloudNativeStatus.UNSUPPORTED
