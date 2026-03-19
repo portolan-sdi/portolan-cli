@@ -23,6 +23,65 @@ Issues #241 and #234 both enhance `portolan scan` to understand ADR-0031/0032 ca
 | Scan WARNS, add ERRORS (--strict makes scan error) | User decision |
 | Dry-run preview outputs JSON for agent restructuring | User decision |
 | No caching for now (YAGNI) | User decision |
+| Collection IDs are flat; nested paths are display-only | Research finding (STAC convention) |
+| Multi-format same name (e.g., `data.parquet` + `data.shp`) = OK (warn) | User clarification |
+| Multi-format different names = ERROR with hint | User clarification |
+| `fix_commands` in JSON output use structured format | User decision |
+| Corrupted files flagged, don't error scan (error on `add`) | User decision |
+| Collection ID sanitization goes in `scan --fix` | User decision |
+
+## Research Findings (2025-03-19)
+
+### Collection ID Character Restrictions
+
+Per STAC best practices and real-world catalogs (AWS Earth Search, Microsoft Planetary Computer, Planet Labs):
+- **Allowed:** `[a-z0-9_-]+` (lowercase letters, numbers, underscores, hyphens)
+- **Forbidden:** Spaces, forward slashes, colons, special characters
+- **Discouraged:** Uppercase letters (convention inconsistency)
+
+**Nested collection IDs:** The `/` in `climate/hittekaart` is a **display path**, not part of the actual collection ID. The `collection.json` should have `"id": "hittekaart"` with parent catalog `climate` linking to it.
+
+### GeoParquet Detection
+
+**Use geoparquet-io instead of direct PyArrow.** The `detect_geoparquet_file_type()` function:
+- Is 300x faster on repeated calls (mtime-based caching)
+- Distinguishes GeoParquet v1 vs v2 vs native Parquet GEOMETRY types
+- Handles malformed metadata gracefully
+- Already a Portolan dependency (per ADR-0010: delegate to upstream)
+
+```python
+from geoparquet_io.core.common import detect_geoparquet_file_type
+
+result = detect_geoparquet_file_type(file_path)
+# Returns: {"has_geo_metadata": bool, "geo_version": str, "file_type": str, ...}
+```
+
+### Progress Reporting (rich library)
+
+Rich supports the two-phase pattern:
+1. Indeterminate spinner while counting directories
+2. Switch to determinate progress bar after count known
+3. Auto-suppresses animations when not a TTY
+
+### Multi-Format Handling
+
+| Scenario | Action |
+|----------|--------|
+| `data.parquet` + `data.shp` (same basename) | WARN: cloud-native + legacy copy detected |
+| `boundaries.parquet` + `points.parquet` (different names) | ERROR: multiple geo-primaries; hint about naming convention |
+| `data.parquet` (GeoParquet) + `lookup.parquet` (plain) | OK: primary + companion |
+
+### JSON Output: `fix_commands` Structure
+
+Use structured format for agent consumption:
+```json
+{
+  "fix_commands": [
+    {"command": "add", "args": ["climate/hittekaart"], "reason": "Collection not tracked"},
+    {"command": "convert", "args": ["data.tif"], "options": {"output": "data.tif"}, "reason": "GeoTIFF is not COG"}
+  ]
+}
+```
 
 ## Files to Modify
 
@@ -130,32 +189,43 @@ Issues #241 and #234 both enhance `portolan scan` to understand ADR-0031/0032 ca
 
 | Function | Location | Use For |
 |----------|----------|---------|
-| `is_geoparquet()` | `formats.py:165` | Distinguish geo vs non-geo Parquet |
+| `detect_geoparquet_file_type()` | `geoparquet_io.core.common` | **Primary:** Distinguish geo vs non-geo Parquet (cached, version-aware) |
+| `is_geoparquet()` | `formats.py:165` | Fallback (uses geoparquet-io internally after refactor) |
 | `is_cloud_optimized_geotiff()` | `formats.py:196` | COG vs regular GeoTIFF |
 | `get_cloud_native_status()` | `formats.py:224` | Full format classification |
 | `infer_nested_collection_id()` | `dataset.py:1238` | Compute nested collection path |
 | `create_intermediate_catalogs()` | `catalog.py:506` | (for add, not scan) |
 
+**Note:** Phase 1 now includes replacing the duplicate `is_geoparquet()` in `scan.py` with a call to geoparquet-io's `detect_geoparquet_file_type()` per ADR-0010.
+
 ## Test Cases
 
-### From existing fixtures (`tests/fixtures/scan/`)
+### Test Fixtures (`tests/fixtures/scan/`)
 
-| Fixture | Tests |
-|---------|-------|
-| `nested/` | Nested collection ID inference, multi-level structure |
-| `multiple_primaries/` | Multiple geo-assets warning |
-| `mixed_formats/` | Vector + raster in same dir |
-| `clean_flat/` | Valid flat structure (no warnings) |
+| Fixture | Tests | Source |
+|---------|-------|--------|
+| `nested/` | Basic nested collection ID inference | Synthetic |
+| `multiple_primaries/` | Multiple geo-assets warning (GeoJSON) | La Plata, Argentina |
+| `mixed_formats/` | Vector + raster in same dir | Various |
+| `clean_flat/` | Valid flat structure (no warnings) | Various |
+| `three_level_nested/` | 3+ level nesting, deep collection IDs | GAUL 2024 (FAO) |
+| `mixed_depths/` | Shallow + nested in same catalog | Den Haag Open Data |
+| `geoparquet_with_companions/` | GeoParquet + plain Parquet companion | Den Haag + synthetic |
+| `multiple_geoparquet/` | Two GeoParquet in same dir (warning) | Den Haag Open Data |
+| `deep_nested/` | 5+ levels of nesting | Den Haag Open Data |
+| `flat_collection/` | Multiple files at root level (ADR-0031) | Den Haag Open Data |
 
-### New test cases needed
+### Test Cases by Fixture
 
-| Case | Expected |
-|------|----------|
-| One GeoParquet + multiple plain Parquet | Valid (no warning) |
-| Two GeoParquet in same dir | Warning: multiple geo primaries |
-| Deep nesting (5+ levels) | Correct nested collection ID |
-| --strict with warnings | Exit code 1 |
-| JSON output with nested IDs | Correct structure |
+| Case | Fixture | Expected |
+|------|---------|----------|
+| One GeoParquet + multiple plain Parquet | `geoparquet_with_companions/` | Valid (no warning) |
+| Two GeoParquet in same dir | `multiple_geoparquet/` | Warning: multiple geo primaries |
+| Deep nesting (5+ levels) | `deep_nested/` | Correct nested collection ID |
+| Three-level nesting | `three_level_nested/` | Collection ID: `GAUL_L2/by_country/AFG` |
+| Mixed depths | `mixed_depths/` | Both `shallow_collection` and `theme/nested_collection` |
+| --strict with warnings | Any with warnings | Exit code 1 |
+| JSON output with nested IDs | `three_level_nested/` | Correct structure |
 
 ## Verification
 
