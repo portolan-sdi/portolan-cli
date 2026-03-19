@@ -311,7 +311,7 @@ def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
 
     # Parquet: check GeoParquet metadata
     if ext == ".parquet":
-        from portolan_cli.scan import is_geoparquet
+        from portolan_cli.formats import is_geoparquet
 
         if not is_geoparquet(path):
             raise NoGeometryError(

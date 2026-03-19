@@ -39,7 +39,6 @@ def fixtures_dir() -> Path:
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(reason="TDD: inferred_collection_id field not yet implemented")
 class TestNestedCollectionIdInference:
     """Tests for ScannedFile.inferred_collection_id field.
 
@@ -188,7 +187,6 @@ class TestNestedCollectionIdInference:
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(reason="TDD: inferred_collection_id field not yet implemented")
 class TestCollectionIdEdgeCases:
     """Edge case tests for collection ID inference."""
 
@@ -236,7 +234,6 @@ class TestCollectionIdEdgeCases:
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(reason="TDD: inferred_collection_id field not yet implemented")
 class TestInferredCollectionIdField:
     """Tests for the ScannedFile.inferred_collection_id field itself."""
 

@@ -40,6 +40,14 @@ from portolan_cli.collection_id import (
     validate_collection_id,
 )
 from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
+
+# Import format detection from formats.py (ADR-0010: delegate to upstream)
+from portolan_cli.formats import (
+    CloudNativeStatus,
+    FormatInfo,
+    get_cloud_native_status,
+    is_geoparquet,
+)
 from portolan_cli.scan_classify import (
     FileCategory,
     SkippedFile,
@@ -198,6 +206,12 @@ class ScannedFile:
         extension: File extension (e.g., ".parquet", ".gdb").
         format_type: Whether this is VECTOR or RASTER data.
         size_bytes: Total size in bytes.
+        inferred_collection_id: Nested collection path derived from directory structure.
+            For nested catalogs (ADR-0032), this is the parent directory path relative
+            to the scan root. Example: "climate/hittekaart" for a file at
+            climate/hittekaart/data.parquet. Empty string for files at scan root.
+        format_status: Cloud-native status classification (CLOUD_NATIVE, CONVERTIBLE, UNSUPPORTED).
+        format_display_name: Human-readable format name (e.g., "GeoParquet", "GeoTIFF (not COG)").
         metadata: Format-specific metadata (e.g., gdbtable_count for FileGDB).
     """
 
@@ -206,6 +220,9 @@ class ScannedFile:
     extension: str
     format_type: FormatType
     size_bytes: int
+    inferred_collection_id: str = ""
+    format_status: CloudNativeStatus = CloudNativeStatus.CLOUD_NATIVE
+    format_display_name: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -431,6 +448,59 @@ def _get_relative_path(path: Path, root: Path) -> str:
         return path.as_posix()
 
 
+def _infer_collection_id_from_relative_path(relative_path: str) -> str:
+    """Infer nested collection ID from a relative path (ADR-0032).
+
+    The collection ID is the directory portion of the relative path,
+    representing the leaf collection in a nested catalog structure.
+
+    Examples:
+        "data.parquet" -> ""
+        "collection/data.parquet" -> "collection"
+        "climate/hittekaart/data.parquet" -> "climate/hittekaart"
+        "env/air/quality/pm25.parquet" -> "env/air/quality"
+
+    Args:
+        relative_path: Path relative to scan root, using forward slashes.
+
+    Returns:
+        Collection ID (parent directory path). Empty string for root-level files.
+    """
+    # Find the last slash - everything before it is the collection ID
+    last_slash_idx = relative_path.rfind("/")
+    if last_slash_idx == -1:
+        # File is at root level (no directory component)
+        return ""
+    return relative_path[:last_slash_idx]
+
+
+def _get_format_info(path: Path, ext: str) -> FormatInfo:
+    """Get cloud-native status and format info for a file.
+
+    This is a lightweight wrapper around get_cloud_native_status() that
+    handles errors gracefully for scan context.
+
+    Args:
+        path: Path to the file.
+        ext: File extension (lowercase).
+
+    Returns:
+        FormatInfo with status, display_name, target_format, and error_message.
+    """
+    try:
+        return get_cloud_native_status(path)
+    except (FileNotFoundError, IsADirectoryError):
+        # Return a fallback for edge cases
+        from portolan_cli.formats import FormatInfo as FI
+
+        return FI(
+            status=CloudNativeStatus.CLOUD_NATIVE,
+            display_name=ext.upper().lstrip(".") if ext else "Unknown",
+            target_format=None,
+            error_message=None,
+        )
+
+
 def _make_skipped_file(
     ctx: _ScanContext,
     path: Path,
@@ -456,33 +526,7 @@ def _make_skipped_file(
     )
 
 
-def is_geoparquet(path: Path) -> bool:
-    """Check if a Parquet file is GeoParquet by inspecting metadata.
-
-    GeoParquet files have a 'geo' key in their schema metadata containing
-    JSON with version, primary_column, and columns fields.
-
-    Args:
-        path: Path to a .parquet file
-
-    Returns:
-        True if the file has GeoParquet metadata, False otherwise.
-        Returns False if file cannot be read or is not valid Parquet.
-    """
-    try:
-        import pyarrow.parquet as pq
-
-        # Use ParquetFile to get Arrow schema with metadata
-        pq_file = pq.ParquetFile(path)
-        schema_metadata = pq_file.schema_arrow.metadata
-        if schema_metadata is None:
-            return False
-        # GeoParquet spec requires 'geo' key in schema metadata
-        return b"geo" in schema_metadata
-    except Exception:
-        # If we can't read it, assume it's not GeoParquet
-        # (could be corrupted, not a Parquet file, etc.)
-        return False
+# NOTE: is_geoparquet() is now imported from portolan_cli.formats (ADR-0010)
 
 
 def _is_overview_extension(ext: str) -> bool:
@@ -1057,13 +1101,21 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         # Gather FileGDB-specific metadata
         metadata = _gather_filegdb_metadata(path)
 
+        # Compute relative path and inferred collection ID
+        relative_path = _get_relative_path(path, ctx.root)
+        inferred_collection_id = _infer_collection_id_from_relative_path(relative_path)
+
         # Create ScannedFile for FileGDB directory
+        # FileGDB is convertible to GeoParquet
         scanned = ScannedFile(
             path=path,
-            relative_path=_get_relative_path(path, ctx.root),
+            relative_path=relative_path,
             extension=".gdb",
             format_type=FormatType.VECTOR,
             size_bytes=size,
+            inferred_collection_id=inferred_collection_id,
+            format_status=CloudNativeStatus.CONVERTIBLE,
+            format_display_name="FileGDB",
             metadata=metadata,
         )
         ctx.ready.append(scanned)
@@ -1131,13 +1183,23 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         ctx.skipped.append(_make_skipped_file(ctx, path, size))
         return
 
+    # Compute relative path and inferred collection ID
+    relative_path = _get_relative_path(path, ctx.root)
+    inferred_collection_id = _infer_collection_id_from_relative_path(relative_path)
+
+    # Get format info for cloud-native status and display name
+    format_info = _get_format_info(path, ext)
+
     # Create scanned file
     scanned = ScannedFile(
         path=path,
-        relative_path=_get_relative_path(path, ctx.root),
+        relative_path=relative_path,
         extension=ext,
         format_type=format_type,
         size_bytes=size,
+        inferred_collection_id=inferred_collection_id,
+        format_status=format_info.status,
+        format_display_name=format_info.display_name,
     )
     ctx.ready.append(scanned)
 
