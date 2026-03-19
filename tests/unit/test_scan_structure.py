@@ -161,7 +161,6 @@ class TestGeoparquetWithCompanions:
         ]
         assert len(multiple_primary_issues) == 0
 
-    @pytest.mark.skip(reason="MULTIPLE_GEO_PRIMARIES not yet implemented")
     def test_geoparquet_companions_no_geo_primary_warning(self, fixtures_dir: Path) -> None:
         """GeoParquet with companions should not trigger MULTIPLE_GEO_PRIMARIES.
 
@@ -206,7 +205,6 @@ class TestMultipleGeoparquet:
     Remove the skip markers when implementing the issue type.
     """
 
-    @pytest.mark.skip(reason="MULTIPLE_GEO_PRIMARIES not yet implemented")
     def test_multiple_geoparquet_triggers_warning(self, fixtures_dir: Path) -> None:
         """Directory with 2+ GeoParquet files triggers MULTIPLE_GEO_PRIMARIES warning.
 
@@ -228,7 +226,6 @@ class TestMultipleGeoparquet:
         )
         assert geo_issues[0].severity == Severity.WARNING
 
-    @pytest.mark.skip(reason="MULTIPLE_GEO_PRIMARIES not yet implemented")
     def test_multiple_geoparquet_distinct_from_multiple_primaries(self, fixtures_dir: Path) -> None:
         """MULTIPLE_GEO_PRIMARIES is a distinct issue type from MULTIPLE_PRIMARIES.
 
@@ -245,7 +242,6 @@ class TestMultipleGeoparquet:
         issue_types = {i.issue_type for i in result.issues}
         assert IssueType.MULTIPLE_GEO_PRIMARIES in issue_types
 
-    @pytest.mark.skip(reason="MULTIPLE_GEO_PRIMARIES not yet implemented")
     def test_multiple_geoparquet_message_references_geoparquet(self, fixtures_dir: Path) -> None:
         """MULTIPLE_GEO_PRIMARIES message should reference GeoParquet specifically."""
         from portolan_cli.scan import IssueType, scan_directory

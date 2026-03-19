@@ -52,7 +52,7 @@ class TestEnums:
         assert Severity.INFO.value == "info"
 
     def test_issue_type_has_all_types(self) -> None:
-        """IssueType enum has all 19 issue types."""
+        """IssueType enum has all 20 issue types."""
         from portolan_cli.scan import IssueType
 
         # All expected issue type values
@@ -76,10 +76,11 @@ class TestEnums:
             "mixed_flat_multiitem",
             "orphan_sidecar",
             "invalid_collection_id",
+            "multiple_geo_primaries",
         }
         actual_values = {t.value for t in IssueType}
         assert actual_values == expected_values, f"Missing: {expected_values - actual_values}"
-        assert len(IssueType) == 19
+        assert len(IssueType) == 20
 
     def test_format_type_has_vector_and_raster(self) -> None:
         """FormatType enum has VECTOR and RASTER values."""
