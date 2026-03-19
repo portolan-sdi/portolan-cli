@@ -97,10 +97,12 @@ class TestAssetPathResolution:
         item_id = "test-item"
 
         # Act: scan for assets
+        # item_dir IS the collection directory in this test scenario
         stac_assets, _, _ = _scan_item_assets(
             item_dir=item_dir,
             item_id=item_id,
             primary_file=data_file,
+            collection_dir=item_dir,  # Files are at collection level
         )
 
         # Assert: href should be relative to item subdirectory (../)

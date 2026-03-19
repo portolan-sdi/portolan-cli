@@ -184,6 +184,7 @@ def _scan_item_assets(
     item_dir: Path,
     item_id: str,
     primary_file: Path,
+    collection_dir: Path,
 ) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str]], list[str]]:
     """Scan an item directory for all trackable assets.
 
@@ -192,9 +193,10 @@ def _scan_item_assets(
     Skips: non-FileGDB directories, symlinks, hidden files, STAC structural files.
 
     Args:
-        item_dir: Path to the item directory.
+        item_dir: Path to the item directory (where files are).
         item_id: Item identifier (for skipping item.json).
         primary_file: Path to the primary data file (gets "data" key).
+        collection_dir: Path to the collection directory.
 
     Returns:
         Tuple of (stac_assets, asset_files, asset_paths):
@@ -245,17 +247,23 @@ def _scan_item_assets(
                 # Collision: use full filename instead
                 asset_key = file_path.name
         # Asset href must be relative to item JSON location.
-        # PySTAC places item JSON at: {collection}/{item_id}/{item_id}.json
+        # PySTAC places item JSON at: {collection_dir}/{item_id}/{item_id}.json
         #
-        # Case 1: Data at {collection}/data.parquet (item_dir.name != item_id)
-        #   - Item JSON at {collection}/{item_id}/item.json
-        #   - Href needs ../{filename} to reach parent directory
+        # Case 1: Data at {collection_dir}/data.parquet (item_dir == collection_dir)
+        #   - Item JSON at {collection_dir}/{item_id}/{item_id}.json (subdirectory)
+        #   - Href needs ../{filename} to reach parent (collection) directory
         #
-        # Case 2: Data at {collection}/{item_id}/data.parquet (item_dir.name == item_id)
-        #   - Item JSON at same level: {collection}/{item_id}/item.json
+        # Case 2: Data at {collection_dir}/{item_id}/data.parquet
+        #   - item_dir == {collection_dir}/{item_id}/
+        #   - Item JSON at same level: {collection_dir}/{item_id}/{item_id}.json
         #   - Href just needs {filename} (same directory)
         #
-        if item_dir.name == item_id:
+        # The key: if item_dir IS the collection, PySTAC creates a subdirectory
+        # and we need ../ to reach the files. Otherwise, files are already in
+        # the item subdirectory.
+        #
+        item_json_dir = collection_dir / item_id
+        if item_dir.resolve() == item_json_dir.resolve():
             # Assets and item JSON are in the same directory
             asset_href = file_path.name
         else:
@@ -605,6 +613,7 @@ def add_dataset(
         item_dir=item_dir,
         item_id=item_id,
         primary_file=output_path,
+        collection_dir=collection_dir,
     )
 
     # Step 6: Create STAC item with ALL assets
@@ -1852,6 +1861,7 @@ def _update_item_with_asset(
         item_dir=item_dir,
         item_id=item_id,
         primary_file=primary_file,
+        collection_dir=collection_dir,
     )
 
     # Update item assets

@@ -576,7 +576,10 @@ class TestFileGDBRoundTrip:
         primary = item_dir / "dummy.parquet"
         primary.write_bytes(b"\x00")
 
-        stac_assets, asset_files, asset_paths = _scan_item_assets(item_dir, "item", primary)
+        # collection_dir is the parent for this test setup
+        stac_assets, asset_files, asset_paths = _scan_item_assets(
+            item_dir, "item", primary, collection_dir=tmp_path
+        )
 
         # The FileGDB should appear in all three return values
         assert "data.gdb" in asset_files, (
@@ -600,7 +603,9 @@ class TestFileGDBRoundTrip:
         primary.write_bytes(b"\x00")
 
         # Simulate what add_dataset does: scan assets and write versions.json
-        _stac_assets, asset_files, _asset_paths = _scan_item_assets(item_dir, "latest", primary)
+        _stac_assets, asset_files, _asset_paths = _scan_item_assets(
+            item_dir, "latest", primary, collection_dir=col_dir
+        )
 
         # Build versions.json using the same asset structure as _update_versions()
         collection_id = "ocha"
