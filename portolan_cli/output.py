@@ -41,10 +41,14 @@ Combined Modes:
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 from typing import TextIO
 
 import click
+
+# Thread lock for console output to prevent interleaved output from concurrent threads
+_output_lock = threading.Lock()
 
 # ANSI color codes via click's style system
 _STYLES: dict[str, dict[str, str | bool]] = {
@@ -93,7 +97,10 @@ def _output(
     dim = bool(style_kwargs.get("dim", False))
     styled_prefix = click.style(prefix, fg=fg, dim=dim)
     styled_message = click.style(message, fg=fg, dim=dim)
-    click.echo(f"{styled_prefix} {styled_message}", file=file, nl=nl)
+
+    # Thread-safe output to prevent interleaving from concurrent threads
+    with _output_lock:
+        click.echo(f"{styled_prefix} {styled_message}", file=file, nl=nl)
 
 
 def success(

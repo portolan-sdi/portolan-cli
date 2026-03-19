@@ -2586,9 +2586,10 @@ def rm_cmd(
 @click.option(
     "--workers",
     "-w",
-    type=int,
+    type=click.IntRange(min=1),
     default=None,
-    help="Parallel workers for catalog-wide push (default: auto-detect, 1=sequential).",
+    help="Parallel workers for catalog-wide push (default: auto-detect based on CPU count, "
+    "capped at 16; use 1 for sequential). Ignored when --collection is specified.",
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")

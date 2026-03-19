@@ -105,6 +105,8 @@ class TestListStatusHypothesis:
         # Skip if names would conflict with reserved names
         assume(collection_name not in {"catalog", ".portolan"})
         assume(item_name not in {"collection"})
+        # Skip STAC reserved filenames (metadata files treated specially)
+        assume(filename not in {"item.json", "collection.json", "catalog.json"})
         # Skip patterns that match default ignored files
         for pattern in DEFAULT_IGNORED_FILES:
             if pattern.startswith("*"):

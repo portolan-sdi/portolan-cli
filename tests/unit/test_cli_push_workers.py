@@ -165,15 +165,20 @@ class TestPushWorkersFlag:
 
     @pytest.mark.unit
     def test_workers_requires_positive_integer(self, runner: CliRunner, tmp_path: Path) -> None:
-        """--workers requires a positive integer value."""
+        """--workers requires a positive integer value (>= 1)."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             _setup_catalog_with_collections(Path("."), ["col1"])
 
-            # Negative value should fail
+            # Negative value should fail with IntRange validation
             result = runner.invoke(cli, ["push", "--workers", "-1"])
             assert result.exit_code != 0
+            assert "1" in result.output or "range" in result.output.lower()
 
-            # Zero should work (means auto-detect in some CLIs, we'll pass through)
+            # Zero should also fail (IntRange min=1)
+            result = runner.invoke(cli, ["push", "--workers", "0"])
+            assert result.exit_code != 0
+            assert "1" in result.output or "range" in result.output.lower()
+
             # Non-integer should fail
             result = runner.invoke(cli, ["push", "--workers", "abc"])
             assert result.exit_code != 0

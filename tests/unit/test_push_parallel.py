@@ -48,28 +48,35 @@ class TestGetDefaultWorkers:
         assert result > 0
 
     def test_respects_max_cap(self) -> None:
-        """get_default_workers caps at 8 workers maximum."""
+        """get_default_workers caps at 16 workers maximum (I/O-bound optimization)."""
         result = get_default_workers()
-        assert result <= 8
+        assert result <= 16
 
     @patch("os.cpu_count")
-    def test_uses_cpu_count_when_available(self, mock_cpu_count: MagicMock) -> None:
-        """get_default_workers uses CPU count when available."""
+    def test_uses_cpu_count_doubled_when_available(self, mock_cpu_count: MagicMock) -> None:
+        """get_default_workers uses 2x CPU count for I/O-bound operations."""
         mock_cpu_count.return_value = 4
         result = get_default_workers()
-        assert result == 4
+        assert result == 8  # 4 * 2 = 8
 
     @patch("os.cpu_count")
     def test_caps_high_cpu_count(self, mock_cpu_count: MagicMock) -> None:
-        """get_default_workers caps CPU count at 8."""
+        """get_default_workers caps at 16 even with many CPUs."""
         mock_cpu_count.return_value = 32
         result = get_default_workers()
-        assert result == 8
+        assert result == 16  # Capped at 16
 
     @patch("os.cpu_count")
     def test_fallback_when_cpu_count_unavailable(self, mock_cpu_count: MagicMock) -> None:
         """get_default_workers returns 4 when CPU count unavailable."""
         mock_cpu_count.return_value = None
+        result = get_default_workers()
+        assert result == 4
+
+    @patch("os.cpu_count")
+    def test_fallback_when_cpu_count_raises(self, mock_cpu_count: MagicMock) -> None:
+        """get_default_workers returns 4 when cpu_count() raises exception."""
+        mock_cpu_count.side_effect = OSError("Cannot determine CPU count")
         result = get_default_workers()
         assert result == 4
 
@@ -342,3 +349,63 @@ class TestPushAllCollectionsParallel:
         # Verify dry_run was passed to individual push calls
         for call in mock_push.call_args_list:
             assert call.kwargs["dry_run"] is True
+
+    @patch("portolan_cli.push.push")
+    def test_parallel_handles_unexpected_exception_types(
+        self, mock_push: MagicMock, tmp_path: Path
+    ) -> None:
+        """Parallel execution catches unexpected exception types (not just specific ones)."""
+        _setup_valid_catalog(tmp_path)
+        for name in ["col1", "col2", "col3"]:
+            _create_collection(tmp_path, name)
+
+        def raise_unexpected(**kwargs):  # type: ignore[no-untyped-def]
+            if kwargs["collection"] == "col2":
+                # Raise an unexpected exception type that wasn't in original catch list
+                raise KeyError("unexpected_key")
+            return PushResult(
+                success=True, files_uploaded=1, versions_pushed=1, conflicts=[], errors=[]
+            )
+
+        mock_push.side_effect = raise_unexpected
+
+        result = push_all_collections(
+            catalog_root=tmp_path,
+            destination="s3://bucket/catalog",
+            workers=3,
+        )
+
+        assert result.success is False
+        assert result.successful_collections == 2
+        assert result.failed_collections == 1
+        assert "col2" in result.collection_errors
+        # Verify error message includes exception type name
+        assert "KeyError" in result.collection_errors["col2"][0]
+
+    @patch("portolan_cli.push.push")
+    def test_parallel_handles_runtime_error(self, mock_push: MagicMock, tmp_path: Path) -> None:
+        """Parallel execution handles RuntimeError (network/obstore errors)."""
+        _setup_valid_catalog(tmp_path)
+        for name in ["col1", "col2"]:
+            _create_collection(tmp_path, name)
+
+        def raise_runtime(**kwargs):  # type: ignore[no-untyped-def]
+            if kwargs["collection"] == "col1":
+                raise RuntimeError("Connection reset by peer")
+            return PushResult(
+                success=True, files_uploaded=1, versions_pushed=1, conflicts=[], errors=[]
+            )
+
+        mock_push.side_effect = raise_runtime
+
+        result = push_all_collections(
+            catalog_root=tmp_path,
+            destination="s3://bucket/catalog",
+            workers=2,
+        )
+
+        assert result.success is False
+        assert result.failed_collections == 1
+        assert "col1" in result.collection_errors
+        assert "RuntimeError" in result.collection_errors["col1"][0]
+        assert "Connection reset" in result.collection_errors["col1"][0]

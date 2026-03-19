@@ -185,9 +185,9 @@ class TestParallelPushIntegration:
 
     @pytest.mark.integration
     def test_get_default_workers_returns_sensible_value(self) -> None:
-        """get_default_workers returns a value between 1 and 8."""
+        """get_default_workers returns a value between 1 and 16."""
         workers = get_default_workers()
-        assert 1 <= workers <= 8
+        assert 1 <= workers <= 16
 
 
 class TestCLIParallelPushIntegration:
