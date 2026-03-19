@@ -81,13 +81,12 @@ class TestCatalogRootConsistency:
         assert result.exit_code == 0, f"list failed: {result.output}"
 
     @pytest.mark.integration
-    def test_list_succeeds_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
-        """list command succeeds from subdirectory (returns empty, doesn't walk up).
+    def test_list_walks_up_to_find_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
+        """list command walks up from subdirectory to find catalog root.
 
-        Note: 'list' uses --catalog with default="." rather than find_catalog_root(),
-        so it doesn't walk up to find the parent catalog. This test verifies the
-        command doesn't error when run from a subdirectory without a catalog.
-        See lines 176-178 for the full explanation.
+        Git-style behavior: list uses find_catalog_root() to auto-detect
+        the catalog by walking up from cwd. This allows running list from
+        any subdirectory within a catalog.
         """
         setup_managed_catalog(tmp_path)
 
@@ -95,12 +94,11 @@ class TestCatalogRootConsistency:
         nested_dir = tmp_path / "collection"
         nested_dir.mkdir()
 
-        # Run list from nested directory - will return empty (no local catalog.json)
+        # Run list from nested directory - should find parent catalog
         with runner.isolated_filesystem(temp_dir=nested_dir):
             result = runner.invoke(cli, ["list"], catch_exceptions=False)
 
-        # Should succeed (exit code 0) but with empty results
-        # list doesn't use find_catalog_root, so it won't find the parent
+        # Should succeed (exit code 0) because list walks up to find catalog
         assert result.exit_code == 0, f"list failed: {result.output}"
 
     @pytest.mark.integration
@@ -198,8 +196,8 @@ class TestCatalogRootConsistency:
     ) -> None:
         """Commands using find_catalog_root fail consistently when no catalog exists.
 
-        Note: 'list' is excluded because it takes --catalog as explicit argument
-        rather than using find_catalog_root. That's a separate issue to address.
+        Git-style behavior: list, push, pull all use find_catalog_root() to
+        auto-detect catalog by walking up from cwd.
         Note: 'status' was removed per issue #210 (merged into 'list').
         """
         nested_dir = tmp_path / "no-catalog" / "nested"
@@ -208,6 +206,7 @@ class TestCatalogRootConsistency:
         # Commands that use find_catalog_root internally
         commands = [
             ["config", "list"],
+            ["list"],
         ]
 
         with runner.isolated_filesystem(temp_dir=nested_dir):
@@ -219,8 +218,8 @@ class TestCatalogRootConsistency:
     def test_all_commands_consistent_with_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
         """Commands using find_catalog_root succeed consistently when catalog exists.
 
-        Note: 'list' is excluded because it takes --catalog as explicit argument
-        rather than using find_catalog_root. That's a separate issue to address.
+        Git-style behavior: list, push, pull all use find_catalog_root() to
+        auto-detect catalog by walking up from cwd.
         Note: 'status' was removed per issue #210 (merged into 'list').
         """
         setup_managed_catalog(tmp_path)
@@ -231,6 +230,7 @@ class TestCatalogRootConsistency:
         # Commands that use find_catalog_root internally
         commands = [
             ["config", "list"],
+            ["list"],
         ]
 
         with runner.isolated_filesystem(temp_dir=nested_dir):
@@ -276,3 +276,103 @@ class TestCatalogRootEdgeCases:
 
         # Should fail because config.yaml is missing
         assert result.exit_code != 0, "Should fail without config.yaml"
+
+
+class TestGitStyleCommandScoping:
+    """Integration tests for git-style command scoping (push, pull, list from subdirectories)."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI runner for testing."""
+        return CliRunner()
+
+    @pytest.mark.integration
+    def test_push_finds_catalog_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
+        """push command finds catalog from nested subdirectory.
+
+        Git-style behavior: push uses find_catalog_root() to auto-detect
+        the catalog by walking up from cwd.
+        """
+        setup_managed_catalog(tmp_path)
+
+        # Create nested subdirectory
+        nested_dir = tmp_path / "collection" / "item"
+        nested_dir.mkdir(parents=True)
+
+        # Run push from nested directory - should find catalog but fail for other reason
+        # (missing destination). The key test is that it DOESN'T fail with
+        # "not a portolan catalog" error.
+        with runner.isolated_filesystem(temp_dir=nested_dir):
+            result = runner.invoke(cli, ["push"])
+
+        # Should NOT fail with "not a portolan catalog" - proves it found the catalog
+        assert "not a portolan catalog" not in result.output.lower(), (
+            f"push should find catalog from subdirectory: {result.output}"
+        )
+
+    @pytest.mark.integration
+    def test_push_fails_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
+        """push command fails with git-style error when not in a catalog."""
+        nested_dir = tmp_path / "no-catalog" / "nested"
+        nested_dir.mkdir(parents=True)
+
+        with runner.isolated_filesystem(temp_dir=nested_dir):
+            result = runner.invoke(cli, ["push"])
+
+        assert result.exit_code != 0
+        assert "not a portolan catalog" in result.output.lower(), (
+            f"Expected git-style error message: {result.output}"
+        )
+
+    @pytest.mark.integration
+    def test_pull_finds_catalog_from_subdirectory(self, runner: CliRunner, tmp_path: Path) -> None:
+        """pull command finds catalog from nested subdirectory.
+
+        Git-style behavior: pull uses find_catalog_root() to auto-detect
+        the catalog by walking up from cwd.
+        """
+        setup_managed_catalog(tmp_path)
+
+        # Create nested subdirectory
+        nested_dir = tmp_path / "collection" / "item"
+        nested_dir.mkdir(parents=True)
+
+        # Run pull from nested directory - should find catalog but fail for other reason
+        # (invalid remote URL). The key test is that it DOESN'T fail with
+        # "not a portolan catalog" error.
+        with runner.isolated_filesystem(temp_dir=nested_dir):
+            result = runner.invoke(cli, ["pull", "s3://dummy/bucket", "--collection", "test"])
+
+        # Should NOT fail with "not a portolan catalog" - proves it found the catalog
+        assert "not a portolan catalog" not in result.output.lower(), (
+            f"pull should find catalog from subdirectory: {result.output}"
+        )
+
+    @pytest.mark.integration
+    def test_pull_fails_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
+        """pull command fails with git-style error when not in a catalog."""
+        nested_dir = tmp_path / "no-catalog" / "nested"
+        nested_dir.mkdir(parents=True)
+
+        with runner.isolated_filesystem(temp_dir=nested_dir):
+            # Provide dummy remote URL so Click doesn't fail on missing argument
+            result = runner.invoke(cli, ["pull", "s3://dummy/bucket", "--collection", "test"])
+
+        assert result.exit_code != 0
+        assert "not a portolan catalog" in result.output.lower(), (
+            f"Expected git-style error message: {result.output}"
+        )
+
+    @pytest.mark.integration
+    def test_list_fails_outside_catalog(self, runner: CliRunner, tmp_path: Path) -> None:
+        """list command fails with git-style error when not in a catalog."""
+        nested_dir = tmp_path / "no-catalog" / "nested"
+        nested_dir.mkdir(parents=True)
+
+        with runner.isolated_filesystem(temp_dir=nested_dir):
+            result = runner.invoke(cli, ["list"])
+
+        assert result.exit_code != 0
+        assert "not a portolan catalog" in result.output.lower(), (
+            f"Expected git-style error message: {result.output}"
+        )

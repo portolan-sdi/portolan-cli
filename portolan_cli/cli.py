@@ -148,41 +148,6 @@ def require_catalog_root(
     return catalog_root
 
 
-def require_inside_catalog(
-    use_json: bool = False,
-    command_name: str = "command",
-) -> Path:
-    """Validate we're inside a catalog, returning cwd for scoped operations.
-
-    Git-style behavior: walks up from cwd to find .portolan/config.yaml,
-    then returns cwd for commands that operate on current directory scope.
-    This validates we're inside a catalog without changing the operation scope.
-
-    Args:
-        use_json: If True, output error as JSON envelope.
-        command_name: Name of the command for error messages.
-
-    Returns:
-        Current working directory (validated to be inside a catalog).
-
-    Raises:
-        SystemExit: If not inside a catalog.
-    """
-    catalog_root = find_catalog_root()
-    if catalog_root is None:
-        msg = "fatal: not a portolan catalog (or any parent up to mount point)"
-        if use_json:
-            envelope = error_envelope(
-                command_name,
-                [ErrorDetail(type="NotACatalogError", message=msg)],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(msg)
-        raise SystemExit(1)
-    return Path.cwd()
-
-
 @click.group()
 @click.version_option()
 @click.option(
