@@ -1498,11 +1498,13 @@ def scan(
     )
 
     # Pre-count directories for progress reporting (fast, < 100ms)
+    # Use same follow_symlinks setting as scan for accurate progress
     total_dirs = count_directories(
         path,
         include_hidden=include_hidden,
         max_depth=max_depth,
         recursive=not no_recursive,
+        follow_symlinks=follow_symlinks,
     )
 
     # Create progress reporter (suppressed in JSON mode)

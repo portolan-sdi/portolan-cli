@@ -193,7 +193,7 @@ def is_geoparquet(path: Path) -> bool:
         return False
 
 
-def is_cloud_optimized_geotiff(path: Path) -> bool:
+def is_cloud_optimized_geotiff(path: Path, *, quiet: bool = True) -> bool:
     """Check if a TIFF file is a Cloud-Optimized GeoTIFF.
 
     Uses rio-cogeo's validation to determine if the file meets COG requirements.
@@ -201,6 +201,8 @@ def is_cloud_optimized_geotiff(path: Path) -> bool:
 
     Args:
         path: Path to the TIFF file.
+        quiet: If True, suppress rio-cogeo's warning output to stdout.
+            Default is True to avoid polluting JSON output.
 
     Returns:
         True if the file is a valid COG, False otherwise.
@@ -214,7 +216,8 @@ def is_cloud_optimized_geotiff(path: Path) -> bool:
         return False
 
     try:
-        is_valid, _errors, _warnings = cog_validate(str(path))
+        # Use quiet=True to suppress rio-cogeo's warning output to stdout
+        is_valid, _errors, _warnings = cog_validate(str(path), quiet=quiet)
         return is_valid
     except Exception:
         logger.exception("Failed to validate COG for %s", path)

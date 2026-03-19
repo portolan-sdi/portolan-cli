@@ -803,19 +803,29 @@ def format_scan_output(
 
 
 def _get_collection_id(file: ScannedFile) -> str | None:
-    """Extract inferred_collection_id from ScannedFile metadata.
+    """Extract inferred_collection_id from ScannedFile.
+
+    Reads from the top-level field first (set by scan.py for nested catalogs),
+    falls back to metadata for backward compatibility.
 
     Args:
         file: The scanned file.
 
     Returns:
-        Collection ID if present in metadata, None otherwise.
+        Collection ID if present, None otherwise.
     """
-    return file.metadata.get("inferred_collection_id")
+    # Primary: top-level field (ADR-0032 nested catalog support)
+    if file.inferred_collection_id:
+        return file.inferred_collection_id
+    # Fallback: metadata dict (backward compatibility)
+    return file.metadata.get("inferred_collection_id") or None
 
 
 def _get_format_status(file: ScannedFile) -> str:
-    """Extract format_status from ScannedFile metadata.
+    """Extract format_status from ScannedFile.
+
+    Reads from the top-level field first (set by scan.py),
+    falls back to metadata, then extension.
 
     Args:
         file: The scanned file.
@@ -823,6 +833,10 @@ def _get_format_status(file: ScannedFile) -> str:
     Returns:
         Format status string, or extension as fallback.
     """
+    # Primary: top-level field (CloudNativeStatus enum)
+    if file.format_status:
+        return file.format_status.value
+    # Fallback: metadata dict
     status = file.metadata.get("format_status")
     if isinstance(status, str):
         return status
@@ -830,7 +844,10 @@ def _get_format_status(file: ScannedFile) -> str:
 
 
 def _get_format_display_name(file: ScannedFile) -> str:
-    """Extract format_display_name from ScannedFile metadata.
+    """Extract format_display_name from ScannedFile.
+
+    Reads from the top-level field first (set by scan.py),
+    falls back to metadata, then derives from extension.
 
     Args:
         file: The scanned file.
@@ -838,6 +855,10 @@ def _get_format_display_name(file: ScannedFile) -> str:
     Returns:
         Human-readable format name.
     """
+    # Primary: top-level field
+    if file.format_display_name:
+        return file.format_display_name
+    # Fallback: metadata dict
     name = file.metadata.get("format_display_name")
     if isinstance(name, str):
         return name
@@ -1225,17 +1246,32 @@ def format_fix_commands_json(result: ScanResult) -> list[dict[str, Any]]:
         )
 
     # Add fix commands for issues that can be auto-fixed
+    # Deduplicate by path - one scan --fix per unique directory
+    seen_paths: set[str] = set()
+    fix_reasons: dict[str, list[str]] = {}  # path -> list of reasons
+
     for issue in result.issues:
         fix = get_fixability(issue.issue_type)
         if fix == Fixability.FIX_FLAG:
-            commands.append(
-                {
-                    "command": "scan",
-                    "args": ["--fix"],
-                    "options": {"path": issue.relative_path},
-                    "reason": issue.message,
-                }
-            )
+            path = issue.relative_path
+            if path not in fix_reasons:
+                fix_reasons[path] = []
+            fix_reasons[path].append(issue.message)
+
+    # Emit one command per unique path with aggregated reasons
+    for path in sorted(fix_reasons.keys()):
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        reasons = fix_reasons[path]
+        # Use positional arg format: scan --fix <path>
+        commands.append(
+            {
+                "command": "scan",
+                "args": ["--fix", path],
+                "reason": reasons[0] if len(reasons) == 1 else f"{len(reasons)} issues",
+            }
+        )
 
     return commands
 

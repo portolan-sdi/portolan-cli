@@ -1648,3 +1648,115 @@ class TestFormatEnhancedSummary:
 
         # Should include recommendations
         assert "portolan" in output.lower() or "reorganize" in output.lower()
+
+
+# =============================================================================
+# Integration Tests: Full Pipeline Verification
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScanOutputIntegration:
+    """Integration tests verifying scan_directory output works with formatters.
+
+    These tests address the tautological testing issue found in adversarial review:
+    they call the real scan_directory() function and verify the output formatting
+    functions work correctly with the actual ScannedFile fields (not synthetic
+    metadata dicts).
+    """
+
+    @pytest.fixture
+    def fixtures_dir(self) -> Path:
+        """Return the path to scan test fixtures."""
+        return Path(__file__).parent.parent / "fixtures" / "scan"
+
+    def test_group_files_by_collection_with_real_scan(self, fixtures_dir: Path) -> None:
+        """group_files_by_collection works with real scan_directory output.
+
+        This verifies _get_collection_id reads from inferred_collection_id field,
+        not metadata dict.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan_output import group_files_by_collection
+
+        result = scan_directory(fixtures_dir / "nested", ScanOptions())
+
+        # Group files by collection using the real output
+        grouped = group_files_by_collection(result.ready)
+
+        # Should have real collection IDs from the field, not "(uncategorized)"
+        assert "(uncategorized)" not in grouped or len(grouped.get("(uncategorized)", [])) == 0
+        # Should have nested collection IDs
+        collection_ids = list(grouped.keys())
+        assert any("/" in cid for cid in collection_ids), (
+            f"Expected nested collection IDs with slashes, got: {collection_ids}"
+        )
+
+    def test_format_fix_commands_json_with_real_scan(self, fixtures_dir: Path) -> None:
+        """format_fix_commands_json works with real scan_directory output.
+
+        This verifies the fix_commands generation uses collection IDs from the
+        inferred_collection_id field, not metadata.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan_output import detect_structure_pattern, format_fix_commands_json
+
+        result = scan_directory(fixtures_dir / "nested", ScanOptions())
+
+        # Get pattern detection result
+        pattern = detect_structure_pattern(result)
+
+        # Should detect collections from real scan data
+        assert len(pattern.collections) > 0, "Expected collections to be detected from real scan"
+
+        # Format fix commands
+        commands = format_fix_commands_json(result)
+
+        # Should have "add" commands for detected collections
+        add_commands = [c for c in commands if c["command"] == "add"]
+        assert len(add_commands) > 0, "Expected add commands for detected collections"
+
+    def test_format_enhanced_summary_with_real_scan(self, fixtures_dir: Path) -> None:
+        """format_enhanced_summary works with real scan_directory output.
+
+        This verifies the enhanced summary shows proper collection grouping
+        from the inferred_collection_id field.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan_output import format_enhanced_summary
+
+        result = scan_directory(fixtures_dir / "nested", ScanOptions())
+
+        # Format the summary
+        output = format_enhanced_summary(result)
+
+        # Should show "Collections:" header and real collection IDs
+        assert "Collections:" in output
+        # Should NOT show only "(uncategorized)"
+        assert output.count("(uncategorized)") == 0 or "census" in output or "imagery" in output
+
+    def test_to_dict_includes_new_fields(self, fixtures_dir: Path) -> None:
+        """ScanResult.to_dict() includes inferred_collection_id and format_status.
+
+        This verifies the JSON output includes the new fields from the PR.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+
+        result = scan_directory(fixtures_dir / "nested", ScanOptions())
+        data = result.to_dict()
+
+        # Check that ready files include the new fields
+        ready_files = data["ready"]
+        assert len(ready_files) > 0, "Expected ready files"
+
+        for file_dict in ready_files:
+            assert "inferred_collection_id" in file_dict, "Missing inferred_collection_id in JSON"
+            assert "format_status" in file_dict, "Missing format_status in JSON"
+            assert "format_display_name" in file_dict, "Missing format_display_name in JSON"
+
+            # Verify values are populated (not all None)
+            # At least nested files should have collection IDs
+            if "/" in file_dict["relative_path"]:
+                assert file_dict["inferred_collection_id"] is not None, (
+                    f"Expected collection ID for nested file {file_dict['relative_path']}"
+                )

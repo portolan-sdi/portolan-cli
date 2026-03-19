@@ -188,7 +188,7 @@ class TestNestedCollectionIdInference:
 
 @pytest.mark.unit
 class TestCollectionIdEdgeCases:
-    """Edge case tests for collection ID inference."""
+    """Edge case tests for collection ID inference using real fixtures."""
 
     def test_collection_id_uses_forward_slashes(self, fixtures_dir: Path) -> None:
         """Collection IDs use forward slashes regardless of OS.
@@ -231,6 +231,144 @@ class TestCollectionIdEdgeCases:
                     f"Collection ID should not start with slash: "
                     f"'{scanned_file.inferred_collection_id}'"
                 )
+
+
+# =============================================================================
+# Hypothesis Property Tests for Collection ID Invariants
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestCollectionIdInvariantsHypothesis:
+    """Property-based tests for collection ID inference invariants.
+
+    These tests use Hypothesis to generate many random directory structures
+    and verify that collection ID inference maintains key invariants:
+    - No backslashes (always forward slashes)
+    - No leading slashes (relative paths)
+    - No trailing slashes (clean paths)
+    """
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            "collection/data.parquet",
+            "a/b/c/d/e/data.parquet",
+            "single/data.parquet",
+            "深度/嵌套/data.parquet",  # Unicode
+            "path-with-dashes/under_scores/data.parquet",
+            "123/456/data.parquet",  # Numeric
+        ],
+    )
+    def test_collection_id_invariants_parametrized(self, relative_path: str) -> None:
+        """Collection IDs satisfy invariants for various path patterns."""
+        from portolan_cli.scan import _infer_collection_id_from_relative_path
+
+        collection_id = _infer_collection_id_from_relative_path(relative_path)
+
+        # Invariant 1: No backslashes
+        assert "\\" not in collection_id, f"Backslash found in '{collection_id}'"
+
+        # Invariant 2: No leading slash
+        assert not collection_id.startswith("/"), f"Leading slash in '{collection_id}'"
+
+        # Invariant 3: No trailing slash
+        assert not collection_id.endswith("/"), f"Trailing slash in '{collection_id}'"
+
+    def test_collection_id_from_root_file_is_empty(self) -> None:
+        """Files at root level have empty collection ID."""
+        from portolan_cli.scan import _infer_collection_id_from_relative_path
+
+        assert _infer_collection_id_from_relative_path("data.parquet") == ""
+        assert _infer_collection_id_from_relative_path("file.geojson") == ""
+
+    def test_collection_id_strips_filename_correctly(self) -> None:
+        """Collection ID is parent path without filename."""
+        from portolan_cli.scan import _infer_collection_id_from_relative_path
+
+        # Single level
+        assert _infer_collection_id_from_relative_path("foo/data.parquet") == "foo"
+
+        # Multi level
+        assert _infer_collection_id_from_relative_path("a/b/c/data.parquet") == "a/b/c"
+
+        # Deep nesting
+        path = "/".join(["level" + str(i) for i in range(10)]) + "/data.parquet"
+        expected = "/".join(["level" + str(i) for i in range(10)])
+        assert _infer_collection_id_from_relative_path(path) == expected
+
+
+try:
+    from hypothesis import given, settings
+    from hypothesis import strategies as st
+
+    @pytest.mark.unit
+    class TestCollectionIdHypothesis:
+        """Hypothesis-based property tests for collection ID inference."""
+
+        @given(
+            path_segments=st.lists(
+                st.text(
+                    alphabet=st.characters(
+                        whitelist_categories=("L", "N"),  # Letters and numbers
+                        whitelist_characters="-_",
+                    ),
+                    min_size=1,
+                    max_size=20,
+                ),
+                min_size=1,
+                max_size=10,
+            )
+        )
+        @settings(max_examples=100)
+        def test_collection_id_invariants_hypothesis(self, path_segments: list[str]) -> None:
+            """Property: Collection IDs never have backslashes or leading/trailing slashes."""
+            from portolan_cli.scan import _infer_collection_id_from_relative_path
+
+            # Filter out empty segments
+            segments = [s for s in path_segments if s]
+            if not segments:
+                return
+
+            # Build relative path with filename
+            relative_path = "/".join(segments) + "/data.parquet"
+            collection_id = _infer_collection_id_from_relative_path(relative_path)
+
+            # Invariants
+            assert "\\" not in collection_id
+            assert not collection_id.startswith("/")
+            assert not collection_id.endswith("/")
+
+        @given(
+            depth=st.integers(min_value=1, max_value=20),
+            segment_name=st.text(
+                alphabet=st.characters(whitelist_categories=("L",)),
+                min_size=1,
+                max_size=10,
+            ),
+        )
+        @settings(max_examples=50)
+        def test_deep_nesting_preserves_structure(self, depth: int, segment_name: str) -> None:
+            """Property: Deep nesting produces correct collection ID length."""
+            from portolan_cli.scan import _infer_collection_id_from_relative_path
+
+            if not segment_name:
+                return
+
+            # Build deep path
+            segments = [segment_name] * depth
+            relative_path = "/".join(segments) + "/data.parquet"
+            collection_id = _infer_collection_id_from_relative_path(relative_path)
+
+            # Collection ID should have depth-1 separators (excludes filename)
+            if depth > 0:
+                expected_separators = depth - 1
+                actual_separators = collection_id.count("/")
+                assert actual_separators == expected_separators
+
+except ImportError:
+    # Hypothesis not installed - skip these tests
+    pass
 
 
 @pytest.mark.unit

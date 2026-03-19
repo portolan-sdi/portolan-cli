@@ -34,6 +34,7 @@ def count_directories(
     include_hidden: bool = False,
     max_depth: int | None = None,
     recursive: bool = True,
+    follow_symlinks: bool = False,
 ) -> int:
     """Fast pre-count of directories for progress reporting.
 
@@ -45,12 +46,17 @@ def count_directories(
         include_hidden: Include hidden directories (starting with .).
         max_depth: Maximum recursion depth (None = unlimited).
         recursive: If False, only count the root directory.
+        follow_symlinks: If True, follow symlinks when counting directories.
+            Should match the value used for actual scanning to ensure
+            accurate progress reporting.
 
     Returns:
         Total number of directories (including root).
 
     Note:
         This should complete in < 100ms for typical directory trees.
+        For accurate progress bars, use the same follow_symlinks value
+        as the actual scan operation.
     """
     if not root.is_dir():
         return 0
@@ -76,7 +82,7 @@ def count_directories(
                         continue
 
                     try:
-                        if entry.is_dir(follow_symlinks=False):
+                        if entry.is_dir(follow_symlinks=follow_symlinks):
                             count += 1
                             _count_recursive(Path(entry.path), current_depth + 1)
                     except (PermissionError, OSError):

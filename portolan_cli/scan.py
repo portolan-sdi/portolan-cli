@@ -335,6 +335,9 @@ class ScanResult:
                     "extension": f.extension,
                     "format_type": f.format_type.value,
                     "size_bytes": f.size_bytes,
+                    "inferred_collection_id": f.inferred_collection_id or None,
+                    "format_status": f.format_status.value if f.format_status else None,
+                    "format_display_name": f.format_display_name or None,
                     "metadata": f.metadata,
                 }
                 for f in self.ready
