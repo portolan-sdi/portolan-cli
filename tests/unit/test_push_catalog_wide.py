@@ -282,7 +282,8 @@ class TestPushAllCollections:
             profile=None,
         )
 
-        assert result.success is False  # Changed: empty catalog is not success
+        # Empty catalog is not a failure, just nothing to do
+        assert result.success is True
         assert result.total_collections == 0
         assert result.successful_collections == 0
         assert result.failed_collections == 0

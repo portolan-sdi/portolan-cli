@@ -413,8 +413,9 @@ class TestPullCommandErrors:
             ],
         )
 
-        # With no collections in the catalog, should report "no collections found"
-        assert result.exit_code != 0
+        # With no collections in the catalog, should succeed (nothing to do)
+        # but still report that no collections were found
+        assert result.exit_code == 0
         assert "no initialized collections" in result.output.lower()
 
     @pytest.mark.integration

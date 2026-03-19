@@ -37,8 +37,8 @@ def _setup_catalog(catalog_root: Path, collections: list[str]) -> None:
 class TestPullAllCollectionsIntegration:
     """Integration tests for pull_all_collections()."""
 
-    def test_empty_catalog_returns_failure(self, tmp_path: Path) -> None:
-        """pull_all_collections with no collections returns failure."""
+    def test_empty_catalog_returns_success(self, tmp_path: Path) -> None:
+        """pull_all_collections with no collections returns success (nothing to do)."""
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
         portolan_dir = catalog_root / ".portolan"
@@ -51,7 +51,8 @@ class TestPullAllCollectionsIntegration:
             workers=1,
         )
 
-        assert result.success is False
+        # Empty catalog is not a failure, just nothing to do
+        assert result.success is True
         assert result.total_collections == 0
 
     def test_discovers_all_collections(self, tmp_path: Path) -> None:
