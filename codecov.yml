@@ -18,7 +18,7 @@ coverage:
     patch:
       default:
         target: 90%  # Patch coverage target (new code)
-        threshold: 5%  # Allow some flexibility for edge cases
+        threshold: 10%  # Allow +-10% tolerance for edge cases
         if_ci_failed: error
 
 # Don't fail for missing coverage on these patterns

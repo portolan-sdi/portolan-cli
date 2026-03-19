@@ -278,7 +278,7 @@ class TestListIgnoredFilesHypothesis:
     @given(
         hidden_name=st.text(
             alphabet=st.sampled_from("abcdefghijklmnopqrstuvwxyz"),
-            min_size=1,
+            min_size=4,  # Avoid short names that match common extensions like .parquet
             max_size=10,
         )
     )

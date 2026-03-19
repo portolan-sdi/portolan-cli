@@ -223,15 +223,15 @@ class TestAddIntegration:
     def test_add_multiple_files_creates_snapshot_with_all_assets(
         self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """Adding files incrementally accumulates assets in versions.json.
+        """Adding a file captures all geo files in the same directory.
 
-        This tests the fix for issues #141 and #147:
-        - Each version should contain ALL assets at that point in time
-        - Not just the newly-added assets
+        Per ADR-0028 ("Track ALL files in item directories as assets"):
+        - When adding a file, ALL geo files in the directory are captured as assets
+        - Adding an already-tracked file is a no-op (is_current returns True)
 
         Expected behavior:
-        - Add file A → version 1.0.0 with {A}
-        - Add file B → version 1.0.1 with {A, B}
+        - Add file A → version 1.0.0 with {A, B, converted parquet}
+        - Add file B → no-op (file already tracked in version 1.0.0)
         """
         import json
 
@@ -242,7 +242,7 @@ class TestAddIntegration:
         shutil.copy(valid_points_geojson, collection_dir / "file-a.geojson")
         shutil.copy(valid_points_geojson, collection_dir / "file-b.geojson")
 
-        # Act 1: Add first file
+        # Act 1: Add first file - this captures ALL geo files in the directory
         result1 = runner.invoke(
             cli,
             [
@@ -255,14 +255,19 @@ class TestAddIntegration:
         )
         assert result1.exit_code == 0, f"First add failed: {result1.output}"
 
-        # Check version 1.0.0 has 1 asset
+        # Check version 1.0.0 has BOTH files (per ADR-0028)
         versions_path = collection_dir / "versions.json"
         with open(versions_path) as f:
             v1 = json.load(f)
         assert len(v1["versions"]) == 1
-        assert len(v1["versions"][0]["assets"]) >= 1  # At least file-a
+        # First add should capture ALL geo files in directory
+        asset_keys = list(v1["versions"][0]["assets"].keys())
+        assert any("file-a" in k for k in asset_keys), f"file-a not in assets: {asset_keys}"
+        assert any("file-b" in k for k in asset_keys), (
+            f"file-b should be captured by ADR-0028 directory scan: {asset_keys}"
+        )
 
-        # Act 2: Add second file (same collection directory)
+        # Act 2: Add second file - should be no-op since already tracked
         result2 = runner.invoke(
             cli,
             [
@@ -275,28 +280,13 @@ class TestAddIntegration:
         )
         assert result2.exit_code == 0, f"Second add failed: {result2.output}"
 
-        # Assert: version 1.0.1 should have BOTH files (snapshot model)
+        # Assert: still only 1 version (second add was no-op)
         with open(versions_path) as f:
             v2 = json.load(f)
 
-        assert len(v2["versions"]) == 2, "Should have 2 versions"
-        latest_version = v2["versions"][-1]
-        asset_keys = list(latest_version["assets"].keys())
-
-        # The key assertion: latest version contains assets from BOTH adds
-        assert len(asset_keys) >= 2, (
-            f"Latest version should have assets from both adds, got: {asset_keys}"
+        assert len(v2["versions"]) == 1, (
+            "Should still have 1 version - second add is no-op for already-tracked file"
         )
-
-        # Verify changes field only shows NEW assets from this add operation
-        # (source geojson + converted parquet = 2 changes per file added)
-        # The key is that changes should NOT include assets from the FIRST add
-        assert len(latest_version["changes"]) <= 2, (
-            f"Changes should only show new files from this operation, got: {latest_version['changes']}"
-        )
-        # Changes should not include file-a
-        for change in latest_version["changes"]:
-            assert "file-a" not in change, f"Changes incorrectly includes file-a: {change}"
 
 
 class TestAddItemIdOverrideIntegration:

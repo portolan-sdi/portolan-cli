@@ -39,7 +39,7 @@ class TestConvertWorkflowIntegration:
         assert result.output.suffix == ".parquet"
 
         # Verify output is valid GeoParquet
-        from portolan_cli.scan import is_geoparquet
+        from portolan_cli.formats import is_geoparquet
 
         assert is_geoparquet(result.output)
 

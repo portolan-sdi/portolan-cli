@@ -23,7 +23,14 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from portolan_cli.scan import IssueType, ScanIssue, ScanResult, Severity
+from portolan_cli.scan import (
+    FormatType,
+    IssueType,
+    ScanIssue,
+    ScannedFile,
+    ScanResult,
+    Severity,
+)
 from portolan_cli.scan_classify import FileCategory, SkippedFile
 
 if TYPE_CHECKING:
@@ -786,5 +793,582 @@ def format_scan_output(
         lines.append("Next steps:")
         for step in steps:
             lines.append(f"  \u2192 {step}")
+
+    return "\n".join(lines)
+
+
+# =============================================================================
+# Phase 3: Enhanced Output for Nested Catalogs (ADR-0032)
+# =============================================================================
+
+
+def _get_collection_id(file: ScannedFile) -> str | None:
+    """Extract inferred_collection_id from ScannedFile.
+
+    Reads from the top-level field first (set by scan.py for nested catalogs),
+    falls back to metadata for backward compatibility.
+
+    Args:
+        file: The scanned file.
+
+    Returns:
+        Collection ID if present, None otherwise.
+    """
+    # Primary: top-level field (ADR-0032 nested catalog support)
+    if file.inferred_collection_id:
+        return file.inferred_collection_id
+    # Fallback: metadata dict (backward compatibility)
+    return file.metadata.get("inferred_collection_id") or None
+
+
+def _get_format_status(file: ScannedFile) -> str:
+    """Extract format_status from ScannedFile.
+
+    Reads from the top-level field first (set by scan.py),
+    falls back to metadata, then extension.
+
+    Args:
+        file: The scanned file.
+
+    Returns:
+        Format status string, or extension as fallback.
+    """
+    # Primary: top-level field (CloudNativeStatus enum)
+    if file.format_status:
+        return file.format_status.value
+    # Fallback: metadata dict
+    status = file.metadata.get("format_status")
+    if isinstance(status, str):
+        return status
+    return file.extension.lstrip(".")
+
+
+def _get_format_display_name(file: ScannedFile) -> str:
+    """Extract format_display_name from ScannedFile.
+
+    Reads from the top-level field first (set by scan.py),
+    falls back to metadata, then derives from extension.
+
+    Args:
+        file: The scanned file.
+
+    Returns:
+        Human-readable format name.
+    """
+    # Primary: top-level field
+    if file.format_display_name:
+        return file.format_display_name
+    # Fallback: metadata dict
+    name = file.metadata.get("format_display_name")
+    if isinstance(name, str):
+        return name
+    return file.extension.lstrip(".").upper()
+
+
+def format_file_entry(file: ScannedFile) -> str:
+    """Format a single file entry with collection ID and format status.
+
+    Shows:
+    - Filename
+    - Format display name (e.g., "GeoParquet", "Parquet (no geometry)")
+    - Collection ID if present
+
+    Args:
+        file: The scanned file to format.
+
+    Returns:
+        Formatted string for display.
+    """
+    filename = file.path.name
+    format_name = _get_format_display_name(file)
+    collection_id = _get_collection_id(file)
+
+    parts = [filename]
+
+    # Add format info
+    parts.append(f"({format_name})")
+
+    # Add collection ID if nested
+    if collection_id and "/" in collection_id:
+        parts.append(f"→ {collection_id}")
+    elif collection_id:
+        parts.append(f"→ {collection_id}")
+
+    return " ".join(parts)
+
+
+def group_files_by_collection(
+    files: list[ScannedFile],
+) -> dict[str, list[ScannedFile]]:
+    """Group scanned files by their inferred collection ID.
+
+    Args:
+        files: List of scanned files.
+
+    Returns:
+        Dictionary mapping collection IDs to lists of files.
+        Files without collection_id are grouped under "(uncategorized)".
+    """
+    grouped: dict[str, list[ScannedFile]] = defaultdict(list)
+
+    for file in files:
+        collection_id = _get_collection_id(file)
+        key = collection_id if collection_id else "(uncategorized)"
+        grouped[key].append(file)
+
+    return dict(grouped)
+
+
+# =============================================================================
+# Structure Pattern Detection
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class StructurePattern:
+    """Detected structure pattern for a scan result.
+
+    Attributes:
+        pattern_type: One of: vector_collection, raster_items, partitioned,
+                      mixed, single_collection, flat
+        collections: List of inferred collection IDs.
+        is_nested: True if there are nested (multi-level) collection IDs.
+        suggested_commands: List of portolan commands to run.
+    """
+
+    pattern_type: str
+    collections: list[str]
+    is_nested: bool
+    suggested_commands: list[str]
+
+
+def detect_structure_pattern(result: ScanResult) -> StructurePattern:
+    """Detect the structure pattern from scan result.
+
+    Analyzes files to determine:
+    - vector_collection: All vectors at collection level
+    - raster_items: Rasters organized as items in collections
+    - single_collection: Only one collection detected
+    - partitioned: Hive-style partitioned data
+    - mixed: Both vector and raster, or unclear structure
+    - flat: Files at root level only
+
+    Args:
+        result: The scan result to analyze.
+
+    Returns:
+        StructurePattern with detected pattern and suggestions.
+    """
+    if not result.ready:
+        return StructurePattern(
+            pattern_type="empty",
+            collections=[],
+            is_nested=False,
+            suggested_commands=[],
+        )
+
+    # Extract unique collection IDs
+    collections: set[str] = set()
+    for f in result.ready:
+        cid = _get_collection_id(f)
+        if cid:
+            collections.add(cid)
+
+    collection_list = sorted(collections)
+    is_nested = any("/" in cid for cid in collection_list)
+
+    # Check format types
+    has_vector = any(f.format_type == FormatType.VECTOR for f in result.ready)
+    has_raster = any(f.format_type == FormatType.RASTER for f in result.ready)
+
+    # Calculate path depths for pattern detection
+    depths = [f.relative_path.count("/") for f in result.ready]
+    avg_depth = sum(depths) / len(depths) if depths else 0
+
+    # Detect pattern - check format-specific patterns first
+    if len(collection_list) == 0:
+        pattern_type = "flat"
+    elif has_raster and not has_vector:
+        # Check if rasters are organized as items (subdirs per date/scene)
+        # Raster items typically have deeper paths (collection/item/asset)
+        pattern_type = "raster_items" if avg_depth >= 2 else "raster_collection"
+    elif has_vector and not has_raster:
+        # Vector collections have files at collection level
+        pattern_type = "vector_collection"
+    elif has_raster and has_vector:
+        pattern_type = "mixed"
+    elif len(collection_list) == 1:
+        pattern_type = "single_collection"
+    else:
+        pattern_type = "multiple_collections"
+
+    # Generate suggested commands
+    commands = []
+    for cid in collection_list:
+        commands.append(f"portolan add {cid}")
+
+    return StructurePattern(
+        pattern_type=pattern_type,
+        collections=collection_list,
+        is_nested=is_nested,
+        suggested_commands=commands,
+    )
+
+
+def generate_structure_recommendation(result: ScanResult) -> str:
+    """Generate actionable structure recommendations.
+
+    Args:
+        result: The scan result to analyze.
+
+    Returns:
+        Multi-line string with recommendations, or empty if none needed.
+    """
+    pattern = detect_structure_pattern(result)
+
+    if pattern.pattern_type == "empty":
+        return ""
+
+    lines: list[str] = []
+
+    # Pattern description
+    pattern_descriptions = {
+        "vector_collection": "Vector data organized as collections",
+        "raster_items": "Raster data organized as items (date/scene subdirectories)",
+        "raster_collection": "Raster collection",
+        "single_collection": "Single collection structure",
+        "mixed": "Mixed vector and raster data",
+        "flat": "Flat structure (files at root level)",
+    }
+
+    desc = pattern_descriptions.get(pattern.pattern_type, pattern.pattern_type)
+    lines.append(f"Structure detected: {desc}")
+
+    if pattern.is_nested:
+        lines.append("  Nested catalog structure (ADR-0032)")
+
+    # Commands to run
+    if pattern.suggested_commands:
+        lines.append("")
+        lines.append("Suggested commands:")
+        for cmd in pattern.suggested_commands[:5]:  # Limit to 5
+            lines.append(f"  $ {cmd}")
+        if len(pattern.suggested_commands) > 5:
+            remaining = len(pattern.suggested_commands) - 5
+            lines.append(f"  ... and {remaining} more")
+
+    return "\n".join(lines)
+
+
+def generate_ascii_tree_recommendation(collections: list[str]) -> str:
+    """Generate ASCII tree showing recommended catalog structure.
+
+    Args:
+        collections: List of collection IDs (may include nested paths).
+
+    Returns:
+        ASCII tree representation.
+    """
+    if not collections:
+        return ""
+
+    # Build tree structure
+    tree: dict[str, Any] = {}
+
+    for collection_id in collections:
+        parts = collection_id.split("/")
+        current = tree
+        for part in parts:
+            if part not in current:
+                current[part] = {}
+            current = current[part]
+
+    # Render tree
+    lines: list[str] = ["catalog/"]
+
+    def render_level(node: dict[str, Any], prefix: str = "") -> None:
+        items = sorted(node.items())
+        for i, (name, children) in enumerate(items):
+            is_last = i == len(items) - 1
+            connector = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
+            child_prefix = "    " if is_last else "\u2502   "
+
+            if children:
+                # It's a directory/intermediate catalog
+                lines.append(f"{prefix}{connector}{name}/")
+                render_level(children, prefix + child_prefix)
+            else:
+                # It's a leaf collection
+                lines.append(f"{prefix}{connector}{name}/ (collection)")
+
+    render_level(tree)
+    return "\n".join(lines)
+
+
+# =============================================================================
+# Verbose Output Formatting
+# =============================================================================
+
+
+def format_issue_basic(issue: ScanIssue) -> str:
+    """Format an issue with minimal info (for non-verbose mode).
+
+    Shows:
+    - Path
+    - Issue type
+    - Brief message
+
+    Args:
+        issue: The scan issue to format.
+
+    Returns:
+        Single-line formatted string.
+    """
+    marker = _get_severity_marker(issue.severity)
+    return f"{marker} {issue.relative_path}: {issue.message}"
+
+
+def format_issue_verbose(issue: ScanIssue) -> str:
+    """Format an issue with full details (for --verbose mode).
+
+    Shows:
+    - Path
+    - Issue type
+    - Full message
+    - Suggestion/recommendation
+    - Spec reference if applicable
+
+    Args:
+        issue: The scan issue to format.
+
+    Returns:
+        Multi-line formatted string.
+    """
+    marker = _get_severity_marker(issue.severity)
+    lines = [f"{marker} {issue.relative_path}"]
+    lines.append(f"  Issue: {issue.message}")
+
+    if issue.suggestion:
+        lines.append(f"  Fix: {issue.suggestion}")
+
+    # Add spec references for specific issue types
+    spec_refs = {
+        IssueType.MULTIPLE_PRIMARIES: "See ADR-0031: One primary geo-asset per directory",
+        IssueType.MIXED_FLAT_MULTIITEM: "See ADR-0032: Nested catalogs with flat collections",
+    }
+
+    if issue.issue_type in spec_refs:
+        lines.append(f"  Reference: {spec_refs[issue.issue_type]}")
+
+    return "\n".join(lines)
+
+
+# =============================================================================
+# JSON Output Formatting (Phase 3 Enhancements)
+# =============================================================================
+
+
+def format_ready_file_json(file: ScannedFile) -> dict[str, Any]:
+    """Format a ready file for JSON output with enhanced fields.
+
+    Includes:
+    - All standard ScannedFile fields
+    - inferred_collection_id
+    - format_status
+    - format_display_name
+
+    Args:
+        file: The scanned file.
+
+    Returns:
+        JSON-serializable dictionary.
+    """
+    return {
+        "path": str(file.path),
+        "relative_path": file.relative_path,
+        "extension": file.extension,
+        "format_type": file.format_type.value,
+        "size_bytes": file.size_bytes,
+        "metadata": file.metadata,
+        # Enhanced fields (extracted from metadata for convenience)
+        "inferred_collection_id": _get_collection_id(file),
+        "format_status": _get_format_status(file),
+        "format_display_name": _get_format_display_name(file),
+    }
+
+
+def format_recommended_structure_json(result: ScanResult) -> dict[str, Any]:
+    """Format recommended structure for JSON output.
+
+    Args:
+        result: The scan result.
+
+    Returns:
+        JSON-serializable dictionary with pattern info and collections.
+    """
+    pattern = detect_structure_pattern(result)
+
+    return {
+        "pattern_type": pattern.pattern_type,
+        "collections": pattern.collections,
+        "is_nested": pattern.is_nested,
+        "suggested_commands": pattern.suggested_commands,
+    }
+
+
+def format_fix_commands_json(result: ScanResult) -> list[dict[str, Any]]:
+    """Format fix commands for JSON output (agent consumption).
+
+    Returns structured commands like:
+    [
+        {"command": "add", "args": ["census"], "reason": "Collection not tracked"},
+        {"command": "convert", "args": ["data.tif"], "options": {...}, "reason": "..."}
+    ]
+
+    Args:
+        result: The scan result.
+
+    Returns:
+        List of structured command dictionaries.
+    """
+    commands: list[dict[str, Any]] = []
+
+    # Add commands for each detected collection
+    pattern = detect_structure_pattern(result)
+    for collection_id in pattern.collections:
+        commands.append(
+            {
+                "command": "add",
+                "args": [collection_id],
+                "options": {},
+                "reason": "Collection detected, needs tracking",
+            }
+        )
+
+    # Add fix commands for issues that can be auto-fixed
+    # Deduplicate by DIRECTORY - one scan --fix per unique directory
+    # (scan --fix requires a directory, not a file path)
+    fix_reasons: dict[str, list[str]] = {}  # directory -> list of reasons
+
+    for issue in result.issues:
+        fix = get_fixability(issue.issue_type)
+        if fix == Fixability.FIX_FLAG:
+            # Get the parent directory of the file
+            # issue.relative_path is a file path; we need its directory
+            file_path = Path(issue.relative_path)
+            dir_path = str(file_path.parent) if file_path.parent.parts else "."
+            if dir_path not in fix_reasons:
+                fix_reasons[dir_path] = []
+            fix_reasons[dir_path].append(issue.message)
+
+    # Emit one command per unique directory with aggregated reasons
+    for dir_path in sorted(fix_reasons.keys()):
+        reasons = fix_reasons[dir_path]
+        # Use positional arg format: scan --fix <directory>
+        commands.append(
+            {
+                "command": "scan",
+                "args": ["--fix", dir_path],
+                "reason": reasons[0] if len(reasons) == 1 else f"{len(reasons)} issues",
+            }
+        )
+
+    return commands
+
+
+# =============================================================================
+# Enhanced Summary Format
+# =============================================================================
+
+
+def format_enhanced_summary(
+    result: ScanResult,
+    *,
+    verbose: bool = False,
+    show_tree: bool = False,
+) -> str:
+    """Format enhanced scan summary with nested collection support.
+
+    Includes:
+    - Summary header with file counts
+    - Files grouped by collection ID
+    - Format status per file
+    - Structure recommendations (if applicable)
+    - Issues (verbose adds details)
+    - Next steps
+
+    Args:
+        result: The scan result to format.
+        verbose: If True, include extra details and spec references.
+        show_tree: If True, include tree view.
+
+    Returns:
+        Complete formatted output string.
+    """
+    lines: list[str] = []
+
+    # Header
+    ready_count = len(result.ready)
+    if ready_count == 0:
+        lines.append(f"Scanned {result.directories_scanned} directories")
+        lines.append("No geo-assets found")
+        return "\n".join(lines)
+
+    lines.append(
+        f"{ready_count} geo-asset{'s' if ready_count != 1 else ''} found "
+        f"in {result.directories_scanned} directories"
+    )
+
+    # Group files by collection
+    grouped = group_files_by_collection(result.ready)
+
+    lines.append("")
+    lines.append("Collections:")
+    for collection_id, files in sorted(grouped.items()):
+        file_count = len(files)
+        lines.append(f"  {collection_id} ({file_count} file{'s' if file_count != 1 else ''})")
+        for f in files[:3]:  # Show first 3 files
+            format_name = _get_format_display_name(f)
+            lines.append(f"    - {f.path.name} ({format_name})")
+        if file_count > 3:
+            lines.append(f"    ... and {file_count - 3} more")
+
+    # Tree view (if requested)
+    if show_tree:
+        lines.append("")
+        lines.append(render_tree_view(result, show_missing=True))
+
+    # Structure recommendations
+    recommendation = generate_structure_recommendation(result)
+    if recommendation:
+        lines.append("")
+        lines.append(recommendation)
+
+    # Issues
+    if result.issues:
+        lines.append("")
+        error_count = result.error_count
+        warn_count = result.warning_count
+        if error_count > 0:
+            lines.append(f"{error_count} error{'s' if error_count != 1 else ''}")
+        if warn_count > 0:
+            lines.append(f"{warn_count} warning{'s' if warn_count != 1 else ''}")
+
+        for issue in result.issues[:10]:
+            if verbose:
+                lines.append(format_issue_verbose(issue))
+            else:
+                lines.append(f"  {format_issue_basic(issue)}")
+
+        if len(result.issues) > 10:
+            lines.append(f"  ... and {len(result.issues) - 10} more")
+
+    # Next steps
+    steps = generate_next_steps(result)
+    if steps:
+        lines.append("")
+        lines.append("Next steps:")
+        for step in steps:
+            lines.append(f"  → {step}")
 
     return "\n".join(lines)

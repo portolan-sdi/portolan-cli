@@ -1142,3 +1142,621 @@ class TestManualOnlyOutput:
 
         # Should say "1 file requires" not "1 file require"
         assert "1 file requires" in output
+
+
+# =============================================================================
+# Tests for Phase 3: Enhanced Output (Nested Catalogs)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestNestedCollectionIdDisplay:
+    """Tests for displaying nested collection IDs."""
+
+    def test_format_file_with_nested_collection_id(self, tmp_path: Path) -> None:
+        """format_file_entry shows nested collection ID when present."""
+        from portolan_cli.scan_output import format_file_entry
+
+        file = ScannedFile(
+            path=tmp_path / "climate" / "hittekaart" / "data.parquet",
+            relative_path="climate/hittekaart/data.parquet",
+            extension=".parquet",
+            format_type=FormatType.VECTOR,
+            size_bytes=1000,
+            metadata={
+                "inferred_collection_id": "climate/hittekaart",
+                "format_status": "cloud_native",
+                "format_display_name": "GeoParquet",
+            },
+        )
+
+        output = format_file_entry(file)
+
+        # Should show the nested collection ID
+        assert "climate/hittekaart" in output
+        # Should show the format status
+        assert "GeoParquet" in output
+
+    def test_format_file_with_simple_collection_id(self, tmp_path: Path) -> None:
+        """format_file_entry shows simple collection ID for flat structures."""
+        from portolan_cli.scan_output import format_file_entry
+
+        file = ScannedFile(
+            path=tmp_path / "census" / "data.parquet",
+            relative_path="census/data.parquet",
+            extension=".parquet",
+            format_type=FormatType.VECTOR,
+            size_bytes=1000,
+            metadata={
+                "inferred_collection_id": "census",
+                "format_status": "cloud_native",
+                "format_display_name": "GeoParquet",
+            },
+        )
+
+        output = format_file_entry(file)
+
+        assert "census" in output
+
+    def test_format_file_without_collection_id(self, tmp_path: Path) -> None:
+        """format_file_entry handles files without inferred_collection_id."""
+        from portolan_cli.scan_output import format_file_entry
+
+        # Legacy ScannedFile without metadata
+        file = make_scanned_file(tmp_path / "data.geojson")
+
+        output = format_file_entry(file)
+
+        # Should still work, showing filename
+        assert "data.geojson" in output
+
+
+@pytest.mark.unit
+class TestFormatStatusDisplay:
+    """Tests for format status display per file."""
+
+    def test_format_status_cloud_native(self, tmp_path: Path) -> None:
+        """Cloud-native formats show positive status."""
+        from portolan_cli.scan_output import format_file_entry
+
+        file = ScannedFile(
+            path=tmp_path / "data.parquet",
+            relative_path="data.parquet",
+            extension=".parquet",
+            format_type=FormatType.VECTOR,
+            size_bytes=1000,
+            metadata={
+                "format_status": "cloud_native",
+                "format_display_name": "GeoParquet",
+            },
+        )
+
+        output = format_file_entry(file)
+
+        assert "GeoParquet" in output
+
+    def test_format_status_parquet_no_geometry(self, tmp_path: Path) -> None:
+        """Parquet without geometry shows different status."""
+        from portolan_cli.scan_output import format_file_entry
+
+        file = ScannedFile(
+            path=tmp_path / "lookup.parquet",
+            relative_path="lookup.parquet",
+            extension=".parquet",
+            format_type=FormatType.VECTOR,
+            size_bytes=1000,
+            metadata={
+                "format_status": "companion",
+                "format_display_name": "Parquet (no geometry)",
+            },
+        )
+
+        output = format_file_entry(file)
+
+        assert "no geometry" in output.lower() or "companion" in output.lower()
+
+    def test_format_status_convertible(self, tmp_path: Path) -> None:
+        """Convertible formats show target format."""
+        from portolan_cli.scan_output import format_file_entry
+
+        file = ScannedFile(
+            path=tmp_path / "data.geojson",
+            relative_path="data.geojson",
+            extension=".geojson",
+            format_type=FormatType.VECTOR,
+            size_bytes=1000,
+            metadata={
+                "format_status": "convertible",
+                "format_display_name": "GeoJSON",
+                "target_format": "GeoParquet",
+            },
+        )
+
+        output = format_file_entry(file)
+
+        # Should mention either the format or conversion
+        assert "GeoJSON" in output or "convert" in output.lower()
+
+
+@pytest.mark.unit
+class TestGroupFilesByCollection:
+    """Tests for grouping files by inferred collection."""
+
+    def test_group_files_by_collection(self, tmp_path: Path) -> None:
+        """group_files_by_collection groups files correctly."""
+        from portolan_cli.scan_output import group_files_by_collection
+
+        files = [
+            ScannedFile(
+                path=tmp_path / "climate" / "hittekaart" / "data.parquet",
+                relative_path="climate/hittekaart/data.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=1000,
+                metadata={"inferred_collection_id": "climate/hittekaart"},
+            ),
+            ScannedFile(
+                path=tmp_path / "climate" / "hittekaart" / "lookup.parquet",
+                relative_path="climate/hittekaart/lookup.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=500,
+                metadata={"inferred_collection_id": "climate/hittekaart"},
+            ),
+            ScannedFile(
+                path=tmp_path / "census" / "data.parquet",
+                relative_path="census/data.parquet",
+                extension=".parquet",
+                format_type=FormatType.VECTOR,
+                size_bytes=2000,
+                metadata={"inferred_collection_id": "census"},
+            ),
+        ]
+
+        grouped = group_files_by_collection(files)
+
+        assert "climate/hittekaart" in grouped
+        assert len(grouped["climate/hittekaart"]) == 2
+        assert "census" in grouped
+        assert len(grouped["census"]) == 1
+
+    def test_group_files_without_collection_id(self, tmp_path: Path) -> None:
+        """Files without collection_id go to 'uncategorized' group."""
+        from portolan_cli.scan_output import group_files_by_collection
+
+        files = [
+            make_scanned_file(tmp_path / "data.geojson"),  # No metadata
+        ]
+
+        grouped = group_files_by_collection(files)
+
+        # Should handle gracefully with a fallback group
+        assert len(grouped) >= 1
+
+
+@pytest.mark.unit
+class TestStructureRecommendations:
+    """Tests for structure recommendations section."""
+
+    def test_detect_vector_collection_pattern(self, tmp_path: Path) -> None:
+        """detect_structure_pattern identifies vector collection."""
+        from portolan_cli.scan_output import detect_structure_pattern
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "census" / "data.parquet",
+                    relative_path="census/data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=1000,
+                    metadata={"inferred_collection_id": "census"},
+                ),
+            ],
+            issues=[],
+            skipped=[],
+            directories_scanned=2,
+        )
+
+        pattern = detect_structure_pattern(result)
+
+        assert pattern.pattern_type in ("vector_collection", "single_collection")
+
+    def test_detect_raster_items_pattern(self, tmp_path: Path) -> None:
+        """detect_structure_pattern identifies raster items."""
+        from portolan_cli.scan_output import detect_structure_pattern
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "imagery" / "2024-01-15" / "scene.tif",
+                    relative_path="imagery/2024-01-15/scene.tif",
+                    extension=".tif",
+                    format_type=FormatType.RASTER,
+                    size_bytes=1000000,
+                    metadata={"inferred_collection_id": "imagery"},
+                ),
+                ScannedFile(
+                    path=tmp_path / "imagery" / "2024-01-16" / "scene.tif",
+                    relative_path="imagery/2024-01-16/scene.tif",
+                    extension=".tif",
+                    format_type=FormatType.RASTER,
+                    size_bytes=1000000,
+                    metadata={"inferred_collection_id": "imagery"},
+                ),
+            ],
+            issues=[],
+            skipped=[],
+            directories_scanned=4,
+        )
+
+        pattern = detect_structure_pattern(result)
+
+        assert pattern.pattern_type == "raster_items"
+
+    def test_generate_structure_recommendation(self, tmp_path: Path) -> None:
+        """generate_structure_recommendation produces actionable output."""
+        from portolan_cli.scan_output import generate_structure_recommendation
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "census" / "data.parquet",
+                    relative_path="census/data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=1000,
+                    metadata={"inferred_collection_id": "census"},
+                ),
+            ],
+            issues=[],
+            skipped=[],
+            directories_scanned=2,
+        )
+
+        recommendation = generate_structure_recommendation(result)
+
+        # Should include suggested commands
+        assert "portolan add" in recommendation or recommendation == ""
+        # Or if there's nothing to recommend, empty is fine
+
+    def test_generate_ascii_tree_recommendation(self, tmp_path: Path) -> None:
+        """generate_ascii_tree_recommendation shows suggested structure."""
+        from portolan_cli.scan_output import generate_ascii_tree_recommendation
+
+        collections = ["climate/hittekaart", "census"]
+
+        output = generate_ascii_tree_recommendation(collections)
+
+        # Should be an ASCII tree
+        assert "├" in output or "└" in output or "│" in output
+        assert "climate" in output
+        assert "hittekaart" in output
+        assert "census" in output
+
+
+@pytest.mark.unit
+class TestEnhancedVerboseOutput:
+    """Tests for enhanced --verbose output."""
+
+    def test_format_issue_verbose(self, tmp_path: Path) -> None:
+        """format_issue_verbose includes extra details."""
+        from portolan_cli.scan_output import format_issue_verbose
+
+        issue = make_scan_issue(
+            tmp_path / "collection",
+            IssueType.MULTIPLE_PRIMARIES,
+            Severity.WARNING,
+            message="Directory has 3 primary assets",
+            suggestion="Move to separate subdirectories",
+        )
+
+        output = format_issue_verbose(issue)
+
+        # Basic info
+        assert "3 primary assets" in output
+        # Suggestion/recommendation
+        assert "subdirectories" in output.lower() or "move" in output.lower()
+
+    def test_format_issue_basic(self, tmp_path: Path) -> None:
+        """format_issue_basic shows minimal info."""
+        from portolan_cli.scan_output import format_issue_basic
+
+        issue = make_scan_issue(
+            tmp_path / "collection",
+            IssueType.MULTIPLE_PRIMARIES,
+            Severity.WARNING,
+            message="Directory has 3 primary assets",
+        )
+
+        output = format_issue_basic(issue)
+
+        # Should show issue and why it matters
+        assert "primary assets" in output
+
+
+@pytest.mark.unit
+class TestEnhancedJsonOutput:
+    """Tests for enhanced JSON output structure."""
+
+    def test_format_ready_file_json(self, tmp_path: Path) -> None:
+        """format_ready_file_json includes new fields."""
+        from portolan_cli.scan_output import format_ready_file_json
+
+        file = ScannedFile(
+            path=tmp_path / "climate" / "hittekaart" / "data.parquet",
+            relative_path="climate/hittekaart/data.parquet",
+            extension=".parquet",
+            format_type=FormatType.VECTOR,
+            size_bytes=1000,
+            metadata={
+                "inferred_collection_id": "climate/hittekaart",
+                "format_status": "cloud_native",
+                "format_display_name": "GeoParquet",
+            },
+        )
+
+        json_dict = format_ready_file_json(file)
+
+        assert json_dict["inferred_collection_id"] == "climate/hittekaart"
+        assert json_dict["format_status"] == "cloud_native"
+        assert json_dict["format_display_name"] == "GeoParquet"
+
+    def test_format_recommended_structure_json(self, tmp_path: Path) -> None:
+        """format_recommended_structure_json includes pattern and commands."""
+        from portolan_cli.scan_output import format_recommended_structure_json
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "census" / "data.parquet",
+                    relative_path="census/data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=1000,
+                    metadata={"inferred_collection_id": "census"},
+                ),
+            ],
+            issues=[],
+            skipped=[],
+            directories_scanned=2,
+        )
+
+        json_dict = format_recommended_structure_json(result)
+
+        assert "pattern_type" in json_dict
+        assert "collections" in json_dict
+        assert isinstance(json_dict["collections"], list)
+
+    def test_format_fix_commands_json(self, tmp_path: Path) -> None:
+        """format_fix_commands_json returns structured commands."""
+        from portolan_cli.scan_output import format_fix_commands_json
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "census" / "data.parquet",
+                    relative_path="census/data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=1000,
+                    metadata={"inferred_collection_id": "census"},
+                ),
+            ],
+            issues=[],
+            skipped=[],
+            directories_scanned=2,
+        )
+
+        commands = format_fix_commands_json(result)
+
+        # Should return a list (may be empty if no fixes needed)
+        assert isinstance(commands, list)
+        # If there are commands, they should have required fields
+        for cmd in commands:
+            assert "command" in cmd
+            assert "args" in cmd
+
+
+@pytest.mark.unit
+class TestFormatEnhancedSummary:
+    """Tests for the enhanced summary format with nested catalogs."""
+
+    def test_format_enhanced_summary_with_nested_collections(self, tmp_path: Path) -> None:
+        """format_enhanced_summary shows nested collection grouping."""
+        from portolan_cli.scan_output import format_enhanced_summary
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "climate" / "hittekaart" / "data.parquet",
+                    relative_path="climate/hittekaart/data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=1000,
+                    metadata={
+                        "inferred_collection_id": "climate/hittekaart",
+                        "format_status": "cloud_native",
+                        "format_display_name": "GeoParquet",
+                    },
+                ),
+                ScannedFile(
+                    path=tmp_path / "census" / "data.parquet",
+                    relative_path="census/data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=2000,
+                    metadata={
+                        "inferred_collection_id": "census",
+                        "format_status": "cloud_native",
+                        "format_display_name": "GeoParquet",
+                    },
+                ),
+            ],
+            issues=[],
+            skipped=[],
+            directories_scanned=4,
+        )
+
+        output = format_enhanced_summary(result)
+
+        # Should show both collection IDs
+        assert "climate/hittekaart" in output
+        assert "census" in output
+
+    def test_format_enhanced_summary_verbose(self, tmp_path: Path) -> None:
+        """format_enhanced_summary includes extra info in verbose mode."""
+        from portolan_cli.scan_output import format_enhanced_summary
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[
+                ScannedFile(
+                    path=tmp_path / "census" / "data.parquet",
+                    relative_path="census/data.parquet",
+                    extension=".parquet",
+                    format_type=FormatType.VECTOR,
+                    size_bytes=1000,
+                    metadata={
+                        "inferred_collection_id": "census",
+                        "format_status": "cloud_native",
+                        "format_display_name": "GeoParquet",
+                    },
+                ),
+            ],
+            issues=[
+                make_scan_issue(
+                    tmp_path / "data",
+                    IssueType.MULTIPLE_PRIMARIES,
+                    Severity.WARNING,
+                    message="Directory has 2 primary assets",
+                    suggestion="Reorganize into separate collections",
+                ),
+            ],
+            skipped=[],
+            directories_scanned=2,
+        )
+
+        # Verbose mode
+        output = format_enhanced_summary(result, verbose=True)
+
+        # Should include recommendations
+        assert "portolan" in output.lower() or "reorganize" in output.lower()
+
+
+# =============================================================================
+# Integration Tests: Full Pipeline Verification
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScanOutputIntegration:
+    """Integration tests verifying scan_directory output works with formatters.
+
+    These tests address the tautological testing issue found in adversarial review:
+    they call the real scan_directory() function and verify the output formatting
+    functions work correctly with the actual ScannedFile fields (not synthetic
+    metadata dicts).
+    """
+
+    @pytest.fixture
+    def fixtures_dir(self) -> Path:
+        """Return the path to scan test fixtures."""
+        return Path(__file__).parent.parent / "fixtures" / "scan"
+
+    def test_group_files_by_collection_with_real_scan(self, fixtures_dir: Path) -> None:
+        """group_files_by_collection works with real scan_directory output.
+
+        This verifies _get_collection_id reads from inferred_collection_id field,
+        not metadata dict.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan_output import group_files_by_collection
+
+        result = scan_directory(fixtures_dir / "nested", ScanOptions())
+
+        # Group files by collection using the real output
+        grouped = group_files_by_collection(result.ready)
+
+        # Should have real collection IDs from the field, not "(uncategorized)"
+        assert "(uncategorized)" not in grouped or len(grouped.get("(uncategorized)", [])) == 0
+        # Should have nested collection IDs
+        collection_ids = list(grouped.keys())
+        assert any("/" in cid for cid in collection_ids), (
+            f"Expected nested collection IDs with slashes, got: {collection_ids}"
+        )
+
+    def test_format_fix_commands_json_with_real_scan(self, fixtures_dir: Path) -> None:
+        """format_fix_commands_json works with real scan_directory output.
+
+        This verifies the fix_commands generation uses collection IDs from the
+        inferred_collection_id field, not metadata.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan_output import detect_structure_pattern, format_fix_commands_json
+
+        result = scan_directory(fixtures_dir / "nested", ScanOptions())
+
+        # Get pattern detection result
+        pattern = detect_structure_pattern(result)
+
+        # Should detect collections from real scan data
+        assert len(pattern.collections) > 0, "Expected collections to be detected from real scan"
+
+        # Format fix commands
+        commands = format_fix_commands_json(result)
+
+        # Should have "add" commands for detected collections
+        add_commands = [c for c in commands if c["command"] == "add"]
+        assert len(add_commands) > 0, "Expected add commands for detected collections"
+
+    def test_format_enhanced_summary_with_real_scan(self, fixtures_dir: Path) -> None:
+        """format_enhanced_summary works with real scan_directory output.
+
+        This verifies the enhanced summary shows proper collection grouping
+        from the inferred_collection_id field.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan_output import format_enhanced_summary
+
+        result = scan_directory(fixtures_dir / "nested", ScanOptions())
+
+        # Format the summary
+        output = format_enhanced_summary(result)
+
+        # Should show "Collections:" header and real collection IDs
+        assert "Collections:" in output
+        # Should NOT show only "(uncategorized)"
+        assert output.count("(uncategorized)") == 0 or "census" in output or "imagery" in output
+
+    def test_to_dict_includes_new_fields(self, fixtures_dir: Path) -> None:
+        """ScanResult.to_dict() includes inferred_collection_id and format_status.
+
+        This verifies the JSON output includes the new fields from the PR.
+        """
+        from portolan_cli.scan import ScanOptions, scan_directory
+
+        result = scan_directory(fixtures_dir / "nested", ScanOptions())
+        data = result.to_dict()
+
+        # Check that ready files include the new fields
+        ready_files = data["ready"]
+        assert len(ready_files) > 0, "Expected ready files"
+
+        for file_dict in ready_files:
+            assert "inferred_collection_id" in file_dict, "Missing inferred_collection_id in JSON"
+            assert "format_status" in file_dict, "Missing format_status in JSON"
+            assert "format_display_name" in file_dict, "Missing format_display_name in JSON"
+
+            # Verify values are populated (not all None)
+            # At least nested files should have collection IDs
+            if "/" in file_dict["relative_path"]:
+                assert file_dict["inferred_collection_id"] is not None, (
+                    f"Expected collection ID for nested file {file_dict['relative_path']}"
+                )

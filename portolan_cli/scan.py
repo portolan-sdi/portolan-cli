@@ -27,11 +27,15 @@ from __future__ import annotations
 import os
 import re
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    # Type alias for progress callback
+    ProgressCallback = Callable[[], None]
 
 # Import new types from scan modules
 from portolan_cli.collection_id import (
@@ -40,6 +44,15 @@ from portolan_cli.collection_id import (
     validate_collection_id,
 )
 from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
+
+# Import format detection from formats.py (ADR-0010: delegate to upstream)
+from portolan_cli.formats import (
+    CloudNativeStatus,
+    FormatInfo,
+    get_cloud_native_status,
+    is_geoparquet,
+    is_valid_parquet,
+)
 from portolan_cli.scan_classify import (
     FileCategory,
     SkippedFile,
@@ -139,6 +152,7 @@ class IssueType(Enum):
     # NEW: Structure issues
     MIXED_FLAT_MULTIITEM = "mixed_flat_multiitem"
     ORPHAN_SIDECAR = "orphan_sidecar"
+    MULTIPLE_GEO_PRIMARIES = "multiple_geo_primaries"
 
     # NEW: Collection ID validation
     INVALID_COLLECTION_ID = "invalid_collection_id"
@@ -181,6 +195,9 @@ class ScanOptions:
     # NEW: Collection inference
     suggest_collections: bool = False  # Suggest collection groupings
 
+    # NEW: Strict mode (Phase 4)
+    strict: bool = False  # Treat warnings as errors
+
     def __post_init__(self) -> None:
         """Validate options."""
         if self.unsafe_fix and not self.fix:
@@ -198,6 +215,12 @@ class ScannedFile:
         extension: File extension (e.g., ".parquet", ".gdb").
         format_type: Whether this is VECTOR or RASTER data.
         size_bytes: Total size in bytes.
+        inferred_collection_id: Nested collection path derived from directory structure.
+            For nested catalogs (ADR-0032), this is the parent directory path relative
+            to the scan root. Example: "climate/hittekaart" for a file at
+            climate/hittekaart/data.parquet. Empty string for files at scan root.
+        format_status: Cloud-native status classification (CLOUD_NATIVE, CONVERTIBLE, UNSUPPORTED).
+        format_display_name: Human-readable format name (e.g., "GeoParquet", "GeoTIFF (not COG)").
         metadata: Format-specific metadata (e.g., gdbtable_count for FileGDB).
     """
 
@@ -206,6 +229,9 @@ class ScannedFile:
     extension: str
     format_type: FormatType
     size_bytes: int
+    inferred_collection_id: str = ""
+    format_status: CloudNativeStatus = CloudNativeStatus.CLOUD_NATIVE
+    format_display_name: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -310,6 +336,9 @@ class ScanResult:
                     "extension": f.extension,
                     "format_type": f.format_type.value,
                     "size_bytes": f.size_bytes,
+                    "inferred_collection_id": f.inferred_collection_id or None,
+                    "format_status": f.format_status.value if f.format_status else None,
+                    "format_display_name": f.format_display_name or None,
                     "metadata": f.metadata,
                 }
                 for f in self.ready
@@ -381,6 +410,8 @@ class _ScanContext:
     shapefile_sidecars: dict[str, set[str]] = field(default_factory=lambda: defaultdict(set))
     # Track special formats (FileGDB, etc.)
     special_formats: list[SpecialFormat] = field(default_factory=list)
+    # Progress callback (called for each directory scanned)
+    progress_callback: Callable[[], None] | None = None
 
 
 # =============================================================================
@@ -431,6 +462,59 @@ def _get_relative_path(path: Path, root: Path) -> str:
         return path.as_posix()
 
 
+def _infer_collection_id_from_relative_path(relative_path: str) -> str:
+    """Infer nested collection ID from a relative path (ADR-0032).
+
+    The collection ID is the directory portion of the relative path,
+    representing the leaf collection in a nested catalog structure.
+
+    Examples:
+        "data.parquet" -> ""
+        "collection/data.parquet" -> "collection"
+        "climate/hittekaart/data.parquet" -> "climate/hittekaart"
+        "env/air/quality/pm25.parquet" -> "env/air/quality"
+
+    Args:
+        relative_path: Path relative to scan root, using forward slashes.
+
+    Returns:
+        Collection ID (parent directory path). Empty string for root-level files.
+    """
+    # Find the last slash - everything before it is the collection ID
+    last_slash_idx = relative_path.rfind("/")
+    if last_slash_idx == -1:
+        # File is at root level (no directory component)
+        return ""
+    return relative_path[:last_slash_idx]
+
+
+def _get_format_info(path: Path, ext: str) -> FormatInfo:
+    """Get cloud-native status and format info for a file.
+
+    This is a lightweight wrapper around get_cloud_native_status() that
+    handles errors gracefully for scan context.
+
+    Args:
+        path: Path to the file.
+        ext: File extension (lowercase).
+
+    Returns:
+        FormatInfo with status, display_name, target_format, and error_message.
+    """
+    try:
+        return get_cloud_native_status(path)
+    except (FileNotFoundError, IsADirectoryError):
+        # Return a fallback for edge cases
+        from portolan_cli.formats import FormatInfo as FI
+
+        return FI(
+            status=CloudNativeStatus.CLOUD_NATIVE,
+            display_name=ext.upper().lstrip(".") if ext else "Unknown",
+            target_format=None,
+            error_message=None,
+        )
+
+
 def _make_skipped_file(
     ctx: _ScanContext,
     path: Path,
@@ -456,33 +540,7 @@ def _make_skipped_file(
     )
 
 
-def is_geoparquet(path: Path) -> bool:
-    """Check if a Parquet file is GeoParquet by inspecting metadata.
-
-    GeoParquet files have a 'geo' key in their schema metadata containing
-    JSON with version, primary_column, and columns fields.
-
-    Args:
-        path: Path to a .parquet file
-
-    Returns:
-        True if the file has GeoParquet metadata, False otherwise.
-        Returns False if file cannot be read or is not valid Parquet.
-    """
-    try:
-        import pyarrow.parquet as pq
-
-        # Use ParquetFile to get Arrow schema with metadata
-        pq_file = pq.ParquetFile(path)
-        schema_metadata = pq_file.schema_arrow.metadata
-        if schema_metadata is None:
-            return False
-        # GeoParquet spec requires 'geo' key in schema metadata
-        return b"geo" in schema_metadata
-    except Exception:
-        # If we can't read it, assume it's not GeoParquet
-        # (could be corrupted, not a Parquet file, etc.)
-        return False
+# NOTE: is_geoparquet() is now imported from portolan_cli.formats (ADR-0010)
 
 
 def _is_overview_extension(ext: str) -> bool:
@@ -693,33 +751,86 @@ def _check_orphan_sidecars(ctx: _ScanContext) -> None:
 def _check_mixed_structure(ctx: _ScanContext) -> None:
     """Check for mixed flat/multi-item directory structure.
 
-    This detects directories that have both files at the root level AND
-    files in subdirectories, which indicates an unclear catalog structure.
-    Is the root a single item with multiple files, or is each subdirectory
-    a separate item?
+    This detects directories that have both files directly AND files in
+    subdirectories, which indicates an unclear catalog structure.
+    Is this directory a single item with multiple files, or is each
+    subdirectory a separate item?
+
+    This check applies to ALL directories with geo-assets, not just root.
     """
-    # Check if root has files directly and also has subdirectories with files
-    root = ctx.root
-    root_has_files = root in ctx.primaries_by_dir and len(ctx.primaries_by_dir[root]) > 0
+    # Track directories we've already flagged to avoid duplicates
+    flagged_dirs: set[Path] = set()
 
-    if not root_has_files:
-        return
+    # Check each directory that has geo-assets
+    for dir_with_files in ctx.primaries_by_dir:
+        if dir_with_files in flagged_dirs:
+            continue
 
-    # Check if any subdirectory has files
-    for dir_path in ctx.primaries_by_dir:
-        if dir_path != root and dir_path.is_relative_to(root):
-            # Found files in a subdirectory
+        # Does this directory have files AND any subdirectory with files?
+        dir_has_files = len(ctx.primaries_by_dir[dir_with_files]) > 0
+        if not dir_has_files:
+            continue
+
+        # Check if any subdirectory (at any depth) also has files
+        for other_dir in ctx.primaries_by_dir:
+            if other_dir == dir_with_files:
+                continue
+            # Check if other_dir is a subdirectory of dir_with_files
+            try:
+                other_dir.relative_to(dir_with_files)
+                # Found files in a subdirectory
+                flagged_dirs.add(dir_with_files)
+                ctx.issues.append(
+                    ScanIssue(
+                        path=dir_with_files,
+                        relative_path=_get_relative_path(dir_with_files, ctx.root),
+                        issue_type=IssueType.MIXED_FLAT_MULTIITEM,
+                        severity=Severity.WARNING,
+                        message="Directory has both data files AND subdirectories with data",
+                        suggestion="Organize as either flat (all files here) or hierarchical (files only in subdirectories)",
+                    )
+                )
+                break  # Only report once per directory
+            except ValueError:
+                # other_dir is not a subdirectory of dir_with_files
+                continue
+
+
+def _check_multiple_geo_primaries(ctx: _ScanContext) -> None:
+    """Check for multiple GeoParquet files in the same directory.
+
+    Multiple GeoParquet files in the same directory creates structural
+    ambiguity about which is the primary geo-asset for catalog purposes.
+    This is distinct from MULTIPLE_PRIMARIES (generic) because it specifically
+    targets the GeoParquet case and enables targeted guidance.
+
+    Key rule: One GeoParquet + multiple plain Parquet = VALID (companions OK)
+
+    Only GeoParquet files (those with geo metadata) are counted as geo-primaries.
+    Plain Parquet files (lookup tables, metadata) are companions, not primaries.
+    """
+    for dir_path, primaries in ctx.primaries_by_dir.items():
+        # Filter to only .parquet files
+        parquet_files = [p for p in primaries if p.suffix.lower() == ".parquet"]
+
+        if len(parquet_files) < 2:
+            continue  # At most 1 parquet file, no issue
+
+        # Count how many are actual GeoParquet (have geo metadata)
+        geo_parquets = [p for p in parquet_files if is_geoparquet(p)]
+
+        if len(geo_parquets) > 1:
+            names = ", ".join(p.name for p in geo_parquets)
             ctx.issues.append(
                 ScanIssue(
-                    path=root,
-                    relative_path=".",
-                    issue_type=IssueType.MIXED_FLAT_MULTIITEM,
+                    path=dir_path,
+                    relative_path=_get_relative_path(dir_path, ctx.root),
+                    issue_type=IssueType.MULTIPLE_GEO_PRIMARIES,
                     severity=Severity.WARNING,
-                    message="Directory has files at root and in subdirectories - unclear catalog structure",
-                    suggestion="Organize as either flat (all files at root) or hierarchical (files only in subdirectories)",
+                    message=f"Multiple primary geo-assets in directory: {names}",
+                    suggestion="Move to separate subdirectories or reorganize as partitioned data",
                 )
             )
-            return  # Only report once per root
 
 
 def _check_collection_ids(ctx: _ScanContext) -> None:
@@ -965,6 +1076,9 @@ def _discover_files(
             return
 
         ctx.directories_scanned += 1
+        # Call progress callback if provided
+        if ctx.progress_callback is not None:
+            ctx.progress_callback()
 
         try:
             entries = list(os.scandir(start))
@@ -1057,13 +1171,21 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         # Gather FileGDB-specific metadata
         metadata = _gather_filegdb_metadata(path)
 
+        # Compute relative path and inferred collection ID
+        relative_path = _get_relative_path(path, ctx.root)
+        inferred_collection_id = _infer_collection_id_from_relative_path(relative_path)
+
         # Create ScannedFile for FileGDB directory
+        # FileGDB is convertible to GeoParquet
         scanned = ScannedFile(
             path=path,
-            relative_path=_get_relative_path(path, ctx.root),
+            relative_path=relative_path,
             extension=".gdb",
             format_type=FormatType.VECTOR,
             size_bytes=size,
+            inferred_collection_id=inferred_collection_id,
+            format_status=CloudNativeStatus.CONVERTIBLE,
+            format_display_name="FileGDB",
             metadata=metadata,
         )
         ctx.ready.append(scanned)
@@ -1108,6 +1230,19 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
 
     # Handle .parquet specially - must check if it's GeoParquet
     if ext == PARQUET_EXTENSION:
+        # First check if it's a valid Parquet file at all (not corrupted)
+        if not is_valid_parquet(path):
+            # File has .parquet extension but is corrupted or not a valid Parquet
+            ctx.skipped.append(
+                SkippedFile(
+                    path=path,
+                    relative_path=_get_relative_path(path, ctx.root),
+                    category=FileCategory.UNKNOWN,
+                    reason_type=SkipReasonType.INVALID_FORMAT,
+                    reason_message="File has .parquet extension but is not a valid Parquet file (corrupted or wrong format)",
+                )
+            )
+            return
         if not is_geoparquet(path):
             # Regular Parquet (tabular data), not a geospatial asset
             # Create SkippedFile directly since classify_file can't detect non-geo parquet
@@ -1131,13 +1266,23 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
         ctx.skipped.append(_make_skipped_file(ctx, path, size))
         return
 
+    # Compute relative path and inferred collection ID
+    relative_path = _get_relative_path(path, ctx.root)
+    inferred_collection_id = _infer_collection_id_from_relative_path(relative_path)
+
+    # Get format info for cloud-native status and display name
+    format_info = _get_format_info(path, ext)
+
     # Create scanned file
     scanned = ScannedFile(
         path=path,
-        relative_path=_get_relative_path(path, ctx.root),
+        relative_path=relative_path,
         extension=ext,
         format_type=format_type,
         size_bytes=size,
+        inferred_collection_id=inferred_collection_id,
+        format_status=format_info.status,
+        format_display_name=format_info.display_name,
     )
     ctx.ready.append(scanned)
 
@@ -1158,6 +1303,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
 def scan_directory(
     path: Path,
     options: ScanOptions | None = None,
+    progress_callback: Callable[[], None] | None = None,
 ) -> ScanResult:
     """Scan a directory for geospatial files and issues.
 
@@ -1166,6 +1312,8 @@ def scan_directory(
     Args:
         path: Directory path to scan.
         options: Scan configuration options. Defaults to ScanOptions().
+        progress_callback: Optional callback called for each directory scanned.
+            Used for progress reporting. Called with no arguments.
 
     Returns:
         ScanResult containing ready files, issues, and skipped files.
@@ -1192,7 +1340,7 @@ def scan_directory(
         options = ScanOptions()
 
     # Create scan context
-    ctx = _ScanContext(root=path, options=options)
+    ctx = _ScanContext(root=path, options=options, progress_callback=progress_callback)
 
     # Discover and process files
     for file_path, file_size in _discover_files(ctx):
@@ -1211,6 +1359,9 @@ def scan_directory(
 
     # Check for mixed flat/multi-item structure
     _check_mixed_structure(ctx)
+
+    # Check for multiple GeoParquet files in same directory
+    _check_multiple_geo_primaries(ctx)
 
     # Run multi-asset checks
     _finalize_multi_asset_checks(ctx)

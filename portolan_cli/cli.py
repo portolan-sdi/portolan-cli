@@ -7,9 +7,10 @@ All business logic lives in the library; the CLI handles user interaction.
 from __future__ import annotations
 
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import click
 
@@ -48,12 +49,14 @@ from portolan_cli.scan_fix import ProposedFix, apply_safe_fixes
 from portolan_cli.scan_infer import infer_collections
 from portolan_cli.scan_output import (
     format_collection_suggestion,
+    format_fix_commands_json,
     generate_next_steps,
     get_category_display_name,
     get_fixability,
     group_skipped_files,
     render_tree_view,
 )
+from portolan_cli.scan_progress import ScanProgressReporter, count_directories
 from portolan_cli.validation import (
     Severity,
 )
@@ -1397,6 +1400,11 @@ def _handle_fix_mode(
     is_flag=True,
     help="Preview fixes without applying them (use with --fix)",
 )
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Treat warnings as errors (exit 1 on any warning or error)",
+)
 @click.pass_context
 def scan(
     ctx: click.Context,
@@ -1412,6 +1420,7 @@ def scan(
     manual_only: bool,
     fix: bool,
     dry_run: bool,
+    strict: bool,
 ) -> None:
     """Scan a directory for geospatial files and potential issues.
 
@@ -1486,10 +1495,32 @@ def scan(
         follow_symlinks=follow_symlinks,
         show_all=show_all,
         suggest_collections=suggest_collections,
+        strict=strict,
+    )
+
+    # Pre-count directories only when progress will be displayed
+    # ScanProgressReporter displays progress when: not json_mode AND stderr is TTY
+    should_show_progress = not use_json and sys.stderr.isatty()
+    total_dirs = 0
+    if should_show_progress:
+        # Use same follow_symlinks setting as scan for accurate progress
+        total_dirs = count_directories(
+            path,
+            include_hidden=include_hidden,
+            max_depth=max_depth,
+            recursive=not no_recursive,
+            follow_symlinks=follow_symlinks,
+        )
+
+    # Create progress reporter (suppressed in JSON mode or non-TTY)
+    progress_reporter = ScanProgressReporter(
+        total_directories=total_dirs,
+        json_mode=use_json,
     )
 
     try:
-        result = scan_directory(path, options)
+        with progress_reporter:
+            result = scan_directory(path, options, progress_callback=progress_reporter.advance)
     except FileNotFoundError as err:
         if use_json:
             envelope = error_envelope(
@@ -1529,46 +1560,143 @@ def scan(
         result.proposed_fixes = proposed
         result.applied_fixes = applied
 
+    # Determine if we should fail based on strict mode
+    # Strict mode: errors OR warnings → failure
+    # Normal mode: errors only → failure (but scan is informational, so still exit 0)
+    has_strict_failure = strict and (result.has_errors or result.warning_count > 0)
+
+    # Output results in appropriate format
+    _output_scan_results(
+        result,
+        use_json=use_json,
+        manual_only=manual_only,
+        show_all=show_all,
+        show_tree=show_tree,
+        strict=strict,
+        has_strict_failure=has_strict_failure,
+        elapsed_seconds=progress_reporter.elapsed_seconds,
+    )
+
+    # Handle strict mode exit code
+    if has_strict_failure:
+        _handle_strict_mode_exit(result, use_json=use_json)
+
+    # Normal mode: scan is informational — exit 0 even with errors
+
+
+def _handle_strict_mode_exit(result: ScanResult, *, use_json: bool) -> NoReturn:
+    """Handle strict mode exit with appropriate messaging.
+
+    Args:
+        result: The scan result.
+        use_json: If True, skip human-readable message (already in JSON envelope).
+
+    Raises:
+        SystemExit: Always raises with exit code 1.
+    """
+    if not use_json:
+        # Add strict mode message for human output
+        warn_count = result.warning_count
+        err_count = result.error_count
+        if warn_count > 0 and err_count == 0:
+            error(f"Strict mode: {warn_count} warning(s) treated as error(s)")
+        elif warn_count > 0 and err_count > 0:
+            error(
+                f"Strict mode: {err_count} error(s) and {warn_count} warning(s) treated as errors"
+            )
+    raise SystemExit(1)
+
+
+def _output_scan_results(
+    result: ScanResult,
+    *,
+    use_json: bool,
+    manual_only: bool,
+    show_all: bool,
+    show_tree: bool,
+    strict: bool,
+    has_strict_failure: bool,
+    elapsed_seconds: float = 0.0,
+) -> None:
+    """Output scan results in the appropriate format.
+
+    Args:
+        result: The scan result.
+        use_json: If True, output JSON envelope.
+        manual_only: If True, show only manual-resolution issues.
+        show_all: If True, show all issues without truncation.
+        show_tree: If True, show directory tree view.
+        strict: If True, treat warnings as errors in JSON output.
+        has_strict_failure: If True, the scan has failed in strict mode.
+        elapsed_seconds: Time elapsed during scan (for progress reporting).
+    """
     if use_json:
-        # JSON output with envelope
-        data = result.to_dict()
-        data["summary"] = {
-            "ready_count": len(result.ready),
-            "error_count": result.error_count,
-            "warning_count": result.warning_count,
-            "skipped_count": len(result.skipped),
-        }
-
-        if result.has_errors:
-            # Still return data, but mark as not successful
-            errors = [
-                ErrorDetail(type=issue.issue_type.value, message=issue.message)
-                for issue in result.issues
-                if issue.severity == ScanSeverity.ERROR
-            ]
-            envelope = error_envelope("scan", errors, data=data)
-        else:
-            envelope = success_envelope("scan", data)
-
-        output_json_envelope(envelope)
+        _output_scan_json(result, strict=strict, has_strict_failure=has_strict_failure)
     elif manual_only:
-        # Show only issues requiring manual resolution
         from portolan_cli.scan_output import format_scan_output
 
         output = format_scan_output(result, manual_only=True)
         click.echo(output)
     else:
-        # Human-readable output per FR-018
-        _print_scan_summary_enhanced(result, show_all=show_all, show_tree=show_tree)
+        _print_scan_summary_enhanced(
+            result,
+            show_all=show_all,
+            show_tree=show_tree,
+            elapsed_seconds=elapsed_seconds,
+        )
 
-    # Scan is informational — always exit 0 on success
+
+def _output_scan_json(result: ScanResult, *, strict: bool, has_strict_failure: bool) -> None:
+    """Output scan results as JSON envelope.
+
+    Args:
+        result: The scan result.
+        strict: If True, include warnings as errors.
+        has_strict_failure: If True, mark as not successful.
+    """
+    data = result.to_dict()
+    data["summary"] = {
+        "ready_count": len(result.ready),
+        "error_count": result.error_count,
+        "warning_count": result.warning_count,
+        "skipped_count": len(result.skipped),
+    }
+    # Add fix_commands for agent consumption
+    data["fix_commands"] = format_fix_commands_json(result)
+
+    if has_strict_failure or result.has_errors:
+        # Still return data, but mark as not successful
+        # In strict mode, include warnings as errors too
+        errors = [
+            ErrorDetail(type=issue.issue_type.value, message=issue.message)
+            for issue in result.issues
+            if issue.severity == ScanSeverity.ERROR
+            or (strict and issue.severity == ScanSeverity.WARNING)
+        ]
+        envelope = error_envelope("scan", errors, data=data)
+    else:
+        envelope = success_envelope("scan", data)
+
+    output_json_envelope(envelope)
 
 
-def _print_scan_header(result: ScanResult) -> None:
-    """Print scan header with file counts."""
+def _print_scan_header(result: ScanResult, *, elapsed_seconds: float = 0.0) -> None:
+    """Print scan header with file counts and timing.
+
+    Args:
+        result: The scan result.
+        elapsed_seconds: Time elapsed during scan.
+    """
     ready_count = len(result.ready)
+    dirs_scanned = result.directories_scanned
+
+    # Format timing string
+    time_str = f" in {elapsed_seconds:.1f}s" if elapsed_seconds > 0 else ""
+
+    # Show directories scanned with timing
+    detail(f"Scanned {dirs_scanned} director{'y' if dirs_scanned == 1 else 'ies'}{time_str}")
+
     if ready_count == 0:
-        info_output(f"Scanned {result.directories_scanned} directories")
         warn("No geo-assets found")
     else:
         success(f"{ready_count} geo-asset{'s' if ready_count != 1 else ''} found")
@@ -1685,11 +1813,12 @@ def _print_scan_summary_enhanced(
     *,
     show_all: bool = False,
     show_tree: bool = False,
+    elapsed_seconds: float = 0.0,
 ) -> None:
     """Print enhanced human-readable scan summary.
 
     Includes:
-    - Summary header
+    - Summary header with timing
     - Format breakdown
     - Tree view (if --tree)
     - Issues with fixability labels
@@ -1701,9 +1830,10 @@ def _print_scan_summary_enhanced(
         result: The scan result to print.
         show_all: If True, show all issues without truncation.
         show_tree: If True, show directory tree view.
+        elapsed_seconds: Time elapsed during scan.
     """
-    # Header
-    _print_scan_header(result)
+    # Header with timing info
+    _print_scan_header(result, elapsed_seconds=elapsed_seconds)
     _print_format_breakdown(result)
 
     # Tree view (if requested)

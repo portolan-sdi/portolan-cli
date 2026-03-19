@@ -162,6 +162,32 @@ UNSUPPORTED_ERROR_MESSAGES: dict[str, str] = {
 # =============================================================================
 
 
+def is_valid_parquet(path: Path) -> bool:
+    """Check if a file is a valid Parquet file (can be read by PyArrow).
+
+    Args:
+        path: Path to the file to check.
+
+    Returns:
+        True if the file is a valid Parquet file, False if corrupted or not Parquet.
+    """
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:
+        logger.warning(
+            "pyarrow not installed; cannot validate Parquet. Install with: pip install pyarrow"
+        )
+        return False
+
+    try:
+        # Just read metadata - fast and validates the file structure
+        pq.read_metadata(str(path))
+        return True
+    except Exception:
+        # File is corrupted or not a valid Parquet file
+        return False
+
+
 def is_geoparquet(path: Path) -> bool:
     """Check if a Parquet file has GeoParquet metadata.
 
@@ -173,6 +199,8 @@ def is_geoparquet(path: Path) -> bool:
 
     Returns:
         True if the file is a valid GeoParquet, False otherwise.
+        Note: Returns False for both non-geo Parquet AND invalid/corrupted files.
+        Use is_valid_parquet() first if you need to distinguish these cases.
     """
     try:
         import pyarrow.parquet as pq
@@ -193,7 +221,7 @@ def is_geoparquet(path: Path) -> bool:
         return False
 
 
-def is_cloud_optimized_geotiff(path: Path) -> bool:
+def is_cloud_optimized_geotiff(path: Path, *, quiet: bool = True) -> bool:
     """Check if a TIFF file is a Cloud-Optimized GeoTIFF.
 
     Uses rio-cogeo's validation to determine if the file meets COG requirements.
@@ -201,6 +229,8 @@ def is_cloud_optimized_geotiff(path: Path) -> bool:
 
     Args:
         path: Path to the TIFF file.
+        quiet: If True, suppress rio-cogeo's warning output to stdout.
+            Default is True to avoid polluting JSON output.
 
     Returns:
         True if the file is a valid COG, False otherwise.
@@ -214,7 +244,8 @@ def is_cloud_optimized_geotiff(path: Path) -> bool:
         return False
 
     try:
-        is_valid, _errors, _warnings = cog_validate(str(path))
+        # Use quiet=True to suppress rio-cogeo's warning output to stdout
+        is_valid, _errors, _warnings = cog_validate(str(path), quiet=quiet)
         return is_valid
     except Exception:
         logger.exception("Failed to validate COG for %s", path)
@@ -275,6 +306,14 @@ def get_cloud_native_status(path: Path) -> FormatInfo:
 
     # Check Parquet files - need content inspection for geo metadata
     if extension == ".parquet":
+        # First check if the file is a valid Parquet (not corrupted)
+        if not is_valid_parquet(path):
+            return FormatInfo(
+                status=CloudNativeStatus.UNSUPPORTED,
+                display_name="Corrupted Parquet",
+                target_format=None,
+                error_message="File has .parquet extension but is not a valid Parquet file",
+            )
         if is_geoparquet(path):
             return FormatInfo(
                 status=CloudNativeStatus.CLOUD_NATIVE,

@@ -32,6 +32,12 @@ These fixtures test **directory structure detection**, not file content parsing.
 | `invalid_chars/` | Filenames with `()` and accents | Warning: invalid characters |
 | `mixed_formats/` | Raster + vector together | Info: mixed format types |
 | `nested/` | Hierarchical `category/year/` structure | Depth detection |
+| `three_level_nested/` | 3+ level nesting `GAUL_L2/by_country/XXX/` | Deep collection ID inference |
+| `mixed_depths/` | Shallow + nested collections in same catalog | Mixed depth handling |
+| `geoparquet_with_companions/` | GeoParquet + plain Parquet companion | Companion file detection |
+| `multiple_geoparquet/` | Two GeoParquet files in same dir | Multiple geo-primary warning |
+| `deep_nested/` | 5+ levels of nesting | Extreme depth handling |
+| `flat_collection/` | Multiple files at root level | ADR-0031 flat pattern |
 | `unsupported/` | `.csv`, `.mxd` + one valid file | Skip unsupported, find valid |
 | `duplicate_basenames/` | `argentina.geojson` + `Argentina.geojson` | Warning: case collision |
 
@@ -158,9 +164,136 @@ Two files with the same base name but different case.
 
 **Tests:** Case collision detection, unique ID generation.
 
+### `three_level_nested/`
+
+Three-level directory nesting for testing ADR-0032 nested catalog support.
+
+```
+three_level_nested/
+└── GAUL_L2/
+    └── by_country/
+        ├── AFG/
+        │   └── AFG.parquet
+        └── ALB/
+            └── ALB.parquet
+```
+
+| File | Format | Size | Source |
+|------|--------|------|--------|
+| `AFG.parquet` | GeoParquet | ~9KB | GAUL 2024 L2 admin boundaries (Saint Barthélemy, renamed) |
+| `ALB.parquet` | GeoParquet | ~79KB | GAUL 2024 L2 admin boundaries (Svalbard, renamed) |
+
+**Source:** [GAUL 2024](https://data.apps.fao.org/catalog/dataset/global-administrative-unit-layers-gaul) - Global Administrative Unit Layers from FAO. Small island territories selected for minimal file size.
+
+**Tests:** Collection ID inference returns `GAUL_L2/by_country/AFG`, `GAUL_L2/by_country/ALB`.
+
+### `mixed_depths/`
+
+Shallow and deeply nested collections coexisting in the same catalog root.
+
+```
+mixed_depths/
+├── shallow_collection/
+│   └── data.parquet
+└── theme/
+    └── nested_collection/
+        └── data.parquet
+```
+
+| File | Format | Size | Source |
+|------|--------|------|--------|
+| `shallow_collection/data.parquet` | GeoParquet | ~67KB | Den Haag bomenrij (tree rows) |
+| `theme/nested_collection/data.parquet` | GeoParquet | ~56KB | Den Haag peilbuizen (monitoring wells) |
+
+**Source:** [Den Haag Open Data](https://denhaag.dataplatform.nl/) - Municipality of The Hague, Netherlands environmental datasets.
+
+**Tests:** Collection IDs: `shallow_collection` and `theme/nested_collection` detected correctly.
+
+### `geoparquet_with_companions/`
+
+One GeoParquet primary + plain Parquet companion file (valid per ADR-0031).
+
+```
+geoparquet_with_companions/
+├── data.parquet          <- GeoParquet (primary, has geo metadata)
+└── lookup.parquet        <- Plain Parquet (companion, no geo metadata)
+```
+
+| File | Format | Size | Source |
+|------|--------|------|--------|
+| `data.parquet` | GeoParquet | ~13KB | Den Haag luchtkwaliteit_meetpunten (air quality monitoring points) |
+| `lookup.parquet` | Plain Parquet | ~1KB | Synthetic (3-row lookup table, no geometry) |
+
+**Tests:** `is_geoparquet()` distinguishes primary from companion. No "multiple primaries" warning.
+
+### `multiple_geoparquet/`
+
+Two GeoParquet files in the same directory — triggers "multiple geo-primaries" warning.
+
+```
+multiple_geoparquet/
+├── milieuzone.parquet
+└── peilbuizen.parquet
+```
+
+| File | Format | Size | Source |
+|------|--------|------|--------|
+| `milieuzone.parquet` | GeoParquet | ~21KB | Den Haag milieuzone (environmental zone boundaries) |
+| `peilbuizen.parquet` | GeoParquet | ~56KB | Den Haag peilbuizen (groundwater monitoring wells) |
+
+**Source:** [Den Haag Open Data](https://denhaag.dataplatform.nl/)
+
+**Tests:** Warning: "Multiple primary geo-assets in same directory". Suggestion: reorganize.
+
+### `deep_nested/`
+
+Extreme nesting (5+ levels) for testing depth limits.
+
+```
+deep_nested/
+└── level1/
+    └── level2/
+        ├── shallow_collection/
+        │   └── data.parquet
+        └── level3/
+            └── level4/
+                └── level5/
+                    └── data.parquet
+```
+
+| File | Format | Size | Source |
+|------|--------|------|--------|
+| `level5/data.parquet` | GeoParquet | ~13KB | Den Haag luchtkwaliteit_meetpunten |
+| `shallow_collection/data.parquet` | GeoParquet | ~21KB | Den Haag milieuzone |
+
+**Source:** [Den Haag Open Data](https://denhaag.dataplatform.nl/)
+
+**Tests:** Collection ID: `level1/level2/level3/level4/level5` (no artificial depth limits).
+
+### `flat_collection/`
+
+Multiple GeoParquet files at root level — tests ADR-0031 flat collection pattern.
+
+```
+flat_collection/
+├── bomenrij.parquet
+├── milieuzone.parquet
+└── peilbuizen.parquet
+```
+
+| File | Format | Size | Source |
+|------|--------|------|--------|
+| `bomenrij.parquet` | GeoParquet | ~67KB | Den Haag tree rows |
+| `milieuzone.parquet` | GeoParquet | ~21KB | Den Haag environmental zone |
+| `peilbuizen.parquet` | GeoParquet | ~56KB | Den Haag monitoring wells |
+
+**Source:** [Den Haag Open Data](https://denhaag.dataplatform.nl/)
+
+**Tests:** All files at collection level. Warning: multiple primaries (unless organized as partitioned).
+
 ## Fixture Size
 
-Total size: ~470KB (25 files)
+Total size: ~850KB (~40 files)
 
 All fixtures are small enough to commit to git. No network dependencies during tests.
 
@@ -214,6 +347,16 @@ Some edge cases cannot be represented as static fixtures committed to git. These
 
 ## Provenance Notes
 
+### Known Sources
+
+| Source | License | Fixtures Using |
+|--------|---------|----------------|
+| [GAUL 2024](https://data.apps.fao.org/catalog/dataset/global-administrative-unit-layers-gaul) | CC BY-NC-SA 3.0 IGO | `three_level_nested/` |
+| [Den Haag Open Data](https://denhaag.dataplatform.nl/) | Public Domain / CC0 | `mixed_depths/`, `geoparquet_with_companions/`, `multiple_geoparquet/`, `deep_nested/`, `flat_collection/` |
+| [INDEC Argentina](https://www.indec.gob.ar/) | Public Domain | `complete_shapefile/`, `incomplete_shapefile/` |
+
+### Unknown Sources
+
 Most source data came from `~/Downloads/spatial/` — a collection of geospatial files accumulated over time. Original sources include:
 
 - **La Plata boundaries:** Administrative boundaries for La Plata, Argentina (unknown exact source)
@@ -222,3 +365,12 @@ Most source data came from `~/Downloads/spatial/` — a collection of geospatial
 - **Other files:** Various small files of unknown provenance, kept because they're valid examples of their formats
 
 If exact provenance matters for a specific test, document it when you add the test.
+
+### Adding New Fixtures from Real Data
+
+When copying from `~/Documents/dev/portolan/portolan-test-data/`:
+
+1. **Prefer smallest files** — Use `find ... -name "*.parquet" -size -500k` to find sub-500KB files
+2. **Document the source** — Add to the provenance table above
+3. **Check licenses** — Ensure data can be redistributed
+4. **Rename if helpful** — Use descriptive names that match the test case
