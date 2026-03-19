@@ -10,7 +10,10 @@ import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
+
+if TYPE_CHECKING:
+    from portolan_cli.pull import PullResult
 
 import click
 
@@ -2569,7 +2572,7 @@ def rm_cmd(
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Show what would be pushed without uploading.",
+    help="Show what would be pushed without uploading. Note: skips remote state check (no network I/O), so conflicts won't be detected.",
 )
 @click.option(
     "--profile",
@@ -2583,6 +2586,14 @@ def rm_cmd(
     default=None,
     help="Path to catalog root (default: auto-detect by walking up from cwd).",
 )
+@click.option(
+    "--workers",
+    "-w",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Parallel workers for catalog-wide push (default: auto-detect based on CPU count; "
+    "use 1 for sequential). Ignored when --collection is specified.",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def push(
@@ -2594,6 +2605,7 @@ def push(
     dry_run: bool,
     profile: str | None,
     catalog_path: Path | None,
+    workers: int | None,
 ) -> None:
     """Push local catalog changes to cloud object storage.
 
@@ -2668,6 +2680,7 @@ def push(
                 force=force,
                 dry_run=dry_run,
                 profile=profile,
+                workers=workers,
             )
 
             if use_json:
@@ -2778,13 +2791,33 @@ def push(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
+    """Output human-readable pull result (reduces complexity in main command)."""
+    if result.up_to_date:
+        info_output("Already up to date")
+    elif result.success:
+        if dry_run:
+            info_output(f"[DRY RUN] Would pull {result.files_downloaded} file(s)")
+        else:
+            success(f"Pulled {result.files_downloaded} file(s)")
+            detail(f"  Local: {result.local_version} -> {result.remote_version}")
+    else:
+        if result.uncommitted_changes:
+            error("Pull blocked by uncommitted changes:")
+            for filename in result.uncommitted_changes:
+                detail(f"  {filename}")
+            warn("Use --force to discard local changes")
+        else:
+            error("Pull failed")
+
+
 @cli.command()
 @click.argument("remote_url")
 @click.option(
     "--collection",
     "-c",
-    required=True,
-    help="Collection to pull.",
+    default=None,
+    help="Collection to pull. If not specified, pulls all collections.",
 )
 @click.option(
     "--catalog",
@@ -2801,7 +2834,7 @@ def push(
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Show what would be downloaded without actually downloading.",
+    help="Show what would be downloaded without actually downloading. Note: skips remote state check (no network I/O), so remote changes won't be detected.",
 )
 @click.option(
     "--profile",
@@ -2809,17 +2842,28 @@ def push(
     default="default",
     help="AWS profile name (for S3).",
 )
+@click.option(
+    "--workers",
+    "-w",
+    type=click.IntRange(min=1),
+    default=None,
+    help=(
+        "Parallel workers for catalog-wide pull (default: auto-detect based on "
+        "CPU count; use 1 for sequential). Ignored when --collection is specified."
+    ),
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def pull_command(
     ctx: click.Context,
     json_output: bool,
     remote_url: str,
-    collection: str,
+    collection: str | None,
     catalog_path: Path | None,
     force: bool,
     dry_run: bool,
     profile: str | None,
+    workers: int | None,
 ) -> None:
     """Pull updates from a remote catalog.
 
@@ -2833,14 +2877,21 @@ def pull_command(
 
     REMOTE_URL is the remote catalog URL (e.g., s3://bucket/catalog).
 
+    If --collection is specified, pulls that collection only. If --collection
+    is omitted, pulls all collections in the catalog.
+
     \b
     Examples:
+        # Pull a single collection
         portolan pull s3://mybucket/my-catalog --collection demographics
         portolan pull s3://mybucket/catalog -c imagery --dry-run
-        portolan pull s3://bucket/catalog -c data --force
-        portolan pull s3://bucket/catalog -c data --profile myprofile
+
+        # Pull all collections
+        portolan pull s3://mybucket/catalog
+        portolan pull s3://mybucket/catalog --workers 4
     """
     from portolan_cli.pull import pull as pull_fn
+    from portolan_cli.pull import pull_all_collections
 
     use_json = should_output_json(ctx, json_output)
 
@@ -2849,61 +2900,120 @@ def pull_command(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "pull")
 
-    result = pull_fn(
-        remote_url=remote_url,
-        local_root=catalog_path,
-        collection=collection,
-        force=force,
-        dry_run=dry_run,
-        profile=profile,
-    )
+    # Catalog-wide pull (no --collection specified)
+    if collection is None:
+        try:
+            all_result = pull_all_collections(
+                remote_url=remote_url,
+                local_root=catalog_path,
+                force=force,
+                dry_run=dry_run,
+                profile=profile,
+                workers=workers,
+            )
 
-    if use_json:
-        data = {
-            "files_downloaded": result.files_downloaded,
-            "files_skipped": result.files_skipped,
-            "local_version": result.local_version,
-            "remote_version": result.remote_version,
-            "up_to_date": result.up_to_date,
-        }
+            if use_json:
+                data = {
+                    "total_collections": all_result.total_collections,
+                    "successful_collections": all_result.successful_collections,
+                    "failed_collections": all_result.failed_collections,
+                    "total_files_downloaded": all_result.total_files_downloaded,
+                    "collection_errors": all_result.collection_errors,
+                }
 
-        if result.success:
-            envelope = success_envelope("pull", data)
-        else:
-            errors = []
-            if result.uncommitted_changes:
-                errors.append(
-                    ErrorDetail(
-                        type="UncommittedChangesError",
-                        message=f"Uncommitted changes: {', '.join(result.uncommitted_changes)}",
-                    )
+                if all_result.success:
+                    envelope = success_envelope("pull", data)
+                else:
+                    errors = [
+                        ErrorDetail(
+                            type="PullError",
+                            message=f"{coll}: {', '.join(errs)}",
+                        )
+                        for coll, errs in all_result.collection_errors.items()
+                    ]
+                    envelope = error_envelope("pull", errors, data=data)
+
+                output_json_envelope(envelope)
+
+            if not all_result.success:
+                raise SystemExit(1)
+
+            return
+
+        except Exception as err:
+            if use_json:
+                envelope = error_envelope(
+                    "pull",
+                    [ErrorDetail(type=type(err).__name__, message=str(err))],
                 )
+                output_json_envelope(envelope)
             else:
-                errors.append(ErrorDetail(type="PullError", message="Pull failed"))
-            envelope = error_envelope("pull", errors, data=data)
+                error(str(err))
+            raise SystemExit(1) from err
 
-        output_json_envelope(envelope)
-    else:
-        # Human-readable output
-        if result.up_to_date:
-            info_output("Already up to date")
-        elif result.success:
-            if dry_run:
-                info_output(f"[DRY RUN] Would pull {result.files_downloaded} file(s)")
+    # Single collection pull
+    try:
+        single_result = pull_fn(
+            remote_url=remote_url,
+            local_root=catalog_path,
+            collection=collection,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+        )
+
+        if use_json:
+            data = {
+                "files_downloaded": single_result.files_downloaded,
+                "files_skipped": single_result.files_skipped,
+                "local_version": single_result.local_version,
+                "remote_version": single_result.remote_version,
+                "up_to_date": single_result.up_to_date,
+            }
+
+            if single_result.success:
+                envelope = success_envelope("pull", data)
             else:
-                success(f"Pulled {result.files_downloaded} file(s)")
-                detail(f"  Local: {result.local_version} -> {result.remote_version}")
+                errors = []
+                if single_result.uncommitted_changes:
+                    errors.append(
+                        ErrorDetail(
+                            type="UncommittedChangesError",
+                            message=f"Uncommitted changes: {', '.join(single_result.uncommitted_changes)}",
+                        )
+                    )
+                else:
+                    errors.append(ErrorDetail(type="PullError", message="Pull failed"))
+                envelope = error_envelope("pull", errors, data=data)
+
+            output_json_envelope(envelope)
         else:
-            if result.uncommitted_changes:
-                error("Pull blocked by uncommitted changes:")
-                for filename in result.uncommitted_changes:
-                    detail(f"  {filename}")
-                warn("Use --force to discard local changes")
-            else:
-                error("Pull failed")
+            _output_pull_human(single_result, dry_run=dry_run)
 
-    if not result.success:
-        raise SystemExit(1)
+        if not single_result.success:
+            raise SystemExit(1)
+
+    except FileNotFoundError as err:
+        if use_json:
+            envelope = error_envelope(
+                "pull",
+                [ErrorDetail(type="FileNotFoundError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(err))
+        raise SystemExit(1) from err
+
+    except ValueError as err:
+        if use_json:
+            envelope = error_envelope(
+                "pull",
+                [ErrorDetail(type="ValueError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(err))
+        raise SystemExit(1) from err
 
 
 # ─────────────────────────────────────────────────────────────────────────────

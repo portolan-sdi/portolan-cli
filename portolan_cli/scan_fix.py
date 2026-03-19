@@ -206,6 +206,11 @@ def _sanitize_filename(name: str) -> str:
     # Remove leading/trailing dashes AND dots (dots can leak into stem from malformed input)
     sanitized = sanitized.strip("-.")
 
+    # Clean up dashes adjacent to embedded dots (e.g., "name-.ext" -> "name.ext")
+    # This handles edge cases where spaces before/after dots become dashes
+    sanitized = re.sub(r"-+\.", ".", sanitized)  # dash before dot
+    sanitized = re.sub(r"\.-+", ".", sanitized)  # dash after dot
+
     # CRITICAL: Handle case where sanitization produces empty string
     # This can happen with filenames containing only non-ASCII chars (e.g., "日本語.shp")
     if not sanitized:

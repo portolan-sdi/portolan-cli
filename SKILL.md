@@ -103,8 +103,8 @@ Pull updates from a remote catalog.
 ```bash
 portolan pull s3://mybucket/my-catalog --collection demographics
 portolan pull s3://mybucket/catalog -c imagery --dry-run
-portolan pull s3://bucket/catalog -c data --force
-portolan pull s3://bucket/catalog -c data --profile myprofile
+portolan pull s3://mybucket/catalog
+portolan pull s3://mybucket/catalog --workers 4
 ```
 
 ### `portolan push`

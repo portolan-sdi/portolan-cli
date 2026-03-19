@@ -392,9 +392,16 @@ class TestPullCommandErrors:
     """Tests for error handling in pull CLI command."""
 
     @pytest.mark.integration
-    def test_pull_missing_collection_arg(self, cli_runner: CliRunner, local_catalog: Path) -> None:
-        """portolan pull should require --collection."""
+    def test_pull_no_collection_pulls_all(self, cli_runner: CliRunner, tmp_path: Path) -> None:
+        """portolan pull without --collection should attempt to pull all collections."""
         from portolan_cli.cli import cli
+
+        # Create a valid catalog without any collections
+        catalog_root = tmp_path / "empty_catalog"
+        catalog_root.mkdir()
+        portolan_dir = catalog_root / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("version: '1.0'\n")
 
         result = cli_runner.invoke(
             cli,
@@ -402,12 +409,14 @@ class TestPullCommandErrors:
                 "pull",
                 "s3://bucket/catalog",
                 "--catalog",
-                str(local_catalog),
+                str(catalog_root),
             ],
         )
 
-        assert result.exit_code != 0
-        assert "collection" in result.output.lower()
+        # With no collections in the catalog, should succeed (nothing to do)
+        # but still report that no collections were found
+        assert result.exit_code == 0
+        assert "no initialized collections" in result.output.lower()
 
     @pytest.mark.integration
     def test_pull_missing_remote_url(self, cli_runner: CliRunner, local_catalog: Path) -> None:

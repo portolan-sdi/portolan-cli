@@ -27,7 +27,8 @@ from typing import TYPE_CHECKING
 
 from portolan_cli.dataset import compute_checksum
 from portolan_cli.download import download_file
-from portolan_cli.output import detail, error, info, success, warn
+from portolan_cli.output import detail, error, info, output_section, success, warn
+from portolan_cli.parallel import execute_parallel
 from portolan_cli.upload import parse_object_store_url
 from portolan_cli.versions import (
     VersionsFile,
@@ -105,6 +106,27 @@ class VersionDiff:
     is_diverged: bool = False
     local_only_versions: list[str] = field(default_factory=list)
     remote_only_versions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class PullAllResult:
+    """Result of a catalog-wide pull operation.
+
+    Attributes:
+        success: True if all collections pulled successfully.
+        total_collections: Total number of collections found.
+        successful_collections: Number of collections that pulled successfully.
+        failed_collections: Number of collections that failed.
+        total_files_downloaded: Total files downloaded across all collections.
+        collection_errors: Dict mapping collection name to list of error messages.
+    """
+
+    success: bool
+    total_collections: int
+    successful_collections: int
+    failed_collections: int
+    total_files_downloaded: int
+    collection_errors: dict[str, list[str]] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -660,4 +682,143 @@ def pull(
         files_skipped=len(diff.files_to_download) - downloaded if not dry_run else 0,
         local_version=diff.local_version,
         remote_version=diff.remote_version,
+    )
+
+
+# =============================================================================
+# Catalog-wide Pull (Parallel)
+# =============================================================================
+
+
+def pull_all_collections(
+    remote_url: str,
+    local_root: Path,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    profile: str | None = None,
+    workers: int | None = None,
+) -> PullAllResult:
+    """Pull all collections in a catalog from cloud storage.
+
+    Processes collections with configurable parallelism.
+    Continues on individual failures and reports all errors at the end.
+
+    Args:
+        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
+        local_root: Path to the local catalog root directory.
+        force: If True, overwrite uncommitted local changes.
+        dry_run: If True, show what would be downloaded without downloading.
+        profile: AWS profile name (for S3 only).
+        workers: Number of parallel workers. None = auto-detect, 1 = sequential.
+
+    Returns:
+        PullAllResult with aggregate statistics and per-collection errors.
+
+    Raises:
+        ValueError: If local_root is not a valid catalog.
+    """
+    # Import here to avoid circular dependency
+    from portolan_cli.push import discover_collections
+
+    # discover_collections validates catalog and raises ValueError if invalid
+    collections = discover_collections(local_root)
+    total = len(collections)
+
+    if total == 0:
+        warn("No initialized collections found in catalog")
+        warn("Collections need a versions.json file to be pullable")
+        return PullAllResult(
+            success=True,  # Empty catalog is not a failure, just nothing to do
+            total_collections=0,
+            successful_collections=0,
+            failed_collections=0,
+            total_files_downloaded=0,
+        )
+
+    info(f"Found {total} collection(s) to pull")
+
+    # Track aggregate stats (thread-safe via output_section for reporting)
+    successful = 0
+    failed = 0
+    total_files = 0
+    collection_errors: dict[str, list[str]] = {}
+
+    def pull_one(collection: str) -> PullResult:
+        """Pull a single collection."""
+        return pull(
+            remote_url=remote_url,
+            local_root=local_root,
+            collection=collection,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+        )
+
+    def on_complete(
+        coll: str,
+        result: PullResult | None,
+        err_msg: str | None,
+        completed: int,
+        total_count: int,
+    ) -> None:
+        """Process completion of a single collection (called with thread-safe progress)."""
+        nonlocal successful, failed, total_files
+
+        # Use output_section to keep multi-line output together
+        with output_section():
+            if err_msg:
+                error(f"[{completed}/{total_count}] Failed {coll}: {err_msg}")
+                failed += 1
+                collection_errors[coll] = [err_msg]
+            elif result and result.success:
+                files = result.files_downloaded
+                if result.up_to_date:
+                    success(f"[{completed}/{total_count}] {coll}: Already up to date")
+                else:
+                    success(f"[{completed}/{total_count}] Pulled {coll}: {files} file(s)")
+                successful += 1
+                total_files += files
+            elif result:
+                errors_list = []
+                if result.uncommitted_changes:
+                    errors_list.append(
+                        f"Uncommitted changes: {', '.join(result.uncommitted_changes)}"
+                    )
+                else:
+                    errors_list.append("Pull failed")
+                error(f"[{completed}/{total_count}] Failed {coll}: {', '.join(errors_list)}")
+                failed += 1
+                collection_errors[coll] = errors_list
+            else:
+                error(f"[{completed}/{total_count}] Failed {coll}: Unknown error")
+                failed += 1
+                collection_errors[coll] = ["Unknown error"]
+
+    # Execute with common parallel infrastructure
+    execute_parallel(
+        items=collections,
+        operation=pull_one,
+        workers=workers,
+        on_complete=on_complete,
+    )
+
+    # Summary report (use output_section to keep summary together)
+    with output_section():
+        info(f"\n{'=' * 60}")
+        if failed == 0:
+            msg = f"Pulled {successful} collection(s), {total_files} file(s) total"
+            success(msg)
+        else:
+            warn(f"Completed with errors: {successful} succeeded, {failed} failed")
+            for collection, errors in collection_errors.items():
+                warn(f"  {collection}: {', '.join(errors)}")
+
+    return PullAllResult(
+        success=(failed == 0),
+        total_collections=total,
+        successful_collections=successful,
+        failed_collections=failed,
+        total_files_downloaded=total_files,
+        collection_errors=collection_errors,
     )
