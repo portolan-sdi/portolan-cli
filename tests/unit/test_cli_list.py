@@ -45,7 +45,7 @@ class TestTopLevelList:
     def test_list_empty_catalog(self, runner: CliRunner) -> None:
         """portolan list shows empty message for catalog with no items."""
         with runner.isolated_filesystem():
-            # Create catalog structure per ADR-0023
+            # Create catalog structure per ADR-0023 and ADR-0029
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -58,6 +58,8 @@ class TestTopLevelList:
                 )
             )
             Path(".portolan").mkdir()
+            # ADR-0029: config.yaml is the sentinel for catalog detection
+            Path(".portolan/config.yaml").write_text("version: 1\n")
 
             result = runner.invoke(cli, ["list"])
 
@@ -68,7 +70,7 @@ class TestTopLevelList:
     def test_list_empty_shows_guidance_scan(self, runner: CliRunner) -> None:
         """portolan list shows guidance about scan command when empty."""
         with runner.isolated_filesystem():
-            # Create catalog structure per ADR-0023
+            # Create catalog structure per ADR-0023 and ADR-0029
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -81,6 +83,8 @@ class TestTopLevelList:
                 )
             )
             Path(".portolan").mkdir()
+            # ADR-0029: config.yaml is the sentinel for catalog detection
+            Path(".portolan/config.yaml").write_text("version: 1\n")
 
             result = runner.invoke(cli, ["list"])
 
@@ -92,7 +96,7 @@ class TestTopLevelList:
     def test_list_empty_shows_guidance_add(self, runner: CliRunner) -> None:
         """portolan list shows guidance about add command when empty."""
         with runner.isolated_filesystem():
-            # Create catalog structure per ADR-0023
+            # Create catalog structure per ADR-0023 and ADR-0029
             Path("catalog.json").write_text(
                 json.dumps(
                     {
@@ -105,6 +109,8 @@ class TestTopLevelList:
                 )
             )
             Path(".portolan").mkdir()
+            # ADR-0029: config.yaml is the sentinel for catalog detection
+            Path(".portolan/config.yaml").write_text("version: 1\n")
 
             result = runner.invoke(cli, ["list"])
 
@@ -129,6 +135,8 @@ class TestTopLevelList:
                 )
             )
             Path(".portolan").mkdir()
+            # ADR-0029: config.yaml is the sentinel for catalog detection
+            Path(".portolan/config.yaml").write_text("version: 1\n")
 
             result = runner.invoke(cli, ["list", "--json"])
 
@@ -159,6 +167,8 @@ class TestTopLevelList:
                 )
             )
             Path(".portolan").mkdir()
+            # ADR-0029: config.yaml is the sentinel for catalog detection
+            Path(".portolan/config.yaml").write_text("version: 1\n")
 
             result = runner.invoke(cli, ["list"])
 
@@ -191,6 +201,8 @@ class TestTopLevelList:
                 )
             )
             Path(".portolan").mkdir()
+            # ADR-0029: config.yaml is the sentinel for catalog detection
+            Path(".portolan/config.yaml").write_text("version: 1\n")
             # Create actual files for scanning
             Path("demographics").mkdir()
             Path("demographics/census").mkdir()
@@ -225,6 +237,8 @@ class TestTopLevelList:
                 )
             )
             Path(".portolan").mkdir()
+            # ADR-0029: config.yaml is the sentinel for catalog detection
+            Path(".portolan/config.yaml").write_text("version: 1\n")
             # Create actual file for scanning
             Path("imagery").mkdir()
             Path("imagery/large-raster").mkdir()
@@ -253,6 +267,8 @@ class TestTopLevelList:
                 )
             )
             Path(".portolan").mkdir()
+            # ADR-0029: config.yaml is the sentinel for catalog detection
+            Path(".portolan/config.yaml").write_text("version: 1\n")
             # Create actual files for scanning
             Path("data").mkdir()
             Path("data/vector-item").mkdir()
@@ -284,6 +300,8 @@ class TestTopLevelList:
                 )
             )
             Path(".portolan").mkdir()
+            # ADR-0029: config.yaml is the sentinel for catalog detection
+            Path(".portolan/config.yaml").write_text("version: 1\n")
             # Create two collections
             Path("target").mkdir()
             Path("target/item1").mkdir()
@@ -318,6 +336,8 @@ class TestTopLevelList:
                 )
             )
             Path(".portolan").mkdir()
+            # ADR-0029: config.yaml is the sentinel for catalog detection
+            Path(".portolan/config.yaml").write_text("version: 1\n")
             Path("col1").mkdir()
             Path("col1/item1").mkdir()
             Path("col1/item1/data.parquet").write_bytes(b"x" * 1000)
