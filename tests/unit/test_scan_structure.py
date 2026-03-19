@@ -293,7 +293,10 @@ class TestDeepNesting:
         result = scan_directory(fixtures_dir / "deep_nested")
 
         # Should find both parquet files at different depths
-        ready_paths = {str(f.path.relative_to(fixtures_dir / "deep_nested")) for f in result.ready}
+        # Use as_posix() for cross-platform path comparison (Windows uses backslashes)
+        ready_paths = {
+            f.path.relative_to(fixtures_dir / "deep_nested").as_posix() for f in result.ready
+        }
         assert "level1/level2/shallow_collection/data.parquet" in ready_paths
         assert "level1/level2/level3/level4/level5/data.parquet" in ready_paths
 
