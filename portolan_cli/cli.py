@@ -2569,7 +2569,7 @@ def rm_cmd(
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Show what would be pushed without uploading.",
+    help="Show what would be pushed without uploading. Note: skips remote state check (no network I/O), so conflicts won't be detected.",
 )
 @click.option(
     "--profile",
@@ -2811,7 +2811,7 @@ def push(
 @click.option(
     "--dry-run",
     is_flag=True,
-    help="Show what would be downloaded without actually downloading.",
+    help="Show what would be downloaded without actually downloading. Note: skips remote state check (no network I/O), so remote changes won't be detected.",
 )
 @click.option(
     "--profile",

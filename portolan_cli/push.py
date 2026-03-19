@@ -20,8 +20,6 @@ See ADR-0007 for CLI wraps Python API (all logic in library layer).
 from __future__ import annotations
 
 import json
-import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,33 +27,15 @@ from typing import Any
 import obstore as obs
 from obstore.store import S3Store
 
-from portolan_cli.output import detail, error, info, success, warn
+from portolan_cli.output import detail, error, info, output_section, success, warn
+from portolan_cli.parallel import (
+    execute_parallel,
+    get_default_workers,  # Re-export for backwards compatibility
+)
 from portolan_cli.upload import ObjectStore, parse_object_store_url
 
-# =============================================================================
-# Worker Configuration (Issue #229)
-# =============================================================================
-
-
-def get_default_workers() -> int:
-    """Auto-detect number of workers for parallel push.
-
-    Uses CPU count with a sensible cap. Since push is I/O-bound (network uploads),
-    we can safely use more workers than CPU cores. The cap at 16 balances
-    parallelism with avoiding rate limits on cloud providers.
-
-    Returns:
-        Number of workers to use (1-16).
-    """
-    try:
-        cpu_count = os.cpu_count()
-    except Exception:
-        # Exotic platforms might raise; fall back gracefully
-        return 4
-    if cpu_count is None:
-        return 4  # Sensible fallback
-    # For I/O-bound operations, use 2x CPU count, capped at 16
-    return min(cpu_count * 2, 16)
+# Re-export get_default_workers for backwards compatibility
+__all__ = ["get_default_workers", "push", "push_all_collections", "discover_collections"]
 
 
 # =============================================================================
@@ -838,7 +818,7 @@ def push_all_collections(
         warn("No initialized collections found in catalog")
         warn("Collections need a versions.json file to be pushable")
         return PushAllResult(
-            success=False,  # Changed from True - empty catalog is not success
+            success=True,  # Empty catalog is not a failure, just nothing to do
             total_collections=0,
             successful_collections=0,
             failed_collections=0,
@@ -846,107 +826,80 @@ def push_all_collections(
             total_versions_pushed=0,
         )
 
-    # Determine number of workers
-    if workers is None:
-        workers = get_default_workers()
-    # Cap workers at collection count (no wasted threads)
-    workers = min(workers, total)
-
     info(f"Found {total} collection(s) to push")
 
-    # Track aggregate stats
+    # Track aggregate stats (thread-safe via output_section for reporting)
     successful = 0
     failed = 0
     total_files = 0
     total_versions = 0
     collection_errors: dict[str, list[str]] = {}
 
-    def push_one_collection(collection: str) -> tuple[str, PushResult | None, str | None]:
-        """Push a single collection and return (collection, result, error_msg)."""
-        try:
-            result = push(
-                catalog_root=catalog_root,
-                collection=collection,
-                destination=destination,
-                force=force,
-                dry_run=dry_run,
-                profile=profile,
-            )
-            return (collection, result, None)
-        except Exception as e:
-            # Catch all exceptions to ensure resilient parallel execution
-            # Specific errors (PushConflictError, FileNotFoundError, etc.) and
-            # unexpected errors (KeyError, network errors) are all reported
-            return (collection, None, f"{type(e).__name__}: {e}")
+    def push_one(collection: str) -> PushResult:
+        """Push a single collection."""
+        return push(
+            catalog_root=catalog_root,
+            collection=collection,
+            destination=destination,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+        )
 
-    def process_result(
-        coll: str, result: PushResult | None, err_msg: str | None
-    ) -> tuple[int, int, int, int, list[str] | None]:
-        """Process a single collection result and return stats.
+    def on_complete(
+        coll: str,
+        result: PushResult | None,
+        err_msg: str | None,
+        completed: int,
+        total_count: int,
+    ) -> None:
+        """Process completion of a single collection (called with thread-safe progress)."""
+        nonlocal successful, failed, total_files, total_versions
 
-        Returns: (success_delta, fail_delta, files_delta, versions_delta, errors)
-        """
-        if err_msg:
-            error(f"✗ Failed {coll}: {err_msg}")
-            return (0, 1, 0, 0, [err_msg])
-        elif result and result.success:
-            versions = result.versions_pushed
-            files = result.files_uploaded
-            success(f"✓ Pushed {coll}: {versions} version(s), {files} file(s)")
-            return (1, 0, files, versions, None)
-        elif result:
-            errors_list = result.errors + result.conflicts
-            error(f"✗ Failed {coll}: {', '.join(errors_list)}")
-            return (0, 1, 0, 0, errors_list)
-        else:
-            # Shouldn't happen, but handle defensively
-            error(f"✗ Failed {coll}: Unknown error (no result)")
-            return (0, 1, 0, 0, ["Unknown error"])
-
-    # Process collections (sequential if workers=1, parallel otherwise)
-    if workers == 1:
-        # Sequential execution (existing behavior)
-        for i, collection in enumerate(collections, 1):
-            info(f"→ Pushing collection {i}/{total}: {collection}")
-            coll, result, err_msg = push_one_collection(collection)
-            s, f, files, versions, errs = process_result(coll, result, err_msg)
-            successful += s
-            failed += f
-            total_files += files
-            total_versions += versions
-            if errs:
-                collection_errors[coll] = errs
-    else:
-        # Parallel execution with ThreadPoolExecutor
-        info(f"Using {workers} parallel worker(s)")
-        completed = 0
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            # Submit all collections
-            futures = {executor.submit(push_one_collection, coll): coll for coll in collections}
-
-            # Process results as they complete
-            for future in as_completed(futures):
-                coll, result, err_msg = future.result()
-                completed += 1
-                detail(f"[{completed}/{total}] Completed: {coll}")
-                s, f, files, versions, errs = process_result(coll, result, err_msg)
-                successful += s
-                failed += f
+        # Use output_section to keep multi-line output together
+        with output_section():
+            if err_msg:
+                error(f"[{completed}/{total_count}] Failed {coll}: {err_msg}")
+                failed += 1
+                collection_errors[coll] = [err_msg]
+            elif result and result.success:
+                versions = result.versions_pushed
+                files = result.files_uploaded
+                success(
+                    f"[{completed}/{total_count}] Pushed {coll}: {versions} version(s), {files} file(s)"
+                )
+                successful += 1
                 total_files += files
                 total_versions += versions
-                if errs:
-                    collection_errors[coll] = errs
+            elif result:
+                errors_list = result.errors + result.conflicts
+                error(f"[{completed}/{total_count}] Failed {coll}: {', '.join(errors_list)}")
+                failed += 1
+                collection_errors[coll] = errors_list
+            else:
+                error(f"[{completed}/{total_count}] Failed {coll}: Unknown error")
+                failed += 1
+                collection_errors[coll] = ["Unknown error"]
 
-    # Summary report
-    info(f"\n{'=' * 60}")
-    if failed == 0:
-        msg = f"✓ Pushed {successful} collection(s), "
-        msg += f"{total_versions} version(s), {total_files} file(s) total"
-        success(msg)
-    else:
-        warn(f"Completed with errors: {successful} succeeded, {failed} failed")
-        for collection, errors in collection_errors.items():
-            warn(f"  {collection}: {', '.join(errors)}")
+    # Execute with common parallel infrastructure
+    execute_parallel(
+        items=collections,
+        operation=push_one,
+        workers=workers,
+        on_complete=on_complete,
+    )
+
+    # Summary report (use output_section to keep summary together)
+    with output_section():
+        info(f"\n{'=' * 60}")
+        if failed == 0:
+            msg = f"Pushed {successful} collection(s), "
+            msg += f"{total_versions} version(s), {total_files} file(s) total"
+            success(msg)
+        else:
+            warn(f"Completed with errors: {successful} succeeded, {failed} failed")
+            for collection, errors in collection_errors.items():
+                warn(f"  {collection}: {', '.join(errors)}")
 
     return PushAllResult(
         success=(failed == 0),

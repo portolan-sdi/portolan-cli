@@ -21,14 +21,14 @@ See ADR-0017 for MTIME + heuristics change detection.
 from __future__ import annotations
 
 import tempfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from portolan_cli.dataset import compute_checksum
 from portolan_cli.download import download_file
-from portolan_cli.output import detail, error, info, success, warn
+from portolan_cli.output import detail, error, info, output_section, success, warn
+from portolan_cli.parallel import execute_parallel
 from portolan_cli.upload import parse_object_store_url
 from portolan_cli.versions import (
     VersionsFile,
@@ -719,7 +719,7 @@ def pull_all_collections(
         ValueError: If local_root is not a valid catalog.
     """
     # Import here to avoid circular dependency
-    from portolan_cli.push import discover_collections, get_default_workers
+    from portolan_cli.push import discover_collections
 
     # discover_collections validates catalog and raises ValueError if invalid
     collections = discover_collections(local_root)
@@ -729,113 +729,90 @@ def pull_all_collections(
         warn("No initialized collections found in catalog")
         warn("Collections need a versions.json file to be pullable")
         return PullAllResult(
-            success=False,
+            success=True,  # Empty catalog is not a failure, just nothing to do
             total_collections=0,
             successful_collections=0,
             failed_collections=0,
             total_files_downloaded=0,
         )
 
-    # Determine number of workers
-    if workers is None:
-        workers = get_default_workers()
-    # Cap workers at collection count (no wasted threads)
-    workers = min(workers, total)
-
     info(f"Found {total} collection(s) to pull")
 
-    # Track aggregate stats
+    # Track aggregate stats (thread-safe via output_section for reporting)
     successful = 0
     failed = 0
     total_files = 0
     collection_errors: dict[str, list[str]] = {}
 
-    def pull_one_collection(collection: str) -> tuple[str, PullResult | None, str | None]:
-        """Pull a single collection and return (collection, result, error_msg)."""
-        try:
-            result = pull(
-                remote_url=remote_url,
-                local_root=local_root,
-                collection=collection,
-                force=force,
-                dry_run=dry_run,
-                profile=profile,
-            )
-            return (collection, result, None)
-        except Exception as e:
-            # Catch all exceptions to ensure resilient parallel execution
-            return (collection, None, f"{type(e).__name__}: {e}")
+    def pull_one(collection: str) -> PullResult:
+        """Pull a single collection."""
+        return pull(
+            remote_url=remote_url,
+            local_root=local_root,
+            collection=collection,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+        )
 
-    def process_result(
-        coll: str, result: PullResult | None, err_msg: str | None
-    ) -> tuple[int, int, int, list[str] | None]:
-        """Process a single collection result and return stats.
+    def on_complete(
+        coll: str,
+        result: PullResult | None,
+        err_msg: str | None,
+        completed: int,
+        total_count: int,
+    ) -> None:
+        """Process completion of a single collection (called with thread-safe progress)."""
+        nonlocal successful, failed, total_files
 
-        Returns: (success_delta, fail_delta, files_delta, errors)
-        """
-        if err_msg:
-            error(f"✗ Failed {coll}: {err_msg}")
-            return (0, 1, 0, [err_msg])
-        elif result and result.success:
-            files = result.files_downloaded
-            if result.up_to_date:
-                success(f"✓ {coll}: Already up to date")
-            else:
-                success(f"✓ Pulled {coll}: {files} file(s)")
-            return (1, 0, files, None)
-        elif result:
-            errors_list = []
-            if result.uncommitted_changes:
-                errors_list.append(f"Uncommitted changes: {', '.join(result.uncommitted_changes)}")
-            else:
-                errors_list.append("Pull failed")
-            error(f"✗ Failed {coll}: {', '.join(errors_list)}")
-            return (0, 1, 0, errors_list)
-        else:
-            error(f"✗ Failed {coll}: Unknown error (no result)")
-            return (0, 1, 0, ["Unknown error"])
-
-    # Process collections (sequential if workers=1, parallel otherwise)
-    if workers == 1:
-        # Sequential execution
-        for i, collection in enumerate(collections, 1):
-            info(f"→ Pulling collection {i}/{total}: {collection}")
-            coll, result, err_msg = pull_one_collection(collection)
-            s, f, files, errs = process_result(coll, result, err_msg)
-            successful += s
-            failed += f
-            total_files += files
-            if errs:
-                collection_errors[coll] = errs
-    else:
-        # Parallel execution with ThreadPoolExecutor
-        info(f"Using {workers} parallel worker(s)")
-        completed = 0
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            # Submit all collections
-            futures = {executor.submit(pull_one_collection, coll): coll for coll in collections}
-
-            # Process results as they complete
-            for future in as_completed(futures):
-                coll, result, err_msg = future.result()
-                completed += 1
-                detail(f"[{completed}/{total}] Completed: {coll}")
-                s, f, files, errs = process_result(coll, result, err_msg)
-                successful += s
-                failed += f
+        # Use output_section to keep multi-line output together
+        with output_section():
+            if err_msg:
+                error(f"[{completed}/{total_count}] Failed {coll}: {err_msg}")
+                failed += 1
+                collection_errors[coll] = [err_msg]
+            elif result and result.success:
+                files = result.files_downloaded
+                if result.up_to_date:
+                    success(f"[{completed}/{total_count}] {coll}: Already up to date")
+                else:
+                    success(f"[{completed}/{total_count}] Pulled {coll}: {files} file(s)")
+                successful += 1
                 total_files += files
-                if errs:
-                    collection_errors[coll] = errs
+            elif result:
+                errors_list = []
+                if result.uncommitted_changes:
+                    errors_list.append(
+                        f"Uncommitted changes: {', '.join(result.uncommitted_changes)}"
+                    )
+                else:
+                    errors_list.append("Pull failed")
+                error(f"[{completed}/{total_count}] Failed {coll}: {', '.join(errors_list)}")
+                failed += 1
+                collection_errors[coll] = errors_list
+            else:
+                error(f"[{completed}/{total_count}] Failed {coll}: Unknown error")
+                failed += 1
+                collection_errors[coll] = ["Unknown error"]
 
-    # Summary report
-    info(f"\n{'=' * 60}")
-    if failed == 0:
-        msg = f"✓ Pulled {successful} collection(s), {total_files} file(s) total"
-        success(msg)
-    else:
-        warn(f"Completed with errors: {successful} succeeded, {failed} failed")
-        for collection, errors in collection_errors.items():
-            warn(f"  {collection}: {', '.join(errors)}")
+    # Execute with common parallel infrastructure
+    execute_parallel(
+        items=collections,
+        operation=pull_one,
+        workers=workers,
+        on_complete=on_complete,
+    )
+
+    # Summary report (use output_section to keep summary together)
+    with output_section():
+        info(f"\n{'=' * 60}")
+        if failed == 0:
+            msg = f"Pulled {successful} collection(s), {total_files} file(s) total"
+            success(msg)
+        else:
+            warn(f"Completed with errors: {successful} succeeded, {failed} failed")
+            for collection, errors in collection_errors.items():
+                warn(f"  {collection}: {', '.join(errors)}")
 
     return PullAllResult(
         success=(failed == 0),

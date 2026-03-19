@@ -42,13 +42,38 @@ from __future__ import annotations
 
 import sys
 import threading
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TextIO
 
 import click
 
-# Thread lock for console output to prevent interleaved output from concurrent threads
-_output_lock = threading.Lock()
+# Reentrant lock for console output to prevent interleaved output from concurrent threads
+# RLock allows nested acquisition (e.g., output_section() calling error() which also locks)
+_output_lock = threading.RLock()
+
+
+@contextmanager
+def output_section() -> Generator[None, None, None]:
+    """Context manager for atomic multi-line output sections.
+
+    Use this when you need to output multiple related lines that shouldn't
+    be interleaved with output from other threads.
+
+    Example:
+        with output_section():
+            error(f"Failed {name}: {msg}")
+            for detail_line in details:
+                warn(f"  {detail_line}")
+
+    Note: Individual output functions (success, error, etc.) already use the
+    lock for single-line output. This context manager is for multi-line
+    sections that must stay together.
+    """
+    with _output_lock:
+        yield
+
 
 # ANSI color codes via click's style system
 _STYLES: dict[str, dict[str, str | bool]] = {

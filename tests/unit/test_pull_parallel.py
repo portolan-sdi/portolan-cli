@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -108,24 +107,21 @@ class TestPullAllCollectionsParallel:
         for name in ["col1", "col2", "col3", "col4"]:
             _create_collection(tmp_path, name)
 
-        # Track concurrent execution
-        active_threads: list[str] = []
-        max_concurrent = 0
+        # Use barrier to ensure all threads reach it before any can continue
+        # This guarantees parallel execution without relying on timing
+        barrier = threading.Barrier(4)  # 4 collections
+        reached_barrier: list[str] = []
         lock = threading.Lock()
 
         def track_concurrent(**kwargs):  # type: ignore[no-untyped-def]
-            nonlocal max_concurrent
             collection = kwargs["collection"]
 
             with lock:
-                active_threads.append(collection)
-                max_concurrent = max(max_concurrent, len(active_threads))
+                reached_barrier.append(collection)
 
-            # Simulate some work
-            time.sleep(0.05)
-
-            with lock:
-                active_threads.remove(collection)
+            # All threads must reach here before any can continue
+            # This proves parallel execution - if sequential, barrier would timeout
+            barrier.wait(timeout=5.0)
 
             return PullResult(
                 success=True,
@@ -145,9 +141,9 @@ class TestPullAllCollectionsParallel:
 
         assert result.success is True
         assert result.total_collections == 4
-        # With 4 workers and 4 collections, should see concurrent execution
-        assert max_concurrent > 1, (
-            f"Expected parallel execution, but max concurrent was {max_concurrent}"
+        # All 4 collections should have reached the barrier (proves parallelism)
+        assert len(reached_barrier) == 4, (
+            f"Expected all 4 collections to reach barrier, got {len(reached_barrier)}"
         )
 
     @patch("portolan_cli.pull.pull")

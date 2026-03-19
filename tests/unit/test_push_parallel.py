@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -52,33 +51,33 @@ class TestGetDefaultWorkers:
         assert isinstance(result, int)
         assert result > 0
 
-    def test_respects_max_cap(self) -> None:
-        """get_default_workers caps at 16 workers maximum (I/O-bound optimization)."""
+    def test_returns_at_least_one(self) -> None:
+        """get_default_workers returns at least 1 worker."""
         result = get_default_workers()
-        assert result <= 16
+        assert result >= 1
 
-    @patch("os.cpu_count")
+    @patch("portolan_cli.parallel.os.cpu_count")
     def test_uses_cpu_count_doubled_when_available(self, mock_cpu_count: MagicMock) -> None:
         """get_default_workers uses 2x CPU count for I/O-bound operations."""
         mock_cpu_count.return_value = 4
         result = get_default_workers()
         assert result == 8  # 4 * 2 = 8
 
-    @patch("os.cpu_count")
-    def test_caps_high_cpu_count(self, mock_cpu_count: MagicMock) -> None:
-        """get_default_workers caps at 16 even with many CPUs."""
+    @patch("portolan_cli.parallel.os.cpu_count")
+    def test_high_cpu_count_uses_2x(self, mock_cpu_count: MagicMock) -> None:
+        """get_default_workers uses 2x CPU count without artificial cap."""
         mock_cpu_count.return_value = 32
         result = get_default_workers()
-        assert result == 16  # Capped at 16
+        assert result == 64  # 32 * 2 = 64 (no cap)
 
-    @patch("os.cpu_count")
+    @patch("portolan_cli.parallel.os.cpu_count")
     def test_fallback_when_cpu_count_unavailable(self, mock_cpu_count: MagicMock) -> None:
         """get_default_workers returns 4 when CPU count unavailable."""
         mock_cpu_count.return_value = None
         result = get_default_workers()
         assert result == 4
 
-    @patch("os.cpu_count")
+    @patch("portolan_cli.parallel.os.cpu_count")
     def test_fallback_when_cpu_count_raises(self, mock_cpu_count: MagicMock) -> None:
         """get_default_workers returns 4 when cpu_count() raises exception."""
         mock_cpu_count.side_effect = OSError("Cannot determine CPU count")
@@ -149,24 +148,21 @@ class TestPushAllCollectionsParallel:
         for name in ["col1", "col2", "col3", "col4"]:
             _create_collection(tmp_path, name)
 
-        # Track concurrent execution
-        active_threads: list[str] = []
-        max_concurrent = 0
+        # Use barrier to ensure all threads reach it before any can continue
+        # This guarantees parallel execution without relying on timing
+        barrier = threading.Barrier(4)  # 4 collections
+        reached_barrier: list[str] = []
         lock = threading.Lock()
 
         def track_concurrent(**kwargs):  # type: ignore[no-untyped-def]
-            nonlocal max_concurrent
             collection = kwargs["collection"]
 
             with lock:
-                active_threads.append(collection)
-                max_concurrent = max(max_concurrent, len(active_threads))
+                reached_barrier.append(collection)
 
-            # Simulate some work
-            time.sleep(0.05)
-
-            with lock:
-                active_threads.remove(collection)
+            # All threads must reach here before any can continue
+            # This proves parallel execution - if sequential, barrier would timeout
+            barrier.wait(timeout=5.0)
 
             return PushResult(
                 success=True, files_uploaded=1, versions_pushed=1, conflicts=[], errors=[]
@@ -182,9 +178,9 @@ class TestPushAllCollectionsParallel:
 
         assert result.success is True
         assert result.total_collections == 4
-        # With 4 workers and 4 collections, should see concurrent execution
-        assert max_concurrent > 1, (
-            f"Expected parallel execution, but max concurrent was {max_concurrent}"
+        # All 4 collections should have reached the barrier (proves parallelism)
+        assert len(reached_barrier) == 4, (
+            f"Expected all 4 collections to reach barrier, got {len(reached_barrier)}"
         )
 
     @patch("portolan_cli.push.push")
