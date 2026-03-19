@@ -12,11 +12,16 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from portolan_cli.push import (
     PushResult,
     get_default_workers,
     push_all_collections,
 )
+
+# Mark all tests in this module as unit tests
+pytestmark = pytest.mark.unit
 
 
 def _setup_valid_catalog(catalog_root: Path) -> None:
