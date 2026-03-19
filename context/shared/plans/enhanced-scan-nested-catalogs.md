@@ -178,13 +178,21 @@ Issues #241 and #234 both enhance `portolan scan` to understand ADR-0031/0032 ca
 
 4. **Full suite**: `uv run pytest`
 
+### Phase 5: Progress Reporting
+
+13. **Add simple progress indicator**
+    - Quick pre-count of directories via `os.walk` (fast, < 100ms for typical trees)
+    - During scan: `Scanning... (12/42 directories)`
+    - Use `rich` progress bar or simple stderr output
+    - Suppress in `--json` mode (agent/batch usage)
+    - Show total at end: `Scanned 42 directories in 1.2s`
+
 ## Out of Scope (Future Work)
 
 - Caching scan results (YAGNI for now)
 - HTML report generation
 - Auto-restructuring (destructive, use dry-run + agent instead)
 - Schema validation for partitions (belongs in `check`)
-- Progress indicators (can add later if needed)
 
 ## References
 
