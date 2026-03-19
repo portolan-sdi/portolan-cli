@@ -113,6 +113,76 @@ def output_json_envelope(envelope: Any) -> None:
     click.echo(envelope.to_json())
 
 
+def require_catalog_root(
+    use_json: bool = False,
+    command_name: str = "command",
+) -> Path:
+    """Find and validate catalog root, or exit with git-style error.
+
+    Git-style behavior: walks up from cwd to find .portolan/config.yaml.
+    Commands that need to operate on the entire catalog use this to find
+    the root regardless of which subdirectory they're run from.
+
+    Args:
+        use_json: If True, output error as JSON envelope.
+        command_name: Name of the command for error messages.
+
+    Returns:
+        Path to catalog root.
+
+    Raises:
+        SystemExit: If not inside a catalog.
+    """
+    catalog_root = find_catalog_root()
+    if catalog_root is None:
+        msg = "fatal: not a portolan catalog (or any parent up to mount point)"
+        if use_json:
+            envelope = error_envelope(
+                command_name,
+                [ErrorDetail(type="NotACatalogError", message=msg)],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(msg)
+        raise SystemExit(1)
+    return catalog_root
+
+
+def require_inside_catalog(
+    use_json: bool = False,
+    command_name: str = "command",
+) -> Path:
+    """Validate we're inside a catalog, returning cwd for scoped operations.
+
+    Git-style behavior: walks up from cwd to find .portolan/config.yaml,
+    then returns cwd for commands that operate on current directory scope.
+    This validates we're inside a catalog without changing the operation scope.
+
+    Args:
+        use_json: If True, output error as JSON envelope.
+        command_name: Name of the command for error messages.
+
+    Returns:
+        Current working directory (validated to be inside a catalog).
+
+    Raises:
+        SystemExit: If not inside a catalog.
+    """
+    catalog_root = find_catalog_root()
+    if catalog_root is None:
+        msg = "fatal: not a portolan catalog (or any parent up to mount point)"
+        if use_json:
+            envelope = error_envelope(
+                command_name,
+                [ErrorDetail(type="NotACatalogError", message=msg)],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(msg)
+        raise SystemExit(1)
+    return Path.cwd()
+
+
 @click.group()
 @click.version_option()
 @click.option(
@@ -331,6 +401,33 @@ def _get_asset_file_size(
     return None
 
 
+def _apply_list_status_filter(
+    result: CatalogListResult,
+    tracked_only: bool,
+    untracked_only: bool,
+) -> None:
+    """Apply status filters to catalog list result in-place.
+
+    Args:
+        result: CatalogListResult to filter (modified in-place).
+        tracked_only: If True, keep only tracked assets.
+        untracked_only: If True, keep only untracked assets.
+    """
+    if not (tracked_only or untracked_only):
+        return
+
+    for col in result.collections:
+        for item in col.items:
+            if tracked_only:
+                item.assets = [a for a in item.assets if a.status == AssetStatus.TRACKED]
+            elif untracked_only:
+                item.assets = [a for a in item.assets if a.status == AssetStatus.UNTRACKED]
+        # Remove empty items after filtering
+        col.items = [item for item in col.items if item.assets]
+    # Remove empty collections after filtering
+    result.collections = [col for col in result.collections if col.items]
+
+
 def _list_tree_output_with_status(result: CatalogListResult) -> None:
     """Output items in hierarchical tree view with status indicators.
 
@@ -411,8 +508,8 @@ def _list_tree_output_with_status(result: CatalogListResult) -> None:
     "--catalog",
     "catalog_path",
     type=click.Path(path_type=Path),
-    default=".",
-    help="Path to catalog root (default: current directory).",
+    default=None,
+    help="Path to catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 @click.option(
@@ -429,12 +526,16 @@ def _list_tree_output_with_status(result: CatalogListResult) -> None:
 def list_cmd(
     ctx: click.Context,
     collection: str | None,
-    catalog_path: Path,
+    catalog_path: Path | None,
     json_output: bool,
     tracked_only: bool,
     untracked_only: bool,
 ) -> None:
     """List all files in the catalog with tracking status.
+
+    Git-style behavior: automatically finds the catalog root by walking up
+    from the current directory. Works from any subdirectory within a catalog.
+    Use --catalog to override and specify an explicit path.
 
     Shows all files organized by collection in a hierarchical tree view.
     Each file shows its tracking status, format type, and file size.
@@ -465,21 +566,16 @@ def list_cmd(
     """
     use_json = should_output_json(ctx, json_output)
 
+    # Git-style: find catalog root from anywhere within the catalog
+    # Use explicit --catalog if provided, otherwise auto-detect
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "list")
+
     # Get all catalog contents with status
     result = list_catalog_contents(catalog_path, collection_id=collection)
 
-    # Apply filters
-    if tracked_only or untracked_only:
-        for col in result.collections:
-            for item in col.items:
-                if tracked_only:
-                    item.assets = [a for a in item.assets if a.status == AssetStatus.TRACKED]
-                elif untracked_only:
-                    item.assets = [a for a in item.assets if a.status == AssetStatus.UNTRACKED]
-            # Remove empty items after filtering
-            col.items = [item for item in col.items if item.assets]
-        # Remove empty collections after filtering
-        result.collections = [col for col in result.collections if col.items]
+    # Apply status filters (modifies result in-place)
+    _apply_list_status_filter(result, tracked_only, untracked_only)
 
     if use_json:
         # Build JSON output with status information
@@ -2519,8 +2615,8 @@ def rm_cmd(
     "--catalog",
     "catalog_path",
     type=click.Path(path_type=Path),
-    default=".",
-    help="Path to catalog root (default: current directory).",
+    default=None,
+    help="Path to catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
@@ -2532,9 +2628,13 @@ def push(
     force: bool,
     dry_run: bool,
     profile: str | None,
-    catalog_path: Path,
+    catalog_path: Path | None,
 ) -> None:
     """Push local catalog changes to cloud object storage.
+
+    Git-style behavior: automatically finds the catalog root by walking up
+    from the current directory. Works from any subdirectory within a catalog.
+    Use --catalog to override and specify an explicit path.
 
     Syncs collection(s) to a remote destination (S3, GCS, Azure).
     Uses optimistic locking to detect concurrent modifications.
@@ -2560,6 +2660,11 @@ def push(
     from portolan_cli.push import push as push_fn
 
     use_json = should_output_json(ctx, json_output)
+
+    # Git-style: find catalog root from anywhere within the catalog
+    # Use explicit --catalog if provided, otherwise auto-detect
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "push")
 
     # Resolve destination: CLI arg > env var > config file
     resolved_destination = get_setting(
@@ -2720,8 +2825,8 @@ def push(
     "--catalog",
     "catalog_path",
     type=click.Path(path_type=Path),
-    default=".",
-    help="Path to local catalog root (default: current directory).",
+    default=None,
+    help="Path to catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.option(
     "--force",
@@ -2746,12 +2851,16 @@ def pull_command(
     json_output: bool,
     remote_url: str,
     collection: str,
-    catalog_path: Path,
+    catalog_path: Path | None,
     force: bool,
     dry_run: bool,
     profile: str | None,
 ) -> None:
     """Pull updates from a remote catalog.
+
+    Git-style behavior: automatically finds the catalog root by walking up
+    from the current directory. Works from any subdirectory within a catalog.
+    Use --catalog to override and specify an explicit path.
 
     Fetches changes from a remote catalog and downloads updated files.
     Similar to `git pull`, this checks for uncommitted local changes before
@@ -2769,6 +2878,11 @@ def pull_command(
     from portolan_cli.pull import pull as pull_fn
 
     use_json = should_output_json(ctx, json_output)
+
+    # Git-style: find catalog root from anywhere within the catalog
+    # Use explicit --catalog if provided, otherwise auto-detect
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "pull")
 
     result = pull_fn(
         remote_url=remote_url,
