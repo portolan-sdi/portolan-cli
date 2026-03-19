@@ -2583,6 +2583,13 @@ def rm_cmd(
     default=None,
     help="Path to catalog root (default: auto-detect by walking up from cwd).",
 )
+@click.option(
+    "--workers",
+    "-w",
+    type=int,
+    default=None,
+    help="Parallel workers for catalog-wide push (default: auto-detect, 1=sequential).",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def push(
@@ -2594,6 +2601,7 @@ def push(
     dry_run: bool,
     profile: str | None,
     catalog_path: Path | None,
+    workers: int | None,
 ) -> None:
     """Push local catalog changes to cloud object storage.
 
@@ -2668,6 +2676,7 @@ def push(
                 force=force,
                 dry_run=dry_run,
                 profile=profile,
+                workers=workers,
             )
 
             if use_json:

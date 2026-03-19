@@ -20,6 +20,8 @@ See ADR-0007 for CLI wraps Python API (all logic in library layer).
 from __future__ import annotations
 
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,26 @@ from obstore.store import S3Store
 
 from portolan_cli.output import detail, error, info, success, warn
 from portolan_cli.upload import ObjectStore, parse_object_store_url
+
+# =============================================================================
+# Worker Configuration (Issue #229)
+# =============================================================================
+
+
+def get_default_workers() -> int:
+    """Auto-detect number of workers for parallel push.
+
+    Uses CPU count with a sensible cap to prevent overwhelming the system
+    or hitting API rate limits.
+
+    Returns:
+        Number of workers to use (1-8).
+    """
+    cpu_count = os.cpu_count()
+    if cpu_count is None:
+        return 4  # Sensible fallback
+    return min(cpu_count, 8)  # Cap at 8
+
 
 # =============================================================================
 # Exceptions
@@ -781,10 +803,11 @@ def push_all_collections(
     force: bool = False,
     dry_run: bool = False,
     profile: str | None = None,
+    workers: int | None = None,
 ) -> PushAllResult:
     """Push all collections in a catalog to cloud storage.
 
-    Processes collections sequentially with progress reporting.
+    Processes collections with configurable parallelism.
     Continues on individual failures and reports all errors at the end.
 
     Args:
@@ -793,6 +816,7 @@ def push_all_collections(
         force: If True, overwrite remote even if diverged.
         dry_run: If True, show what would be uploaded without uploading.
         profile: AWS profile name (for S3 only).
+        workers: Number of parallel workers. None = auto-detect, 1 = sequential.
 
     Returns:
         PushAllResult with aggregate statistics and per-collection errors.
@@ -816,6 +840,12 @@ def push_all_collections(
             total_versions_pushed=0,
         )
 
+    # Determine number of workers
+    if workers is None:
+        workers = get_default_workers()
+    # Cap workers at collection count (no wasted threads)
+    workers = min(workers, total)
+
     info(f"Found {total} collection(s) to push")
 
     # Track aggregate stats
@@ -825,10 +855,8 @@ def push_all_collections(
     total_versions = 0
     collection_errors: dict[str, list[str]] = {}
 
-    # Process collections sequentially
-    for i, collection in enumerate(collections, 1):
-        info(f"→ Pushing collection {i}/{total}: {collection}")
-
+    def push_one_collection(collection: str) -> tuple[str, PushResult | None, str | None]:
+        """Push a single collection and return (collection, result, error_msg)."""
         try:
             result = push(
                 catalog_root=catalog_root,
@@ -838,37 +866,67 @@ def push_all_collections(
                 dry_run=dry_run,
                 profile=profile,
             )
+            return (collection, result, None)
+        except (PushConflictError, FileNotFoundError, ValueError, OSError) as e:
+            return (collection, None, str(e))
 
-            if result.success:
+    # Process collections (sequential if workers=1, parallel otherwise)
+    if workers == 1:
+        # Sequential execution (existing behavior)
+        for i, collection in enumerate(collections, 1):
+            info(f"→ Pushing collection {i}/{total}: {collection}")
+            coll, result, err_msg = push_one_collection(collection)
+
+            if err_msg:
+                failed += 1
+                collection_errors[coll] = [err_msg]
+                error(f"✗ Failed {coll}: {err_msg}")
+            elif result and result.success:
                 successful += 1
                 total_files += result.files_uploaded
                 total_versions += result.versions_pushed
-                success(
-                    f"✓ Pushed {collection}: {result.versions_pushed} version(s), {result.files_uploaded} file(s)"
-                )
-            else:
+                versions = result.versions_pushed
+                files = result.files_uploaded
+                success(f"✓ Pushed {coll}: {versions} version(s), {files} file(s)")
+            elif result:
                 failed += 1
                 errors = result.errors + result.conflicts
-                collection_errors[collection] = errors
-                error(f"✗ Failed {collection}: {', '.join(errors)}")
+                collection_errors[coll] = errors
+                error(f"✗ Failed {coll}: {', '.join(errors)}")
+    else:
+        # Parallel execution with ThreadPoolExecutor
+        info(f"Using {workers} parallel worker(s)")
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            # Submit all collections
+            futures = {executor.submit(push_one_collection, coll): coll for coll in collections}
 
-        except PushConflictError as e:
-            failed += 1
-            collection_errors[collection] = [str(e)]
-            error(f"✗ Failed {collection}: {e}")
-        except (FileNotFoundError, ValueError, OSError) as e:
-            # Catch expected errors from push operations
-            failed += 1
-            collection_errors[collection] = [str(e)]
-            error(f"✗ Failed {collection}: {e}")
-        # Don't catch Exception - let programming errors (AttributeError, etc.) bubble up
+            # Process results as they complete
+            for future in as_completed(futures):
+                coll, result, err_msg = future.result()
+
+                if err_msg:
+                    failed += 1
+                    collection_errors[coll] = [err_msg]
+                    error(f"✗ Failed {coll}: {err_msg}")
+                elif result and result.success:
+                    successful += 1
+                    total_files += result.files_uploaded
+                    total_versions += result.versions_pushed
+                    versions = result.versions_pushed
+                    files = result.files_uploaded
+                    success(f"✓ Pushed {coll}: {versions} version(s), {files} file(s)")
+                elif result:
+                    failed += 1
+                    errors = result.errors + result.conflicts
+                    collection_errors[coll] = errors
+                    error(f"✗ Failed {coll}: {', '.join(errors)}")
 
     # Summary report
     info(f"\n{'=' * 60}")
     if failed == 0:
-        success(
-            f"✓ Pushed {successful} collection(s), {total_versions} version(s), {total_files} file(s) total"
-        )
+        msg = f"✓ Pushed {successful} collection(s), "
+        msg += f"{total_versions} version(s), {total_files} file(s) total"
+        success(msg)
     else:
         warn(f"Completed with errors: {successful} succeeded, {failed} failed")
         for collection, errors in collection_errors.items():
