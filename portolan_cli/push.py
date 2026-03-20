@@ -751,12 +751,24 @@ def discover_collections(catalog_root: Path) -> list[str]:
     collections: list[str] = []
     visited_paths: set[Path] = set()
 
-    for versions_file in catalog_root.rglob("versions.json"):
+    # Use rglob to find all versions.json files recursively
+    # Wrap in try/except to handle permission errors gracefully
+    try:
+        versions_files = list(catalog_root.rglob("versions.json"))
+    except PermissionError as e:
+        warn(f"Permission denied during catalog scan: {e}")
+        versions_files = []
+
+    for versions_file in versions_files:
         # Get the collection directory (parent of versions.json)
         collection_dir = versions_file.parent
 
         # Get path relative to catalog root for checking
         rel_path = collection_dir.relative_to(catalog_root)
+
+        # Skip versions.json at catalog root (not a valid collection location)
+        if not rel_path.parts:
+            continue
 
         # Skip hidden directories (starting with '.') at any level in relative path
         # This includes .portolan, .git, .hidden, etc.

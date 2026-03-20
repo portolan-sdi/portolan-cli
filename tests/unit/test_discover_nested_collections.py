@@ -198,3 +198,83 @@ def test_subcatalog_without_collections_ignored(catalog_with_config: Path) -> No
     result = discover_collections(catalog_with_config)
 
     assert result == ["real-collection"]
+
+
+@pytest.mark.unit
+def test_root_level_versions_json_ignored(catalog_with_config: Path) -> None:
+    """versions.json at catalog root should be ignored (not a valid collection).
+
+    Structure:
+        catalog_root/
+            versions.json  # Should be ignored (at root level)
+            real-collection/
+                versions.json  # Should be included
+
+    Expected: ["real-collection"] (root-level versions.json excluded)
+    """
+    # Create versions.json at root (should be ignored)
+    (catalog_with_config / "versions.json").write_text("{}")
+
+    # Create real collection in subdirectory
+    real = catalog_with_config / "real-collection"
+    real.mkdir()
+    (real / "versions.json").write_text("{}")
+
+    result = discover_collections(catalog_with_config)
+
+    assert result == ["real-collection"]
+
+
+@pytest.mark.unit
+def test_symlink_cycle_detection(catalog_with_config: Path) -> None:
+    """Symlink cycles should be detected and deduplicated.
+
+    Structure:
+        catalog_root/
+            real-collection/
+                versions.json
+            loop -> catalog_root  # Symlink back to root (cycle)
+
+    Expected: ["real-collection"] (cycle doesn't cause duplicates or hangs)
+    """
+    # Create real collection
+    real = catalog_with_config / "real-collection"
+    real.mkdir()
+    (real / "versions.json").write_text("{}")
+
+    # Create symlink that points back to catalog root (creates cycle)
+    loop = catalog_with_config / "loop"
+    loop.symlink_to(catalog_with_config)
+
+    # Should not hang, should detect the cycle and deduplicate
+    result = discover_collections(catalog_with_config)
+
+    # The real collection should appear exactly once
+    assert result == ["real-collection"]
+
+
+@pytest.mark.unit
+def test_empty_nested_directory_structure(catalog_with_config: Path) -> None:
+    """Empty nested directories should not affect discovery.
+
+    Structure:
+        catalog_root/
+            empty-sub/
+                another-empty/  # No versions.json anywhere
+            real-collection/
+                versions.json
+
+    Expected: ["real-collection"]
+    """
+    # Create empty nested structure
+    empty = catalog_with_config / "empty-sub" / "another-empty"
+    empty.mkdir(parents=True)
+
+    # Create real collection
+    real = catalog_with_config / "real-collection"
+    real.mkdir()
+    (real / "versions.json").write_text("{}")
+
+    result = discover_collections(catalog_with_config)
+
+    assert result == ["real-collection"]
