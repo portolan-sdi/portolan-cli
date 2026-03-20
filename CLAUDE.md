@@ -184,12 +184,12 @@ Always research before implementing:
 ### Test Markers
 
 ```python
-@pytest.mark.unit        # Fast, isolated, no I/O (< 100ms)
+@pytest.mark.unit        # Fast, isolated, no I/O (< 100ms each)
 @pytest.mark.integration # Multi-component, may touch filesystem
-@pytest.mark.network     # Requires network (mocked locally, live in nightly)
-@pytest.mark.realdata    # Uses real-world fixtures committed in tests/fixtures/realdata/
+@pytest.mark.network     # Requires network (mocked locally, real in CI nightly)
+@pytest.mark.realdata    # Uses real-world fixtures from tests/fixtures/realdata/ (tests orchestration, not geometry)
 @pytest.mark.snapshot    # Compares output against golden files
-@pytest.mark.benchmark   # Performance measurement
+@pytest.mark.benchmark   # Performance measurement, tracked over time
 @pytest.mark.slow        # Takes > 5 seconds
 ```
 
@@ -379,7 +379,7 @@ error("No geometry column (required)")     # ✗ Red X
 detail("Processing chunk 3/10...")         # Dimmed text
 ```
 
-<!-- freshness: last-verified: 2026-03-19 -->
+<!-- freshness: last-verified: 2026-03-20 -->
 ## Design Principles
 
 | Principle | Meaning | ADR |

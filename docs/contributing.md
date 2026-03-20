@@ -83,9 +83,12 @@ Tests use pytest with markers to categorize test types:
 
 | Marker | Description |
 |--------|-------------|
-| `@pytest.mark.unit` | Fast, isolated, no I/O (< 100ms) |
+| `@pytest.mark.unit` | Fast, isolated, no I/O (< 100ms each) |
 | `@pytest.mark.integration` | Multi-component, may touch filesystem |
-| `@pytest.mark.network` | Requires network (mocked locally) |
+| `@pytest.mark.network` | Requires network (mocked locally, real in CI nightly) |
+| `@pytest.mark.realdata` | Uses real-world fixtures from `tests/fixtures/realdata/` |
+| `@pytest.mark.snapshot` | Compares output against golden files |
+| `@pytest.mark.benchmark` | Performance measurement, tracked over time |
 | `@pytest.mark.slow` | Takes > 5 seconds |
 
 ```bash

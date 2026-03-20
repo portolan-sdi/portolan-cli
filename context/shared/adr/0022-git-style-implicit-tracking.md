@@ -28,12 +28,12 @@ Portolan needs a clear command model where each command addresses a distinct con
 ### Command Details
 
 **`check` flags:**
-- `check` — validate all (metadata + format)
-- `check --fix` — fix all (generate metadata + convert)
+- `check` — validate all (metadata + geo-assets)
+- `check --fix` — fix all (generate metadata + convert files)
 - `check --metadata` — validate metadata only
-- `check --format` — validate format only
+- `check --geo-assets` — validate geo-assets only (cloud-native status)
 - `check --metadata --fix` — generate/repair metadata only
-- `check --format --fix` — convert files only
+- `check --geo-assets --fix` — convert files only (GeoJSON→GeoParquet, TIFF→COG)
 
 **`add` — tracks files already in the catalog directory:**
 ```bash

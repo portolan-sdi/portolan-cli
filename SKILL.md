@@ -182,10 +182,10 @@ format_type = detect_format("data.parquet")  # Returns FormatType.GEOPARQUET
    portolan init --title "My Geospatial Data"
    ```
 
-2. **Scan directory for files and issues:**
+2. **Scan directory for files and fix filename issues:**
    ```bash
    portolan scan /data/geospatial
-   # Fix any issues found
+   # Fix filename issues (invalid chars, reserved names, long paths)
    portolan scan /data/geospatial --fix
    ```
 
