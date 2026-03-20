@@ -92,9 +92,15 @@ class TestParallelPushIntegration:
     """Integration tests for parallel push_all_collections."""
 
     @pytest.mark.integration
+    @patch("portolan_cli.push.obs.put")
+    @patch("portolan_cli.push._setup_store")
     @patch("portolan_cli.push.push")
     def test_parallel_execution_observes_worker_count(
-        self, mock_push: MagicMock, multi_collection_catalog: Path
+        self,
+        mock_push: MagicMock,
+        mock_setup_store: MagicMock,
+        _mock_obs_put: MagicMock,
+        multi_collection_catalog: Path,
     ) -> None:
         """Parallel execution respects the workers parameter."""
         active_count: list[int] = []
@@ -112,6 +118,7 @@ class TestParallelPushIntegration:
             )
 
         mock_push.side_effect = track_concurrent
+        mock_setup_store.return_value = (MagicMock(), "test-prefix")
 
         result = push_all_collections(
             catalog_root=multi_collection_catalog,
@@ -124,9 +131,15 @@ class TestParallelPushIntegration:
         assert mock_push.call_count == 4
 
     @pytest.mark.integration
+    @patch("portolan_cli.push.obs.put")
+    @patch("portolan_cli.push._setup_store")
     @patch("portolan_cli.push.push")
     def test_sequential_execution_with_workers_1(
-        self, mock_push: MagicMock, multi_collection_catalog: Path
+        self,
+        mock_push: MagicMock,
+        mock_setup_store: MagicMock,
+        _mock_obs_put: MagicMock,
+        multi_collection_catalog: Path,
     ) -> None:
         """workers=1 executes collections sequentially."""
         call_order: list[str] = []
@@ -138,6 +151,7 @@ class TestParallelPushIntegration:
             )
 
         mock_push.side_effect = track_order
+        mock_setup_store.return_value = (MagicMock(), "test-prefix")
 
         result = push_all_collections(
             catalog_root=multi_collection_catalog,
@@ -185,9 +199,10 @@ class TestParallelPushIntegration:
 
     @pytest.mark.integration
     def test_get_default_workers_returns_sensible_value(self) -> None:
-        """get_default_workers returns a value between 1 and 16."""
+        """get_default_workers returns a positive value based on CPU count."""
         workers = get_default_workers()
-        assert 1 <= workers <= 16
+        # Minimum 1 worker, no upper bound (depends on system capabilities)
+        assert workers >= 1
 
 
 class TestCLIParallelPushIntegration:
