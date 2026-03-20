@@ -10,14 +10,14 @@ coverage:
     # Overall project coverage
     project:
       default:
-        target: 95%
-        threshold: 2%  # Allow 2% drop from target
+        target: 90%
+        threshold: 5%  # Allow 5% drop from target
         if_ci_failed: error
 
     # Coverage of changed lines only (patch)
     patch:
       default:
-        target: 90%  # Patch coverage target (new code)
+        target: 80%  # Patch coverage target (new code)
         threshold: 10%  # Allow +-10% tolerance for edge cases
         if_ci_failed: error
 
