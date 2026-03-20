@@ -569,7 +569,8 @@ def _upload_stac_files(
     for i, file_path in enumerate(ordered_files, 1):
         try:
             rel_path = file_path.relative_to(catalog_root)
-            target_key = f"{prefix}/{rel_path}".lstrip("/")
+            # Use as_posix() to ensure forward slashes on Windows (cloud keys are always /)
+            target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
 
             if dry_run:
                 info(f"[DRY RUN] Would upload STAC ({i}/{total}): {rel_path}")
