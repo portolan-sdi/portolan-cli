@@ -441,21 +441,32 @@ def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> No
 def _discover_stac_files(
     catalog_root: Path,
     collection: str,
+    *,
+    include_catalog: bool = False,
 ) -> dict[str, list[Path]]:
-    """Discover all STAC metadata files that should be uploaded for a collection.
+    """Discover STAC metadata files that should be uploaded for a collection.
 
-    Finds catalog.json, collection.json, and all item.json files within
-    the collection's directory structure.
+    Finds collection.json and all item STAC files within the collection's
+    directory structure. Optionally includes catalog.json.
+
+    Note: Portolan creates item files as {item_id}.json (not item.json).
+    The item_id matches the item directory name by convention.
 
     Args:
         catalog_root: Path to catalog root.
         collection: Collection identifier.
+        include_catalog: If True, include catalog.json in discovery.
+            Default False because catalog.json is a shared resource that
+            should be uploaded once after all collections, not per-collection.
 
     Returns:
         Dict with keys 'catalog', 'collection', 'items' mapping to lists of paths.
-        - 'catalog': [catalog_root/catalog.json] (always exactly one)
-        - 'collection': [collection/collection.json] (always exactly one)
-        - 'items': [collection/item1/item.json, collection/item2/item.json, ...]
+        - 'catalog': [catalog_root/catalog.json] if include_catalog and exists
+        - 'collection': [collection/collection.json] if exists
+        - 'items': [collection/item1/item1.json, ...] for each item found
+
+    Raises:
+        FileNotFoundError: If collection.json doesn't exist (required for push).
     """
     stac_files: dict[str, list[Path]] = {
         "catalog": [],
@@ -463,25 +474,49 @@ def _discover_stac_files(
         "items": [],
     }
 
-    # 1. Root catalog.json
-    catalog_json = catalog_root / "catalog.json"
-    if catalog_json.exists():
-        stac_files["catalog"].append(catalog_json)
+    # 1. Root catalog.json (only if requested - typically for push_all_collections)
+    if include_catalog:
+        catalog_json = catalog_root / "catalog.json"
+        if catalog_json.exists():
+            stac_files["catalog"].append(catalog_json)
 
-    # 2. Collection's collection.json
+    # 2. Collection's collection.json (required)
     collection_dir = catalog_root / collection
     collection_json = collection_dir / "collection.json"
-    if collection_json.exists():
-        stac_files["collection"].append(collection_json)
+    if not collection_json.exists():
+        raise FileNotFoundError(
+            f"collection.json not found for '{collection}': {collection_json}. "
+            "Run 'portolan add' to create STAC metadata before pushing."
+        )
+    stac_files["collection"].append(collection_json)
 
-    # 3. All item.json files within the collection
-    # Items are subdirectories of the collection that contain item.json
-    if collection_dir.exists():
-        for item_dir in collection_dir.iterdir():
-            if item_dir.is_dir() and not item_dir.name.startswith("."):
-                item_json = item_dir / "item.json"
-                if item_json.exists():
-                    stac_files["items"].append(item_json)
+    # 3. All item STAC files within the collection
+    # Portolan naming convention: items are in subdirectories named {item_id}
+    # and the STAC file is {item_id}.json (not item.json)
+    visited_paths: set[Path] = set()
+
+    for item_dir in collection_dir.iterdir():
+        # Skip non-directories and hidden directories
+        if not item_dir.is_dir() or item_dir.name.startswith("."):
+            continue
+
+        # Symlink safety: resolve and detect cycles (matches discover_collections)
+        try:
+            resolved = item_dir.resolve()
+        except OSError:
+            warn(f"Cannot resolve path {item_dir}, skipping")
+            continue
+
+        if resolved in visited_paths:
+            warn(f"Symlink cycle detected at {item_dir}, skipping")
+            continue
+        visited_paths.add(resolved)
+
+        # Look for {item_id}.json where item_id = directory name
+        item_id = item_dir.name
+        item_json = item_dir / f"{item_id}.json"
+        if item_json.exists():
+            stac_files["items"].append(item_json)
 
     return stac_files
 
@@ -497,9 +532,13 @@ def _upload_stac_files(
     """Upload STAC metadata files in manifest-last order.
 
     Upload order (manifest-last pattern for atomicity):
-    1. item.json files (leaf manifests)
+    1. Item STAC files (leaf manifests) - {item_id}.json
     2. collection.json (intermediate manifest)
-    3. catalog.json (root manifest)
+    3. catalog.json (root manifest) - only if included in stac_files
+
+    Note: STAC files are NOT rolled back on failure. They are idempotent
+    (re-uploading is safe) and the manifest-last pattern ensures consistency:
+    versions.json is uploaded last, so incomplete pushes aren't "visible".
 
     Args:
         store: Object store instance.
@@ -719,25 +758,18 @@ def push(
     # Diff versions
     diff = diff_version_lists(local_versions, remote_versions)
 
-    # Check for conflicts
+    # Check for conflicts (dry_run already returned above, so we're always in live mode here)
     if diff.has_conflict and not force:
         conflict_msg = (
             f"Remote has changes not present locally: {diff.remote_only}. "
             "Pull changes first or use --force to overwrite."
         )
-        if not dry_run:
-            raise PushConflictError(conflict_msg)
-        else:
-            warn(f"[DRY RUN] Would conflict: {conflict_msg}")
-            raise PushConflictError(conflict_msg)
+        raise PushConflictError(conflict_msg)
 
     # Nothing to push?
     # With --force, we still push if remote has versions we don't have (to overwrite remote state)
     if not diff.local_only and not (force and diff.remote_only):
-        if dry_run:
-            info("[DRY RUN] Nothing would be pushed - local and remote are in sync")
-        else:
-            info("Nothing to push - local and remote are in sync")
+        info("Nothing to push - local and remote are in sync")
         return PushResult(
             success=True,
             files_uploaded=0,
@@ -749,24 +781,10 @@ def push(
     # Get assets to upload
     assets = _get_assets_to_upload(catalog_root, local_data, diff.local_only)
 
-    if dry_run:
-        info(f"[DRY RUN] Would push {len(diff.local_only)} version(s): {diff.local_only}")
-        info(f"[DRY RUN] Would upload {len(assets)} asset file(s)")
-        for asset in assets:
-            rel_path = asset.relative_to(catalog_root)
-            detail(f"  {rel_path}")
-        return PushResult(
-            success=True,
-            files_uploaded=0,
-            versions_pushed=0,
-            conflicts=[],
-            errors=[],
-        )
-
     # Upload assets first (manifest-last pattern)
     info(f"Uploading {len(assets)} asset(s)...")
     files_uploaded, upload_errors, uploaded_keys = _upload_assets(
-        store, catalog_root, prefix, assets, dry_run=dry_run
+        store, catalog_root, prefix, assets, dry_run=False
     )
 
     if upload_errors:
@@ -782,16 +800,31 @@ def push(
         )
 
     # Upload STAC metadata files (Issue #252)
-    # Order: item.json -> collection.json -> catalog.json (leaf to root)
-    stac_files = _discover_stac_files(catalog_root, collection)
-    stac_uploaded, stac_errors, stac_keys = _upload_stac_files(
-        store, catalog_root, prefix, stac_files, dry_run=dry_run
+    # Order: item STAC -> collection.json (leaf to root)
+    # Note: catalog.json is uploaded separately by push_all_collections()
+    # Note: STAC keys are NOT tracked for rollback - they're idempotent
+    try:
+        stac_files = _discover_stac_files(catalog_root, collection, include_catalog=False)
+    except FileNotFoundError as e:
+        error(str(e))
+        _cleanup_uploaded_assets(store, uploaded_keys)
+        return PushResult(
+            success=False,
+            files_uploaded=files_uploaded,
+            versions_pushed=0,
+            conflicts=[],
+            errors=[str(e)],
+        )
+
+    stac_uploaded, stac_errors, _stac_keys = _upload_stac_files(
+        store, catalog_root, prefix, stac_files, dry_run=False
     )
-    uploaded_keys.extend(stac_keys)
+    # Don't extend uploaded_keys with stac_keys - STAC files are not rolled back
     files_uploaded += stac_uploaded
 
     if stac_errors:
         error("STAC metadata upload failed, aborting push")
+        # Only rollback assets, not STAC files (they're idempotent)
         _cleanup_uploaded_assets(store, uploaded_keys)
         return PushResult(
             success=False,
@@ -1025,6 +1058,29 @@ def push_all_collections(
         workers=workers,
         on_complete=on_complete,
     )
+
+    # Upload catalog.json once after all collections (Issue #252)
+    # This avoids race conditions when pushing collections in parallel
+    catalog_json = catalog_root / "catalog.json"
+
+    if successful > 0 and catalog_json.exists():
+        if dry_run:
+            info("[DRY RUN] Would upload catalog.json")
+        else:
+            try:
+                store, prefix = _setup_store(destination, profile=profile)
+                target_key = f"{prefix}/catalog.json".lstrip("/")
+                content = catalog_json.read_bytes()
+                obs.put(store, target_key, content)
+                success("Uploaded catalog.json")
+                total_files += 1
+            except Exception as e:
+                error(f"Failed to upload catalog.json: {e}")
+                # Don't fail the whole operation - collections were pushed successfully
+                # Just warn that catalog.json wasn't uploaded
+                warn("Collections were pushed but catalog.json upload failed")
+    elif not catalog_json.exists():
+        warn(f"catalog.json not found at {catalog_json} - remote catalog may be incomplete")
 
     # Summary report (use output_section to keep summary together)
     with output_section():
