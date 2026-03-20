@@ -50,11 +50,11 @@ portolan sync s3://my-bucket/catalog -c demographics
 
 ```bash
 portolan init                               # Initialize catalog
-portolan scan <path>                        # Scan for issues
+portolan scan <path>                        # Scan for issues (--fix for filenames)
 portolan add <path>                         # Track files
 portolan rm <path>                          # Untrack files (--keep to preserve data)
-portolan check                              # Validate catalog
-portolan check --fix                        # Convert to cloud-native formats
+portolan check                              # Validate catalog (metadata + geo-assets)
+portolan check --fix                        # Convert to cloud-native + update metadata
 portolan list                               # List tracked files
 portolan info <path>                        # Show file/collection info
 portolan push <remote>                      # Push to remote storage
