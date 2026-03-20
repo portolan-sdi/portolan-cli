@@ -802,11 +802,10 @@ def push(
         )
 
     # Upload STAC metadata files (Issue #252)
-    # Order: item STAC -> collection.json (leaf to root)
-    # Note: catalog.json is uploaded separately by push_all_collections()
-    # Note: STAC keys are NOT tracked for rollback - they're idempotent
+    # Order: item STAC -> collection.json -> catalog.json (leaf to root)
+    # Include catalog.json so standalone push() creates a clonable remote catalog
     try:
-        stac_files = _discover_stac_files(catalog_root, collection, include_catalog=False)
+        stac_files = _discover_stac_files(catalog_root, collection, include_catalog=True)
     except FileNotFoundError as e:
         error(str(e))
         _cleanup_uploaded_assets(store, uploaded_keys)
@@ -818,15 +817,17 @@ def push(
             errors=[str(e)],
         )
 
-    stac_uploaded, stac_errors, _stac_keys = _upload_stac_files(
+    stac_uploaded, stac_errors, stac_keys = _upload_stac_files(
         store, catalog_root, prefix, stac_files, dry_run=False
     )
-    # Don't extend uploaded_keys with stac_keys - STAC files are not rolled back
+    # Track STAC keys for rollback - if versions.json fails, STAC files should
+    # also be rolled back to avoid broken references to rolled-back assets
+    uploaded_keys.extend(stac_keys)
     files_uploaded += stac_uploaded
 
     if stac_errors:
         error("STAC metadata upload failed, aborting push")
-        # Only rollback assets, not STAC files (they're idempotent)
+        # Rollback both assets and STAC files
         _cleanup_uploaded_assets(store, uploaded_keys)
         return PushResult(
             success=False,
@@ -1062,10 +1063,12 @@ def push_all_collections(
     )
 
     # Upload catalog.json once after all collections (Issue #252)
-    # This avoids race conditions when pushing collections in parallel
+    # Only upload when ALL collections succeeded to avoid publishing incomplete catalog
+    # Note: Individual push() calls also upload catalog.json for standalone use
     catalog_json = catalog_root / "catalog.json"
+    catalog_upload_failed = False
 
-    if successful > 0 and catalog_json.exists():
+    if successful > 0 and failed == 0 and catalog_json.exists():
         if dry_run:
             info("[DRY RUN] Would upload catalog.json")
         else:
@@ -1078,26 +1081,28 @@ def push_all_collections(
                 total_files += 1
             except Exception as e:
                 error(f"Failed to upload catalog.json: {e}")
-                # Don't fail the whole operation - collections were pushed successfully
-                # Just warn that catalog.json wasn't uploaded
-                warn("Collections were pushed but catalog.json upload failed")
+                catalog_upload_failed = True
+                collection_errors["catalog.json"] = [str(e)]
+    elif failed > 0:
+        warn("Skipping catalog.json upload because some collections failed")
     elif not catalog_json.exists():
         warn(f"catalog.json not found at {catalog_json} - remote catalog may be incomplete")
 
     # Summary report (use output_section to keep summary together)
+    overall_success = failed == 0 and not catalog_upload_failed
     with output_section():
         info(f"\n{'=' * 60}")
-        if failed == 0:
+        if overall_success:
             msg = f"Pushed {successful} collection(s), "
             msg += f"{total_versions} version(s), {total_files} file(s) total"
             success(msg)
         else:
             warn(f"Completed with errors: {successful} succeeded, {failed} failed")
-            for collection, errors in collection_errors.items():
-                warn(f"  {collection}: {', '.join(errors)}")
+            for coll_name, errs in collection_errors.items():
+                warn(f"  {coll_name}: {', '.join(errs)}")
 
     return PushAllResult(
-        success=(failed == 0),
+        success=overall_success,
         total_collections=total,
         successful_collections=successful,
         failed_collections=failed,

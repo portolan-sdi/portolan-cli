@@ -7,13 +7,15 @@ Design principle from ADR-0006: Portolan owns bucket contents.
 The catalog should round-trip perfectly: push -> clone should recreate the catalog.
 
 Test categories:
+- Push uploads catalog.json so standalone push creates clonable remote catalog
 - Push uploads collection.json for each collection
 - Push uploads {item_id}.json for each item (Portolan naming convention)
-- push_all_collections uploads catalog.json once at the end
+- push_all_collections uploads catalog.json at the end (when all collections succeed)
 - Manifest-last pattern preserved (data first, then manifests)
 
-Note: Per-collection push does NOT upload catalog.json - this is done once
-by push_all_collections() to avoid race conditions in parallel push.
+Note: Both push() and push_all_collections() upload catalog.json. This ensures
+standalone push() creates a complete catalog, while push_all_collections()
+ensures a final consistent catalog.json when pushing multiple collections.
 """
 
 from __future__ import annotations
@@ -180,15 +182,15 @@ def full_catalog(tmp_path: Path) -> Path:
 
 @pytest.mark.unit
 class TestPushUploadsCatalogJson:
-    """Tests that catalog.json is uploaded by push_all_collections, not per-collection push.
+    """Tests that catalog.json is uploaded by both push() and push_all_collections().
 
-    Per-collection push() does NOT upload catalog.json to avoid race conditions
-    when pushing multiple collections in parallel. Instead, push_all_collections()
-    uploads catalog.json once at the end after all collections are pushed.
+    push() uploads catalog.json so standalone push creates a complete, clonable
+    remote catalog. push_all_collections() also uploads catalog.json at the end
+    (when all collections succeed) to ensure a final consistent state.
     """
 
-    def test_per_collection_push_does_not_upload_catalog_json(self, full_catalog: Path) -> None:
-        """Per-collection push should NOT upload catalog.json."""
+    def test_per_collection_push_uploads_catalog_json(self, full_catalog: Path) -> None:
+        """Per-collection push SHOULD upload catalog.json for standalone use."""
         from portolan_cli.push import push
 
         uploaded_keys: list[str] = []
@@ -206,15 +208,20 @@ class TestPushUploadsCatalogJson:
                     destination="s3://test-bucket/test-prefix",
                 )
 
-        # Verify catalog.json was NOT uploaded by per-collection push
+        # Verify catalog.json WAS uploaded by per-collection push
         catalog_json_keys = [k for k in uploaded_keys if k.endswith("catalog.json")]
-        assert len(catalog_json_keys) == 0, (
-            f"catalog.json should NOT be uploaded by per-collection push: {uploaded_keys}"
+        assert len(catalog_json_keys) == 1, (
+            f"catalog.json SHOULD be uploaded by per-collection push: {uploaded_keys}"
         )
+        assert catalog_json_keys[0] == "test-prefix/catalog.json"
         assert result.success
 
     def test_push_all_collections_uploads_catalog_json(self, full_catalog: Path) -> None:
-        """push_all_collections should upload catalog.json once at the end."""
+        """push_all_collections uploads catalog.json at the end (may also be uploaded by push).
+
+        Each push() call uploads catalog.json, and push_all_collections also uploads
+        it at the end when all collections succeed. This ensures a consistent final state.
+        """
         from portolan_cli.push import push_all_collections
 
         uploaded_keys: list[str] = []
@@ -231,12 +238,12 @@ class TestPushUploadsCatalogJson:
                     destination="s3://test-bucket/test-prefix",
                 )
 
-        # Verify catalog.json was uploaded
+        # Verify catalog.json was uploaded at least once (could be 2x: by push + push_all)
         catalog_json_keys = [k for k in uploaded_keys if k.endswith("catalog.json")]
-        assert len(catalog_json_keys) == 1, (
-            f"Expected catalog.json upload by push_all_collections: {uploaded_keys}"
+        assert len(catalog_json_keys) >= 1, (
+            f"Expected at least one catalog.json upload: {uploaded_keys}"
         )
-        assert catalog_json_keys[0] == "test-prefix/catalog.json"
+        assert all(k == "test-prefix/catalog.json" for k in catalog_json_keys)
         assert result.success
 
     def test_push_all_catalog_json_content_matches_local(self, full_catalog: Path) -> None:
@@ -358,10 +365,8 @@ class TestPushManifestLastOrdering:
         1. Asset files (data.parquet, etc.)
         2. {item_id}.json (leaf manifests)
         3. collection.json (intermediate manifests)
-        4. versions.json (last - makes the push "visible")
-
-        Note: catalog.json is NOT uploaded by per-collection push.
-        It's uploaded once by push_all_collections() at the end.
+        4. catalog.json (root manifest)
+        5. versions.json (last - makes the push "visible")
         """
         from portolan_cli.push import push
 
@@ -390,27 +395,26 @@ class TestPushManifestLastOrdering:
         asset_idx = find_index("data.parquet")
         item_idx = find_index("test-item.json")  # Portolan naming: {item_id}.json
         collection_idx = find_index("collection.json")
+        catalog_idx = find_index("catalog.json")
         versions_idx = find_index("versions.json")
 
-        # Verify required files were uploaded (catalog.json is NOT uploaded here)
+        # Verify required files were uploaded
         assert asset_idx >= 0, f"data.parquet not uploaded: {upload_order}"
         assert item_idx >= 0, f"test-item.json not uploaded: {upload_order}"
         assert collection_idx >= 0, f"collection.json not uploaded: {upload_order}"
+        assert catalog_idx >= 0, f"catalog.json not uploaded: {upload_order}"
         assert versions_idx >= 0, f"versions.json not uploaded: {upload_order}"
 
-        # Verify catalog.json was NOT uploaded (it's done by push_all_collections)
-        catalog_idx = find_index("catalog.json")
-        assert catalog_idx == -1, (
-            f"catalog.json should NOT be uploaded by per-collection push: {upload_order}"
-        )
-
-        # Verify order: assets < {item_id}.json < collection.json < versions.json
+        # Verify order: assets < {item_id}.json < collection.json < catalog.json < versions.json
         assert asset_idx < item_idx, f"Assets should be uploaded before item STAC: {upload_order}"
         assert item_idx < collection_idx, (
             f"Item STAC should be uploaded before collection.json: {upload_order}"
         )
-        assert collection_idx < versions_idx, (
-            f"collection.json should be uploaded before versions.json: {upload_order}"
+        assert collection_idx < catalog_idx, (
+            f"collection.json should be uploaded before catalog.json: {upload_order}"
+        )
+        assert catalog_idx < versions_idx, (
+            f"catalog.json should be uploaded before versions.json: {upload_order}"
         )
 
 
@@ -423,8 +427,8 @@ class TestPushManifestLastOrdering:
 class TestPushUploadsAllFiles:
     """Tests that push uploads all required files for a complete catalog."""
 
-    def test_per_collection_push_uploads_collection_structure(self, full_catalog: Path) -> None:
-        """Per-collection push should upload collection STAC structure (not catalog.json)."""
+    def test_per_collection_push_uploads_complete_structure(self, full_catalog: Path) -> None:
+        """Per-collection push should upload complete STAC structure including catalog.json."""
         from portolan_cli.push import push
 
         uploaded_keys: set[str] = set()
@@ -442,9 +446,9 @@ class TestPushUploadsAllFiles:
                     destination="s3://test-bucket/test-prefix",
                 )
 
-        # Per-collection push uploads: collection.json, {item_id}.json, assets, versions.json
-        # It does NOT upload catalog.json (that's done by push_all_collections)
+        # Per-collection push uploads complete STAC structure for standalone use
         expected_files = {
+            "test-prefix/catalog.json",  # Root catalog for clonable remote
             "test-prefix/test-collection/collection.json",
             "test-prefix/test-collection/test-item/test-item.json",  # {item_id}.json
             "test-prefix/test-collection/test-item/data.parquet",
@@ -453,12 +457,6 @@ class TestPushUploadsAllFiles:
 
         assert expected_files.issubset(uploaded_keys), (
             f"Missing files. Expected: {expected_files}, Got: {uploaded_keys}"
-        )
-
-        # Verify catalog.json was NOT uploaded
-        catalog_keys = [k for k in uploaded_keys if k.endswith("catalog.json")]
-        assert len(catalog_keys) == 0, (
-            f"catalog.json should NOT be uploaded by per-collection push: {uploaded_keys}"
         )
 
     def test_push_all_uploads_complete_stac_structure(self, full_catalog: Path) -> None:
