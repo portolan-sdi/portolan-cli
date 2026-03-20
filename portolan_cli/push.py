@@ -433,6 +433,123 @@ def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> No
             warn(f"Failed to delete {key} during rollback: {e}")
 
 
+# =============================================================================
+# STAC Metadata File Discovery and Upload (Issue #252)
+# =============================================================================
+
+
+def _discover_stac_files(
+    catalog_root: Path,
+    collection: str,
+) -> dict[str, list[Path]]:
+    """Discover all STAC metadata files that should be uploaded for a collection.
+
+    Finds catalog.json, collection.json, and all item.json files within
+    the collection's directory structure.
+
+    Args:
+        catalog_root: Path to catalog root.
+        collection: Collection identifier.
+
+    Returns:
+        Dict with keys 'catalog', 'collection', 'items' mapping to lists of paths.
+        - 'catalog': [catalog_root/catalog.json] (always exactly one)
+        - 'collection': [collection/collection.json] (always exactly one)
+        - 'items': [collection/item1/item.json, collection/item2/item.json, ...]
+    """
+    stac_files: dict[str, list[Path]] = {
+        "catalog": [],
+        "collection": [],
+        "items": [],
+    }
+
+    # 1. Root catalog.json
+    catalog_json = catalog_root / "catalog.json"
+    if catalog_json.exists():
+        stac_files["catalog"].append(catalog_json)
+
+    # 2. Collection's collection.json
+    collection_dir = catalog_root / collection
+    collection_json = collection_dir / "collection.json"
+    if collection_json.exists():
+        stac_files["collection"].append(collection_json)
+
+    # 3. All item.json files within the collection
+    # Items are subdirectories of the collection that contain item.json
+    if collection_dir.exists():
+        for item_dir in collection_dir.iterdir():
+            if item_dir.is_dir() and not item_dir.name.startswith("."):
+                item_json = item_dir / "item.json"
+                if item_json.exists():
+                    stac_files["items"].append(item_json)
+
+    return stac_files
+
+
+def _upload_stac_files(
+    store: ObjectStore,
+    catalog_root: Path,
+    prefix: str,
+    stac_files: dict[str, list[Path]],
+    *,
+    dry_run: bool = False,
+) -> tuple[int, list[str], list[str]]:
+    """Upload STAC metadata files in manifest-last order.
+
+    Upload order (manifest-last pattern for atomicity):
+    1. item.json files (leaf manifests)
+    2. collection.json (intermediate manifest)
+    3. catalog.json (root manifest)
+
+    Args:
+        store: Object store instance.
+        catalog_root: Path to catalog root (for relative path calculation).
+        prefix: Prefix in object storage.
+        stac_files: Dict of STAC files from _discover_stac_files().
+        dry_run: If True, don't actually upload.
+
+    Returns:
+        Tuple of (files_uploaded, errors, uploaded_keys).
+    """
+    files_uploaded = 0
+    errors: list[str] = []
+    uploaded_keys: list[str] = []
+
+    # Build ordered list: items first, then collection, then catalog
+    ordered_files: list[Path] = []
+    ordered_files.extend(stac_files.get("items", []))
+    ordered_files.extend(stac_files.get("collection", []))
+    ordered_files.extend(stac_files.get("catalog", []))
+
+    total = len(ordered_files)
+    if total == 0:
+        return 0, [], []
+
+    info(f"Uploading {total} STAC metadata file(s)...")
+
+    for i, file_path in enumerate(ordered_files, 1):
+        try:
+            rel_path = file_path.relative_to(catalog_root)
+            target_key = f"{prefix}/{rel_path}".lstrip("/")
+
+            if dry_run:
+                info(f"[DRY RUN] Would upload STAC ({i}/{total}): {rel_path}")
+            else:
+                detail(f"Uploading STAC ({i}/{total}): {rel_path}")
+                # Read and upload the JSON file
+                content = file_path.read_bytes()
+                obs.put(store, target_key, content)
+                files_uploaded += 1
+                uploaded_keys.append(target_key)
+
+        except Exception as e:
+            error_msg = f"Failed to upload {file_path}: {e}"
+            errors.append(error_msg)
+            error(error_msg)
+
+    return files_uploaded, errors, uploaded_keys
+
+
 def _upload_versions_json(
     store: ObjectStore,
     prefix: str,
@@ -662,6 +779,26 @@ def push(
             versions_pushed=0,
             conflicts=[],
             errors=upload_errors,
+        )
+
+    # Upload STAC metadata files (Issue #252)
+    # Order: item.json -> collection.json -> catalog.json (leaf to root)
+    stac_files = _discover_stac_files(catalog_root, collection)
+    stac_uploaded, stac_errors, stac_keys = _upload_stac_files(
+        store, catalog_root, prefix, stac_files, dry_run=dry_run
+    )
+    uploaded_keys.extend(stac_keys)
+    files_uploaded += stac_uploaded
+
+    if stac_errors:
+        error("STAC metadata upload failed, aborting push")
+        _cleanup_uploaded_assets(store, uploaded_keys)
+        return PushResult(
+            success=False,
+            files_uploaded=files_uploaded,
+            versions_pushed=0,
+            conflicts=[],
+            errors=stac_errors,
         )
 
     # Upload versions.json last (manifest-last pattern)
