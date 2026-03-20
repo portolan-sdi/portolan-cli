@@ -723,17 +723,18 @@ class PushAllResult:
 
 
 def discover_collections(catalog_root: Path) -> list[str]:
-    """Discover all collections in a catalog by finding directories with versions.json.
+    """Recursively discover all collections by finding directories with versions.json.
 
-    Collections are subdirectories of the catalog root that contain a versions.json file.
-    Hidden directories (starting with '.') are excluded.
-    Symlinks are followed but cycles are detected and skipped.
+    Per ADR-0032 (Nested Catalogs with Flat Collections), collections can exist at any
+    depth within the catalog structure. This function recursively searches for
+    versions.json files and returns the relative paths to their parent directories.
 
     Args:
         catalog_root: Path to the catalog root directory.
 
     Returns:
-        Sorted list of collection names (directory names).
+        Sorted list of collection paths relative to catalog_root (POSIX format).
+        Examples: ["collection", "sub-catalog/collection", "a/b/c/collection"]
 
     Raises:
         ValueError: If catalog_root is not a valid catalog directory.
@@ -750,34 +751,33 @@ def discover_collections(catalog_root: Path) -> list[str]:
     collections: list[str] = []
     visited_paths: set[Path] = set()
 
-    for item in catalog_root.iterdir():
-        # Skip non-directories
-        if not item.is_dir():
-            continue
+    for versions_file in catalog_root.rglob("versions.json"):
+        # Get the collection directory (parent of versions.json)
+        collection_dir = versions_file.parent
 
-        # Skip hidden directories (including .portolan)
-        if item.name.startswith("."):
+        # Get path relative to catalog root for checking
+        rel_path = collection_dir.relative_to(catalog_root)
+
+        # Skip hidden directories (starting with '.') at any level in relative path
+        # This includes .portolan, .git, .hidden, etc.
+        if any(part.startswith(".") for part in rel_path.parts):
             continue
 
         # Resolve symlinks and detect cycles
         try:
-            resolved = item.resolve()
+            resolved = collection_dir.resolve()
         except OSError:
             # Cannot resolve (broken symlink or permission error)
-            warn(f"Cannot resolve path {item}, skipping")
+            warn(f"Cannot resolve path {collection_dir}, skipping")
             continue
 
         # Skip if we've already seen this resolved path (symlink cycle)
         if resolved in visited_paths:
-            warn(f"Symlink cycle detected at {item}, skipping")
+            warn(f"Symlink cycle detected at {collection_dir}, skipping")
             continue
 
         visited_paths.add(resolved)
-
-        # Check for versions.json
-        versions_path = item / "versions.json"
-        if versions_path.exists():
-            collections.append(item.name)
+        collections.append(rel_path.as_posix())
 
     return sorted(collections)
 
