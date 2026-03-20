@@ -1024,6 +1024,7 @@ class TestUpdateVersionsHref:
         _update_versions(
             collection_dir=collection_dir,
             item_id="census-2020",
+            collection_id="agriculture",
             asset_files={
                 "census-2020.parquet": (output_file, "abc123"),
             },
@@ -1049,6 +1050,7 @@ class TestUpdateVersionsHref:
         _update_versions(
             collection_dir=collection_dir,
             item_id="pop-data",
+            collection_id="demographics",
             asset_files={
                 "pop-data.parquet": (output_file, "def456"),
             },
@@ -1461,6 +1463,7 @@ class TestMultiAssetUpdateVersions:
         _update_versions(
             collection_dir=collection_dir,
             item_id="my-item",
+            collection_id="my-collection",
             asset_files={
                 "my-item.parquet": (parquet_file, "hash1"),
                 "thumbnail.png": (thumbnail, "hash2"),
@@ -1501,6 +1504,7 @@ class TestMultiAssetUpdateVersions:
         _update_versions(
             collection_dir=collection_dir,
             item_id="census-2020",
+            collection_id="agriculture",
             asset_files={
                 "census-2020.parquet": (output_file, "abc123"),
             },

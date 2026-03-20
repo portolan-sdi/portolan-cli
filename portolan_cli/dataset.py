@@ -507,6 +507,12 @@ def _derive_item_id_and_asset_level(
 
     Raises:
         ValueError: If derived or provided item_id is invalid.
+
+    Note:
+        For nested collections (e.g., collection_id="a/b"), a file at
+        catalog_root/a/file.parquet will NOT be detected as collection-level
+        for collection "a/b" (since path.parent != catalog_root/a/b).
+        This is intentional - the file would belong to parent collection "a".
     """
     # Detect collection-level assets (Issue #250, ADR-0031)
     # If file is directly in collection directory, it's a collection-level asset
@@ -697,6 +703,7 @@ def add_dataset(
     _update_versions(
         collection_dir=collection_dir,
         item_id=item_id,
+        collection_id=collection_id,
         asset_files=asset_files,
         is_collection_level_asset=is_collection_level_asset,
     )
@@ -950,6 +957,7 @@ def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
 def _update_versions(
     collection_dir: Path,
     item_id: str,
+    collection_id: str,
     output_path: Path | None = None,
     checksum: str | None = None,
     *,
@@ -963,6 +971,7 @@ def _update_versions(
     Args:
         collection_dir: Path to collection directory.
         item_id: Item identifier.
+        collection_id: Collection identifier (full path like "climate/hittekaart" for nested).
         output_path: Path to single output file (legacy mode).
         checksum: SHA-256 checksum for single file (legacy mode).
         asset_files: Dict mapping filename to (path, checksum) tuples.
@@ -989,8 +998,6 @@ def _update_versions(
         parts = versions_file.current_version.split(".")
         parts[-1] = str(int(parts[-1]) + 1)
         new_version = ".".join(parts)
-
-    collection_id = collection_dir.name
 
     # Build assets dict - support both single-file and multi-file modes
     assets: dict[str, Asset] = {}
@@ -1929,11 +1936,16 @@ def _update_item_with_asset(
     with open(item_json_path, "w") as f:
         json.dump(item_data, f, indent=2)
 
+    # Detect if this is a collection-level asset
+    is_collection_level = item_dir.resolve() == collection_dir.resolve()
+
     # Update versions.json with new asset
     _update_versions(
         collection_dir=collection_dir,
         item_id=item_id,
+        collection_id=collection_id,
         asset_files=asset_files,
+        is_collection_level_asset=is_collection_level,
     )
 
 

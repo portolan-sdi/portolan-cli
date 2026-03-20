@@ -34,6 +34,7 @@ def initialized_catalog(tmp_path):
     return tmp_path
 
 
+@pytest.mark.unit
 class TestCollectionLevelAssets:
     """Test collection-level asset handling per ADR-0031."""
 
