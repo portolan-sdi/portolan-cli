@@ -23,82 +23,74 @@ This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich
 <!-- --8<-- [start:quickstart] -->
 ## Quick Start
 
+### Bootstrap & Roundtrip Example
+
 ```bash
 # Initialize a catalog
 portolan init
 
-# Scan a directory for issues (optional but recommended)
-portolan scan demographics/
-
-# Add all files in a directory (creates a "demographics" collection)
+# Add files (creates collections from directories)
 portolan add demographics/
 
+# Validate and convert to cloud-native formats
+portolan check --fix
+
 # notest - requires S3 credentials
-# Push the collection to remote storage
+# Push to remote storage
 portolan push s3://my-bucket/catalog --collection demographics
+
+# Later: pull updates from remote
+portolan pull s3://my-bucket/catalog -c demographics
+
+# Or sync everything (pull → init → scan → check → push)
+portolan sync s3://my-bucket/catalog -c demographics
 ```
 
-Other common commands:
+### All Commands
 
 ```bash
+portolan init                               # Initialize catalog
+portolan scan <path>                        # Scan for issues
+portolan add <path>                         # Track files
+portolan rm <path>                          # Untrack files (--keep to preserve data)
 portolan check                              # Validate catalog
 portolan check --fix                        # Convert to cloud-native formats
-portolan rm --keep demographics/old.parquet # Untrack without deleting
-# notest - requires S3 credentials
-portolan pull s3://my-bucket/catalog -c demographics  # Pull from remote
-# notest - requires S3 credentials
-portolan sync s3://my-bucket/catalog -c demographics  # Full workflow: pull → init → scan → check → push
-portolan config set remote s3://my-bucket/catalog     # Save remote URL
-portolan config list                        # List all config settings
+portolan list                               # List tracked files
+portolan info <path>                        # Show file/collection info
+portolan push <remote>                      # Push to remote storage
+portolan pull <remote>                      # Pull from remote storage
+portolan sync <remote>                      # Full roundtrip sync
+portolan clone <remote> <path>              # Clone remote catalog
+portolan config <set|get|list|unset>        # Manage configuration
+portolan clean                              # Remove Portolan metadata
 ```
 <!-- --8<-- [end:quickstart] -->
 
 <!-- --8<-- [start:installation] -->
 ## Installation
 
-### Recommended: pipx (for global use)
-
 ```bash
-# notest - installation command
-pipx install portolan-cli
+# Recommended: uv (fast, isolated, project-aware)
+uv tool install portolan-cli
+
+# Alternative: pipx (isolated environment)
+# pipx install portolan-cli
+
+# Alternative: pip (global/user site-packages, may conflict)
+# pip install portolan-cli
 ```
-
-This installs `portolan` in an isolated environment while making the command globally available.
-
-If you don't have pipx installed:
-```bash
-# notest - installation commands
-python3 -m pip install --user pipx
-python3 -m pipx ensurepath
-```
-
-### Alternative: pip
-
-```bash
-# notest - installation command
-pip install portolan-cli
-```
-
-**Note:** This installs into your global or user site-packages and may conflict with other packages.
 
 ### For Development
 
-Use [uv](https://github.com/astral-sh/uv) for local development:
-
 ```bash
-# notest - development setup
 git clone https://github.com/portolan-sdi/portolan-cli.git
 cd portolan-cli
 uv sync --all-extras
 uv run portolan --help
 ```
-<!-- --8<-- [end:installation] -->
 
 See [Contributing Guide](docs/contributing.md) for full development setup.
-
-## Documentation
-
-- [Contributing Guide](docs/contributing.md)
+<!-- --8<-- [end:installation] -->
 
 ## License
 
