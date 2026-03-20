@@ -514,24 +514,29 @@ def _derive_item_id_and_asset_level(
         for collection "a/b" (since path.parent != catalog_root/a/b).
         This is intentional - the file would belong to parent collection "a".
     """
-    # Detect collection-level assets (Issue #250, ADR-0031)
-    # If file is directly in collection directory, it's a collection-level asset
+    # If item_id is explicitly provided, treat as item-level (not collection-level)
+    # This ensures --item-id creates a subdirectory structure
+    if item_id is not None:
+        # Validate item_id is a safe single path segment
+        if not item_id or "/" in item_id or "\\" in item_id or item_id in {".", ".."}:
+            raise ValueError(f"Invalid item_id '{item_id}': must be a single path segment")
+        return item_id, False  # Explicit item_id = item-level structure
+
+    # Auto-detect: collection-level if file is directly in collection directory
     is_collection_level_asset = path.parent.resolve() == collection_dir.resolve()
 
     # Generate item ID from PARENT DIRECTORY name (Issue #163)
     # Item boundaries are directories, not filenames.
     # Example: collection/item_dir/file.parquet -> item_id = "item_dir"
     # For collection-level assets, use file stem to avoid duplicate directory name
-    if item_id is None:
-        if is_collection_level_asset:
-            # Use file stem for collection-level assets to avoid collection/collection/ nesting
-            item_id = path.stem
-        else:
-            # Use parent directory name for item-level organization
-            item_id = path.parent.name
+    if is_collection_level_asset:
+        # Use file stem for collection-level assets to avoid collection/collection/ nesting
+        item_id = path.stem
+    else:
+        # Use parent directory name for item-level organization
+        item_id = path.parent.name
 
-    # Validate item_id is a safe single path segment
-    # (collection_id can be nested per ADR-0032, validated above)
+    # Validate derived item_id
     if not item_id or "/" in item_id or "\\" in item_id or item_id in {".", ".."}:
         raise ValueError(f"Invalid item_id '{item_id}': must be a single path segment")
 
