@@ -490,6 +490,48 @@ def _fix_collection_links(
     collection_json_path.write_text(json.dumps(collection_data, indent=2))
 
 
+def _derive_item_id_and_asset_level(
+    path: Path,
+    collection_dir: Path,
+    item_id: str | None,
+) -> tuple[str, bool]:
+    """Derive item ID and detect if asset is collection-level.
+
+    Args:
+        path: Path to the asset file.
+        collection_dir: Collection directory path.
+        item_id: Optional explicit item ID.
+
+    Returns:
+        Tuple of (item_id, is_collection_level_asset).
+
+    Raises:
+        ValueError: If derived or provided item_id is invalid.
+    """
+    # Detect collection-level assets (Issue #250, ADR-0031)
+    # If file is directly in collection directory, it's a collection-level asset
+    is_collection_level_asset = path.parent.resolve() == collection_dir.resolve()
+
+    # Generate item ID from PARENT DIRECTORY name (Issue #163)
+    # Item boundaries are directories, not filenames.
+    # Example: collection/item_dir/file.parquet -> item_id = "item_dir"
+    # For collection-level assets, use file stem to avoid duplicate directory name
+    if item_id is None:
+        if is_collection_level_asset:
+            # Use file stem for collection-level assets to avoid collection/collection/ nesting
+            item_id = path.stem
+        else:
+            # Use parent directory name for item-level organization
+            item_id = path.parent.name
+
+    # Validate item_id is a safe single path segment
+    # (collection_id can be nested per ADR-0032, validated above)
+    if not item_id or "/" in item_id or "\\" in item_id or item_id in {".", ".."}:
+        raise ValueError(f"Invalid item_id '{item_id}': must be a single path segment")
+
+    return item_id, is_collection_level_asset
+
+
 def add_dataset(
     *,
     path: Path,
@@ -561,22 +603,19 @@ def add_dataset(
     # Check for valid geometry/features before any conversion or copying
     _pre_validate_geometry(path, format_type)
 
-    # Generate item ID from PARENT DIRECTORY name (Issue #163)
-    # Item boundaries are directories, not filenames.
-    # Example: collection/item_dir/file.parquet -> item_id = "item_dir"
-    if item_id is None:
-        item_id = path.parent.name
-
-    # Validate item_id is a safe single path segment
-    # (collection_id can be nested per ADR-0032, validated above)
-    if not item_id or "/" in item_id or "\\" in item_id or item_id in {".", ".."}:
-        raise ValueError(f"Invalid item_id '{item_id}': must be a single path segment")
-
     # Set up paths - track files IN-PLACE (Issue #163)
-    # The file's parent directory IS the item directory.
-    # No copying needed; assets stay where they are.
     # Handle nested collection IDs (ADR-0032)
     collection_dir = catalog_root / Path(*collection_id.split("/"))
+
+    # Derive item ID and detect collection-level assets
+    item_id, is_collection_level_asset = _derive_item_id_and_asset_level(
+        path=path,
+        collection_dir=collection_dir,
+        item_id=item_id,
+    )
+
+    # The file's parent directory IS the item directory.
+    # No copying needed; assets stay where they are.
     item_dir = path.parent  # Use existing directory, don't create new one
 
     # Verify structural consistency: item_dir should be inside collection_dir
@@ -659,6 +698,7 @@ def add_dataset(
         collection_dir=collection_dir,
         item_id=item_id,
         asset_files=asset_files,
+        is_collection_level_asset=is_collection_level_asset,
     )
 
     return DatasetInfo(
@@ -914,6 +954,7 @@ def _update_versions(
     checksum: str | None = None,
     *,
     asset_files: dict[str, tuple[Path, str]] | None = None,
+    is_collection_level_asset: bool = False,
 ) -> None:
     """Update versions.json with assets.
 
@@ -926,6 +967,8 @@ def _update_versions(
         checksum: SHA-256 checksum for single file (legacy mode).
         asset_files: Dict mapping filename to (path, checksum) tuples.
             If provided, output_path/checksum are ignored.
+        is_collection_level_asset: If True, asset is at collection level (per ADR-0031).
+            Affects href construction (no item_id in path).
     """
     versions_path = collection_dir / "versions.json"
 
@@ -955,8 +998,13 @@ def _update_versions(
         # Multi-asset mode (per issue #133)
         # Use item-scoped keys ({item_id}/{filename}) for multi-asset tracking
         for filename, (file_path, file_checksum) in asset_files.items():
-            href = f"{collection_id}/{item_id}/{filename}"
-            asset_key = f"{item_id}/{filename}"
+            # For collection-level assets (Issue #250, ADR-0031), omit item_id from path
+            if is_collection_level_asset:
+                href = f"{collection_id}/{filename}"
+                asset_key = f"{collection_id}/{filename}"
+            else:
+                href = f"{collection_id}/{item_id}/{filename}"
+                asset_key = f"{item_id}/{filename}"
             stat = file_path.stat()
             # For directory-format assets (e.g., FileGDB), size_bytes is the inode
             # size which is not meaningful. Store 0 and rely on sha256 fingerprint
@@ -970,7 +1018,10 @@ def _update_versions(
             )
     elif output_path is not None and checksum is not None:
         # Legacy single-file mode (backward compatibility)
-        href = f"{collection_id}/{item_id}/{output_path.name}"
+        if is_collection_level_asset:
+            href = f"{collection_id}/{output_path.name}"
+        else:
+            href = f"{collection_id}/{item_id}/{output_path.name}"
         assets[output_path.name] = Asset(
             sha256=checksum,
             size_bytes=output_path.stat().st_size,
