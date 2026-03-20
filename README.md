@@ -47,7 +47,7 @@ portolan rm --keep demographics/old.parquet # Untrack without deleting
 # notest - requires S3 credentials
 portolan pull s3://my-bucket/catalog -c demographics  # Pull from remote
 # notest - requires S3 credentials
-portolan sync s3://my-bucket/catalog -c demographics  # Full workflow: pull → check → push
+portolan sync s3://my-bucket/catalog -c demographics  # Full workflow: pull → init → scan → check → push
 portolan config set remote s3://my-bucket/catalog     # Save remote URL
 portolan config list                        # List all config settings
 ```
