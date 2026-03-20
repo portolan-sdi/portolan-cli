@@ -88,9 +88,9 @@ cd portolan-cli
 uv sync --all-extras
 uv run portolan --help
 ```
+<!-- --8<-- [end:installation] -->
 
 See [Contributing Guide](docs/contributing.md) for full development setup.
-<!-- --8<-- [end:installation] -->
 
 ## License
 
