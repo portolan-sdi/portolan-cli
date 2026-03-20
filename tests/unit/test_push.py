@@ -37,7 +37,10 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def local_catalog(tmp_path: Path) -> Path:
-    """Create a local catalog with versions.json for testing."""
+    """Create a local catalog with versions.json for testing.
+
+    Includes required STAC metadata files (collection.json, item STAC).
+    """
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
@@ -83,10 +86,38 @@ def local_catalog(tmp_path: Path) -> Path:
 
     (versions_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
+    # Create collection.json (required for push per Issue #252)
+    collection_data = {
+        "type": "Collection",
+        "id": "test",
+        "stac_version": "1.0.0",
+        "description": "Test collection",
+        "license": "proprietary",
+        "extent": {
+            "spatial": {"bbox": [[-180, -90, 180, 90]]},
+            "temporal": {"interval": [[None, None]]},
+        },
+        "links": [],
+    }
+    (versions_dir / "collection.json").write_text(json.dumps(collection_data, indent=2))
+
     # Create actual data file at catalog_root/collection/item/filename
     item_dir = versions_dir / "data"
     item_dir.mkdir(parents=True)
     (item_dir / "data.parquet").write_bytes(b"x" * 2048)
+
+    # Create item STAC file using Portolan naming convention: {item_id}.json
+    item_data = {
+        "type": "Feature",
+        "stac_version": "1.0.0",
+        "id": "data",
+        "geometry": None,
+        "bbox": None,
+        "properties": {"datetime": "2024-01-01T00:00:00Z"},
+        "links": [],
+        "assets": {"data": {"href": "./data.parquet", "type": "application/x-parquet"}},
+    }
+    (item_dir / "data.json").write_text(json.dumps(item_data, indent=2))
 
     return catalog_dir
 
@@ -503,15 +534,18 @@ class TestPush:
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
-                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
-                    mock_upload_versions.return_value = None
+                with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
+                    mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
-                    result = push(
-                        catalog_root=local_catalog,
-                        collection="test",
-                        destination="s3://mybucket/catalog",
-                        force=True,
-                    )
+                    with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                        mock_upload_versions.return_value = None
+
+                        result = push(
+                            catalog_root=local_catalog,
+                            collection="test",
+                            destination="s3://mybucket/catalog",
+                            force=True,
+                        )
 
         assert result.success is True
 
@@ -526,14 +560,17 @@ class TestPush:
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
-                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
-                    mock_upload_versions.return_value = None
+                with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
+                    mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
-                    result = push(
-                        catalog_root=local_catalog,
-                        collection="test",
-                        destination="s3://mybucket/catalog",
-                    )
+                    with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                        mock_upload_versions.return_value = None
+
+                        result = push(
+                            catalog_root=local_catalog,
+                            collection="test",
+                            destination="s3://mybucket/catalog",
+                        )
 
         assert result.success is True
         assert result.versions_pushed >= 1
@@ -587,20 +624,23 @@ class TestEtagOptimisticLocking:
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
-                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
-                    mock_upload_versions.return_value = None
+                with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
+                    mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
-                    push(
-                        catalog_root=local_catalog,
-                        collection="test",
-                        destination="s3://mybucket/catalog",
-                    )
+                    with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                        mock_upload_versions.return_value = None
 
-                    # Verify etag was passed to upload_versions_json
-                    call_args = mock_upload_versions.call_args
-                    assert call_args is not None
-                    # Check that etag was passed (either positional or keyword)
-                    assert "etag-abc123" in str(call_args)
+                        push(
+                            catalog_root=local_catalog,
+                            collection="test",
+                            destination="s3://mybucket/catalog",
+                        )
+
+                        # Verify etag was passed to upload_versions_json
+                        call_args = mock_upload_versions.call_args
+                        assert call_args is not None
+                        # Check that etag was passed (either positional or keyword)
+                        assert "etag-abc123" in str(call_args)
 
     @pytest.mark.unit
     def test_push_raises_on_etag_mismatch(self, local_catalog: Path) -> None:
@@ -620,21 +660,24 @@ class TestEtagOptimisticLocking:
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
-                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
-                    # Simulate PushConflictError from etag mismatch
-                    mock_upload_versions.side_effect = PushConflictError(
-                        "Remote changed during push, re-run push to try again"
-                    )
+                with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
+                    mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
-                    with patch("portolan_cli.push._cleanup_uploaded_assets"):
-                        with pytest.raises(PushConflictError) as exc_info:
-                            push(
-                                catalog_root=local_catalog,
-                                collection="test",
-                                destination="s3://mybucket/catalog",
-                            )
+                    with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                        # Simulate PushConflictError from etag mismatch
+                        mock_upload_versions.side_effect = PushConflictError(
+                            "Remote changed during push, re-run push to try again"
+                        )
 
-                    assert "Remote changed during push" in str(exc_info.value)
+                        with patch("portolan_cli.push._cleanup_uploaded_assets"):
+                            with pytest.raises(PushConflictError) as exc_info:
+                                push(
+                                    catalog_root=local_catalog,
+                                    collection="test",
+                                    destination="s3://mybucket/catalog",
+                                )
+
+                        assert "Remote changed during push" in str(exc_info.value)
 
 
 # =============================================================================
@@ -647,7 +690,7 @@ class TestManifestLastOrdering:
 
     @pytest.mark.unit
     def test_assets_uploaded_before_versions(self, local_catalog: Path) -> None:
-        """Assets should be uploaded before versions.json (manifest-last)."""
+        """Assets should be uploaded before STAC files before versions.json (manifest-last)."""
         from portolan_cli.push import push
 
         call_order: list[str] = []
@@ -655,6 +698,10 @@ class TestManifestLastOrdering:
         def track_assets(*args, **kwargs):
             call_order.append("assets")
             return (1, [], ["catalog/data.parquet"])
+
+        def track_stac(*args, **kwargs):
+            call_order.append("stac")
+            return (2, [], ["stac/collection.json"])
 
         def track_versions(*args, **kwargs):
             call_order.append("versions")
@@ -664,15 +711,18 @@ class TestManifestLastOrdering:
             mock_fetch.return_value = (None, None)
 
             with patch("portolan_cli.push._upload_assets", side_effect=track_assets):
-                with patch("portolan_cli.push._upload_versions_json", side_effect=track_versions):
-                    push(
-                        catalog_root=local_catalog,
-                        collection="test",
-                        destination="s3://mybucket/catalog",
-                    )
+                with patch("portolan_cli.push._upload_stac_files", side_effect=track_stac):
+                    with patch(
+                        "portolan_cli.push._upload_versions_json", side_effect=track_versions
+                    ):
+                        push(
+                            catalog_root=local_catalog,
+                            collection="test",
+                            destination="s3://mybucket/catalog",
+                        )
 
-        assert call_order == ["assets", "versions"], (
-            f"Expected assets before versions, got: {call_order}"
+        assert call_order == ["assets", "stac", "versions"], (
+            f"Expected assets -> stac -> versions, got: {call_order}"
         )
 
     @pytest.mark.unit
@@ -808,15 +858,18 @@ class TestForceFlag:
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
-                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
-                    mock_upload_versions.return_value = None
+                with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
+                    mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
-                    result = push(
-                        catalog_root=local_catalog,
-                        collection="test",
-                        destination="s3://mybucket/catalog",
-                        force=True,
-                    )
+                    with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                        mock_upload_versions.return_value = None
+
+                        result = push(
+                            catalog_root=local_catalog,
+                            collection="test",
+                            destination="s3://mybucket/catalog",
+                            force=True,
+                        )
 
         # With --force, should have uploaded
         assert result.success is True
@@ -863,6 +916,22 @@ class TestForceFlag:
             ],
         }
         (versions_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+
+        # Create collection.json (required for push per Issue #252)
+        collection_data = {
+            "type": "Collection",
+            "id": "test",
+            "stac_version": "1.0.0",
+            "description": "Test collection",
+            "license": "proprietary",
+            "extent": {
+                "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [],
+        }
+        (versions_dir / "collection.json").write_text(json.dumps(collection_data, indent=2))
+
         item_dir = versions_dir / "data"
         item_dir.mkdir(parents=True)
         (item_dir / "data.parquet").write_bytes(b"x" * 1024)
@@ -884,15 +953,18 @@ class TestForceFlag:
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
                 mock_upload_assets.return_value = (0, [], [])  # No assets to upload
 
-                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
-                    mock_upload_versions.return_value = None
+                with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
+                    mock_upload_stac.return_value = (1, [], ["stac/collection.json"])
 
-                    result = push(
-                        catalog_root=catalog_dir,
-                        collection="test",
-                        destination="s3://mybucket/catalog",
-                        force=True,
-                    )
+                    with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                        mock_upload_versions.return_value = None
+
+                        result = push(
+                            catalog_root=catalog_dir,
+                            collection="test",
+                            destination="s3://mybucket/catalog",
+                            force=True,
+                        )
 
         # With --force, should still upload versions.json to overwrite remote
         # even though local has no NEW versions (local_only is empty)
@@ -986,15 +1058,18 @@ class TestOrphanCleanup:
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
-                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
-                    mock_upload_versions.side_effect = Exception("Network timeout")
+                with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
+                    mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
-                    with patch("portolan_cli.push._cleanup_uploaded_assets") as mock_cleanup:
-                        result = push(
-                            catalog_root=local_catalog,
-                            collection="test",
-                            destination="s3://mybucket/catalog",
-                        )
+                    with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                        mock_upload_versions.side_effect = Exception("Network timeout")
+
+                        with patch("portolan_cli.push._cleanup_uploaded_assets") as mock_cleanup:
+                            result = push(
+                                catalog_root=local_catalog,
+                                collection="test",
+                                destination="s3://mybucket/catalog",
+                            )
 
         # Cleanup should have been called with the uploaded keys
         mock_cleanup.assert_called_once()
@@ -1020,16 +1095,19 @@ class TestOrphanCleanup:
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
 
-                with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
-                    mock_upload_versions.side_effect = PushConflictError("Etag mismatch")
+                with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
+                    mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
-                    with patch("portolan_cli.push._cleanup_uploaded_assets") as mock_cleanup:
-                        with pytest.raises(PushConflictError):
-                            push(
-                                catalog_root=local_catalog,
-                                collection="test",
-                                destination="s3://mybucket/catalog",
-                            )
+                    with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
+                        mock_upload_versions.side_effect = PushConflictError("Etag mismatch")
+
+                        with patch("portolan_cli.push._cleanup_uploaded_assets") as mock_cleanup:
+                            with pytest.raises(PushConflictError):
+                                push(
+                                    catalog_root=local_catalog,
+                                    collection="test",
+                                    destination="s3://mybucket/catalog",
+                                )
 
         mock_cleanup.assert_called_once()
 
