@@ -392,7 +392,8 @@ def _upload_assets(
         try:
             # Calculate relative path from catalog root
             rel_path = asset_path.relative_to(catalog_root)
-            target_key = f"{prefix}/{rel_path}".lstrip("/")
+            # Use as_posix() to ensure forward slashes on Windows (cloud keys are always /)
+            target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
 
             if dry_run:
                 info(f"[DRY RUN] Would upload ({i}/{total}): {rel_path} -> {target_key}")
