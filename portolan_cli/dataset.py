@@ -658,6 +658,7 @@ def add_dataset(
     _update_versions(
         collection_dir=collection_dir,
         item_id=item_id,
+        catalog_root=catalog_root,
         asset_files=asset_files,
     )
 
@@ -910,6 +911,7 @@ def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
 def _update_versions(
     collection_dir: Path,
     item_id: str,
+    catalog_root: Path,
     output_path: Path | None = None,
     checksum: str | None = None,
     *,
@@ -922,6 +924,7 @@ def _update_versions(
     Args:
         collection_dir: Path to collection directory.
         item_id: Item identifier.
+        catalog_root: Root directory of the catalog (for computing relative hrefs).
         output_path: Path to single output file (legacy mode).
         checksum: SHA-256 checksum for single file (legacy mode).
         asset_files: Dict mapping filename to (path, checksum) tuples.
@@ -955,7 +958,9 @@ def _update_versions(
         # Multi-asset mode (per issue #133)
         # Use item-scoped keys ({item_id}/{filename}) for multi-asset tracking
         for filename, (file_path, file_checksum) in asset_files.items():
-            href = f"{collection_id}/{item_id}/{filename}"
+            # Compute href as actual relative path from catalog_root (ADR-0031 fix)
+            # This handles both collection-level assets (vector) and item-level assets (raster)
+            href = str(file_path.relative_to(catalog_root))
             asset_key = f"{item_id}/{filename}"
             stat = file_path.stat()
             # For directory-format assets (e.g., FileGDB), size_bytes is the inode
@@ -970,7 +975,8 @@ def _update_versions(
             )
     elif output_path is not None and checksum is not None:
         # Legacy single-file mode (backward compatibility)
-        href = f"{collection_id}/{item_id}/{output_path.name}"
+        # Compute href as actual relative path from catalog_root (ADR-0031 fix)
+        href = str(output_path.relative_to(catalog_root))
         assets[output_path.name] = Asset(
             sha256=checksum,
             size_bytes=output_path.stat().st_size,
@@ -1882,6 +1888,7 @@ def _update_item_with_asset(
     _update_versions(
         collection_dir=collection_dir,
         item_id=item_id,
+        catalog_root=catalog_root,
         asset_files=asset_files,
     )
 

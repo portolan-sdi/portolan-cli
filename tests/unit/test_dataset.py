@@ -1024,6 +1024,7 @@ class TestUpdateVersionsHref:
         _update_versions(
             collection_dir=collection_dir,
             item_id="census-2020",
+            catalog_root=catalog_root,
             asset_files={
                 "census-2020.parquet": (output_file, "abc123"),
             },
@@ -1049,6 +1050,7 @@ class TestUpdateVersionsHref:
         _update_versions(
             collection_dir=collection_dir,
             item_id="pop-data",
+            catalog_root=catalog_root,
             asset_files={
                 "pop-data.parquet": (output_file, "def456"),
             },
@@ -1461,6 +1463,7 @@ class TestMultiAssetUpdateVersions:
         _update_versions(
             collection_dir=collection_dir,
             item_id="my-item",
+            catalog_root=catalog_root,
             asset_files={
                 "my-item.parquet": (parquet_file, "hash1"),
                 "thumbnail.png": (thumbnail, "hash2"),
@@ -1501,6 +1504,7 @@ class TestMultiAssetUpdateVersions:
         _update_versions(
             collection_dir=collection_dir,
             item_id="census-2020",
+            catalog_root=catalog_root,
             asset_files={
                 "census-2020.parquet": (output_file, "abc123"),
             },
@@ -1511,6 +1515,46 @@ class TestMultiAssetUpdateVersions:
         asset = versions.versions[0].assets["census-2020/census-2020.parquet"]
         assert asset.href == "agriculture/census-2020/census-2020.parquet"
         assert asset.sha256 == "abc123"
+
+    @pytest.mark.unit
+    def test_update_versions_collection_level_asset_no_doubled_path(
+        self, tmp_path: Path
+    ) -> None:
+        """Collection-level assets (ADR-0031) should not double the path.
+
+        When item_id == collection_id (file is at collection level, not in
+        subdirectory), the href should NOT be collection/collection/file.
+        This is a regression test for the bug where vector data at collection
+        level got doubled paths in versions.json.
+        """
+        catalog_root = tmp_path / "catalog"
+        # Vector data at collection level: parks/parks_datasd.parquet
+        collection_dir = catalog_root / "parks"
+        collection_dir.mkdir(parents=True)
+
+        # File is directly in collection dir (not in item subdir)
+        parquet_file = collection_dir / "parks_datasd.parquet"
+        parquet_file.write_bytes(b"fake parquet")
+
+        # item_id == collection_id (both are "parks")
+        _update_versions(
+            collection_dir=collection_dir,
+            item_id="parks",
+            catalog_root=catalog_root,
+            asset_files={
+                "parks_datasd.parquet": (parquet_file, "abc123"),
+            },
+        )
+
+        versions = read_versions(collection_dir / "versions.json")
+        asset = versions.versions[0].assets["parks/parks_datasd.parquet"]
+
+        # href should be parks/parks_datasd.parquet, NOT parks/parks/parks_datasd.parquet
+        assert asset.href == "parks/parks_datasd.parquet"
+        # Verify it resolves to the actual file
+        resolved = catalog_root / asset.href
+        assert resolved == parquet_file
+        assert resolved.exists()
 
 
 class TestMultiAssetListAndInfo:
