@@ -15,3 +15,11 @@ docs = ["docs/reference/formats.md"]
 [[link]]
 code = "portolan_cli/output.py"
 docs = ["docs/contributing.md"]
+
+[[link]]
+code = "portolan_cli/config.py"
+docs = ["docs/reference/configuration.md"]
+
+[[link]]
+code = "portolan_cli/conversion_config.py"
+docs = ["docs/reference/configuration.md"]

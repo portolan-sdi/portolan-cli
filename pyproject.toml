@@ -252,4 +252,6 @@ transitive_depth = 1
 enforce_symmetry = true
 require_links = ["portolan_cli/**/*.py"]
 exempt = ["tests/**"]
-doc_paths = ["docs/**/*.md", "README.md", "CLAUDE.md", "context/**/*.md"]
+# Only track USER-FACING docs (not ADRs, plans, or internal context)
+# ADRs are historical records - they don't need updating when code changes
+doc_paths = ["docs/**/*.md", "README.md"]
