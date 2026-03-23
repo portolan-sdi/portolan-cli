@@ -119,6 +119,7 @@ uv run pytest --cov-report=html         # Coverage report
 uv run ruff check .                     # Lint
 uv run ruff format .                    # Format
 uv run mypy portolan_cli                # Type check
+uv run deptry .                         # Check dependencies (unused, missing, transitive)
 uv run vulture portolan_cli tests       # Dead code
 uv run xenon --max-absolute=C portolan_cli  # Complexity
 uv run pylint --disable=all --enable=duplicate-code portolan_cli/  # Duplicate code
