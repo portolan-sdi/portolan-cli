@@ -617,6 +617,8 @@ def _detect_json_type(path: Path) -> FormatType:
             prefix = f.read(8192)
             if any(token in prefix for token in geojson_tokens):
                 return FormatType.VECTOR
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # OSError: permission denied, file not found, etc.
+        # UnicodeDecodeError: binary file with .json extension
         pass
     return FormatType.UNKNOWN
