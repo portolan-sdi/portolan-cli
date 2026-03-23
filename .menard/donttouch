@@ -4,5 +4,10 @@
 # License identifiers (must exist in LICENSE file)
 "Apache-2.0"
 
-# Brand colors - changing breaks visual identity
-docs/BRANDING.md
+# Brand colors - protect the color values only
+"#eaedf9"
+"#202a4f"
+"#343e63"
+"#4163cc"
+"#395eca"
+"#848bd8"

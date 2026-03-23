@@ -46,22 +46,11 @@ The branding is implemented through:
 
 ## GitHub Repository Setup
 
-### Social Preview Image
+Configure these settings in **Settings** → **General**:
 
-To configure the GitHub repository's social preview:
+**Social preview:** Upload `docs/assets/images/social-card.png` to ensure Portolan branding appears on social media, chat apps, and link previews.
 
-1. Navigate to **Settings** → **General**
-2. Scroll to **Social preview** section
-3. Click **Edit** and upload `docs/assets/images/social-card.png`
-
-This ensures the Portolan branding appears when sharing the repository on:
-- Social media (Twitter, LinkedIn, etc.)
-- Chat apps (Slack, Discord, etc.)
-- Link previews anywhere
-
-### Repository Description
-
-Ensure the repository description matches the brand messaging:
+**Repository description:** Use the brand messaging:
 
 > A CLI for publishing and managing cloud-native geospatial data catalogs
 

@@ -144,9 +144,8 @@ repos:
 
       - id: menard-brevity
         name: check for duplicate documentation
-        entry: menard brevity --threshold 0.95
-        language: python
-        additional_dependencies: ['menard[brevity]>=0.3.0']
+        entry: uv run menard brevity --threshold 0.95
+        language: system
         files: \.md$
         pass_filenames: false
 
