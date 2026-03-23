@@ -74,6 +74,112 @@ class TestInferNestedCollectionId:
         with pytest.raises(ValueError, match="outside catalog root"):
             infer_nested_collection_id(file_path, catalog_root)
 
+    def test_filegdb_in_collection_infers_parent(self, tmp_path: Path) -> None:
+        """FileGDB in collection: ocha/my_data.gdb -> ocha (Issue #259).
+
+        FileGDB directories are data assets, not collections. The collection ID
+        should be the parent directory, not include the .gdb folder name.
+        """
+        from portolan_cli.dataset import infer_nested_collection_id
+
+        catalog_root = tmp_path
+        # Create a mock FileGDB directory structure
+        gdb_path = tmp_path / "ocha" / "my_data.gdb"
+        gdb_path.mkdir(parents=True)
+        # FileGDB requires internal structure to be detected
+        (gdb_path / "gdb").touch()
+
+        result = infer_nested_collection_id(gdb_path, catalog_root)
+        assert result == "ocha"
+
+    def test_filegdb_at_root_raises_error(self, tmp_path: Path) -> None:
+        """FileGDB at catalog root should raise ValueError (Issue #259).
+
+        Just like files at root, FileGDB directories at root level should
+        raise an error requiring them to be in a collection subdirectory.
+        """
+        from portolan_cli.dataset import infer_nested_collection_id
+
+        catalog_root = tmp_path
+        # Create a mock FileGDB at root level
+        gdb_path = tmp_path / "my_data.gdb"
+        gdb_path.mkdir()
+        (gdb_path / "gdb").touch()
+
+        with pytest.raises(ValueError, match="must be in a subdirectory"):
+            infer_nested_collection_id(gdb_path, catalog_root)
+
+    def test_filegdb_nested_two_levels(self, tmp_path: Path) -> None:
+        """FileGDB nested: theme/subtheme/data.gdb -> theme/subtheme (Issue #259)."""
+        from portolan_cli.dataset import infer_nested_collection_id
+
+        catalog_root = tmp_path
+        gdb_path = tmp_path / "theme" / "subtheme" / "boundaries.gdb"
+        gdb_path.mkdir(parents=True)
+        (gdb_path / "gdb").touch()
+
+        result = infer_nested_collection_id(gdb_path, catalog_root)
+        assert result == "theme/subtheme"
+
+    def test_filegdb_with_gdbtable_files(self, tmp_path: Path) -> None:
+        """FileGDB detected via .gdbtable files (alternate detection path).
+
+        is_filegdb() accepts either 'gdb' marker OR .gdbtable files.
+        This test covers the .gdbtable detection path.
+        """
+        from portolan_cli.dataset import infer_nested_collection_id
+
+        catalog_root = tmp_path
+        gdb_path = tmp_path / "ocha" / "boundaries.gdb"
+        gdb_path.mkdir(parents=True)
+        # Create .gdbtable files instead of 'gdb' marker
+        (gdb_path / "a00000001.gdbtable").touch()
+        (gdb_path / "a00000002.gdbtable").touch()
+
+        result = infer_nested_collection_id(gdb_path, catalog_root)
+        assert result == "ocha"
+
+    def test_empty_gdb_directory_uses_suffix_fallback(self, tmp_path: Path) -> None:
+        """Empty .gdb directory still infers parent via suffix fallback.
+
+        A directory named *.gdb without proper internal structure (no 'gdb'
+        marker, no .gdbtable files) should still be treated as a data asset
+        using the suffix fallback. This handles:
+        - Corrupted FileGDB
+        - Partial downloads
+        - Manually created .gdb folders
+        """
+        from portolan_cli.dataset import infer_nested_collection_id
+        from portolan_cli.scan_detect import is_filegdb
+
+        catalog_root = tmp_path
+        gdb_path = tmp_path / "ocha" / "incomplete.gdb"
+        gdb_path.mkdir(parents=True)
+        # Intentionally NOT creating any internal structure
+
+        # Verify is_filegdb returns False (no internal structure)
+        assert is_filegdb(gdb_path) is False
+
+        # But infer_nested_collection_id should still work via suffix fallback
+        result = infer_nested_collection_id(gdb_path, catalog_root)
+        assert result == "ocha"
+
+    def test_empty_gdb_at_root_raises_error(self, tmp_path: Path) -> None:
+        """Empty .gdb directory at root should raise ValueError.
+
+        Even with suffix fallback, a .gdb directory at catalog root must
+        be in a collection subdirectory.
+        """
+        from portolan_cli.dataset import infer_nested_collection_id
+
+        catalog_root = tmp_path
+        gdb_path = tmp_path / "empty.gdb"
+        gdb_path.mkdir()
+        # Intentionally NOT creating any internal structure
+
+        with pytest.raises(ValueError, match="must be in a subdirectory"):
+            infer_nested_collection_id(gdb_path, catalog_root)
+
 
 class TestCreateIntermediateCatalogs:
     """Test create_intermediate_catalogs() function."""
