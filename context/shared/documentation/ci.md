@@ -35,6 +35,8 @@ Install with: `uv run pre-commit install`
 - `xenon` — Complexity monitoring
 - `mypy` — Type checking (strict)
 - `pytest -m unit` — Fast unit tests only
+- `menard check` — Documentation freshness (requires Python 3.11+)
+- `menard check-protected` — Protected content validation
 - `commitizen` — Commit message validation (commit-msg stage)
 - Standard hooks: trailing whitespace, YAML validation, large file detection
 
@@ -76,6 +78,17 @@ Workflow: `.github/workflows/ci.yml`
 #### `docs` — Documentation Build
 
 - `mkdocs build --strict` — Fails on warnings
+
+#### `doc-sync` — Documentation Sync (menard)
+
+Checks that documentation stays in sync with code changes:
+
+- `menard validate-links` — Verifies all code→doc links are valid
+- `menard list-stale` — Identifies docs that need updating
+- `menard check-protected` — Validates protected content integrity
+- `menard coverage` — Reports documentation coverage percentage
+
+**Note:** This job requires Python 3.11+ due to menard's dependencies.
 
 #### `build` — Package Build
 
@@ -218,3 +231,13 @@ Refactor the flagged function/module. Consider extracting helper functions or si
 ### "pip-audit found vulnerabilities"
 
 Update the affected dependency or add a temporary exception with justification in an ADR.
+
+### "menard: stale documentation detected"
+
+Code was modified but linked documentation wasn't updated. Options:
+1. Update the documentation to reflect the code changes
+2. Run `menard fix` for interactive resolution
+3. Run `menard fix-mark-reviewed <code-file> <doc-file>` if the doc doesn't need changes
+4. Run `menard fix-ignore <code-file> <doc-file>` to permanently ignore the relationship
+
+To see what changed: `menard list-stale --show-diff`
