@@ -1,0 +1,8 @@
+# Protected content - menard will warn if these are modified
+# Format: file paths (gitignore-style) or "literal strings"
+
+# License identifiers (must exist in LICENSE file)
+"Apache-2.0"
+
+# Brand colors - changing breaks visual identity
+docs/BRANDING.md

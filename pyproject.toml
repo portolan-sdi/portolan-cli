@@ -51,6 +51,7 @@ portolan = "portolan_cli:cli"
 dev = [
     "bandit>=1.9.3",
     "codespell>=2.4.1",
+    "menard>=0.2.0; python_version >= '3.11'",  # Doc drift detection (requires 3.11+)
     "deptry>=0.25.1",  # Dependency checker (unused, missing, transitive deps)
     "gitingest>=0.1.0",  # Auto-fetch API docs for core dependencies
     "import-linter>=2.0",  # Architecture enforcement via import contracts
@@ -244,3 +245,13 @@ dev = [
     "pylint>=4.0.5",
     "types-pyyaml>=6.0.12.20250915",
 ]
+
+[tool.menard]
+mode = "block"
+transitive_depth = 1
+enforce_symmetry = true
+require_links = ["portolan_cli/**/*.py"]
+exempt = ["tests/**"]
+# Only track USER-FACING docs (not ADRs, plans, or internal context)
+# ADRs are historical records - they don't need updating when code changes
+doc_paths = ["docs/**/*.md", "README.md"]

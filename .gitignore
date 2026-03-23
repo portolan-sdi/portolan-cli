@@ -195,6 +195,12 @@ cython_debug/
 # The index is machine-local and regenerated via: grepai init && grepai watch
 .grepai/
 
+# menard (documentation sync)
+# Cache files are machine-local; links.toml should be committed
+.menard/cache/
+.menard/*.json
+.menard/*.state
+
 # Portolan catalog files (test artifacts)
 # These are created during testing but should not be committed to the repository
 .portolan/
