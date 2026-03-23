@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question / Discussion
+    url: https://github.com/portolan-sdi/portolan-cli/discussions
+    about: Ask questions or discuss ideas before opening an issue
+  - name: Security Issue
+    url: https://github.com/portolan-sdi/portolan-cli/security/advisories/new
+    about: Report security vulnerabilities privately

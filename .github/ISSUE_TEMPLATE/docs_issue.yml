@@ -1,0 +1,43 @@
+name: Documentation Issue
+description: Report unclear, incorrect, or missing documentation
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: dropdown
+    id: docs-type
+    attributes:
+      label: Documentation Type
+      options:
+        - "README"
+        - "CLI Reference"
+        - "Python API"
+        - "User Guide"
+        - "Installation"
+        - "Contributing"
+        - "Other"
+    validations:
+      required: true
+
+  - type: textarea
+    id: location
+    attributes:
+      label: Location
+      description: Link to the problematic documentation
+      placeholder: "https://portolan-sdi.github.io/portolan-cli/guide/..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: issue
+    attributes:
+      label: What's Wrong?
+      description: Describe the problem with the current docs
+      placeholder: "The example shows X, but it should show Y because..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Improvement
+      description: How should it be fixed?
