@@ -14,7 +14,7 @@ docs = ["docs/reference/formats.md"]
 
 [[link]]
 code = "portolan_cli/output.py"
-docs = ["docs/contributing.md"]
+docs = ["docs/contributing.md#Code Standards"]
 
 [[link]]
 code = "portolan_cli/config.py"
@@ -22,4 +22,4 @@ docs = ["docs/reference/configuration.md"]
 
 [[link]]
 code = "portolan_cli/conversion_config.py"
-docs = ["docs/reference/configuration.md"]
+docs = ["docs/reference/configuration.md#Conversion Configuration"]
