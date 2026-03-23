@@ -1444,12 +1444,17 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     if not parts:
         raise ValueError(f"Cannot determine collection from path: {path}")
 
-    # File must be in at least one subdirectory
-    if path.is_file() and len(parts) == 1:
+    # A path is treated as a "data asset" (not a collection) if it's a file
+    # OR a FileGDB directory. FileGDB directories (*.gdb) contain the actual
+    # data - they're assets, not organizational collections (Issue #259).
+    is_asset = path.is_file() or is_filegdb(path)
+
+    # Data asset must be in at least one subdirectory (collection)
+    if is_asset and len(parts) == 1:
         raise ValueError(f"File {path} must be in a subdirectory (collection)")
 
     # Return parent directory path as collection ID (all but last component)
-    parent_parts = parts[:-1] if path.is_file() else parts
+    parent_parts = parts[:-1] if is_asset else parts
     if not parent_parts:
         raise ValueError(f"File {path} must be in a subdirectory (collection)")
 

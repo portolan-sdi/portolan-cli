@@ -74,6 +74,53 @@ class TestInferNestedCollectionId:
         with pytest.raises(ValueError, match="outside catalog root"):
             infer_nested_collection_id(file_path, catalog_root)
 
+    def test_filegdb_in_collection_infers_parent(self, tmp_path: Path) -> None:
+        """FileGDB in collection: ocha/my_data.gdb -> ocha (Issue #259).
+
+        FileGDB directories are data assets, not collections. The collection ID
+        should be the parent directory, not include the .gdb folder name.
+        """
+        from portolan_cli.dataset import infer_nested_collection_id
+
+        catalog_root = tmp_path
+        # Create a mock FileGDB directory structure
+        gdb_path = tmp_path / "ocha" / "my_data.gdb"
+        gdb_path.mkdir(parents=True)
+        # FileGDB requires internal structure to be detected
+        (gdb_path / "gdb").touch()
+
+        result = infer_nested_collection_id(gdb_path, catalog_root)
+        assert result == "ocha"
+
+    def test_filegdb_at_root_raises_error(self, tmp_path: Path) -> None:
+        """FileGDB at catalog root should raise ValueError (Issue #259).
+
+        Just like files at root, FileGDB directories at root level should
+        raise an error requiring them to be in a collection subdirectory.
+        """
+        from portolan_cli.dataset import infer_nested_collection_id
+
+        catalog_root = tmp_path
+        # Create a mock FileGDB at root level
+        gdb_path = tmp_path / "my_data.gdb"
+        gdb_path.mkdir()
+        (gdb_path / "gdb").touch()
+
+        with pytest.raises(ValueError, match="must be in a subdirectory"):
+            infer_nested_collection_id(gdb_path, catalog_root)
+
+    def test_filegdb_nested_two_levels(self, tmp_path: Path) -> None:
+        """FileGDB nested: theme/subtheme/data.gdb -> theme/subtheme (Issue #259)."""
+        from portolan_cli.dataset import infer_nested_collection_id
+
+        catalog_root = tmp_path
+        gdb_path = tmp_path / "theme" / "subtheme" / "boundaries.gdb"
+        gdb_path.mkdir(parents=True)
+        (gdb_path / "gdb").touch()
+
+        result = infer_nested_collection_id(gdb_path, catalog_root)
+        assert result == "theme/subtheme"
+
 
 class TestCreateIntermediateCatalogs:
     """Test create_intermediate_catalogs() function."""
