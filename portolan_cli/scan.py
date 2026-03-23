@@ -49,11 +49,16 @@ from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
 from portolan_cli.formats import (
     CloudNativeStatus,
     FormatInfo,
+    _detect_json_type,
     get_cloud_native_status,
     is_geoparquet,
     is_valid_parquet,
 )
+from portolan_cli.formats import (
+    FormatType as FormatsFormatType,
+)
 from portolan_cli.scan_classify import (
+    STAC_FILENAMES,
     FileCategory,
     SkippedFile,
     SkipReasonType,
@@ -1257,6 +1262,40 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
             )
             return
         # It's GeoParquet - treat as vector format
+        format_type = FormatType.VECTOR
+    elif ext == ".json":
+        # Handle .json files - need content inspection for GeoJSON detection
+        # Issue #256: GeoJSON files are often saved with .json extension
+        #
+        # But first, check for STAC metadata files (catalog.json, collection.json, etc.)
+        # These should be skipped as metadata, not inspected for GeoJSON content.
+        if name in STAC_FILENAMES:
+            # STAC metadata file - skip with proper classification
+            ctx.skipped.append(
+                SkippedFile(
+                    path=path,
+                    relative_path=_get_relative_path(path, ctx.root),
+                    category=FileCategory.STAC_METADATA,
+                    reason_type=SkipReasonType.METADATA_FILE,
+                    reason_message=f"{name} is STAC catalog metadata",
+                )
+            )
+            return
+        if _detect_json_type(path) != FormatsFormatType.VECTOR:
+            # Plain JSON, not GeoJSON - skip with informative message
+            # We override classify_file here because we have specific knowledge:
+            # we inspected the content and determined it's not GeoJSON.
+            ctx.skipped.append(
+                SkippedFile(
+                    path=path,
+                    relative_path=_get_relative_path(path, ctx.root),
+                    category=FileCategory.UNKNOWN,
+                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
+                    reason_message="JSON file does not contain GeoJSON content",
+                )
+            )
+            return
+        # It's GeoJSON in a .json file - treat as vector format
         format_type = FormatType.VECTOR
     elif _is_recognized_extension(ext):
         # Get format type for other recognized extensions

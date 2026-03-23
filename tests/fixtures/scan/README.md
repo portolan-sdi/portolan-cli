@@ -40,6 +40,7 @@ These fixtures test **directory structure detection**, not file content parsing.
 | `flat_collection/` | Multiple files at root level | ADR-0031 flat pattern |
 | `unsupported/` | `.csv`, `.mxd` + one valid file | Skip unsupported, find valid |
 | `duplicate_basenames/` | `argentina.geojson` + `Argentina.geojson` | Warning: case collision |
+| `json_geojson/` | GeoJSON in `.json` file + plain JSON | Issue #256: content-based GeoJSON detection |
 
 ## Fixture Details
 
