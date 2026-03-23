@@ -79,17 +79,6 @@ Workflow: `.github/workflows/ci.yml`
 
 - `mkdocs build --strict` — Fails on warnings
 
-#### `doc-sync` — Documentation Sync (menard)
-
-Checks that documentation stays in sync with code changes:
-
-- `menard validate-links` — Verifies all code→doc links are valid
-- `menard list-stale` — Identifies docs that need updating
-- `menard check-protected` — Validates protected content integrity
-- `menard coverage` — Reports documentation coverage percentage
-
-**Note:** This job requires Python 3.11+ due to menard's dependencies.
-
 #### `build` — Package Build
 
 - `uv build` — Verify package builds correctly
