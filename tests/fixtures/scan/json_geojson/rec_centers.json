@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-118.2437, 34.0522]
+      },
+      "properties": {
+        "name": "Downtown Recreation Center",
+        "capacity": 200
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-118.3965, 34.0689]
+      },
+      "properties": {
+        "name": "West Side Community Center",
+        "capacity": 150
+      }
+    }
+  ]
+}

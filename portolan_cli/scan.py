@@ -49,9 +49,13 @@ from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
 from portolan_cli.formats import (
     CloudNativeStatus,
     FormatInfo,
+    _detect_json_type,
     get_cloud_native_status,
     is_geoparquet,
     is_valid_parquet,
+)
+from portolan_cli.formats import (
+    FormatType as FormatsFormatType,
 )
 from portolan_cli.scan_classify import (
     FileCategory,
@@ -1257,6 +1261,23 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
             )
             return
         # It's GeoParquet - treat as vector format
+        format_type = FormatType.VECTOR
+    elif ext == ".json":
+        # Handle .json files - need content inspection for GeoJSON detection
+        # Issue #256: GeoJSON files are often saved with .json extension
+        if _detect_json_type(path) != FormatsFormatType.VECTOR:
+            # Plain JSON, not GeoJSON - skip as non-geospatial
+            ctx.skipped.append(
+                SkippedFile(
+                    path=path,
+                    relative_path=_get_relative_path(path, ctx.root),
+                    category=FileCategory.UNKNOWN,
+                    reason_type=SkipReasonType.NOT_GEOSPATIAL,
+                    reason_message="JSON file does not contain GeoJSON content",
+                )
+            )
+            return
+        # It's GeoJSON in a .json file - treat as vector format
         format_type = FormatType.VECTOR
     elif _is_recognized_extension(ext):
         # Get format type for other recognized extensions

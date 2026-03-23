@@ -1106,3 +1106,108 @@ class TestScanDefaultPath:
         issues = output["data"].get("issues", [])
         permission_issues = [i for i in issues if i.get("type") == "permission_denied"]
         assert len(permission_issues) == 1
+
+
+# =============================================================================
+# Issue #256: JSON GeoJSON Detection
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScanJsonGeoJsonCLI:
+    """Integration tests for Issue #256: .json files with GeoJSON content.
+
+    GeoJSON files are often saved with .json extension rather than .geojson.
+    These tests verify the CLI correctly handles such files.
+    """
+
+    def test_scan_json_geojson_shows_in_ready_count(
+        self, runner: CliRunner, fixtures_dir: Path
+    ) -> None:
+        """portolan scan correctly counts .json files with GeoJSON content."""
+        result = runner.invoke(cli, ["scan", str(fixtures_dir / "json_geojson"), "--json"])
+
+        assert result.exit_code == 0
+        envelope = json.loads(result.output)
+        data = envelope["data"]
+
+        # Should find 1 ready file (rec_centers.json)
+        # config.json should be skipped (not GeoJSON)
+        assert data["summary"]["ready_count"] == 1
+
+    def test_scan_json_geojson_human_output(self, runner: CliRunner, fixtures_dir: Path) -> None:
+        """Human-readable output mentions the .json file."""
+        result = runner.invoke(cli, ["scan", str(fixtures_dir / "json_geojson")])
+
+        assert result.exit_code == 0
+        # Output should mention the ready file
+        assert "1 geo-asset" in result.output.lower()
+
+    def test_scan_json_geojson_extension_preserved(
+        self, runner: CliRunner, fixtures_dir: Path
+    ) -> None:
+        """JSON output shows .json extension preserved (not converted to .geojson)."""
+        result = runner.invoke(cli, ["scan", str(fixtures_dir / "json_geojson"), "--json"])
+
+        assert result.exit_code == 0
+        envelope = json.loads(result.output)
+        data = envelope["data"]
+
+        # Find the ready file
+        ready_files = data.get("ready", [])
+        assert len(ready_files) == 1
+
+        # Extension should be .json, not .geojson
+        assert ready_files[0]["extension"] == ".json"
+        assert ready_files[0]["relative_path"] == "rec_centers.json"
+
+    def test_scan_json_geojson_format_type_is_vector(
+        self, runner: CliRunner, fixtures_dir: Path
+    ) -> None:
+        """JSON GeoJSON files are detected as vector format."""
+        result = runner.invoke(cli, ["scan", str(fixtures_dir / "json_geojson"), "--json"])
+
+        assert result.exit_code == 0
+        envelope = json.loads(result.output)
+        data = envelope["data"]
+
+        ready_files = data.get("ready", [])
+        assert len(ready_files) == 1
+        assert ready_files[0]["format_type"] == "vector"
+
+    def test_scan_plain_json_shows_in_skipped(self, runner: CliRunner, fixtures_dir: Path) -> None:
+        """Plain JSON files appear in skipped list with appropriate reason."""
+        result = runner.invoke(cli, ["scan", str(fixtures_dir / "json_geojson"), "--json", "--all"])
+
+        assert result.exit_code == 0
+        envelope = json.loads(result.output)
+        data = envelope["data"]
+
+        # config.json should be in skipped list
+        skipped_files = data.get("skipped", [])
+        config_skipped = [s for s in skipped_files if s["relative_path"] == "config.json"]
+        assert len(config_skipped) == 1, "config.json should be in skipped list"
+
+        # Should have appropriate reason (field is 'reason' in JSON output)
+        reason = config_skipped[0].get("reason", "")
+        assert "GeoJSON" in reason or "geospatial" in reason.lower()
+
+    def test_scan_mixed_json_and_geojson(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Both .json and .geojson files with GeoJSON content are detected."""
+        # Create both file types
+        (tmp_path / "standard.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+        (tmp_path / "alternate.json").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = runner.invoke(cli, ["scan", str(tmp_path), "--json"])
+
+        assert result.exit_code == 0
+        envelope = json.loads(result.output)
+        data = envelope["data"]
+
+        # Both files should be detected
+        assert data["summary"]["ready_count"] == 2
+
+        # Check both files are in ready list
+        ready_paths = [f["relative_path"] for f in data.get("ready", [])]
+        assert "standard.geojson" in ready_paths
+        assert "alternate.json" in ready_paths
