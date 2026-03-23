@@ -1,0 +1,88 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please provide details to help us reproduce and fix it.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: Clear description of what went wrong
+      placeholder: "When I run `portolan init`, it crashes with..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps to reproduce the issue
+      placeholder: |
+        1. Install portolan with `pipx install portolan-cli`
+        2. Run `portolan init`
+        3. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include error messages/stack traces.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: System details
+      value: |
+        - OS: [e.g., Ubuntu 22.04, macOS 14, Windows 11]
+        - Python version: [e.g., 3.11.5]
+        - portolan version: [run `portolan --version`]
+        - Installation method: [pipx, pip, uv tool, from source]
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: sample-data
+    attributes:
+      label: Sample Data (Optional)
+      description: |
+        Link to sample data that reproduces the issue.
+        Use a public URL (S3, GitHub gist, etc.) if possible.
+      placeholder: "https://example.com/sample.parquet"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (Optional)
+      description: Full command output with `--verbose` flag
+      render: shell
+
+  - type: dropdown
+    id: contribution
+    attributes:
+      label: Would you like to submit a PR?
+      options:
+        - "No"
+        - "Yes, I'd like to try"
+        - "Yes, already working on it"
+    validations:
+      required: true
