@@ -32,6 +32,8 @@ dependencies = [
     "pyarrow>=12.0.0,<22.0.0",  # v22+ has ABI incompatibility with abseil on some systems
     "pystac>=1.10.0",  # STAC catalog/collection/item creation
     "pyyaml>=6.0",  # YAML config file support
+    "rasterio>=1.3.0",  # Raster I/O (transitive via rio-cogeo, but we import directly)
+    "rich>=13.0.0",  # Terminal progress bars (transitive via geoparquet-io, but we import directly)
     "rio-cogeo>=5.0.0",  # COG creation/validation (includes rasterio)
     "typing_extensions>=4.0.0; python_version < '3.11'",
 ]
@@ -49,6 +51,7 @@ portolan = "portolan_cli:cli"
 dev = [
     "bandit>=1.9.3",
     "codespell>=2.4.1",
+    "deptry>=0.25.1",  # Dependency checker (unused, missing, transitive deps)
     "gitingest>=0.1.0",  # Auto-fetch API docs for core dependencies
     "import-linter>=2.0",  # Architecture enforcement via import contracts
     "commitizen>=4.13.4",
@@ -221,6 +224,19 @@ modules = [
     "portolan_cli.errors",
     "portolan_cli.constants",
     "portolan_cli.json_output",
+]
+
+# ---------- dependency checking ----------
+# deptry detects unused, missing, and transitive dependencies
+# Rules: DEP001 (missing), DEP002 (unused), DEP003 (transitive), DEP004 (imported as dev)
+
+[tool.deptry]
+# Treat optional-dependencies groups as dev dependencies
+optional_dependencies_dev_groups = ["dev", "docs"]
+# Extend default exclusions (venv, .venv, tests, .git already excluded)
+extend_exclude = [
+    "scripts",  # Standalone scripts may use external tools
+    "context",  # Documentation context, not runtime code
 ]
 
 [dependency-groups]
