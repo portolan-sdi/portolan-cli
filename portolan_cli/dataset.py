@@ -1409,22 +1409,28 @@ def resolve_collection_id(path: Path, catalog_root: Path) -> str:
 
 
 def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
-    """Infer nested collection ID from a file path (ADR-0032).
+    """Infer nested collection ID from a file or directory-based data asset (ADR-0032).
 
     Unlike resolve_collection_id() which returns only the first component,
     this returns the full nested path representing the leaf collection.
 
     Per ADR-0032: Nested catalogs with flat collections means:
     - Intermediate directories become catalogs (organizational)
-    - The parent directory of the data file is the collection
+    - The parent directory of the data asset is the collection
+
+    Directory-based formats like FileGDB (*.gdb) are treated as data assets,
+    not organizational directories. Detection uses both content inspection
+    (internal .gdbtable files or 'gdb' marker) and suffix fallback for
+    incomplete/corrupted FileGDB directories.
 
     Examples:
         climate/hittekaart/data.parquet -> "climate/hittekaart"
         env/air/quality/pm25.parquet -> "env/air/quality"
         demographics/data.parquet -> "demographics"
+        ocha/my_data.gdb -> "ocha"  (FileGDB directory)
 
     Args:
-        path: Path to the file.
+        path: Path to the file or directory-based data asset (e.g., FileGDB).
         catalog_root: Root directory of the catalog.
 
     Returns:
@@ -1447,16 +1453,25 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     # A path is treated as a "data asset" (not a collection) if it's a file
     # OR a FileGDB directory. FileGDB directories (*.gdb) contain the actual
     # data - they're assets, not organizational collections (Issue #259).
-    is_asset = path.is_file() or is_filegdb(path)
+    #
+    # For FileGDB detection, we use:
+    # 1. is_filegdb() - content inspection (internal .gdbtable files or 'gdb' marker)
+    # 2. Suffix fallback - handles empty/incomplete/corrupted FileGDB directories
+    #
+    # The suffix fallback ensures directories named *.gdb are always treated as
+    # data assets, even if they lack proper internal structure (e.g., partial
+    # download, corruption, or manual folder creation).
+    is_gdb_suffix = path.is_dir() and path.name.lower().endswith(".gdb")
+    is_asset = path.is_file() or is_filegdb(path) or is_gdb_suffix
 
     # Data asset must be in at least one subdirectory (collection)
     if is_asset and len(parts) == 1:
-        raise ValueError(f"File {path} must be in a subdirectory (collection)")
+        raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
 
     # Return parent directory path as collection ID (all but last component)
     parent_parts = parts[:-1] if is_asset else parts
     if not parent_parts:
-        raise ValueError(f"File {path} must be in a subdirectory (collection)")
+        raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
 
     return "/".join(parent_parts)
 
