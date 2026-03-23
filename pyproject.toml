@@ -51,7 +51,7 @@ portolan = "portolan_cli:cli"
 dev = [
     "bandit>=1.9.3",
     "codespell>=2.4.1",
-    "menard[brevity]>=0.3.0",  # Doc drift detection + duplicate content finder
+    "menard>=0.3.0",  # Doc drift detection (brevity extra pending PyPI release)
     "deptry>=0.25.1",  # Dependency checker (unused, missing, transitive deps)
     "gitingest>=0.1.0",  # Auto-fetch API docs for core dependencies
     "import-linter>=2.0",  # Architecture enforcement via import contracts
@@ -258,6 +258,3 @@ exempt = ["tests/**"]
 # Only track USER-FACING docs (not ADRs, plans, or internal context)
 # ADRs are historical records - they don't need updating when code changes
 doc_paths = ["docs/**/*.md", "README.md"]
-
-[tool.uv.sources]
-menard = { git = "https://github.com/nlebovits/menard.git" }

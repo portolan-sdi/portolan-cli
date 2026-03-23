@@ -1824,17 +1824,14 @@ wheels = [
 [[package]]
 name = "menard"
 version = "0.3.0"
-source = { git = "https://github.com/nlebovits/menard.git#2071c2e40843e8e101b0f054972721fb3f501119" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pathspec" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
-
-[package.optional-dependencies]
-brevity = [
-    { name = "fastembed" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+sdist = { url = "https://files.pythonhosted.org/packages/97/33/eadf35575f6333326229e9ff5e6e70c4e9fef9de474a87a12eefce0fc05c/menard-0.3.0.tar.gz", hash = "sha256:755f87073cb08154b9b7565492f1a95d2dba93831155896138620d1a766ac3a1", size = 357323, upload-time = "2026-03-23T14:16:31.75Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/23/11/b2f7e1d4aaae2eee6e6ac39cb9001a1bb3c6bb22d267dddcfd87fc016830/menard-0.3.0-py3-none-any.whl", hash = "sha256:d7b406018618b2c9c64bbd17a305b00306c50dd2f5910e54befeba855cf850f9", size = 51793, upload-time = "2026-03-23T14:16:30.647Z" },
 ]
 
 [[package]]
@@ -3139,7 +3136,7 @@ dev = [
     { name = "gitingest" },
     { name = "hypothesis" },
     { name = "import-linter" },
-    { name = "menard", extra = ["brevity"] },
+    { name = "menard" },
     { name = "mutmut" },
     { name = "mypy" },
     { name = "pip-audit" },
@@ -3164,7 +3161,7 @@ docs = [
 [package.dev-dependencies]
 dev = [
     { name = "fastembed" },
-    { name = "menard", extra = ["brevity"] },
+    { name = "menard" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pylint" },
@@ -3182,7 +3179,7 @@ requires-dist = [
     { name = "gitingest", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.151.5" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
-    { name = "menard", extras = ["brevity"], marker = "extra == 'dev'", git = "https://github.com/nlebovits/menard.git" },
+    { name = "menard", marker = "extra == 'dev'", specifier = ">=0.3.0" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.1" },
     { name = "mkdocs-click", marker = "extra == 'docs'", specifier = ">=0.8.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.7.1" },
@@ -3214,7 +3211,7 @@ provides-extras = ["dev", "docs"]
 [package.metadata.requires-dev]
 dev = [
     { name = "fastembed", specifier = ">=0.8.0" },
-    { name = "menard", extras = ["brevity"], git = "https://github.com/nlebovits/menard.git" },
+    { name = "menard", extras = ["brevity"], specifier = ">=0.2.0" },
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "pylint", specifier = ">=4.0.5" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
