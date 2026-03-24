@@ -1453,10 +1453,12 @@ def _upload_to_remote_if_configured(
     asset_files: dict[str, tuple[Path, str]],
     remote: str | None,
 ) -> None:
-    """Upload converted files and STAC metadata to remote if configured.
+    """Upload STAC metadata to remote if configured.
 
     Called after local processing when backend=iceberg and remote is set.
-    Uploads: data files, STAC item JSON, collection JSON, and catalog.json.
+    Only uploads STAC metadata (item JSON, collection JSON, catalog.json).
+    Data files are NOT uploaded — they live in the Iceberg warehouse,
+    managed by PyIceberg.
 
     Args:
         catalog_root: Root directory of the catalog.
@@ -1471,14 +1473,8 @@ def _upload_to_remote_if_configured(
 
     remote = remote.rstrip("/")
 
-    # Upload data files
-    for filename, (file_path, _checksum) in asset_files.items():
-        if file_path.exists():
-            dest = f"{remote}/{collection_id}/{item_id}/{filename}"
-            upload_file(source=file_path, destination=dest)
-
-    # Upload STAC item JSON
-    item_json = item_dir / f"{item_id}.json"
+    # Upload STAC item JSON (lives in {collection}/{item_id}/{item_id}.json)
+    item_json = catalog_root / collection_id / item_id / f"{item_id}.json"
     if item_json.exists():
         dest = f"{remote}/{collection_id}/{item_id}/{item_id}.json"
         upload_file(source=item_json, destination=dest)
@@ -1505,6 +1501,7 @@ def _update_versions(
     *,
     asset_files: dict[str, tuple[Path, str]] | None = None,
     is_collection_level_asset: bool = False,
+    catalog_root: Path | None = None,
 ) -> None:
     """Update versions via the active backend.
 
@@ -1522,10 +1519,12 @@ def _update_versions(
             If provided, output_path/checksum are ignored.
         is_collection_level_asset: If True, asset is at collection level (per ADR-0031).
             Affects href construction (no item_id in path).
+        catalog_root: Root directory of the catalog. If None, derived from collection_dir.
     """
     from portolan_cli.version_ops import publish_version
 
-    catalog_root = collection_dir.parent
+    if catalog_root is None:
+        catalog_root = collection_dir.parent
 
     # Build assets dict (asset_key -> file_path) for the backend.
     # The backend (file or plugin) handles checksum/size computation internally.
@@ -1533,9 +1532,11 @@ def _update_versions(
     if asset_files is not None:
         # Multi-asset mode (per issue #133)
         for filename, (file_path, _checksum) in asset_files.items():
-            # For collection-level assets (Issue #250, ADR-0031), omit item_id from path
+            # For collection-level assets (Issue #250, ADR-0031), use filename only.
+            # Both backends prepend collection/ when building the href,
+            # so do NOT include collection_id here to avoid doubling.
             if is_collection_level_asset:
-                asset_key = f"{collection_id}/{filename}"
+                asset_key = filename
             else:
                 asset_key = f"{item_id}/{filename}"
             assets[asset_key] = str(file_path)
@@ -2703,6 +2704,7 @@ def _update_item_with_asset(
         collection_id=collection_id,
         asset_files=asset_files,
         is_collection_level_asset=is_collection_level,
+        catalog_root=catalog_root,
     )
 
 

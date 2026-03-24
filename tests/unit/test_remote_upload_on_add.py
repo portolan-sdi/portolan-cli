@@ -37,7 +37,7 @@ def catalog_with_stac(tmp_path: Path) -> tuple[Path, Path]:
 
 @pytest.mark.unit
 def test_upload_called_when_remote_configured(catalog_with_stac):
-    """_upload_to_remote_if_configured should upload data files to remote."""
+    """_upload_to_remote_if_configured should upload STAC metadata only (not data files)."""
     from portolan_cli.dataset import _upload_to_remote_if_configured
 
     catalog_root, item_dir = catalog_with_stac
@@ -55,7 +55,10 @@ def test_upload_called_when_remote_configured(catalog_with_stac):
 
         assert mock_upload.call_count >= 1
         destinations = [call.kwargs["destination"] for call in mock_upload.call_args_list]
-        assert any("data.parquet" in d for d in destinations)
+        # Data files should NOT be uploaded — Iceberg manages them
+        assert not any("data.parquet" in d for d in destinations)
+        # Only STAC metadata should be uploaded
+        assert any("item1.json" in d for d in destinations)
 
 
 @pytest.mark.unit
@@ -143,7 +146,7 @@ def test_no_upload_when_remote_is_none():
 
 @pytest.mark.unit
 def test_upload_constructs_correct_remote_paths(catalog_with_stac):
-    """Remote paths should follow {remote}/{collection}/{item}/{filename} pattern."""
+    """Remote paths should follow correct patterns for STAC metadata only."""
     from portolan_cli.dataset import _upload_to_remote_if_configured
 
     catalog_root, item_dir = catalog_with_stac
@@ -160,7 +163,12 @@ def test_upload_constructs_correct_remote_paths(catalog_with_stac):
         )
 
         destinations = [call.kwargs["destination"] for call in mock_upload.call_args_list]
-        assert "gs://test-bucket/catalog/boundaries/item1/data.parquet" in destinations
+        # STAC metadata paths
+        assert "gs://test-bucket/catalog/boundaries/item1/item1.json" in destinations
+        assert "gs://test-bucket/catalog/boundaries/collection.json" in destinations
+        assert "gs://test-bucket/catalog/catalog.json" in destinations
+        # Data files should NOT be present
+        assert "gs://test-bucket/catalog/boundaries/item1/data.parquet" not in destinations
 
 
 @pytest.mark.unit
