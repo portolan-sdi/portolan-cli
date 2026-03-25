@@ -134,7 +134,7 @@ FORMAT_DISPLAY_NAMES: dict[str, str] = {
     ".gpkg": "GPKG",
     ".csv": "CSV",
     ".tsv": "TSV",
-    ".json": "GeoJSON",
+    ".json": "JSON",  # Plain JSON; use content inspection to detect GeoJSON
     # Convertible raster
     ".jp2": "JP2",
     # Unsupported
@@ -584,6 +584,9 @@ def _detect_json_type(path: Path) -> FormatType:
     Uses prefix reading (first 8KB) to avoid OOM on large files.
     Searches for GeoJSON type tokens without full JSON parsing.
 
+    STAC items/collections/catalogs are NOT GeoJSON even though they have
+    "type": "Feature". They are identified by "stac_version".
+
     Args:
         path: Path to JSON file.
 
@@ -615,6 +618,9 @@ def _detect_json_type(path: Path) -> FormatType:
         # Read only first 8KB to avoid OOM on large files
         with open(path, encoding="utf-8") as f:
             prefix = f.read(8192)
+            # STAC metadata has stac_version - NOT GeoJSON
+            if "stac_version" in prefix:
+                return FormatType.UNKNOWN
             if any(token in prefix for token in geojson_tokens):
                 return FormatType.VECTOR
     except (OSError, UnicodeDecodeError):

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from portolan_cli.config import get_ignored_files
-from portolan_cli.formats import FORMAT_DISPLAY_NAMES
+from portolan_cli.formats import FORMAT_DISPLAY_NAMES, FormatType, _detect_json_type
 from portolan_cli.versions import read_versions
 
 if TYPE_CHECKING:
@@ -130,6 +130,7 @@ _STAC_METADATA_FILES: frozenset[str] = frozenset(
         "item.json",
         "collection.json",
         "catalog.json",
+        "versions.json",  # Portolan internal version tracking
     }
 )
 
@@ -153,10 +154,13 @@ def _is_ignored(filename: str, item_id: str, ignored_patterns: list[str]) -> boo
     if filename.startswith("."):
         return True
 
-    # Ignore STAC metadata files
+    # Ignore STAC metadata files (by name)
     if filename in _STAC_METADATA_FILES:
         return True
-    if filename == f"{item_id}.json":
+
+    # Ignore STAC item JSON files named {item_id}.json
+    # These are STAC metadata, not user data files
+    if item_id and filename == f"{item_id}.json":
         return True
 
     # Check against ignored patterns
@@ -167,16 +171,29 @@ def _is_ignored(filename: str, item_id: str, ignored_patterns: list[str]) -> boo
     return False
 
 
-def _get_format_display_name(filename: str) -> str:
-    """Get human-readable format name for a file based on extension.
+def _get_format_display_name(filename: str, file_path: Path | None = None) -> str:
+    """Get human-readable format name for a file.
+
+    Uses extension-based detection by default, with content inspection
+    for ambiguous formats like .json (which may be GeoJSON or plain JSON).
 
     Args:
         filename: The filename to check.
+        file_path: Optional full path for content inspection. If provided and
+            the file exists, content inspection is used for .json files.
 
     Returns:
-        Human-readable format name (e.g., "GeoParquet", "PNG").
+        Human-readable format name (e.g., "GeoParquet", "GeoJSON", "JSON").
     """
     ext = Path(filename).suffix.lower()
+
+    # Special case: .json files need content inspection to distinguish
+    # GeoJSON from plain JSON (PR #261)
+    if ext == ".json" and file_path is not None and file_path.exists():
+        if _detect_json_type(file_path) == FormatType.VECTOR:
+            return "GeoJSON"
+        return "JSON"
+
     if ext in FORMAT_DISPLAY_NAMES:
         return FORMAT_DISPLAY_NAMES[ext]
     if ext:
@@ -264,7 +281,7 @@ def _scan_item_directory(
                     path=filename,
                     status=status,
                     size_bytes=size_bytes,
-                    format_name=_get_format_display_name(filename),
+                    format_name=_get_format_display_name(filename, file_path=entry),
                 )
             )
     except OSError as e:
