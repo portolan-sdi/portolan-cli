@@ -167,6 +167,8 @@ class TestAddDirectory:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {},
             )
             mock_checksum.return_value = "abc"
@@ -237,6 +239,8 @@ class TestAddDirectory:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {},
             )
             mock_meta_r.return_value = MagicMock(
@@ -313,6 +317,8 @@ class TestAddDirectory:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {},
             )
             mock_checksum.return_value = "abc"

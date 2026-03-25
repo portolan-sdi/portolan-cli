@@ -26,6 +26,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
+    "antimeridian>=0.3.11",  # RFC 7946 compliant antimeridian handling for STAC bbox
     "click>=8.3.1",
     "geoparquet-io>=0.3.0",
     "obstore>=0.8.2",  # Cloud object storage (S3, GCS, Azure) via Rust bindings

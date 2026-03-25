@@ -29,6 +29,8 @@ class COGMetadata:
         nodata: Legacy single nodata value (first band). Use nodatavals for per-band.
         resolution: Pixel resolution as (x_res, y_res).
         nodatavals: Per-band nodata values as tuple. If None, falls back to nodata.
+        transform: Affine transform as 6 coefficients (a, b, c, d, e, f).
+                  Maps pixel coordinates to CRS coordinates.
     """
 
     bbox: tuple[float, float, float, float]
@@ -40,6 +42,7 @@ class COGMetadata:
     nodata: float | None
     resolution: tuple[float, float]
     nodatavals: tuple[float | None, ...] | None = None
+    transform: tuple[float, float, float, float, float, float] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
@@ -57,6 +60,8 @@ class COGMetadata:
             # Convert tuple to list, preserving None values
             nodatavals_list: list[float | None] = list(self.nodatavals)
             result["nodatavals"] = nodatavals_list
+        if self.transform is not None:
+            result["transform"] = list(self.transform)
         return result
 
     def to_stac_properties(self) -> dict[str, Any]:
@@ -125,6 +130,18 @@ def extract_cog_metadata(path: Path) -> COGMetadata:
         # src.nodatavals returns a tuple with one value per band
         nodatavals = src.nodatavals if src.nodatavals else None
 
+        # Extract affine transform as GDAL GeoTransform format
+        # GDAL format: (origin_x, pixel_width, rotation_x, origin_y, rotation_y, pixel_height)
+        gdal_transform = src.transform.to_gdal()
+        transform = (
+            gdal_transform[0],
+            gdal_transform[1],
+            gdal_transform[2],
+            gdal_transform[3],
+            gdal_transform[4],
+            gdal_transform[5],
+        )
+
         return COGMetadata(
             bbox=bbox,
             crs=crs,
@@ -135,6 +152,7 @@ def extract_cog_metadata(path: Path) -> COGMetadata:
             nodata=src.nodata,  # Keep for backward compatibility
             resolution=resolution,
             nodatavals=nodatavals,
+            transform=transform,
         )
 
 
@@ -194,16 +212,25 @@ def extract_schema_from_cog(
         else:
             warnings.append("Raster has no CRS defined. Consider adding CRS metadata.")
 
+        # Get per-band nodata values (fallback to uniform nodata if not available)
+        nodatavals = src.nodatavals if src.nodatavals else None
+
         # Build BandSchema for each band
         bands: list[BandSchema] = []
         for i in range(1, src.count + 1):
             # Get band description if available
             description = src.descriptions[i - 1] if src.descriptions else None
 
+            # Use per-band nodata if available, otherwise fall back to uniform nodata
+            if nodatavals is not None and len(nodatavals) >= i:
+                band_nodata = nodatavals[i - 1]
+            else:
+                band_nodata = src.nodata
+
             band = BandSchema(
                 name=f"band_{i}",
                 data_type=str(src.dtypes[i - 1]),
-                nodata=src.nodata,
+                nodata=band_nodata,
                 description=description,
             )
             bands.append(band)

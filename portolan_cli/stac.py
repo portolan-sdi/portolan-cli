@@ -242,11 +242,13 @@ def _update_collection_extent(
 
 
 # STAC Extension schema URLs (v1.1.0 compatible)
+# Note: "file" extension is reserved for future use (checksums, sizes)
+# Currently only table, projection, and raster are actively used
 EXTENSION_URLS = {
     "table": "https://stac-extensions.github.io/table/v1.2.0/schema.json",
     "projection": "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
     "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
-    "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",
+    "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",  # Reserved for future
 }
 
 
@@ -324,12 +326,18 @@ def add_projection_extension(
 ) -> None:
     """Add Projection extension fields to an item from metadata.
 
-    Sets proj:code and proj:bbox based on the provided metadata object.
-    proj:bbox stores the native CRS bbox (before WGS84 transformation).
+    Always sets (when available):
+    - proj:code: CRS code (EPSG or WKT)
+    - proj:bbox: Bounding box in native CRS
+
+    For raster metadata (COGMetadata), also sets:
+    - proj:shape: [height, width] in pixels
+    - proj:transform: GDAL GeoTransform array
 
     Args:
         item: The item to add extension fields to.
         metadata: A metadata object with crs and bbox attributes.
+                 For rasters, should also have width, height, and transform.
     """
     if not hasattr(metadata, "crs") or metadata.crs is None:
         return
@@ -341,12 +349,35 @@ def add_projection_extension(
         if crs_str.upper().startswith("EPSG:"):
             item.properties["proj:code"] = crs_str.upper()
         else:
-            # WKT or other format - could extract EPSG if possible
+            # WKT or other format - store as-is
             item.properties["proj:code"] = crs_str
+    elif isinstance(crs_str, dict):
+        # PROJJSON format (used by some GeoParquet files)
+        # Try to extract EPSG code if available
+        if "id" in crs_str and "code" in crs_str["id"]:
+            authority = crs_str["id"].get("authority", "EPSG")
+            code = crs_str["id"]["code"]
+            item.properties["proj:code"] = f"{authority}:{code}"
+        else:
+            # Store as WKT2 if we can't extract EPSG
+            item.properties["proj:code"] = str(crs_str)
 
     # Set proj:bbox (native CRS bbox)
     if hasattr(metadata, "bbox") and metadata.bbox is not None:
         item.properties["proj:bbox"] = list(metadata.bbox)
+
+    # Set raster-specific fields if available (COGMetadata)
+    # proj:shape is [height, width] per the extension spec
+    # Check for actual int values, not just attribute existence (MagicMock creates attributes dynamically)
+    height = getattr(metadata, "height", None)
+    width = getattr(metadata, "width", None)
+    if isinstance(height, int) and isinstance(width, int):
+        item.properties["proj:shape"] = [height, width]
+
+    # proj:transform is GDAL GeoTransform array
+    transform = getattr(metadata, "transform", None)
+    if transform is not None and isinstance(transform, (list, tuple)):
+        item.properties["proj:transform"] = list(transform)
 
     # Update stac_extensions if not already present
     ext_url = EXTENSION_URLS["projection"]
