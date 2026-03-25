@@ -36,6 +36,7 @@ from portolan_cli.constants import (
     SIDECAR_PATTERNS,
     TABULAR_EXTENSIONS,
 )
+from portolan_cli.crs import transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError
 from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
@@ -47,6 +48,8 @@ from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
     add_item_to_collection,
+    add_projection_extension,
+    add_table_extension,
     create_collection,
     create_item,
     load_catalog,
@@ -649,7 +652,7 @@ def add_dataset(
         output_path = convert_raster(path, item_dir)
         metadata = extract_cog_metadata(output_path)
 
-    # Step 4: Extract bbox (handle tuple -> list conversion)
+    # Step 4: Extract bbox and transform to WGS84 (STAC requirement per RFC 7946)
     if not metadata.bbox:
         # Clean up orphaned artifact before raising (Issue #190 review)
         _cleanup_orphaned_output(output_path, item_dir, path)
@@ -657,7 +660,10 @@ def add_dataset(
             path=metadata.id if hasattr(metadata, "id") else path.stem,
             reason="The source file may have no valid geometry.",
         )
-    bbox = list(metadata.bbox)
+    # Transform bbox from native CRS to WGS84 (handles antimeridian crossing)
+    crs_str = metadata.crs if isinstance(metadata.crs, str) else None
+    wgs84_bbox = transform_bbox_to_wgs84(metadata.bbox, crs_str)
+    bbox = list(wgs84_bbox)
 
     # Step 5: Scan ALL files in item_dir for assets (per issue #133)
     stac_assets, asset_files, asset_paths = _scan_item_assets(
@@ -681,6 +687,9 @@ def add_dataset(
         assets=stac_assets,
     )
 
+    # Add projection extension (native CRS info: proj:code, proj:bbox, proj:shape, proj:transform)
+    add_projection_extension(item, metadata)
+
     # Set item href explicitly to prevent PySTAC from creating a nested subdirectory.
     # By default, PySTAC's normalize_hrefs() + save() creates {item_id}/{item_id}.json
     # but we want the item JSON in the existing item_dir (same as data files).
@@ -695,6 +704,10 @@ def add_dataset(
 
     # Add item to collection (PySTAC may add duplicate links if called multiple times)
     add_item_to_collection(collection, item, update_extent=True)
+
+    # Add table extension for vector data (row count, columns, primary geometry)
+    if format_type == FormatType.VECTOR:
+        add_table_extension(collection, metadata)
 
     # Step 8: De-duplicate item links before saving
     _deduplicate_collection_item_links(collection)

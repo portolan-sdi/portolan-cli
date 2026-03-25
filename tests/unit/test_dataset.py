@@ -126,6 +126,8 @@ class TestAddDataset:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
             mock_checksum.return_value = "abc123"
@@ -240,6 +242,8 @@ class TestAddDataset:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {},
             )
             mock_checksum.return_value = "xyz789"
@@ -294,6 +298,8 @@ class TestAddDataset:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {},
             )
             mock_checksum.return_value = "new123"
@@ -717,6 +723,8 @@ class TestAddDatasetMissingBbox:
                 crs="EPSG:4326",
                 feature_count=0,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {},
             )
             mock_checksum.return_value = "xyz789"
@@ -787,6 +795,8 @@ class TestAddDatasetItemIdDerivation:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
             mock_checksum.return_value = "abc123"
@@ -849,6 +859,8 @@ class TestAddDatasetItemIdDerivation:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
             mock_checksum.return_value = "abc123"
@@ -1286,6 +1298,8 @@ class TestMultiAssetAddDataset:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {"geoparquet:feature_count": 1},
             )
             mock_checksum.return_value = "abc123"
@@ -1331,6 +1345,8 @@ class TestMultiAssetAddDataset:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {},
             )
             mock_checksum.return_value = "xyz789"
@@ -1379,6 +1395,8 @@ class TestMultiAssetAddDataset:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {},
             )
             mock_checksum.return_value = "xyz789"
@@ -1424,6 +1442,8 @@ class TestMultiAssetAddDataset:
                 crs="EPSG:4326",
                 feature_count=1,
                 geometry_type="Point",
+                geometry_column="geometry",  # Required for table extension
+                schema={"id": "int64", "geometry": "binary"},  # Required for table extension
                 to_stac_properties=lambda: {},
             )
             mock_checksum.return_value = "xyz789"
