@@ -30,6 +30,7 @@ dependencies = [
     "geoparquet-io>=0.3.0",
     "obstore>=0.8.2",  # Cloud object storage (S3, GCS, Azure) via Rust bindings
     "pyarrow>=12.0.0,<22.0.0",  # v22+ has ABI incompatibility with abseil on some systems
+    "pyproj>=3.0.0",  # CRS transformations (transitive via rasterio, but we import directly)
     "pystac>=1.10.0",  # STAC catalog/collection/item creation
     "pyyaml>=6.0",  # YAML config file support
     "rasterio>=1.3.0",  # Raster I/O (transitive via rio-cogeo, but we import directly)

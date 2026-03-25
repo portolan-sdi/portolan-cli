@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pystac
 
-# STAC version we generate
-STAC_VERSION = "1.0.0"
+# STAC version we generate (v1.1.0 has unified bands array, superseding eo:bands/raster:bands)
+STAC_VERSION = "1.1.0"
 
 # Default license when not specified
 DEFAULT_LICENSE = "proprietary"
@@ -239,3 +239,118 @@ def _update_collection_extent(
     ]
 
     collection.extent.spatial = pystac.SpatialExtent(bboxes=[new_bbox])
+
+
+# STAC Extension schema URLs (v1.1.0 compatible)
+EXTENSION_URLS = {
+    "table": "https://stac-extensions.github.io/table/v1.2.0/schema.json",
+    "projection": "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
+    "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
+    "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",
+}
+
+
+def build_stac_extensions(properties: dict[str, object]) -> list[str]:
+    """Build stac_extensions array based on which extension fields are populated.
+
+    Scans the properties dict for extension-prefixed fields (e.g., "table:", "proj:")
+    and returns the corresponding extension schema URLs.
+
+    Args:
+        properties: Properties dict to scan for extension fields.
+
+    Returns:
+        List of extension schema URLs.
+    """
+    extensions: list[str] = []
+
+    # Check for table extension fields
+    if any(k.startswith("table:") for k in properties):
+        extensions.append(EXTENSION_URLS["table"])
+
+    # Check for projection extension fields
+    if any(k.startswith("proj:") for k in properties):
+        extensions.append(EXTENSION_URLS["projection"])
+
+    # Check for raster extension fields
+    if any(k.startswith("raster:") for k in properties):
+        extensions.append(EXTENSION_URLS["raster"])
+
+    # Check for file extension fields
+    if any(k.startswith("file:") for k in properties):
+        extensions.append(EXTENSION_URLS["file"])
+
+    return extensions
+
+
+def add_table_extension(
+    collection: pystac.Collection,
+    metadata: object,
+) -> None:
+    """Add Table extension fields to a collection from GeoParquet metadata.
+
+    Sets table:row_count, table:primary_geometry, and table:columns based on
+    the provided GeoParquet metadata object.
+
+    Args:
+        collection: The collection to add extension fields to.
+        metadata: A GeoParquetMetadata-like object with feature_count,
+                 geometry_column, and schema attributes.
+    """
+    # Set row count
+    if hasattr(metadata, "feature_count") and metadata.feature_count is not None:
+        collection.extra_fields["table:row_count"] = metadata.feature_count
+
+    # Set primary geometry column
+    if hasattr(metadata, "geometry_column") and metadata.geometry_column is not None:
+        collection.extra_fields["table:primary_geometry"] = metadata.geometry_column
+
+    # Set columns from schema
+    if hasattr(metadata, "schema") and metadata.schema:
+        columns = [{"name": name, "type": dtype} for name, dtype in metadata.schema.items()]
+        collection.extra_fields["table:columns"] = columns
+
+    # Update stac_extensions if not already present
+    ext_url = EXTENSION_URLS["table"]
+    if ext_url not in (collection.stac_extensions or []):
+        if collection.stac_extensions is None:
+            collection.stac_extensions = []
+        collection.stac_extensions.append(ext_url)
+
+
+def add_projection_extension(
+    item: pystac.Item,
+    metadata: object,
+) -> None:
+    """Add Projection extension fields to an item from metadata.
+
+    Sets proj:code and proj:bbox based on the provided metadata object.
+    proj:bbox stores the native CRS bbox (before WGS84 transformation).
+
+    Args:
+        item: The item to add extension fields to.
+        metadata: A metadata object with crs and bbox attributes.
+    """
+    if not hasattr(metadata, "crs") or metadata.crs is None:
+        return
+
+    # Set proj:code
+    crs_str = metadata.crs
+    if isinstance(crs_str, str):
+        # Normalize EPSG codes
+        if crs_str.upper().startswith("EPSG:"):
+            item.properties["proj:code"] = crs_str.upper()
+        else:
+            # WKT or other format - could extract EPSG if possible
+            item.properties["proj:code"] = crs_str
+
+    # Set proj:bbox (native CRS bbox)
+    if hasattr(metadata, "bbox") and metadata.bbox is not None:
+        item.properties["proj:bbox"] = list(metadata.bbox)
+
+    # Update stac_extensions if not already present
+    ext_url = EXTENSION_URLS["projection"]
+    if ext_url not in (item.stac_extensions or []):
+        if item.stac_extensions is None:
+            item.stac_extensions = []
+        item.stac_extensions.append(ext_url)
