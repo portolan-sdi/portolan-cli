@@ -23,8 +23,6 @@ This CLI converts data to cloud-native formats (GeoParquet, COG), generates rich
 <!-- --8<-- [start:quickstart] -->
 ## Quick Start
 
-### Bootstrap & Roundtrip Example
-
 ```bash
 # Initialize a catalog
 portolan init

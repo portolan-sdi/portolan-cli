@@ -51,7 +51,7 @@ portolan = "portolan_cli:cli"
 dev = [
     "bandit>=1.9.3",
     "codespell>=2.4.1",
-    "menard>=0.2.0; python_version >= '3.11'",  # Doc drift detection (requires 3.11+)
+    "menard>=0.3.0",  # Doc drift detection (brevity extra pending PyPI release)
     "deptry>=0.25.1",  # Dependency checker (unused, missing, transitive deps)
     "gitingest>=0.1.0",  # Auto-fetch API docs for core dependencies
     "import-linter>=2.0",  # Architecture enforcement via import contracts
@@ -242,6 +242,9 @@ extend_exclude = [
 
 [dependency-groups]
 dev = [
+    "fastembed>=0.8.0",
+    "menard[brevity]>=0.2.0",
+    "numpy>=2.2.6",
     "pylint>=4.0.5",
     "types-pyyaml>=6.0.12.20250915",
 ]
