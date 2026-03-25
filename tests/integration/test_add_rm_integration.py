@@ -293,21 +293,31 @@ class TestAddItemIdOverrideIntegration:
     """Integration tests for --item-id flag on 'portolan add' command.
 
     Issue #136: Users should be able to override automatic item ID derivation.
+
+    Per ADR-0031: --item-id only applies to raster data (item-level assets).
+    Vector data is collection-level and doesn't create items.
     """
 
     @pytest.mark.integration
     def test_add_with_item_id_creates_item_with_custom_id(
-        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+        self, runner: CliRunner, initialized_catalog: Path, valid_singleband_cog: Path
     ) -> None:
-        """add --item-id creates STAC item with the custom ID."""
+        """add --item-id creates STAC item with the custom ID.
+
+        Per ADR-0031: Raster data = item-level asset (grandparent = collection).
+        Per ADR-0032: For rasters, collection is the grandparent, item is the parent.
+        The --item-id flag overrides the default item ID (parent directory name).
+        """
         import json
 
-        # Set up: create collection directory (leaf level per ADR-0032)
-        # Per ADR-0032: file's parent directory is the leaf collection
-        collection_dir = initialized_catalog / "demographics"
-        collection_dir.mkdir()
-        test_file = collection_dir / "census.geojson"
-        shutil.copy(valid_points_geojson, test_file)
+        # Set up: create structure for raster data
+        # Per ADR-0031: Raster structure is collection/item_dir/data.tif
+        # imagery = collection, scene-001 = item directory
+        collection_dir = initialized_catalog / "imagery"
+        item_dir = collection_dir / "scene-001"
+        item_dir.mkdir(parents=True)
+        test_file = item_dir / "data.tif"
+        shutil.copy(valid_singleband_cog, test_file)
 
         # Act: add with --item-id override
         result = runner.invoke(
@@ -317,7 +327,7 @@ class TestAddItemIdOverrideIntegration:
                 "--portolan-dir",
                 str(initialized_catalog),
                 "--item-id",
-                "custom-census-2024",
+                "custom-scene-2024",
                 str(test_file),
             ],
             catch_exceptions=False,
@@ -326,46 +336,40 @@ class TestAddItemIdOverrideIntegration:
         # Assert
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Check versions.json exists and has a version entry
+        # Per ADR-0031: versions.json is at the collection level (imagery/)
         versions_path = collection_dir / "versions.json"
-        assert versions_path.exists(), "versions.json not created"
+        assert versions_path.exists(), "versions.json not created at collection level"
         with open(versions_path) as f:
             versions = json.load(f)
         assert len(versions["versions"]) > 0, "No version entries created"
 
-        # Verify the STAC item JSON uses the custom item ID.
-        # Asset keys in versions.json are "{item_id}/{filename}" so checking
-        # asset keys is indirect; reading the Item JSON is the correct contract.
-        # Pick the first asset href to locate the item directory.
-        latest_version = versions["versions"][-1]
-        asset_hrefs = [a["href"] for a in latest_version["assets"].values()]
-        assert len(asset_hrefs) > 0, "No assets in version entry"
-
-        # Item JSON lives at collection_dir/{item_id}/{item_id}.json
-        # Use the href (format: "collection_id/item_id/filename") to find item_id
-        item_id_from_href = asset_hrefs[0].split("/")[1]
-        item_json_path = collection_dir / item_id_from_href / f"{item_id_from_href}.json"
+        # Per ADR-0031: Raster item JSON is at item_dir/{item_id}.json
+        # The item_id is custom, but the item JSON stays alongside the data.
+        item_json_path = item_dir / "custom-scene-2024.json"
         assert item_json_path.exists(), f"Item JSON not found at {item_json_path}"
 
         with open(item_json_path) as f:
             item_json = json.load(f)
-        assert item_json["id"] == "custom-census-2024", (
-            f"STAC item ID should be 'custom-census-2024', got '{item_json['id']}'"
+        assert item_json["id"] == "custom-scene-2024", (
+            f"STAC item ID should be 'custom-scene-2024', got '{item_json['id']}'"
         )
 
     @pytest.mark.integration
     def test_add_with_item_id_stac_item_uses_custom_id(
-        self, runner: CliRunner, initialized_catalog: Path, valid_points_geojson: Path
+        self, runner: CliRunner, initialized_catalog: Path, valid_singleband_cog: Path
     ) -> None:
-        """add --item-id results in STAC item.json with custom ID field."""
+        """add --item-id results in STAC item.json with custom ID field.
+
+        Per ADR-0031: Raster data = item-level asset with item.json.
+        """
         import json
 
-        # Set up
+        # Set up: raster structure per ADR-0031
         collection_dir = initialized_catalog / "imagery"
         item_dir = collection_dir / "original-dir"
         item_dir.mkdir(parents=True)
-        test_file = item_dir / "satellite.geojson"
-        shutil.copy(valid_points_geojson, test_file)
+        test_file = item_dir / "satellite.tif"
+        shutil.copy(valid_singleband_cog, test_file)
 
         # Act
         result = runner.invoke(
@@ -383,21 +387,12 @@ class TestAddItemIdOverrideIntegration:
 
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Find and read the item.json
-        # STAC item structure: collection_dir/item_id/item_id.json
-        # But since we override item_id, we still create in original dir
-        item_json_files = list(collection_dir.rglob("*.json"))
-        item_json = None
-        for f in item_json_files:
-            if f.name not in ("collection.json", "versions.json", "catalog.json"):
-                try:
-                    with open(f) as fh:
-                        data = json.load(fh)
-                        if data.get("type") == "Feature":
-                            item_json = data
-                            break
-                except (json.JSONDecodeError, KeyError):
-                    continue
+        # Per ADR-0031: Raster item JSON at item_dir/{item_id}.json (flat structure)
+        item_json_path = item_dir / "my-custom-item.json"
+        assert item_json_path.exists(), f"Item JSON not found at {item_json_path}"
+
+        with open(item_json_path) as fh:
+            item_json = json.load(fh)
 
         assert item_json is not None, "No STAC item found"
         assert item_json.get("id") == "my-custom-item", (

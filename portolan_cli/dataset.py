@@ -27,6 +27,7 @@ from typing import Any
 
 import click
 import pystac
+from pystac.layout import AsIsLayoutStrategy
 
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.constants import (
@@ -680,6 +681,11 @@ def add_dataset(
         assets=stac_assets,
     )
 
+    # Set item href explicitly to prevent PySTAC from creating a nested subdirectory.
+    # By default, PySTAC's normalize_hrefs() + save() creates {item_id}/{item_id}.json
+    # but we want the item JSON in the existing item_dir (same as data files).
+    item.set_self_href(str(item_dir / f"{item_id}.json"))
+
     # Step 7: Load or create collection
     collection = _get_or_create_collection(
         catalog_root=catalog_root,
@@ -693,8 +699,13 @@ def add_dataset(
     # Step 8: De-duplicate item links before saving
     _deduplicate_collection_item_links(collection)
 
-    # Save collection (normalize_hrefs sets self link and relative paths)
-    collection.normalize_hrefs(str(collection_dir))
+    # Set collection href explicitly
+    collection.set_self_href(str(collection_dir / "collection.json"))
+
+    # Save collection using AsIsLayoutStrategy to preserve our explicit item hrefs.
+    # The default BestPracticesLayoutStrategy would create {item_id}/{item_id}.json
+    # subdirectories, but we want items flat in item_dir (same as data files).
+    collection.normalize_hrefs(str(collection_dir), strategy=AsIsLayoutStrategy())
     collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
 
     # Step 8b: Fix root/parent links in saved JSON
@@ -1409,35 +1420,41 @@ def resolve_collection_id(path: Path, catalog_root: Path) -> str:
 
 
 def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
-    """Infer nested collection ID from a file or directory-based data asset (ADR-0032).
+    """Infer nested collection ID from a file or directory-based data asset.
 
-    Unlike resolve_collection_id() which returns only the first component,
-    this returns the full nested path representing the leaf collection.
+    Per ADR-0031 (Collection-Level Assets for Vector Data) and ADR-0032
+    (Nested Catalogs with Flat Collections), the collection depth depends
+    on the format type:
 
-    Per ADR-0032: Nested catalogs with flat collections means:
-    - Intermediate directories become catalogs (organizational)
-    - The parent directory of the data asset is the collection
+    - **Vector data**: Parent directory = collection (collection-level asset)
+      Example: demographics/boundaries.parquet -> collection = "demographics"
 
-    Directory-based formats like FileGDB (*.gdb) are treated as data assets,
-    not organizational directories. Detection uses both content inspection
-    (internal .gdbtable files or 'gdb' marker) and suffix fallback for
-    incomplete/corrupted FileGDB directories.
+    - **Raster data**: Grandparent directory = collection, parent = item
+      Example: 2025/tile1/scene.tif -> collection = "2025", item = "tile1"
+
+    Directory-based formats like FileGDB (*.gdb) are treated as vector data
+    (collection-level assets).
 
     Examples:
+        # Vector (collection-level)
         climate/hittekaart/data.parquet -> "climate/hittekaart"
-        env/air/quality/pm25.parquet -> "env/air/quality"
-        demographics/data.parquet -> "demographics"
+        demographics/boundaries.geojson -> "demographics"
         ocha/my_data.gdb -> "ocha"  (FileGDB directory)
+
+        # Raster (item-level, needs subdirectory)
+        imagery/2025/tile1/scene.tif -> "imagery/2025"
+        satellite/scene-001/B04.tif -> "satellite"
 
     Args:
         path: Path to the file or directory-based data asset (e.g., FileGDB).
         catalog_root: Root directory of the catalog.
 
     Returns:
-        Collection ID (full path of parent directory relative to catalog root).
+        Collection ID (nested path relative to catalog root).
 
     Raises:
-        ValueError: If path is not inside catalog root or at root level.
+        ValueError: If path is not inside catalog root, at root level, or
+            if raster data lacks required item subdirectory structure.
     """
     # Get path relative to catalog root
     try:
@@ -1457,10 +1474,6 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     # For FileGDB detection, we use:
     # 1. is_filegdb() - content inspection (internal .gdbtable files or 'gdb' marker)
     # 2. Suffix fallback - handles empty/incomplete/corrupted FileGDB directories
-    #
-    # The suffix fallback ensures directories named *.gdb are always treated as
-    # data assets, even if they lack proper internal structure (e.g., partial
-    # download, corruption, or manual folder creation).
     is_gdb_suffix = path.is_dir() and path.name.lower().endswith(".gdb")
     is_asset = path.is_file() or is_filegdb(path) or is_gdb_suffix
 
@@ -1468,12 +1481,31 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     if is_asset and len(parts) == 1:
         raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
 
-    # Return parent directory path as collection ID (all but last component)
-    parent_parts = parts[:-1] if is_asset else parts
-    if not parent_parts:
+    # Detect format type to determine collection depth (ADR-0031)
+    # - Vector: parent directory = collection (collection-level asset)
+    # - Raster: grandparent = collection, parent = item (item-level asset)
+    format_type = detect_format(path)
+    is_raster = format_type == FormatType.RASTER
+
+    if is_raster:
+        # Raster files need item subdirectory: collection/item/data.tif
+        # Minimum depth: 3 parts (collection, item_dir, filename)
+        if len(parts) < 3:
+            raise ValueError(
+                f"Raster file {path} must be in a subdirectory (collection/item/). "
+                f"Per ADR-0031, raster data requires item-level organization."
+            )
+        # Return grandparent as collection (all but last 2 components)
+        collection_parts = parts[:-2]
+    else:
+        # Vector files: parent directory = collection
+        # Return parent as collection (all but last component)
+        collection_parts = parts[:-1] if is_asset else parts
+
+    if not collection_parts:
         raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
 
-    return "/".join(parent_parts)
+    return "/".join(collection_parts)
 
 
 def is_current(
