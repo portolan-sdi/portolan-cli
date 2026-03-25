@@ -124,29 +124,26 @@ repos:
         pass_filenames: false
 
       # === DOCUMENTATION SYNC HOOKS ===
-      # menard: detect when code changes require doc updates (requires Python 3.10+)
+      # menard: detect when code changes require doc updates
+      # Uses language: python with version constraint to ensure 3.11+
 
       - id: menard-check
         name: check documentation freshness
-        entry: uv run menard check
-        language: system
+        entry: menard check
+        language: python
+        language_version: python3.11
+        additional_dependencies: ['menard>=0.2.0']
         files: ^portolan_cli/.*\.py$
         pass_filenames: false
 
       - id: menard-protected
         name: check protected content
-        entry: uv run menard check-protected
-        language: system
+        entry: menard check-protected
+        language: python
+        language_version: python3.11
+        additional_dependencies: ['menard>=0.2.0']
         files: \.(md|py)$
         pass_filenames: false
-
-      # TODO: Enable when menard[brevity] is published to PyPI
-      # - id: menard-brevity
-      #   name: check for duplicate documentation
-      #   entry: uv run menard brevity --threshold 0.95
-      #   language: system
-      #   files: \.md$
-      #   pass_filenames: false
 
   - repo: https://github.com/commitizen-tools/commitizen
     rev: v4.1.0

@@ -76,12 +76,10 @@ filename_strategy = st.text(
     min_size=1,
     max_size=30,
 ).filter(
-    lambda x: (
-        not x.startswith(".")
-        and not x.endswith(".")
-        and ".." not in x
-        and x not in DEFAULT_IGNORED_FILES
-    )
+    lambda x: not x.startswith(".")
+    and not x.endswith(".")
+    and ".." not in x
+    and x not in DEFAULT_IGNORED_FILES
 )
 
 

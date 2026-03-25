@@ -16,7 +16,9 @@ Portolan converts data to cloud-native formats (GeoParquet, COG) for efficient c
 | COG | COG | Already cloud-native |
 | FlatGeobuf | — | Accepted as-is (cloud-native) |
 
-## ESRI File Geodatabase Rasters
+## Limitations
+
+### ESRI File Geodatabase Rasters
 
 Raster data stored in ESRI File Geodatabases (`.gdb`) **cannot be converted by Portolan**. The format was reverse-engineered exclusively for GDAL—no pure Python library can read it.
 

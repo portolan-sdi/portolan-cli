@@ -676,7 +676,7 @@ def _render_errors_tree(tree: dict[str, list[tuple[str, Severity, str]]]) -> lis
     lines: list[str] = []
 
     # Sort directories: root first, then alphabetically
-    sorted_dirs = sorted(tree.keys(), key=lambda d: "" if d == "." else d)
+    sorted_dirs = sorted(tree.keys(), key=lambda d: ("" if d == "." else d))
 
     for dir_path in sorted_dirs:
         issues = tree[dir_path]
