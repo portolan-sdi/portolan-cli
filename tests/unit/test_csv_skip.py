@@ -1320,7 +1320,9 @@ class TestAddFilesCodePaths:
             )
         )
 
-        def mock_add_dataset_side_effect(path, catalog_root, collection_id, item_id=None):
+        def mock_add_dataset_side_effect(
+            path, catalog_root, collection_id, item_id=None, item_datetime=None
+        ):
             """Simulate add_dataset: success for geojson, geometry error for csv."""
             if path.suffix.lower() == ".geojson":
                 return MagicMock(item_id="data", collection_id="collection")

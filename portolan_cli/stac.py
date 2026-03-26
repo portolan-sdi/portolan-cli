@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pystac
+from pystac.summaries import Summarizer, SummaryStrategy
 
 # STAC version we generate (v1.1.0 has unified bands array, superseding eo:bands/raster:bands)
 STAC_VERSION = "1.1.0"
@@ -86,7 +87,8 @@ def create_item(
     Args:
         item_id: Unique identifier for the item.
         bbox: Bounding box as [min_x, min_y, max_x, max_y] in WGS84.
-        datetime: Acquisition/creation datetime. Defaults to current UTC time.
+        datetime: Acquisition/creation datetime. If None, defaults to current time
+            but marks item as provisional (per ADR-0035).
         properties: Additional properties to include.
         assets: Asset dictionary to attach to the item.
 
@@ -96,12 +98,16 @@ def create_item(
     # Generate polygon geometry from bbox
     geometry = _bbox_to_polygon(bbox)
 
-    # Default to current time if not specified
+    # Merge any custom properties
+    item_properties = dict(properties) if properties else {}
+
+    # Per ADR-0035: STAC requires temporal extent, so we default to _now_utc()
+    # BUT mark it as provisional so portolan check can flag incomplete items
+    datetime_provisional = datetime is None
     if datetime is None:
         datetime = _now_utc()
-
-    # Merge any custom properties
-    item_properties = properties or {}
+    if datetime_provisional:
+        item_properties["portolan:datetime_provisional"] = True
 
     item = pystac.Item(
         id=item_id,
@@ -249,6 +255,7 @@ EXTENSION_URLS = {
     "projection": "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
     "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
     "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",  # Reserved for future
+    "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",  # Proposal maturity
 }
 
 
@@ -281,6 +288,10 @@ def build_stac_extensions(properties: dict[str, object]) -> list[str]:
     # Check for file extension fields
     if any(k.startswith("file:") for k in properties):
         extensions.append(EXTENSION_URLS["file"])
+
+    # Check for vector extension fields
+    if any(k.startswith("vector:") for k in properties):
+        extensions.append(EXTENSION_URLS["vector"])
 
     return extensions
 
@@ -385,3 +396,73 @@ def add_projection_extension(
         if item.stac_extensions is None:
             item.stac_extensions = []
         item.stac_extensions.append(ext_url)
+
+
+def add_vector_extension(
+    item: pystac.Item,
+    metadata: object,
+) -> None:
+    """Add Vector extension fields to an item from GeoParquet metadata.
+
+    Sets vector:geometry_types based on the geometry type(s) in the metadata.
+    Per ADR-0037: Use experimental extensions (Vector v0.1.0 is Proposal maturity).
+
+    Args:
+        item: The STAC item to add extension fields to.
+        metadata: A metadata object with geometry_type attribute (str or list).
+    """
+    if not hasattr(metadata, "geometry_type") or metadata.geometry_type is None:
+        return
+
+    # geometry_types is an array per spec
+    geometry_types = metadata.geometry_type
+    if isinstance(geometry_types, str):
+        geometry_types = [geometry_types]
+
+    item.properties["vector:geometry_types"] = geometry_types
+
+    # Update stac_extensions if not already present
+    ext_url = EXTENSION_URLS["vector"]
+    if ext_url not in (item.stac_extensions or []):
+        if item.stac_extensions is None:
+            item.stac_extensions = []
+        item.stac_extensions.append(ext_url)
+
+
+# Per ADR-0036: Hybrid field detection for collection summaries
+# Explicit fields with known strategies; auto-detect extension-prefixed fields
+SUMMARIZED_FIELDS: dict[str, SummaryStrategy] = {
+    "proj:code": SummaryStrategy.ARRAY,  # Distinct CRS codes
+    "vector:geometry_types": SummaryStrategy.ARRAY,  # Distinct geometry types
+    "gsd": SummaryStrategy.RANGE,  # Ground sample distance range
+}
+
+
+def update_collection_summaries(collection: pystac.Collection) -> None:
+    """Update collection summaries from item properties.
+
+    Uses PySTAC's Summarizer with hybrid field detection:
+    - Explicit strategies for core fields (proj:code, vector:geometry_types, gsd)
+    - Auto-detect extension-prefixed fields (custom:*, etc.)
+
+    Per ADR-0036: Categorical fields only, no numeric aggregation across items.
+
+    Args:
+        collection: The collection to update summaries for.
+    """
+    items = list(collection.get_items(recursive=True))
+    if not items:
+        return
+
+    # Build field strategies: explicit + auto-detected extension prefixes
+    field_strategies = dict(SUMMARIZED_FIELDS)
+
+    # Auto-detect extension-prefixed fields from items (not in explicit list)
+    for item in items:
+        for key in item.properties:
+            if ":" in key and key not in field_strategies:
+                # Extension-prefixed field, default to ARRAY (distinct values)
+                field_strategies[key] = SummaryStrategy.ARRAY
+
+    summarizer = Summarizer(field_strategies)
+    collection.summaries = summarizer.summarize(items)

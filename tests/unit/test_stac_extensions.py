@@ -477,7 +477,7 @@ class TestPerBandNodata:
         )
 
         props = metadata.to_stac_properties()
-        bands = props["raster:bands"]
+        bands = props["bands"]
 
         assert len(bands) == 3
         assert bands[0]["nodata"] == 0
@@ -500,7 +500,7 @@ class TestPerBandNodata:
         )
 
         props = metadata.to_stac_properties()
-        bands = props["raster:bands"]
+        bands = props["bands"]
 
         assert all(b["nodata"] == -9999.0 for b in bands)
 
@@ -520,7 +520,7 @@ class TestPerBandNodata:
         )
 
         props = metadata.to_stac_properties()
-        bands = props["raster:bands"]
+        bands = props["bands"]
 
         assert len(bands) == 2
         assert all(b["nodata"] == -32768 for b in bands)

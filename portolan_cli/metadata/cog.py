@@ -65,24 +65,35 @@ class COGMetadata:
         return result
 
     def to_stac_properties(self) -> dict[str, Any]:
-        """Convert to STAC Item properties format.
+        """Convert to STAC Item properties format (STAC v1.1.0 unified bands).
 
-        Returns per-band nodata values when nodatavals is set,
-        otherwise falls back to uniform nodata for all bands.
+        Returns unified `bands` array (not `raster:bands`) per STAC v1.1.0 spec.
+        Each band has: name, data_type, and optional nodata.
+
+        Also includes raster:spatial_resolution from resolution tuple.
         """
-        props: dict[str, Any] = {
-            "raster:bands": [{"data_type": self.dtype} for _ in range(self.band_count)],
-        }
-
-        # Prefer per-band nodata values
-        if self.nodatavals is not None and len(self.nodatavals) == self.band_count:
-            for i, band in enumerate(props["raster:bands"]):
+        # Build unified bands array (STAC v1.1.0)
+        bands: list[dict[str, Any]] = []
+        for i in range(self.band_count):
+            band: dict[str, Any] = {
+                "name": f"band_{i + 1}",
+                "data_type": self.dtype,
+            }
+            # Per-band nodata (preferred)
+            if self.nodatavals is not None and i < len(self.nodatavals):
                 if self.nodatavals[i] is not None:
                     band["nodata"] = self.nodatavals[i]
-        elif self.nodata is not None:
-            # Fall back to uniform nodata
-            for band in props["raster:bands"]:
+            elif self.nodata is not None:
+                # Fall back to uniform nodata
                 band["nodata"] = self.nodata
+            bands.append(band)
+
+        props: dict[str, Any] = {"bands": bands}
+
+        # Add raster:spatial_resolution (average of x and y resolution)
+        if self.resolution:
+            x_res, y_res = self.resolution
+            props["raster:spatial_resolution"] = (x_res + y_res) / 2
 
         return props
 

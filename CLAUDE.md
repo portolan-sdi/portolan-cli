@@ -104,6 +104,10 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0031](context/shared/adr/0031-collection-level-assets-for-vector-data.md) | Collection-level assets for vector data (GeoParquet, Shapefile, GeoPackage) |
 | [0032](context/shared/adr/0032-nested-catalogs-with-flat-collections.md) | Nested catalogs with flat collections (supersedes ADR-0012) |
 | [0033](context/shared/adr/0033-esri-gdb-raster-gdal-requirement.md) | ESRI GDB rasters require external GDAL (no bundled support) |
+| [0034](context/shared/adr/0034-statistics-computation-defaults.md) | Stats: approx raster, PyArrow parquet, enabled by default, configurable |
+| [0035](context/shared/adr/0035-temporal-extent-handling.md) | Temporal: default null (not now), prompt for datetime, flag incomplete |
+| [0036](context/shared/adr/0036-collection-summaries-strategy.md) | Summaries: hybrid field detection, categorical only, no numeric aggregation |
+| [0037](context/shared/adr/0037-experimental-extension-policy.md) | Use experimental extensions, accept migration cost, no fallback prefixes |
 
 ## Common Commands
 

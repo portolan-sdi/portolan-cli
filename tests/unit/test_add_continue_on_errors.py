@@ -13,6 +13,7 @@ Expected behavior:
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -109,6 +110,7 @@ class TestAddFilesContinuesOnErrors:
             catalog_root: Path,
             collection_id: str,
             item_id: str | None = None,
+            item_datetime: datetime | None = None,
         ) -> DatasetInfo:
             nonlocal call_count
             call_count += 1
@@ -159,6 +161,7 @@ class TestAddFilesContinuesOnErrors:
             catalog_root: Path,
             collection_id: str,
             item_id: str | None = None,
+            item_datetime: datetime | None = None,
         ) -> DatasetInfo:
             if "file1" in path.name:
                 raise FileNotFoundError("Source file disappeared")
@@ -201,6 +204,7 @@ class TestAddFilesContinuesOnErrors:
             catalog_root: Path,
             collection_id: str,
             item_id: str | None = None,
+            item_datetime: datetime | None = None,
         ) -> DatasetInfo:
             raise ValueError(f"Error processing {path.name}")
 

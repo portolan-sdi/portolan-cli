@@ -118,8 +118,8 @@ class TestCOGMetadata:
 
         # Check that bands have nodata if the source file has it
         if metadata.nodata is not None:
-            assert "raster:bands" in props
-            for band in props["raster:bands"]:
+            assert "bands" in props
+            for band in props["bands"]:
                 assert "nodata" in band
                 assert band["nodata"] == metadata.nodata
 
@@ -140,8 +140,8 @@ class TestCOGMetadata:
         props = metadata.to_stac_properties()
 
         # Bands should not have nodata key
-        assert "raster:bands" in props
-        for band in props["raster:bands"]:
+        assert "bands" in props
+        for band in props["bands"]:
             assert "nodata" not in band
 
 

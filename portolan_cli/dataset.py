@@ -50,9 +50,11 @@ from portolan_cli.stac import (
     add_item_to_collection,
     add_projection_extension,
     add_table_extension,
+    add_vector_extension,
     create_collection,
     create_item,
     load_catalog,
+    update_collection_summaries,
 )
 from portolan_cli.versions import (
     Asset,
@@ -555,6 +557,7 @@ def add_dataset(
     title: str | None = None,
     description: str | None = None,
     item_id: str | None = None,
+    item_datetime: datetime | None = None,
 ) -> DatasetInfo:
     """Add a dataset to a Portolan catalog.
 
@@ -577,6 +580,8 @@ def add_dataset(
         title: Optional display title for the dataset.
         description: Optional description.
         item_id: Optional item ID (defaults to parent directory name).
+        item_datetime: Optional acquisition/creation datetime (per ADR-0035).
+            If None, defaults to current time but marks item as provisional.
 
     Returns:
         DatasetInfo with details about the added dataset.
@@ -683,6 +688,7 @@ def add_dataset(
     item = create_item(
         item_id=item_id,
         bbox=bbox,
+        datetime=item_datetime,
         properties=stac_properties,
         assets=stac_assets,
     )
@@ -708,6 +714,11 @@ def add_dataset(
     # Add table extension for vector data (row count, columns, primary geometry)
     if format_type == FormatType.VECTOR:
         add_table_extension(collection, metadata)
+        # Add vector extension for geometry types (per ADR-0037)
+        add_vector_extension(item, metadata)
+
+    # Update collection summaries from items (per ADR-0036)
+    update_collection_summaries(collection)
 
     # Step 8: De-duplicate item links before saving
     _deduplicate_collection_item_links(collection)
@@ -1678,6 +1689,7 @@ def add_files(
     catalog_root: Path,
     collection_id: str | None = None,
     item_id: str | None = None,
+    item_datetime: datetime | None = None,
     verbose: bool = False,
     on_progress: Callable[[Path], None] | None = None,
 ) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
@@ -1708,6 +1720,8 @@ def add_files(
         item_id: Optional explicit item ID. If provided, overrides automatic
             derivation from parent directory name. Must be a single path segment
             (no '/', '\\', '.', or '..').
+        item_datetime: Optional acquisition/creation datetime (per ADR-0035).
+            If None, defaults to current time but marks item as provisional.
         verbose: If True, return skipped files info.
         on_progress: Optional callback invoked before processing each geo file.
             Receives the file path being processed. Use for progress display.
@@ -1796,6 +1810,7 @@ def add_files(
                     catalog_root=catalog_root,
                     collection_id=coll_id,
                     item_id=item_id,
+                    item_datetime=item_datetime,
                 )
                 added.append(result)
 

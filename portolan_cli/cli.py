@@ -60,6 +60,7 @@ from portolan_cli.scan_output import (
     render_tree_view,
 )
 from portolan_cli.scan_progress import ScanProgressReporter, count_directories
+from portolan_cli.temporal import parse_flexible_datetime
 from portolan_cli.validation import (
     Severity,
 )
@@ -2262,6 +2263,13 @@ def _output_add_results(
     default=None,
     help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
 )
+@click.option(
+    "--datetime",
+    "datetime_str",
+    type=str,
+    default=None,
+    help="Acquisition/creation datetime (ISO 8601). Default: null (unspecified). Per ADR-0035.",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
@@ -2271,6 +2279,7 @@ def add_cmd(
     verbose: bool,
     item_id: str | None,
     catalog_path: Path | None,
+    datetime_str: str | None,
 ) -> None:
     """Track files in the catalog.
 
@@ -2383,12 +2392,20 @@ def add_cmd(
         if not use_json:
             info_output(f"Adding: {file_path.name}")
 
+    # Parse datetime string (per ADR-0035: flexible formats, null if not provided)
+    try:
+        item_datetime = parse_flexible_datetime(datetime_str)
+    except ValueError as err:
+        _handle_cmd_error("add", "DatetimeParseError", str(err), use_json)
+        raise SystemExit(1) from err
+
     try:
         all_added, all_skipped, all_failures = add_files(
             paths=resolved_paths,
             catalog_root=catalog_root,
             collection_id=None,
             item_id=item_id,
+            item_datetime=item_datetime,
             verbose=verbose,
             on_progress=show_add_progress,
         )
