@@ -11,6 +11,7 @@ from portolan_cli.validation.rules import (
     CatalogJsonValidRule,
     MetadataFreshRule,
     PMTilesRecommendedRule,
+    ProvisionalDatetimeRule,
     StacFieldsRule,
     ValidationRule,
 )
@@ -23,6 +24,7 @@ DEFAULT_RULES: tuple[ValidationRule, ...] = (
     StacFieldsRule(),
     PMTilesRecommendedRule(),
     MetadataFreshRule(),
+    ProvisionalDatetimeRule(),
 )
 
 

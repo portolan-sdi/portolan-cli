@@ -13,6 +13,9 @@ import pytest
 
 from portolan_cli.stac import EXTENSION_URLS, add_vector_extension
 
+# Mark all tests in this module as unit tests
+pytestmark = pytest.mark.unit
+
 
 class TestVectorExtensionUrl:
     """Tests for Vector extension URL registration."""

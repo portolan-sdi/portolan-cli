@@ -12,6 +12,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Mark all tests in this module as unit tests
+pytestmark = pytest.mark.unit
+
 
 class TestBandStatistics:
     """Tests for BandStatistics dataclass."""

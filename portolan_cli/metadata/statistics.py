@@ -103,9 +103,9 @@ def extract_band_statistics(
         results: list[BandStatistics] = []
 
         for band_idx in range(1, src.count + 1):
-            # Try cached stats first (GDAL metadata tags)
+            # Try cached stats first (GDAL metadata tags) - but not if exact mode requested
             tags = src.tags(bidx=band_idx)
-            if "STATISTICS_MINIMUM" in tags:
+            if mode != "exact" and "STATISTICS_MINIMUM" in tags:
                 results.append(
                     BandStatistics(
                         minimum=float(tags["STATISTICS_MINIMUM"]),
@@ -118,7 +118,7 @@ def extract_band_statistics(
                 continue
 
             if mode == "cached":
-                continue  # No cached stats, skip this band
+                continue  # No cached stats and cached-only mode, skip this band
 
             # Compute using GDAL
             computed = src.statistics(band_idx, approx=(mode == "approx"))
@@ -134,6 +134,33 @@ def extract_band_statistics(
         return results
 
 
+def _is_stats_compatible_type(field: Any) -> bool:
+    """Check if a PyArrow field type supports meaningful statistics.
+
+    Binary, struct, list, and geometry columns don't have meaningful min/max.
+
+    Args:
+        field: PyArrow field from schema.
+
+    Returns:
+        True if the field type supports meaningful statistics.
+    """
+    import pyarrow as pa
+
+    # Types that don't support meaningful min/max statistics
+    incompatible_types = (
+        pa.types.is_binary,
+        pa.types.is_large_binary,
+        pa.types.is_struct,
+        pa.types.is_list,
+        pa.types.is_large_list,
+        pa.types.is_map,
+        pa.types.is_nested,
+    )
+
+    return not any(check(field.type) for check in incompatible_types)
+
+
 def extract_parquet_statistics(path: Path) -> dict[str, ColumnStatistics]:
     """Extract column statistics from Parquet file metadata.
 
@@ -143,13 +170,14 @@ def extract_parquet_statistics(path: Path) -> dict[str, ColumnStatistics]:
     Limitations:
     - Only min/max/null_count (no mean/stddev without DuckDB per ADR-0034)
     - Statistics must be present in file (write-time setting)
-    - Geometry columns typically have no meaningful stats
+    - Geometry columns (binary) are skipped - no meaningful min/max
 
     Args:
         path: Path to Parquet file.
 
     Returns:
         Dict mapping column name to ColumnStatistics.
+        Binary/geometry columns are excluded.
     """
     pf = pq.ParquetFile(path)
     schema = pf.schema_arrow
@@ -159,6 +187,11 @@ def extract_parquet_statistics(path: Path) -> dict[str, ColumnStatistics]:
 
     for col_idx, field in enumerate(schema):
         col_name = field.name
+
+        # Skip binary/geometry columns - no meaningful statistics
+        if not _is_stats_compatible_type(field):
+            continue
+
         global_min = None
         global_max = None
         total_nulls = 0

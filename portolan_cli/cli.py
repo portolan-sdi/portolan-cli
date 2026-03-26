@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -60,7 +61,7 @@ from portolan_cli.scan_output import (
     render_tree_view,
 )
 from portolan_cli.scan_progress import ScanProgressReporter, count_directories
-from portolan_cli.temporal import parse_flexible_datetime
+from portolan_cli.temporal import FLEXIBLE_DATETIME
 from portolan_cli.validation import (
     Severity,
 )
@@ -2265,14 +2266,14 @@ def _output_add_results(
 )
 @click.option(
     "--datetime",
-    "datetime_str",
-    type=str,
+    "item_datetime",
+    type=FLEXIBLE_DATETIME,
     default=None,
     help=(
         "Acquisition/creation datetime (ISO 8601, YYYY-MM-DD, or 'YYYY-MM-DD HH:MM:SS'). "
         "Applied to ALL items in this command. For different datetimes per item, "
-        "run separate add commands. If omitted, uses current time but marks items "
-        "as provisional (portolan check will flag them)."
+        "run separate add commands. If omitted, items are marked as provisional "
+        "(portolan check will flag them)."
     ),
 )
 @click.pass_context
@@ -2284,7 +2285,7 @@ def add_cmd(
     verbose: bool,
     item_id: str | None,
     catalog_path: Path | None,
-    datetime_str: str | None,
+    item_datetime: datetime | None,
 ) -> None:
     """Track files in the catalog.
 
@@ -2310,8 +2311,8 @@ def add_cmd(
             portolan add census/2020/ --datetime 2020-04-01
             portolan add census/2023/ --datetime 2023-04-01
 
-        If --datetime is omitted, items use current time but are marked
-        as provisional. Run 'portolan check' to find items needing dates.
+        If --datetime is omitted, items have null temporal extent and are
+        marked as provisional. Run 'portolan check' to find items needing dates.
 
     \b
     Examples:
@@ -2409,13 +2410,7 @@ def add_cmd(
         if not use_json:
             info_output(f"Adding: {file_path.name}")
 
-    # Parse datetime string (per ADR-0035: flexible formats, null if not provided)
-    try:
-        item_datetime = parse_flexible_datetime(datetime_str)
-    except ValueError as err:
-        _handle_cmd_error("add", "DatetimeParseError", str(err), use_json)
-        raise SystemExit(1) from err
-
+    # item_datetime is parsed by Click via FLEXIBLE_DATETIME type (ADR-0035)
     try:
         all_added, all_skipped, all_failures = add_files(
             paths=resolved_paths,

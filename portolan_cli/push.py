@@ -32,6 +32,7 @@ from portolan_cli.parallel import (
     execute_parallel,
     get_default_workers,  # Re-export for backwards compatibility
 )
+from portolan_cli.stac import update_collection_summaries
 from portolan_cli.upload import ObjectStore, parse_object_store_url
 
 # Re-export get_default_workers for backwards compatibility
@@ -169,6 +170,37 @@ def _read_local_versions(catalog_root: Path, collection: str) -> dict[str, Any]:
         return data
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON in versions.json: {e}") from e
+
+
+# =============================================================================
+# Collection Summaries (per ADR-0036)
+# =============================================================================
+
+
+def _update_collection_summaries_before_push(catalog_root: Path, collection: str) -> None:
+    """Update collection summaries before push.
+
+    This aggregates item properties into collection-level summaries for discovery.
+    Done during push (not add) to avoid O(N²) performance for large collections.
+
+    Args:
+        catalog_root: Path to catalog root directory.
+        collection: Collection identifier.
+    """
+    import pystac
+
+    collection_path = catalog_root / collection / "collection.json"
+    if not collection_path.exists():
+        return  # No collection to update
+
+    try:
+        stac_collection = pystac.Collection.from_file(str(collection_path))
+        update_collection_summaries(stac_collection)
+        stac_collection.save_object()
+        detail("Updated collection summaries")
+    except Exception as e:
+        # Don't fail push if summaries update fails - just warn
+        warn(f"Could not update collection summaries: {e}")
 
 
 # =============================================================================
@@ -779,6 +811,11 @@ def push(
             conflicts=[],
             errors=[],
         )
+
+    # Update collection summaries before push (per ADR-0036)
+    # This aggregates item properties into collection-level summaries for discovery.
+    # Done here (not on add) to avoid O(N²) performance for large collections.
+    _update_collection_summaries_before_push(catalog_root, collection)
 
     # Get assets to upload
     assets = _get_assets_to_upload(catalog_root, local_data, diff.local_only)

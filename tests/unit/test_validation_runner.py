@@ -89,6 +89,7 @@ class TestCheck:
         # No .portolan dir = first rule fails
         report = check(tmp_path)
 
-        # Should have run all 5 default rules even though the first one failed
+        # Should have run all 6 default rules even though the first one failed
+        # (Added ProvisionalDatetimeRule per ADR-0035)
         # This verifies the runner doesn't short-circuit on failure
-        assert len(report.results) == 5
+        assert len(report.results) == 6

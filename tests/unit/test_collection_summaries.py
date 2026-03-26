@@ -13,6 +13,9 @@ import pytest
 
 from portolan_cli.stac import SUMMARIZED_FIELDS, update_collection_summaries
 
+# Mark all tests in this module as unit tests
+pytestmark = pytest.mark.unit
+
 
 class TestSummarizedFieldsConfig:
     """Tests for SUMMARIZED_FIELDS configuration."""

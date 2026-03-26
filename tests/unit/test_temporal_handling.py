@@ -1,6 +1,6 @@
 """Tests for temporal extent handling.
 
-Per ADR-0035: Default to null (not now), prompt for datetime, flag incomplete.
+Per ADR-0035: Default to null (open interval), mark provisional, flag in check.
 """
 
 from __future__ import annotations
@@ -13,6 +13,9 @@ from portolan_cli.temporal import (
     FLEXIBLE_DATETIME,
     parse_flexible_datetime,
 )
+
+# Mark all tests in this module as unit tests
+pytestmark = pytest.mark.unit
 
 
 class TestParseFlexibleDatetime:
@@ -98,7 +101,7 @@ class TestCreateItemDatetime:
         assert "portolan:datetime_provisional" not in item.properties
 
     def test_create_item_with_none_datetime_marks_provisional(self) -> None:
-        """Should default to now BUT mark as provisional when datetime is None (ADR-0035)."""
+        """Should use open interval and mark as provisional when datetime is None (ADR-0035)."""
         from portolan_cli.stac import create_item
 
         item = create_item(
@@ -106,9 +109,11 @@ class TestCreateItemDatetime:
             bbox=[-180, -90, 180, 90],
             datetime=None,
         )
-        # Per ADR-0035: STAC requires datetime, so we use now() as placeholder
-        # BUT mark it as provisional so portolan check can flag it
-        assert item.datetime is not None  # Has a datetime (STAC-valid)
+        # Per ADR-0035: Use null datetime with open interval (start/end both null)
+        # STAC allows datetime=null if start_datetime and end_datetime are set
+        assert item.datetime is None  # Null datetime (open interval)
+        assert item.properties.get("start_datetime") is None
+        assert item.properties.get("end_datetime") is None
         assert item.properties.get("portolan:datetime_provisional") is True
 
     def test_create_item_explicit_datetime_clears_provisional(self) -> None:

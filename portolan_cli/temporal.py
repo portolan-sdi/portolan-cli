@@ -1,10 +1,10 @@
 """Temporal extent handling for STAC items.
 
 Per ADR-0035:
-- Default to null (not current time)
-- Accept flexible datetime formats
-- Prompt in interactive mode
-- Flag incomplete items in portolan check
+- Default to null (open temporal interval) when --datetime not provided
+- Mark null-datetime items as provisional (portolan:datetime_provisional)
+- Accept flexible datetime formats (ISO 8601, YYYY-MM-DD, space-separated)
+- Flag provisional items in portolan check
 """
 
 from __future__ import annotations

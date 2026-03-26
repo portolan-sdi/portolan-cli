@@ -87,8 +87,8 @@ def create_item(
     Args:
         item_id: Unique identifier for the item.
         bbox: Bounding box as [min_x, min_y, max_x, max_y] in WGS84.
-        datetime: Acquisition/creation datetime. If None, defaults to current time
-            but marks item as provisional (per ADR-0035).
+        datetime: Acquisition/creation datetime. If None, creates an open temporal
+            interval (start/end both null) and marks as provisional (per ADR-0035).
         properties: Additional properties to include.
         assets: Asset dictionary to attach to the item.
 
@@ -101,19 +101,21 @@ def create_item(
     # Merge any custom properties
     item_properties = dict(properties) if properties else {}
 
-    # Per ADR-0035: STAC requires temporal extent, so we default to _now_utc()
-    # BUT mark it as provisional so portolan check can flag incomplete items
+    # Per ADR-0035: If datetime not provided, use open interval (null start/end)
+    # and mark as provisional so portolan check can flag incomplete items.
+    # STAC requires either datetime OR start_datetime+end_datetime.
     datetime_provisional = datetime is None
-    if datetime is None:
-        datetime = _now_utc()
     if datetime_provisional:
+        # Use open temporal interval (both null = unknown temporal extent)
+        item_properties["start_datetime"] = None
+        item_properties["end_datetime"] = None
         item_properties["portolan:datetime_provisional"] = True
 
     item = pystac.Item(
         id=item_id,
         geometry=geometry,
         bbox=bbox,
-        datetime=datetime,
+        datetime=datetime,  # Will be None if provisional
         properties=item_properties,
     )
 

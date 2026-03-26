@@ -6,7 +6,12 @@ This is a breaking change from STAC v1.0 to v1.1.
 
 from __future__ import annotations
 
+import pytest
+
 from portolan_cli.metadata.cog import COGMetadata
+
+# Mark all tests in this module as unit tests
+pytestmark = pytest.mark.unit
 
 
 class TestUnifiedBandsArray:
