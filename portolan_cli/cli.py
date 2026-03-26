@@ -4108,17 +4108,43 @@ def _generate_readme_content(
     return generate_readme(stac=stac, metadata=metadata_dict), False
 
 
+def _process_readme_entry(
+    readme_path: Path,
+    content: str,
+    rel_path: str,
+    check: bool,
+    generated: list[str],
+    stale: list[str],
+) -> None:
+    """Process a single README: check freshness or write.
+
+    Args:
+        readme_path: Absolute path to README.md.
+        content: Generated content to write/check.
+        rel_path: Relative path for reporting.
+        check: If True, check freshness only.
+        generated: List to append fresh/generated paths.
+        stale: List to append stale paths.
+    """
+    if check:
+        is_fresh = readme_path.exists() and readme_path.read_text() == content
+        (generated if is_fresh else stale).append(rel_path)
+    else:
+        readme_path.write_text(content)
+        generated.append(rel_path)
+
+
 def _readme_recursive(
     catalog_path: Path,
     use_json: bool,
     check: bool,
     stdout: bool,
 ) -> None:
-    """Generate READMEs for catalog and all collections.
+    """Generate READMEs for catalog and all collections recursively.
 
-    Helper for --recursive flag. Generates:
-    1. Catalog README with aggregated extent
-    2. Each collection's README
+    Helper for --recursive flag. Walks the entire catalog tree and generates:
+    1. Catalog/subcatalog READMEs (directories with catalog.json)
+    2. Collection READMEs (directories with collection.json)
 
     Args:
         catalog_path: Path to catalog root.
@@ -4138,42 +4164,40 @@ def _readme_recursive(
     generated_paths: list[str] = []
     stale_paths: list[str] = []
 
-    # Generate catalog README
-    catalog_readme = catalog_path / "README.md"
-    catalog_content = generate_catalog_readme(catalog_path)
-
-    if check:
-        is_fresh = catalog_readme.exists() and catalog_readme.read_text() == catalog_content
-        if is_fresh:
-            generated_paths.append("README.md")
-        else:
-            stale_paths.append("README.md")
-    else:
-        catalog_readme.write_text(catalog_content)
-        generated_paths.append("README.md")
-
-    # Find and generate collection READMEs
-    for subdir in sorted(catalog_path.iterdir()):
-        if not subdir.is_dir():
+    # Walk entire tree to find all catalogs and collections
+    for dirpath in sorted(catalog_path.rglob("*")):
+        if not dirpath.is_dir():
             continue
-        if subdir.name.startswith("."):
-            continue
-        if not (subdir / "collection.json").exists():
+        if any(part.startswith(".") for part in dirpath.relative_to(catalog_path).parts):
             continue
 
-        coll_readme = subdir / "README.md"
-        coll_content = generate_readme_for_collection(subdir, catalog_path)
-        rel_path = f"{subdir.name}/README.md"
+        rel_dir = dirpath.relative_to(catalog_path)
+        readme_path = dirpath / "README.md"
+        rel_path = str(rel_dir / "README.md")
 
-        if check:
-            is_fresh = coll_readme.exists() and coll_readme.read_text() == coll_content
-            if is_fresh:
-                generated_paths.append(rel_path)
-            else:
-                stale_paths.append(rel_path)
-        else:
-            coll_readme.write_text(coll_content)
-            generated_paths.append(rel_path)
+        if (dirpath / "collection.json").exists():
+            content = generate_readme_for_collection(dirpath, catalog_path)
+            _process_readme_entry(
+                readme_path, content, rel_path, check, generated_paths, stale_paths
+            )
+        elif (dirpath / "catalog.json").exists():
+            content = generate_catalog_readme(dirpath)
+            _process_readme_entry(
+                readme_path, content, rel_path, check, generated_paths, stale_paths
+            )
+
+    # Generate root catalog README
+    root_content = generate_catalog_readme(catalog_path)
+    _process_readme_entry(
+        catalog_path / "README.md", root_content, "README.md", check, generated_paths, stale_paths
+    )
+    # Move root to front of list
+    if "README.md" in generated_paths:
+        generated_paths.remove("README.md")
+        generated_paths.insert(0, "README.md")
+    if "README.md" in stale_paths:
+        stale_paths.remove("README.md")
+        stale_paths.insert(0, "README.md")
 
     # Output results
     if use_json:
