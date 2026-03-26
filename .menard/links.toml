@@ -24,3 +24,11 @@ docs = ["docs/reference/configuration.md"]
 [[link]]
 code = "portolan_cli/conversion_config.py"
 docs = ["docs/reference/configuration.md#Conversion Configuration"]
+
+[[link]]
+code = "portolan_cli/metadata_yaml.py"
+docs = ["docs/reference/configuration.md#Metadata Enrichment"]
+
+[[link]]
+code = "portolan_cli/readme.py"
+docs = ["docs/reference/configuration.md#README Generation"]

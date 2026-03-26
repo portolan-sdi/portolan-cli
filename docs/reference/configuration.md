@@ -216,3 +216,101 @@ All settings can be set via environment variables with the `PORTOLAN_` prefix:
 | `aws_profile` | `PORTOLAN_AWS_PROFILE` |
 
 Environment variables override config file settings but are overridden by CLI arguments.
+
+## Metadata Enrichment
+
+In addition to `config.yaml`, Portolan supports `.portolan/metadata.yaml` for human-enrichable metadata that supplements STAC.
+
+### Purpose
+
+STAC provides machine-extractable metadata (title, description, extent, columns). `metadata.yaml` adds **human-only fields** that can't be derived automatically:
+
+| Field | Purpose |
+|-------|---------|
+| `contact` | Accountability (name, email) |
+| `license` | SPDX identifier (e.g., CC-BY-4.0, MIT) |
+| `citation` | Academic citation text |
+| `doi` | Zenodo/DataCite DOI |
+| `known_issues` | Data quality caveats |
+
+### Quick Start
+
+```bash
+# Generate template
+portolan metadata init
+
+# Validate required fields
+portolan metadata validate
+
+# Generate README from STAC + metadata
+portolan readme
+```
+
+### Example
+
+```yaml
+# .portolan/metadata.yaml
+contact:
+  name: Data Team
+  email: data@example.org
+
+license: CC-BY-4.0
+
+# Optional
+license_url: https://creativecommons.org/licenses/by/4.0/
+citation: "Census Bureau (2024). Demographics Dataset. DOI: 10.5281/zenodo.1234567"
+doi: 10.5281/zenodo.1234567
+known_issues: "Coverage gaps in rural areas for 2020 data."
+```
+
+### Required Fields
+
+Only two fields are required in `metadata.yaml`:
+
+- **`contact.name`** and **`contact.email`** - Who maintains this data
+- **`license`** - SPDX identifier (validated against common licenses)
+
+Title and description come from STAC metadata (set during `portolan init`).
+
+### Hierarchical Inheritance
+
+Like `config.yaml`, `metadata.yaml` supports hierarchical resolution:
+
+```
+catalog/
+  .portolan/
+    metadata.yaml         # Default contact and license
+  demographics/
+    .portolan/
+      metadata.yaml       # Override or add collection-specific fields
+```
+
+Child values override parent values. Use this to set catalog-wide defaults (license, contact) while adding collection-specific fields (known_issues, citation).
+
+### README Generation
+
+The `portolan readme` command generates `README.md` by combining:
+
+**From STAC (automatic):**
+- Title, description
+- Spatial/temporal coverage
+- Schema columns (from `table:columns`)
+- Bands (from `eo:bands`, `raster:bands`)
+- Files with checksums
+- Code examples based on format
+
+**From metadata.yaml (human):**
+- License, contact
+- Citation, DOI
+- Known issues
+
+```bash
+# Generate README.md
+portolan readme
+
+# Preview without writing
+portolan readme --stdout
+
+# Check if README is up-to-date (for CI)
+portolan readme --check
+```
