@@ -615,6 +615,7 @@ def _extract_statistics_best_effort(
     output_path: Path,
     format_type: FormatType,
     catalog_root: Path,
+    collection_path: Path | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
     """Extract statistics with best-effort error handling.
 
@@ -622,19 +623,28 @@ def _extract_statistics_best_effort(
         output_path: Path to the converted file.
         format_type: Format type (RASTER or VECTOR).
         catalog_root: Catalog root for config lookup.
+        collection_path: Collection directory for hierarchical config (ADR-0039).
 
     Returns:
         Tuple of (band_stats, parquet_stats). Empty if disabled or failed.
     """
     band_stats: list[Any] = []
     parquet_stats: dict[str, Any] = {}
-    stats_enabled = get_setting("statistics.enabled", catalog_path=catalog_root)
+    stats_enabled = get_setting(
+        "statistics.enabled",
+        catalog_path=catalog_root,
+        collection_path=collection_path,
+    )
     if not stats_enabled:
         return band_stats, parquet_stats
 
     try:
         if format_type == FormatType.RASTER:
-            raster_mode = get_setting("statistics.raster_mode", catalog_path=catalog_root)
+            raster_mode = get_setting(
+                "statistics.raster_mode",
+                catalog_path=catalog_root,
+                collection_path=collection_path,
+            )
             mode = raster_mode if raster_mode in ("cached", "approx", "exact") else "approx"
             band_stats = extract_band_statistics(output_path, mode=mode)  # type: ignore[arg-type]
         else:
@@ -789,12 +799,18 @@ def add_dataset(
         collection_dir=collection_dir,
     )
     band_stats, parquet_stats = _extract_statistics_best_effort(
-        output_path, format_type, catalog_root
+        output_path, format_type, catalog_root, collection_path=collection_dir
     )
 
     # Step 6: Build STAC properties
     stac_properties = metadata.to_stac_properties()
-    stats_enabled = bool(get_setting("statistics.enabled", catalog_path=catalog_root))
+    stats_enabled = bool(
+        get_setting(
+            "statistics.enabled",
+            catalog_path=catalog_root,
+            collection_path=collection_dir,
+        )
+    )
     _add_statistics_to_properties(
         stac_properties, format_type, band_stats, parquet_stats, stats_enabled
     )

@@ -461,6 +461,13 @@ def find_portolan_files(
     start_path = start_path.resolve()
     catalog_root = catalog_root.resolve()
 
+    # Validate start_path is inside catalog_root (security: prevent path traversal)
+    try:
+        start_path.relative_to(catalog_root)
+    except ValueError:
+        # start_path is not inside catalog_root
+        return []
+
     # Collect directories from start_path up to catalog_root (inclusive)
     directories: list[Path] = []
     current = start_path
@@ -469,8 +476,8 @@ def find_portolan_files(
         if current == catalog_root:
             break
         parent = current.parent
-        # Safety: stop if we go above catalog_root or hit filesystem root
-        if parent == current or not str(current).startswith(str(catalog_root)):
+        # Safety: stop if we hit filesystem root (shouldn't happen after validation)
+        if parent == current:
             break
         current = parent
 
@@ -486,6 +493,39 @@ def find_portolan_files(
             result.append(file_path)
 
     return result
+
+
+def _load_validated_mapping(file_path: Path) -> dict[str, Any] | None:
+    """Load and validate a YAML file as a mapping.
+
+    Handles YAML parsing errors and validates the document is a dict.
+    Returns None for empty files or non-dict documents (with logging).
+
+    Args:
+        file_path: Path to the YAML file.
+
+    Returns:
+        Parsed dict if valid, None otherwise.
+
+    Raises:
+        ConfigInvalidStructureError: If YAML is malformed.
+    """
+    from portolan_cli.errors import ConfigInvalidStructureError
+
+    content = file_path.read_text()
+    if not content.strip():
+        return None
+
+    try:
+        data = yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        raise ConfigInvalidStructureError(str(file_path), f"Invalid YAML syntax: {e}") from e
+
+    if not isinstance(data, dict):
+        # Non-mapping YAML (e.g., a list or scalar) - skip with warning
+        return None
+
+    return data
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -538,11 +578,9 @@ def load_merged_yaml(
 
     result: dict[str, Any] = {}
     for file_path in files:
-        content = file_path.read_text()
-        if content.strip():
-            data = yaml.safe_load(content)
-            if isinstance(data, dict):
-                result = _deep_merge(result, data)
+        data = _load_validated_mapping(file_path)
+        if data is not None:
+            result = _deep_merge(result, data)
 
     return result
 
@@ -572,42 +610,38 @@ def load_merged_config(
     # Check for legacy collections: section in root config
     root_config_path = catalog_root / ".portolan" / CONFIG_FILENAME
     if root_config_path.is_file():
-        root_content = root_config_path.read_text()
-        if root_content.strip():
-            root_config = yaml.safe_load(root_content)
-            if isinstance(root_config, dict):
-                collections = root_config.get("collections", {})
-                if isinstance(collections, dict):
-                    # Determine collection name from path
-                    try:
-                        relative = path.resolve().relative_to(catalog_root.resolve())
-                        collection_name = relative.parts[0] if relative.parts else None
-                    except ValueError:
-                        collection_name = None
+        root_config = _load_validated_mapping(root_config_path)
+        if root_config is not None:
+            collections = root_config.get("collections", {})
+            if isinstance(collections, dict):
+                # Determine collection name from path
+                try:
+                    relative = path.resolve().relative_to(catalog_root.resolve())
+                    collection_name = relative.parts[0] if relative.parts else None
+                except ValueError:
+                    collection_name = None
 
-                    if collection_name and collection_name in collections:
-                        legacy_config = collections[collection_name]
-                        if isinstance(legacy_config, dict):
-                            # Merge: hierarchy config overrides legacy
-                            # First apply legacy, then hierarchy on top
-                            result: dict[str, Any] = {}
-                            # Start with root-level settings (excluding collections:)
-                            for key, value in root_config.items():
-                                if key != "collections":
-                                    result[key] = value
-                            # Apply legacy collection config
-                            result = _deep_merge(result, legacy_config)
-                            # Apply hierarchical folder configs (takes precedence)
-                            # But we need to exclude the root config since we processed it
-                            files = find_portolan_files(path, CONFIG_FILENAME, catalog_root)
-                            for file_path in files:
-                                if file_path != root_config_path:
-                                    content = file_path.read_text()
-                                    if content.strip():
-                                        data = yaml.safe_load(content)
-                                        if isinstance(data, dict):
-                                            result = _deep_merge(result, data)
-                            return result
+                if collection_name and collection_name in collections:
+                    legacy_config = collections[collection_name]
+                    if isinstance(legacy_config, dict):
+                        # Merge: hierarchy config overrides legacy
+                        # First apply legacy, then hierarchy on top
+                        result: dict[str, Any] = {}
+                        # Start with root-level settings (excluding collections:)
+                        for key, value in root_config.items():
+                            if key != "collections":
+                                result[key] = value
+                        # Apply legacy collection config
+                        result = _deep_merge(result, legacy_config)
+                        # Apply hierarchical folder configs (takes precedence)
+                        # But we need to exclude the root config since we processed it
+                        files = find_portolan_files(path, CONFIG_FILENAME, catalog_root)
+                        for file_path in files:
+                            if file_path != root_config_path:
+                                data = _load_validated_mapping(file_path)
+                                if data is not None:
+                                    result = _deep_merge(result, data)
+                        return result
 
     return merged
 
