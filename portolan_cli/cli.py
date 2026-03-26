@@ -3787,3 +3787,319 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
         else:
             error(f"Failed to clean catalog: {e}")
         raise SystemExit(1) from e
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Metadata Commands (ADR-0038)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def metadata() -> None:
+    """Manage catalog metadata for README generation.
+
+    metadata.yaml files supplement STAC with human-enrichable fields like
+    titles, descriptions, contact info, and citations. These files can exist
+    at any level in the catalog hierarchy (catalog, subcatalog, collection).
+
+    \b
+    Examples:
+        portolan metadata init                # Create template at catalog root
+        portolan metadata init demographics   # Create template for collection
+        portolan metadata validate            # Validate metadata.yaml
+    """
+
+
+@metadata.command("init")
+@click.argument("path", required=False, type=click.Path())
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing metadata.yaml file.",
+)
+@click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def metadata_init(
+    ctx: click.Context,
+    json_output: bool,
+    path: str | None,
+    force: bool,
+) -> None:
+    """Generate a metadata.yaml template.
+
+    Creates a .portolan/metadata.yaml file with all required and optional
+    fields, including helpful comments explaining each field.
+
+    If PATH is provided, creates the template at that directory. Otherwise,
+    creates it at the catalog root.
+
+    \b
+    Examples:
+        portolan metadata init                # Template at catalog root
+        portolan metadata init demographics   # Template for collection
+        portolan metadata init --force        # Overwrite existing
+    """
+    from portolan_cli.metadata_yaml import generate_metadata_template
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Find catalog root
+    catalog_path = find_catalog_root()
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "metadata init",
+                [
+                    ErrorDetail(
+                        type="CatalogNotFoundError",
+                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not inside a Portolan catalog")
+            info_output("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    # Determine target directory
+    if path:
+        target_dir = catalog_path / path
+    else:
+        target_dir = catalog_path
+
+    # Create .portolan directory if needed
+    portolan_dir = target_dir / ".portolan"
+    portolan_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check for existing file
+    metadata_file = portolan_dir / "metadata.yaml"
+    if metadata_file.exists() and not force:
+        if use_json:
+            envelope = error_envelope(
+                "metadata init",
+                [
+                    ErrorDetail(
+                        type="FileExistsError",
+                        message=f"metadata.yaml already exists at {metadata_file}. Use --force to overwrite.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            warn(f"metadata.yaml already exists at {metadata_file}")
+            info_output("Use --force to overwrite")
+        raise SystemExit(1)
+
+    # Generate and write template
+    template = generate_metadata_template()
+    metadata_file.write_text(template)
+
+    if use_json:
+        relative_path = str(metadata_file.relative_to(catalog_path))
+        envelope = success_envelope(
+            "metadata init",
+            {"path": relative_path, "overwritten": force and metadata_file.exists()},
+        )
+        output_json_envelope(envelope)
+    else:
+        success(f"Created {metadata_file.relative_to(catalog_path)}")
+        info_output("Edit the file to add your catalog's metadata")
+
+
+@metadata.command("validate")
+@click.argument("path", required=False, type=click.Path())
+@click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def metadata_validate(
+    ctx: click.Context,
+    json_output: bool,
+    path: str | None,
+) -> None:
+    """Validate metadata.yaml against schema.
+
+    Checks for:
+    - Required fields: title, description, contact (name + email), license
+    - Format validation: email, SPDX license identifier, DOI
+
+    Uses hierarchical resolution: child metadata.yaml files inherit from
+    parent levels and override specific fields.
+
+    \b
+    Examples:
+        portolan metadata validate              # Validate at catalog root
+        portolan metadata validate demographics # Validate for collection
+    """
+    from portolan_cli.metadata_yaml import load_and_validate_metadata
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Find catalog root
+    catalog_path = find_catalog_root()
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "metadata validate",
+                [
+                    ErrorDetail(
+                        type="CatalogNotFoundError",
+                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not inside a Portolan catalog")
+            info_output("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    # Determine target directory
+    if path:
+        target_dir = catalog_path / path
+    else:
+        target_dir = catalog_path
+
+    # Load and validate
+    _metadata, errors = load_and_validate_metadata(target_dir, catalog_path)
+
+    if use_json:
+        envelope = success_envelope(
+            "metadata validate",
+            {"valid": len(errors) == 0, "errors": errors, "path": str(path or ".")},
+        )
+        output_json_envelope(envelope)
+        if errors:
+            raise SystemExit(1)
+    else:
+        if errors:
+            error(f"Validation failed with {len(errors)} error(s):")
+            for err in errors:
+                detail(f"  - {err}")
+            raise SystemExit(1)
+        else:
+            success("Metadata is valid")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# README Command (ADR-0038)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.command()
+@click.argument("path", required=False, type=click.Path())
+@click.option(
+    "--stdout",
+    is_flag=True,
+    default=False,
+    help="Print README to stdout instead of writing file.",
+)
+@click.option(
+    "--check",
+    is_flag=True,
+    default=False,
+    help="Check if README is up-to-date (for CI). Exits 1 if stale.",
+)
+@click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def readme(
+    ctx: click.Context,
+    json_output: bool,
+    path: str | None,
+    stdout: bool,
+    check: bool,
+) -> None:
+    """Generate README.md from STAC metadata and metadata.yaml.
+
+    The README is a pure output - always generated from STAC (machine-extracted
+    metadata) plus .portolan/metadata.yaml (human enrichment). Never hand-edit
+    the README; edit metadata.yaml instead and regenerate.
+
+    Use --check in CI to verify the README is up-to-date:
+
+    \b
+    Examples:
+        portolan readme                    # Generate at catalog root
+        portolan readme demographics       # Generate for collection
+        portolan readme --stdout           # Print without writing
+        portolan readme --check            # CI mode: exit 1 if stale
+    """
+    from portolan_cli.config import load_merged_metadata
+    from portolan_cli.readme import check_readme_freshness, generate_readme
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Find catalog root
+    catalog_path = find_catalog_root()
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "readme",
+                [
+                    ErrorDetail(
+                        type="CatalogNotFoundError",
+                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not inside a Portolan catalog")
+            info_output("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    # Determine target directory
+    if path:
+        target_dir = catalog_path / path
+    else:
+        target_dir = catalog_path
+
+    # Load STAC (collection.json or catalog.json)
+    stac: dict[str, Any] = {}
+    for stac_file in ["collection.json", "catalog.json"]:
+        stac_path = target_dir / stac_file
+        if stac_path.exists():
+            stac = json.loads(stac_path.read_text())
+            break
+
+    # Load merged metadata
+    metadata_dict = load_merged_metadata(target_dir, catalog_path)
+
+    # Generate README
+    readme_content = generate_readme(stac=stac, metadata=metadata_dict)
+
+    # Determine output path
+    readme_path = target_dir / "README.md"
+
+    if check:
+        # CI mode: check freshness
+        is_fresh = check_readme_freshness(readme_path, stac=stac, metadata=metadata_dict)
+        if use_json:
+            envelope = success_envelope(
+                "readme",
+                {"fresh": is_fresh, "path": str(readme_path.relative_to(catalog_path))},
+            )
+            output_json_envelope(envelope)
+            if not is_fresh:
+                raise SystemExit(1)
+        else:
+            if is_fresh:
+                success("README is up-to-date")
+            else:
+                error("README is stale or missing")
+                info_output("Run 'portolan readme' to regenerate")
+                raise SystemExit(1)
+    elif stdout:
+        # Print to stdout
+        click.echo(readme_content)
+    else:
+        # Write to file
+        readme_path.write_text(readme_content)
+        if use_json:
+            envelope = success_envelope(
+                "readme",
+                {"path": str(readme_path.relative_to(catalog_path)), "generated": True},
+            )
+            output_json_envelope(envelope)
+        else:
+            success(f"Generated {readme_path.relative_to(catalog_path)}")
