@@ -126,7 +126,7 @@ conversion:
 
 ## Collection-Level Configuration
 
-Override settings for specific collections:
+Override settings for specific collections using the `collections:` section:
 
 ```yaml
 # .portolan/config.yaml
@@ -146,6 +146,65 @@ collections:
       extensions:
         preserve: [shp, gpkg, geojson]  # Preserve all original formats
 ```
+
+This approach works well for most catalogs. For large catalogs with many collections, see [Hierarchical Configuration](#hierarchical-configuration-optional) below.
+
+## Hierarchical Configuration (Optional)
+
+For large catalogs or when different maintainers manage different collections, you can optionally create `.portolan/` folders at collection or subcatalog levels:
+
+```
+catalog/
+  .portolan/
+    config.yaml           # Catalog defaults
+  demographics/
+    .portolan/
+      config.yaml         # Collection-specific overrides (optional)
+    collection.json
+  historical/             # Subcatalog
+    .portolan/
+      config.yaml         # Subcatalog defaults (optional)
+    census-1990/
+      collection.json
+```
+
+**This is entirely optional.** Benefits include:
+
+- **Scalability**: Avoids one giant config file with 100+ collection entries
+- **Ownership**: Collection maintainers edit their own folder without touching root
+- **Git-friendly**: Changes to one collection don't create merge conflicts in root
+
+### Inheritance Rules
+
+Settings are inherited from parent levels. Child values override parent values:
+
+```yaml
+# catalog/.portolan/config.yaml
+aws_profile: default
+remote: s3://catalog/
+
+# catalog/demographics/.portolan/config.yaml
+remote: s3://demographics/  # Overrides parent
+# aws_profile inherited from catalog
+```
+
+### Precedence
+
+When both approaches are used, folder config takes precedence over `collections:` section:
+
+```
+CLI > Env var > Collection folder config > Subcatalog folder config >
+  Root collections: section > Catalog config > Default
+```
+
+### When to Use Each Approach
+
+| Approach | Best For |
+|----------|----------|
+| `collections:` section | Small catalogs, simple overrides |
+| Hierarchical folders | Large catalogs, multiple maintainers, verbose metadata |
+
+Most users should start with `collections:` and only add per-collection `.portolan/` folders when needed
 
 ## Environment Variables
 

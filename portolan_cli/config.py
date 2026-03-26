@@ -216,21 +216,24 @@ def get_setting(
     cli_value: Any | None = None,
     catalog_path: Path | None = None,
     collection: str | None = None,
+    collection_path: Path | None = None,
 ) -> Any | None:
     """Resolve a setting with full precedence.
 
     Precedence (highest to lowest):
     1. CLI argument (cli_value)
     2. Environment variable (PORTOLAN_<KEY>)
-    3. Collection-level config (if collection specified)
-    4. Catalog-level config
-    5. Built-in default (None)
+    3. Hierarchical .portolan/ config (if collection_path specified, ADR-0039)
+    4. Legacy collection-level config (collections: section, if collection specified)
+    5. Catalog-level config
+    6. Built-in default (None)
 
     Args:
         key: Setting key (e.g., "remote", "aws_profile")
         cli_value: Value passed via CLI argument (highest precedence)
         catalog_path: Path to catalog root for loading config file
-        collection: Optional collection name for collection-level config
+        collection: Optional collection name for legacy collection-level config
+        collection_path: Optional path to collection directory for hierarchical lookup
 
     Returns:
         Resolved value, or None if not found at any level.
@@ -249,21 +252,30 @@ def get_setting(
     if catalog_path is None:
         return None
 
-    # Load config from file
-    config = load_config(catalog_path)
+    # 3. Hierarchical .portolan/ config (ADR-0039)
+    if collection_path is not None:
+        merged_config = load_merged_config(collection_path, catalog_path)
+        if key in merged_config:
+            return merged_config[key]
+        # Fall through to built-in defaults
 
-    # 3. Collection-level config (if collection specified)
-    if collection is not None:
-        collections = config.get("collections", {})
-        collection_config = collections.get(collection, {})
-        if key in collection_config:
-            return collection_config[key]
+    else:
+        # Legacy behavior: use collections: section in root config
+        # Load config from file
+        config = load_config(catalog_path)
 
-    # 4. Catalog-level config
-    if key in config:
-        return config[key]
+        # 4. Legacy collection-level config (if collection specified)
+        if collection is not None:
+            collections = config.get("collections", {})
+            collection_config = collections.get(collection, {})
+            if key in collection_config:
+                return collection_config[key]
 
-    # 5. Built-in default from DEFAULT_SETTINGS
+        # 5. Catalog-level config
+        if key in config:
+            return config[key]
+
+    # 6. Built-in default from DEFAULT_SETTINGS
     return DEFAULT_SETTINGS.get(key)
 
 
@@ -418,3 +430,201 @@ def get_setting_source(
         return "catalog"
 
     return "default"
+
+
+# =============================================================================
+# Hierarchical .portolan/ support (ADR-0039)
+# =============================================================================
+
+
+def find_portolan_files(
+    start_path: Path,
+    filename: str,
+    catalog_root: Path,
+) -> list[Path]:
+    """Find all .portolan/{filename} from start_path up to catalog_root.
+
+    Walks the directory tree from catalog_root to start_path, collecting
+    paths to .portolan/{filename} files that exist. Returns them in order
+    from catalog root to start_path (for merging: parent first, child last).
+
+    Args:
+        start_path: Directory to start from (collection or subcatalog).
+        filename: File to look for (e.g., "config.yaml" or "metadata.yaml").
+        catalog_root: Catalog root directory (stopping point).
+
+    Returns:
+        List of Paths in order from catalog root to start_path.
+        Empty list if no .portolan/{filename} files exist.
+    """
+    # Resolve paths to handle symlinks and relative paths
+    start_path = start_path.resolve()
+    catalog_root = catalog_root.resolve()
+
+    # Collect directories from start_path up to catalog_root (inclusive)
+    directories: list[Path] = []
+    current = start_path
+    while True:
+        directories.append(current)
+        if current == catalog_root:
+            break
+        parent = current.parent
+        # Safety: stop if we go above catalog_root or hit filesystem root
+        if parent == current or not str(current).startswith(str(catalog_root)):
+            break
+        current = parent
+
+    # Reverse to get catalog_root -> start_path order
+    directories.reverse()
+
+    # Find .portolan/{filename} in each directory
+    result: list[Path] = []
+    for directory in directories:
+        portolan_dir = directory / ".portolan"
+        file_path = portolan_dir / filename
+        if file_path.is_file():
+            result.append(file_path)
+
+    return result
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep merge two dictionaries with override taking precedence.
+
+    For nested dictionaries, recursively merges. For other types,
+    override value completely replaces base value.
+
+    Args:
+        base: Base dictionary (values may be overridden).
+        override: Override dictionary (values take precedence).
+
+    Returns:
+        New merged dictionary.
+    """
+    result = dict(base)  # Shallow copy of base
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            # Recursively merge nested dicts
+            result[key] = _deep_merge(result[key], value)
+        else:
+            # Override value completely
+            result[key] = value
+    return result
+
+
+def load_merged_yaml(
+    start_path: Path,
+    filename: str,
+    catalog_root: Path,
+) -> dict[str, Any]:
+    """Load and merge YAML files from .portolan/ hierarchy.
+
+    Finds all .portolan/{filename} from catalog_root to start_path,
+    then deep-merges them with child values overriding parent values.
+
+    Args:
+        start_path: Directory to start from (collection or subcatalog).
+        filename: YAML file to look for (e.g., "config.yaml").
+        catalog_root: Catalog root directory.
+
+    Returns:
+        Merged dictionary from all YAML files in hierarchy.
+        Empty dict if no files exist.
+    """
+    files = find_portolan_files(start_path, filename, catalog_root)
+
+    if not files:
+        return {}
+
+    result: dict[str, Any] = {}
+    for file_path in files:
+        content = file_path.read_text()
+        if content.strip():
+            data = yaml.safe_load(content)
+            if isinstance(data, dict):
+                result = _deep_merge(result, data)
+
+    return result
+
+
+def load_merged_config(
+    path: Path,
+    catalog_root: Path,
+) -> dict[str, Any]:
+    """Load merged config.yaml with backwards compatibility.
+
+    Supports both:
+    1. New: .portolan/config.yaml at each level (ADR-0039)
+    2. Legacy: collections: section in root config.yaml (ADR-0024)
+
+    Collection .portolan/config.yaml takes precedence over root collections:.
+
+    Args:
+        path: Path to collection or subcatalog directory.
+        catalog_root: Catalog root directory.
+
+    Returns:
+        Merged configuration dictionary.
+    """
+    # Get the merged config from hierarchy
+    merged = load_merged_yaml(path, CONFIG_FILENAME, catalog_root)
+
+    # Check for legacy collections: section in root config
+    root_config_path = catalog_root / ".portolan" / CONFIG_FILENAME
+    if root_config_path.is_file():
+        root_content = root_config_path.read_text()
+        if root_content.strip():
+            root_config = yaml.safe_load(root_content)
+            if isinstance(root_config, dict):
+                collections = root_config.get("collections", {})
+                if isinstance(collections, dict):
+                    # Determine collection name from path
+                    try:
+                        relative = path.resolve().relative_to(catalog_root.resolve())
+                        collection_name = relative.parts[0] if relative.parts else None
+                    except ValueError:
+                        collection_name = None
+
+                    if collection_name and collection_name in collections:
+                        legacy_config = collections[collection_name]
+                        if isinstance(legacy_config, dict):
+                            # Merge: hierarchy config overrides legacy
+                            # First apply legacy, then hierarchy on top
+                            result: dict[str, Any] = {}
+                            # Start with root-level settings (excluding collections:)
+                            for key, value in root_config.items():
+                                if key != "collections":
+                                    result[key] = value
+                            # Apply legacy collection config
+                            result = _deep_merge(result, legacy_config)
+                            # Apply hierarchical folder configs (takes precedence)
+                            # But we need to exclude the root config since we processed it
+                            files = find_portolan_files(path, CONFIG_FILENAME, catalog_root)
+                            for file_path in files:
+                                if file_path != root_config_path:
+                                    content = file_path.read_text()
+                                    if content.strip():
+                                        data = yaml.safe_load(content)
+                                        if isinstance(data, dict):
+                                            result = _deep_merge(result, data)
+                            return result
+
+    return merged
+
+
+def load_merged_metadata(
+    path: Path,
+    catalog_root: Path,
+) -> dict[str, Any]:
+    """Load merged metadata.yaml from hierarchy.
+
+    Simply delegates to load_merged_yaml for metadata.yaml files.
+
+    Args:
+        path: Path to collection or subcatalog directory.
+        catalog_root: Catalog root directory.
+
+    Returns:
+        Merged metadata dictionary.
+    """
+    return load_merged_yaml(path, "metadata.yaml", catalog_root)
