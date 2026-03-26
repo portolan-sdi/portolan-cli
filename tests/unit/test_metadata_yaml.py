@@ -167,6 +167,47 @@ class TestMetadataValidation:
             assert license_errors == [], f"License {license_id} should be valid"
 
     @pytest.mark.unit
+    def test_licenseref_custom_identifiers_pass(self) -> None:
+        """validate_metadata accepts LicenseRef-* custom license identifiers (SPDX spec).
+
+        Per SPDX spec Section 6, custom licenses use LicenseRef-[idstring] format.
+        This is common for government/proprietary data.
+        """
+        from portolan_cli.metadata_yaml import validate_metadata
+
+        valid_custom_licenses = [
+            "LicenseRef-CityOfPhiladelphia",
+            "LicenseRef-Proprietary-1.0",
+            "LicenseRef-Internal.Use.Only",
+            "LicenseRef-Custom-123",
+        ]
+
+        for license_id in valid_custom_licenses:
+            metadata = {
+                "contact": {"name": "Data Team", "email": "data@example.org"},
+                "license": license_id,
+            }
+
+            errors = validate_metadata(metadata)
+
+            license_errors = [e for e in errors if "license" in e.lower()]
+            assert license_errors == [], f"LicenseRef {license_id} should be valid"
+
+    @pytest.mark.unit
+    def test_licenseref_requires_idstring(self) -> None:
+        """validate_metadata rejects bare 'LicenseRef-' without an idstring."""
+        from portolan_cli.metadata_yaml import validate_metadata
+
+        metadata = {
+            "contact": {"name": "Data Team", "email": "data@example.org"},
+            "license": "LicenseRef-",  # Missing idstring
+        }
+
+        errors = validate_metadata(metadata)
+
+        assert any("license" in e.lower() for e in errors)
+
+    @pytest.mark.unit
     def test_invalid_doi_format_returns_error(self) -> None:
         """validate_metadata returns error for invalid DOI format."""
         from portolan_cli.metadata_yaml import validate_metadata

@@ -95,6 +95,11 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 # See: https://www.doi.org/doi_handbook/2_Numbering.html
 DOI_PATTERN = re.compile(r"^10\.\d{4,}/\S+$")
 
+# LicenseRef pattern: LicenseRef-[idstring] per SPDX spec Section 6
+# idstring: alphanumeric plus dot, hyphen; must have at least one character
+# See: https://spdx.github.io/spdx-spec/v2.3/other-licensing-information-detected/
+LICENSEREF_PATTERN = re.compile(r"^LicenseRef-[A-Za-z0-9.\-]+$")
+
 
 # =============================================================================
 # Validation
@@ -142,12 +147,16 @@ def validate_metadata(metadata: dict[str, Any]) -> list[str]:
     elif not metadata["license"] or not str(metadata["license"]).strip():
         errors.append("Field 'license' cannot be empty")
     else:
-        # Validate license is SPDX identifier
-        license_id = metadata.get("license")
-        if license_id not in COMMON_SPDX_LICENSES:
+        # Validate license is SPDX identifier or valid LicenseRef-* custom identifier
+        # Per SPDX spec, LicenseRef-[idstring] is valid for proprietary/custom licenses
+        license_id = str(metadata.get("license"))
+        is_standard_license = license_id in COMMON_SPDX_LICENSES
+        is_custom_license = LICENSEREF_PATTERN.match(license_id) is not None
+        if not is_standard_license and not is_custom_license:
             errors.append(
                 f"Invalid SPDX license identifier: '{license_id}'. "
-                f"Common licenses: MIT, Apache-2.0, CC-BY-4.0, CC0-1.0"
+                f"Use a standard license (MIT, Apache-2.0, CC-BY-4.0, CC0-1.0) "
+                f"or custom format LicenseRef-YourLicense"
             )
 
     # Validate DOI format if present (optional field)
