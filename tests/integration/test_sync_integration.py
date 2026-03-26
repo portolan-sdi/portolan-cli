@@ -353,6 +353,57 @@ class TestSyncFlagPassthrough:
             call_kwargs = mock_sync.call_args.kwargs
             assert call_kwargs.get("profile") == "production"
 
+    @pytest.mark.integration
+    def test_sync_reads_aws_profile_from_config(self, managed_catalog: Path) -> None:
+        """Sync should read aws_profile from .portolan/config.yaml when --profile not specified."""
+        from portolan_cli.cli import cli
+        from portolan_cli.pull import PullResult
+        from portolan_cli.push import PushResult
+        from portolan_cli.sync import SyncResult
+
+        runner = CliRunner()
+
+        # Set aws_profile in config.yaml
+        config_file = managed_catalog / ".portolan" / "config.yaml"
+        config_file.write_text("remote: s3://test-bucket/catalog\naws_profile: config-profile\n")
+
+        with patch("portolan_cli.sync.sync") as mock_sync:
+            mock_sync.return_value = SyncResult(
+                success=True,
+                pull_result=PullResult(
+                    success=True,
+                    files_downloaded=0,
+                    files_skipped=0,
+                    local_version="1.0.0",
+                    remote_version="1.0.0",
+                ),
+                init_performed=False,
+                scan_result=None,
+                check_result=None,
+                push_result=PushResult(
+                    success=True,
+                    files_uploaded=0,
+                    versions_pushed=0,
+                ),
+                errors=[],
+            )
+
+            runner.invoke(
+                cli,
+                [
+                    "sync",
+                    "--collection",
+                    "demographics",
+                    "--catalog",
+                    str(managed_catalog),
+                ],
+                catch_exceptions=False,
+            )
+
+            # Should read profile from config, not use hardcoded "default"
+            call_kwargs = mock_sync.call_args.kwargs
+            assert call_kwargs.get("profile") == "config-profile"
+
 
 # =============================================================================
 # Error Handling Tests

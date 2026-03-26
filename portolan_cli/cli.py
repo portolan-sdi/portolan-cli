@@ -153,6 +153,32 @@ def require_catalog_root(
     return catalog_root
 
 
+def resolve_aws_profile(
+    profile: str | None,
+    catalog_path: Path | None,
+    collection: str | None = None,
+) -> str:
+    """Resolve AWS profile with precedence: CLI > env var > config > default.
+
+    Args:
+        profile: CLI-provided profile value (None if not specified).
+        catalog_path: Path to catalog root for config lookup.
+        collection: Optional collection name for collection-level config.
+
+    Returns:
+        Resolved profile name (defaults to "default" if nothing configured).
+    """
+    from portolan_cli.config import get_setting
+
+    resolved = get_setting(
+        "aws_profile",
+        cli_value=profile,
+        catalog_path=catalog_path,
+        collection=collection,
+    )
+    return resolved if resolved is not None else "default"
+
+
 @click.group()
 @click.version_option()
 @click.option(
@@ -2605,8 +2631,8 @@ def rm_cmd(
 )
 @click.option(
     "--profile",
-    default="default",
-    help="AWS profile name (for S3 destinations).",
+    default=None,
+    help="AWS profile name (for S3 destinations). Uses config or 'default' if not specified.",
 )
 @click.option(
     "--catalog",
@@ -2679,6 +2705,7 @@ def push(
         catalog_path=catalog_path,
         collection=collection,
     )
+    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
 
     if resolved_destination is None:
         if use_json:
@@ -2708,7 +2735,7 @@ def push(
                 destination=resolved_destination,
                 force=force,
                 dry_run=dry_run,
-                profile=profile,
+                profile=resolved_profile,
                 workers=workers,
             )
 
@@ -2750,7 +2777,7 @@ def push(
             destination=resolved_destination,
             force=force,
             dry_run=dry_run,
-            profile=profile,
+            profile=resolved_profile,
         )
 
         if use_json:
@@ -2868,8 +2895,8 @@ def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
 @click.option(
     "--profile",
     type=str,
-    default="default",
-    help="AWS profile name (for S3).",
+    default=None,
+    help="AWS profile name (for S3). Uses config or 'default' if not specified.",
 )
 @click.option(
     "--workers",
@@ -2929,6 +2956,8 @@ def pull_command(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "pull")
 
+    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+
     # Catalog-wide pull (no --collection specified)
     if collection is None:
         try:
@@ -2937,7 +2966,7 @@ def pull_command(
                 local_root=catalog_path,
                 force=force,
                 dry_run=dry_run,
-                profile=profile,
+                profile=resolved_profile,
                 workers=workers,
             )
 
@@ -2988,7 +3017,7 @@ def pull_command(
             collection=collection,
             force=force,
             dry_run=dry_run,
-            profile=profile,
+            profile=resolved_profile,
         )
 
         if use_json:
@@ -3075,8 +3104,8 @@ def pull_command(
 )
 @click.option(
     "--profile",
-    default="default",
-    help="AWS profile name (for S3 destinations).",
+    default=None,
+    help="AWS profile name (for S3 destinations). Uses config or 'default' if not specified.",
 )
 @click.option(
     "--catalog",
@@ -3125,6 +3154,7 @@ def sync(
         catalog_path=catalog_path,
         collection=collection,
     )
+    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
 
     if resolved_destination is None:
         if use_json:
@@ -3153,7 +3183,7 @@ def sync(
         force=force,
         dry_run=dry_run,
         fix=fix,
-        profile=profile,
+        profile=resolved_profile,
     )
 
     if use_json:
@@ -3225,8 +3255,8 @@ def sync(
 )
 @click.option(
     "--profile",
-    default="default",
-    help="AWS profile name (for S3 sources).",
+    default=None,
+    help="AWS profile name (for S3 sources). Uses env var or 'default' if not specified.",
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
@@ -3273,6 +3303,9 @@ def clone(
 
     use_json = should_output_json(ctx, json_output)
 
+    # Resolve profile: CLI arg > env var > default (no local catalog yet)
+    resolved_profile = resolve_aws_profile(profile, catalog_path=None)
+
     # Infer local_path from URL if not provided
     if local_path is None:
         try:
@@ -3294,7 +3327,7 @@ def clone(
         remote_url=remote_url,
         local_path=local_path,
         collection=collection,
-        profile=profile,
+        profile=resolved_profile,
     )
 
     if use_json:
