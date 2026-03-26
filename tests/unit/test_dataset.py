@@ -171,7 +171,8 @@ class TestAddDataset:
                 width=64,
                 height=64,
                 band_count=3,
-                to_stac_properties=lambda: {"raster:bands": [{"data_type": "uint8"}]},
+                # STAC v1.1.0: unified bands array (not raster:bands)
+                to_stac_properties=lambda: {"bands": [{"data_type": "uint8"}]},
             )
             mock_checksum.return_value = "def456"
 

@@ -32,7 +32,21 @@ from typing import Any
 import yaml
 
 # Known settings for documentation/validation (but unknown keys are still allowed)
-KNOWN_SETTINGS: frozenset[str] = frozenset({"remote", "aws_profile", "ignored_files"})
+KNOWN_SETTINGS: frozenset[str] = frozenset(
+    {
+        "remote",
+        "aws_profile",
+        "ignored_files",
+        "statistics.enabled",
+        "statistics.raster_mode",
+    }
+)
+
+# Default values for settings (per ADR-0034 for statistics)
+DEFAULT_SETTINGS: dict[str, Any] = {
+    "statistics.enabled": True,
+    "statistics.raster_mode": "approx",
+}
 
 # Default glob patterns for files to exclude from asset tracking (per ADR-0028).
 # These cover common OS-generated junk files and temporary files that should
@@ -249,8 +263,8 @@ def get_setting(
     if key in config:
         return config[key]
 
-    # 5. Default (None)
-    return None
+    # 5. Built-in default from DEFAULT_SETTINGS
+    return DEFAULT_SETTINGS.get(key)
 
 
 def set_setting(

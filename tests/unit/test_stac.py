@@ -141,16 +141,18 @@ class TestCreateItem:
         assert item.datetime == dt
 
     @pytest.mark.unit
-    def test_create_item_default_datetime(self) -> None:
-        """create_item uses current time when datetime not specified."""
-        before = datetime.now(timezone.utc)
+    def test_create_item_default_datetime_is_null_with_provisional_marker(self) -> None:
+        """create_item uses null datetime (open interval) when not specified (ADR-0035)."""
         item = create_item(
             item_id="now-item",
             bbox=[0, 0, 1, 1],
         )
-        after = datetime.now(timezone.utc)
 
-        assert before <= item.datetime <= after
+        # Per ADR-0035: datetime is null with open interval (start/end both null)
+        assert item.datetime is None
+        assert item.properties.get("start_datetime") is None
+        assert item.properties.get("end_datetime") is None
+        assert item.properties.get("portolan:datetime_provisional") is True
 
     @pytest.mark.unit
     def test_create_item_with_properties(self) -> None:

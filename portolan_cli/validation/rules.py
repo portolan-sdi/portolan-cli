@@ -356,3 +356,75 @@ class MetadataFreshRule(ValidationRule):
             message=message,
             fix_hint="Run 'portolan check --metadata --fix' to update STAC metadata",
         )
+
+
+class ProvisionalDatetimeRule(ValidationRule):
+    """Check for items with provisional (unknown) datetime.
+
+    Per ADR-0035, items added without --datetime have null temporal extent
+    and are marked with portolan:datetime_provisional=true. This rule warns
+    about such items so users can enrich the metadata later.
+
+    This is a WARNING, not an error - items are still valid STAC, just
+    missing explicit temporal metadata.
+    """
+
+    name = "provisional_datetime"
+    severity = Severity.WARNING
+    description = "Check for items missing explicit datetime"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Find items with provisional datetime marker.
+
+        Args:
+            catalog_path: Path to the directory containing .portolan.
+
+        Returns:
+            ValidationResult with list of provisional items.
+        """
+        # Find all item JSON files in collections
+        catalog_json = catalog_path / "catalog.json"
+        if not catalog_json.exists():
+            return self._pass("No catalog.json found")
+
+        provisional_items: list[str] = []
+
+        # Collections can be nested (per ADR-0032), find all collection.json files
+        for collection_json in catalog_path.rglob("collection.json"):
+            collection_dir = collection_json.parent
+
+            # Skip hidden directories
+            if any(part.startswith(".") for part in collection_dir.parts):
+                continue
+
+            # Compute collection_id as relative path from catalog root
+            # e.g., catalog_path/environment/air-quality/collection.json -> "environment/air-quality"
+            collection_id = str(collection_dir.relative_to(catalog_path)).replace("\\", "/")
+
+            # Find item JSON files (not collection.json, not versions.json, not catalog.json)
+            for item_json in collection_dir.rglob("*.json"):
+                if item_json.name in ("collection.json", "versions.json", "catalog.json"):
+                    continue
+
+                try:
+                    data = json.loads(item_json.read_text(encoding="utf-8"))
+                    properties = data.get("properties", {})
+                    if properties.get("portolan:datetime_provisional"):
+                        item_id = data.get("id", item_json.stem)
+                        provisional_items.append(f"{collection_id}/{item_id}")
+                except (json.JSONDecodeError, OSError):
+                    # Skip files we can't read
+                    continue
+
+        if not provisional_items:
+            return self._pass("All items have explicit datetime")
+
+        # Build message with list of provisional items
+        item_list = ", ".join(provisional_items[:5])  # Show first 5
+        if len(provisional_items) > 5:
+            item_list += f" (+{len(provisional_items) - 5} more)"
+
+        return self._fail(
+            f"{len(provisional_items)} item(s) have provisional datetime: {item_list}",
+            fix_hint="Use 'portolan add --datetime YYYY-MM-DD' to set explicit datetime",
+        )

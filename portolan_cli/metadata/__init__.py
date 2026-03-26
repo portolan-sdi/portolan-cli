@@ -67,6 +67,12 @@ from portolan_cli.metadata.models import (
     MetadataReport,
     MetadataStatus,
 )
+from portolan_cli.metadata.statistics import (
+    BandStatistics,
+    ColumnStatistics,
+    extract_band_statistics,
+    extract_parquet_statistics,
+)
 from portolan_cli.metadata.update import (
     create_missing_item,
     update_collection_extent,
@@ -87,6 +93,11 @@ __all__ = [
     "GeoParquetMetadata",
     "extract_cog_metadata",
     "extract_geoparquet_metadata",
+    # Statistics
+    "BandStatistics",
+    "ColumnStatistics",
+    "extract_band_statistics",
+    "extract_parquet_statistics",
     # Detection
     "StoredMetadata",
     "check_file_metadata",

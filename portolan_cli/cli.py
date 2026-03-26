@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -60,6 +61,7 @@ from portolan_cli.scan_output import (
     render_tree_view,
 )
 from portolan_cli.scan_progress import ScanProgressReporter, count_directories
+from portolan_cli.temporal import FLEXIBLE_DATETIME
 from portolan_cli.validation import (
     Severity,
 )
@@ -2262,6 +2264,18 @@ def _output_add_results(
     default=None,
     help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
 )
+@click.option(
+    "--datetime",
+    "item_datetime",
+    type=FLEXIBLE_DATETIME,
+    default=None,
+    help=(
+        "Acquisition/creation datetime (ISO 8601, YYYY-MM-DD, or 'YYYY-MM-DD HH:MM:SS'). "
+        "Applied to ALL items in this command. For different datetimes per item, "
+        "run separate add commands. If omitted, items are marked as provisional "
+        "(portolan check will flag them)."
+    ),
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
@@ -2271,6 +2285,7 @@ def add_cmd(
     verbose: bool,
     item_id: str | None,
     catalog_path: Path | None,
+    item_datetime: datetime | None,
 ) -> None:
     """Track files in the catalog.
 
@@ -2289,12 +2304,24 @@ def add_cmd(
         assets (per ADR-0028).
 
     \b
+    Datetime handling (per ADR-0035):
+        --datetime applies to ALL items added in this command. For items
+        with different acquisition dates, run separate add commands:
+
+            portolan add census/2020/ --datetime 2020-04-01
+            portolan add census/2023/ --datetime 2023-04-01
+
+        If --datetime is omitted, items have null temporal extent and are
+        marked as provisional. Run 'portolan check' to find items needing dates.
+
+    \b
     Examples:
         portolan add demographics/census.parquet
         portolan add file1.geojson file2.geojson   # Add multiple files
         portolan add imagery/                      # Add all files in directory
         portolan add .                             # Add all files in catalog
         portolan add data.geojson --item-id my-id  # Override item ID (single file only)
+        portolan add sat.tif --datetime 2024-06-15 # Explicit acquisition date
 
     Smart behavior:
     - Unchanged files are silently skipped (use --verbose to see them)
@@ -2383,12 +2410,14 @@ def add_cmd(
         if not use_json:
             info_output(f"Adding: {file_path.name}")
 
+    # item_datetime is parsed by Click via FLEXIBLE_DATETIME type (ADR-0035)
     try:
         all_added, all_skipped, all_failures = add_files(
             paths=resolved_paths,
             catalog_root=catalog_root,
             collection_id=None,
             item_id=item_id,
+            item_datetime=item_datetime,
             verbose=verbose,
             on_progress=show_add_progress,
         )

@@ -30,6 +30,7 @@ import pystac
 from pystac.layout import AsIsLayoutStrategy
 
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
+from portolan_cli.config import get_setting
 from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
     MTIME_TOLERANCE_SECONDS,
@@ -40,8 +41,10 @@ from portolan_cli.crs import transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError
 from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
 from portolan_cli.metadata import (
+    extract_band_statistics,
     extract_cog_metadata,
     extract_geoparquet_metadata,
+    extract_parquet_statistics,
 )
 from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
@@ -50,9 +53,11 @@ from portolan_cli.stac import (
     add_item_to_collection,
     add_projection_extension,
     add_table_extension,
+    add_vector_extension,
     create_collection,
     create_item,
     load_catalog,
+    update_collection_temporal_extent,
 )
 from portolan_cli.versions import (
     Asset,
@@ -547,43 +552,14 @@ def _derive_item_id_and_asset_level(
     return item_id, is_collection_level_asset
 
 
-def add_dataset(
-    *,
-    path: Path,
-    catalog_root: Path,
-    collection_id: str,
-    title: str | None = None,
-    description: str | None = None,
-    item_id: str | None = None,
-) -> DatasetInfo:
-    """Add a dataset to a Portolan catalog.
-
-    This is the main orchestration function that:
-    1. Detects the format type
-    2. Converts to cloud-native format if needed
-    3. Extracts metadata
-    4. Creates/updates STAC collection and item
-    5. Updates versions.json
-
-    STAC structure (per ADR-0023):
-    - Collection: {catalog_root}/{collection_id}/collection.json
-    - Item: {catalog_root}/{collection_id}/{item_id}/{item_id}.json
-    - Versions: {catalog_root}/{collection_id}/versions.json
+def _validate_collection_id(collection_id: str) -> None:
+    """Validate collection ID for security and STAC compliance.
 
     Args:
-        path: Path to the source file.
-        catalog_root: Root directory of the catalog.
-        collection_id: Collection to add the dataset to.
-        title: Optional display title for the dataset.
-        description: Optional description.
-        item_id: Optional item ID (defaults to parent directory name).
-
-    Returns:
-        DatasetInfo with details about the added dataset.
+        collection_id: The collection ID to validate.
 
     Raises:
-        ValueError: If the format is unsupported or collection_id is invalid.
-        FileNotFoundError: If the source file doesn't exist.
+        ValueError: If the collection ID is invalid.
     """
     # First check: reject unsafe collection IDs (security check)
     # Per ADR-0032: forward slashes allowed for nested catalogs
@@ -609,32 +585,181 @@ def add_dataset(
             pass
         raise ValueError(f"Invalid collection ID '{collection_id}': {error_msg}.{suggestion}")
 
-    # Step 1: Detect format
+
+def _convert_and_extract_metadata(
+    path: Path,
+    item_dir: Path,
+    format_type: FormatType,
+) -> tuple[Path, GeoParquetMetadata | COGMetadata]:
+    """Convert to cloud-native format and extract metadata.
+
+    Args:
+        path: Source file path.
+        item_dir: Item directory for output.
+        format_type: Detected format type.
+
+    Returns:
+        Tuple of (output_path, metadata).
+    """
+    metadata: GeoParquetMetadata | COGMetadata
+    if format_type == FormatType.VECTOR:
+        output_path = convert_vector(path, item_dir)
+        metadata = extract_geoparquet_metadata(output_path)
+    else:  # RASTER
+        output_path = convert_raster(path, item_dir)
+        metadata = extract_cog_metadata(output_path)
+    return output_path, metadata
+
+
+def _extract_statistics_best_effort(
+    output_path: Path,
+    format_type: FormatType,
+    catalog_root: Path,
+) -> tuple[list[Any], dict[str, Any]]:
+    """Extract statistics with best-effort error handling.
+
+    Args:
+        output_path: Path to the converted file.
+        format_type: Format type (RASTER or VECTOR).
+        catalog_root: Catalog root for config lookup.
+
+    Returns:
+        Tuple of (band_stats, parquet_stats). Empty if disabled or failed.
+    """
+    band_stats: list[Any] = []
+    parquet_stats: dict[str, Any] = {}
+    stats_enabled = get_setting("statistics.enabled", catalog_path=catalog_root)
+    if not stats_enabled:
+        return band_stats, parquet_stats
+
+    try:
+        if format_type == FormatType.RASTER:
+            raster_mode = get_setting("statistics.raster_mode", catalog_path=catalog_root)
+            mode = raster_mode if raster_mode in ("cached", "approx", "exact") else "approx"
+            band_stats = extract_band_statistics(output_path, mode=mode)  # type: ignore[arg-type]
+        else:
+            parquet_stats = extract_parquet_statistics(output_path)
+    except Exception:
+        # Statistics extraction failed - continue without stats
+        pass
+    return band_stats, parquet_stats
+
+
+def _add_statistics_to_properties(
+    stac_properties: dict[str, Any],
+    format_type: FormatType,
+    band_stats: list[Any],
+    parquet_stats: dict[str, Any],
+    stats_enabled: bool,
+) -> None:
+    """Add statistics to STAC properties in-place.
+
+    Args:
+        stac_properties: Properties dict to modify.
+        format_type: Format type (RASTER or VECTOR).
+        band_stats: Band statistics (for rasters).
+        parquet_stats: Parquet column statistics (for vectors).
+        stats_enabled: Whether stats are enabled.
+    """
+    if not stats_enabled:
+        return
+
+    if format_type == FormatType.RASTER and band_stats:
+        for i, stats in enumerate(band_stats):
+            if i < len(stac_properties.get("bands", [])):
+                stac_properties["bands"][i]["statistics"] = stats.to_stac_dict()
+    elif format_type == FormatType.VECTOR and parquet_stats:
+        col_stats = {
+            name: stat.to_stac_dict() for name, stat in parquet_stats.items() if stat.to_stac_dict()
+        }
+        if col_stats:
+            stac_properties["table:column_statistics"] = col_stats
+
+
+def _save_collection_with_links(
+    collection: pystac.Collection,
+    collection_dir: Path,
+    catalog_root: Path,
+    collection_id: str,
+) -> None:
+    """Save collection and fix links.
+
+    Args:
+        collection: PySTAC collection to save.
+        collection_dir: Collection directory path.
+        catalog_root: Catalog root path.
+        collection_id: Collection identifier.
+    """
+    _deduplicate_collection_item_links(collection)
+    collection.set_self_href(str(collection_dir / "collection.json"))
+    collection.normalize_hrefs(str(collection_dir), strategy=AsIsLayoutStrategy())
+    collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+
+    collection_json_path = collection_dir / "collection.json"
+    _fix_collection_links(collection_json_path, catalog_root, collection_dir)
+    _update_catalog_links(catalog_root, collection_id)
+
+
+def add_dataset(
+    *,
+    path: Path,
+    catalog_root: Path,
+    collection_id: str,
+    title: str | None = None,
+    description: str | None = None,
+    item_id: str | None = None,
+    item_datetime: datetime | None = None,
+) -> DatasetInfo:
+    """Add a dataset to a Portolan catalog.
+
+    This is the main orchestration function that:
+    1. Detects the format type
+    2. Converts to cloud-native format if needed
+    3. Extracts metadata
+    4. Creates/updates STAC collection and item
+    5. Updates versions.json
+
+    STAC structure (per ADR-0023):
+    - Collection: {catalog_root}/{collection_id}/collection.json
+    - Item: {catalog_root}/{collection_id}/{item_id}/{item_id}.json
+    - Versions: {catalog_root}/{collection_id}/versions.json
+
+    Args:
+        path: Path to the source file.
+        catalog_root: Root directory of the catalog.
+        collection_id: Collection to add the dataset to.
+        title: Optional display title for the dataset.
+        description: Optional description.
+        item_id: Optional item ID (defaults to parent directory name).
+        item_datetime: Optional acquisition/creation datetime (per ADR-0035).
+            If None, uses null datetime with open interval (per ADR-0035).
+
+    Returns:
+        DatasetInfo with details about the added dataset.
+
+    Raises:
+        ValueError: If the format is unsupported or collection_id is invalid.
+        FileNotFoundError: If the source file doesn't exist.
+    """
+    # Step 1: Validate inputs
+    _validate_collection_id(collection_id)
+
     format_type = detect_format(path)
     if format_type == FormatType.UNKNOWN:
         raise ValueError(f"Unsupported format: {path.suffix}")
 
-    # Step 2: Pre-validate BEFORE any filesystem operations (Issue #163 atomicity)
-    # Check for valid geometry/features before any conversion or copying
     _pre_validate_geometry(path, format_type)
 
-    # Set up paths - track files IN-PLACE (Issue #163)
-    # Handle nested collection IDs (ADR-0032)
+    # Step 2: Set up paths
     collection_dir = catalog_root / Path(*collection_id.split("/"))
-
-    # Derive item ID and detect collection-level assets
     item_id, is_collection_level_asset = _derive_item_id_and_asset_level(
         path=path,
         collection_dir=collection_dir,
         item_id=item_id,
     )
+    item_dir = path.parent
 
-    # The file's parent directory IS the item directory.
-    # No copying needed; assets stay where they are.
-    item_dir = path.parent  # Use existing directory, don't create new one
-
-    # Verify structural consistency: item_dir should be inside collection_dir
-    # Use .resolve() to prevent symlink bypass attacks (CodeRabbit review)
+    # Verify item_dir is inside collection_dir (security check)
     try:
         item_dir.resolve().relative_to(collection_dir.resolve())
     except ValueError as err:
@@ -643,92 +768,69 @@ def add_dataset(
             f"Expected path under '{collection_dir}'."
         ) from err
 
-    # Step 3: Convert to cloud-native format (in-place)
-    metadata: GeoParquetMetadata | COGMetadata
-    if format_type == FormatType.VECTOR:
-        output_path = convert_vector(path, item_dir)
-        metadata = extract_geoparquet_metadata(output_path)
-    else:  # RASTER
-        output_path = convert_raster(path, item_dir)
-        metadata = extract_cog_metadata(output_path)
+    # Step 3: Convert and extract metadata
+    output_path, metadata = _convert_and_extract_metadata(path, item_dir, format_type)
 
-    # Step 4: Extract bbox and transform to WGS84 (STAC requirement per RFC 7946)
+    # Step 4: Extract and transform bbox
     if not metadata.bbox:
-        # Clean up orphaned artifact before raising (Issue #190 review)
         _cleanup_orphaned_output(output_path, item_dir, path)
         raise NoGeometryError(
             path=metadata.id if hasattr(metadata, "id") else path.stem,
             reason="The source file may have no valid geometry.",
         )
-    # Transform bbox from native CRS to WGS84 (handles antimeridian crossing)
     crs_str = metadata.crs if isinstance(metadata.crs, str) else None
-    wgs84_bbox = transform_bbox_to_wgs84(metadata.bbox, crs_str)
-    bbox = list(wgs84_bbox)
+    bbox = list(transform_bbox_to_wgs84(metadata.bbox, crs_str))
 
-    # Step 5: Scan ALL files in item_dir for assets (per issue #133)
+    # Step 5: Scan assets and compute statistics
     stac_assets, asset_files, asset_paths = _scan_item_assets(
         item_dir=item_dir,
         item_id=item_id,
         primary_file=output_path,
         collection_dir=collection_dir,
     )
+    band_stats, parquet_stats = _extract_statistics_best_effort(
+        output_path, format_type, catalog_root
+    )
 
-    # Step 6: Create STAC item with ALL assets
+    # Step 6: Build STAC properties
     stac_properties = metadata.to_stac_properties()
+    stats_enabled = bool(get_setting("statistics.enabled", catalog_path=catalog_root))
+    _add_statistics_to_properties(
+        stac_properties, format_type, band_stats, parquet_stats, stats_enabled
+    )
     if title:
         stac_properties["title"] = title
     if description:
         stac_properties["description"] = description
 
+    # Step 7: Create STAC item
     item = create_item(
         item_id=item_id,
         bbox=bbox,
+        datetime=item_datetime,
         properties=stac_properties,
         assets=stac_assets,
     )
-
-    # Add projection extension (native CRS info: proj:code, proj:bbox, proj:shape, proj:transform)
     add_projection_extension(item, metadata)
-
-    # Set item href explicitly to prevent PySTAC from creating a nested subdirectory.
-    # By default, PySTAC's normalize_hrefs() + save() creates {item_id}/{item_id}.json
-    # but we want the item JSON in the existing item_dir (same as data files).
     item.set_self_href(str(item_dir / f"{item_id}.json"))
 
-    # Step 7: Load or create collection
+    # Step 8: Create/update collection
     collection = _get_or_create_collection(
         catalog_root=catalog_root,
         collection_id=collection_id,
         initial_bbox=bbox,
     )
-
-    # Add item to collection (PySTAC may add duplicate links if called multiple times)
     add_item_to_collection(collection, item, update_extent=True)
+    update_collection_temporal_extent(collection, item_datetime)
 
-    # Add table extension for vector data (row count, columns, primary geometry)
     if format_type == FormatType.VECTOR:
         add_table_extension(collection, metadata)
+        add_vector_extension(item, metadata)
 
-    # Step 8: De-duplicate item links before saving
-    _deduplicate_collection_item_links(collection)
+    # Step 9: Save and update links
+    _save_collection_with_links(collection, collection_dir, catalog_root, collection_id)
 
-    # Set collection href explicitly
-    collection.set_self_href(str(collection_dir / "collection.json"))
-
-    # Save collection using AsIsLayoutStrategy to preserve our explicit item hrefs.
-    # The default BestPracticesLayoutStrategy would create {item_id}/{item_id}.json
-    # subdirectories, but we want items flat in item_dir (same as data files).
-    collection.normalize_hrefs(str(collection_dir), strategy=AsIsLayoutStrategy())
-    collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
-
-    # Step 8b: Fix root/parent links in saved JSON
-    collection_json_path = collection_dir / "collection.json"
-    _fix_collection_links(collection_json_path, catalog_root, collection_dir)
-
-    # Step 9: Update catalog to link to collection (if new)
-    _update_catalog_links(catalog_root, collection_id)
-
-    # Step 10: Update versions.json with ALL assets
+    # Step 10: Update versions.json
     _update_versions(
         collection_dir=collection_dir,
         item_id=item_id,
@@ -1678,6 +1780,7 @@ def add_files(
     catalog_root: Path,
     collection_id: str | None = None,
     item_id: str | None = None,
+    item_datetime: datetime | None = None,
     verbose: bool = False,
     on_progress: Callable[[Path], None] | None = None,
 ) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
@@ -1708,6 +1811,8 @@ def add_files(
         item_id: Optional explicit item ID. If provided, overrides automatic
             derivation from parent directory name. Must be a single path segment
             (no '/', '\\', '.', or '..').
+        item_datetime: Optional acquisition/creation datetime (per ADR-0035).
+            If None, defaults to current time but marks item as provisional.
         verbose: If True, return skipped files info.
         on_progress: Optional callback invoked before processing each geo file.
             Receives the file path being processed. Use for progress display.
@@ -1796,6 +1901,7 @@ def add_files(
                     catalog_root=catalog_root,
                     collection_id=coll_id,
                     item_id=item_id,
+                    item_datetime=item_datetime,
                 )
                 added.append(result)
 

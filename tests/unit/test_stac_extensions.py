@@ -74,8 +74,9 @@ class TestStacExtensionsArray:
         """build_stac_extensions includes raster extension when raster: fields present."""
         from portolan_cli.stac import build_stac_extensions
 
+        # STAC v1.1.0: bands is now unified, but raster:spatial_resolution triggers raster ext
         properties = {
-            "raster:bands": [{"data_type": "uint8", "nodata": 0}],
+            "raster:spatial_resolution": 10.0,
         }
         result = build_stac_extensions(properties)
 
@@ -477,7 +478,7 @@ class TestPerBandNodata:
         )
 
         props = metadata.to_stac_properties()
-        bands = props["raster:bands"]
+        bands = props["bands"]
 
         assert len(bands) == 3
         assert bands[0]["nodata"] == 0
@@ -500,7 +501,7 @@ class TestPerBandNodata:
         )
 
         props = metadata.to_stac_properties()
-        bands = props["raster:bands"]
+        bands = props["bands"]
 
         assert all(b["nodata"] == -9999.0 for b in bands)
 
@@ -520,7 +521,7 @@ class TestPerBandNodata:
         )
 
         props = metadata.to_stac_properties()
-        bands = props["raster:bands"]
+        bands = props["bands"]
 
         assert len(bands) == 2
         assert all(b["nodata"] == -32768 for b in bands)

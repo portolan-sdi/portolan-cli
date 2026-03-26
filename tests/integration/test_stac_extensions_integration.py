@@ -349,7 +349,8 @@ class TestEndToEndWorkflow:
         # Verify raster-specific fields
         assert "proj:shape" in item.properties
         assert "proj:transform" in item.properties
-        assert "raster:bands" in item.properties
+        # STAC v1.1.0: unified bands array (not raster:bands)
+        assert "bands" in item.properties
 
         # Verify extension URLs
         assert EXTENSION_URLS["projection"] in (item.stac_extensions or [])
