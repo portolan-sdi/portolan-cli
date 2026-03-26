@@ -3111,8 +3111,8 @@ def pull_command(
     "--catalog",
     "catalog_path",
     type=click.Path(path_type=Path),
-    default=".",
-    help="Path to catalog root (default: current directory).",
+    default=None,
+    help="Path to catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
@@ -3125,7 +3125,7 @@ def sync(
     dry_run: bool,
     fix: bool,
     profile: str | None,
-    catalog_path: Path,
+    catalog_path: Path | None,
 ) -> None:
     """Sync local catalog with remote storage (pull + push).
 
@@ -3146,6 +3146,11 @@ def sync(
     from portolan_cli.sync import sync as sync_fn
 
     use_json = should_output_json(ctx, json_output)
+
+    # Git-style: find catalog root from anywhere within the catalog
+    # Use explicit --catalog if provided, otherwise auto-detect
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "sync")
 
     # Resolve destination: CLI arg > env var > config file
     resolved_destination = get_setting(

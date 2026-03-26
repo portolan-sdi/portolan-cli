@@ -184,16 +184,21 @@ class TestProfileDefaultBehavior:
         with patch("portolan_cli.sync.clone") as mock_clone:
             mock_clone.return_value = MagicMock(
                 success=True,
-                collections_cloned=1,
-                files_downloaded=0,
+                local_path=clone_target,
+                collections_cloned=["test-collection"],
+                total_files_downloaded=0,
                 errors=[],
+                pull_result=None,
             )
 
             with runner.isolated_filesystem(temp_dir=tmp_path):
-                runner.invoke(
+                result = runner.invoke(
                     cli,
                     ["clone", "s3://test-bucket/test-catalog", str(clone_target)],
                 )
+
+            # Verify command succeeded
+            assert result.exit_code == 0
 
             # Verify clone was called with profile="default"
             assert mock_clone.called
@@ -353,18 +358,23 @@ class TestProfileConfigResolution:
         with patch("portolan_cli.sync.clone") as mock_clone:
             mock_clone.return_value = MagicMock(
                 success=True,
-                collections_cloned=1,
-                files_downloaded=0,
+                local_path=clone_target,
+                collections_cloned=["test-collection"],
+                total_files_downloaded=0,
                 errors=[],
+                pull_result=None,
             )
 
             # Clone uses env var since there's no local catalog to read config from
             with patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "env-profile"}):
                 with runner.isolated_filesystem(temp_dir=catalog_with_profile.parent):
-                    runner.invoke(
+                    result = runner.invoke(
                         cli,
                         ["clone", "s3://test-bucket/test-catalog", str(clone_target)],
                     )
+
+                # Verify command succeeded
+                assert result.exit_code == 0
 
                 # Verify clone was called with profile from env
                 assert mock_clone.called
