@@ -264,6 +264,75 @@ def _add_stac_links_section(sections: list[str], stac: dict[str, Any]) -> None:
     sections.append("")
 
 
+def _add_source_section(sections: list[str], metadata: dict[str, Any]) -> None:
+    """Add source URL from metadata.
+
+    Renders the data source as a clickable link, helping users find
+    the original data or verify provenance.
+    """
+    source_url = metadata.get("source_url")
+    if not source_url or not str(source_url).strip():
+        return
+
+    sections.append("## Source")
+    sections.append("")
+    sections.append(f"[{source_url}]({source_url})")
+    sections.append("")
+
+
+def _add_processing_section(sections: list[str], metadata: dict[str, Any]) -> None:
+    """Add processing notes from metadata.
+
+    Documents any transformations, cleaning, or modifications
+    applied to the original data.
+    """
+    notes = metadata.get("processing_notes")
+    if not notes or not str(notes).strip():
+        return
+
+    sections.append("## Processing Notes")
+    sections.append("")
+    sections.append(str(notes))
+    sections.append("")
+
+
+def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None:
+    """Add keywords as shield.io badges.
+
+    Renders keywords as visual badges for quick scanning and
+    potential use in search/filtering.
+    """
+    keywords = metadata.get("keywords")
+    if not keywords or not isinstance(keywords, list) or len(keywords) == 0:
+        return
+
+    badges = []
+    for keyword in keywords:
+        # URL-encode spaces and special chars
+        safe_keyword = str(keyword).replace(" ", "_").replace("-", "--")
+        badge = f"![{keyword}](https://img.shields.io/badge/{safe_keyword}-blue)"
+        badges.append(badge)
+
+    sections.append(" ".join(badges))
+    sections.append("")
+
+
+def _add_attribution_section(sections: list[str], metadata: dict[str, Any]) -> None:
+    """Add attribution from metadata.
+
+    Credits the data provider or source organization.
+    Appears near the footer but before license.
+    """
+    attribution = metadata.get("attribution")
+    if not attribution or not str(attribution).strip():
+        return
+
+    sections.append("## Attribution")
+    sections.append("")
+    sections.append(str(attribution))
+    sections.append("")
+
+
 def _add_citation_section(sections: list[str], metadata: dict[str, Any]) -> None:
     """Add citation and DOI from metadata."""
     citation = metadata.get("citation")
@@ -381,6 +450,7 @@ def generate_readme(
 
     # STAC-sourced sections
     _add_title_section(sections, stac)
+    _add_keywords_section(sections, metadata)  # Visual badges after title
     _add_spatial_section(sections, stac)
     _add_temporal_section(sections, stac)
     _add_schema_section(sections, stac)
@@ -389,8 +459,11 @@ def generate_readme(
     _add_code_example_section(sections, assets)
     _add_stac_links_section(sections, stac)
 
-    # Metadata-sourced sections
+    # Metadata-sourced sections (human enrichment)
+    _add_source_section(sections, metadata)
+    _add_processing_section(sections, metadata)
     _add_citation_section(sections, metadata)
+    _add_attribution_section(sections, metadata)
     _add_license_section(sections, metadata)
     _add_contact_section(sections, metadata)
     _add_known_issues_section(sections, metadata)
@@ -455,3 +528,229 @@ def generate_readme_for_collection(
     metadata = load_merged_metadata(collection_path, catalog_root)
 
     return generate_readme(stac=stac, metadata=metadata)
+
+
+def _extract_collection_extent(
+    data: dict[str, Any],
+) -> tuple[list[float] | None, str | None, str | None]:
+    """Extract bbox and temporal extent from a collection dict.
+
+    Returns:
+        Tuple of (bbox, temporal_start, temporal_end).
+    """
+    extent = data.get("extent", {})
+
+    # Extract spatial
+    spatial = extent.get("spatial", {})
+    bbox_list = spatial.get("bbox", [])
+    bbox = bbox_list[0] if bbox_list and len(bbox_list[0]) >= 4 else None
+
+    # Extract temporal
+    temporal = extent.get("temporal", {})
+    intervals = temporal.get("interval", [])
+    start, end = None, None
+    if intervals and len(intervals) > 0 and len(intervals[0]) >= 2:
+        start = intervals[0][0] if intervals[0][0] else None
+        end = intervals[0][1] if intervals[0][1] else None
+
+    return bbox, start, end
+
+
+def _compute_bbox_envelope(bboxes: list[list[float]]) -> list[float] | None:
+    """Compute bounding box envelope (union) from multiple bboxes."""
+    if not bboxes:
+        return None
+    return [
+        min(b[0] for b in bboxes),
+        min(b[1] for b in bboxes),
+        max(b[2] for b in bboxes),
+        max(b[3] for b in bboxes),
+    ]
+
+
+def aggregate_catalog_extent(catalog_path: Path) -> dict[str, Any]:
+    """Aggregate extent information from all collections in a catalog.
+
+    Computes the bounding box envelope (union) and temporal extent span
+    across all child collections.
+
+    Args:
+        catalog_path: Path to the catalog root directory.
+
+    Returns:
+        Dict with aggregated extent info:
+        - bbox: [min_x, min_y, max_x, max_y] or None if no collections
+        - temporal_start: Earliest start datetime (ISO string) or None
+        - temporal_end: Latest end datetime (ISO string) or None
+        - collections: List of collection IDs
+    """
+    collections: list[str] = []
+    bboxes: list[list[float]] = []
+    temporal_starts: list[str] = []
+    temporal_ends: list[str] = []
+
+    # Find all collection.json files in immediate subdirectories
+    for subdir in catalog_path.iterdir():
+        if not subdir.is_dir() or subdir.name.startswith("."):
+            continue
+
+        collection_json = subdir / "collection.json"
+        if not collection_json.exists():
+            continue
+
+        try:
+            data = json.loads(collection_json.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        collections.append(data.get("id", subdir.name))
+        bbox, start, end = _extract_collection_extent(data)
+
+        if bbox:
+            bboxes.append(bbox)
+        if start:
+            temporal_starts.append(start)
+        if end:
+            temporal_ends.append(end)
+
+    return {
+        "bbox": _compute_bbox_envelope(bboxes),
+        "temporal_start": min(temporal_starts) if temporal_starts else None,
+        "temporal_end": max(temporal_ends) if temporal_ends else None,
+        "collections": collections,
+    }
+
+
+def _add_collections_section(
+    sections: list[str],
+    catalog_path: Path,
+    aggregation: dict[str, Any],
+) -> None:
+    """Add collections listing section for catalog README."""
+    collections = aggregation.get("collections", [])
+    if not collections:
+        return
+
+    sections.append("## Collections")
+    sections.append("")
+
+    for coll_id in sorted(collections):
+        coll_json = catalog_path / coll_id / "collection.json"
+        title = coll_id
+        description = ""
+
+        if coll_json.exists():
+            try:
+                data = json.loads(coll_json.read_text())
+                title = data.get("title", coll_id)
+                description = data.get("description", "")
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # Link to collection directory
+        sections.append(f"### [{title}](./{coll_id}/)")
+        sections.append("")
+        if description:
+            # Truncate long descriptions
+            if len(description) > 200:
+                description = description[:197] + "..."
+            sections.append(description)
+            sections.append("")
+
+
+def _add_aggregated_extent_section(
+    sections: list[str],
+    aggregation: dict[str, Any],
+) -> None:
+    """Add aggregated spatial/temporal extent section for catalog README."""
+    bbox = aggregation.get("bbox")
+    temporal_start = aggregation.get("temporal_start")
+    temporal_end = aggregation.get("temporal_end")
+
+    if not bbox and not temporal_start and not temporal_end:
+        return
+
+    sections.append("## Coverage")
+    sections.append("")
+
+    if bbox:
+        sections.append("**Spatial Extent**")
+        sections.append("")
+        sections.append(
+            f"- West: {bbox[0]:.4f}, South: {bbox[1]:.4f}, "
+            f"East: {bbox[2]:.4f}, North: {bbox[3]:.4f}"
+        )
+        sections.append("")
+
+    if temporal_start or temporal_end:
+        sections.append("**Temporal Extent**")
+        sections.append("")
+        start_str = temporal_start[:10] if temporal_start else "open"
+        end_str = temporal_end[:10] if temporal_end else "open"
+        sections.append(f"- {start_str} to {end_str}")
+        sections.append("")
+
+
+def generate_catalog_readme(catalog_path: Path) -> str:
+    """Generate README for a catalog with aggregated collection info.
+
+    Creates a catalog-level README that:
+    - Shows catalog title and description
+    - Lists all collections with links
+    - Shows aggregated spatial/temporal extent
+
+    Args:
+        catalog_path: Path to the catalog root directory.
+
+    Returns:
+        README markdown string.
+    """
+    sections: list[str] = []
+
+    # Load catalog.json
+    catalog_json = catalog_path / "catalog.json"
+    catalog: dict[str, Any] = {}
+    if catalog_json.exists():
+        try:
+            catalog = json.loads(catalog_json.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Load merged metadata
+    metadata = load_merged_metadata(catalog_path, catalog_path)
+
+    # Title and description
+    title = catalog.get("title", catalog.get("id", "Data Catalog"))
+    description = catalog.get("description", "")
+
+    sections.append(f"# {title}")
+    sections.append("")
+
+    # Keywords right after title
+    _add_keywords_section(sections, metadata)
+
+    if description:
+        sections.append(description)
+        sections.append("")
+
+    # Aggregate from collections
+    aggregation = aggregate_catalog_extent(catalog_path)
+
+    # Collections listing
+    _add_collections_section(sections, catalog_path, aggregation)
+
+    # Aggregated extent
+    _add_aggregated_extent_section(sections, aggregation)
+
+    # Metadata sections (from catalog-level metadata.yaml)
+    _add_source_section(sections, metadata)
+    _add_processing_section(sections, metadata)
+    _add_citation_section(sections, metadata)
+    _add_attribution_section(sections, metadata)
+    _add_license_section(sections, metadata)
+    _add_contact_section(sections, metadata)
+
+    # Footer
+    _add_footer_section(sections)
+
+    return "\n".join(sections)

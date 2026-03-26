@@ -232,6 +232,10 @@ STAC provides machine-extractable metadata (title, description, extent, columns)
 | `citation` | Academic citation text |
 | `doi` | Zenodo/DataCite DOI |
 | `known_issues` | Data quality caveats |
+| `source_url` | Link to original data source |
+| `processing_notes` | Documentation of transformations applied |
+| `keywords` | Tags for search/discovery (rendered as badges) |
+| `attribution` | Credit to data provider or organization |
 
 ### Quick Start
 
@@ -256,11 +260,23 @@ contact:
 
 license: CC-BY-4.0
 
-# Optional
+# Optional enrichment fields
 license_url: https://creativecommons.org/licenses/by/4.0/
 citation: "Census Bureau (2024). Demographics Dataset. DOI: 10.5281/zenodo.1234567"
 doi: 10.5281/zenodo.1234567
 known_issues: "Coverage gaps in rural areas for 2020 data."
+
+# Provenance and discovery
+source_url: https://data.census.gov/demographics
+processing_notes: |
+  - Reprojected from NAD83 to EPSG:4326
+  - Simplified geometries for web display
+  - Joined with income data from ACS 2020
+keywords:
+  - census
+  - demographics
+  - population
+attribution: "U.S. Census Bureau"
 ```
 
 ### Required Fields
@@ -303,6 +319,8 @@ The `portolan readme` command generates `README.md` by combining:
 - License, contact
 - Citation, DOI
 - Known issues
+- Source URL, processing notes
+- Keywords (as badges), attribution
 
 ```bash
 # Generate README.md
@@ -313,4 +331,12 @@ portolan readme --stdout
 
 # Check if README is up-to-date (for CI)
 portolan readme --check
+
+# Generate for catalog and all collections
+portolan readme --recursive
 ```
+
+**Catalog-level README:** When run at catalog root, generates an index README with:
+- Aggregated spatial extent (envelope of all collections)
+- Aggregated temporal extent (earliest to latest)
+- List of collections with links

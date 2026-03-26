@@ -4053,74 +4053,35 @@ def metadata_validate(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@cli.command()
-@click.argument("path", required=False, type=click.Path())
-@click.option(
-    "--stdout",
-    is_flag=True,
-    default=False,
-    help="Print README to stdout instead of writing file.",
-)
-@click.option(
-    "--check",
-    is_flag=True,
-    default=False,
-    help="Check if README is up-to-date (for CI). Exits 1 if stale.",
-)
-@click.pass_context
-@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
-def readme(
-    ctx: click.Context,
-    json_output: bool,
-    path: str | None,
-    stdout: bool,
-    check: bool,
-) -> None:
-    """Generate README.md from STAC metadata and metadata.yaml.
+def _generate_readme_content(
+    target_dir: Path,
+    catalog_path: Path,
+    use_json: bool,
+) -> tuple[str, bool]:
+    """Generate README content for a target directory.
 
-    The README is a pure output - always generated from STAC (machine-extracted
-    metadata) plus .portolan/metadata.yaml (human enrichment). Never hand-edit
-    the README; edit metadata.yaml instead and regenerate.
+    Args:
+        target_dir: Directory to generate README for.
+        catalog_path: Root catalog path.
+        use_json: Whether to output errors as JSON.
 
-    Use --check in CI to verify the README is up-to-date:
+    Returns:
+        Tuple of (readme_content, is_catalog_root).
 
-    \b
-    Examples:
-        portolan readme                    # Generate at catalog root
-        portolan readme demographics       # Generate for collection
-        portolan readme --stdout           # Print without writing
-        portolan readme --check            # CI mode: exit 1 if stale
+    Raises:
+        SystemExit: On YAML parse errors.
     """
     from portolan_cli.config import load_merged_metadata
     from portolan_cli.errors import ConfigInvalidStructureError
-    from portolan_cli.readme import check_readme_freshness, generate_readme
+    from portolan_cli.readme import generate_catalog_readme, generate_readme
 
-    use_json = should_output_json(ctx, json_output)
+    # Check if at catalog root (has catalog.json, not collection.json)
+    is_catalog_root = (target_dir / "catalog.json").exists() and not (
+        target_dir / "collection.json"
+    ).exists()
 
-    # Find catalog root
-    catalog_path = find_catalog_root()
-    if catalog_path is None:
-        if use_json:
-            envelope = error_envelope(
-                "readme",
-                [
-                    ErrorDetail(
-                        type="CatalogNotFoundError",
-                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("Not inside a Portolan catalog")
-            info_output("Run 'portolan init' to create one")
-        raise SystemExit(1)
-
-    # Determine target directory
-    if path:
-        target_dir = catalog_path / path
-    else:
-        target_dir = catalog_path
+    if is_catalog_root:
+        return generate_catalog_readme(target_dir), True
 
     # Load STAC (collection.json or catalog.json)
     stac: dict[str, Any] = {}
@@ -4144,15 +4105,201 @@ def readme(
             error(f"Invalid YAML in metadata.yaml: {err}")
         raise SystemExit(1) from err
 
-    # Generate README
-    readme_content = generate_readme(stac=stac, metadata=metadata_dict)
+    return generate_readme(stac=stac, metadata=metadata_dict), False
+
+
+def _readme_recursive(
+    catalog_path: Path,
+    use_json: bool,
+    check: bool,
+    stdout: bool,
+) -> None:
+    """Generate READMEs for catalog and all collections.
+
+    Helper for --recursive flag. Generates:
+    1. Catalog README with aggregated extent
+    2. Each collection's README
+
+    Args:
+        catalog_path: Path to catalog root.
+        use_json: Output JSON format.
+        check: CI mode - check freshness only.
+        stdout: Print to stdout (not supported in recursive mode).
+    """
+    from portolan_cli.readme import (
+        generate_catalog_readme,
+        generate_readme_for_collection,
+    )
+
+    if stdout:
+        error("--stdout is not supported with --recursive")
+        raise SystemExit(1)
+
+    generated_paths: list[str] = []
+    stale_paths: list[str] = []
+
+    # Generate catalog README
+    catalog_readme = catalog_path / "README.md"
+    catalog_content = generate_catalog_readme(catalog_path)
+
+    if check:
+        is_fresh = catalog_readme.exists() and catalog_readme.read_text() == catalog_content
+        if is_fresh:
+            generated_paths.append("README.md")
+        else:
+            stale_paths.append("README.md")
+    else:
+        catalog_readme.write_text(catalog_content)
+        generated_paths.append("README.md")
+
+    # Find and generate collection READMEs
+    for subdir in sorted(catalog_path.iterdir()):
+        if not subdir.is_dir():
+            continue
+        if subdir.name.startswith("."):
+            continue
+        if not (subdir / "collection.json").exists():
+            continue
+
+        coll_readme = subdir / "README.md"
+        coll_content = generate_readme_for_collection(subdir, catalog_path)
+        rel_path = f"{subdir.name}/README.md"
+
+        if check:
+            is_fresh = coll_readme.exists() and coll_readme.read_text() == coll_content
+            if is_fresh:
+                generated_paths.append(rel_path)
+            else:
+                stale_paths.append(rel_path)
+        else:
+            coll_readme.write_text(coll_content)
+            generated_paths.append(rel_path)
+
+    # Output results
+    if use_json:
+        if check:
+            envelope = success_envelope(
+                "readme",
+                {
+                    "fresh": len(stale_paths) == 0,
+                    "checked": generated_paths + stale_paths,
+                    "stale": stale_paths,
+                },
+            )
+        else:
+            envelope = success_envelope(
+                "readme",
+                {"generated": generated_paths, "count": len(generated_paths)},
+            )
+        output_json_envelope(envelope)
+        if check and stale_paths:
+            raise SystemExit(1)
+    else:
+        if check:
+            if stale_paths:
+                error(f"{len(stale_paths)} README(s) are stale:")
+                for p in stale_paths:
+                    detail(f"  {p}")
+                info_output("Run 'portolan readme --recursive' to regenerate")
+                raise SystemExit(1)
+            else:
+                success(f"All {len(generated_paths)} README(s) are up-to-date")
+        else:
+            success(f"Generated {len(generated_paths)} README(s)")
+            for p in generated_paths:
+                detail(f"  {p}")
+
+
+@cli.command()
+@click.argument("path", required=False, type=click.Path())
+@click.option(
+    "--stdout",
+    is_flag=True,
+    default=False,
+    help="Print README to stdout instead of writing file.",
+)
+@click.option(
+    "--check",
+    is_flag=True,
+    default=False,
+    help="Check if README is up-to-date (for CI). Exits 1 if stale.",
+)
+@click.option(
+    "--recursive",
+    "-r",
+    is_flag=True,
+    default=False,
+    help="Generate READMEs for catalog and all collections.",
+)
+@click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def readme(
+    ctx: click.Context,
+    json_output: bool,
+    path: str | None,
+    stdout: bool,
+    check: bool,
+    recursive: bool,
+) -> None:
+    """Generate README.md from STAC metadata and metadata.yaml.
+
+    The README is a pure output - always generated from STAC (machine-extracted
+    metadata) plus .portolan/metadata.yaml (human enrichment). Never hand-edit
+    the README; edit metadata.yaml instead and regenerate.
+
+    Use --check in CI to verify the README is up-to-date:
+
+    \b
+    Examples:
+        portolan readme                    # Generate at catalog root
+        portolan readme demographics       # Generate for collection
+        portolan readme --stdout           # Print without writing
+        portolan readme --check            # CI mode: exit 1 if stale
+        portolan readme --recursive        # Generate for catalog and all collections
+    """
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Find catalog root
+    catalog_path = find_catalog_root()
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "readme",
+                [
+                    ErrorDetail(
+                        type="CatalogNotFoundError",
+                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not inside a Portolan catalog")
+            info_output("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    # Handle recursive mode
+    if recursive:
+        _readme_recursive(catalog_path, use_json, check, stdout)
+        return
+
+    # Determine target directory
+    if path:
+        target_dir = catalog_path / path
+    else:
+        target_dir = catalog_path
+
+    # Generate README content
+    readme_content, is_catalog_root = _generate_readme_content(target_dir, catalog_path, use_json)
 
     # Determine output path
     readme_path = target_dir / "README.md"
 
     if check:
-        # CI mode: check freshness
-        is_fresh = check_readme_freshness(readme_path, stac=stac, metadata=metadata_dict)
+        # Compare existing README against freshly generated content
+        is_fresh = readme_path.exists() and readme_path.read_text() == readme_content
+
         if use_json:
             envelope = success_envelope(
                 "readme",
