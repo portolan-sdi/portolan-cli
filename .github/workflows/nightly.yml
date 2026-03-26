@@ -20,7 +20,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -99,7 +99,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -150,7 +150,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -177,7 +177,7 @@ jobs:
         uses: astral-sh/setup-uv@v7
 
       - name: Set up Python
-        uses: nick-fields/retry@v3
+        uses: nick-fields/retry@v4
         with:
           timeout_minutes: 5
           max_attempts: 3
