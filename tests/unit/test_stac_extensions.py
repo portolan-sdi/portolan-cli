@@ -74,8 +74,9 @@ class TestStacExtensionsArray:
         """build_stac_extensions includes raster extension when raster: fields present."""
         from portolan_cli.stac import build_stac_extensions
 
+        # STAC v1.1.0: bands is now unified, but raster:spatial_resolution triggers raster ext
         properties = {
-            "raster:bands": [{"data_type": "uint8", "nodata": 0}],
+            "raster:spatial_resolution": 10.0,
         }
         result = build_stac_extensions(properties)
 
