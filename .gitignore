@@ -224,3 +224,6 @@ __marimo__/
 specs/
 !tests/specs/
 .worktrees
+
+# GDAL auxiliary files (raster statistics)
+*.aux.xml

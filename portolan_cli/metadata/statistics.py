@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 import pyarrow.parquet as pq
 import rasterio
+from rasterio import Statistics as RasterioStats
 
 
 @dataclass
@@ -101,6 +102,7 @@ def extract_band_statistics(
     """
     with rasterio.open(path) as src:
         results: list[BandStatistics] = []
+        computed_stats: list[RasterioStats] | None = None  # Lazy-computed via stats()
 
         for band_idx in range(1, src.count + 1):
             # Try cached stats first (GDAL metadata tags) - but not if exact mode requested
@@ -120,14 +122,18 @@ def extract_band_statistics(
             if mode == "cached":
                 continue  # No cached stats and cached-only mode, skip this band
 
-            # Compute using GDAL
-            computed = src.statistics(band_idx, approx=(mode == "approx"))
+            # Compute using GDAL's stats() (rasterio 2.0+ compatible)
+            # Lazy-compute once for all bands that need it
+            if computed_stats is None:
+                computed_stats = src.stats(approx=(mode == "approx"))
+
+            stat = computed_stats[band_idx - 1]  # stats() returns 0-indexed list
             results.append(
                 BandStatistics(
-                    minimum=computed.min,
-                    maximum=computed.max,
-                    mean=computed.mean,
-                    stddev=computed.std,
+                    minimum=stat.min,
+                    maximum=stat.max,
+                    mean=stat.mean,
+                    stddev=stat.std,
                 )
             )
 

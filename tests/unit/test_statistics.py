@@ -67,7 +67,7 @@ class TestExtractBandStatistics:
         mock_ds.count = 2  # 2 bands
         mock_ds.tags.return_value = {}  # No cached stats
 
-        # Mock Statistics namedtuple
+        # Mock Statistics namedtuple (rasterio stats() returns a list)
         @dataclass
         class MockStats:
             min: float
@@ -75,7 +75,8 @@ class TestExtractBandStatistics:
             mean: float
             std: float
 
-        mock_ds.statistics.side_effect = [
+        # stats() returns a list of all bands at once
+        mock_ds.stats.return_value = [
             MockStats(min=0.0, max=255.0, mean=127.5, std=45.2),
             MockStats(min=10.0, max=200.0, mean=100.0, std=30.0),
         ]
@@ -94,7 +95,7 @@ class TestExtractBandStatistics:
         assert results[0].minimum == 0.0
         assert results[0].maximum == 255.0
         # Verify approx mode was used
-        mock_rasterio_dataset.statistics.assert_called_with(2, approx=True)
+        mock_rasterio_dataset.stats.assert_called_with(approx=True)
 
     def test_uses_cached_stats_when_available(self) -> None:
         """extract_band_statistics uses cached GDAL stats from tags."""
@@ -118,8 +119,8 @@ class TestExtractBandStatistics:
         assert len(results) == 1
         assert results[0].minimum == 0.0
         assert results[0].valid_percent == 100.0
-        # Verify statistics() was NOT called (used cached)
-        mock_ds.statistics.assert_not_called()
+        # Verify stats() was NOT called (used cached)
+        mock_ds.stats.assert_not_called()
 
     def test_exact_mode_computes_full_stats(self, mock_rasterio_dataset: MagicMock) -> None:
         """extract_band_statistics uses exact mode when requested."""
@@ -131,7 +132,7 @@ class TestExtractBandStatistics:
             extract_band_statistics(Path("test.tif"), mode="exact")
 
         # Verify approx=False was used
-        mock_rasterio_dataset.statistics.assert_called_with(2, approx=False)
+        mock_rasterio_dataset.stats.assert_called_with(approx=False)
 
 
 class TestColumnStatistics:
