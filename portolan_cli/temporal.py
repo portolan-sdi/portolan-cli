@@ -14,6 +14,26 @@ from datetime import datetime, timezone
 import click
 
 
+def ensure_utc_aware(dt: datetime | None) -> datetime | None:
+    """Ensure a datetime is timezone-aware (UTC).
+
+    Converts naive datetimes to UTC-aware. Required for STAC compliance and
+    to avoid comparison errors between naive and aware datetimes.
+
+    Args:
+        dt: Datetime to normalize, or None.
+
+    Returns:
+        UTC-aware datetime, or None if input is None.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        # Naive datetime - assume UTC
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def parse_flexible_datetime(value: str | None) -> datetime | None:
     """Parse a datetime string with flexible format support.
 

@@ -13,12 +13,34 @@ Per ADR-0034:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import pyarrow.parquet as pq
 import rasterio
 from rasterio import Statistics as RasterioStats
+
+
+def _serialize_stat_value(value: Any) -> Any:
+    """Convert a statistic value to JSON-serializable form.
+
+    PyArrow statistics can return native Python datetime/date objects
+    for timestamp columns. These need to be converted to ISO 8601 strings.
+
+    Args:
+        value: The statistic value from PyArrow (min/max).
+
+    Returns:
+        JSON-serializable value (datetime → ISO string, others unchanged).
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
 
 
 @dataclass
@@ -72,12 +94,13 @@ class ColumnStatistics:
         """Format for STAC table:columns[].statistics.
 
         Omits None values and zero null_count.
+        Converts datetime values to ISO 8601 strings for JSON serialization.
         """
         result: dict[str, Any] = {}
         if self.min_value is not None:
-            result["minimum"] = self.min_value
+            result["minimum"] = _serialize_stat_value(self.min_value)
         if self.max_value is not None:
-            result["maximum"] = self.max_value
+            result["maximum"] = _serialize_stat_value(self.max_value)
         if self.null_count > 0:
             result["null_count"] = self.null_count
         return result
