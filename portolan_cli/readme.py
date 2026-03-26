@@ -168,9 +168,18 @@ def _add_temporal_section(sections: list[str], stac: dict[str, Any]) -> None:
 
 
 def _add_schema_section(sections: list[str], stac: dict[str, Any]) -> None:
-    """Add schema/columns from table:columns extension."""
-    summaries = stac.get("summaries", {})
-    columns = summaries.get("table:columns", [])
+    """Add schema/columns from table:columns extension.
+
+    The Table extension writes table:columns directly on the Collection object
+    (via add_table_extension), so we check there first. Fall back to summaries
+    for backward compatibility with older catalogs.
+    """
+    # Primary location: Collection extra_fields (per Table extension spec)
+    columns = stac.get("table:columns", [])
+    # Fallback: legacy summaries location
+    if not columns:
+        summaries = stac.get("summaries", {})
+        columns = summaries.get("table:columns", [])
 
     if not columns:
         return
@@ -356,7 +365,19 @@ def generate_readme(
         README markdown string.
     """
     sections: list[str] = []
-    assets = stac.get("assets", {})
+
+    # Aggregate assets from collection and items
+    # Collection-level assets (vector data per ADR-0031)
+    assets = dict(stac.get("assets", {}))
+    # Item-level assets (raster/temporal data)
+    for item in stac.get("items", []):
+        item_id = item.get("id", "")
+        for asset_key, asset_value in item.get("assets", {}).items():
+            # Namespace item assets to avoid collisions: "item_id/asset_key"
+            namespaced_key = f"{item_id}/{asset_key}" if item_id else asset_key
+            # Only add if not already present (collection-level takes precedence)
+            if namespaced_key not in assets and asset_key not in assets:
+                assets[namespaced_key] = asset_value
 
     # STAC-sourced sections
     _add_title_section(sections, stac)

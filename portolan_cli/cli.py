@@ -153,6 +153,37 @@ def require_catalog_root(
     return catalog_root
 
 
+def _collection_path(catalog_path: Path | None, collection: str | None) -> Path | None:
+    """Compute collection folder path for hierarchical config (ADR-0039)."""
+    return catalog_path / collection if catalog_path and collection else None
+
+
+def resolve_remote(
+    destination: str | None,
+    catalog_path: Path | None,
+    collection: str | None = None,
+) -> str | None:
+    """Resolve remote destination with precedence: CLI > env var > config.
+
+    Args:
+        destination: CLI-provided destination value (None if not specified).
+        catalog_path: Path to catalog root for config lookup.
+        collection: Optional collection name for collection-level config.
+
+    Returns:
+        Resolved destination URL or None if not configured.
+    """
+    from portolan_cli.config import get_setting
+
+    return get_setting(
+        "remote",
+        cli_value=destination,
+        catalog_path=catalog_path,
+        collection=collection,
+        collection_path=_collection_path(catalog_path, collection),
+    )
+
+
 def resolve_aws_profile(
     profile: str | None,
     catalog_path: Path | None,
@@ -175,6 +206,7 @@ def resolve_aws_profile(
         cli_value=profile,
         catalog_path=catalog_path,
         collection=collection,
+        collection_path=_collection_path(catalog_path, collection),
     )
     return resolved if resolved is not None else "default"
 
@@ -2687,7 +2719,6 @@ def push(
         portolan push s3://mybucket/catalog
         portolan push --dry-run  # Uses configured remote
     """
-    from portolan_cli.config import get_setting
     from portolan_cli.push import PushConflictError, push_all_collections
     from portolan_cli.push import push as push_fn
 
@@ -2698,13 +2729,7 @@ def push(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "push")
 
-    # Resolve destination: CLI arg > env var > config file
-    resolved_destination = get_setting(
-        "remote",
-        cli_value=destination,
-        catalog_path=catalog_path,
-        collection=collection,
-    )
+    resolved_destination = resolve_remote(destination, catalog_path, collection)
     resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
 
     if resolved_destination is None:
@@ -3142,7 +3167,6 @@ def sync(
         portolan sync s3://mybucket/catalog -c data --profile prod
         portolan sync --collection demographics  # Uses configured remote
     """
-    from portolan_cli.config import get_setting
     from portolan_cli.sync import sync as sync_fn
 
     use_json = should_output_json(ctx, json_output)
@@ -3152,13 +3176,7 @@ def sync(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "sync")
 
-    # Resolve destination: CLI arg > env var > config file
-    resolved_destination = get_setting(
-        "remote",
-        cli_value=destination,
-        catalog_path=catalog_path,
-        collection=collection,
-    )
+    resolved_destination = resolve_remote(destination, catalog_path, collection)
     resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
 
     if resolved_destination is None:
@@ -3976,13 +3994,20 @@ def metadata_validate(
         raise SystemExit(1) from err
 
     if use_json:
-        envelope = success_envelope(
-            "metadata validate",
-            {"valid": len(errors) == 0, "errors": errors, "path": str(path or ".")},
-        )
-        output_json_envelope(envelope)
         if errors:
+            envelope = error_envelope(
+                "metadata validate",
+                [ErrorDetail(type="ValidationError", message=e) for e in errors],
+                data={"valid": False, "errors": errors, "path": str(path or ".")},
+            )
+            output_json_envelope(envelope)
             raise SystemExit(1)
+        else:
+            envelope = success_envelope(
+                "metadata validate",
+                {"valid": True, "errors": [], "path": str(path or ".")},
+            )
+            output_json_envelope(envelope)
     else:
         if errors:
             error(f"Validation failed with {len(errors)} error(s):")
