@@ -3931,6 +3931,7 @@ def metadata_validate(
         portolan metadata validate              # Validate at catalog root
         portolan metadata validate demographics # Validate for collection
     """
+    from portolan_cli.errors import ConfigInvalidStructureError
     from portolan_cli.metadata_yaml import load_and_validate_metadata
 
     use_json = should_output_json(ctx, json_output)
@@ -3961,7 +3962,18 @@ def metadata_validate(
         target_dir = catalog_path
 
     # Load and validate
-    _metadata, errors = load_and_validate_metadata(target_dir, catalog_path)
+    try:
+        _metadata, errors = load_and_validate_metadata(target_dir, catalog_path)
+    except ConfigInvalidStructureError as err:
+        if use_json:
+            envelope = error_envelope(
+                "metadata validate",
+                [ErrorDetail(type="InvalidYAMLError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Invalid YAML in metadata.yaml: {err}")
+        raise SystemExit(1) from err
 
     if use_json:
         envelope = success_envelope(
@@ -3974,8 +3986,8 @@ def metadata_validate(
     else:
         if errors:
             error(f"Validation failed with {len(errors)} error(s):")
-            for err in errors:
-                detail(f"  - {err}")
+            for validation_err in errors:
+                detail(f"  - {validation_err}")
             raise SystemExit(1)
         else:
             success("Metadata is valid")
@@ -4025,6 +4037,7 @@ def readme(
         portolan readme --check            # CI mode: exit 1 if stale
     """
     from portolan_cli.config import load_merged_metadata
+    from portolan_cli.errors import ConfigInvalidStructureError
     from portolan_cli.readme import check_readme_freshness, generate_readme
 
     use_json = should_output_json(ctx, json_output)
@@ -4063,7 +4076,18 @@ def readme(
             break
 
     # Load merged metadata
-    metadata_dict = load_merged_metadata(target_dir, catalog_path)
+    try:
+        metadata_dict = load_merged_metadata(target_dir, catalog_path)
+    except ConfigInvalidStructureError as err:
+        if use_json:
+            envelope = error_envelope(
+                "readme",
+                [ErrorDetail(type="InvalidYAMLError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Invalid YAML in metadata.yaml: {err}")
+        raise SystemExit(1) from err
 
     # Generate README
     readme_content = generate_readme(stac=stac, metadata=metadata_dict)
