@@ -389,20 +389,21 @@ class ProvisionalDatetimeRule(ValidationRule):
 
         provisional_items: list[str] = []
 
-        # Collections are at root level, identified by collection.json
-        for collection_dir in catalog_path.iterdir():
-            if not collection_dir.is_dir():
-                continue
-            # Skip .portolan and hidden directories
-            if collection_dir.name.startswith("."):
-                continue
-            # Only process directories with collection.json
-            if not (collection_dir / "collection.json").exists():
+        # Collections can be nested (per ADR-0032), find all collection.json files
+        for collection_json in catalog_path.rglob("collection.json"):
+            collection_dir = collection_json.parent
+
+            # Skip hidden directories
+            if any(part.startswith(".") for part in collection_dir.parts):
                 continue
 
-            # Find item JSON files (not collection.json, not versions.json)
+            # Compute collection_id as relative path from catalog root
+            # e.g., catalog_path/environment/air-quality/collection.json -> "environment/air-quality"
+            collection_id = str(collection_dir.relative_to(catalog_path)).replace("\\", "/")
+
+            # Find item JSON files (not collection.json, not versions.json, not catalog.json)
             for item_json in collection_dir.rglob("*.json"):
-                if item_json.name in ("collection.json", "versions.json"):
+                if item_json.name in ("collection.json", "versions.json", "catalog.json"):
                     continue
 
                 try:
@@ -410,7 +411,6 @@ class ProvisionalDatetimeRule(ValidationRule):
                     properties = data.get("properties", {})
                     if properties.get("portolan:datetime_provisional"):
                         item_id = data.get("id", item_json.stem)
-                        collection_id = collection_dir.name
                         provisional_items.append(f"{collection_id}/{item_id}")
                 except (json.JSONDecodeError, OSError):
                     # Skip files we can't read

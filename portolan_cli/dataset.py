@@ -57,6 +57,7 @@ from portolan_cli.stac import (
     create_collection,
     create_item,
     load_catalog,
+    update_collection_temporal_extent,
 )
 from portolan_cli.versions import (
     Asset,
@@ -820,6 +821,7 @@ def add_dataset(
         initial_bbox=bbox,
     )
     add_item_to_collection(collection, item, update_extent=True)
+    update_collection_temporal_extent(collection, item_datetime)
 
     if format_type == FormatType.VECTOR:
         add_table_extension(collection, metadata)

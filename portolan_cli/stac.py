@@ -249,6 +249,39 @@ def _update_collection_extent(
     collection.extent.spatial = pystac.SpatialExtent(bboxes=[new_bbox])
 
 
+def update_collection_temporal_extent(
+    collection: pystac.Collection,
+    item_datetime: datetime | None,
+) -> None:
+    """Update a collection's temporal extent to include an item's datetime.
+
+    Widens the collection's temporal interval to encompass the item's datetime.
+    Per ADR-0035, items without datetime have null interval and are not included.
+
+    Args:
+        collection: The collection to update.
+        item_datetime: The item's datetime, or None for provisional items.
+    """
+    if item_datetime is None:
+        return  # Provisional items don't affect temporal extent
+
+    # Get current interval
+    current_interval = collection.extent.temporal.intervals[0]
+    current_start = current_interval[0]
+    current_end = current_interval[1]
+
+    # Widen interval to include item datetime
+    new_start = current_start
+    new_end = current_end
+
+    if current_start is None or item_datetime < current_start:
+        new_start = item_datetime
+    if current_end is None or item_datetime > current_end:
+        new_end = item_datetime
+
+    collection.extent.temporal = pystac.TemporalExtent(intervals=[[new_start, new_end]])
+
+
 # STAC Extension schema URLs (v1.1.0 compatible)
 # Note: "file" extension is reserved for future use (checksums, sizes)
 # Currently only table, projection, and raster are actively used
