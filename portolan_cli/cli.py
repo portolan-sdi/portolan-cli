@@ -2268,7 +2268,12 @@ def _output_add_results(
     "datetime_str",
     type=str,
     default=None,
-    help="Acquisition/creation datetime (ISO 8601). Default: null (unspecified). Per ADR-0035.",
+    help=(
+        "Acquisition/creation datetime (ISO 8601, YYYY-MM-DD, or 'YYYY-MM-DD HH:MM:SS'). "
+        "Applied to ALL items in this command. For different datetimes per item, "
+        "run separate add commands. If omitted, uses current time but marks items "
+        "as provisional (portolan check will flag them)."
+    ),
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
@@ -2298,12 +2303,24 @@ def add_cmd(
         assets (per ADR-0028).
 
     \b
+    Datetime handling (per ADR-0035):
+        --datetime applies to ALL items added in this command. For items
+        with different acquisition dates, run separate add commands:
+
+            portolan add census/2020/ --datetime 2020-04-01
+            portolan add census/2023/ --datetime 2023-04-01
+
+        If --datetime is omitted, items use current time but are marked
+        as provisional. Run 'portolan check' to find items needing dates.
+
+    \b
     Examples:
         portolan add demographics/census.parquet
         portolan add file1.geojson file2.geojson   # Add multiple files
         portolan add imagery/                      # Add all files in directory
         portolan add .                             # Add all files in catalog
         portolan add data.geojson --item-id my-id  # Override item ID (single file only)
+        portolan add sat.tif --datetime 2024-06-15 # Explicit acquisition date
 
     Smart behavior:
     - Unchanged files are silently skipped (use --verbose to see them)

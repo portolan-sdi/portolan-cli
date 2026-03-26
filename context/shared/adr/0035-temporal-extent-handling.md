@@ -15,6 +15,11 @@ Current implementation defaults `datetime` to "now" when unspecified. This confl
 4. **Accept flexible formats:** ISO 8601, `YYYY-MM-DD`, `YYYY-MM-DD HH:MM:SS` — normalize to ISO
 5. **Flag incomplete:** Items with `portolan:datetime_provisional: true` are flagged in `portolan check` as "missing temporal metadata"
 6. **CLI flag:** `--datetime 2024-01-15` for non-interactive use
+7. **Per-command scope:** `--datetime` applies to ALL items in a single `portolan add` command. For items with different acquisition dates, users must run separate commands:
+   ```bash
+   portolan add census/2020/ --datetime 2020-04-01
+   portolan add census/2023/ --datetime 2023-04-01
+   ```
 
 ## Consequences
 - All items are STAC-valid (always have temporal extent)
