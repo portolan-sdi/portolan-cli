@@ -40,29 +40,6 @@ class TestProfileDefaultBehavior:
 
         return catalog_root
 
-    @pytest.fixture
-    def mock_catalog_with_profile(self, tmp_path: Path) -> Path:
-        """Create a catalog with aws_profile configured."""
-        catalog_root = tmp_path / "catalog"
-        catalog_root.mkdir()
-        (catalog_root / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
-
-        collection_dir = catalog_root / "test-collection"
-        collection_dir.mkdir()
-        (collection_dir / "collection.json").write_text(
-            '{"type": "Collection", "id": "test-collection"}'
-        )
-        (collection_dir / "versions.json").write_text('{"spec_version": "1.0.0", "versions": []}')
-
-        portolan_dir = catalog_root / ".portolan"
-        portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text(
-            "remote: s3://test-bucket/test-catalog\naws_profile: config-profile\n"
-        )
-        (portolan_dir / "state.json").write_text("{}")
-
-        return catalog_root
-
     @pytest.mark.unit
     def test_push_defaults_to_default_profile(self, mock_catalog: Path) -> None:
         """portolan push should use 'default' profile when --profile not specified."""
