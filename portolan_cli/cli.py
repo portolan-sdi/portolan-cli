@@ -2250,6 +2250,28 @@ def _print_add_failures_batched(failures: list[AddFailure]) -> None:
                 detail(f"    Examples: {paths}")
 
 
+def _output_add_unchanged(skipped: list[Path], verbose: bool) -> None:
+    """Output message when all files are already tracked (unchanged)."""
+    skip_count = len(skipped)
+    success(f"All {skip_count} file{'s' if skip_count != 1 else ''} already tracked (unchanged)")
+    if verbose:
+        for p in skipped:
+            detail(f"  {p.name}")
+
+
+def _output_add_summary(added: list[DatasetInfo]) -> None:
+    """Output final success summary after adding files."""
+    total_added = len(added)
+    unique_items = len({ds.item_id for ds in added})
+    if unique_items == total_added:
+        success(f"Added {total_added} item{'s' if total_added != 1 else ''}")
+    else:
+        success(
+            f"Added {total_added} file{'s' if total_added != 1 else ''} "
+            f"({unique_items} item{'s' if unique_items != 1 else ''})"
+        )
+
+
 def _output_add_human(
     added: list[DatasetInfo],
     skipped: list[Path],
@@ -2257,9 +2279,12 @@ def _output_add_human(
     verbose: bool,
 ) -> None:
     """Output add command results as human-readable text."""
+    # Handle edge cases with early returns
+    if not added and not failures and not skipped:
+        info_output("No geospatial files found to add")
+        return
     if not added and not failures:
-        if not skipped:
-            info_output("No geospatial files found to add")
+        _output_add_unchanged(skipped, verbose)
         return
 
     # Output successful adds
@@ -2270,6 +2295,7 @@ def _output_add_human(
         else:
             _output_added_multi_collection(added)
 
+    # Show skipped files in verbose mode
     if verbose and skipped:
         for p in skipped:
             detail(f"Skipping {p.name} (unchanged)")
@@ -2277,6 +2303,10 @@ def _output_add_human(
     # Output failures batched by error message (Issue #199)
     if failures:
         _print_add_failures_batched(failures)
+
+    # Final success summary (only if we added something and had no failures)
+    if added and not failures:
+        _output_add_summary(added)
 
 
 def _output_add_results(
