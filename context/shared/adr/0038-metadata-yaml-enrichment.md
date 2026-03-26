@@ -6,13 +6,13 @@ Accepted
 
 ## Context
 
-Portolan's STAC generation ([ADR-0018](0018-metadata-generation-tiers.md)) extracts comprehensive machine-oriented metadata: bbox, CRS, schema, statistics, checksums. However, there's no mechanism for human-enrichable metadata that STAC doesn't capture well:
+Portolan's STAC generation ([ADR-0018](0018-metadata-generation-tiers.md)) extracts comprehensive machine-oriented metadata: bbox, CRS, schema, statistics, checksums. Title and description are set during `portolan init`. However, there's no mechanism for human-enrichable metadata that STAC doesn't capture:
 
-- Rich descriptions (beyond generic defaults)
 - Academic citations and DOIs
-- Contact information
-- Column/band documentation (units, semantic meaning)
-- Data provenance and processing notes
+- Contact information (accountability)
+- License (SPDX identifier)
+- Data quality caveats (known issues)
+- Processing notes
 
 GitHub Issues [#108](https://github.com/portolan-sdi/portolan-cli/issues/108) (metadata enrichment) and [#3](https://github.com/portolan-sdi/portolan-cli/issues/3) (README generation) both address this gap.
 
@@ -44,8 +44,9 @@ STAC JSON (auto-extracted)  +  .portolan/metadata.yaml (human supplement)
 
 The metadata.yaml template itself defines best practices:
 
-- Fields present in the template = recommended fields
-- Fields without `# optional` comments = required for publication
+- **Required fields**: `contact` (name + email) and `license` (SPDX identifier)
+- **Optional fields**: citation, DOI, known_issues, etc.
+- Title and description come from STAC (set during `portolan init`)
 - No separate natural language specification document
 
 ### Separation from config.yaml
@@ -77,10 +78,13 @@ metadata.yaml is separate from config.yaml because:
 
 ### README Generation
 
-`portolan readme` combines:
+`portolan readme` combines STAC and metadata.yaml into a comprehensive document:
 
-1. STAC metadata (bbox, CRS, schema, file counts)
-2. metadata.yaml (descriptions, citations, contact)
+```bash
+portolan readme           # Generate README.md
+portolan readme --stdout  # Preview without writing
+portolan readme --check   # CI freshness validation (exit 1 if stale)
+```
 
 README includes a footer indicating it's generated—users know not to edit it.
 
@@ -88,13 +92,36 @@ README includes a footer indicating it's generated—users know not to edit it.
 
 | Field | Location | Rationale |
 |-------|----------|-----------|
+| title, description | STAC catalog/collection | Set during `portolan init` |
 | bbox, CRS, schema | STAC | Auto-extracted from data |
-| file size, checksum | STAC/versions.json | Auto-computed |
-| title, description | metadata.yaml | Human-written |
-| citation, DOI | metadata.yaml | Human-provided |
-| contact info | metadata.yaml | Human-provided |
-| column descriptions | metadata.yaml | Human/LLM enrichment |
-| license | metadata.yaml | Human choice (SPDX identifier) |
+| columns (table:columns) | STAC summaries | Auto-extracted by scan |
+| bands (eo:bands, raster:bands) | STAC summaries | Auto-extracted by scan |
+| file size, checksum | STAC assets | Auto-computed |
+| contact (name, email) | metadata.yaml | **Required** - accountability |
+| license | metadata.yaml | **Required** - SPDX identifier |
+| citation, DOI | metadata.yaml | Optional - academic attribution |
+| known_issues | metadata.yaml | Optional - data quality caveats |
+
+### README Content Sources
+
+`portolan readme` generates comprehensive documentation:
+
+**Auto-filled from STAC:**
+- Title (from `title` or `id`)
+- Description
+- Spatial coverage (bbox, CRS)
+- Temporal coverage (interval)
+- Schema/columns (from `table:columns` extension)
+- Bands (from `eo:bands` or `raster:bands`)
+- Files with checksums
+- Code examples (based on detected format: GeoParquet → geopandas, COG → rasterio)
+- STAC links
+
+**From metadata.yaml:**
+- License
+- Contact
+- Citation and DOI
+- Known issues
 
 ## Alternatives Considered
 
