@@ -137,11 +137,14 @@ Configure Cloud-Optimized GeoTIFF conversion parameters. By default, Portolan us
 conversion:
   cog:
     compression: JPEG      # DEFLATE (default), JPEG, LZW, ZSTD, WEBP
-    quality: 95            # JPEG quality 1-100 (only applies to JPEG)
+    quality: 95            # Quality 1-100 (applies to JPEG and WEBP)
     tile_size: 512         # Internal tile size in pixels
     predictor: 2           # 1=none, 2=horizontal (default), 3=floating point
     resampling: nearest    # Overview resampling: nearest, bilinear, cubic, etc.
 ```
+
+!!! note "Validation"
+    Invalid settings produce warnings but don't block conversion. Quality is clamped to 1-100, and unknown compression/resampling values are passed through to let rio-cogeo handle errors.
 
 #### Use Cases
 

@@ -25,12 +25,15 @@ See:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
 from portolan_cli.config import load_config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -161,6 +164,46 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
 # COG Settings (Issue #279)
 # =============================================================================
 
+# Valid compression algorithms supported by rio-cogeo
+# See: rio_cogeo.profiles.cog_profiles
+VALID_COG_COMPRESSIONS: frozenset[str] = frozenset(
+    {
+        "DEFLATE",
+        "LZW",
+        "ZSTD",
+        "JPEG",
+        "WEBP",
+        "LERC",
+        "LERC_DEFLATE",
+        "LERC_ZSTD",
+        "PACKBITS",
+        "LZMA",
+        "RAW",  # No compression
+    }
+)
+
+# Lossy compression methods (predictor doesn't apply)
+LOSSY_COMPRESSIONS: frozenset[str] = frozenset({"JPEG", "WEBP"})
+
+# Compression methods that support quality setting
+QUALITY_COMPRESSIONS: frozenset[str] = frozenset({"JPEG", "WEBP"})
+
+# Valid resampling methods for overview generation
+# See: rio_cogeo.cogeo.cog_translate overview_resampling parameter
+VALID_RESAMPLING_METHODS: frozenset[str] = frozenset(
+    {
+        "nearest",
+        "bilinear",
+        "cubic",
+        "cubic_spline",
+        "lanczos",
+        "average",
+        "mode",
+        "gauss",
+        "rms",
+    }
+)
+
 
 @dataclass(frozen=True)
 class CogSettings:
@@ -170,7 +213,7 @@ class CogSettings:
 
     Attributes:
         compression: Compression algorithm (DEFLATE, JPEG, LZW, ZSTD, etc.).
-        quality: JPEG quality (1-100). Only applies when compression is JPEG.
+        quality: Quality setting (1-100). Applies to JPEG and WEBP compression.
         tile_size: Internal tile size in pixels (default 512).
         predictor: Compression predictor (1=none, 2=horizontal, 3=floating point).
         resampling: Overview resampling method (nearest, bilinear, cubic, etc.).
@@ -183,11 +226,97 @@ class CogSettings:
     resampling: str = "nearest"
 
 
+def validate_cog_settings(settings: CogSettings) -> list[str]:
+    """Validate COG settings and return warnings for any issues.
+
+    Does not raise exceptions — returns a list of warning messages. This allows
+    conversion to proceed with potentially suboptimal settings while informing
+    the user of issues.
+
+    Args:
+        settings: CogSettings instance to validate.
+
+    Returns:
+        List of warning messages. Empty list if all settings are valid.
+    """
+    warnings: list[str] = []
+
+    # Validate compression
+    if settings.compression not in VALID_COG_COMPRESSIONS:
+        warnings.append(
+            f"Unknown compression '{settings.compression}'. "
+            f"Valid values: {', '.join(sorted(VALID_COG_COMPRESSIONS))}. "
+            "Conversion may fail."
+        )
+
+    # Validate resampling
+    if settings.resampling not in VALID_RESAMPLING_METHODS:
+        warnings.append(
+            f"Unknown resampling method '{settings.resampling}'. "
+            f"Valid values: {', '.join(sorted(VALID_RESAMPLING_METHODS))}. "
+            "Conversion may fail."
+        )
+
+    # Validate quality bounds
+    if settings.quality is not None:
+        if not 1 <= settings.quality <= 100:
+            warnings.append(
+                f"Quality {settings.quality} is out of range. "
+                "Valid range: 1-100. Using clamped value."
+            )
+        # Warn if quality is set for non-lossy compression
+        if settings.compression not in QUALITY_COMPRESSIONS:
+            warnings.append(
+                f"Quality setting ({settings.quality}) is ignored for "
+                f"'{settings.compression}' compression. "
+                f"Quality only applies to: {', '.join(sorted(QUALITY_COMPRESSIONS))}."
+            )
+
+    # Validate tile_size
+    if settings.tile_size < 64:
+        warnings.append(
+            f"tile_size {settings.tile_size} is very small. "
+            "Minimum recommended: 64. This may cause performance issues."
+        )
+    elif settings.tile_size > 4096:
+        warnings.append(
+            f"tile_size {settings.tile_size} is very large. "
+            "Maximum recommended: 4096. This may cause memory issues."
+        )
+    # Warn if not a power of 2 (common convention, not strict requirement)
+    elif settings.tile_size & (settings.tile_size - 1) != 0:
+        warnings.append(
+            f"tile_size {settings.tile_size} is not a power of 2. "
+            "While valid, power-of-2 sizes (256, 512, 1024) are conventional."
+        )
+
+    # Validate predictor
+    if settings.predictor not in (1, 2, 3):
+        warnings.append(
+            f"Predictor {settings.predictor} is invalid. "
+            "Valid values: 1 (none), 2 (horizontal), 3 (floating point). "
+            "Using predictor=2."
+        )
+
+    # Warn about predictor with lossy compression
+    if settings.compression in LOSSY_COMPRESSIONS and settings.predictor != 1:
+        warnings.append(
+            f"Predictor={settings.predictor} is ignored for lossy compression "
+            f"'{settings.compression}'. Consider setting predictor=1 to avoid confusion."
+        )
+
+    return warnings
+
+
 def get_cog_settings(catalog_path: Path) -> CogSettings:
     """Load COG conversion settings from catalog config.
 
     Reads the 'conversion.cog' section from .portolan/config.yaml and returns
     a CogSettings instance with values from config merged with defaults.
+
+    Validates settings and logs warnings for any issues. Invalid values are
+    either corrected (e.g., quality clamped to 1-100) or passed through to
+    let rio-cogeo handle the error with its own message.
 
     Args:
         catalog_path: Root path of the catalog.
@@ -215,6 +344,9 @@ def get_cog_settings(catalog_path: Path) -> CogSettings:
     quality = cog.get("quality")
     if not isinstance(quality, int):
         quality = None
+    elif quality is not None:
+        # Clamp quality to valid range
+        quality = max(1, min(100, quality))
 
     tile_size = cog.get("tile_size")
     if not isinstance(tile_size, int):
@@ -227,11 +359,21 @@ def get_cog_settings(catalog_path: Path) -> CogSettings:
     resampling = cog.get("resampling")
     if not isinstance(resampling, str):
         resampling = "nearest"
+    else:
+        # Normalize resampling to lowercase
+        resampling = resampling.lower()
 
-    return CogSettings(
+    settings = CogSettings(
         compression=compression,
         quality=quality,
         tile_size=tile_size,
         predictor=predictor,
         resampling=resampling,
     )
+
+    # Validate and log warnings
+    warnings = validate_cog_settings(settings)
+    for warning in warnings:
+        logger.warning("COG config: %s", warning)
+
+    return settings

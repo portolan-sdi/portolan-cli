@@ -390,6 +390,7 @@ def check_directory(
             path,
             on_progress=on_progress,
             file_paths=convertible_files,
+            catalog_path=catalog_path,
         )
         report.conversion_report = conversion_report
 

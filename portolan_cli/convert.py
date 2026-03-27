@@ -22,7 +22,12 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
-from portolan_cli.conversion_config import CogSettings, get_cog_settings
+from portolan_cli.conversion_config import (
+    LOSSY_COMPRESSIONS,
+    QUALITY_COMPRESSIONS,
+    CogSettings,
+    get_cog_settings,
+)
 from portolan_cli.errors import (
     ConversionFailedError,
 )
@@ -379,13 +384,17 @@ def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None
         profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
         profile["compress"] = settings.compression
 
-    # Apply settings from config
-    profile["predictor"] = settings.predictor
+    # Apply tile size settings
     profile["blockxsize"] = settings.tile_size
     profile["blockysize"] = settings.tile_size
 
-    # Add quality for JPEG compression
-    if settings.quality is not None and compression_lower == "jpeg":
+    # Apply predictor only for non-lossy compression
+    # Predictor is meaningless for JPEG/WEBP and can cause issues
+    if settings.compression not in LOSSY_COMPRESSIONS:
+        profile["predictor"] = settings.predictor
+
+    # Apply quality for JPEG and WEBP compression
+    if settings.quality is not None and settings.compression in QUALITY_COMPRESSIONS:
         profile["quality"] = settings.quality
 
     # Write to temp file first to avoid corrupting source if output_path == source
@@ -472,6 +481,7 @@ def convert_directory(
     on_progress: Callable[[ConversionResult], None] | None = None,
     recursive: bool = True,
     file_paths: list[Path] | None = None,
+    catalog_path: Path | None = None,
 ) -> ConversionReport:
     """Convert all geospatial files in a directory to cloud-native formats.
 
@@ -488,6 +498,8 @@ def convert_directory(
         file_paths: Optional list of specific files to convert. If provided,
             skips directory scanning and converts only these files. Useful
             when the caller has already scanned and filtered the files.
+        catalog_path: Path to the catalog root for loading conversion config.
+            If None, uses ADR-0019 defaults for COG conversion.
 
     Returns:
         ConversionReport with results for all processed files.
@@ -523,7 +535,7 @@ def convert_directory(
         # Determine output directory for this file
         file_output_dir = output_dir if output_dir else file_path.parent
 
-        result = convert_file(file_path, output_dir=file_output_dir)
+        result = convert_file(file_path, output_dir=file_output_dir, catalog_path=catalog_path)
         results.append(result)
 
         # Invoke callback if provided

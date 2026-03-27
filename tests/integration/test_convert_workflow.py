@@ -380,3 +380,107 @@ conversion:
         # Verify default DEFLATE compression
         with rasterio.open(result.output) as src:
             assert src.compression.name.upper() == "DEFLATE"
+
+    def test_convert_directory_uses_catalog_path(
+        self,
+        non_cog_tif: Path,
+        tmp_path: Path,
+    ) -> None:
+        """convert_directory passes catalog_path to convert_file."""
+        import rasterio
+
+        from portolan_cli.convert import ConversionStatus, convert_directory
+
+        # Create catalog with LZW compression config
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    compression: LZW
+""")
+
+        # Create a subdirectory with the source file
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        source = data_dir / "input.tif"
+        shutil.copy(non_cog_tif, source)
+
+        # Convert using convert_directory with catalog_path
+        report = convert_directory(data_dir, catalog_path=tmp_path)
+
+        assert report.succeeded == 1
+        assert report.failed == 0
+
+        # Verify the config was applied
+        result = report.results[0]
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+
+        with rasterio.open(result.output) as src:
+            assert src.compression.name.upper() == "LZW"
+
+    def test_convert_directory_without_catalog_uses_defaults(
+        self,
+        non_cog_tif: Path,
+        tmp_path: Path,
+    ) -> None:
+        """convert_directory without catalog_path uses defaults."""
+        import rasterio
+
+        from portolan_cli.convert import ConversionStatus, convert_directory
+
+        # Create a subdirectory with the source file (no .portolan config)
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        source = data_dir / "input.tif"
+        shutil.copy(non_cog_tif, source)
+
+        # Convert without catalog_path
+        report = convert_directory(data_dir)
+
+        assert report.succeeded == 1
+
+        result = report.results[0]
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+
+        # Should use default DEFLATE
+        with rasterio.open(result.output) as src:
+            assert src.compression.name.upper() == "DEFLATE"
+
+    def test_webp_compression_with_quality(
+        self,
+        non_cog_tif: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Convert uses WEBP compression with quality from config."""
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        # Create catalog with WEBP compression config
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    compression: WEBP
+    quality: 80
+""")
+
+        source = tmp_path / "input.tif"
+        shutil.copy(non_cog_tif, source)
+
+        result = convert_file(source, output_dir=tmp_path, catalog_path=tmp_path)
+
+        # WEBP may not be available in all GDAL builds, so check if it succeeded
+        if result.status == ConversionStatus.SUCCESS:
+            import rasterio
+
+            assert result.output is not None
+            with rasterio.open(result.output) as src:
+                assert src.compression.name.upper() == "WEBP"
+        else:
+            # WEBP not available - that's OK, just verify error is clear
+            assert result.error is not None
