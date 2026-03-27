@@ -2364,6 +2364,15 @@ def _output_add_results(
         "(portolan check will flag them)."
     ),
 )
+@click.option(
+    "--workers",
+    type=int,
+    default=1,
+    help=(
+        "Number of parallel workers for metadata extraction. "
+        "Default is 1 (sequential). Use higher values for large catalogs."
+    ),
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
@@ -2374,6 +2383,7 @@ def add_cmd(
     item_id: str | None,
     catalog_path: Path | None,
     item_datetime: datetime | None,
+    workers: int,
 ) -> None:
     """Track files in the catalog.
 
@@ -2508,6 +2518,8 @@ def add_cmd(
             item_datetime=item_datetime,
             verbose=verbose,
             on_progress=show_add_progress,
+            workers=workers,
+            json_mode=use_json,
         )
     except (ValueError, FileNotFoundError) as err:
         err_type = type(err).__name__

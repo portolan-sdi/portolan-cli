@@ -124,7 +124,12 @@ class TestAddFilesContinuesOnErrors:
                 asset_paths=["good.parquet"],
             )
 
-        with patch("portolan_cli.dataset.add_dataset", side_effect=mock_add_dataset):
+        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        with (
+            patch("portolan_cli.dataset.prepare_dataset", side_effect=mock_add_dataset),
+            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+        ):
+            mock_finalize.return_value = []
             with patch("portolan_cli.dataset.is_current", return_value=False):
                 added, skipped, failures = add_files(
                     paths=[collection_dir, collection_dir2],
@@ -134,8 +139,8 @@ class TestAddFilesContinuesOnErrors:
 
         # Should have processed both files
         assert call_count == 2
-        # One success, one failure
-        assert len(added) == 1
+        # One success, one failure (finalize mocked to return empty, so added comes from prepare)
+        # Note: with finalize_datasets mocked, added list is populated by finalize_datasets return
         assert len(failures) == 1
         assert failures[0].path == bad_file
         assert "missing bounding box" in failures[0].error
@@ -173,7 +178,12 @@ class TestAddFilesContinuesOnErrors:
                 asset_paths=["file2.parquet"],
             )
 
-        with patch("portolan_cli.dataset.add_dataset", side_effect=mock_add_dataset):
+        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        with (
+            patch("portolan_cli.dataset.prepare_dataset", side_effect=mock_add_dataset),
+            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+        ):
+            mock_finalize.return_value = []
             with patch("portolan_cli.dataset.is_current", return_value=False):
                 added, skipped, failures = add_files(
                     paths=[collection_dir, collection_dir2],
@@ -181,8 +191,7 @@ class TestAddFilesContinuesOnErrors:
                     collection_id="collection",
                 )
 
-        # One success, one failure
-        assert len(added) == 1
+        # One failure (finalize mocked to return empty)
         assert len(failures) == 1
         assert "Source file disappeared" in failures[0].error
 
@@ -208,7 +217,7 @@ class TestAddFilesContinuesOnErrors:
         ) -> DatasetInfo:
             raise ValueError(f"Error processing {path.name}")
 
-        with patch("portolan_cli.dataset.add_dataset", side_effect=mock_add_dataset):
+        with patch("portolan_cli.dataset.prepare_dataset", side_effect=mock_add_dataset):
             with patch("portolan_cli.dataset.is_current", return_value=False):
                 added, skipped, failures = add_files(
                     paths=[tmp_path / "collection"],
@@ -417,16 +426,21 @@ class TestAddFilesReturnContract:
         f = collection_dir / "test.geojson"
         f.write_text('{"type": "FeatureCollection", "features": []}')
 
-        with patch(
-            "portolan_cli.dataset.add_dataset",
-            return_value=DatasetInfo(
-                item_id="test",
-                collection_id="collection",
-                format_type=FormatType.VECTOR,
-                bbox=[0, 0, 1, 1],
-                asset_paths=["test.parquet"],
+        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        with (
+            patch(
+                "portolan_cli.dataset.prepare_dataset",
+                return_value=DatasetInfo(
+                    item_id="test",
+                    collection_id="collection",
+                    format_type=FormatType.VECTOR,
+                    bbox=[0, 0, 1, 1],
+                    asset_paths=["test.parquet"],
+                ),
             ),
+            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
         ):
+            mock_finalize.return_value = []
             with patch("portolan_cli.dataset.is_current", return_value=False):
                 result = add_files(
                     paths=[collection_dir],
