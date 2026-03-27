@@ -2094,3 +2094,70 @@ class TestDryRunNetworkIsolation:
         assert result.dry_run is True
         assert len(result.errors) == 1  # Missing asset recorded as error
         assert "missing.parquet" in result.errors[0]
+
+
+# =============================================================================
+# README Discovery Tests
+# =============================================================================
+
+
+class TestDiscoverStacFilesReadmes:
+    """Tests for README.md discovery in _discover_stac_files()."""
+
+    @pytest.mark.unit
+    def test_discovers_collection_readme(self, tmp_path: Path) -> None:
+        """_discover_stac_files should find collection-level README.md."""
+        from portolan_cli.push import _discover_stac_files
+
+        # Setup catalog with collection.json and README
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        collection_dir = catalog_dir / "test"
+        collection_dir.mkdir()
+        (collection_dir / "collection.json").write_text("{}")
+        (collection_dir / "README.md").write_text("# Test Collection")
+
+        result = _discover_stac_files(catalog_dir, "test")
+
+        assert len(result["readmes"]) == 1
+        assert result["readmes"][0].name == "README.md"
+        assert "test" in str(result["readmes"][0])
+
+    @pytest.mark.unit
+    def test_discovers_catalog_readme_when_include_catalog(self, tmp_path: Path) -> None:
+        """_discover_stac_files should find root README.md when include_catalog=True."""
+        from portolan_cli.push import _discover_stac_files
+
+        # Setup catalog with root README and collection
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        (catalog_dir / "catalog.json").write_text("{}")
+        (catalog_dir / "README.md").write_text("# Catalog")
+        collection_dir = catalog_dir / "test"
+        collection_dir.mkdir()
+        (collection_dir / "collection.json").write_text("{}")
+        (collection_dir / "README.md").write_text("# Collection")
+
+        result = _discover_stac_files(catalog_dir, "test", include_catalog=True)
+
+        # Should find both READMEs
+        assert len(result["readmes"]) == 2
+        readme_names = [r.parent.name for r in result["readmes"]]
+        assert "catalog" in readme_names  # root README
+        assert "test" in readme_names  # collection README
+
+    @pytest.mark.unit
+    def test_no_readme_when_missing(self, tmp_path: Path) -> None:
+        """_discover_stac_files should handle missing README.md gracefully."""
+        from portolan_cli.push import _discover_stac_files
+
+        # Setup catalog without README
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        collection_dir = catalog_dir / "test"
+        collection_dir.mkdir()
+        (collection_dir / "collection.json").write_text("{}")
+
+        result = _discover_stac_files(catalog_dir, "test")
+
+        assert len(result["readmes"]) == 0

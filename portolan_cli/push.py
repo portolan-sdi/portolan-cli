@@ -490,7 +490,7 @@ def _discover_stac_files(
     """Discover STAC metadata files that should be uploaded for a collection.
 
     Finds collection.json and all item STAC files within the collection's
-    directory structure. Optionally includes catalog.json.
+    directory structure. Optionally includes catalog.json and README.md files.
 
     Note: Portolan creates item files as {item_id}.json (not item.json).
     The item_id matches the item directory name by convention.
@@ -498,15 +498,16 @@ def _discover_stac_files(
     Args:
         catalog_root: Path to catalog root.
         collection: Collection identifier.
-        include_catalog: If True, include catalog.json in discovery.
+        include_catalog: If True, include catalog.json and root README.md in discovery.
             Default False because catalog.json is a shared resource that
             should be uploaded once after all collections, not per-collection.
 
     Returns:
-        Dict with keys 'catalog', 'collection', 'items' mapping to lists of paths.
+        Dict with keys 'catalog', 'collection', 'items', 'readmes' mapping to lists of paths.
         - 'catalog': [catalog_root/catalog.json] if include_catalog and exists
         - 'collection': [collection/collection.json] if exists
         - 'items': [collection/item1/item1.json, ...] for each item found
+        - 'readmes': [README.md files at catalog and collection level]
 
     Raises:
         FileNotFoundError: If collection.json doesn't exist (required for push).
@@ -515,15 +516,20 @@ def _discover_stac_files(
         "catalog": [],
         "collection": [],
         "items": [],
+        "readmes": [],
     }
 
-    # 1. Root catalog.json (only if requested - typically for push_all_collections)
+    # 1. Root catalog.json and README.md (only if requested)
     if include_catalog:
         catalog_json = catalog_root / "catalog.json"
         if catalog_json.exists():
             stac_files["catalog"].append(catalog_json)
+        # Root README.md
+        root_readme = catalog_root / "README.md"
+        if root_readme.exists():
+            stac_files["readmes"].append(root_readme)
 
-    # 2. Collection's collection.json (required)
+    # 2. Collection's collection.json (required) and README.md (optional)
     collection_dir = catalog_root / collection
     collection_json = collection_dir / "collection.json"
     if not collection_json.exists():
@@ -532,6 +538,10 @@ def _discover_stac_files(
             "Run 'portolan add' to create STAC metadata before pushing."
         )
     stac_files["collection"].append(collection_json)
+    # Collection-level README.md
+    collection_readme = collection_dir / "README.md"
+    if collection_readme.exists():
+        stac_files["readmes"].append(collection_readme)
 
     # 3. All item STAC files within the collection
     # Portolan naming convention: items are in subdirectories named {item_id}
@@ -572,12 +582,13 @@ def _upload_stac_files(
     *,
     dry_run: bool = False,
 ) -> tuple[int, list[str], list[str]]:
-    """Upload STAC metadata files in manifest-last order.
+    """Upload STAC metadata files and READMEs in manifest-last order.
 
     Upload order (manifest-last pattern for atomicity):
-    1. Item STAC files (leaf manifests) - {item_id}.json
-    2. collection.json (intermediate manifest)
-    3. catalog.json (root manifest) - only if included in stac_files
+    1. README.md files (supplementary docs, uploaded first)
+    2. Item STAC files (leaf manifests) - {item_id}.json
+    3. collection.json (intermediate manifest)
+    4. catalog.json (root manifest) - only if included in stac_files
 
     Note: STAC files are NOT rolled back on failure. They are idempotent
     (re-uploading is safe) and the manifest-last pattern ensures consistency:
@@ -597,8 +608,9 @@ def _upload_stac_files(
     errors: list[str] = []
     uploaded_keys: list[str] = []
 
-    # Build ordered list: items first, then collection, then catalog
+    # Build ordered list: READMEs first, then items, then collection, then catalog
     ordered_files: list[Path] = []
+    ordered_files.extend(stac_files.get("readmes", []))
     ordered_files.extend(stac_files.get("items", []))
     ordered_files.extend(stac_files.get("collection", []))
     ordered_files.extend(stac_files.get("catalog", []))
@@ -607,7 +619,12 @@ def _upload_stac_files(
     if total == 0:
         return 0, [], []
 
-    info(f"Uploading {total} STAC metadata file(s)...")
+    readme_count = len(stac_files.get("readmes", []))
+    stac_count = total - readme_count
+    if readme_count > 0:
+        info(f"Uploading {stac_count} STAC metadata + {readme_count} README file(s)...")
+    else:
+        info(f"Uploading {stac_count} STAC metadata file(s)...")
 
     for i, file_path in enumerate(ordered_files, 1):
         try:
