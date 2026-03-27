@@ -137,10 +137,10 @@ class TestPushWorkersFlag:
 
     @pytest.mark.unit
     @patch("portolan_cli.push.push")
-    def test_workers_ignored_for_single_collection(
+    def test_workers_passed_for_single_collection(
         self, mock_push: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """--workers is ignored when pushing a specific collection (--collection)."""
+        """--workers is passed to push() for file-level parallelism."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             _setup_catalog_with_collections(Path("."), ["col1"])
 
@@ -152,16 +152,16 @@ class TestPushWorkersFlag:
                 errors=[],
             )
 
-            # When --collection is specified, single push is called
+            # When --collection is specified, single push is called with workers
             result = runner.invoke(
                 cli, ["push", "--catalog", ".", "--collection", "col1", "--workers", "4"]
             )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
-            # Single collection push doesn't use workers
+            # Single collection push now uses workers for file-level parallelism
             mock_push.assert_called_once()
             call_kwargs = mock_push.call_args.kwargs
-            assert "workers" not in call_kwargs
+            assert call_kwargs["workers"] == 4
 
     @pytest.mark.unit
     def test_workers_requires_positive_integer(self, runner: CliRunner, tmp_path: Path) -> None:

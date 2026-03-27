@@ -1122,7 +1122,7 @@ class TestProgressReporting:
 
     @pytest.mark.unit
     def test_upload_assets_shows_progress(self, local_catalog: Path, capsys) -> None:
-        """_upload_assets should show (1/N) style progress."""
+        """_upload_assets should show [1/N] style progress."""
         from portolan_cli.push import _upload_assets
 
         with patch("portolan_cli.push.obs.put") as mock_put:
@@ -1140,7 +1140,7 @@ class TestProgressReporting:
 
         # Check that progress indicator was shown
         captured = capsys.readouterr()
-        assert "(1/1)" in captured.out
+        assert "[1/1]" in captured.out
 
     @pytest.mark.unit
     def test_upload_assets_dry_run_shows_progress(self, local_catalog: Path, capsys) -> None:

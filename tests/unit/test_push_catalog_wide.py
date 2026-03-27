@@ -141,6 +141,7 @@ class TestPushAllCollections:
             dry_run=False,
             profile=None,
             region=None,
+            workers=1,
         )
 
     @patch("portolan_cli.push.push")
@@ -326,4 +327,5 @@ class TestPushAllCollections:
             dry_run=True,
             profile=None,
             region=None,
+            workers=1,
         )

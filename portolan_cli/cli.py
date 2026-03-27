@@ -2874,6 +2874,7 @@ def push(
             dry_run=dry_run,
             profile=resolved_profile,
             region=resolved_region,
+            workers=workers,
         )
 
         if use_json:

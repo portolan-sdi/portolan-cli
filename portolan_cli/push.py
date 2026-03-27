@@ -20,6 +20,7 @@ See ADR-0007 for CLI wraps Python API (all logic in library layer).
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -382,8 +383,9 @@ def _upload_assets(
     assets: list[Path],
     *,
     dry_run: bool = False,
+    workers: int | None = None,
 ) -> tuple[int, list[str], list[str]]:
-    """Upload asset files to object storage.
+    """Upload asset files to object storage with parallel workers.
 
     Args:
         store: Object store instance.
@@ -391,38 +393,64 @@ def _upload_assets(
         prefix: Prefix in object storage.
         assets: List of asset file paths to upload.
         dry_run: If True, don't actually upload.
+        workers: Number of parallel upload workers. None = auto-detect.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys).
         uploaded_keys contains the object keys that were successfully uploaded,
         useful for rollback on subsequent failures.
     """
-    files_uploaded = 0
-    errors: list[str] = []
-    uploaded_keys: list[str] = []
+    if not assets:
+        return 0, [], []
+
     total = len(assets)
 
-    for i, asset_path in enumerate(assets, 1):
-        try:
-            # Calculate relative path from catalog root
+    if dry_run:
+        # Dry run stays sequential for readable output
+        for i, asset_path in enumerate(assets, 1):
             rel_path = asset_path.relative_to(catalog_root)
-            # Use as_posix() to ensure forward slashes on Windows (cloud keys are always /)
             target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+            info(f"[DRY RUN] Would upload ({i}/{total}): {rel_path} -> {target_key}")
+        return 0, [], []
 
-            if dry_run:
-                info(f"[DRY RUN] Would upload ({i}/{total}): {rel_path} -> {target_key}")
+    # Thread-safe containers for parallel execution
+    uploaded_keys: list[str] = []
+    errors_list: list[str] = []
+    keys_lock = threading.Lock()
+
+    def upload_one(asset_path_str: str) -> str:
+        """Upload a single asset. Returns target key on success."""
+        asset_path = Path(asset_path_str)
+        rel_path = asset_path.relative_to(catalog_root)
+        target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+        obs.put(store, target_key, asset_path)
+        return target_key
+
+    # Convert paths to strings for execute_parallel
+    asset_strs = [str(p) for p in assets]
+
+    def on_complete(
+        item: str, result: str | None, err: str | None, completed: int, total_count: int
+    ) -> None:
+        """Track results thread-safely."""
+        rel_path = Path(item).relative_to(catalog_root)
+        with keys_lock:
+            if err:
+                errors_list.append(f"Failed to upload {rel_path}: {err}")
+                error(f"[{completed}/{total_count}] Failed: {rel_path}")
             else:
-                info(f"Uploading ({i}/{total}): {rel_path}")
-                obs.put(store, target_key, asset_path)
-                files_uploaded += 1
-                uploaded_keys.append(target_key)
-                success(f"Uploaded: {rel_path}")
-        except Exception as e:
-            error_msg = f"Failed to upload {asset_path}: {e}"
-            errors.append(error_msg)
-            error(error_msg)
+                uploaded_keys.append(result)  # type: ignore[arg-type]
+                detail(f"[{completed}/{total_count}] Uploaded: {rel_path}")
 
-    return files_uploaded, errors, uploaded_keys
+    info(f"Uploading {total} asset(s)...")
+    execute_parallel(
+        items=asset_strs,
+        operation=upload_one,
+        workers=workers,
+        on_complete=on_complete,
+    )
+
+    return len(uploaded_keys), errors_list, uploaded_keys
 
 
 def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
@@ -712,6 +740,7 @@ def push(
     dry_run: bool = False,
     profile: str | None = None,
     region: str | None = None,
+    workers: int | None = None,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage.
 
@@ -731,6 +760,7 @@ def push(
         dry_run: If True, show what would be uploaded without uploading.
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only). Overrides profile/env config.
+        workers: Number of parallel upload workers. None = auto-detect.
 
     Returns:
         PushResult with upload statistics.
@@ -800,9 +830,8 @@ def push(
     assets = _get_assets_to_upload(catalog_root, local_data, diff.local_only)
 
     # Upload assets first (manifest-last pattern)
-    info(f"Uploading {len(assets)} asset(s)...")
     files_uploaded, upload_errors, uploaded_keys = _upload_assets(
-        store, catalog_root, prefix, assets, dry_run=False
+        store, catalog_root, prefix, assets, dry_run=False, workers=workers
     )
 
     if upload_errors:
@@ -1040,6 +1069,9 @@ def push_all_collections(
 
     def push_one(collection: str) -> PushResult:
         """Push a single collection."""
+        # Use workers=1 here since collection-level parallelism is already handled
+        # by execute_parallel. File-level parallelism is controlled by the workers
+        # param when pushing a single collection directly via CLI.
         return push(
             catalog_root=catalog_root,
             collection=collection,
@@ -1048,6 +1080,7 @@ def push_all_collections(
             dry_run=dry_run,
             profile=profile,
             region=region,
+            workers=1,
         )
 
     def on_complete(
