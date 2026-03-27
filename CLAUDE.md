@@ -386,6 +386,8 @@ error("No geometry column (required)")     # ✗ Red X
 detail("Processing chunk 3/10...")         # Dimmed text
 ```
 
+**Progress UI:** The `add` and `scan` commands have excellent progress printing with real-time updates. Use this pattern (Rich progress bars + batched output) for any long-running operations.
+
 <!-- freshness: last-verified: 2026-03-26 -->
 ## Design Principles
 
