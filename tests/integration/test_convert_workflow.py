@@ -259,3 +259,124 @@ class TestConvertWorkflowRealData:
         # Should be skipped (already COG)
         assert result.status == ConversionStatus.SKIPPED
         assert result.format_from == "COG"
+
+
+# =============================================================================
+# COG Settings Configuration Tests (Issue #279)
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestCogSettingsIntegration:
+    """Integration tests for configurable COG settings."""
+
+    def test_convert_uses_default_deflate_compression(
+        self,
+        non_cog_tif: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Convert uses DEFLATE compression by default."""
+        import rasterio
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        source = tmp_path / "input.tif"
+        shutil.copy(non_cog_tif, source)
+
+        result = convert_file(source, output_dir=tmp_path)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+
+        # Verify compression is DEFLATE (default)
+        with rasterio.open(result.output) as src:
+            assert src.compression.name.upper() == "DEFLATE"
+
+    def test_convert_uses_config_compression(
+        self,
+        non_cog_tif: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Convert uses compression from config.yaml."""
+        import rasterio
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        # Create catalog with LZW compression config
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    compression: LZW
+""")
+
+        source = tmp_path / "input.tif"
+        shutil.copy(non_cog_tif, source)
+
+        result = convert_file(source, output_dir=tmp_path, catalog_path=tmp_path)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+
+        # Verify compression matches config
+        with rasterio.open(result.output) as src:
+            assert src.compression.name.upper() == "LZW"
+
+    def test_convert_uses_config_predictor(
+        self,
+        non_cog_tif: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Convert uses predictor from config.yaml."""
+        import rasterio
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        # Create catalog with predictor=1 (no predictor)
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    predictor: 1
+""")
+
+        source = tmp_path / "input.tif"
+        shutil.copy(non_cog_tif, source)
+
+        result = convert_file(source, output_dir=tmp_path, catalog_path=tmp_path)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+
+        # Verify predictor matches config (1 = none)
+        with rasterio.open(result.output) as src:
+            # Note: rasterio uses different constants
+            # PREDICTOR_NONE = 1
+            assert src.profile.get("predictor", 1) == 1
+
+    def test_convert_without_catalog_uses_defaults(
+        self,
+        non_cog_tif: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Convert without catalog_path uses ADR-0019 defaults."""
+        import rasterio
+
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        source = tmp_path / "input.tif"
+        shutil.copy(non_cog_tif, source)
+
+        # No catalog_path - should use defaults
+        result = convert_file(source, output_dir=tmp_path)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+
+        # Verify default DEFLATE compression
+        with rasterio.open(result.output) as src:
+            assert src.compression.name.upper() == "DEFLATE"

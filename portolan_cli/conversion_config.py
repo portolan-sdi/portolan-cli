@@ -155,3 +155,83 @@ def get_conversion_overrides(catalog_path: Path) -> ConversionOverrides:
         extensions_preserve=_parse_extensions(_get_list(extensions, "preserve")),
         paths_preserve=_parse_paths(_get_list(paths, "preserve")),
     )
+
+
+# =============================================================================
+# COG Settings (Issue #279)
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class CogSettings:
+    """Configuration for Cloud-Optimized GeoTIFF conversion.
+
+    Defaults match ADR-0019: COG Optimization Defaults.
+
+    Attributes:
+        compression: Compression algorithm (DEFLATE, JPEG, LZW, ZSTD, etc.).
+        quality: JPEG quality (1-100). Only applies when compression is JPEG.
+        tile_size: Internal tile size in pixels (default 512).
+        predictor: Compression predictor (1=none, 2=horizontal, 3=floating point).
+        resampling: Overview resampling method (nearest, bilinear, cubic, etc.).
+    """
+
+    compression: str = "DEFLATE"
+    quality: int | None = None
+    tile_size: int = 512
+    predictor: int = 2
+    resampling: str = "nearest"
+
+
+def get_cog_settings(catalog_path: Path) -> CogSettings:
+    """Load COG conversion settings from catalog config.
+
+    Reads the 'conversion.cog' section from .portolan/config.yaml and returns
+    a CogSettings instance with values from config merged with defaults.
+
+    Args:
+        catalog_path: Root path of the catalog.
+
+    Returns:
+        CogSettings instance. Returns defaults if no config exists.
+    """
+    config = load_config(catalog_path)
+
+    conversion = _get_dict(config, "conversion")
+    if not conversion:
+        return CogSettings()
+
+    cog = _get_dict(conversion, "cog")
+    if not cog:
+        return CogSettings()
+
+    # Parse individual settings with type validation
+    compression = cog.get("compression")
+    if isinstance(compression, str):
+        compression = compression.upper()
+    else:
+        compression = "DEFLATE"
+
+    quality = cog.get("quality")
+    if not isinstance(quality, int):
+        quality = None
+
+    tile_size = cog.get("tile_size")
+    if not isinstance(tile_size, int):
+        tile_size = 512
+
+    predictor = cog.get("predictor")
+    if not isinstance(predictor, int):
+        predictor = 2
+
+    resampling = cog.get("resampling")
+    if not isinstance(resampling, str):
+        resampling = "nearest"
+
+    return CogSettings(
+        compression=compression,
+        quality=quality,
+        tile_size=tile_size,
+        predictor=predictor,
+        resampling=resampling,
+    )
