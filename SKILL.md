@@ -97,6 +97,15 @@ portolan list --tracked-only            # Show only tracked files
 portolan list --untracked-only          # Show only untracked files
 ```
 
+### `portolan metadata`
+Manage catalog metadata for README generation.
+
+```bash
+portolan metadata init                # Create template at catalog root
+portolan metadata init demographics   # Create template for collection
+portolan metadata validate            # Validate metadata.yaml
+```
+
 ### `portolan pull`
 Pull updates from a remote catalog.
 
@@ -115,6 +124,16 @@ portolan push s3://mybucket/catalog --collection demographics
 portolan push gs://mybucket/catalog -c imagery --dry-run
 portolan push s3://mybucket/catalog
 portolan push --dry-run  # Uses configured remote
+```
+
+### `portolan readme`
+Generate README.md from STAC metadata and metadata.yaml.
+
+```bash
+portolan readme                    # Generate at catalog root
+portolan readme demographics       # Generate for collection
+portolan readme --stdout           # Print without writing
+portolan readme --check            # CI mode: exit 1 if stale
 ```
 
 ### `portolan rm`

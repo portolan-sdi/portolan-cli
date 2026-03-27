@@ -7,7 +7,8 @@ Portolan stores configuration in `.portolan/config.yaml` within your catalog dir
 ```yaml
 # .portolan/config.yaml
 remote: s3://my-bucket/catalog
-aws_profile: production
+profile: production    # AWS profile (alias: aws_profile)
+region: us-west-2      # AWS region for S3
 ```
 
 ## Setting Configuration
@@ -16,8 +17,12 @@ aws_profile: production
 # Set remote storage URL
 portolan config set remote s3://my-bucket/catalog
 
-# Set AWS profile
-portolan config set aws_profile production
+# Set AWS profile (either name works)
+portolan config set profile production
+# portolan config set aws_profile production  # Also valid
+
+# Set AWS region
+portolan config set region us-west-2
 
 # View current settings
 portolan config list
@@ -126,7 +131,7 @@ conversion:
 
 ## Collection-Level Configuration
 
-Override settings for specific collections:
+Override settings for specific collections using the `collections:` section:
 
 ```yaml
 # .portolan/config.yaml
@@ -147,13 +152,208 @@ collections:
         preserve: [shp, gpkg, geojson]  # Preserve all original formats
 ```
 
+This approach works well for most catalogs. For large catalogs with many collections, see [Hierarchical Configuration](#hierarchical-configuration-optional) below.
+
+## Hierarchical Configuration (Optional)
+
+For large catalogs or when different maintainers manage different collections, you can optionally create `.portolan/` folders at collection or subcatalog levels:
+
+```
+catalog/
+  .portolan/
+    config.yaml           # Catalog defaults
+  demographics/
+    .portolan/
+      config.yaml         # Collection-specific overrides (optional)
+    collection.json
+  historical/             # Subcatalog
+    .portolan/
+      config.yaml         # Subcatalog defaults (optional)
+    census-1990/
+      collection.json
+```
+
+**This is entirely optional.** Benefits include:
+
+- **Scalability**: Avoids one giant config file with 100+ collection entries
+- **Ownership**: Collection maintainers edit their own folder without touching root
+- **Git-friendly**: Changes to one collection don't create merge conflicts in root
+
+### Inheritance Rules
+
+Settings are inherited from parent levels. Child values override parent values:
+
+```yaml
+# catalog/.portolan/config.yaml
+aws_profile: default
+remote: s3://catalog/
+
+# catalog/demographics/.portolan/config.yaml
+remote: s3://demographics/  # Overrides parent
+# aws_profile inherited from catalog
+```
+
+### Precedence
+
+When both approaches are used, folder config takes precedence over `collections:` section:
+
+```
+CLI > Env var > Collection folder config > Subcatalog folder config >
+  Root collections: section > Catalog config > Default
+```
+
+### When to Use Each Approach
+
+| Approach | Best For |
+|----------|----------|
+| `collections:` section | Small catalogs, simple overrides |
+| Hierarchical folders | Large catalogs, multiple maintainers, verbose metadata |
+
+Most users should start with `collections:` and only add per-collection `.portolan/` folders when needed
+
 ## Environment Variables
 
 All settings can be set via environment variables with the `PORTOLAN_` prefix:
 
-| Setting | Environment Variable |
-|---------|---------------------|
-| `remote` | `PORTOLAN_REMOTE` |
-| `aws_profile` | `PORTOLAN_AWS_PROFILE` |
+| Setting | Environment Variable | Notes |
+|---------|---------------------|-------|
+| `remote` | `PORTOLAN_REMOTE` | |
+| `aws_profile` | `PORTOLAN_AWS_PROFILE` | |
+| `profile` | `PORTOLAN_PROFILE` | Alias for `aws_profile` |
+| `region` | `PORTOLAN_REGION` | AWS region for S3 |
 
 Environment variables override config file settings but are overridden by CLI arguments.
+
+### Setting Aliases
+
+Some settings have aliases for convenience:
+
+| Canonical Name | Alias |
+|----------------|-------|
+| `aws_profile` | `profile` |
+
+Both names work interchangeably in config files and environment variables.
+
+## Metadata Enrichment
+
+In addition to `config.yaml`, Portolan supports `.portolan/metadata.yaml` for human-enrichable metadata that supplements STAC.
+
+### Purpose
+
+STAC provides machine-extractable metadata (title, description, extent, columns). `metadata.yaml` adds **human-only fields** that can't be derived automatically:
+
+| Field | Purpose |
+|-------|---------|
+| `contact` | Accountability (name, email) |
+| `license` | SPDX identifier (e.g., CC-BY-4.0, MIT) |
+| `citation` | Academic citation text |
+| `doi` | Zenodo/DataCite DOI |
+| `known_issues` | Data quality caveats |
+| `source_url` | Link to original data source |
+| `processing_notes` | Documentation of transformations applied |
+| `keywords` | Tags for search/discovery (rendered as badges) |
+| `attribution` | Credit to data provider or organization |
+
+### Quick Start
+
+```bash
+# Generate template
+portolan metadata init
+
+# Validate required fields
+portolan metadata validate
+
+# Generate README from STAC + metadata
+portolan readme
+```
+
+### Example
+
+```yaml
+# .portolan/metadata.yaml
+contact:
+  name: Data Team
+  email: data@example.org
+
+license: CC-BY-4.0
+
+# Optional enrichment fields
+license_url: https://creativecommons.org/licenses/by/4.0/
+citation: "Census Bureau (2024). Demographics Dataset. DOI: 10.5281/zenodo.1234567"
+doi: 10.5281/zenodo.1234567
+known_issues: "Coverage gaps in rural areas for 2020 data."
+
+# Provenance and discovery
+source_url: https://data.census.gov/demographics
+processing_notes: |
+  - Reprojected from NAD83 to EPSG:4326
+  - Simplified geometries for web display
+  - Joined with income data from ACS 2020
+keywords:
+  - census
+  - demographics
+  - population
+attribution: "U.S. Census Bureau"
+```
+
+### Required Fields
+
+Only two fields are required in `metadata.yaml`:
+
+- **`contact.name`** and **`contact.email`** - Who maintains this data
+- **`license`** - SPDX identifier (validated against common licenses)
+
+Title and description come from STAC metadata (set during `portolan init`).
+
+### Hierarchical Inheritance
+
+Like `config.yaml`, `metadata.yaml` supports hierarchical resolution:
+
+```
+catalog/
+  .portolan/
+    metadata.yaml         # Default contact and license
+  demographics/
+    .portolan/
+      metadata.yaml       # Override or add collection-specific fields
+```
+
+Child values override parent values. Use this to set catalog-wide defaults (license, contact) while adding collection-specific fields (known_issues, citation).
+
+### README Generation
+
+The `portolan readme` command generates `README.md` by combining:
+
+**From STAC (automatic):**
+- Title, description
+- Spatial/temporal coverage
+- Schema columns (from `table:columns`)
+- Bands (from `eo:bands`, `raster:bands`)
+- Files with checksums
+- Code examples based on format
+
+**From metadata.yaml (human):**
+- License, contact
+- Citation, DOI
+- Known issues
+- Source URL, processing notes
+- Keywords (as badges), attribution
+
+```bash
+# Generate README.md
+portolan readme
+
+# Preview without writing
+portolan readme --stdout
+
+# Check if README is up-to-date (for CI)
+portolan readme --check
+
+# Generate for catalog and all collections
+portolan readme --recursive
+```
+
+**Catalog-level README:** When run at catalog root, generates an index README with:
+- Aggregated spatial extent (envelope of all collections)
+- Aggregated temporal extent (earliest to latest)
+- List of collections with links

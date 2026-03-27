@@ -153,6 +153,90 @@ def require_catalog_root(
     return catalog_root
 
 
+def _collection_path(catalog_path: Path | None, collection: str | None) -> Path | None:
+    """Compute collection folder path for hierarchical config (ADR-0039)."""
+    return catalog_path / collection if catalog_path and collection else None
+
+
+def resolve_remote(
+    destination: str | None,
+    catalog_path: Path | None,
+    collection: str | None = None,
+) -> str | None:
+    """Resolve remote destination with precedence: CLI > env var > config.
+
+    Args:
+        destination: CLI-provided destination value (None if not specified).
+        catalog_path: Path to catalog root for config lookup.
+        collection: Optional collection name for collection-level config.
+
+    Returns:
+        Resolved destination URL or None if not configured.
+    """
+    from portolan_cli.config import get_setting
+
+    return get_setting(
+        "remote",
+        cli_value=destination,
+        catalog_path=catalog_path,
+        collection=collection,
+        collection_path=_collection_path(catalog_path, collection),
+    )
+
+
+def resolve_aws_profile(
+    profile: str | None,
+    catalog_path: Path | None,
+    collection: str | None = None,
+) -> str:
+    """Resolve AWS profile with precedence: CLI > env var > config > default.
+
+    Args:
+        profile: CLI-provided profile value (None if not specified).
+        catalog_path: Path to catalog root for config lookup.
+        collection: Optional collection name for collection-level config.
+
+    Returns:
+        Resolved profile name (defaults to "default" if nothing configured).
+    """
+    from portolan_cli.config import get_setting
+
+    resolved = get_setting(
+        "aws_profile",
+        cli_value=profile,
+        catalog_path=catalog_path,
+        collection=collection,
+        collection_path=_collection_path(catalog_path, collection),
+    )
+    return resolved if resolved is not None else "default"
+
+
+def resolve_aws_region(
+    region: str | None,
+    catalog_path: Path | None,
+    collection: str | None = None,
+) -> str | None:
+    """Resolve AWS region with precedence: CLI > env var > config.
+
+    Args:
+        region: CLI-provided region value (None if not specified).
+        catalog_path: Path to catalog root for config lookup.
+        collection: Optional collection name for collection-level config.
+
+    Returns:
+        Resolved region name or None if not configured.
+    """
+    from portolan_cli.config import get_setting
+
+    return get_setting(
+        "region",
+        cli_value=region,
+        catalog_path=catalog_path,
+        collection=collection,
+        collection_path=_collection_path(catalog_path, collection),
+    )
+
+
 @click.group()
 @click.version_option()
 @click.option(
@@ -2192,6 +2276,28 @@ def _print_add_failures_batched(failures: list[AddFailure]) -> None:
                 detail(f"    Examples: {paths}")
 
 
+def _output_add_unchanged(skipped: list[Path], verbose: bool) -> None:
+    """Output message when all files are already tracked (unchanged)."""
+    skip_count = len(skipped)
+    success(f"All {skip_count} file{'s' if skip_count != 1 else ''} already tracked (unchanged)")
+    if verbose:
+        for p in skipped:
+            detail(f"  {p.name}")
+
+
+def _output_add_summary(added: list[DatasetInfo]) -> None:
+    """Output final success summary after adding files."""
+    total_added = len(added)
+    unique_items = len({ds.item_id for ds in added})
+    if unique_items == total_added:
+        success(f"Added {total_added} item{'s' if total_added != 1 else ''}")
+    else:
+        success(
+            f"Added {total_added} file{'s' if total_added != 1 else ''} "
+            f"({unique_items} item{'s' if unique_items != 1 else ''})"
+        )
+
+
 def _output_add_human(
     added: list[DatasetInfo],
     skipped: list[Path],
@@ -2199,9 +2305,12 @@ def _output_add_human(
     verbose: bool,
 ) -> None:
     """Output add command results as human-readable text."""
+    # Handle edge cases with early returns
+    if not added and not failures and not skipped:
+        info_output("No geospatial files found to add")
+        return
     if not added and not failures:
-        if not skipped:
-            info_output("No geospatial files found to add")
+        _output_add_unchanged(skipped, verbose)
         return
 
     # Output successful adds
@@ -2212,6 +2321,7 @@ def _output_add_human(
         else:
             _output_added_multi_collection(added)
 
+    # Show skipped files in verbose mode
     if verbose and skipped:
         for p in skipped:
             detail(f"Skipping {p.name} (unchanged)")
@@ -2219,6 +2329,10 @@ def _output_add_human(
     # Output failures batched by error message (Issue #199)
     if failures:
         _print_add_failures_batched(failures)
+
+    # Final success summary (only if we added something and had no failures)
+    if added and not failures:
+        _output_add_summary(added)
 
 
 def _output_add_results(
@@ -2276,6 +2390,15 @@ def _output_add_results(
         "(portolan check will flag them)."
     ),
 )
+@click.option(
+    "--workers",
+    type=int,
+    default=1,
+    help=(
+        "Number of parallel workers for metadata extraction. "
+        "Default is 1 (sequential). Use higher values for large catalogs."
+    ),
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
@@ -2286,6 +2409,7 @@ def add_cmd(
     item_id: str | None,
     catalog_path: Path | None,
     item_datetime: datetime | None,
+    workers: int,
 ) -> None:
     """Track files in the catalog.
 
@@ -2420,6 +2544,8 @@ def add_cmd(
             item_datetime=item_datetime,
             verbose=verbose,
             on_progress=show_add_progress,
+            workers=workers,
+            json_mode=use_json,
         )
     except (ValueError, FileNotFoundError) as err:
         err_type = type(err).__name__
@@ -2605,8 +2731,8 @@ def rm_cmd(
 )
 @click.option(
     "--profile",
-    default="default",
-    help="AWS profile name (for S3 destinations).",
+    default=None,
+    help="AWS profile name (for S3 destinations). Uses config or 'default' if not specified.",
 )
 @click.option(
     "--catalog",
@@ -2661,7 +2787,6 @@ def push(
         portolan push s3://mybucket/catalog
         portolan push --dry-run  # Uses configured remote
     """
-    from portolan_cli.config import get_setting
     from portolan_cli.push import PushConflictError, push_all_collections
     from portolan_cli.push import push as push_fn
 
@@ -2672,13 +2797,9 @@ def push(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "push")
 
-    # Resolve destination: CLI arg > env var > config file
-    resolved_destination = get_setting(
-        "remote",
-        cli_value=destination,
-        catalog_path=catalog_path,
-        collection=collection,
-    )
+    resolved_destination = resolve_remote(destination, catalog_path, collection)
+    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+    resolved_region = resolve_aws_region(None, catalog_path, collection)
 
     if resolved_destination is None:
         if use_json:
@@ -2708,7 +2829,8 @@ def push(
                 destination=resolved_destination,
                 force=force,
                 dry_run=dry_run,
-                profile=profile,
+                profile=resolved_profile,
+                region=resolved_region,
                 workers=workers,
             )
 
@@ -2750,7 +2872,9 @@ def push(
             destination=resolved_destination,
             force=force,
             dry_run=dry_run,
-            profile=profile,
+            profile=resolved_profile,
+            region=resolved_region,
+            workers=workers,
         )
 
         if use_json:
@@ -2868,8 +2992,8 @@ def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
 @click.option(
     "--profile",
     type=str,
-    default="default",
-    help="AWS profile name (for S3).",
+    default=None,
+    help="AWS profile name (for S3). Uses config or 'default' if not specified.",
 )
 @click.option(
     "--workers",
@@ -2929,6 +3053,8 @@ def pull_command(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "pull")
 
+    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+
     # Catalog-wide pull (no --collection specified)
     if collection is None:
         try:
@@ -2937,7 +3063,7 @@ def pull_command(
                 local_root=catalog_path,
                 force=force,
                 dry_run=dry_run,
-                profile=profile,
+                profile=resolved_profile,
                 workers=workers,
             )
 
@@ -2988,7 +3114,7 @@ def pull_command(
             collection=collection,
             force=force,
             dry_run=dry_run,
-            profile=profile,
+            profile=resolved_profile,
         )
 
         if use_json:
@@ -3075,15 +3201,15 @@ def pull_command(
 )
 @click.option(
     "--profile",
-    default="default",
-    help="AWS profile name (for S3 destinations).",
+    default=None,
+    help="AWS profile name (for S3 destinations). Uses config or 'default' if not specified.",
 )
 @click.option(
     "--catalog",
     "catalog_path",
     type=click.Path(path_type=Path),
-    default=".",
-    help="Path to catalog root (default: current directory).",
+    default=None,
+    help="Path to catalog root (default: auto-detect by walking up from cwd).",
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
@@ -3096,7 +3222,7 @@ def sync(
     dry_run: bool,
     fix: bool,
     profile: str | None,
-    catalog_path: Path,
+    catalog_path: Path | None,
 ) -> None:
     """Sync local catalog with remote storage (pull + push).
 
@@ -3113,18 +3239,18 @@ def sync(
         portolan sync s3://mybucket/catalog -c data --profile prod
         portolan sync --collection demographics  # Uses configured remote
     """
-    from portolan_cli.config import get_setting
     from portolan_cli.sync import sync as sync_fn
 
     use_json = should_output_json(ctx, json_output)
 
-    # Resolve destination: CLI arg > env var > config file
-    resolved_destination = get_setting(
-        "remote",
-        cli_value=destination,
-        catalog_path=catalog_path,
-        collection=collection,
-    )
+    # Git-style: find catalog root from anywhere within the catalog
+    # Use explicit --catalog if provided, otherwise auto-detect
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "sync")
+
+    resolved_destination = resolve_remote(destination, catalog_path, collection)
+    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+    resolved_region = resolve_aws_region(None, catalog_path, collection)
 
     if resolved_destination is None:
         if use_json:
@@ -3153,7 +3279,8 @@ def sync(
         force=force,
         dry_run=dry_run,
         fix=fix,
-        profile=profile,
+        profile=resolved_profile,
+        region=resolved_region,
     )
 
     if use_json:
@@ -3225,8 +3352,8 @@ def sync(
 )
 @click.option(
     "--profile",
-    default="default",
-    help="AWS profile name (for S3 sources).",
+    default=None,
+    help="AWS profile name (for S3 sources). Uses env var or 'default' if not specified.",
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
@@ -3273,6 +3400,9 @@ def clone(
 
     use_json = should_output_json(ctx, json_output)
 
+    # Resolve profile: CLI arg > env var > default (no local catalog yet)
+    resolved_profile = resolve_aws_profile(profile, catalog_path=None)
+
     # Infer local_path from URL if not provided
     if local_path is None:
         try:
@@ -3294,7 +3424,7 @@ def clone(
         remote_url=remote_url,
         local_path=local_path,
         collection=collection,
-        profile=profile,
+        profile=resolved_profile,
     )
 
     if use_json:
@@ -3749,3 +3879,521 @@ def clean(ctx: click.Context, json_output: bool, dry_run: bool) -> None:
         else:
             error(f"Failed to clean catalog: {e}")
         raise SystemExit(1) from e
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Metadata Commands (ADR-0038)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def metadata() -> None:
+    """Manage catalog metadata for README generation.
+
+    metadata.yaml files supplement STAC with human-enrichable fields like
+    titles, descriptions, contact info, and citations. These files can exist
+    at any level in the catalog hierarchy (catalog, subcatalog, collection).
+
+    \b
+    Examples:
+        portolan metadata init                # Create template at catalog root
+        portolan metadata init demographics   # Create template for collection
+        portolan metadata validate            # Validate metadata.yaml
+    """
+
+
+@metadata.command("init")
+@click.argument("path", required=False, type=click.Path())
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Overwrite existing metadata.yaml file.",
+)
+@click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def metadata_init(
+    ctx: click.Context,
+    json_output: bool,
+    path: str | None,
+    force: bool,
+) -> None:
+    """Generate a metadata.yaml template.
+
+    Creates a .portolan/metadata.yaml file with all required and optional
+    fields, including helpful comments explaining each field.
+
+    If PATH is provided, creates the template at that directory. Otherwise,
+    creates it at the catalog root.
+
+    \b
+    Examples:
+        portolan metadata init                # Template at catalog root
+        portolan metadata init demographics   # Template for collection
+        portolan metadata init --force        # Overwrite existing
+    """
+    from portolan_cli.metadata_yaml import generate_metadata_template
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Find catalog root
+    catalog_path = find_catalog_root()
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "metadata init",
+                [
+                    ErrorDetail(
+                        type="CatalogNotFoundError",
+                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not inside a Portolan catalog")
+            info_output("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    # Determine target directory
+    if path:
+        target_dir = catalog_path / path
+    else:
+        target_dir = catalog_path
+
+    # Create .portolan directory if needed
+    portolan_dir = target_dir / ".portolan"
+    portolan_dir.mkdir(parents=True, exist_ok=True)
+
+    # Check for existing file
+    metadata_file = portolan_dir / "metadata.yaml"
+    if metadata_file.exists() and not force:
+        if use_json:
+            envelope = error_envelope(
+                "metadata init",
+                [
+                    ErrorDetail(
+                        type="FileExistsError",
+                        message=f"metadata.yaml already exists at {metadata_file}. Use --force to overwrite.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            warn(f"metadata.yaml already exists at {metadata_file}")
+            info_output("Use --force to overwrite")
+        raise SystemExit(1)
+
+    # Generate and write template
+    template = generate_metadata_template()
+    metadata_file.write_text(template)
+
+    if use_json:
+        relative_path = str(metadata_file.relative_to(catalog_path))
+        envelope = success_envelope(
+            "metadata init",
+            {"path": relative_path, "overwritten": force and metadata_file.exists()},
+        )
+        output_json_envelope(envelope)
+    else:
+        success(f"Created {metadata_file.relative_to(catalog_path)}")
+        info_output("Edit the file to add your catalog's metadata")
+
+
+@metadata.command("validate")
+@click.argument("path", required=False, type=click.Path())
+@click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def metadata_validate(
+    ctx: click.Context,
+    json_output: bool,
+    path: str | None,
+) -> None:
+    """Validate metadata.yaml against schema.
+
+    Checks for:
+    - Required fields: title, description, contact (name + email), license
+    - Format validation: email, SPDX license identifier, DOI
+
+    Uses hierarchical resolution: child metadata.yaml files inherit from
+    parent levels and override specific fields.
+
+    \b
+    Examples:
+        portolan metadata validate              # Validate at catalog root
+        portolan metadata validate demographics # Validate for collection
+    """
+    from portolan_cli.errors import ConfigInvalidStructureError
+    from portolan_cli.metadata_yaml import load_and_validate_metadata
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Find catalog root
+    catalog_path = find_catalog_root()
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "metadata validate",
+                [
+                    ErrorDetail(
+                        type="CatalogNotFoundError",
+                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not inside a Portolan catalog")
+            info_output("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    # Determine target directory
+    if path:
+        target_dir = catalog_path / path
+    else:
+        target_dir = catalog_path
+
+    # Load and validate
+    try:
+        _metadata, errors = load_and_validate_metadata(target_dir, catalog_path)
+    except ConfigInvalidStructureError as err:
+        if use_json:
+            envelope = error_envelope(
+                "metadata validate",
+                [ErrorDetail(type="InvalidYAMLError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Invalid YAML in metadata.yaml: {err}")
+        raise SystemExit(1) from err
+
+    if use_json:
+        if errors:
+            envelope = error_envelope(
+                "metadata validate",
+                [ErrorDetail(type="ValidationError", message=e) for e in errors],
+                data={"valid": False, "errors": errors, "path": str(path or ".")},
+            )
+            output_json_envelope(envelope)
+            raise SystemExit(1)
+        else:
+            envelope = success_envelope(
+                "metadata validate",
+                {"valid": True, "errors": [], "path": str(path or ".")},
+            )
+            output_json_envelope(envelope)
+    else:
+        if errors:
+            error(f"Validation failed with {len(errors)} error(s):")
+            for validation_err in errors:
+                detail(f"  - {validation_err}")
+            raise SystemExit(1)
+        else:
+            success("Metadata is valid")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# README Command (ADR-0038)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _generate_readme_content(
+    target_dir: Path,
+    catalog_path: Path,
+    use_json: bool,
+) -> tuple[str, bool]:
+    """Generate README content for a target directory.
+
+    Args:
+        target_dir: Directory to generate README for.
+        catalog_path: Root catalog path.
+        use_json: Whether to output errors as JSON.
+
+    Returns:
+        Tuple of (readme_content, is_catalog_root).
+
+    Raises:
+        SystemExit: On YAML parse errors.
+    """
+    from portolan_cli.config import load_merged_metadata
+    from portolan_cli.errors import ConfigInvalidStructureError
+    from portolan_cli.readme import generate_catalog_readme, generate_readme
+
+    # Check if at catalog root (has catalog.json, not collection.json)
+    is_catalog_root = (target_dir / "catalog.json").exists() and not (
+        target_dir / "collection.json"
+    ).exists()
+
+    if is_catalog_root:
+        return generate_catalog_readme(target_dir), True
+
+    # Load STAC (collection.json or catalog.json)
+    stac: dict[str, Any] = {}
+    for stac_file in ["collection.json", "catalog.json"]:
+        stac_path = target_dir / stac_file
+        if stac_path.exists():
+            stac = json.loads(stac_path.read_text())
+            break
+
+    # Load merged metadata
+    try:
+        metadata_dict = load_merged_metadata(target_dir, catalog_path)
+    except ConfigInvalidStructureError as err:
+        if use_json:
+            envelope = error_envelope(
+                "readme",
+                [ErrorDetail(type="InvalidYAMLError", message=str(err))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Invalid YAML in metadata.yaml: {err}")
+        raise SystemExit(1) from err
+
+    return generate_readme(stac=stac, metadata=metadata_dict), False
+
+
+def _process_readme_entry(
+    readme_path: Path,
+    content: str,
+    rel_path: str,
+    check: bool,
+    generated: list[str],
+    stale: list[str],
+) -> None:
+    """Process a single README: check freshness or write.
+
+    Args:
+        readme_path: Absolute path to README.md.
+        content: Generated content to write/check.
+        rel_path: Relative path for reporting.
+        check: If True, check freshness only.
+        generated: List to append fresh/generated paths.
+        stale: List to append stale paths.
+    """
+    if check:
+        is_fresh = readme_path.exists() and readme_path.read_text() == content
+        (generated if is_fresh else stale).append(rel_path)
+    else:
+        readme_path.write_text(content)
+        generated.append(rel_path)
+
+
+def _readme_recursive(
+    catalog_path: Path,
+    use_json: bool,
+    check: bool,
+    stdout: bool,
+) -> None:
+    """Generate READMEs for catalog and all collections recursively.
+
+    Helper for --recursive flag. Walks the entire catalog tree and generates:
+    1. Catalog/subcatalog READMEs (directories with catalog.json)
+    2. Collection READMEs (directories with collection.json)
+
+    Args:
+        catalog_path: Path to catalog root.
+        use_json: Output JSON format.
+        check: CI mode - check freshness only.
+        stdout: Print to stdout (not supported in recursive mode).
+    """
+    from portolan_cli.readme import (
+        generate_catalog_readme,
+        generate_readme_for_collection,
+    )
+
+    if stdout:
+        error("--stdout is not supported with --recursive")
+        raise SystemExit(1)
+
+    generated_paths: list[str] = []
+    stale_paths: list[str] = []
+
+    # Walk entire tree to find all catalogs and collections
+    for dirpath in sorted(catalog_path.rglob("*")):
+        if not dirpath.is_dir():
+            continue
+        if any(part.startswith(".") for part in dirpath.relative_to(catalog_path).parts):
+            continue
+
+        rel_dir = dirpath.relative_to(catalog_path)
+        readme_path = dirpath / "README.md"
+        rel_path = str(rel_dir / "README.md")
+
+        if (dirpath / "collection.json").exists():
+            content = generate_readme_for_collection(dirpath, catalog_path)
+            _process_readme_entry(
+                readme_path, content, rel_path, check, generated_paths, stale_paths
+            )
+        elif (dirpath / "catalog.json").exists():
+            content = generate_catalog_readme(dirpath)
+            _process_readme_entry(
+                readme_path, content, rel_path, check, generated_paths, stale_paths
+            )
+
+    # Generate root catalog README
+    root_content = generate_catalog_readme(catalog_path)
+    _process_readme_entry(
+        catalog_path / "README.md", root_content, "README.md", check, generated_paths, stale_paths
+    )
+    # Move root to front of list
+    if "README.md" in generated_paths:
+        generated_paths.remove("README.md")
+        generated_paths.insert(0, "README.md")
+    if "README.md" in stale_paths:
+        stale_paths.remove("README.md")
+        stale_paths.insert(0, "README.md")
+
+    # Output results
+    if use_json:
+        if check:
+            envelope = success_envelope(
+                "readme",
+                {
+                    "fresh": len(stale_paths) == 0,
+                    "checked": generated_paths + stale_paths,
+                    "stale": stale_paths,
+                },
+            )
+        else:
+            envelope = success_envelope(
+                "readme",
+                {"generated": generated_paths, "count": len(generated_paths)},
+            )
+        output_json_envelope(envelope)
+        if check and stale_paths:
+            raise SystemExit(1)
+    else:
+        if check:
+            if stale_paths:
+                error(f"{len(stale_paths)} README(s) are stale:")
+                for p in stale_paths:
+                    detail(f"  {p}")
+                info_output("Run 'portolan readme --recursive' to regenerate")
+                raise SystemExit(1)
+            else:
+                success(f"All {len(generated_paths)} README(s) are up-to-date")
+        else:
+            success(f"Generated {len(generated_paths)} README(s)")
+            for p in generated_paths:
+                detail(f"  {p}")
+
+
+@cli.command()
+@click.argument("path", required=False, type=click.Path())
+@click.option(
+    "--stdout",
+    is_flag=True,
+    default=False,
+    help="Print README to stdout instead of writing file.",
+)
+@click.option(
+    "--check",
+    is_flag=True,
+    default=False,
+    help="Check if README is up-to-date (for CI). Exits 1 if stale.",
+)
+@click.option(
+    "--recursive",
+    "-r",
+    is_flag=True,
+    default=False,
+    help="Generate READMEs for catalog and all collections.",
+)
+@click.pass_context
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+def readme(
+    ctx: click.Context,
+    json_output: bool,
+    path: str | None,
+    stdout: bool,
+    check: bool,
+    recursive: bool,
+) -> None:
+    """Generate README.md from STAC metadata and metadata.yaml.
+
+    The README is a pure output - always generated from STAC (machine-extracted
+    metadata) plus .portolan/metadata.yaml (human enrichment). Never hand-edit
+    the README; edit metadata.yaml instead and regenerate.
+
+    Use --check in CI to verify the README is up-to-date:
+
+    \b
+    Examples:
+        portolan readme                    # Generate at catalog root
+        portolan readme demographics       # Generate for collection
+        portolan readme --stdout           # Print without writing
+        portolan readme --check            # CI mode: exit 1 if stale
+        portolan readme --recursive        # Generate for catalog and all collections
+    """
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Find catalog root
+    catalog_path = find_catalog_root()
+    if catalog_path is None:
+        if use_json:
+            envelope = error_envelope(
+                "readme",
+                [
+                    ErrorDetail(
+                        type="CatalogNotFoundError",
+                        message="Not inside a Portolan catalog. Run 'portolan init' first.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Not inside a Portolan catalog")
+            info_output("Run 'portolan init' to create one")
+        raise SystemExit(1)
+
+    # Handle recursive mode
+    if recursive:
+        _readme_recursive(catalog_path, use_json, check, stdout)
+        return
+
+    # Determine target directory
+    if path:
+        target_dir = catalog_path / path
+    else:
+        target_dir = catalog_path
+
+    # Generate README content
+    readme_content, is_catalog_root = _generate_readme_content(target_dir, catalog_path, use_json)
+
+    # Determine output path
+    readme_path = target_dir / "README.md"
+
+    if check:
+        # Compare existing README against freshly generated content
+        is_fresh = readme_path.exists() and readme_path.read_text() == readme_content
+
+        if use_json:
+            envelope = success_envelope(
+                "readme",
+                {"fresh": is_fresh, "path": str(readme_path.relative_to(catalog_path))},
+            )
+            output_json_envelope(envelope)
+            if not is_fresh:
+                raise SystemExit(1)
+        else:
+            if is_fresh:
+                success("README is up-to-date")
+            else:
+                error("README is stale or missing")
+                info_output("Run 'portolan readme' to regenerate")
+                raise SystemExit(1)
+    elif stdout:
+        # Print to stdout
+        click.echo(readme_content)
+    else:
+        # Write to file
+        readme_path.write_text(readme_content)
+        if use_json:
+            envelope = success_envelope(
+                "readme",
+                {"path": str(readme_path.relative_to(catalog_path)), "generated": True},
+            )
+            output_json_envelope(envelope)
+        else:
+            success(f"Generated {readme_path.relative_to(catalog_path)}")

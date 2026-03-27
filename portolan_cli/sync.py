@@ -385,6 +385,7 @@ def _step_push(
     force: bool,
     dry_run: bool,
     profile: str | None,
+    region: str | None,
 ) -> tuple[PushResult | None, str | None]:
     """Execute push step. Returns (push_result, error_msg)."""
     info(f"Pushing to {destination}...")
@@ -396,6 +397,7 @@ def _step_push(
             force=force,
             dry_run=dry_run,
             profile=profile,
+            region=region,
         )
 
         if not push_result.success:
@@ -437,6 +439,7 @@ def sync(
     dry_run: bool = False,
     fix: bool = False,
     profile: str | None = None,
+    region: str | None = None,
 ) -> SyncResult:
     """Sync local catalog with remote storage.
 
@@ -455,6 +458,7 @@ def sync(
         dry_run: If True, show what would happen without making changes.
         fix: If True, convert non-cloud-native formats during check.
         profile: AWS profile name (for S3 destinations).
+        region: AWS region (for S3 destinations). Overrides profile/env config.
 
     Returns:
         SyncResult with aggregated results from all steps.
@@ -533,7 +537,7 @@ def sync(
 
     # Step 5: Push
     push_result, push_error = _step_push(
-        catalog_root, collection, destination, force, dry_run, profile
+        catalog_root, collection, destination, force, dry_run, profile, region
     )
     if push_error:
         error(push_error)

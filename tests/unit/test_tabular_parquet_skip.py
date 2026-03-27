@@ -192,10 +192,16 @@ class TestTabularParquetWithGeoAsset:
         # Mock add_dataset to simulate the real flow:
         # - GeoJSON succeeds (creates STAC item)
         # - Tabular parquet raises NoGeometryError (deferred, then tracked)
+        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
         with (
-            patch("portolan_cli.dataset.add_dataset", side_effect=mock_add_side_effect) as mock_add,
+            patch(
+                "portolan_cli.dataset.prepare_dataset", side_effect=mock_add_side_effect
+            ) as mock_add,
+            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
             patch("portolan_cli.dataset._update_item_with_asset") as mock_update_item,
         ):
+            mock_finalize.return_value = []
+
             added, skipped, failures = add_files(
                 paths=[item_dir],  # Add the entire item directory
                 catalog_root=initialized_catalog,
@@ -203,7 +209,7 @@ class TestTabularParquetWithGeoAsset:
             )
 
             # The geo file should be added
-            assert mock_add.called, "Should have called add_dataset for GeoJSON"
+            assert mock_add.called, "Should have called prepare_dataset for GeoJSON"
 
             # The tabular parquet should be tracked as an auxiliary asset
             # (deferred to after geo processing, then _update_item_with_asset called)
@@ -339,7 +345,7 @@ class TestNonGeometryValueErrorsPropagation:
         pq.write_table(table, item_dir / "data.parquet")
 
         # Mock add_dataset to raise a non-geometry ValueError
-        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+        with patch("portolan_cli.dataset.prepare_dataset") as mock_add:
             mock_add.side_effect = ValueError("Unsupported format: .xyz")
 
             # Per Issue #175, errors are collected in failures instead of raised
@@ -418,13 +424,31 @@ class TestGeoParquetSuccessPath:
         table = table.replace_schema_metadata(new_meta)
         pq.write_table(table, geo_parquet)
 
-        # Mock add_dataset to simulate success
-        with patch("portolan_cli.dataset.add_dataset") as mock_add:
+        # Mock prepare_dataset and finalize_datasets to simulate success
+        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # The added list is populated from finalize_datasets return value
+        from portolan_cli.dataset import DatasetInfo
+        from portolan_cli.formats import FormatType
+
+        mock_dataset_info = DatasetInfo(
+            item_id="item",
+            collection_id="collection",
+            format_type=FormatType.VECTOR,
+            bbox=[-180.0, -90.0, 180.0, 90.0],
+            asset_paths=["boundaries.parquet"],
+        )
+
+        with (
+            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
+            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+        ):
             mock_add.return_value = MagicMock(
                 item_id="item",
                 collection_id="collection",
                 asset_paths=["boundaries.parquet"],
             )
+            # finalize_datasets returns the list of successfully added DatasetInfo objects
+            mock_finalize.return_value = [mock_dataset_info]
 
             added, skipped, failures = add_files(
                 paths=[geo_parquet],
@@ -433,7 +457,7 @@ class TestGeoParquetSuccessPath:
             )
 
             # Valid GeoParquet should be ADDED (not deferred/skipped)
-            assert mock_add.called, "add_dataset should be called for valid GeoParquet"
+            assert mock_add.called, "prepare_dataset should be called for valid GeoParquet"
             assert len(added) == 1, "Valid GeoParquet should appear in added list"
 
 
@@ -576,9 +600,14 @@ class TestTabularParquetHypothesis:
                 }
                 geojson_file.write_text(json.dumps(geojson_data))
 
-            # Mock add_dataset to track calls
-            with patch("portolan_cli.dataset.add_dataset") as mock_add:
+            # Mock prepare_dataset and finalize_datasets to track calls
+            # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+            with (
+                patch("portolan_cli.dataset.prepare_dataset") as mock_add,
+                patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            ):
                 mock_add.return_value = MagicMock(item_id="item", collection_id="collection")
+                mock_finalize.return_value = []
 
                 # This should NOT raise
                 try:

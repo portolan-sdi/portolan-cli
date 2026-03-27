@@ -20,6 +20,7 @@ See ADR-0007 for CLI wraps Python API (all logic in library layer).
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,6 @@ from portolan_cli.parallel import (
     execute_parallel,
     get_default_workers,  # Re-export for backwards compatibility
 )
-from portolan_cli.stac import update_collection_summaries
 from portolan_cli.upload import ObjectStore, parse_object_store_url
 
 # Re-export get_default_workers for backwards compatibility
@@ -173,37 +173,6 @@ def _read_local_versions(catalog_root: Path, collection: str) -> dict[str, Any]:
 
 
 # =============================================================================
-# Collection Summaries (per ADR-0036)
-# =============================================================================
-
-
-def _update_collection_summaries_before_push(catalog_root: Path, collection: str) -> None:
-    """Update collection summaries before push.
-
-    This aggregates item properties into collection-level summaries for discovery.
-    Done during push (not add) to avoid O(N²) performance for large collections.
-
-    Args:
-        catalog_root: Path to catalog root directory.
-        collection: Collection identifier.
-    """
-    import pystac
-
-    collection_path = catalog_root / collection / "collection.json"
-    if not collection_path.exists():
-        return  # No collection to update
-
-    try:
-        stac_collection = pystac.Collection.from_file(str(collection_path))
-        update_collection_summaries(stac_collection)
-        stac_collection.save_object()
-        detail("Updated collection summaries")
-    except Exception as e:
-        # Don't fail push if summaries update fails - just warn
-        warn(f"Could not update collection summaries: {e}")
-
-
-# =============================================================================
 # Remote Versions Fetching
 # =============================================================================
 
@@ -212,6 +181,7 @@ def _setup_store(
     destination: str,
     *,
     profile: str | None = None,
+    region: str | None = None,
 ) -> tuple[ObjectStore, str]:
     """Setup object store and extract prefix from destination URL.
 
@@ -224,6 +194,7 @@ def _setup_store(
         destination: Object store URL (e.g., s3://bucket/prefix, gs://bucket/prefix,
             az://container/prefix).
         profile: AWS profile name (for S3 only).
+        region: AWS region (for S3 only). Takes precedence over profile/env config.
 
     Returns:
         Tuple of (store, prefix).
@@ -240,25 +211,37 @@ def _setup_store(
         # Load credentials
         access_key: str | None = None
         secret_key: str | None = None
-        region: str | None = None
+        profile_region: str | None = None
 
         if profile:
             from portolan_cli.upload import _load_aws_credentials_from_profile
 
-            access_key, secret_key, region = _load_aws_credentials_from_profile(profile)
+            access_key, secret_key, profile_region = _load_aws_credentials_from_profile(profile)
         else:
             access_key = os.environ.get("AWS_ACCESS_KEY_ID")
             secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-            region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
 
-        store_kwargs: dict[str, str] = {}
-        if region:
-            store_kwargs["region"] = region
+        # Region precedence: explicit param > env var > profile config
+        resolved_region = region
+        if not resolved_region:
+            resolved_region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+        if not resolved_region:
+            resolved_region = profile_region
+
+        store_kwargs: dict[str, Any] = {}
+        if resolved_region:
+            store_kwargs["region"] = resolved_region
         if access_key and secret_key:
             store_kwargs["access_key_id"] = access_key
             store_kwargs["secret_access_key"] = secret_key
 
-        store: ObjectStore = S3Store(bucket, **store_kwargs)  # type: ignore[arg-type]
+        # Bucket names with dots (e.g., us-west-2.opendata.source.coop) require
+        # path-style requests because virtual-hosted style would create invalid
+        # DNS names (bucket.s3.region.amazonaws.com doesn't work with dots)
+        if "." in bucket:
+            store_kwargs["virtual_hosted_style_request"] = False
+
+        store: ObjectStore = S3Store(bucket, **store_kwargs)
 
     elif bucket_url.startswith("gs://"):
         bucket = bucket_url.replace("gs://", "")
@@ -400,8 +383,9 @@ def _upload_assets(
     assets: list[Path],
     *,
     dry_run: bool = False,
+    workers: int | None = None,
 ) -> tuple[int, list[str], list[str]]:
-    """Upload asset files to object storage.
+    """Upload asset files to object storage with parallel workers.
 
     Args:
         store: Object store instance.
@@ -409,38 +393,64 @@ def _upload_assets(
         prefix: Prefix in object storage.
         assets: List of asset file paths to upload.
         dry_run: If True, don't actually upload.
+        workers: Number of parallel upload workers. None = auto-detect.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys).
         uploaded_keys contains the object keys that were successfully uploaded,
         useful for rollback on subsequent failures.
     """
-    files_uploaded = 0
-    errors: list[str] = []
-    uploaded_keys: list[str] = []
+    if not assets:
+        return 0, [], []
+
     total = len(assets)
 
-    for i, asset_path in enumerate(assets, 1):
-        try:
-            # Calculate relative path from catalog root
+    if dry_run:
+        # Dry run stays sequential for readable output
+        for i, asset_path in enumerate(assets, 1):
             rel_path = asset_path.relative_to(catalog_root)
-            # Use as_posix() to ensure forward slashes on Windows (cloud keys are always /)
             target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+            info(f"[DRY RUN] Would upload ({i}/{total}): {rel_path} -> {target_key}")
+        return 0, [], []
 
-            if dry_run:
-                info(f"[DRY RUN] Would upload ({i}/{total}): {rel_path} -> {target_key}")
+    # Thread-safe containers for parallel execution
+    uploaded_keys: list[str] = []
+    errors_list: list[str] = []
+    keys_lock = threading.Lock()
+
+    def upload_one(asset_path_str: str) -> str:
+        """Upload a single asset. Returns target key on success."""
+        asset_path = Path(asset_path_str)
+        rel_path = asset_path.relative_to(catalog_root)
+        target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+        obs.put(store, target_key, asset_path)
+        return target_key
+
+    # Convert paths to strings for execute_parallel
+    asset_strs = [str(p) for p in assets]
+
+    def on_complete(
+        item: str, result: str | None, err: str | None, completed: int, total_count: int
+    ) -> None:
+        """Track results thread-safely."""
+        rel_path = Path(item).relative_to(catalog_root)
+        with keys_lock:
+            if err:
+                errors_list.append(f"Failed to upload {rel_path}: {err}")
+                error(f"[{completed}/{total_count}] Failed: {rel_path}")
             else:
-                info(f"Uploading ({i}/{total}): {rel_path}")
-                obs.put(store, target_key, asset_path)
-                files_uploaded += 1
-                uploaded_keys.append(target_key)
-                success(f"Uploaded: {rel_path}")
-        except Exception as e:
-            error_msg = f"Failed to upload {asset_path}: {e}"
-            errors.append(error_msg)
-            error(error_msg)
+                uploaded_keys.append(result)  # type: ignore[arg-type]
+                detail(f"[{completed}/{total_count}] Uploaded: {rel_path}")
 
-    return files_uploaded, errors, uploaded_keys
+    info(f"Uploading {total} asset(s)...")
+    execute_parallel(
+        items=asset_strs,
+        operation=upload_one,
+        workers=workers,
+        on_complete=on_complete,
+    )
+
+    return len(uploaded_keys), errors_list, uploaded_keys
 
 
 def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
@@ -480,7 +490,7 @@ def _discover_stac_files(
     """Discover STAC metadata files that should be uploaded for a collection.
 
     Finds collection.json and all item STAC files within the collection's
-    directory structure. Optionally includes catalog.json.
+    directory structure. Optionally includes catalog.json and README.md files.
 
     Note: Portolan creates item files as {item_id}.json (not item.json).
     The item_id matches the item directory name by convention.
@@ -488,15 +498,16 @@ def _discover_stac_files(
     Args:
         catalog_root: Path to catalog root.
         collection: Collection identifier.
-        include_catalog: If True, include catalog.json in discovery.
+        include_catalog: If True, include catalog.json and root README.md in discovery.
             Default False because catalog.json is a shared resource that
             should be uploaded once after all collections, not per-collection.
 
     Returns:
-        Dict with keys 'catalog', 'collection', 'items' mapping to lists of paths.
+        Dict with keys 'catalog', 'collection', 'items', 'readmes' mapping to lists of paths.
         - 'catalog': [catalog_root/catalog.json] if include_catalog and exists
         - 'collection': [collection/collection.json] if exists
         - 'items': [collection/item1/item1.json, ...] for each item found
+        - 'readmes': [README.md files at catalog and collection level]
 
     Raises:
         FileNotFoundError: If collection.json doesn't exist (required for push).
@@ -505,15 +516,20 @@ def _discover_stac_files(
         "catalog": [],
         "collection": [],
         "items": [],
+        "readmes": [],
     }
 
-    # 1. Root catalog.json (only if requested - typically for push_all_collections)
+    # 1. Root catalog.json and README.md (only if requested)
     if include_catalog:
         catalog_json = catalog_root / "catalog.json"
         if catalog_json.exists():
             stac_files["catalog"].append(catalog_json)
+        # Root README.md
+        root_readme = catalog_root / "README.md"
+        if root_readme.exists():
+            stac_files["readmes"].append(root_readme)
 
-    # 2. Collection's collection.json (required)
+    # 2. Collection's collection.json (required) and README.md (optional)
     collection_dir = catalog_root / collection
     collection_json = collection_dir / "collection.json"
     if not collection_json.exists():
@@ -522,6 +538,10 @@ def _discover_stac_files(
             "Run 'portolan add' to create STAC metadata before pushing."
         )
     stac_files["collection"].append(collection_json)
+    # Collection-level README.md
+    collection_readme = collection_dir / "README.md"
+    if collection_readme.exists():
+        stac_files["readmes"].append(collection_readme)
 
     # 3. All item STAC files within the collection
     # Portolan naming convention: items are in subdirectories named {item_id}
@@ -569,6 +589,9 @@ def _upload_stac_files(
     2. collection.json (intermediate manifest)
     3. catalog.json (root manifest) - only if included in stac_files
 
+    Note: READMEs are uploaded separately AFTER versions.json since they
+    are derived from STAC + versions.json + metadata.yaml.
+
     Note: STAC files are NOT rolled back on failure. They are idempotent
     (re-uploading is safe) and the manifest-last pattern ensures consistency:
     versions.json is uploaded last, so incomplete pushes aren't "visible".
@@ -588,6 +611,7 @@ def _upload_stac_files(
     uploaded_keys: list[str] = []
 
     # Build ordered list: items first, then collection, then catalog
+    # READMEs are uploaded separately after versions.json
     ordered_files: list[Path] = []
     ordered_files.extend(stac_files.get("items", []))
     ordered_files.extend(stac_files.get("collection", []))
@@ -621,6 +645,60 @@ def _upload_stac_files(
             error(error_msg)
 
     return files_uploaded, errors, uploaded_keys
+
+
+def _upload_readmes(
+    store: ObjectStore,
+    catalog_root: Path,
+    prefix: str,
+    stac_files: dict[str, list[Path]],
+    *,
+    dry_run: bool = False,
+) -> tuple[int, list[str]]:
+    """Upload README.md files after all other metadata.
+
+    READMEs are derived from STAC + versions.json + metadata.yaml, so they
+    must be uploaded last. They are not rolled back on failure since they
+    are purely documentation.
+
+    Args:
+        store: Object store instance.
+        catalog_root: Path to catalog root.
+        prefix: Prefix in object storage.
+        stac_files: Dict from _discover_stac_files() containing 'readmes' key.
+        dry_run: If True, don't actually upload.
+
+    Returns:
+        Tuple of (files_uploaded, errors).
+    """
+    readmes = stac_files.get("readmes", [])
+    if not readmes:
+        return 0, []
+
+    files_uploaded = 0
+    errors: list[str] = []
+
+    info(f"Uploading {len(readmes)} README file(s)...")
+
+    for readme_path in readmes:
+        try:
+            rel_path = readme_path.relative_to(catalog_root)
+            target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+
+            if dry_run:
+                info(f"[DRY RUN] Would upload README: {rel_path}")
+            else:
+                detail(f"Uploading README: {rel_path}")
+                content = readme_path.read_bytes()
+                obs.put(store, target_key, content)
+                files_uploaded += 1
+
+        except Exception as e:
+            error_msg = f"Failed to upload {readme_path}: {e}"
+            errors.append(error_msg)
+            error(error_msg)
+
+    return files_uploaded, errors
 
 
 def _upload_versions_json(
@@ -729,6 +807,8 @@ def push(
     force: bool = False,
     dry_run: bool = False,
     profile: str | None = None,
+    region: str | None = None,
+    workers: int | None = None,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage.
 
@@ -747,6 +827,8 @@ def push(
         force: If True, overwrite remote even if diverged.
         dry_run: If True, show what would be uploaded without uploading.
         profile: AWS profile name (for S3 only).
+        region: AWS region (for S3 only). Overrides profile/env config.
+        workers: Number of parallel upload workers. None = auto-detect.
 
     Returns:
         PushResult with upload statistics.
@@ -776,7 +858,7 @@ def push(
         return _handle_push_dry_run(catalog_root, local_data, local_versions)
 
     # Setup store
-    store, prefix = _setup_store(destination, profile=profile)
+    store, prefix = _setup_store(destination, profile=profile, region=region)
 
     # Fetch remote versions
     info(f"Checking remote state: {destination}")
@@ -812,18 +894,12 @@ def push(
             errors=[],
         )
 
-    # Update collection summaries before push (per ADR-0036)
-    # This aggregates item properties into collection-level summaries for discovery.
-    # Done here (not on add) to avoid O(N²) performance for large collections.
-    _update_collection_summaries_before_push(catalog_root, collection)
-
     # Get assets to upload
     assets = _get_assets_to_upload(catalog_root, local_data, diff.local_only)
 
     # Upload assets first (manifest-last pattern)
-    info(f"Uploading {len(assets)} asset(s)...")
     files_uploaded, upload_errors, uploaded_keys = _upload_assets(
-        store, catalog_root, prefix, assets, dry_run=False
+        store, catalog_root, prefix, assets, dry_run=False, workers=workers
     )
 
     if upload_errors:
@@ -874,7 +950,7 @@ def push(
             errors=stac_errors,
         )
 
-    # Upload versions.json last (manifest-last pattern)
+    # Upload versions.json (manifest-last pattern for data integrity)
     info("Uploading versions.json...")
     try:
         _upload_versions_json(store, prefix, collection, local_data, etag, force=force)
@@ -894,6 +970,16 @@ def push(
             conflicts=[],
             errors=[f"Failed to upload versions.json: {e}"],
         )
+
+    # Upload READMEs last (derived from STAC + versions.json + metadata.yaml)
+    # README errors are warnings, not failures - the data is already pushed
+    readme_uploaded, readme_errors = _upload_readmes(
+        store, catalog_root, prefix, stac_files, dry_run=False
+    )
+    files_uploaded += readme_uploaded
+    if readme_errors:
+        for err in readme_errors:
+            warn(err)
 
     return PushResult(
         success=True,
@@ -1011,6 +1097,7 @@ def push_all_collections(
     force: bool = False,
     dry_run: bool = False,
     profile: str | None = None,
+    region: str | None = None,
     workers: int | None = None,
 ) -> PushAllResult:
     """Push all collections in a catalog to cloud storage.
@@ -1024,6 +1111,7 @@ def push_all_collections(
         force: If True, overwrite remote even if diverged.
         dry_run: If True, show what would be uploaded without uploading.
         profile: AWS profile name (for S3 only).
+        region: AWS region (for S3 only). Overrides profile/env config.
         workers: Number of parallel workers. None = auto-detect, 1 = sequential.
 
     Returns:
@@ -1059,6 +1147,9 @@ def push_all_collections(
 
     def push_one(collection: str) -> PushResult:
         """Push a single collection."""
+        # Use workers=1 here since collection-level parallelism is already handled
+        # by execute_parallel. File-level parallelism is controlled by the workers
+        # param when pushing a single collection directly via CLI.
         return push(
             catalog_root=catalog_root,
             collection=collection,
@@ -1066,6 +1157,8 @@ def push_all_collections(
             force=force,
             dry_run=dry_run,
             profile=profile,
+            region=region,
+            workers=1,
         )
 
     def on_complete(
@@ -1122,7 +1215,7 @@ def push_all_collections(
             info("[DRY RUN] Would upload catalog.json")
         else:
             try:
-                store, prefix = _setup_store(destination, profile=profile)
+                store, prefix = _setup_store(destination, profile=profile, region=region)
                 target_key = f"{prefix}/catalog.json".lstrip("/")
                 content = catalog_json.read_bytes()
                 obs.put(store, target_key, content)

@@ -60,6 +60,9 @@ portolan pull <remote>                      # Pull from remote storage
 portolan sync <remote>                      # Full roundtrip sync
 portolan clone <remote> <path>              # Clone remote catalog
 portolan config <set|get|list|unset>        # Manage configuration
+portolan metadata init                      # Create metadata.yaml template
+portolan metadata validate                  # Validate required metadata fields
+portolan readme                             # Generate README.md from STAC + metadata
 portolan clean                              # Remove Portolan metadata
 ```
 <!-- --8<-- [end:quickstart] -->

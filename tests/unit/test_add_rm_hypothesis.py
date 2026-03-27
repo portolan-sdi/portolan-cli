@@ -805,28 +805,34 @@ class TestAddFilesEdgeCases:
         link = collection / "link.geojson"
         link.symlink_to(real_file)
 
-        with patch("portolan_cli.dataset.add_dataset") as mock_add:
-            from portolan_cli.dataset import DatasetInfo
+        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        with (
+            patch("portolan_cli.dataset.prepare_dataset") as mock_prepare,
+            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+        ):
+            from portolan_cli.dataset import PreparedDataset
             from portolan_cli.formats import FormatType
 
-            mock_add.return_value = DatasetInfo(
+            mock_prepare.return_value = PreparedDataset(
                 item_id="real",
                 collection_id="data",
                 format_type=FormatType.VECTOR,
-                bbox=None,
-                asset_paths=[],
+                bbox=[0, 0, 1, 1],
+                asset_files={},
+                item_json_path=collection / "real" / "real.json",
             )
+            mock_finalize.return_value = []
 
             added, skipped, failures = add_files(
                 paths=[link],
                 catalog_root=catalog,
             )
 
-            # Should have called add_dataset with resolved path
-            if mock_add.called:
-                call_path = mock_add.call_args.kwargs.get("path") or mock_add.call_args[1].get(
-                    "path"
-                )
+            # Should have called prepare_dataset with resolved path
+            if mock_prepare.called:
+                call_path = mock_prepare.call_args.kwargs.get("path") or mock_prepare.call_args[
+                    1
+                ].get("path")
                 # The path should be resolved (not a symlink)
                 assert not call_path.is_symlink() or call_path.resolve() == real_file.resolve()
 
@@ -852,8 +858,9 @@ class TestAddFilesEdgeCases:
         test_file = collection / "test.geojson"
         test_file.write_text("{}")
 
-        with patch("portolan_cli.dataset.add_dataset") as mock_add:
-            mock_add.side_effect = ValueError("original error")
+        # Per Issue #281: add_files now calls prepare_dataset instead of add_dataset
+        with patch("portolan_cli.dataset.prepare_dataset") as mock_prepare:
+            mock_prepare.side_effect = ValueError("original error")
 
             # Per Issue #175: errors are now collected instead of raised
             added, skipped, failures = add_files(paths=[test_file], catalog_root=catalog)

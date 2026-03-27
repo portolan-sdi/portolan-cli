@@ -108,6 +108,8 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0035](context/shared/adr/0035-temporal-extent-handling.md) | Temporal: default null (open interval), mark provisional, flag in check |
 | [0036](context/shared/adr/0036-collection-summaries-strategy.md) | Summaries: hybrid field detection, categorical only, no numeric aggregation |
 | [0037](context/shared/adr/0037-experimental-extension-policy.md) | Use experimental extensions, accept migration cost, no fallback prefixes |
+| [0038](context/shared/adr/0038-metadata-yaml-enrichment.md) | metadata.yaml as human enrichment layer (supplements STAC, generates README) |
+| [0039](context/shared/adr/0039-hierarchical-portolan-folders.md) | Hierarchical .portolan/ at collection/subcatalog levels |
 
 ## Common Commands
 
@@ -383,6 +385,8 @@ warn("Missing thumbnail (recommended)")    # ⚠ Yellow warning
 error("No geometry column (required)")     # ✗ Red X
 detail("Processing chunk 3/10...")         # Dimmed text
 ```
+
+**Progress UI:** The `add` and `scan` commands have excellent progress printing with real-time updates. Use this pattern (Rich progress bars + batched output) for any long-running operations.
 
 <!-- freshness: last-verified: 2026-03-26 -->
 ## Design Principles

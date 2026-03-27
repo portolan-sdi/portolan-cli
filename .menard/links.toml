@@ -24,3 +24,23 @@ docs = ["docs/reference/configuration.md"]
 [[link]]
 code = "portolan_cli/conversion_config.py"
 docs = ["docs/reference/configuration.md#Conversion Configuration"]
+
+[[link]]
+code = "portolan_cli/metadata_yaml.py"
+docs = ["docs/reference/configuration.md#Metadata Enrichment"]
+
+[[link]]
+code = "portolan_cli/readme.py"
+docs = ["docs/reference/configuration.md#README Generation"]
+
+[[link]]
+code = "portolan_cli/push.py"
+docs = ["docs/reference/configuration.md#Environment Variables"]
+
+[[link]]
+code = "portolan_cli/sync.py"
+docs = ["docs/reference/configuration.md#Environment Variables"]
+
+[[link]]
+code = "portolan_cli/parallel.py"
+docs = ["docs/contributing.md"]

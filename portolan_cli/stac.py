@@ -262,22 +262,28 @@ def update_collection_temporal_extent(
         collection: The collection to update.
         item_datetime: The item's datetime, or None for provisional items.
     """
+    from portolan_cli.temporal import ensure_utc_aware
+
     if item_datetime is None:
         return  # Provisional items don't affect temporal extent
 
+    # Normalize to UTC-aware to avoid naive/aware comparison errors
+    item_dt = ensure_utc_aware(item_datetime)
+    assert item_dt is not None  # Already checked above, but mypy needs this
+
     # Get current interval
     current_interval = collection.extent.temporal.intervals[0]
-    current_start = current_interval[0]
-    current_end = current_interval[1]
+    current_start = ensure_utc_aware(current_interval[0])
+    current_end = ensure_utc_aware(current_interval[1])
 
     # Widen interval to include item datetime
     new_start = current_start
     new_end = current_end
 
-    if current_start is None or item_datetime < current_start:
-        new_start = item_datetime
-    if current_end is None or item_datetime > current_end:
-        new_end = item_datetime
+    if current_start is None or item_dt < current_start:
+        new_start = item_dt
+    if current_end is None or item_dt > current_end:
+        new_end = item_dt
 
     collection.extent.temporal = pystac.TemporalExtent(intervals=[[new_start, new_end]])
 

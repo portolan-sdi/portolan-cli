@@ -377,6 +377,82 @@ class TestPushCLI:
             assert call_kwargs.get("profile") == "myprofile"
 
     @pytest.mark.integration
+    def test_push_reads_aws_profile_from_config(self, catalog_with_versions: Path) -> None:
+        """Push should read aws_profile from .portolan/config.yaml when --profile not specified."""
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        # Set aws_profile in config.yaml
+        config_file = catalog_with_versions / ".portolan" / "config.yaml"
+        config_file.write_text("remote: s3://test-bucket/catalog\naws_profile: config-profile\n")
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.return_value = PushResult(
+                success=True,
+                files_uploaded=0,
+                versions_pushed=0,
+                conflicts=[],
+                errors=[],
+            )
+
+            runner.invoke(
+                cli,
+                [
+                    "push",
+                    "--collection",
+                    "demographics",
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+                catch_exceptions=False,
+            )
+
+            # Should read profile from config, not use hardcoded "default"
+            call_kwargs = mock_push.call_args[1]
+            assert call_kwargs.get("profile") == "config-profile"
+
+    @pytest.mark.integration
+    def test_push_cli_profile_overrides_config(self, catalog_with_versions: Path) -> None:
+        """Push --profile should override aws_profile from config.yaml."""
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        # Set aws_profile in config.yaml
+        config_file = catalog_with_versions / ".portolan" / "config.yaml"
+        config_file.write_text("remote: s3://test-bucket/catalog\naws_profile: config-profile\n")
+
+        with patch("portolan_cli.push.push") as mock_push:
+            mock_push.return_value = PushResult(
+                success=True,
+                files_uploaded=0,
+                versions_pushed=0,
+                conflicts=[],
+                errors=[],
+            )
+
+            runner.invoke(
+                cli,
+                [
+                    "push",
+                    "--collection",
+                    "demographics",
+                    "--profile",
+                    "cli-override",
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+                catch_exceptions=False,
+            )
+
+            # CLI flag should override config
+            call_kwargs = mock_push.call_args[1]
+            assert call_kwargs.get("profile") == "cli-override"
+
+    @pytest.mark.integration
     def test_push_conflict_shows_error(self, catalog_with_versions: Path) -> None:
         """Push conflict should show error message to user."""
         from portolan_cli.cli import cli
