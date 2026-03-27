@@ -7,7 +7,8 @@ Portolan stores configuration in `.portolan/config.yaml` within your catalog dir
 ```yaml
 # .portolan/config.yaml
 remote: s3://my-bucket/catalog
-aws_profile: production
+profile: production    # AWS profile (alias: aws_profile)
+region: us-west-2      # AWS region for S3
 ```
 
 ## Setting Configuration
@@ -16,8 +17,12 @@ aws_profile: production
 # Set remote storage URL
 portolan config set remote s3://my-bucket/catalog
 
-# Set AWS profile
-portolan config set aws_profile production
+# Set AWS profile (either name works)
+portolan config set profile production
+# portolan config set aws_profile production  # Also valid
+
+# Set AWS region
+portolan config set region us-west-2
 
 # View current settings
 portolan config list
@@ -210,12 +215,24 @@ Most users should start with `collections:` and only add per-collection `.portol
 
 All settings can be set via environment variables with the `PORTOLAN_` prefix:
 
-| Setting | Environment Variable |
-|---------|---------------------|
-| `remote` | `PORTOLAN_REMOTE` |
-| `aws_profile` | `PORTOLAN_AWS_PROFILE` |
+| Setting | Environment Variable | Notes |
+|---------|---------------------|-------|
+| `remote` | `PORTOLAN_REMOTE` | |
+| `aws_profile` | `PORTOLAN_AWS_PROFILE` | |
+| `profile` | `PORTOLAN_PROFILE` | Alias for `aws_profile` |
+| `region` | `PORTOLAN_REGION` | AWS region for S3 |
 
 Environment variables override config file settings but are overridden by CLI arguments.
+
+### Setting Aliases
+
+Some settings have aliases for convenience:
+
+| Canonical Name | Alias |
+|----------------|-------|
+| `aws_profile` | `profile` |
+
+Both names work interchangeably in config files and environment variables.
 
 ## Metadata Enrichment
 
