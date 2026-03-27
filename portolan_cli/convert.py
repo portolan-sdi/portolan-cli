@@ -19,9 +19,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
+from portolan_cli.conversion_config import (
+    LOSSY_COMPRESSIONS,
+    QUALITY_COMPRESSIONS,
+    CogSettings,
+    get_cog_settings,
+)
 from portolan_cli.errors import (
     ConversionFailedError,
 )
@@ -33,6 +39,19 @@ from portolan_cli.formats import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Type alias for rio-cogeo resampling methods
+ResamplingMethod = Literal[
+    "nearest",
+    "bilinear",
+    "cubic",
+    "cubic_spline",
+    "lanczos",
+    "average",
+    "mode",
+    "gauss",
+    "rms",
+]
 
 
 class ConversionStatus(Enum):
@@ -157,6 +176,7 @@ class ConversionReport:
 def convert_file(
     source: Path,
     output_dir: Path | None = None,
+    catalog_path: Path | None = None,
 ) -> ConversionResult:
     """Convert a single file to cloud-native format.
 
@@ -167,6 +187,8 @@ def convert_file(
         source: Path to the source file to convert.
         output_dir: Directory for the output file. If None, uses the same
             directory as the source file.
+        catalog_path: Path to the catalog root for loading conversion config.
+            If None, uses ADR-0019 defaults.
 
     Returns:
         ConversionResult with conversion outcome, timing, and paths.
@@ -217,6 +239,9 @@ def convert_file(
     out_dir = output_dir if output_dir else source.parent
     format_type = detect_format(source)
 
+    # Load COG settings from config if catalog_path provided
+    cog_settings = get_cog_settings(catalog_path) if catalog_path else CogSettings()
+
     # Convert based on format type
     try:
         if format_type == FormatType.VECTOR:
@@ -225,7 +250,7 @@ def convert_file(
             # Validate output is valid GeoParquet
             validation_error = _validate_geoparquet(output_path)
         elif format_type == FormatType.RASTER:
-            output_path = _convert_raster(source, out_dir)
+            output_path = _convert_raster(source, out_dir, cog_settings)
             target_format = "COG"
             # Validate output is valid COG
             validation_error = _validate_cog(output_path)
@@ -311,10 +336,10 @@ def _convert_vector(source: Path, output_dir: Path) -> Path:
     return output_path
 
 
-def _convert_raster(source: Path, output_dir: Path) -> Path:
+def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
     """Convert a raster file to COG.
 
-    Uses COG defaults from the convert command design:
+    Uses COG settings from config if provided, otherwise ADR-0019 defaults:
     - DEFLATE compression
     - Predictor=2 (horizontal differencing)
     - 512x512 tiles
@@ -323,6 +348,7 @@ def _convert_raster(source: Path, output_dir: Path) -> Path:
     Args:
         source: Source raster file.
         output_dir: Directory for output file.
+        settings: COG conversion settings. If None, uses ADR-0019 defaults.
 
     Returns:
         Path to the output COG file.
@@ -336,6 +362,10 @@ def _convert_raster(source: Path, output_dir: Path) -> Path:
     from rio_cogeo.cogeo import cog_translate
     from rio_cogeo.profiles import cog_profiles
 
+    # Use defaults if no settings provided
+    if settings is None:
+        settings = CogSettings()
+
     output_path = output_dir / f"{source.stem}.tif"
 
     # Warn if we're about to overwrite the source file
@@ -345,11 +375,27 @@ def _convert_raster(source: Path, output_dir: Path) -> Path:
             source,
         )
 
-    # Use DEFLATE profile with our opinionated defaults
-    profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
+    # Select profile based on compression type
+    compression_lower = settings.compression.lower()
+    if compression_lower in ("jpeg", "webp"):
+        profile = cog_profiles.get(compression_lower)  # type: ignore[no-untyped-call]
+    else:
+        # DEFLATE, LZW, ZSTD, etc. use the deflate profile as base
+        profile = cog_profiles.get("deflate")  # type: ignore[no-untyped-call]
+        profile["compress"] = settings.compression
 
-    # Set predictor=2 for horizontal differencing compression
-    profile["predictor"] = 2
+    # Apply tile size settings
+    profile["blockxsize"] = settings.tile_size
+    profile["blockysize"] = settings.tile_size
+
+    # Apply predictor only for non-lossy compression
+    # Predictor is meaningless for JPEG/WEBP and can cause issues
+    if settings.compression not in LOSSY_COMPRESSIONS:
+        profile["predictor"] = settings.predictor
+
+    # Apply quality for JPEG and WEBP compression
+    if settings.quality is not None and settings.compression in QUALITY_COMPRESSIONS:
+        profile["quality"] = settings.quality
 
     # Write to temp file first to avoid corrupting source if output_path == source
     # Use same directory as output for atomic rename across filesystems
@@ -369,7 +415,7 @@ def _convert_raster(source: Path, output_dir: Path) -> Path:
             str(temp_path),
             profile,
             quiet=True,
-            overview_resampling="nearest",
+            overview_resampling=cast(ResamplingMethod, settings.resampling),
         )
 
         # Atomic replace
@@ -435,6 +481,7 @@ def convert_directory(
     on_progress: Callable[[ConversionResult], None] | None = None,
     recursive: bool = True,
     file_paths: list[Path] | None = None,
+    catalog_path: Path | None = None,
 ) -> ConversionReport:
     """Convert all geospatial files in a directory to cloud-native formats.
 
@@ -451,6 +498,8 @@ def convert_directory(
         file_paths: Optional list of specific files to convert. If provided,
             skips directory scanning and converts only these files. Useful
             when the caller has already scanned and filtered the files.
+        catalog_path: Path to the catalog root for loading conversion config.
+            If None, uses ADR-0019 defaults for COG conversion.
 
     Returns:
         ConversionReport with results for all processed files.
@@ -486,7 +535,7 @@ def convert_directory(
         # Determine output directory for this file
         file_output_dir = output_dir if output_dir else file_path.parent
 
-        result = convert_file(file_path, output_dir=file_output_dir)
+        result = convert_file(file_path, output_dir=file_output_dir, catalog_path=catalog_path)
         results.append(result)
 
         # Invoke callback if provided

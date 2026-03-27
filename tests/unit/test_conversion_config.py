@@ -395,3 +395,428 @@ conversion:
 
         # Should only include valid string extensions
         assert overrides.extensions_preserve == frozenset({".shp", ".geojson"})
+
+
+# =============================================================================
+# COG Settings Tests (Issue #279)
+# =============================================================================
+
+
+class TestCogSettingsDataclass:
+    """Tests for the CogSettings dataclass."""
+
+    @pytest.mark.unit
+    def test_default_values(self) -> None:
+        """CogSettings has sensible defaults matching ADR-0019."""
+        from portolan_cli.conversion_config import CogSettings
+
+        settings = CogSettings()
+
+        assert settings.compression == "DEFLATE"
+        assert settings.quality is None  # Only applies to JPEG
+        assert settings.tile_size == 512
+        assert settings.predictor == 2
+        assert settings.resampling == "nearest"
+
+    @pytest.mark.unit
+    def test_custom_jpeg_settings(self) -> None:
+        """CogSettings accepts JPEG with quality setting."""
+        from portolan_cli.conversion_config import CogSettings
+
+        settings = CogSettings(compression="JPEG", quality=95)
+
+        assert settings.compression == "JPEG"
+        assert settings.quality == 95
+
+    @pytest.mark.unit
+    def test_custom_tile_size(self) -> None:
+        """CogSettings accepts custom tile sizes."""
+        from portolan_cli.conversion_config import CogSettings
+
+        settings = CogSettings(tile_size=256)
+
+        assert settings.tile_size == 256
+
+    @pytest.mark.unit
+    def test_custom_resampling(self) -> None:
+        """CogSettings accepts custom resampling methods."""
+        from portolan_cli.conversion_config import CogSettings
+
+        settings = CogSettings(resampling="bilinear")
+
+        assert settings.resampling == "bilinear"
+
+    @pytest.mark.unit
+    def test_frozen_dataclass(self) -> None:
+        """CogSettings is immutable (frozen)."""
+        from portolan_cli.conversion_config import CogSettings
+
+        settings = CogSettings()
+
+        with pytest.raises(AttributeError):
+            settings.compression = "JPEG"  # type: ignore[misc]
+
+
+class TestGetCogSettings:
+    """Tests for get_cog_settings() function."""
+
+    @pytest.mark.unit
+    def test_returns_defaults_when_no_config(self, tmp_path: Path) -> None:
+        """get_cog_settings() returns defaults when no config exists."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        # No .portolan directory
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.compression == "DEFLATE"
+        assert settings.predictor == 2
+        assert settings.tile_size == 512
+        assert settings.resampling == "nearest"
+
+    @pytest.mark.unit
+    def test_loads_compression_from_config(self, tmp_path: Path) -> None:
+        """get_cog_settings() loads compression setting from config."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    compression: JPEG
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.compression == "JPEG"
+
+    @pytest.mark.unit
+    def test_loads_all_cog_settings(self, tmp_path: Path) -> None:
+        """get_cog_settings() loads all COG settings from config."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    compression: JPEG
+    quality: 95
+    tile_size: 256
+    predictor: 1
+    resampling: bilinear
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.compression == "JPEG"
+        assert settings.quality == 95
+        assert settings.tile_size == 256
+        assert settings.predictor == 1
+        assert settings.resampling == "bilinear"
+
+    @pytest.mark.unit
+    def test_partial_config_uses_defaults(self, tmp_path: Path) -> None:
+        """get_cog_settings() uses defaults for missing settings."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    compression: LZW
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.compression == "LZW"
+        assert settings.predictor == 2  # Default
+        assert settings.tile_size == 512  # Default
+        assert settings.resampling == "nearest"  # Default
+
+    @pytest.mark.unit
+    def test_handles_missing_conversion_section(self, tmp_path: Path) -> None:
+        """get_cog_settings() handles config without conversion section."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("remote: s3://bucket/\n")
+
+        settings = get_cog_settings(tmp_path)
+
+        # Returns defaults
+        assert settings.compression == "DEFLATE"
+
+    @pytest.mark.unit
+    def test_handles_missing_cog_section(self, tmp_path: Path) -> None:
+        """get_cog_settings() handles conversion section without cog key."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  extensions:
+    convert: [fgb]
+""")
+        settings = get_cog_settings(tmp_path)
+
+        # Returns defaults
+        assert settings.compression == "DEFLATE"
+
+
+class TestCogSettingsEdgeCases:
+    """Tests for edge cases in COG settings parsing."""
+
+    @pytest.mark.unit
+    def test_cog_section_not_a_dict(self, tmp_path: Path) -> None:
+        """get_cog_settings() handles non-dict cog value."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog: invalid_value
+""")
+        settings = get_cog_settings(tmp_path)
+
+        # Should return defaults
+        assert settings.compression == "DEFLATE"
+
+    @pytest.mark.unit
+    def test_invalid_quality_type_ignored(self, tmp_path: Path) -> None:
+        """get_cog_settings() ignores non-integer quality values."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    compression: JPEG
+    quality: "high"
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.compression == "JPEG"
+        assert settings.quality is None  # Invalid value ignored
+
+    @pytest.mark.unit
+    def test_invalid_tile_size_type_uses_default(self, tmp_path: Path) -> None:
+        """get_cog_settings() uses default for non-integer tile_size."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    tile_size: "large"
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.tile_size == 512  # Default
+
+    @pytest.mark.unit
+    def test_compression_normalized_to_uppercase(self, tmp_path: Path) -> None:
+        """get_cog_settings() normalizes compression to uppercase."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    compression: jpeg
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.compression == "JPEG"
+
+
+# =============================================================================
+# COG Settings Validation Tests
+# =============================================================================
+
+
+class TestValidateCogSettings:
+    """Tests for validate_cog_settings() function."""
+
+    @pytest.mark.unit
+    def test_valid_settings_returns_empty_list(self) -> None:
+        """validate_cog_settings() returns empty list for valid settings."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings()  # All defaults are valid
+        warnings = validate_cog_settings(settings)
+
+        assert warnings == []
+
+    @pytest.mark.unit
+    def test_invalid_compression_warns(self) -> None:
+        """validate_cog_settings() warns about invalid compression."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(compression="MAGIC")
+        warnings = validate_cog_settings(settings)
+
+        assert len(warnings) == 1
+        assert "Unknown compression 'MAGIC'" in warnings[0]
+
+    @pytest.mark.unit
+    def test_invalid_resampling_warns(self) -> None:
+        """validate_cog_settings() warns about invalid resampling."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(resampling="superfast")
+        warnings = validate_cog_settings(settings)
+
+        assert len(warnings) == 1
+        assert "Unknown resampling method 'superfast'" in warnings[0]
+
+    @pytest.mark.unit
+    def test_quality_out_of_range_warns(self) -> None:
+        """validate_cog_settings() warns about quality out of range."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(compression="JPEG", quality=150)
+        warnings = validate_cog_settings(settings)
+
+        assert any("out of range" in w for w in warnings)
+
+    @pytest.mark.unit
+    def test_quality_on_non_lossy_compression_warns(self) -> None:
+        """validate_cog_settings() warns when quality is set for non-lossy compression."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(compression="DEFLATE", quality=95)
+        warnings = validate_cog_settings(settings)
+
+        assert any("ignored for 'DEFLATE'" in w for w in warnings)
+
+    @pytest.mark.unit
+    def test_tile_size_too_small_warns(self) -> None:
+        """validate_cog_settings() warns about very small tile sizes."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(tile_size=32)
+        warnings = validate_cog_settings(settings)
+
+        assert any("very small" in w for w in warnings)
+
+    @pytest.mark.unit
+    def test_tile_size_too_large_warns(self) -> None:
+        """validate_cog_settings() warns about very large tile sizes."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(tile_size=8192)
+        warnings = validate_cog_settings(settings)
+
+        assert any("very large" in w for w in warnings)
+
+    @pytest.mark.unit
+    def test_non_power_of_2_tile_size_warns(self) -> None:
+        """validate_cog_settings() warns about non-power-of-2 tile sizes."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(tile_size=500)
+        warnings = validate_cog_settings(settings)
+
+        assert any("not a power of 2" in w for w in warnings)
+
+    @pytest.mark.unit
+    def test_invalid_predictor_warns(self) -> None:
+        """validate_cog_settings() warns about invalid predictor values."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(predictor=5)
+        warnings = validate_cog_settings(settings)
+
+        assert any("Predictor 5 is invalid" in w for w in warnings)
+
+    @pytest.mark.unit
+    def test_predictor_with_lossy_compression_warns(self) -> None:
+        """validate_cog_settings() warns about predictor with lossy compression."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(compression="JPEG", predictor=2)
+        warnings = validate_cog_settings(settings)
+
+        assert any("ignored for lossy compression" in w for w in warnings)
+
+    @pytest.mark.unit
+    def test_webp_quality_no_warning(self) -> None:
+        """validate_cog_settings() does not warn when WEBP has quality."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(compression="WEBP", quality=90, predictor=1)
+        warnings = validate_cog_settings(settings)
+
+        # Should have no warnings (predictor=1 is OK for lossy, quality is valid for WEBP)
+        assert warnings == []
+
+
+class TestGetCogSettingsValidation:
+    """Tests that get_cog_settings() validates and logs warnings."""
+
+    @pytest.mark.unit
+    def test_quality_clamped_to_valid_range(self, tmp_path: Path) -> None:
+        """get_cog_settings() clamps quality to 1-100."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    compression: JPEG
+    quality: 150
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.quality == 100  # Clamped to max
+
+    @pytest.mark.unit
+    def test_quality_clamped_minimum(self, tmp_path: Path) -> None:
+        """get_cog_settings() clamps quality minimum to 1."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    compression: JPEG
+    quality: -5
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.quality == 1  # Clamped to min
+
+    @pytest.mark.unit
+    def test_resampling_normalized_to_lowercase(self, tmp_path: Path) -> None:
+        """get_cog_settings() normalizes resampling to lowercase."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    resampling: BILINEAR
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.resampling == "bilinear"

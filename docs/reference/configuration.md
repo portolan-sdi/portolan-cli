@@ -129,6 +129,41 @@ conversion:
 
 **Precedence:** Path patterns override extension rules. A FlatGeobuf file in `archive/` will be preserved even if `extensions.convert: [fgb]` is set.
 
+### COG Settings
+
+Configure Cloud-Optimized GeoTIFF conversion parameters. By default, Portolan uses ADR-0019 defaults (DEFLATE compression, predictor=2, 512×512 tiles, nearest resampling).
+
+```yaml
+conversion:
+  cog:
+    compression: JPEG      # DEFLATE (default), JPEG, LZW, ZSTD, WEBP
+    quality: 95            # Quality 1-100 (applies to JPEG and WEBP)
+    tile_size: 512         # Internal tile size in pixels
+    predictor: 2           # 1=none, 2=horizontal (default), 3=floating point
+    resampling: nearest    # Overview resampling: nearest, bilinear, cubic, etc.
+```
+
+!!! note "Validation"
+    Invalid settings produce warnings but don't block conversion. Quality is clamped to 1-100, and unknown compression/resampling values are passed through to let rio-cogeo handle errors.
+
+#### Use Cases
+
+| Scenario | Configuration |
+|----------|---------------|
+| RGB imagery (smaller files) | `compression: JPEG`, `quality: 95` |
+| Elevation data (lossless) | `compression: DEFLATE`, `predictor: 3` |
+| Analytics (fast reads) | `compression: LZW`, `tile_size: 256` |
+
+#### Available Compression Methods
+
+| Method | Best For | Notes |
+|--------|----------|-------|
+| `DEFLATE` | General use (default) | Lossless, universal compatibility |
+| `LZW` | Fast compression/decompression | Lossless, slightly larger files |
+| `ZSTD` | High compression ratio | Lossless, requires GDAL 2.3+ |
+| `JPEG` | RGB imagery | Lossy, smallest files for photos |
+| `WEBP` | Web display | Lossy, modern browsers only |
+
 ## Collection-Level Configuration
 
 Override settings for specific collections using the `collections:` section:
