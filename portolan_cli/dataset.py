@@ -56,6 +56,7 @@ from portolan_cli.stac import (
     create_collection,
     create_item,
     load_catalog,
+    update_collection_summaries,
 )
 from portolan_cli.versions import (
     Asset,
@@ -924,6 +925,11 @@ def finalize_datasets(
                 # Table extension needs metadata - skip for now as it's on collection
                 # The extension was already added by add_dataset in the old flow
                 break
+
+        # Compute collection summaries from items (per ADR-0036)
+        # Moved here from push.py for separation of concerns - summaries are now
+        # available immediately after add, not just after push.
+        update_collection_summaries(collection)
 
         # Save collection.json ONCE for all items in this collection
         _save_collection_with_links(collection, collection_dir, catalog_root, collection_id)
