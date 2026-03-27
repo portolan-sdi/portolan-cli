@@ -26,6 +26,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from portolan_cli.push import UploadMetrics
+
 if TYPE_CHECKING:
     pass
 
@@ -532,7 +534,7 @@ class TestPush:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
@@ -558,7 +560,7 @@ class TestPush:
             mock_fetch.return_value = (None, None)  # No remote versions.json
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
@@ -622,7 +624,7 @@ class TestEtagOptimisticLocking:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
@@ -658,7 +660,7 @@ class TestEtagOptimisticLocking:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
@@ -697,7 +699,7 @@ class TestManifestLastOrdering:
 
         def track_assets(*args, **kwargs):
             call_order.append("assets")
-            return (1, [], ["catalog/data.parquet"])
+            return (1, [], ["catalog/data.parquet"], UploadMetrics())
 
         def track_stac(*args, **kwargs):
             call_order.append("stac")
@@ -734,7 +736,12 @@ class TestManifestLastOrdering:
             mock_fetch.return_value = (None, None)
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (0, ["Failed to upload data.parquet"], [])
+                mock_upload_assets.return_value = (
+                    0,
+                    ["Failed to upload data.parquet"],
+                    [],
+                    UploadMetrics(),
+                )
 
                 with patch("portolan_cli.push._upload_versions_json") as mock_upload_versions:
                     with patch("portolan_cli.push._cleanup_uploaded_assets"):
@@ -771,7 +778,7 @@ class TestStoreSetup:
                 mock_setup.return_value = (mock_store, "prefix")
 
                 with patch("portolan_cli.push._upload_assets") as mock_upload:
-                    mock_upload.return_value = (1, [], ["catalog/data.parquet"])
+                    mock_upload.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                     with patch("portolan_cli.push._upload_versions_json"):
                         push(
@@ -856,7 +863,7 @@ class TestForceFlag:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
@@ -951,7 +958,12 @@ class TestForceFlag:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (0, [], [])  # No assets to upload
+                mock_upload_assets.return_value = (
+                    0,
+                    [],
+                    [],
+                    UploadMetrics(),
+                )  # No assets to upload
 
                 with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
                     mock_upload_stac.return_value = (1, [], ["stac/collection.json"])
@@ -986,13 +998,17 @@ class TestOrphanCleanup:
         """_upload_assets should return list of uploaded object keys."""
         from portolan_cli.push import _upload_assets
 
+        # Create the test file (needed for size calculation)
+        test_file = local_catalog / "data.parquet"
+        test_file.write_bytes(b"test data")
+
         with patch("portolan_cli.push.obs.put") as mock_put:
             mock_put.return_value = None
 
             mock_store = MagicMock()
-            assets = [local_catalog / "data.parquet"]
+            assets = [test_file]
 
-            files_uploaded, errors, uploaded_keys = _upload_assets(
+            files_uploaded, errors, uploaded_keys, _metrics = _upload_assets(
                 store=mock_store,
                 catalog_root=local_catalog,
                 prefix="catalog",
@@ -1056,7 +1072,7 @@ class TestOrphanCleanup:
             mock_fetch.return_value = (None, None)
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
@@ -1093,7 +1109,7 @@ class TestOrphanCleanup:
             )
 
             with patch("portolan_cli.push._upload_assets") as mock_upload_assets:
-                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"])
+                mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch("portolan_cli.push._upload_stac_files") as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
@@ -1122,20 +1138,30 @@ class TestProgressReporting:
 
     @pytest.mark.unit
     def test_upload_assets_shows_progress(self, local_catalog: Path, capsys) -> None:
-        """_upload_assets should show [1/N] style progress."""
+        """_upload_assets should show [1/N] style progress in verbose mode.
+
+        Note: With json_mode=True, progress is shown as text. With json_mode=False,
+        a Rich progress bar handles the display (which outputs to stderr, not stdout).
+        """
         from portolan_cli.push import _upload_assets
+
+        # Create the test file (needed for size calculation)
+        test_file = local_catalog / "data.parquet"
+        test_file.write_bytes(b"test data")
 
         with patch("portolan_cli.push.obs.put") as mock_put:
             mock_put.return_value = None
 
             mock_store = MagicMock()
-            assets = [local_catalog / "data.parquet"]
+            assets = [test_file]
 
             _upload_assets(
                 store=mock_store,
                 catalog_root=local_catalog,
                 prefix="catalog",
                 assets=assets,
+                verbose=True,
+                json_mode=True,  # Text progress when no Rich progress bar
             )
 
         # Check that progress indicator was shown
@@ -1509,16 +1535,20 @@ class TestUploadAssetsErrorHandling:
         """_upload_assets should catch and report upload exceptions."""
         from portolan_cli.push import _upload_assets
 
+        # Create the test file (needed for size calculation)
+        test_file = local_catalog / "data.parquet"
+        test_file.write_bytes(b"test data")
+
         mock_store = MagicMock()
 
         with patch("portolan_cli.push.obs.put") as mock_put:
             mock_put.side_effect = Exception("Network timeout")
 
-            files_uploaded, errors, uploaded_keys = _upload_assets(
+            files_uploaded, errors, uploaded_keys, _metrics = _upload_assets(
                 store=mock_store,
                 catalog_root=local_catalog,
                 prefix="catalog",
-                assets=[local_catalog / "data.parquet"],
+                assets=[test_file],
             )
 
         assert files_uploaded == 0
@@ -2025,7 +2055,7 @@ class TestDryRunNetworkIsolation:
                 mock_setup.return_value = (MagicMock(), "prefix")
 
                 with patch("portolan_cli.push._upload_assets") as mock_upload:
-                    mock_upload.return_value = (1, [], ["key"])
+                    mock_upload.return_value = (1, [], ["key"], UploadMetrics())
                     with patch("portolan_cli.push._upload_versions_json"):
                         push(
                             catalog_root=local_catalog,
