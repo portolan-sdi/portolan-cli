@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -34,9 +35,18 @@ from portolan_cli.parallel import (
     get_default_workers,  # Re-export for backwards compatibility
 )
 from portolan_cli.upload import ObjectStore, parse_object_store_url
+from portolan_cli.upload_progress import UploadProgressReporter
 
 # Re-export get_default_workers for backwards compatibility
-__all__ = ["get_default_workers", "push", "push_all_collections", "discover_collections"]
+__all__ = [
+    "get_default_workers",
+    "push",
+    "push_all_collections",
+    "discover_collections",
+    "UploadMetrics",
+    "format_file_size",
+    "format_speed",
+]
 
 
 # =============================================================================
@@ -73,6 +83,7 @@ class PushResult:
         dry_run: True if this was a dry-run operation (no network calls made).
         would_push_versions: In dry-run mode, max versions that would be pushed
             (upper bound; actual count depends on remote state).
+        metrics: Upload performance metrics (bytes, duration, speed).
     """
 
     success: bool
@@ -82,6 +93,7 @@ class PushResult:
     errors: list[str] = field(default_factory=list)
     dry_run: bool = False
     would_push_versions: int = 0
+    metrics: UploadMetrics | None = None
 
 
 @dataclass
@@ -102,6 +114,88 @@ class VersionDiff:
     def has_conflict(self) -> bool:
         """True if remote has versions not present locally."""
         return len(self.remote_only) > 0
+
+
+@dataclass
+class UploadMetrics:
+    """Tracks upload performance metrics for summary display.
+
+    Thread-safe accumulator for upload statistics.
+    """
+
+    total_bytes: int = 0
+    total_duration: float = 0.0
+    file_count: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def record(self, size_bytes: int, duration_seconds: float) -> None:
+        """Record metrics for a single upload (thread-safe)."""
+        with self._lock:
+            self.total_bytes += size_bytes
+            self.total_duration += duration_seconds
+            self.file_count += 1
+
+    @property
+    def average_speed(self) -> float:
+        """Average upload speed in bytes per second."""
+        if self.total_duration == 0:
+            return 0.0
+        return self.total_bytes / self.total_duration
+
+    def merge(self, other: UploadMetrics) -> None:
+        """Merge metrics from another instance (thread-safe).
+
+        Used to aggregate metrics across multiple collections.
+        """
+        with self._lock:
+            self.total_bytes += other.total_bytes
+            self.total_duration += other.total_duration
+            self.file_count += other.file_count
+
+
+# =============================================================================
+# Formatting Utilities
+# =============================================================================
+
+
+def format_file_size(size_bytes: int) -> str:
+    """Format file size in human-readable form.
+
+    Args:
+        size_bytes: Size in bytes.
+
+    Returns:
+        Human-readable size string (e.g., "54.2 MB").
+    """
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+
+
+def format_speed(bytes_per_second: float) -> str:
+    """Format upload speed in human-readable form.
+
+    Uses binary units (KiB, MiB, GiB) which are standard for network transfer rates.
+
+    Args:
+        bytes_per_second: Speed in bytes per second.
+
+    Returns:
+        Human-readable speed string (e.g., "10.5 MiB/s").
+    """
+    if bytes_per_second < 1024:
+        return f"{int(bytes_per_second)} B/s"
+    elif bytes_per_second < 1024 * 1024:
+        return f"{bytes_per_second / 1024:.1f} KiB/s"
+    elif bytes_per_second < 1024 * 1024 * 1024:
+        return f"{bytes_per_second / (1024 * 1024):.1f} MiB/s"
+    else:
+        return f"{bytes_per_second / (1024 * 1024 * 1024):.1f} GiB/s"
 
 
 # =============================================================================
@@ -384,7 +478,9 @@ def _upload_assets(
     *,
     dry_run: bool = False,
     workers: int | None = None,
-) -> tuple[int, list[str], list[str]]:
+    verbose: bool = False,
+    json_mode: bool = False,
+) -> tuple[int, list[str], list[str], UploadMetrics]:
     """Upload asset files to object storage with parallel workers.
 
     Args:
@@ -394,14 +490,20 @@ def _upload_assets(
         assets: List of asset file paths to upload.
         dry_run: If True, don't actually upload.
         workers: Number of parallel upload workers. None = auto-detect.
+        verbose: If True, show per-file upload details. Default quiet mode
+            only shows failures.
+        json_mode: If True, suppress progress bar (for --json output).
 
     Returns:
-        Tuple of (files_uploaded, errors, uploaded_keys).
+        Tuple of (files_uploaded, errors, uploaded_keys, metrics).
         uploaded_keys contains the object keys that were successfully uploaded,
         useful for rollback on subsequent failures.
+        metrics contains upload performance data for summary display.
     """
+    metrics = UploadMetrics()
+
     if not assets:
-        return 0, [], []
+        return 0, [], [], metrics
 
     total = len(assets)
 
@@ -411,46 +513,83 @@ def _upload_assets(
             rel_path = asset_path.relative_to(catalog_root)
             target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
             info(f"[DRY RUN] Would upload ({i}/{total}): {rel_path} -> {target_key}")
-        return 0, [], []
+        return 0, [], [], metrics
+
+    # Calculate total bytes for progress bar
+    total_bytes = sum(p.stat().st_size for p in assets)
 
     # Thread-safe containers for parallel execution
     uploaded_keys: list[str] = []
     errors_list: list[str] = []
     keys_lock = threading.Lock()
+    # Hold reference to progress reporter for on_complete callback
+    progress_reporter: UploadProgressReporter | None = None
 
-    def upload_one(asset_path_str: str) -> str:
-        """Upload a single asset. Returns target key on success."""
+    def upload_one(asset_path_str: str) -> tuple[str, int, float]:
+        """Upload a single asset. Returns (target_key, size_bytes, duration_seconds)."""
         asset_path = Path(asset_path_str)
         rel_path = asset_path.relative_to(catalog_root)
         target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+
+        # Get file size before upload
+        size_bytes = asset_path.stat().st_size
+
+        # Time the upload
+        start = time.perf_counter()
         obs.put(store, target_key, asset_path)
-        return target_key
+        duration = time.perf_counter() - start
+
+        return target_key, size_bytes, duration
 
     # Convert paths to strings for execute_parallel
     asset_strs = [str(p) for p in assets]
 
     def on_complete(
-        item: str, result: str | None, err: str | None, completed: int, total_count: int
+        item: str,
+        result: tuple[str, int, float] | None,
+        err: str | None,
+        completed: int,
+        total_count: int,
     ) -> None:
         """Track results thread-safely."""
         rel_path = Path(item).relative_to(catalog_root)
         with keys_lock:
             if err:
                 errors_list.append(f"Failed to upload {rel_path}: {err}")
-                error(f"[{completed}/{total_count}] Failed: {rel_path}")
+                # Always show failures
+                error(f"Failed: {rel_path} - {err}")
             else:
-                uploaded_keys.append(result)  # type: ignore[arg-type]
-                detail(f"[{completed}/{total_count}] Uploaded: {rel_path}")
+                target_key, size_bytes, duration = result  # type: ignore[misc]
+                uploaded_keys.append(target_key)
+                metrics.record(size_bytes, duration)
 
-    info(f"Uploading {total} asset(s)...")
-    execute_parallel(
-        items=asset_strs,
-        operation=upload_one,
-        workers=workers,
-        on_complete=on_complete,
-    )
+                # Update progress bar
+                if progress_reporter is not None:
+                    progress_reporter.advance(bytes_uploaded=size_bytes)
 
-    return len(uploaded_keys), errors_list, uploaded_keys
+                # Only show per-file details in verbose mode (without progress bar)
+                if verbose and json_mode:
+                    size_str = format_file_size(size_bytes)
+                    speed = size_bytes / duration if duration > 0 else 0
+                    speed_str = format_speed(speed)
+                    detail(f"[{completed}/{total_count}] {rel_path} ({size_str}, {speed_str})")
+
+    # Use progress bar for live feedback (unless json_mode)
+    with UploadProgressReporter(
+        total_files=total,
+        total_bytes=total_bytes,
+        json_mode=json_mode,
+    ) as reporter:
+        progress_reporter = reporter
+        execute_parallel(
+            items=asset_strs,
+            operation=upload_one,
+            workers=workers,
+            on_complete=on_complete,
+            verbose=False,  # Progress bar handles display, not execute_parallel
+        )
+
+    return len(uploaded_keys), errors_list, uploaded_keys, metrics
 
 
 def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
@@ -809,6 +948,8 @@ def push(
     profile: str | None = None,
     region: str | None = None,
     workers: int | None = None,
+    verbose: bool = False,
+    json_mode: bool = False,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage.
 
@@ -829,6 +970,9 @@ def push(
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only). Overrides profile/env config.
         workers: Number of parallel upload workers. None = auto-detect.
+        verbose: If True, show per-file upload details with size and speed.
+            Default is quiet mode (only shows failures).
+        json_mode: If True, suppress progress bar (for --json output).
 
     Returns:
         PushResult with upload statistics.
@@ -898,8 +1042,15 @@ def push(
     assets = _get_assets_to_upload(catalog_root, local_data, diff.local_only)
 
     # Upload assets first (manifest-last pattern)
-    files_uploaded, upload_errors, uploaded_keys = _upload_assets(
-        store, catalog_root, prefix, assets, dry_run=False, workers=workers
+    files_uploaded, upload_errors, uploaded_keys, metrics = _upload_assets(
+        store,
+        catalog_root,
+        prefix,
+        assets,
+        dry_run=False,
+        workers=workers,
+        verbose=verbose,
+        json_mode=json_mode,
     )
 
     if upload_errors:
@@ -912,6 +1063,7 @@ def push(
             versions_pushed=0,
             conflicts=[],
             errors=upload_errors,
+            metrics=metrics,
         )
 
     # Upload STAC metadata files (Issue #252)
@@ -928,6 +1080,7 @@ def push(
             versions_pushed=0,
             conflicts=[],
             errors=[str(e)],
+            metrics=metrics,
         )
 
     stac_uploaded, stac_errors, stac_keys = _upload_stac_files(
@@ -948,13 +1101,20 @@ def push(
             versions_pushed=0,
             conflicts=[],
             errors=stac_errors,
+            metrics=metrics,
         )
 
     # Upload versions.json (manifest-last pattern for data integrity)
     info("Uploading versions.json...")
     try:
         _upload_versions_json(store, prefix, collection, local_data, etag, force=force)
-        success(f"Pushed {len(diff.local_only)} version(s): {diff.local_only}")
+        # Build success message with optional metrics
+        msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
+        if metrics.total_bytes > 0:
+            size = format_file_size(metrics.total_bytes)
+            speed = format_speed(metrics.average_speed)
+            msg += f" ({size}, {speed})"
+        success(msg)
     except PushConflictError as e:
         # Clean up uploaded assets on versions.json failure (orphan prevention)
         _cleanup_uploaded_assets(store, uploaded_keys)
@@ -969,6 +1129,7 @@ def push(
             versions_pushed=0,
             conflicts=[],
             errors=[f"Failed to upload versions.json: {e}"],
+            metrics=metrics,
         )
 
     # Upload READMEs last (derived from STAC + versions.json + metadata.yaml)
@@ -987,6 +1148,7 @@ def push(
         versions_pushed=len(diff.local_only),
         conflicts=[],
         errors=[],
+        metrics=metrics,
     )
 
 
@@ -1099,6 +1261,8 @@ def push_all_collections(
     profile: str | None = None,
     region: str | None = None,
     workers: int | None = None,
+    verbose: bool = False,
+    json_mode: bool = False,
 ) -> PushAllResult:
     """Push all collections in a catalog to cloud storage.
 
@@ -1113,6 +1277,8 @@ def push_all_collections(
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only). Overrides profile/env config.
         workers: Number of parallel workers. None = auto-detect, 1 = sequential.
+        verbose: If True, show per-file upload details.
+        json_mode: If True, suppress progress bar (for --json output).
 
     Returns:
         PushAllResult with aggregate statistics and per-collection errors.
@@ -1143,6 +1309,7 @@ def push_all_collections(
     failed = 0
     total_files = 0
     total_versions = 0
+    total_metrics = UploadMetrics()  # Aggregate upload metrics across collections
     collection_errors: dict[str, list[str]] = {}
 
     def push_one(collection: str) -> PushResult:
@@ -1159,6 +1326,8 @@ def push_all_collections(
             profile=profile,
             region=region,
             workers=1,
+            verbose=verbose,
+            json_mode=json_mode,
         )
 
     def on_complete(
@@ -1178,14 +1347,15 @@ def push_all_collections(
                 failed += 1
                 collection_errors[coll] = [err_msg]
             elif result and result.success:
-                versions = result.versions_pushed
-                files = result.files_uploaded
-                success(
-                    f"[{completed}/{total_count}] Pushed {coll}: {versions} version(s), {files} file(s)"
-                )
+                v = result.versions_pushed
+                f = result.files_uploaded
+                success(f"[{completed}/{total_count}] {coll}: {v} version(s), {f} file(s)")
                 successful += 1
-                total_files += files
-                total_versions += versions
+                total_files += f
+                total_versions += v
+                # Aggregate metrics from successful pushes
+                if result.metrics:
+                    total_metrics.merge(result.metrics)
             elif result:
                 errors_list = result.errors + result.conflicts
                 error(f"[{completed}/{total_count}] Failed {coll}: {', '.join(errors_list)}")
@@ -1236,7 +1406,12 @@ def push_all_collections(
         info(f"\n{'=' * 60}")
         if overall_success:
             msg = f"Pushed {successful} collection(s), "
-            msg += f"{total_versions} version(s), {total_files} file(s) total"
+            msg += f"{total_versions} version(s), {total_files} file(s)"
+            # Add throughput summary if we have metrics
+            if total_metrics.total_bytes > 0:
+                size = format_file_size(total_metrics.total_bytes)
+                speed = format_speed(total_metrics.average_speed)
+                msg += f" ({size}, avg {speed})"
             success(msg)
         else:
             warn(f"Completed with errors: {successful} succeeded, {failed} failed")
