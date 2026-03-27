@@ -180,6 +180,7 @@ def _setup_store(
     destination: str,
     *,
     profile: str | None = None,
+    region: str | None = None,
 ) -> tuple[ObjectStore, str]:
     """Setup object store and extract prefix from destination URL.
 
@@ -192,6 +193,7 @@ def _setup_store(
         destination: Object store URL (e.g., s3://bucket/prefix, gs://bucket/prefix,
             az://container/prefix).
         profile: AWS profile name (for S3 only).
+        region: AWS region (for S3 only). Takes precedence over profile/env config.
 
     Returns:
         Tuple of (store, prefix).
@@ -208,25 +210,37 @@ def _setup_store(
         # Load credentials
         access_key: str | None = None
         secret_key: str | None = None
-        region: str | None = None
+        profile_region: str | None = None
 
         if profile:
             from portolan_cli.upload import _load_aws_credentials_from_profile
 
-            access_key, secret_key, region = _load_aws_credentials_from_profile(profile)
+            access_key, secret_key, profile_region = _load_aws_credentials_from_profile(profile)
         else:
             access_key = os.environ.get("AWS_ACCESS_KEY_ID")
             secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-            region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
 
-        store_kwargs: dict[str, str] = {}
-        if region:
-            store_kwargs["region"] = region
+        # Region precedence: explicit param > env var > profile config
+        resolved_region = region
+        if not resolved_region:
+            resolved_region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+        if not resolved_region:
+            resolved_region = profile_region
+
+        store_kwargs: dict[str, Any] = {}
+        if resolved_region:
+            store_kwargs["region"] = resolved_region
         if access_key and secret_key:
             store_kwargs["access_key_id"] = access_key
             store_kwargs["secret_access_key"] = secret_key
 
-        store: ObjectStore = S3Store(bucket, **store_kwargs)  # type: ignore[arg-type]
+        # Bucket names with dots (e.g., us-west-2.opendata.source.coop) require
+        # path-style requests because virtual-hosted style would create invalid
+        # DNS names (bucket.s3.region.amazonaws.com doesn't work with dots)
+        if "." in bucket:
+            store_kwargs["virtual_hosted_style_request"] = False
+
+        store: ObjectStore = S3Store(bucket, **store_kwargs)
 
     elif bucket_url.startswith("gs://"):
         bucket = bucket_url.replace("gs://", "")
@@ -697,6 +711,7 @@ def push(
     force: bool = False,
     dry_run: bool = False,
     profile: str | None = None,
+    region: str | None = None,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage.
 
@@ -715,6 +730,7 @@ def push(
         force: If True, overwrite remote even if diverged.
         dry_run: If True, show what would be uploaded without uploading.
         profile: AWS profile name (for S3 only).
+        region: AWS region (for S3 only). Overrides profile/env config.
 
     Returns:
         PushResult with upload statistics.
@@ -744,7 +760,7 @@ def push(
         return _handle_push_dry_run(catalog_root, local_data, local_versions)
 
     # Setup store
-    store, prefix = _setup_store(destination, profile=profile)
+    store, prefix = _setup_store(destination, profile=profile, region=region)
 
     # Fetch remote versions
     info(f"Checking remote state: {destination}")
@@ -974,6 +990,7 @@ def push_all_collections(
     force: bool = False,
     dry_run: bool = False,
     profile: str | None = None,
+    region: str | None = None,
     workers: int | None = None,
 ) -> PushAllResult:
     """Push all collections in a catalog to cloud storage.
@@ -987,6 +1004,7 @@ def push_all_collections(
         force: If True, overwrite remote even if diverged.
         dry_run: If True, show what would be uploaded without uploading.
         profile: AWS profile name (for S3 only).
+        region: AWS region (for S3 only). Overrides profile/env config.
         workers: Number of parallel workers. None = auto-detect, 1 = sequential.
 
     Returns:
@@ -1029,6 +1047,7 @@ def push_all_collections(
             force=force,
             dry_run=dry_run,
             profile=profile,
+            region=region,
         )
 
     def on_complete(
@@ -1085,7 +1104,7 @@ def push_all_collections(
             info("[DRY RUN] Would upload catalog.json")
         else:
             try:
-                store, prefix = _setup_store(destination, profile=profile)
+                store, prefix = _setup_store(destination, profile=profile, region=region)
                 target_key = f"{prefix}/catalog.json".lstrip("/")
                 content = catalog_json.read_bytes()
                 obs.put(store, target_key, content)

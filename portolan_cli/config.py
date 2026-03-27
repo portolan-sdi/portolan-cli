@@ -36,11 +36,19 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
     {
         "remote",
         "aws_profile",
+        "profile",  # Alias for aws_profile (more intuitive)
+        "region",  # AWS region for S3
         "ignored_files",
         "statistics.enabled",
         "statistics.raster_mode",
     }
 )
+
+# Setting aliases: maps canonical key -> list of alternative keys to check
+# When looking up aws_profile, also check for "profile" in the config
+SETTING_ALIASES: dict[str, list[str]] = {
+    "aws_profile": ["profile"],
+}
 
 # Default values for settings (per ADR-0034 for statistics)
 DEFAULT_SETTINGS: dict[str, Any] = {
@@ -252,11 +260,22 @@ def get_setting(
     if catalog_path is None:
         return None
 
+    # Helper to check key and its aliases in a config dict
+    def _get_with_aliases(cfg: dict[str, Any], k: str) -> Any | None:
+        if k in cfg:
+            return cfg[k]
+        # Check aliases (e.g., aws_profile -> profile)
+        for alias in SETTING_ALIASES.get(k, []):
+            if alias in cfg:
+                return cfg[alias]
+        return None
+
     # 3. Hierarchical .portolan/ config (ADR-0039)
     if collection_path is not None:
         merged_config = load_merged_config(collection_path, catalog_path)
-        if key in merged_config:
-            return merged_config[key]
+        value = _get_with_aliases(merged_config, key)
+        if value is not None:
+            return value
         # Fall through to built-in defaults
 
     else:
@@ -268,12 +287,14 @@ def get_setting(
         if collection is not None:
             collections = config.get("collections", {})
             collection_config = collections.get(collection, {})
-            if key in collection_config:
-                return collection_config[key]
+            value = _get_with_aliases(collection_config, key)
+            if value is not None:
+                return value
 
         # 5. Catalog-level config
-        if key in config:
-            return config[key]
+        value = _get_with_aliases(config, key)
+        if value is not None:
+            return value
 
     # 6. Built-in default from DEFAULT_SETTINGS
     return DEFAULT_SETTINGS.get(key)

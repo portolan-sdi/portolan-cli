@@ -211,6 +211,32 @@ def resolve_aws_profile(
     return resolved if resolved is not None else "default"
 
 
+def resolve_aws_region(
+    region: str | None,
+    catalog_path: Path | None,
+    collection: str | None = None,
+) -> str | None:
+    """Resolve AWS region with precedence: CLI > env var > config.
+
+    Args:
+        region: CLI-provided region value (None if not specified).
+        catalog_path: Path to catalog root for config lookup.
+        collection: Optional collection name for collection-level config.
+
+    Returns:
+        Resolved region name or None if not configured.
+    """
+    from portolan_cli.config import get_setting
+
+    return get_setting(
+        "region",
+        cli_value=region,
+        catalog_path=catalog_path,
+        collection=collection,
+        collection_path=_collection_path(catalog_path, collection),
+    )
+
+
 @click.group()
 @click.version_option()
 @click.option(
@@ -2773,6 +2799,7 @@ def push(
 
     resolved_destination = resolve_remote(destination, catalog_path, collection)
     resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+    resolved_region = resolve_aws_region(None, catalog_path, collection)
 
     if resolved_destination is None:
         if use_json:
@@ -2803,6 +2830,7 @@ def push(
                 force=force,
                 dry_run=dry_run,
                 profile=resolved_profile,
+                region=resolved_region,
                 workers=workers,
             )
 
@@ -2845,6 +2873,7 @@ def push(
             force=force,
             dry_run=dry_run,
             profile=resolved_profile,
+            region=resolved_region,
         )
 
         if use_json:
@@ -3220,6 +3249,7 @@ def sync(
 
     resolved_destination = resolve_remote(destination, catalog_path, collection)
     resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+    resolved_region = resolve_aws_region(None, catalog_path, collection)
 
     if resolved_destination is None:
         if use_json:
@@ -3249,6 +3279,7 @@ def sync(
         dry_run=dry_run,
         fix=fix,
         profile=resolved_profile,
+        region=resolved_region,
     )
 
     if use_json:
