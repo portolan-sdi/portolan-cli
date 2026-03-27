@@ -582,13 +582,15 @@ def _upload_stac_files(
     *,
     dry_run: bool = False,
 ) -> tuple[int, list[str], list[str]]:
-    """Upload STAC metadata files and READMEs in manifest-last order.
+    """Upload STAC metadata files in manifest-last order.
 
     Upload order (manifest-last pattern for atomicity):
-    1. README.md files (supplementary docs, uploaded first)
-    2. Item STAC files (leaf manifests) - {item_id}.json
-    3. collection.json (intermediate manifest)
-    4. catalog.json (root manifest) - only if included in stac_files
+    1. Item STAC files (leaf manifests) - {item_id}.json
+    2. collection.json (intermediate manifest)
+    3. catalog.json (root manifest) - only if included in stac_files
+
+    Note: READMEs are uploaded separately AFTER versions.json since they
+    are derived from STAC + versions.json + metadata.yaml.
 
     Note: STAC files are NOT rolled back on failure. They are idempotent
     (re-uploading is safe) and the manifest-last pattern ensures consistency:
@@ -608,9 +610,9 @@ def _upload_stac_files(
     errors: list[str] = []
     uploaded_keys: list[str] = []
 
-    # Build ordered list: READMEs first, then items, then collection, then catalog
+    # Build ordered list: items first, then collection, then catalog
+    # READMEs are uploaded separately after versions.json
     ordered_files: list[Path] = []
-    ordered_files.extend(stac_files.get("readmes", []))
     ordered_files.extend(stac_files.get("items", []))
     ordered_files.extend(stac_files.get("collection", []))
     ordered_files.extend(stac_files.get("catalog", []))
@@ -619,12 +621,7 @@ def _upload_stac_files(
     if total == 0:
         return 0, [], []
 
-    readme_count = len(stac_files.get("readmes", []))
-    stac_count = total - readme_count
-    if readme_count > 0:
-        info(f"Uploading {stac_count} STAC metadata + {readme_count} README file(s)...")
-    else:
-        info(f"Uploading {stac_count} STAC metadata file(s)...")
+    info(f"Uploading {total} STAC metadata file(s)...")
 
     for i, file_path in enumerate(ordered_files, 1):
         try:
@@ -648,6 +645,60 @@ def _upload_stac_files(
             error(error_msg)
 
     return files_uploaded, errors, uploaded_keys
+
+
+def _upload_readmes(
+    store: ObjectStore,
+    catalog_root: Path,
+    prefix: str,
+    stac_files: dict[str, list[Path]],
+    *,
+    dry_run: bool = False,
+) -> tuple[int, list[str]]:
+    """Upload README.md files after all other metadata.
+
+    READMEs are derived from STAC + versions.json + metadata.yaml, so they
+    must be uploaded last. They are not rolled back on failure since they
+    are purely documentation.
+
+    Args:
+        store: Object store instance.
+        catalog_root: Path to catalog root.
+        prefix: Prefix in object storage.
+        stac_files: Dict from _discover_stac_files() containing 'readmes' key.
+        dry_run: If True, don't actually upload.
+
+    Returns:
+        Tuple of (files_uploaded, errors).
+    """
+    readmes = stac_files.get("readmes", [])
+    if not readmes:
+        return 0, []
+
+    files_uploaded = 0
+    errors: list[str] = []
+
+    info(f"Uploading {len(readmes)} README file(s)...")
+
+    for readme_path in readmes:
+        try:
+            rel_path = readme_path.relative_to(catalog_root)
+            target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+
+            if dry_run:
+                info(f"[DRY RUN] Would upload README: {rel_path}")
+            else:
+                detail(f"Uploading README: {rel_path}")
+                content = readme_path.read_bytes()
+                obs.put(store, target_key, content)
+                files_uploaded += 1
+
+        except Exception as e:
+            error_msg = f"Failed to upload {readme_path}: {e}"
+            errors.append(error_msg)
+            error(error_msg)
+
+    return files_uploaded, errors
 
 
 def _upload_versions_json(
@@ -899,7 +950,7 @@ def push(
             errors=stac_errors,
         )
 
-    # Upload versions.json last (manifest-last pattern)
+    # Upload versions.json (manifest-last pattern for data integrity)
     info("Uploading versions.json...")
     try:
         _upload_versions_json(store, prefix, collection, local_data, etag, force=force)
@@ -919,6 +970,16 @@ def push(
             conflicts=[],
             errors=[f"Failed to upload versions.json: {e}"],
         )
+
+    # Upload READMEs last (derived from STAC + versions.json + metadata.yaml)
+    # README errors are warnings, not failures - the data is already pushed
+    readme_uploaded, readme_errors = _upload_readmes(
+        store, catalog_root, prefix, stac_files, dry_run=False
+    )
+    files_uploaded += readme_uploaded
+    if readme_errors:
+        for err in readme_errors:
+            warn(err)
 
     return PushResult(
         success=True,
