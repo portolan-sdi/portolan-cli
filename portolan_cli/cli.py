@@ -2830,25 +2830,23 @@ def push(
     # Check if active backend supports push
     active_backend = get_setting("backend", catalog_path=catalog_path)
     if active_backend is not None and active_backend != "file":
-        remote = get_setting("remote", catalog_path=catalog_path, collection=collection)
-        if remote:
-            msg = (
-                f"Push is not needed with the '{active_backend}' backend. "
-                f"The `add` command already uploads data to the configured remote."
-            )
-        else:
-            msg = (
-                f"Push is not supported with the '{active_backend}' backend. "
-                f"The {active_backend} backend manages versions through its catalog."
-            )
-        if use_json:
-            envelope = error_envelope(
-                "push", [ErrorDetail(type="NotImplementedError", message=msg)]
-            )
-            output_json_envelope(envelope)
-        else:
-            error(msg)
-        raise SystemExit(1)
+        from portolan_cli.backends import get_backend
+
+        backend = get_backend(active_backend, catalog_root=catalog_path)
+        if hasattr(backend, "supports_push") and not backend.supports_push():
+            remote = get_setting("remote", catalog_path=catalog_path, collection=collection)
+            if hasattr(backend, "push_blocked_message"):
+                msg = backend.push_blocked_message(remote)
+            else:
+                msg = f"Push is not supported with the '{active_backend}' backend."
+            if use_json:
+                envelope = error_envelope(
+                    "push", [ErrorDetail(type="NotImplementedError", message=msg)]
+                )
+                output_json_envelope(envelope)
+            else:
+                error(msg)
+            raise SystemExit(1)
 
     resolved_destination = resolve_remote(destination, catalog_path, collection)
     resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
@@ -3102,7 +3100,7 @@ def pull_command(
     """
     from portolan_cli.config import get_setting
     from portolan_cli.pull import pull as pull_fn
-    from portolan_cli.pull import pull_all_collections, pull_iceberg
+    from portolan_cli.pull import pull_all_collections
 
     use_json = should_output_json(ctx, json_output)
 

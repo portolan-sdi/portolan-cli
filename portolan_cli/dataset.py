@@ -73,7 +73,6 @@ from portolan_cli.stac import (
     load_catalog,
     update_collection_summaries,
 )
-from portolan_cli.upload import upload_file
 from portolan_cli.versions import (
     read_versions,
 )
@@ -1413,83 +1412,6 @@ def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
         # Re-save catalog
         catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
 
-
-def _update_collection_stac_extensions(
-    *,
-    catalog_root: Path,
-    collection_id: str,
-    collection_dir: Path,
-    collection: pystac.Collection,
-) -> None:
-    """Update collection.json with STAC extension metadata from Iceberg backend.
-
-    Adds table:* (Layer 1) and iceberg:* (Layer 2) fields to the collection's
-    extra_fields, then re-saves collection.json.
-    """
-    from portolan_cli.backends import get_backend
-
-    try:
-        backend = get_backend("iceberg", catalog_root=catalog_root)
-        if hasattr(backend, "get_stac_metadata"):
-            stac_metadata = backend.get_stac_metadata(collection_id)
-
-            # Update collection extra_fields
-            for key, value in stac_metadata.items():
-                collection.extra_fields[key] = value
-
-            # Re-save collection.json
-            collection.normalize_hrefs(str(collection_dir))
-            collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
-    except Exception:
-        logger.debug("Could not update STAC extensions for collection %s", collection_id)
-
-
-def _upload_to_remote_if_configured(
-    *,
-    catalog_root: Path,
-    collection_id: str,
-    item_id: str,
-    item_dir: Path,
-    asset_files: dict[str, tuple[Path, str]],
-    remote: str | None,
-) -> None:
-    """Upload STAC metadata to remote if configured.
-
-    Called after local processing when backend=iceberg and remote is set.
-    Only uploads STAC metadata (item JSON, collection JSON, catalog.json).
-    Data files are NOT uploaded — they live in the Iceberg warehouse,
-    managed by PyIceberg.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection_id: Collection identifier.
-        item_id: Item identifier.
-        item_dir: Path to the item directory containing data files.
-        asset_files: Dict mapping filename to (path, checksum) tuples.
-        remote: Remote URL (e.g., gs://bucket/catalog). None means skip upload.
-    """
-    if remote is None:
-        return
-
-    remote = remote.rstrip("/")
-
-    # Upload STAC item JSON (lives in {collection}/{item_id}/{item_id}.json)
-    item_json = catalog_root / collection_id / item_id / f"{item_id}.json"
-    if item_json.exists():
-        dest = f"{remote}/{collection_id}/{item_id}/{item_id}.json"
-        upload_file(source=item_json, destination=dest)
-
-    # Upload STAC collection JSON
-    collection_json = catalog_root / collection_id / "collection.json"
-    if collection_json.exists():
-        dest = f"{remote}/{collection_id}/collection.json"
-        upload_file(source=collection_json, destination=dest)
-
-    # Upload root catalog.json
-    catalog_json = catalog_root / "catalog.json"
-    if catalog_json.exists():
-        dest = f"{remote}/catalog.json"
-        upload_file(source=catalog_json, destination=dest)
 
 
 def _update_versions(
