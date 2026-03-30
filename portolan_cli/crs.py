@@ -10,16 +10,40 @@ the western bound (minx) will be greater than the eastern bound (maxx).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import antimeridian
 from pyproj import CRS, Transformer
 from pyproj.exceptions import CRSError
 
+from portolan_cli.errors import CRSMismatchError
+
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CRSMismatchWarning:
+    """Warning about CRS mismatch between declared CRS and actual coordinates.
+
+    This is returned when coordinates appear to be in WGS84 but the CRS
+    declares a projected coordinate system (like EPSG:28992).
+
+    Attributes:
+        declared_crs: The CRS declared in the file metadata.
+        likely_actual_crs: The CRS the coordinates likely belong to.
+        message: Human-readable warning message.
+        bbox: The bbox that triggered the warning.
+    """
+
+    declared_crs: str
+    likely_actual_crs: str
+    message: str
+    bbox: tuple[float, float, float, float]
+
 
 # WGS84 CRS (cached for reuse)
 WGS84 = CRS.from_epsg(4326)
@@ -32,6 +56,8 @@ EDGE_SAMPLE_POINTS = 10
 def transform_bbox_to_wgs84(
     bbox: tuple[float, float, float, float],
     source_crs: str | None,
+    *,
+    allow_guess: bool = False,
 ) -> tuple[float, float, float, float]:
     """Transform bbox from source CRS to WGS84 with antimeridian handling.
 
@@ -46,13 +72,17 @@ def transform_bbox_to_wgs84(
         bbox: Bounding box as (minx, miny, maxx, maxy) in source CRS.
         source_crs: Source CRS as EPSG code (e.g., "EPSG:32610") or WKT string.
                    If None, returns bbox unchanged (assumed WGS84).
+        allow_guess: If True, when a CRS mismatch is detected (e.g., declared
+                    as projected CRS but coordinates appear to be WGS84), log a
+                    warning and return the bbox unchanged. If False (default),
+                    raise CRSMismatchError for fail-fast behavior.
 
     Returns:
         Bounding box as (west, south, east, north) in WGS84.
         For antimeridian-crossing bboxes, west > east.
 
     Raises:
-        No exceptions raised - returns original bbox with warning on CRS errors.
+        CRSMismatchError: When a CRS mismatch is detected and allow_guess=False.
     """
     if source_crs is None:
         return bbox
@@ -72,6 +102,25 @@ def transform_bbox_to_wgs84(
     if _is_wgs84(src_crs):
         return bbox
 
+    # Check for CRS mismatch BEFORE attempting transformation
+    # This catches the common bug where data is WGS84 but labeled as a projected CRS
+    mismatch = validate_bbox_crs(bbox, source_crs)
+    if mismatch:
+        if allow_guess:
+            logger.warning(
+                "CRS mismatch detected: %s declares %s but coordinates %s appear to be WGS84. "
+                "Returning bbox unchanged (treating as WGS84).",
+                source_crs,
+                source_crs,
+                bbox,
+            )
+            return bbox
+        raise CRSMismatchError(
+            source_crs=source_crs,
+            bbox=bbox,
+            likely_actual_crs=mismatch.likely_actual_crs,
+        )
+
     # Transform bbox to WGS84 polygon and compute RFC 7946 compliant bbox
     try:
         return _transform_and_compute_bbox(bbox, src_crs)
@@ -87,10 +136,22 @@ def transform_bbox_to_wgs84(
 
 
 def _is_wgs84(crs: CRS) -> bool:
-    """Check if a CRS is WGS84 (EPSG:4326)."""
+    """Check if a CRS is WGS84 (EPSG:4326 or CRS84).
+
+    CRS84 (urn:ogc:def:crs:OGC:1.3:CRS84) is WGS84 with explicit lon/lat axis order.
+    Both should be treated as WGS84 for coordinate transformation purposes.
+    """
     epsg = crs.to_epsg()
     if epsg == 4326:
         return True
+
+    # Check for CRS84 by name (pyproj recognizes it)
+    crs_name = crs.name.lower() if crs.name else ""
+    if "crs84" in crs_name or "wgs 84" in crs_name or "wgs84" in crs_name:
+        # Verify it's actually a geographic CRS (not just a name match)
+        if crs.is_geographic:
+            return True
+
     # Also check by comparing CRS objects (handles WKT inputs)
     return crs.equals(WGS84)
 
@@ -134,6 +195,84 @@ def _transform_and_compute_bbox(
     bbox_list = antimeridian.bbox(fixed_geojson)
 
     return (bbox_list[0], bbox_list[1], bbox_list[2], bbox_list[3])
+
+
+def validate_bbox_crs(
+    bbox: tuple[float, float, float, float],
+    crs: str | None,
+) -> CRSMismatchWarning | None:
+    """Validate that bbox coordinates match declared CRS.
+
+    Detects the common bug where a file declares a projected CRS (e.g., EPSG:28992)
+    but actually contains WGS84 coordinates. This happens when ArcGIS services
+    return WGS84 but declare the original projection.
+
+    Args:
+        bbox: Bounding box as (minx, miny, maxx, maxy).
+        crs: Declared CRS as EPSG code or None.
+
+    Returns:
+        CRSMismatchWarning if mismatch detected, None otherwise.
+    """
+    # No CRS declared = assumed WGS84, no validation needed
+    if crs is None:
+        return None
+
+    # Check if CRS is WGS84 (no mismatch possible)
+    try:
+        parsed_crs = CRS.from_user_input(crs)
+        if _is_wgs84(parsed_crs):
+            return None
+    except (CRSError, TypeError):
+        # Invalid CRS, can't validate
+        return None
+
+    # CRS is NOT WGS84 - check if coordinates look like WGS84
+    if is_likely_wgs84_bbox(bbox):
+        return CRSMismatchWarning(
+            declared_crs=crs,
+            likely_actual_crs="EPSG:4326",
+            message=(
+                f"CRS mismatch detected: file declares {crs} but coordinates "
+                f"({bbox[0]:.2f}, {bbox[1]:.2f}, {bbox[2]:.2f}, {bbox[3]:.2f}) "
+                "appear to be WGS84 (EPSG:4326). This often happens when ArcGIS "
+                "services return WGS84 data but declare the original projection."
+            ),
+            bbox=bbox,
+        )
+
+    # No mismatch detected
+    return None
+
+
+def is_likely_wgs84_bbox(bbox: tuple[float, float, float, float]) -> bool:
+    """Detect if bbox coordinates look like WGS84 (lon/lat).
+
+    Uses heuristics to detect if coordinates are likely in WGS84:
+    - Longitude: -180 to 180 (or crossing antimeridian where west > east)
+    - Latitude: -90 to 90
+
+    This is used to detect CRS mislabeling where data is declared as a
+    projected CRS (e.g., EPSG:28992) but actually contains WGS84 coordinates.
+
+    Args:
+        bbox: Bounding box as (minx, miny, maxx, maxy).
+
+    Returns:
+        True if coordinates appear to be WGS84-like.
+    """
+    minx, miny, maxx, maxy = bbox
+
+    # Check latitude bounds (y coordinates must be -90 to 90)
+    if not (-90.0 <= miny <= 90.0 and -90.0 <= maxy <= 90.0):
+        return False
+
+    # Check longitude bounds (x coordinates must be -180 to 180)
+    # Note: for antimeridian crossing, minx > maxx is valid
+    if not (-180.0 <= minx <= 180.0 and -180.0 <= maxx <= 180.0):
+        return False
+
+    return True
 
 
 def _sample_bbox_edges(

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
+    from portolan_cli.extract.arcgis.report import ExtractionReport
     from portolan_cli.pull import PullResult
 
 import click
@@ -4397,3 +4398,438 @@ def readme(
             output_json_envelope(envelope)
         else:
             success(f"Generated {readme_path.relative_to(catalog_path)}")
+
+
+# =============================================================================
+# Extract Commands
+# =============================================================================
+
+
+def _parse_filter_patterns(pattern_str: str | None) -> list[str] | None:
+    """Parse comma-separated filter patterns into a list."""
+    if not pattern_str:
+        return None
+    return [p.strip() for p in pattern_str.split(",") if p.strip()]
+
+
+def _build_layer_filters(
+    layers: str | None,
+    exclude_layers: str | None,
+    unified_filter: str | None,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Build include/exclude filter lists from CLI options."""
+    layer_include = _parse_filter_patterns(unified_filter)
+    explicit_include = _parse_filter_patterns(layers)
+
+    if explicit_include:
+        if layer_include:
+            layer_include.extend(explicit_include)
+        else:
+            layer_include = explicit_include
+
+    layer_exclude = _parse_filter_patterns(exclude_layers)
+    return layer_include, layer_exclude
+
+
+def _build_service_filters(
+    services: str | None,
+    exclude_services: str | None,
+    unified_filter: str | None,
+    is_services_root: bool,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Build service include/exclude filter lists from CLI options."""
+    service_include = _parse_filter_patterns(services)
+    service_exclude = _parse_filter_patterns(exclude_services)
+
+    # Apply unified filter to services when at services root
+    if unified_filter and is_services_root:
+        unified_patterns = _parse_filter_patterns(unified_filter)
+        if unified_patterns:
+            if service_include:
+                service_include.extend(unified_patterns)
+            else:
+                service_include = unified_patterns
+
+    return service_include, service_exclude
+
+
+def _handle_list_services_mode(
+    url: str,
+    service_filter: list[str] | None,
+    timeout: float,
+    use_json: bool,
+) -> None:
+    """Handle --list-services mode: list available services and exit."""
+    from portolan_cli.extract.arcgis.orchestrator import list_services as list_services_func
+
+    try:
+        result = list_services_func(url, service_filter=service_filter, timeout=timeout)
+    except Exception as e:
+        _output_extract_error(use_json, type(e).__name__, str(e), url)
+        raise SystemExit(1) from None
+
+    if use_json:
+        click.echo(json.dumps(result.to_dict(), indent=2))
+    else:
+        click.echo(f"Services at {url}:")
+        click.echo()
+        for svc in result.services:
+            click.echo(f"  • {svc.name} ({svc.service_type})")
+        click.echo()
+        click.echo(f"Total: {len(result.services)} services")
+        if result.folders:
+            click.echo(f"Folders: {', '.join(result.folders)}")
+
+
+def _output_extract_error(use_json: bool, error_type: str, message: str, url: str) -> None:
+    """Output extraction error in JSON or text format."""
+    from portolan_cli.output import error
+
+    if use_json:
+        err = ErrorDetail(type=error_type, message=message)
+        envelope = error_envelope("extract-arcgis", [err], data={"url": url})
+        output_json_envelope(envelope)
+    else:
+        error(message)
+
+
+def _output_extract_result(
+    report: ExtractionReport,
+    output_dir: Path,
+    use_json: bool,
+    dry_run: bool,
+) -> None:
+    """Output extraction results in JSON or text format."""
+    from portolan_cli.output import error, success, warn
+
+    if use_json:
+        data = {
+            "source_url": report.source_url,
+            "output_dir": str(output_dir),
+            "summary": {
+                "total_layers": report.summary.total_layers,
+                "succeeded": report.summary.succeeded,
+                "failed": report.summary.failed,
+                "skipped": report.summary.skipped,
+                "total_features": report.summary.total_features,
+                "total_size_bytes": report.summary.total_size_bytes,
+            },
+            "layers": [
+                {
+                    "id": layer.id,
+                    "name": layer.name,
+                    "status": layer.status,
+                    "features": layer.features,
+                    "output_path": layer.output_path,
+                    "error": layer.error,
+                }
+                for layer in report.layers
+            ],
+        }
+
+        if report.summary.failed > 0:
+            # Emit error envelope for partial failures
+            failed_layers = [
+                {"id": layer.id, "name": layer.name, "error": layer.error}
+                for layer in report.layers
+                if layer.status == "failed"
+            ]
+            errors = [
+                ErrorDetail(
+                    type="ExtractionFailed",
+                    message=f"Layer '{fl['name']}' (ID: {fl['id']}): {fl['error']}",
+                )
+                for fl in failed_layers
+            ]
+            envelope = error_envelope("extract-arcgis", errors, data=data)
+            output_json_envelope(envelope)
+            raise SystemExit(1)
+
+        envelope = success_envelope("extract-arcgis", data)
+        output_json_envelope(envelope)
+        return
+
+    if dry_run:
+        info_output(f"\nDry run - would extract {report.summary.total_layers} layers:")
+        for layer in report.layers:
+            click.echo(f"  • {layer.name} (ID: {layer.id})")
+        return
+
+    click.echo()
+    if report.summary.failed > 0:
+        warn(
+            f"Extracted {report.summary.succeeded}/{report.summary.total_layers} "
+            f"layers ({report.summary.failed} failed)"
+        )
+        for layer in report.layers:
+            if layer.status == "failed":
+                error(f"  ✗ {layer.name}: {layer.error}")
+        info_output(f"Output: {output_dir}")
+        info_output(f"Report: {output_dir}/.portolan/extraction-report.json")
+        raise SystemExit(1)
+
+    success(f"Extracted {report.summary.succeeded}/{report.summary.total_layers} layers")
+    info_output(f"Output: {output_dir}")
+    info_output(f"Report: {output_dir}/.portolan/extraction-report.json")
+
+
+@cli.group()
+def extract() -> None:
+    """Extract data from external sources into Portolan catalogs.
+
+    Convert data from ArcGIS services, APIs, or other sources into
+    well-structured Portolan catalogs with STAC metadata.
+
+    \b
+    Examples:
+        portolan extract arcgis https://services.arcgis.com/.../FeatureServer ./output
+        portolan extract arcgis URL --layers "Census*" --dry-run
+        portolan extract arcgis URL --filter "sdn_*" --resume
+    """
+
+
+@extract.command("arcgis")
+@click.argument("url")
+@click.argument("output_dir", type=click.Path(path_type=Path), required=False)
+@click.option(
+    "--layers",
+    type=str,
+    default=None,
+    help="Include layers matching glob patterns (comma-separated). Example: 'Census*,Transport*'",
+)
+@click.option(
+    "--exclude-layers",
+    type=str,
+    default=None,
+    help="Exclude layers matching glob patterns (comma-separated). Example: 'Legacy*,Test*'",
+)
+@click.option(
+    "--filter",
+    "unified_filter",
+    type=str,
+    default=None,
+    help="Apply glob filter to both services and layers. Example: 'sdn_*', '*_2024*'",
+)
+@click.option(
+    "--services",
+    type=str,
+    default=None,
+    help="Include services matching glob patterns (comma-separated). For services root URLs only.",
+)
+@click.option(
+    "--exclude-services",
+    type=str,
+    default=None,
+    help="Exclude services matching glob patterns (comma-separated). For services root URLs only.",
+)
+@click.option(
+    "--list-services",
+    is_flag=True,
+    help="List available services without extracting (for services root URLs).",
+)
+@click.option(
+    "--workers",
+    type=click.IntRange(min=1),
+    default=3,
+    help="Parallel page requests per layer (default: 3).",
+)
+@click.option(
+    "--retries",
+    type=click.IntRange(min=1),
+    default=3,
+    help="Retry attempts per failed layer (default: 3).",
+)
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0.0, min_open=True),
+    default=60.0,
+    help="Per-request timeout in seconds (default: 60).",
+)
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="Resume from existing extraction-report.json (skip succeeded layers).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="List layers without extracting.",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output extraction report as JSON.",
+)
+@click.option(
+    "--auto",
+    is_flag=True,
+    help="Skip confirmation prompts.",
+)
+@click.option(
+    "--raw",
+    is_flag=True,
+    help="Skip auto-init: create only extraction files, no STAC catalog.",
+)
+@click.pass_context
+def extract_arcgis_cmd(
+    ctx: click.Context,
+    url: str,
+    output_dir: Path | None,
+    layers: str | None,
+    exclude_layers: str | None,
+    unified_filter: str | None,
+    services: str | None,
+    exclude_services: str | None,
+    list_services: bool,
+    workers: int,
+    retries: int,
+    timeout: float,
+    resume: bool,
+    dry_run: bool,
+    json_output: bool,
+    auto: bool,
+    raw: bool,
+) -> None:
+    """Extract vector data from ArcGIS FeatureServer/MapServer.
+
+    Downloads layers from an ArcGIS REST service and creates a Portolan
+    catalog with GeoParquet files and STAC metadata.
+
+    URL is the ArcGIS service URL (FeatureServer, MapServer, or services root).
+    OUTPUT_DIR is the directory to write extracted data (default: inferred from service name).
+
+    \b
+    URL Types:
+        FeatureServer/MapServer: Extract layers from a single service
+        rest/services: Extract from all services (creates nested catalog)
+
+    \b
+    Glob Patterns:
+        Patterns use fnmatch syntax: * matches any, ? matches single char.
+        Common patterns:
+        - Country prefix: 'sdn_*', 'ukr_*'
+        - Year suffix: '*_2024', '*_2025'
+        - Folder path: 'Hosted/cod_ab_*'
+        - Dataset family: 'cod_ab_ukr*'
+
+    \b
+    Examples:
+        # Extract all layers from a FeatureServer
+        portolan extract arcgis https://services.arcgis.com/.../FeatureServer ./output
+
+        # Extract specific layers by name
+        portolan extract arcgis URL --layers "Census*,Transport*"
+
+        # List available services from a services root
+        portolan extract arcgis https://services.arcgis.com/.../rest/services --list-services
+
+        # Extract from services root (filter services)
+        portolan extract arcgis https://.../rest/services ./output --services "Census*"
+
+        # Dry run to see what would be extracted
+        portolan extract arcgis URL --dry-run
+
+        # Extract raw files only (no STAC catalog auto-init)
+        portolan extract arcgis URL --raw
+
+        # JSON output for agent consumption
+        portolan extract arcgis URL --json
+    """
+    from portolan_cli.extract.arcgis.orchestrator import (
+        ExtractionOptions,
+        ExtractionProgress,
+        extract_arcgis_catalog,
+    )
+    from portolan_cli.extract.arcgis.url_parser import ArcGISURLType, parse_arcgis_url
+    from portolan_cli.output import detail, info, warn
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Parse URL to get service name for default output dir
+    try:
+        parsed = parse_arcgis_url(url)
+    except ValueError as e:
+        _output_extract_error(use_json, "InvalidURLError", str(e), url)
+        raise SystemExit(1) from None
+
+    # Handle --list-services mode
+    if list_services:
+        if parsed.url_type != ArcGISURLType.SERVICES_ROOT:
+            _output_extract_error(
+                use_json,
+                "InvalidURLError",
+                "--list-services requires a services root URL (ending with /rest/services)",
+                url,
+            )
+            raise SystemExit(1)
+        service_filter = _parse_filter_patterns(services)
+        _handle_list_services_mode(url, service_filter, timeout, use_json)
+        return
+
+    # Default output directory from service name (or "services_extract" for services root)
+    if output_dir is None:
+        if parsed.url_type == ArcGISURLType.SERVICES_ROOT:
+            output_dir = Path("services_extract")
+        else:
+            service_name = parsed.service_name or "arcgis_extract"
+            output_dir = Path(service_name.replace("/", "_").lower())
+
+    # Build filter lists
+    layer_include, layer_exclude = _build_layer_filters(layers, exclude_layers, unified_filter)
+    is_services_root = parsed.url_type == ArcGISURLType.SERVICES_ROOT
+    service_include, service_exclude = _build_service_filters(
+        services, exclude_services, unified_filter, is_services_root
+    )
+
+    # Build options
+    options = ExtractionOptions(
+        workers=workers,
+        retries=retries,
+        timeout=timeout,
+        resume=resume,
+        dry_run=dry_run,
+        raw=raw,
+    )
+
+    # Progress callback for text output
+    def on_progress(progress: ExtractionProgress) -> None:
+        if progress.status == "starting":
+            info(f"[{progress.layer_index + 1}/{progress.total_layers}] {progress.layer_name}")
+        elif progress.status == "success":
+            detail("  ✓ Success")
+        elif progress.status == "failed":
+            warn("  ✗ Failed")
+        elif progress.status == "skipped":
+            detail("  ↪ Skipped (already extracted)")
+
+    # Confirmation prompt for large extractions
+    if not auto and not dry_run and not use_json:
+        click.echo(f"Extract from: {url}")
+        click.echo(f"Output to: {output_dir}")
+        if layer_include:
+            click.echo(f"Layer filter: {', '.join(layer_include)}")
+        if layer_exclude:
+            click.echo(f"Exclude: {', '.join(layer_exclude)}")
+        if not click.confirm("Continue?", default=True):
+            raise SystemExit(0)
+
+    try:
+        report = extract_arcgis_catalog(
+            url=url,
+            output_dir=output_dir,
+            layer_filter=layer_include,
+            layer_exclude=layer_exclude,
+            service_filter=service_include,
+            service_exclude=service_exclude,
+            options=options,
+            on_progress=None if use_json else on_progress,
+        )
+    except NotImplementedError as e:
+        _output_extract_error(use_json, "NotImplementedError", str(e), url)
+        raise SystemExit(1) from None
+    except Exception as e:
+        _output_extract_error(use_json, type(e).__name__, f"Extraction failed: {e}", url)
+        raise SystemExit(1) from None
+
+    _output_extract_result(report, output_dir, use_json, dry_run)

@@ -29,6 +29,7 @@ dependencies = [
     "antimeridian>=0.3.11",  # RFC 7946 compliant antimeridian handling for STAC bbox
     "click>=8.3.1",
     "geoparquet-io>=0.3.0",
+    "httpx>=0.27.0",  # HTTP client for ArcGIS REST API discovery
     "obstore>=0.8.2",  # Cloud object storage (S3, GCS, Azure) via Rust bindings
     "pyarrow>=12.0.0,<22.0.0",  # v22+ has ABI incompatibility with abseil on some systems
     "pyproj>=3.0.0",  # CRS transformations (transitive via rasterio, but we import directly)
@@ -80,6 +81,7 @@ docs = [
     "mkdocs-click>=0.8.0",  # Auto-generate CLI reference from Click commands
     "mkdocs-material>=9.7.1",
     "mkdocstrings[python]>=1.0.0",
+    "pymdown-extensions>=10.21.2",  # Fix filename=None bug in highlight extension
 ]
 
 [tool.hatch.build.targets.wheel]

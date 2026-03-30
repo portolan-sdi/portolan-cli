@@ -67,6 +67,15 @@ portolan config list
 portolan config unset remote
 ```
 
+### `portolan extract`
+Extract data from external sources into Portolan catalogs.
+
+```bash
+portolan extract arcgis https://services.arcgis.com/.../FeatureServer ./output
+portolan extract arcgis URL --layers "Census*" --dry-run
+portolan extract arcgis URL --filter "sdn_*" --resume
+```
+
 ### `portolan info`
 Show information about a file, collection, or catalog.
 
