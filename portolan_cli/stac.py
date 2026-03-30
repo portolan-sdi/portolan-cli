@@ -269,7 +269,7 @@ def update_collection_temporal_extent(
 
     # Normalize to UTC-aware to avoid naive/aware comparison errors
     item_dt = ensure_utc_aware(item_datetime)
-    assert item_dt is not None  # Already checked above, but mypy needs this
+    assert item_dt is not None  # nosec B101 - type narrowing for mypy, runtime checked above
 
     # Get current interval
     current_interval = collection.extent.temporal.intervals[0]

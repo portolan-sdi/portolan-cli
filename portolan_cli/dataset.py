@@ -680,7 +680,7 @@ def _extract_statistics_best_effort(
             band_stats = extract_band_statistics(output_path, mode=mode)  # type: ignore[arg-type]
         else:
             parquet_stats = extract_parquet_statistics(output_path)
-    except Exception:
+    except Exception:  # nosec B110 - stats extraction is optional, failure is non-fatal
         # Statistics extraction failed - continue without stats
         pass
     return band_stats, parquet_stats
