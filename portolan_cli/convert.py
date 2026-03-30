@@ -653,6 +653,52 @@ def convert_multilayer_file(
     return results
 
 
+def _validate_layer_name(layer: str) -> str:
+    """Validate and sanitize a layer name for use in SQL.
+
+    Layer names in GeoPackage/FileGDB can contain letters, numbers, underscores,
+    and spaces. We escape single quotes to prevent SQL injection.
+
+    Args:
+        layer: Layer name to validate.
+
+    Returns:
+        Sanitized layer name safe for SQL interpolation.
+
+    Raises:
+        ValueError: If layer name contains dangerous characters.
+    """
+    # Block obviously malicious patterns
+    dangerous_patterns = ["--", ";", "/*", "*/", "\\"]
+    for pattern in dangerous_patterns:
+        if pattern in layer:
+            raise ValueError(
+                f"Invalid layer name '{layer}': contains unsafe character sequence '{pattern}'"
+            )
+
+    # Escape single quotes (SQL standard: double them)
+    return layer.replace("'", "''")
+
+
+def _build_st_read_expr(input_path: str, layer: str | None = None) -> str:
+    """Build ST_Read expression with optional layer parameter.
+
+    Args:
+        input_path: Path or URL to the spatial file (already SQL-escaped).
+        layer: Optional layer name (will be validated and escaped).
+
+    Returns:
+        SQL expression for ST_Read.
+
+    Raises:
+        ValueError: If layer name contains invalid characters.
+    """
+    if layer:
+        safe_layer = _validate_layer_name(layer)
+        return f"ST_Read('{input_path}', layer := '{safe_layer}')"
+    return f"ST_Read('{input_path}')"
+
+
 def _convert_vector_layer(source: Path, layer: str, output: Path) -> None:
     """Convert a single layer from a multi-layer file to GeoParquet.
 
@@ -665,14 +711,17 @@ def _convert_vector_layer(source: Path, layer: str, output: Path) -> None:
         output: Path for the output GeoParquet file.
 
     Raises:
+        ValueError: If layer name contains SQL injection patterns.
         Exception: If conversion fails.
     """
     import duckdb
 
-    # Escape path for SQL
+    # Escape paths for SQL (single quotes)
     source_escaped = str(source).replace("'", "''")
     output_escaped = str(output).replace("'", "''")
-    layer_escaped = layer.replace("'", "''")
+
+    # Build ST_Read expression with validated layer name
+    st_read_expr = _build_st_read_expr(source_escaped, layer)
 
     con = duckdb.connect()
     try:
@@ -681,10 +730,10 @@ def _convert_vector_layer(source: Path, layer: str, output: Path) -> None:
         # Use COPY to write GeoParquet with spatial metadata
         query = f"""
             COPY (
-                SELECT * FROM ST_Read('{source_escaped}', layer='{layer_escaped}')
+                SELECT * FROM {st_read_expr}
             ) TO '{output_escaped}'
             WITH (FORMAT PARQUET)
-        """
+        """  # nosec B608 - layer name validated by _validate_layer_name()
         con.execute(query)
     finally:
         con.close()
