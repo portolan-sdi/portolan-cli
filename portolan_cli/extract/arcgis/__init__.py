@@ -21,6 +21,11 @@ from portolan_cli.extract.arcgis.filters import (
     filter_services,
 )
 from portolan_cli.extract.arcgis.metadata import ArcGISMetadata, extract_arcgis_metadata
+from portolan_cli.extract.arcgis.orchestrator import (
+    ExtractionOptions,
+    ExtractionProgress,
+    extract_arcgis_catalog,
+)
 from portolan_cli.extract.arcgis.report import (
     ExtractionReport,
     ExtractionSummary,
@@ -80,6 +85,10 @@ __all__ = [
     "RetryError",
     "RetryResult",
     "retry_with_backoff",
+    # Orchestrator
+    "ExtractionOptions",
+    "ExtractionProgress",
+    "extract_arcgis_catalog",
     # URL parsing
     "ArcGISURLType",
     "InvalidArcGISURLError",
