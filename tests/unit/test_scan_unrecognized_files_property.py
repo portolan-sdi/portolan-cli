@@ -67,10 +67,12 @@ class TestUnrecognizedFileClassification:
             # Should be classified as UNKNOWN (unless it matches something by chance)
             # Most generated extensions should be UNKNOWN
             if category != FileCategory.UNKNOWN:
-                # If not unknown, it should at least be recognized as something
-                assert skip_reason is not None, (
-                    f"Extension {ext} classified as {category} but should have skip_reason"
-                )
+                # GEO_ASSET files are primary data - they have no skip_reason
+                # (they're not skipped, they're processed)
+                if category != FileCategory.GEO_ASSET:
+                    assert skip_reason is not None, (
+                        f"Extension {ext} classified as {category} but should have skip_reason"
+                    )
 
     @given(
         count=st.integers(min_value=1, max_value=20),
