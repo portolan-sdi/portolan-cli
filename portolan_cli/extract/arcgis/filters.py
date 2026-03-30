@@ -14,7 +14,7 @@ Per CLI design (context/shared/plans/extract-arcgis-design.md):
 
 from __future__ import annotations
 
-from fnmatch import fnmatch
+from fnmatch import fnmatch, fnmatchcase
 
 
 def filter_services(
@@ -200,7 +200,9 @@ def _matches_any_glob(
     """
     for pattern in patterns:
         if case_sensitive:
-            if fnmatch(value, pattern):
+            # Use fnmatchcase for consistent case-sensitive matching across platforms
+            # (fnmatch is case-insensitive on Windows/macOS due to filesystem behavior)
+            if fnmatchcase(value, pattern):
                 return True
         else:
             # Case-insensitive: lowercase both
@@ -233,7 +235,8 @@ def _layer_matches(
         else:
             # Glob pattern on name
             if case_sensitive:
-                if fnmatch(layer_name, pattern_stripped):
+                # Use fnmatchcase for consistent case-sensitive matching across platforms
+                if fnmatchcase(layer_name, pattern_stripped):
                     return True
             else:
                 if fnmatch(layer_name.lower(), pattern_stripped.lower()):
