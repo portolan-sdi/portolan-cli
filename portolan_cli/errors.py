@@ -372,6 +372,36 @@ class ValidationFailedError(ConversionError):
         )
 
 
+class CRSMismatchError(ConversionError):
+    """Raised when bbox coordinates don't match the declared CRS.
+
+    Error code: PRTLN-CNV004
+
+    This indicates a common data quality issue where a file declares a projected
+    CRS (e.g., EPSG:28992) but actually contains WGS84 coordinates. This can
+    happen when ArcGIS services return WGS84 data but declare the original
+    projection.
+    """
+
+    code = "PRTLN-CNV004"
+
+    def __init__(
+        self,
+        source_crs: str,
+        bbox: tuple[float, float, float, float],
+        likely_actual_crs: str = "EPSG:4326",
+    ) -> None:
+        super().__init__(
+            f"CRS mismatch: declares {source_crs} but coordinates "
+            f"({bbox[0]:.2f}, {bbox[1]:.2f}, {bbox[2]:.2f}, {bbox[3]:.2f}) "
+            f"appear to be {likely_actual_crs}. The data may have been "
+            "reprojected but the CRS metadata was not updated.",
+            source_crs=source_crs,
+            bbox=bbox,
+            likely_actual_crs=likely_actual_crs,
+        )
+
+
 # Configuration Errors (PRTLN-CFG*)
 class ConfigError(PortolanError):
     """Base class for configuration-related errors."""

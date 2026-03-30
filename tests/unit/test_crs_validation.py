@@ -16,6 +16,7 @@ from portolan_cli.crs import (
     transform_bbox_to_wgs84,
     validate_bbox_crs,
 )
+from portolan_cli.errors import CRSMismatchError
 
 pytestmark = pytest.mark.unit
 
@@ -144,17 +145,35 @@ class TestValidateBboxCrs:
 class TestTransformBboxToWgs84WithValidation:
     """Tests for CRS mismatch detection during bbox transformation."""
 
-    def test_logs_warning_on_crs_mismatch(self, caplog: pytest.LogCaptureFixture) -> None:
-        """transform_bbox_to_wgs84 logs warning when CRS mismatch detected.
+    def test_raises_error_on_crs_mismatch_by_default(self) -> None:
+        """transform_bbox_to_wgs84 raises CRSMismatchError by default.
 
         When coordinates look like WGS84 but CRS declares projected system,
-        we should warn but still return the coordinates (assuming they're
-        already WGS84).
+        we should fail-fast with a clear exception to avoid propagating
+        invalid coordinates.
+        """
+        bbox = (4.29, 52.07, 4.35, 52.10)  # WGS84 coords
+
+        with pytest.raises(CRSMismatchError) as exc_info:
+            transform_bbox_to_wgs84(bbox, "EPSG:28992")
+
+        assert exc_info.value.source_crs == "EPSG:28992"
+        assert exc_info.value.bbox == bbox
+        assert exc_info.value.likely_actual_crs == "EPSG:4326"
+
+    def test_logs_warning_on_crs_mismatch_with_allow_guess(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """transform_bbox_to_wgs84 logs warning when allow_guess=True.
+
+        When coordinates look like WGS84 but CRS declares projected system,
+        and allow_guess=True, we should warn but still return the coordinates
+        (assuming they're already WGS84).
         """
         bbox = (4.29, 52.07, 4.35, 52.10)  # WGS84 coords
 
         with caplog.at_level(logging.WARNING):
-            result = transform_bbox_to_wgs84(bbox, "EPSG:28992")
+            result = transform_bbox_to_wgs84(bbox, "EPSG:28992", allow_guess=True)
 
         # Result should be unchanged (mismatch detected)
         assert result == bbox
@@ -164,15 +183,15 @@ class TestTransformBboxToWgs84WithValidation:
             f"Expected CRS mismatch warning in logs. Got: {[r.message for r in caplog.records]}"
         )
 
-    def test_returns_unchanged_bbox_on_mismatch(self) -> None:
-        """When CRS mismatch detected, return bbox unchanged (assumed WGS84).
+    def test_returns_unchanged_bbox_on_mismatch_with_allow_guess(self) -> None:
+        """When CRS mismatch detected with allow_guess=True, return bbox unchanged.
 
         If coordinates are already WGS84 but CRS claims projected, attempting
         the transformation would produce garbage. Better to return unchanged.
         """
         bbox = (4.29, 52.07, 4.35, 52.10)  # WGS84 coords
 
-        result = transform_bbox_to_wgs84(bbox, "EPSG:28992")
+        result = transform_bbox_to_wgs84(bbox, "EPSG:28992", allow_guess=True)
 
         # Should return coordinates unchanged (they're already WGS84)
         assert result == bbox

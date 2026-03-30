@@ -21,6 +21,7 @@ Typical usage:
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -55,6 +56,8 @@ from portolan_cli.extract.arcgis.url_parser import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -388,6 +391,12 @@ def _extract_one_layer(
         if layer.id in existing_results:
             _emit_progress(on_progress, index, total, layer.name, "skipped")
             return existing_results[layer.id]
+        # Resume state says skip, but we have no cached result - re-extract with warning
+        logger.warning(
+            "Layer '%s' (id=%d) marked complete in resume state but result missing; re-extracting",
+            layer.name,
+            layer.id,
+        )
 
     # Build output path: collection_name/collection_name.parquet
     collection_dir = output_dir / layer_slug
@@ -614,10 +623,6 @@ def _collect_layers_from_services(
         Tuple of (all_layers, service_for_layer, discovery_errors).
         discovery_errors is a list of (service_name, error_message) tuples.
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     all_layers: list[LayerInfo] = []
     service_for_layer: dict[int, ServiceInfo] = {}
     discovery_errors: list[tuple[str, str]] = []
@@ -710,10 +715,6 @@ def _extract_services_root(
     Supports resume by tracking output_path (unique across services) rather than
     layer ID (which can repeat across services).
     """
-    import logging
-
-    logger = logging.getLogger(__name__)
-
     if options is None:
         options = ExtractionOptions()
 

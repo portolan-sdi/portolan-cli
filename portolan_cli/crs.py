@@ -17,6 +17,8 @@ import antimeridian
 from pyproj import CRS, Transformer
 from pyproj.exceptions import CRSError
 
+from portolan_cli.errors import CRSMismatchError
+
 if TYPE_CHECKING:
     pass
 
@@ -54,6 +56,8 @@ EDGE_SAMPLE_POINTS = 10
 def transform_bbox_to_wgs84(
     bbox: tuple[float, float, float, float],
     source_crs: str | None,
+    *,
+    allow_guess: bool = False,
 ) -> tuple[float, float, float, float]:
     """Transform bbox from source CRS to WGS84 with antimeridian handling.
 
@@ -68,13 +72,17 @@ def transform_bbox_to_wgs84(
         bbox: Bounding box as (minx, miny, maxx, maxy) in source CRS.
         source_crs: Source CRS as EPSG code (e.g., "EPSG:32610") or WKT string.
                    If None, returns bbox unchanged (assumed WGS84).
+        allow_guess: If True, when a CRS mismatch is detected (e.g., declared
+                    as projected CRS but coordinates appear to be WGS84), log a
+                    warning and return the bbox unchanged. If False (default),
+                    raise CRSMismatchError for fail-fast behavior.
 
     Returns:
         Bounding box as (west, south, east, north) in WGS84.
         For antimeridian-crossing bboxes, west > east.
 
     Raises:
-        No exceptions raised - returns original bbox with warning on CRS errors.
+        CRSMismatchError: When a CRS mismatch is detected and allow_guess=False.
     """
     if source_crs is None:
         return bbox
@@ -98,14 +106,20 @@ def transform_bbox_to_wgs84(
     # This catches the common bug where data is WGS84 but labeled as a projected CRS
     mismatch = validate_bbox_crs(bbox, source_crs)
     if mismatch:
-        logger.warning(
-            "CRS mismatch detected: %s declares %s but coordinates %s appear to be WGS84. "
-            "Returning bbox unchanged (treating as WGS84).",
-            source_crs,
-            source_crs,
-            bbox,
+        if allow_guess:
+            logger.warning(
+                "CRS mismatch detected: %s declares %s but coordinates %s appear to be WGS84. "
+                "Returning bbox unchanged (treating as WGS84).",
+                source_crs,
+                source_crs,
+                bbox,
+            )
+            return bbox
+        raise CRSMismatchError(
+            source_crs=source_crs,
+            bbox=bbox,
+            likely_actual_crs=mismatch.likely_actual_crs,
         )
-        return bbox
 
     # Transform bbox to WGS84 polygon and compute RFC 7946 compliant bbox
     try:

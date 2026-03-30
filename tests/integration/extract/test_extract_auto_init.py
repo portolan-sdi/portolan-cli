@@ -71,6 +71,7 @@ def make_report(
         gpio_version="0.5.0",
         metadata_extracted=MetadataExtracted(
             source_url=source_url,
+            description=None,
             attribution=None,
             keywords=None,
             contact_name=None,
@@ -153,13 +154,14 @@ class TestAutoInitCatalog:
         output_dir.mkdir()
 
         # Copy fixtures to simulate multiple extracted layers
+        # Uses simple.parquet which has no CRS issues (no CRS = assumed WGS84)
         layers = []
-        for i, fixture_name in enumerate(["peilbuizen.parquet", "milieuzone.parquet"]):
+        for i in range(2):
             layer_name = f"layer_{i}"
             layer_dir = output_dir / layer_name
             layer_dir.mkdir()
 
-            fixture_path = FIXTURES_DIR / "scan" / "flat_collection" / fixture_name
+            fixture_path = FIXTURES_DIR / "simple.parquet"
             output_parquet = layer_dir / "data.parquet"
             shutil.copy(fixture_path, output_parquet)
 
