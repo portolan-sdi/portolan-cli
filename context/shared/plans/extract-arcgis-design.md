@@ -162,8 +162,6 @@ my-catalog/
 | `accessInformation` | `known_issues` | Sometimes | Access restrictions, caveats |
 | `licenseInfo` | (logged, not mapped) | Sometimes | Free-form, not SPDX—log for human review |
 | Field aliases | (STAC table:columns) | Common | Human-readable field names |
-| Coded value domains | `field_domains` | Common | Code → label mappings (e.g., `1: "Residential"`) |
-| Relationships | (extraction report) | Rare | Foreign key relationships between layers |
 
 #### What We DON'T Extract (Auto-extracted from Parquet)
 
@@ -379,21 +377,9 @@ If no extraction report exists, `--resume` is a no-op (proceeds normally).
 
 1. **Authentication:** Out of scope for MVP. gpio already supports auth (`ArcGISAuth`), but this command targets public data only. Future work tracked in [geoparquet-io #318](https://github.com/geoparquet/geoparquet-io/issues/318) (unified auth for downstream tools) and related [#310](https://github.com/geoparquet/geoparquet-io/issues/310) (WFS auth).
 
-   Common ArcGIS authentication patterns (for future reference):
-   | Method | Use Case |
-   |--------|----------|
-   | Token URL param | Simplest, widely supported |
-   | Bearer token | ArcGIS Online |
-   | X-Esri-Authorization header | Enterprise with web-tier auth (IWA) |
-   | Reverse proxy (proxy.ashx) | Enterprise behind corporate proxy |
+2. **Rate Limiting:** Handled by gpio via `max_workers` and built-in throttling. No additional rate limiting needed at Portolan layer.
 
-2. **Reverse Proxy Support:** Out of scope for MVP. Enterprise deployments often use `proxy.ashx`-style reverse proxies. gpio would need to support a proxy prefix option. Tracked as future work.
-
-3. **Rate Limiting:** Handled by gpio via `max_workers` and built-in throttling. No additional rate limiting needed at Portolan layer.
-
-4. **Resume Capability:** Yes—`--resume` flag uses existing `extraction-report.json` to skip succeeded layers and retry failed ones.
-
-5. **Pagination Reliability:** gpio uses `orderByFields=OBJECTID ASC` for reliable pagination, preventing duplicates/gaps when extracting large layers.
+3. **Resume Capability:** Yes—`--resume` flag uses existing `extraction-report.json` to skip succeeded layers and retry failed ones.
 
 ## References
 
