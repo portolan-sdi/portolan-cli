@@ -4645,6 +4645,11 @@ def extract() -> None:
     is_flag=True,
     help="Skip confirmation prompts.",
 )
+@click.option(
+    "--raw",
+    is_flag=True,
+    help="Skip auto-init: create only extraction files, no STAC catalog.",
+)
 @click.pass_context
 def extract_arcgis_cmd(
     ctx: click.Context,
@@ -4663,6 +4668,7 @@ def extract_arcgis_cmd(
     dry_run: bool,
     json_output: bool,
     auto: bool,
+    raw: bool,
 ) -> None:
     """Extract vector data from ArcGIS FeatureServer/MapServer.
 
@@ -4702,6 +4708,9 @@ def extract_arcgis_cmd(
 
         # Dry run to see what would be extracted
         portolan extract arcgis URL --dry-run
+
+        # Extract raw files only (no STAC catalog auto-init)
+        portolan extract arcgis URL --raw
 
         # JSON output for agent consumption
         portolan extract arcgis URL --json
@@ -4759,6 +4768,7 @@ def extract_arcgis_cmd(
         timeout=timeout,
         resume=resume,
         dry_run=dry_run,
+        raw=raw,
     )
 
     # Progress callback for text output

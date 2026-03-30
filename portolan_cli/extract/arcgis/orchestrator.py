@@ -45,7 +45,7 @@ from portolan_cli.extract.arcgis.report import (
     load_report,
     save_report,
 )
-from portolan_cli.extract.arcgis.resume import get_resume_state, should_process_layer
+from portolan_cli.extract.arcgis.resume import ResumeState, get_resume_state, should_process_layer
 from portolan_cli.extract.arcgis.retry import RetryConfig, retry_with_backoff
 from portolan_cli.extract.arcgis.url_parser import (
     ArcGISURLType,
@@ -193,12 +193,14 @@ class ExtractionOptions:
         resume: Whether to resume from existing extraction report
         dry_run: If True, list layers without extracting
         sort_hilbert: Whether to apply Hilbert spatial sorting
+        raw: If True, skip auto-init (only create extraction files, no STAC catalog)
     """
 
     workers: int = 3
     retries: int = 3
     timeout: float = 60.0
     resume: bool = False
+    raw: bool = False
     dry_run: bool = False
     sort_hilbert: bool = True
 
@@ -273,6 +275,168 @@ def _extract_single_layer(
     return feature_count, file_size, duration
 
 
+def _filter_discovered_layers(
+    layers: list[LayerInfo],
+    layer_filter: list[str] | None,
+    layer_exclude: list[str] | None,
+) -> list[LayerInfo]:
+    """Apply include/exclude filters to discovered layers."""
+    if not layer_filter and not layer_exclude:
+        return layers
+
+    layers_dicts: list[dict[str, int | str]] = [
+        {"id": layer.id, "name": layer.name} for layer in layers
+    ]
+    filtered_dicts = filter_layers(layers_dicts, include=layer_filter, exclude=layer_exclude)
+    filtered_ids = {d["id"] for d in filtered_dicts}
+    return [layer for layer in layers if layer.id in filtered_ids]
+
+
+def _get_resume_context(
+    options: ExtractionOptions,
+    report_path: Path,
+) -> tuple[ResumeState | None, dict[int, LayerResult]]:
+    """Get resume state and existing results if resuming.
+
+    Returns:
+        Tuple of (resume_state, existing_results). resume_state is a ResumeState
+        object from get_resume_state() or None if not resuming.
+    """
+    if not options.resume or not report_path.exists():
+        return None, {}
+
+    existing_report = load_report(report_path)
+    resume_state = get_resume_state(existing_report)
+    existing_results = {r.id: r for r in existing_report.layers}
+    return resume_state, existing_results
+
+
+def _build_dry_run_report(
+    url: str,
+    discovery_result: ServiceDiscoveryResult,
+    layers: list[LayerInfo],
+) -> ExtractionReport:
+    """Build a report for dry-run mode."""
+    dry_run_results = [
+        LayerResult(
+            id=layer.id,
+            name=layer.name,
+            status="pending",
+            features=0,
+            size_bytes=0,
+            duration_seconds=0.0,
+            output_path="",
+            warnings=[],
+            error=None,
+            attempts=0,
+        )
+        for layer in layers
+    ]
+    return _build_report(url=url, discovery_result=discovery_result, layer_results=dry_run_results)
+
+
+def _extract_layers(
+    url: str,
+    output_dir: Path,
+    layers: list[LayerInfo],
+    options: ExtractionOptions,
+    resume_state: ResumeState | None,
+    existing_results: dict[int, LayerResult],
+    on_progress: Callable[[ExtractionProgress], None] | None,
+) -> list[LayerResult]:
+    """Extract all layers and return results."""
+    layer_results: list[LayerResult] = []
+    retry_config = RetryConfig(max_attempts=options.retries)
+    total = len(layers)
+
+    for i, layer in enumerate(layers):
+        result = _extract_one_layer(
+            url,
+            output_dir,
+            layer,
+            i,
+            total,
+            options,
+            retry_config,
+            resume_state,
+            existing_results,
+            on_progress,
+        )
+        layer_results.append(result)
+
+    return layer_results
+
+
+def _extract_one_layer(
+    url: str,
+    output_dir: Path,
+    layer: LayerInfo,
+    index: int,
+    total: int,
+    options: ExtractionOptions,
+    retry_config: RetryConfig,
+    resume_state: ResumeState | None,
+    existing_results: dict[int, LayerResult],
+    on_progress: Callable[[ExtractionProgress], None] | None,
+) -> LayerResult:
+    """Extract a single layer and return its result."""
+    layer_slug = _slugify(layer.name)
+    _emit_progress(on_progress, index, total, layer.name, "starting")
+
+    # Check resume state - skip if already succeeded
+    if resume_state and not should_process_layer(layer.id, resume_state):
+        if layer.id in existing_results:
+            _emit_progress(on_progress, index, total, layer.name, "skipped")
+            return existing_results[layer.id]
+
+    # Build output path: collection_name/collection_name.parquet
+    collection_dir = output_dir / layer_slug
+    output_path = collection_dir / f"{layer_slug}.parquet"
+
+    # Extract with retry
+    _emit_progress(on_progress, index, total, layer.name, "extracting")
+
+    result = retry_with_backoff(
+        _extract_single_layer,
+        retry_config,
+        url,
+        layer,
+        output_path,
+        options,
+        on_retry=lambda attempt, err: None,
+    )
+
+    if result.success:
+        features, size_bytes, duration = result.value  # type: ignore[misc]
+        _emit_progress(on_progress, index, total, layer.name, "success")
+        return LayerResult(
+            id=layer.id,
+            name=layer.name,
+            status="success",
+            features=features,
+            size_bytes=size_bytes,
+            duration_seconds=duration,
+            output_path=str(output_path.relative_to(output_dir)),
+            warnings=[],
+            error=None,
+            attempts=result.attempts,
+        )
+
+    _emit_progress(on_progress, index, total, layer.name, "failed")
+    return LayerResult(
+        id=layer.id,
+        name=layer.name,
+        status="failed",
+        features=0,
+        size_bytes=0,
+        duration_seconds=0.0,
+        output_path="",
+        warnings=[],
+        error=str(result.error) if result.error else "Unknown error",
+        attempts=result.attempts,
+    )
+
+
 def extract_arcgis_catalog(
     url: str,
     output_dir: Path,
@@ -332,132 +496,27 @@ def extract_arcgis_catalog(
         )
 
     # Single service extraction (FeatureServer or MapServer)
-    # Discover layers
     discovery_result = discover_layers(url, timeout=options.timeout)
 
-    # Convert LayerInfo to dict format for filtering
-    layers_dicts: list[dict[str, int | str]] = [
-        {"id": layer.id, "name": layer.name} for layer in discovery_result.layers
-    ]
+    # Apply layer filters
+    layers = _filter_discovered_layers(discovery_result.layers, layer_filter, layer_exclude)
 
-    # Apply filters
-    if layer_filter or layer_exclude:
-        filtered_dicts = filter_layers(
-            layers_dicts,
-            include=layer_filter,
-            exclude=layer_exclude,
-        )
-        filtered_ids = {d["id"] for d in filtered_dicts}
-        layers = [layer for layer in discovery_result.layers if layer.id in filtered_ids]
-    else:
-        layers = discovery_result.layers
-
-    # Handle resume
-    resume_state = None
-    existing_results: dict[int, LayerResult] = {}
+    # Handle resume state
     report_path = output_dir / ".portolan" / "extraction-report.json"
-
-    if options.resume and report_path.exists():
-        existing_report = load_report(report_path)
-        resume_state = get_resume_state(existing_report)
-        existing_results = {r.id: r for r in existing_report.layers}
+    resume_state, existing_results = _get_resume_context(options, report_path)
 
     # Dry run - just return what would be extracted
     if options.dry_run:
-        dry_run_results = [
-            LayerResult(
-                id=layer.id,
-                name=layer.name,
-                status="pending",
-                features=0,
-                size_bytes=0,
-                duration_seconds=0.0,
-                output_path="",
-                warnings=[],
-                error=None,
-                attempts=0,
-            )
-            for layer in layers
-        ]
-        return _build_report(
-            url=url,
-            discovery_result=discovery_result,
-            layer_results=dry_run_results,
-        )
+        return _build_dry_run_report(url, discovery_result, layers)
 
     # Create output directory structure
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / ".portolan").mkdir(exist_ok=True)
 
     # Extract each layer
-    layer_results: list[LayerResult] = []
-    retry_config = RetryConfig(max_attempts=options.retries)
-
-    for i, layer in enumerate(layers):
-        layer_slug = _slugify(layer.name)
-
-        total = len(layers)
-        _emit_progress(on_progress, i, total, layer.name, "starting")
-
-        # Check resume state
-        if resume_state and not should_process_layer(layer.id, resume_state):
-            # Already succeeded - use existing result
-            if layer.id in existing_results:
-                layer_results.append(existing_results[layer.id])
-                _emit_progress(on_progress, i, total, layer.name, "skipped")
-                continue
-
-        # Build output path: collection_name/collection_name.parquet
-        # Collection-level asset per ADR-0031 (no nested items for single vector files)
-        collection_dir = output_dir / layer_slug
-        output_path = collection_dir / f"{layer_slug}.parquet"
-
-        # Extract with retry
-        _emit_progress(on_progress, i, total, layer.name, "extracting")
-
-        result = retry_with_backoff(
-            _extract_single_layer,
-            retry_config,
-            url,
-            layer,
-            output_path,
-            options,
-            on_retry=lambda attempt, err: None,  # Silent retries
-        )
-
-        if result.success:
-            features, size_bytes, duration = result.value  # type: ignore[misc]
-            layer_results.append(
-                LayerResult(
-                    id=layer.id,
-                    name=layer.name,
-                    status="success",
-                    features=features,
-                    size_bytes=size_bytes,
-                    duration_seconds=duration,
-                    output_path=str(output_path.relative_to(output_dir)),
-                    warnings=[],
-                    error=None,
-                    attempts=result.attempts,
-                )
-            )
-            _emit_progress(on_progress, i, total, layer.name, "success")
-        else:
-            layer_results.append(
-                LayerResult(
-                    id=layer.id,
-                    name=layer.name,
-                    status="failed",
-                    features=0,
-                    size_bytes=0,
-                    duration_seconds=0.0,
-                    output_path="",
-                    warnings=[],
-                    error=str(result.error) if result.error else "Unknown error",
-                    attempts=result.attempts,
-                )
-            )
-            _emit_progress(on_progress, i, total, layer.name, "failed")
+    layer_results = _extract_layers(
+        url, output_dir, layers, options, resume_state, existing_results, on_progress
+    )
 
     # Build and save report
     report = _build_report(
@@ -467,7 +526,52 @@ def extract_arcgis_catalog(
     )
     save_report(report, report_path)
 
+    # Auto-init catalog unless raw mode
+    if not options.raw:
+        _auto_init_catalog(output_dir, report)
+
     return report
+
+
+def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
+    """Initialize a Portolan catalog and add extracted files.
+
+    Called automatically after extraction unless raw=True.
+    Creates catalog.json, config.yaml, and collection.json for each layer.
+    """
+    from portolan_cli.catalog import init_catalog
+    from portolan_cli.dataset import add_files
+
+    # Get list of successfully extracted parquet files
+    parquet_files = [
+        output_dir / result.output_path
+        for result in report.layers
+        if result.status == "success" and result.output_path
+    ]
+
+    if not parquet_files:
+        return  # Nothing to add
+
+    # Initialize the catalog
+    # Extract title from service metadata if available
+    title = None
+    if report.metadata_extracted and report.metadata_extracted.source_url:
+        # Use service name from URL as title
+        from portolan_cli.extract.arcgis.url_parser import parse_arcgis_url
+
+        try:
+            parsed = parse_arcgis_url(report.metadata_extracted.source_url)
+            title = parsed.service_name
+        except ValueError:
+            pass
+
+    init_catalog(output_dir, title=title)
+
+    # Add all extracted parquet files
+    add_files(
+        paths=parquet_files,
+        catalog_root=output_dir,
+    )
 
 
 def _discover_and_filter_services(

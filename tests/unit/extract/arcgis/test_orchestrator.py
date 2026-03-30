@@ -213,7 +213,8 @@ class TestExtractArcgisCatalog:
             # Return (feature_count, file_size, duration) for each extraction
             mock_extract.return_value = (100, 1024, 1.5)
 
-            options = ExtractionOptions()
+            # Use raw=True to skip auto-init (tested separately in integration tests)
+            options = ExtractionOptions(raw=True)
             result = extract_arcgis_catalog(
                 url=TEST_FEATURE_SERVER_URL,
                 output_dir=tmp_path,
@@ -370,7 +371,8 @@ class TestOrchestratorIntegration:
             mock_discover.return_value = mock_discovery_result
             mock_extract.return_value = (100, 2048, 2.5)
 
-            options = ExtractionOptions()
+            # Use raw=True to skip auto-init (tested separately in integration tests)
+            options = ExtractionOptions(raw=True)
             result = extract_arcgis_catalog(
                 url=TEST_FEATURE_SERVER_URL,
                 output_dir=tmp_path,
@@ -413,7 +415,8 @@ class TestOrchestratorIntegration:
                 error=Exception("Connection timeout"),
             )
 
-            options = ExtractionOptions()
+            # Use raw=True to skip auto-init (tested separately in integration tests)
+            options = ExtractionOptions(raw=True)
             result = extract_arcgis_catalog(
                 url=TEST_FEATURE_SERVER_URL,
                 output_dir=tmp_path,
@@ -578,7 +581,8 @@ class TestServicesRootExtraction:
             mock_discover_layers.return_value = mock_census_layers
             mock_extract.return_value = (100, 2048, 2.5)
 
-            options = ExtractionOptions()
+            # Use raw=True to skip auto-init (tested separately in integration tests)
+            options = ExtractionOptions(raw=True)
             result = extract_arcgis_catalog(
                 url=TEST_SERVICES_ROOT_URL,
                 output_dir=tmp_path,
@@ -625,7 +629,8 @@ class TestServicesRootExtraction:
             mock_discover_layers.return_value = mock_census_layers
             mock_extract.return_value = (100, 2048, 2.5)
 
-            options = ExtractionOptions()
+            # Use raw=True to skip auto-init (tested separately in integration tests)
+            options = ExtractionOptions(raw=True)
             result = extract_arcgis_catalog(
                 url=TEST_SERVICES_ROOT_URL,
                 output_dir=tmp_path,
