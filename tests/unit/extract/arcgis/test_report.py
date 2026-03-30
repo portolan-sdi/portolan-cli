@@ -29,6 +29,8 @@ from portolan_cli.extract.arcgis.report import (
 if TYPE_CHECKING:
     pass
 
+pytestmark = pytest.mark.unit
+
 
 class TestLayerResult:
     """Tests for LayerResult dataclass."""
@@ -347,6 +349,7 @@ class TestMetadataExtracted:
         """Create metadata with all fields populated."""
         metadata = MetadataExtracted(
             source_url="https://services.arcgis.com/test/FeatureServer",
+            description="Census data for Philadelphia region",
             attribution="City of Philadelphia",
             keywords=["census", "demographics"],
             contact_name="GIS Department",
@@ -356,6 +359,7 @@ class TestMetadataExtracted:
         )
 
         assert metadata.source_url == "https://services.arcgis.com/test/FeatureServer"
+        assert metadata.description == "Census data for Philadelphia region"
         assert metadata.attribution == "City of Philadelphia"
         assert metadata.keywords == ["census", "demographics"]
         assert metadata.contact_name == "GIS Department"
@@ -367,6 +371,7 @@ class TestMetadataExtracted:
         """Create metadata with only required field."""
         metadata = MetadataExtracted(
             source_url="https://services.arcgis.com/test/FeatureServer",
+            description=None,
             attribution=None,
             keywords=None,
             contact_name=None,
@@ -376,6 +381,7 @@ class TestMetadataExtracted:
         )
 
         assert metadata.source_url == "https://services.arcgis.com/test/FeatureServer"
+        assert metadata.description is None
         assert metadata.attribution is None
         assert metadata.keywords is None
 
@@ -383,6 +389,7 @@ class TestMetadataExtracted:
         """Serialize full metadata to dict."""
         metadata = MetadataExtracted(
             source_url="https://test.com/FeatureServer",
+            description="Test description",
             attribution="Test Org",
             keywords=["test", "data"],
             contact_name="Test User",
@@ -394,6 +401,7 @@ class TestMetadataExtracted:
         result = metadata.to_dict()
 
         assert result["source_url"] == "https://test.com/FeatureServer"
+        assert result["description"] == "Test description"
         assert result["attribution"] == "Test Org"
         assert result["keywords"] == ["test", "data"]
         assert result["contact_name"] == "Test User"
@@ -405,6 +413,7 @@ class TestMetadataExtracted:
         """Serialize metadata with null values."""
         metadata = MetadataExtracted(
             source_url="https://test.com/FeatureServer",
+            description=None,
             attribution=None,
             keywords=None,
             contact_name=None,
@@ -417,6 +426,7 @@ class TestMetadataExtracted:
 
         # Null values should still be included (for documentation of what was checked)
         assert result["source_url"] == "https://test.com/FeatureServer"
+        assert result["description"] is None
         assert result["attribution"] is None
         assert result["keywords"] is None
 
@@ -424,6 +434,7 @@ class TestMetadataExtracted:
         """Deserialize metadata from dict."""
         data = {
             "source_url": "https://example.com/FeatureServer",
+            "description": "Example description",
             "attribution": "Example Org",
             "keywords": ["key1", "key2"],
             "contact_name": None,
@@ -435,6 +446,7 @@ class TestMetadataExtracted:
         metadata = MetadataExtracted.from_dict(data)
 
         assert metadata.source_url == "https://example.com/FeatureServer"
+        assert metadata.description == "Example description"
         assert metadata.attribution == "Example Org"
         assert metadata.keywords == ["key1", "key2"]
         assert metadata.contact_name is None
@@ -444,6 +456,7 @@ class TestMetadataExtracted:
         """Metadata survives JSON roundtrip."""
         original = MetadataExtracted(
             source_url="https://roundtrip.com/FeatureServer",
+            description="Roundtrip description",
             attribution="Roundtrip Org",
             keywords=["round", "trip"],
             contact_name="Tester",
@@ -456,6 +469,7 @@ class TestMetadataExtracted:
         restored = MetadataExtracted.from_dict(json.loads(json_str))
 
         assert restored.source_url == original.source_url
+        assert restored.description == original.description
         assert restored.attribution == original.attribution
         assert restored.keywords == original.keywords
         assert restored.contact_name == original.contact_name
@@ -468,6 +482,7 @@ class TestExtractionReport:
         """Create a complete extraction report."""
         metadata = MetadataExtracted(
             source_url="https://services.arcgis.com/test/FeatureServer",
+            description="Census data service",
             attribution="City of Philadelphia",
             keywords=["census"],
             contact_name=None,
@@ -555,6 +570,7 @@ class TestExtractionReport:
             "gpio_version": "0.2.0",
             "metadata_extracted": {
                 "source_url": "https://example.com/FeatureServer",
+                "description": None,
                 "attribution": "Test",
                 "keywords": None,
                 "contact_name": None,
@@ -634,6 +650,7 @@ class TestReportIO:
             "gpio_version": "0.2.0",
             "metadata_extracted": {
                 "source_url": "https://load.com/FeatureServer",
+                "description": None,
                 "attribution": None,
                 "keywords": None,
                 "contact_name": None,
@@ -693,6 +710,7 @@ def _create_sample_report() -> ExtractionReport:
     """Create a sample report for testing."""
     metadata = MetadataExtracted(
         source_url="https://test.com/FeatureServer",
+        description="Test service description",
         attribution="Test Org",
         keywords=["test"],
         contact_name=None,

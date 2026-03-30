@@ -151,6 +151,7 @@ class MetadataExtracted:
 
     Attributes:
         source_url: The ArcGIS service URL that was extracted.
+        description: Service description (maps to STAC description field).
         attribution: Copyright text from service (copyrightText field).
         keywords: Keywords from documentInfo (comma-separated → list).
         contact_name: Author from documentInfo (rare).
@@ -160,6 +161,7 @@ class MetadataExtracted:
     """
 
     source_url: str
+    description: str | None
     attribution: str | None
     keywords: list[str] | None
     contact_name: str | None
@@ -174,6 +176,7 @@ class MetadataExtracted:
         """
         return {
             "source_url": self.source_url,
+            "description": self.description,
             "attribution": self.attribution,
             "keywords": self.keywords,
             "contact_name": self.contact_name,
@@ -187,6 +190,7 @@ class MetadataExtracted:
         """Create MetadataExtracted from dict."""
         return cls(
             source_url=data["source_url"],
+            description=data.get("description"),
             attribution=data.get("attribution"),
             keywords=data.get("keywords"),
             contact_name=data.get("contact_name"),

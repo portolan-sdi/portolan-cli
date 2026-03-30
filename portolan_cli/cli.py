@@ -4503,31 +4503,49 @@ def _output_extract_result(
     from portolan_cli.output import error, success, warn
 
     if use_json:
-        envelope = success_envelope(
-            "extract-arcgis",
-            {
-                "source_url": report.source_url,
-                "output_dir": str(output_dir),
-                "summary": {
-                    "total_layers": report.summary.total_layers,
-                    "succeeded": report.summary.succeeded,
-                    "failed": report.summary.failed,
-                    "skipped": report.summary.skipped,
-                    "total_features": report.summary.total_features,
-                    "total_size_bytes": report.summary.total_size_bytes,
-                },
-                "layers": [
-                    {
-                        "id": layer.id,
-                        "name": layer.name,
-                        "status": layer.status,
-                        "features": layer.features,
-                        "output_path": layer.output_path,
-                    }
-                    for layer in report.layers
-                ],
+        data = {
+            "source_url": report.source_url,
+            "output_dir": str(output_dir),
+            "summary": {
+                "total_layers": report.summary.total_layers,
+                "succeeded": report.summary.succeeded,
+                "failed": report.summary.failed,
+                "skipped": report.summary.skipped,
+                "total_features": report.summary.total_features,
+                "total_size_bytes": report.summary.total_size_bytes,
             },
-        )
+            "layers": [
+                {
+                    "id": layer.id,
+                    "name": layer.name,
+                    "status": layer.status,
+                    "features": layer.features,
+                    "output_path": layer.output_path,
+                    "error": layer.error,
+                }
+                for layer in report.layers
+            ],
+        }
+
+        if report.summary.failed > 0:
+            # Emit error envelope for partial failures
+            failed_layers = [
+                {"id": layer.id, "name": layer.name, "error": layer.error}
+                for layer in report.layers
+                if layer.status == "failed"
+            ]
+            errors = [
+                ErrorDetail(
+                    type="ExtractionFailed",
+                    message=f"Layer '{fl['name']}' (ID: {fl['id']}): {fl['error']}",
+                )
+                for fl in failed_layers
+            ]
+            envelope = error_envelope("extract-arcgis", errors, data=data)
+            output_json_envelope(envelope)
+            raise SystemExit(1)
+
+        envelope = success_envelope("extract-arcgis", data)
         output_json_envelope(envelope)
         return
 
@@ -4546,8 +4564,11 @@ def _output_extract_result(
         for layer in report.layers:
             if layer.status == "failed":
                 error(f"  ✗ {layer.name}: {layer.error}")
-    else:
-        success(f"Extracted {report.summary.succeeded}/{report.summary.total_layers} layers")
+        info_output(f"Output: {output_dir}")
+        info_output(f"Report: {output_dir}/.portolan/extraction-report.json")
+        raise SystemExit(1)
+
+    success(f"Extracted {report.summary.succeeded}/{report.summary.total_layers} layers")
     info_output(f"Output: {output_dir}")
     info_output(f"Report: {output_dir}/.portolan/extraction-report.json")
 
@@ -4608,19 +4629,19 @@ def extract() -> None:
 )
 @click.option(
     "--workers",
-    type=int,
+    type=click.IntRange(min=1),
     default=3,
     help="Parallel page requests per layer (default: 3).",
 )
 @click.option(
     "--retries",
-    type=int,
+    type=click.IntRange(min=1),
     default=3,
     help="Retry attempts per failed layer (default: 3).",
 )
 @click.option(
     "--timeout",
-    type=float,
+    type=click.FloatRange(min=0.0, min_open=True),
     default=60.0,
     help="Per-request timeout in seconds (default: 60).",
 )

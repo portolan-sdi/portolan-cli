@@ -607,10 +607,20 @@ def _collect_layers_from_services(
     services: list[ServiceInfo],
     base_url: str,
     timeout: float,
-) -> tuple[list[LayerInfo], dict[int, ServiceInfo]]:
-    """Collect all layers from multiple services."""
+) -> tuple[list[LayerInfo], dict[int, ServiceInfo], list[tuple[str, str]]]:
+    """Collect all layers from multiple services.
+
+    Returns:
+        Tuple of (all_layers, service_for_layer, discovery_errors).
+        discovery_errors is a list of (service_name, error_message) tuples.
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     all_layers: list[LayerInfo] = []
     service_for_layer: dict[int, ServiceInfo] = {}
+    discovery_errors: list[tuple[str, str]] = []
 
     for service in services:
         service_url = service.get_url(base_url)
@@ -620,10 +630,17 @@ def _collect_layers_from_services(
                 layer_idx = len(all_layers)
                 all_layers.append(layer)
                 service_for_layer[layer_idx] = service
-        except Exception:
+        except Exception as e:
+            error_msg = str(e)
+            discovery_errors.append((service.name, error_msg))
+            logger.warning(
+                "Failed to discover layers from service '%s': %s",
+                service.name,
+                error_msg,
+            )
             continue  # Skip services that fail to discover
 
-    return all_layers, service_for_layer
+    return all_layers, service_for_layer, discovery_errors
 
 
 def _filter_layers_by_index(
@@ -647,6 +664,30 @@ def _filter_layers_by_index(
     return [(i, layer) for i, layer in enumerate(all_layers) if i in filtered_indices]
 
 
+def _get_services_root_resume_context(
+    options: ExtractionOptions,
+    report_path: Path,
+) -> dict[str, LayerResult]:
+    """Get resume context for services root extraction.
+
+    For services root, we use output_path as the unique identifier since
+    layer IDs are not unique across services (multiple services can have layer 0).
+
+    Returns:
+        Dict mapping output_path to LayerResult for succeeded layers.
+    """
+    if not options.resume or not report_path.exists():
+        return {}
+
+    existing_report = load_report(report_path)
+    # Map by output_path (unique across services) for succeeded/skipped layers
+    return {
+        r.output_path: r
+        for r in existing_report.layers
+        if r.status in ("success", "skipped") and r.output_path
+    }
+
+
 def _extract_services_root(
     url: str,
     parsed: ParsedArcGISURL,
@@ -665,7 +706,14 @@ def _extract_services_root(
     - Root = Catalog
     - Services = Sub-catalogs
     - Layers = Collections
+
+    Supports resume by tracking output_path (unique across services) rather than
+    layer ID (which can repeat across services).
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     if options is None:
         options = ExtractionOptions()
 
@@ -673,7 +721,7 @@ def _extract_services_root(
     services = _discover_and_filter_services(url, service_filter, service_exclude, options.timeout)
 
     # Collect layers from all services
-    all_layers, service_for_layer = _collect_layers_from_services(
+    all_layers, service_for_layer, _discovery_errors = _collect_layers_from_services(
         services, parsed.base_url, options.timeout
     )
 
@@ -711,6 +759,10 @@ def _extract_services_root(
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / ".portolan").mkdir(exist_ok=True)
 
+    # Handle resume state for services root
+    report_path = output_dir / ".portolan" / "extraction-report.json"
+    existing_results_by_path = _get_services_root_resume_context(options, report_path)
+
     # Extract each layer
     layer_results: list[LayerResult] = []
     retry_config = RetryConfig(max_attempts=options.retries)
@@ -722,13 +774,26 @@ def _extract_services_root(
         service_slug = _slugify(service.name)
         layer_slug = _slugify(layer.name)
 
-        _emit_progress(on_progress, progress_idx, total, layer.name, "starting")
-
         # Build output path: service_name/layer_name/layer_name.parquet
         # Service as subcatalog, layer as collection
         service_dir = output_dir / service_slug
         collection_dir = service_dir / layer_slug
         output_path = collection_dir / f"{layer_slug}.parquet"
+        relative_output_path = str(output_path.relative_to(output_dir))
+
+        _emit_progress(on_progress, progress_idx, total, layer.name, "starting")
+
+        # Check resume state - skip if already succeeded
+        if relative_output_path in existing_results_by_path:
+            existing_result = existing_results_by_path[relative_output_path]
+            layer_results.append(existing_result)
+            _emit_progress(on_progress, progress_idx, total, layer.name, "skipped")
+            logger.debug(
+                "Skipping already-completed layer: %s/%s",
+                service.name,
+                layer.name,
+            )
+            continue
 
         # Extract with retry
         _emit_progress(on_progress, progress_idx, total, layer.name, "extracting")
@@ -753,7 +818,7 @@ def _extract_services_root(
                     features=features,
                     size_bytes=size_bytes,
                     duration_seconds=duration,
-                    output_path=str(output_path.relative_to(output_dir)),
+                    output_path=relative_output_path,
                     warnings=[],
                     error=None,
                     attempts=result.attempts,
@@ -788,6 +853,10 @@ def _extract_services_root(
     )
     report_path = output_dir / ".portolan" / "extraction-report.json"
     save_report(report, report_path)
+
+    # Auto-init catalog unless raw mode
+    if not options.raw:
+        _auto_init_catalog(output_dir, report)
 
     return report
 
@@ -831,6 +900,7 @@ def _build_report(
 
     metadata_extracted = MetadataExtracted(
         source_url=url,
+        description=arcgis_metadata.description,
         attribution=arcgis_metadata.attribution,
         keywords=arcgis_metadata.keywords,
         contact_name=arcgis_metadata.contact_name,

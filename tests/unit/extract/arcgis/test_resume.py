@@ -230,6 +230,7 @@ def _create_report_with_layers(layer_specs: list[tuple[str, int]]) -> Extraction
 
     metadata = MetadataExtracted(
         source_url="https://test.com/FeatureServer",
+        description=None,
         attribution=None,
         keywords=None,
         contact_name=None,
