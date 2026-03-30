@@ -6,6 +6,15 @@ endpoints into Portolan catalogs.
 
 from __future__ import annotations
 
+from portolan_cli.extract.arcgis.discovery import (
+    ArcGISDiscoveryError,
+    LayerInfo,
+    ServiceDiscoveryResult,
+    ServiceInfo,
+    discover_layers,
+    discover_services,
+    fetch_layer_details,
+)
 from portolan_cli.extract.arcgis.filters import (
     apply_unified_filter,
     filter_layers,
@@ -25,6 +34,12 @@ from portolan_cli.extract.arcgis.resume import (
     get_resume_state,
     should_process_layer,
 )
+from portolan_cli.extract.arcgis.retry import (
+    RetryConfig,
+    RetryError,
+    RetryResult,
+    retry_with_backoff,
+)
 from portolan_cli.extract.arcgis.url_parser import (
     ArcGISURLType,
     InvalidArcGISURLError,
@@ -33,6 +48,14 @@ from portolan_cli.extract.arcgis.url_parser import (
 )
 
 __all__ = [
+    # Discovery
+    "ArcGISDiscoveryError",
+    "LayerInfo",
+    "ServiceDiscoveryResult",
+    "ServiceInfo",
+    "discover_layers",
+    "discover_services",
+    "fetch_layer_details",
     # Filters
     "apply_unified_filter",
     "filter_layers",
@@ -52,6 +75,11 @@ __all__ = [
     "ResumeState",
     "get_resume_state",
     "should_process_layer",
+    # Retry
+    "RetryConfig",
+    "RetryError",
+    "RetryResult",
+    "retry_with_backoff",
     # URL parsing
     "ArcGISURLType",
     "InvalidArcGISURLError",
