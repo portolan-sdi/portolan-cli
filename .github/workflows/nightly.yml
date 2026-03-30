@@ -188,9 +188,11 @@ jobs:
         run: uv sync --all-extras
 
       - name: Full security audit
+        # CVE-2026-4539: pygments 2.19.x ReDoS in AdlLexer (CVSS 3.3, local only)
+        # No upstream fix available. Track: https://github.com/portolan-sdi/portolan-cli/issues/285
         run: |
           echo "=== Dependency security audit ==="
-          uv run pip-audit --strict
+          uv run pip-audit --strict --ignore-vuln CVE-2026-4539
 
       - name: Check for outdated dependencies
         run: |
