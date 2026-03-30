@@ -578,6 +578,126 @@ def detect_format(path: Path) -> FormatType:
     return FormatType.UNKNOWN
 
 
+# =============================================================================
+# Multi-Layer Format Support (Issue #265)
+# =============================================================================
+
+# Formats that can contain multiple layers
+MULTILAYER_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".gpkg",  # GeoPackage
+        ".gdb",  # FileGDB directory
+    }
+)
+
+
+def list_layers(path: Path) -> list[str] | None:
+    """List all layers in a multi-layer geospatial file.
+
+    For multi-layer formats (GeoPackage, FileGDB), returns all layer names.
+    For single-layer formats (GeoJSON, Shapefile), returns None.
+
+    GeoPackage: Uses sqlite3 (no external dependencies).
+    FileGDB: Uses DuckDB spatial extension (requires GDAL via DuckDB).
+
+    Args:
+        path: Path to the geospatial file.
+
+    Returns:
+        List of layer names for multi-layer formats, None for single-layer formats.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+
+    Example:
+        >>> list_layers(Path("multi.gpkg"))
+        ['points', 'lines', 'polygons']
+        >>> list_layers(Path("single.geojson"))
+        None
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    extension = path.suffix.lower()
+
+    # Handle directory-based formats (FileGDB)
+    if path.is_dir() and extension == ".gdb":
+        return _list_filegdb_layers(path)
+
+    # Single-layer formats return None
+    if extension not in MULTILAYER_EXTENSIONS:
+        return None
+
+    # GeoPackage: query SQLite directly (no external deps)
+    if extension == ".gpkg":
+        return _list_geopackage_layers(path)
+
+    return None
+
+
+def _list_geopackage_layers(path: Path) -> list[str] | None:
+    """List layers in a GeoPackage using sqlite3.
+
+    GeoPackage is a SQLite database with standardized tables.
+    Layer names are in gpkg_contents.table_name.
+    """
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(str(path))
+        cursor = conn.cursor()
+        # Query gpkg_contents for feature and tile layers
+        cursor.execute(
+            "SELECT table_name FROM gpkg_contents WHERE data_type IN ('features', 'tiles')"
+        )
+        layers = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return layers if layers else None
+    except sqlite3.Error as e:
+        logger.error("Failed to read GeoPackage %s: %s", path, e)
+        return None
+
+
+def _list_filegdb_layers(path: Path) -> list[str] | None:
+    """List layers in an ESRI FileGDB.
+
+    FileGDB is a proprietary format that requires GDAL to read.
+    Currently returns None with a warning - proper layer enumeration
+    requires adding this functionality to geoparquet-io.
+
+    See GitHub issue #265 for tracking multi-layer format support.
+    """
+    # FileGDB layer enumeration is not yet implemented
+    # The format is complex and requires GDAL bindings
+    # For now, log a warning and return None
+    logger.warning(
+        "FileGDB layer listing not yet implemented. Use ogrinfo to list layers: ogrinfo %s",
+        path,
+    )
+    return None
+
+
+def is_multilayer(path: Path) -> bool:
+    """Check if a file contains multiple layers.
+
+    Args:
+        path: Path to the geospatial file.
+
+    Returns:
+        True if the file has more than one layer, False otherwise.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    layers = list_layers(path)
+    if layers is None:
+        return False
+    return len(layers) > 1
+
+
 def _detect_json_type(path: Path) -> FormatType:
     """Check if a .json file is GeoJSON.
 

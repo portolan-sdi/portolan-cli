@@ -146,6 +146,13 @@ These fixtures test the `check` command's metadata validation and the versions.j
 3. Run `uv run python tests/fixtures/generate.py`
 4. Commit the fixture files
 
-## GeoPackage Note
+## Multi-Layer Fixtures
 
-GeoPackage fixtures are deferred to issue #30 (real-world data). Synthetic fixtures cover GeoJSON and GeoParquet only.
+See `multilayer/README.md` for details on multi-layer format fixtures (GeoPackage, FileGDB).
+
+These fixtures test [GitHub issue #265](https://github.com/portolan-sdi/portolan-cli/issues/265): ensuring all layers in multi-layer files are discovered and converted.
+
+| Fixture | Format | Layers | Source |
+|---------|--------|--------|--------|
+| `multilayer/multilayer.gpkg` | GeoPackage | 3 (points, lines, polygons) | Pre-generated (committed) |
+| `multilayer/featuredataset.gdb` | FileGDB | 4 (with feature datasets) | Vendored from [GDAL autotest](https://github.com/OSGeo/gdal/tree/master/autotest/ogr/data/filegdb) |
