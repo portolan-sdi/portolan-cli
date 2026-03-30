@@ -37,7 +37,7 @@ class TestUnrecognizedFileClassification:
 
         Tests that the classification system is robust to arbitrary extensions.
         """
-        # Skip common extensions that might be generated
+        # Skip common extensions that might be generated (including geospatial formats)
         skip_exts = {
             ".md",
             ".txt",
@@ -51,6 +51,21 @@ class TestUnrecognizedFileClassification:
             ".gpkg",
             ".py",
             ".exe",
+            # Geospatial formats that are known/recognized
+            ".geojson",
+            ".shp",
+            ".dbf",
+            ".shx",
+            ".prj",
+            ".parquet",
+            ".gdb",
+            ".fgb",
+            ".kml",
+            ".kmz",
+            ".gml",
+            ".jp2",
+            ".tiff",
+            ".geotiff",
         }
         if ext in skip_exts:
             return

@@ -1,0 +1,8 @@
+# Mark binary files to prevent text processing issues
+*.gdbtable binary
+*.gdbtablx binary
+*.gdbindexes binary
+*.atx binary
+*.spx binary
+*.freelist binary
+tests/fixtures/multilayer/featuredataset.gdb/* binary

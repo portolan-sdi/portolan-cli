@@ -34,3 +34,49 @@ Then add the resulting COG to your catalog as usual.
 
 !!! note "Vector GDB data is supported"
     This limitation applies only to **raster** data in geodatabases. Vector layers in `.gdb` files work normally.
+
+## Multi-Layer Formats
+
+GeoPackage and FileGDB files can contain multiple vector layers. Portolan handles these specially:
+
+| Format | Layer Detection | Notes |
+|--------|-----------------|-------|
+| GeoPackage | ✅ Pure Python (sqlite3) | No external dependencies |
+| FileGDB | ⚠️ Requires GDAL | `osgeo.ogr` must be installed |
+
+### API Functions
+
+- `list_layers(path)` — Returns list of layer names, or `None` for single-layer formats
+- `is_multilayer(path)` — Returns `True` if file has more than one layer
+- `convert_multilayer_file(source, output_dir)` — Converts each layer to a separate GeoParquet file
+
+### Output Naming
+
+Each layer becomes a separate file: `{source_stem}_{layer_name}.parquet`
+
+```
+multilayer.gpkg (3 layers)
+├── points
+├── lines
+└── polygons
+
+→ multilayer_points.parquet
+→ multilayer_lines.parquet
+→ multilayer_polygons.parquet
+```
+
+## COG Conversion Settings
+
+COG (Cloud-Optimized GeoTIFF) conversion can be configured via `config.yaml`:
+
+```yaml
+conversion:
+  cog:
+    compression: DEFLATE  # DEFLATE, LZW, ZSTD, JPEG, WEBP
+    tile_size: 512        # 256, 512, 1024
+    predictor: 2          # 1=none, 2=horizontal, 3=floating-point
+    resampling: nearest   # nearest, bilinear, cubic, lanczos, average
+    quality: 75           # JPEG/WEBP quality (1-100)
+```
+
+See `get_cog_settings()` and `CogSettings` for programmatic access.

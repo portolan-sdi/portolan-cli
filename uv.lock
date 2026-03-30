@@ -3130,6 +3130,7 @@ source = { editable = "." }
 dependencies = [
     { name = "antimeridian" },
     { name = "click" },
+    { name = "duckdb" },
     { name = "geoparquet-io" },
     { name = "obstore" },
     { name = "pyarrow" },
@@ -3194,6 +3195,7 @@ requires-dist = [
     { name = "codespell", marker = "extra == 'dev'", specifier = ">=2.4.1" },
     { name = "commitizen", marker = "extra == 'dev'", specifier = ">=4.13.4" },
     { name = "deptry", marker = "extra == 'dev'", specifier = ">=0.25.1" },
+    { name = "duckdb", specifier = ">=1.0.0" },
     { name = "geoparquet-io", specifier = ">=0.3.0" },
     { name = "gitingest", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.151.5" },
