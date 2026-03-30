@@ -81,6 +81,7 @@ docs = [
     "mkdocs-click>=0.8.0",  # Auto-generate CLI reference from Click commands
     "mkdocs-material>=9.7.1",
     "mkdocstrings[python]>=1.0.0",
+    "pymdown-extensions>=10.21.2",  # Fix filename=None bug in highlight extension
 ]
 
 [tool.hatch.build.targets.wheel]
