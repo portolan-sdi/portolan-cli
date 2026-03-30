@@ -62,7 +62,9 @@ jobs:
         run: uv run bandit -r portolan_cli -c pyproject.toml
 
       - name: Audit dependencies
-        run: uv run pip-audit
+        # CVE-2026-4539: pygments 2.19.x ReDoS in AdlLexer (CVSS 3.3, local only)
+        # No upstream fix available. Track: https://github.com/portolan-sdi/portolan-cli/issues/285
+        run: uv run pip-audit --ignore-vuln CVE-2026-4539
 
   test:
     name: Test (Python ${{ matrix.python-version }} / ${{ matrix.os }})
