@@ -4431,6 +4431,56 @@ def _build_layer_filters(
     return layer_include, layer_exclude
 
 
+def _build_service_filters(
+    services: str | None,
+    exclude_services: str | None,
+    unified_filter: str | None,
+    is_services_root: bool,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Build service include/exclude filter lists from CLI options."""
+    service_include = _parse_filter_patterns(services)
+    service_exclude = _parse_filter_patterns(exclude_services)
+
+    # Apply unified filter to services when at services root
+    if unified_filter and is_services_root:
+        unified_patterns = _parse_filter_patterns(unified_filter)
+        if unified_patterns:
+            if service_include:
+                service_include.extend(unified_patterns)
+            else:
+                service_include = unified_patterns
+
+    return service_include, service_exclude
+
+
+def _handle_list_services_mode(
+    url: str,
+    service_filter: list[str] | None,
+    timeout: float,
+    use_json: bool,
+) -> None:
+    """Handle --list-services mode: list available services and exit."""
+    from portolan_cli.extract.arcgis.orchestrator import list_services as list_services_func
+
+    try:
+        result = list_services_func(url, service_filter=service_filter, timeout=timeout)
+    except Exception as e:
+        _output_extract_error(use_json, type(e).__name__, str(e), url)
+        raise SystemExit(1) from None
+
+    if use_json:
+        click.echo(json.dumps(result.to_dict(), indent=2))
+    else:
+        click.echo(f"Services at {url}:")
+        click.echo()
+        for svc in result.services:
+            click.echo(f"  • {svc.name} ({svc.service_type})")
+        click.echo()
+        click.echo(f"Total: {len(result.services)} services")
+        if result.folders:
+            click.echo(f"Folders: {', '.join(result.folders)}")
+
+
 def _output_extract_error(use_json: bool, error_type: str, message: str, url: str) -> None:
     """Output extraction error in JSON or text format."""
     from portolan_cli.output import error
@@ -4540,6 +4590,23 @@ def extract() -> None:
     help="Apply glob filter to both services and layers. Example: 'sdn_*', '*_2024*'",
 )
 @click.option(
+    "--services",
+    type=str,
+    default=None,
+    help="Include services matching glob patterns (comma-separated). For services root URLs only.",
+)
+@click.option(
+    "--exclude-services",
+    type=str,
+    default=None,
+    help="Exclude services matching glob patterns (comma-separated). For services root URLs only.",
+)
+@click.option(
+    "--list-services",
+    is_flag=True,
+    help="List available services without extracting (for services root URLs).",
+)
+@click.option(
     "--workers",
     type=int,
     default=3,
@@ -4586,6 +4653,9 @@ def extract_arcgis_cmd(
     layers: str | None,
     exclude_layers: str | None,
     unified_filter: str | None,
+    services: str | None,
+    exclude_services: str | None,
+    list_services: bool,
     workers: int,
     retries: int,
     timeout: float,
@@ -4599,8 +4669,13 @@ def extract_arcgis_cmd(
     Downloads layers from an ArcGIS REST service and creates a Portolan
     catalog with GeoParquet files and STAC metadata.
 
-    URL is the ArcGIS service URL (FeatureServer or MapServer).
+    URL is the ArcGIS service URL (FeatureServer, MapServer, or services root).
     OUTPUT_DIR is the directory to write extracted data (default: inferred from service name).
+
+    \b
+    URL Types:
+        FeatureServer/MapServer: Extract layers from a single service
+        rest/services: Extract from all services (creates nested catalog)
 
     \b
     Glob Patterns:
@@ -4619,14 +4694,14 @@ def extract_arcgis_cmd(
         # Extract specific layers by name
         portolan extract arcgis URL --layers "Census*,Transport*"
 
-        # Unified filter (applies to both services and layers)
-        portolan extract arcgis URL --filter "sdn_*"
+        # List available services from a services root
+        portolan extract arcgis https://services.arcgis.com/.../rest/services --list-services
+
+        # Extract from services root (filter services)
+        portolan extract arcgis https://.../rest/services ./output --services "Census*"
 
         # Dry run to see what would be extracted
         portolan extract arcgis URL --dry-run
-
-        # Resume a failed extraction
-        portolan extract arcgis URL ./output --resume
 
         # JSON output for agent consumption
         portolan extract arcgis URL --json
@@ -4636,7 +4711,7 @@ def extract_arcgis_cmd(
         ExtractionProgress,
         extract_arcgis_catalog,
     )
-    from portolan_cli.extract.arcgis.url_parser import parse_arcgis_url
+    from portolan_cli.extract.arcgis.url_parser import ArcGISURLType, parse_arcgis_url
     from portolan_cli.output import detail, info, warn
 
     use_json = should_output_json(ctx, json_output)
@@ -4648,13 +4723,34 @@ def extract_arcgis_cmd(
         _output_extract_error(use_json, "InvalidURLError", str(e), url)
         raise SystemExit(1) from None
 
-    # Default output directory from service name
-    if output_dir is None:
-        service_name = parsed.service_name or "arcgis_extract"
-        output_dir = Path(service_name.replace("/", "_").lower())
+    # Handle --list-services mode
+    if list_services:
+        if parsed.url_type != ArcGISURLType.SERVICES_ROOT:
+            _output_extract_error(
+                use_json,
+                "InvalidURLError",
+                "--list-services requires a services root URL (ending with /rest/services)",
+                url,
+            )
+            raise SystemExit(1)
+        service_filter = _parse_filter_patterns(services)
+        _handle_list_services_mode(url, service_filter, timeout, use_json)
+        return
 
-    # Build layer filter lists
+    # Default output directory from service name (or "services_extract" for services root)
+    if output_dir is None:
+        if parsed.url_type == ArcGISURLType.SERVICES_ROOT:
+            output_dir = Path("services_extract")
+        else:
+            service_name = parsed.service_name or "arcgis_extract"
+            output_dir = Path(service_name.replace("/", "_").lower())
+
+    # Build filter lists
     layer_include, layer_exclude = _build_layer_filters(layers, exclude_layers, unified_filter)
+    is_services_root = parsed.url_type == ArcGISURLType.SERVICES_ROOT
+    service_include, service_exclude = _build_service_filters(
+        services, exclude_services, unified_filter, is_services_root
+    )
 
     # Build options
     options = ExtractionOptions(
@@ -4693,6 +4789,8 @@ def extract_arcgis_cmd(
             output_dir=output_dir,
             layer_filter=layer_include,
             layer_exclude=layer_exclude,
+            service_filter=service_include,
+            service_exclude=service_exclude,
             options=options,
             on_progress=None if use_json else on_progress,
         )

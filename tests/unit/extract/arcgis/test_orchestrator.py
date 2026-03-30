@@ -11,12 +11,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from portolan_cli.extract.arcgis.discovery import LayerInfo, ServiceDiscoveryResult
+from portolan_cli.extract.arcgis.discovery import (
+    LayerInfo,
+    ServiceDiscoveryResult,
+    ServiceInfo,
+)
 from portolan_cli.extract.arcgis.orchestrator import (
     ExtractionOptions,
     ExtractionProgress,
+    ServicesRootDiscoveryResult,
     _slugify,
     extract_arcgis_catalog,
+    list_services,
 )
 
 pytestmark = pytest.mark.unit
@@ -222,13 +228,55 @@ class TestExtractArcgisCatalog:
             assert result.summary.total_layers == 3
             assert result.summary.succeeded == 3
 
-    def test_services_root_not_supported(self, tmp_path: Path) -> None:
-        """Should raise NotImplementedError for services root URLs."""
-        with pytest.raises(NotImplementedError, match="Services root URLs not yet supported"):
-            extract_arcgis_catalog(
+    def test_services_root_dry_run_lists_services_and_layers(self, tmp_path: Path) -> None:
+        """Services root dry run should list all services and their layers."""
+        mock_services = [
+            ServiceInfo(name="Census_2020", service_type="FeatureServer"),
+            ServiceInfo(name="Transportation", service_type="MapServer"),
+        ]
+        mock_census_layers = ServiceDiscoveryResult(
+            layers=[
+                LayerInfo(id=0, name="Block_Groups", layer_type="Feature Layer"),
+                LayerInfo(id=1, name="Tracts", layer_type="Feature Layer"),
+            ],
+        )
+        mock_transport_layers = ServiceDiscoveryResult(
+            layers=[
+                LayerInfo(id=0, name="Roads", layer_type="Feature Layer"),
+            ],
+        )
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_services"
+            ) as mock_discover_services,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
+            ) as mock_discover_layers,
+        ):
+            mock_discover_services.return_value = (mock_services, [])
+            # Return different layers for each service
+            mock_discover_layers.side_effect = [mock_census_layers, mock_transport_layers]
+
+            options = ExtractionOptions(dry_run=True)
+            result = extract_arcgis_catalog(
                 url=TEST_SERVICES_ROOT_URL,
                 output_dir=tmp_path,
+                options=options,
             )
+
+            # Should discover services first
+            mock_discover_services.assert_called_once()
+
+            # Should probe each service for layers
+            assert mock_discover_layers.call_count == 2
+
+            # Result should contain all layers from all services
+            assert result.summary.total_layers == 3
+            layer_names = [r.name for r in result.layers]
+            assert "Block_Groups" in layer_names
+            assert "Tracts" in layer_names
+            assert "Roads" in layer_names
 
     def test_report_contains_metadata(
         self, mock_discovery_result: ServiceDiscoveryResult, tmp_path: Path
@@ -377,3 +425,216 @@ class TestOrchestratorIntegration:
             assert result.summary.failed == 3
             assert all(r.status == "failed" for r in result.layers)
             assert all("Connection timeout" in (r.error or "") for r in result.layers)
+
+
+# =============================================================================
+# Services root support tests
+# =============================================================================
+
+
+class TestListServices:
+    """Tests for list_services function (--list-services mode)."""
+
+    def test_list_services_returns_services_only(self) -> None:
+        """list_services should return services without probing for layers."""
+        mock_services = [
+            ServiceInfo(name="Census_2020", service_type="FeatureServer"),
+            ServiceInfo(name="Transportation", service_type="MapServer"),
+            ServiceInfo(name="Basemap", service_type="MapServer"),
+        ]
+
+        with patch("portolan_cli.extract.arcgis.orchestrator.discover_services") as mock_discover:
+            mock_discover.return_value = (mock_services, ["Archived", "Internal"])
+
+            result = list_services(TEST_SERVICES_ROOT_URL)
+
+            # Should call discover_services with return_folders=True
+            mock_discover.assert_called_once()
+            call_kwargs = mock_discover.call_args.kwargs
+            assert call_kwargs.get("return_folders") is True
+
+            # Should return all services
+            assert len(result.services) == 3
+            assert result.services[0].name == "Census_2020"
+            assert result.services[1].name == "Transportation"
+
+            # Should include folders
+            assert result.folders == ["Archived", "Internal"]
+
+    def test_list_services_filters_by_type(self) -> None:
+        """list_services should filter by service type."""
+        mock_services = [
+            ServiceInfo(name="Census_2020", service_type="FeatureServer"),
+            ServiceInfo(name="Transportation", service_type="MapServer"),
+        ]
+
+        with patch("portolan_cli.extract.arcgis.orchestrator.discover_services") as mock_discover:
+            mock_discover.return_value = (mock_services, [])
+
+            result = list_services(
+                TEST_SERVICES_ROOT_URL,
+                service_types=["FeatureServer"],
+            )
+
+            # discover_services should be called with service_types filter
+            mock_discover.assert_called_once()
+            call_kwargs = mock_discover.call_args.kwargs
+            assert call_kwargs.get("service_types") == ["FeatureServer"]
+
+            # Result should contain the services
+            assert len(result.services) == 2
+
+    def test_list_services_applies_glob_filter(self) -> None:
+        """list_services should apply glob pattern filters."""
+        mock_services = [
+            ServiceInfo(name="Census_2020", service_type="FeatureServer"),
+            ServiceInfo(name="Census_2010", service_type="FeatureServer"),
+            ServiceInfo(name="Transportation", service_type="MapServer"),
+        ]
+
+        with patch("portolan_cli.extract.arcgis.orchestrator.discover_services") as mock_discover:
+            mock_discover.return_value = (mock_services, [])
+
+            result = list_services(
+                TEST_SERVICES_ROOT_URL,
+                service_filter=["Census*"],
+            )
+
+            # Should only return Census services
+            assert len(result.services) == 2
+            assert all("Census" in s.name for s in result.services)
+
+    def test_list_services_raises_for_non_services_root(self) -> None:
+        """list_services should raise error for non-services-root URLs."""
+        with pytest.raises(ValueError, match="not a services root URL"):
+            list_services(TEST_FEATURE_SERVER_URL)
+
+
+class TestServicesRootDiscoveryResult:
+    """Tests for ServicesRootDiscoveryResult dataclass."""
+
+    def test_creates_with_services_and_folders(self) -> None:
+        """Should create result with services and folders."""
+        services = [
+            ServiceInfo(name="Test", service_type="FeatureServer"),
+        ]
+        result = ServicesRootDiscoveryResult(
+            services=services,
+            folders=["Archived"],
+            base_url=TEST_SERVICES_ROOT_URL,
+        )
+
+        assert len(result.services) == 1
+        assert result.folders == ["Archived"]
+        assert result.base_url == TEST_SERVICES_ROOT_URL
+
+    def test_to_dict_for_json_output(self) -> None:
+        """Should convert to dict for JSON serialization."""
+        services = [
+            ServiceInfo(name="Census_2020", service_type="FeatureServer"),
+            ServiceInfo(name="Roads", service_type="MapServer"),
+        ]
+        result = ServicesRootDiscoveryResult(
+            services=services,
+            folders=["Archived"],
+            base_url=TEST_SERVICES_ROOT_URL,
+        )
+
+        d = result.to_dict()
+
+        assert d["base_url"] == TEST_SERVICES_ROOT_URL
+        assert len(d["services"]) == 2
+        assert d["services"][0]["name"] == "Census_2020"
+        assert d["services"][0]["type"] == "FeatureServer"
+        assert d["services"][0]["url"].endswith("Census_2020/FeatureServer")
+        assert d["folders"] == ["Archived"]
+        assert d["total_services"] == 2
+
+
+class TestServicesRootExtraction:
+    """Tests for services root extraction (full extraction mode)."""
+
+    def test_services_root_extracts_all_services(self, tmp_path: Path) -> None:
+        """Services root extraction should extract all services and layers."""
+        mock_services = [
+            ServiceInfo(name="Census_2020", service_type="FeatureServer"),
+        ]
+        mock_census_layers = ServiceDiscoveryResult(
+            layers=[
+                LayerInfo(id=0, name="Block_Groups", layer_type="Feature Layer"),
+            ],
+        )
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_services"
+            ) as mock_discover_services,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
+            ) as mock_discover_layers,
+            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
+        ):
+            mock_discover_services.return_value = (mock_services, [])
+            mock_discover_layers.return_value = mock_census_layers
+            mock_extract.return_value = (100, 2048, 2.5)
+
+            options = ExtractionOptions()
+            result = extract_arcgis_catalog(
+                url=TEST_SERVICES_ROOT_URL,
+                output_dir=tmp_path,
+                options=options,
+            )
+
+            # Should extract layers
+            assert mock_extract.call_count == 1
+            assert result.summary.succeeded == 1
+
+            # Should create .portolan directory with report
+            assert (tmp_path / ".portolan").exists()
+            assert (tmp_path / ".portolan" / "extraction-report.json").exists()
+
+            # Verify _extract_single_layer was called with correct path structure
+            # (service as subcatalog: census_2020/block_groups/block_groups.parquet)
+            call_args = mock_extract.call_args
+            output_path = call_args[0][2]  # Third positional arg is output_path
+            assert "census_2020" in str(output_path)
+            assert "block_groups" in str(output_path)
+
+    def test_services_root_applies_service_filter(self, tmp_path: Path) -> None:
+        """Services root should apply service filter."""
+        mock_services = [
+            ServiceInfo(name="Census_2020", service_type="FeatureServer"),
+            ServiceInfo(name="Transportation", service_type="MapServer"),
+        ]
+        mock_census_layers = ServiceDiscoveryResult(
+            layers=[
+                LayerInfo(id=0, name="Block_Groups", layer_type="Feature Layer"),
+            ],
+        )
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_services"
+            ) as mock_discover_services,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
+            ) as mock_discover_layers,
+            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
+        ):
+            mock_discover_services.return_value = (mock_services, [])
+            mock_discover_layers.return_value = mock_census_layers
+            mock_extract.return_value = (100, 2048, 2.5)
+
+            options = ExtractionOptions()
+            result = extract_arcgis_catalog(
+                url=TEST_SERVICES_ROOT_URL,
+                output_dir=tmp_path,
+                service_filter=["Census*"],
+                options=options,
+            )
+
+            # Should only probe Census service for layers
+            assert mock_discover_layers.call_count == 1
+
+            # Should only extract Census layers
+            assert result.summary.total_layers == 1

@@ -31,7 +31,9 @@ from typing import TYPE_CHECKING
 from portolan_cli.extract.arcgis.discovery import (
     LayerInfo,
     ServiceDiscoveryResult,
+    ServiceInfo,
     discover_layers,
+    discover_services,
 )
 from portolan_cli.extract.arcgis.filters import filter_layers
 from portolan_cli.extract.arcgis.metadata import extract_arcgis_metadata
@@ -45,10 +47,104 @@ from portolan_cli.extract.arcgis.report import (
 )
 from portolan_cli.extract.arcgis.resume import get_resume_state, should_process_layer
 from portolan_cli.extract.arcgis.retry import RetryConfig, retry_with_backoff
-from portolan_cli.extract.arcgis.url_parser import ArcGISURLType, parse_arcgis_url
+from portolan_cli.extract.arcgis.url_parser import (
+    ArcGISURLType,
+    ParsedArcGISURL,
+    parse_arcgis_url,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
+
+
+@dataclass
+class ServicesRootDiscoveryResult:
+    """Result of listing services from a services root URL.
+
+    Used for --list-services mode and JSON output.
+
+    Attributes:
+        services: List of discovered services.
+        folders: List of folder names in the services root.
+        base_url: The services root URL that was queried.
+    """
+
+    services: list[ServiceInfo]
+    folders: list[str]
+    base_url: str
+
+    def to_dict(self) -> dict[str, object]:
+        """Convert to JSON-serializable dict."""
+        return {
+            "base_url": self.base_url,
+            "services": [
+                {
+                    "name": s.name,
+                    "type": s.service_type,
+                    "url": s.get_url(self.base_url),
+                }
+                for s in self.services
+            ],
+            "folders": self.folders,
+            "total_services": len(self.services),
+        }
+
+
+def list_services(
+    url: str,
+    *,
+    service_types: Sequence[str] | None = None,
+    service_filter: list[str] | None = None,
+    timeout: float = 60.0,
+) -> ServicesRootDiscoveryResult:
+    """List services from an ArcGIS services root URL.
+
+    This is a lightweight discovery operation that does NOT probe each service
+    for layers. Use this for --list-services mode.
+
+    Args:
+        url: ArcGIS services root URL (must end with /rest/services).
+        service_types: Filter by service types (e.g., ["FeatureServer"]).
+        service_filter: Glob patterns to filter service names.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        ServicesRootDiscoveryResult with services and folders.
+
+    Raises:
+        ValueError: If URL is not a services root URL.
+    """
+    from portolan_cli.extract.arcgis.filters import filter_services
+
+    # Parse URL to verify it's a services root
+    parsed = parse_arcgis_url(url)
+    if parsed.url_type != ArcGISURLType.SERVICES_ROOT:
+        msg = f"URL is not a services root URL: {url}"
+        raise ValueError(msg)
+
+    # Discover services
+    services, folders = discover_services(
+        url,
+        service_types=list(service_types) if service_types else None,
+        return_folders=True,
+        timeout=timeout,
+    )
+
+    # Apply service filter if provided
+    if service_filter:
+        service_names = [s.name for s in services]
+        filtered_names = filter_services(
+            service_names,
+            include=service_filter,
+            case_sensitive=False,
+        )
+        services = [s for s in services if s.name in filtered_names]
+
+    return ServicesRootDiscoveryResult(
+        services=services,
+        folders=folders,
+        base_url=parsed.base_url,
+    )
 
 
 def _emit_progress(
@@ -183,6 +279,8 @@ def extract_arcgis_catalog(
     *,
     layer_filter: list[str] | None = None,
     layer_exclude: list[str] | None = None,
+    service_filter: list[str] | None = None,
+    service_exclude: list[str] | None = None,
     options: ExtractionOptions | None = None,
     on_progress: Callable[[ExtractionProgress], None] | None = None,
 ) -> ExtractionReport:
@@ -190,7 +288,7 @@ def extract_arcgis_catalog(
 
     This is the main orchestration function that:
     1. Parses the URL to determine service type
-    2. Discovers available layers
+    2. Discovers available layers (or services for services root)
     3. Applies filters
     4. Handles resume logic
     5. Extracts each layer with retry
@@ -201,6 +299,8 @@ def extract_arcgis_catalog(
         output_dir: Directory to write extracted data
         layer_filter: Glob patterns to include layers (if None, include all)
         layer_exclude: Glob patterns to exclude layers
+        service_filter: Glob patterns to include services (for services root URLs)
+        service_exclude: Glob patterns to exclude services (for services root URLs)
         options: Extraction options (defaults to ExtractionOptions())
         on_progress: Callback for progress updates
 
@@ -216,12 +316,22 @@ def extract_arcgis_catalog(
 
     # Parse URL
     parsed = parse_arcgis_url(url)
-    if parsed.url_type == ArcGISURLType.SERVICES_ROOT:
-        msg = (
-            "Services root URLs not yet supported. Please provide a FeatureServer or MapServer URL."
-        )
-        raise NotImplementedError(msg)
 
+    # Handle services root URLs differently
+    if parsed.url_type == ArcGISURLType.SERVICES_ROOT:
+        return _extract_services_root(
+            url=url,
+            parsed=parsed,
+            output_dir=output_dir,
+            layer_filter=layer_filter,
+            layer_exclude=layer_exclude,
+            service_filter=service_filter,
+            service_exclude=service_exclude,
+            options=options,
+            on_progress=on_progress,
+        )
+
+    # Single service extraction (FeatureServer or MapServer)
     # Discover layers
     discovery_result = discover_layers(url, timeout=options.timeout)
 
@@ -355,6 +465,224 @@ def extract_arcgis_catalog(
         discovery_result=discovery_result,
         layer_results=layer_results,
     )
+    save_report(report, report_path)
+
+    return report
+
+
+def _discover_and_filter_services(
+    url: str,
+    service_filter: list[str] | None,
+    service_exclude: list[str] | None,
+    timeout: float,
+) -> list[ServiceInfo]:
+    """Discover services and apply filters."""
+    from portolan_cli.extract.arcgis.filters import filter_services
+
+    services, _folders = discover_services(
+        url,
+        service_types=["FeatureServer", "MapServer"],
+        return_folders=True,
+        timeout=timeout,
+    )
+
+    if service_filter or service_exclude:
+        service_names = [s.name for s in services]
+        filtered_names = filter_services(
+            service_names,
+            include=service_filter,
+            exclude=service_exclude,
+            case_sensitive=False,
+        )
+        services = [s for s in services if s.name in filtered_names]
+
+    return services
+
+
+def _collect_layers_from_services(
+    services: list[ServiceInfo],
+    base_url: str,
+    timeout: float,
+) -> tuple[list[LayerInfo], dict[int, ServiceInfo]]:
+    """Collect all layers from multiple services."""
+    all_layers: list[LayerInfo] = []
+    service_for_layer: dict[int, ServiceInfo] = {}
+
+    for service in services:
+        service_url = service.get_url(base_url)
+        try:
+            service_discovery = discover_layers(service_url, timeout=timeout)
+            for layer in service_discovery.layers:
+                layer_idx = len(all_layers)
+                all_layers.append(layer)
+                service_for_layer[layer_idx] = service
+        except Exception:
+            continue  # Skip services that fail to discover
+
+    return all_layers, service_for_layer
+
+
+def _filter_layers_by_index(
+    all_layers: list[LayerInfo],
+    layer_filter: list[str] | None,
+    layer_exclude: list[str] | None,
+) -> list[tuple[int, LayerInfo]]:
+    """Filter layers and return (index, layer) tuples."""
+    if not layer_filter and not layer_exclude:
+        return list(enumerate(all_layers))
+
+    layers_dicts: list[dict[str, int | str]] = [
+        {"id": i, "name": layer.name} for i, layer in enumerate(all_layers)
+    ]
+    filtered_dicts = filter_layers(
+        layers_dicts,
+        include=layer_filter,
+        exclude=layer_exclude,
+    )
+    filtered_indices = {d["id"] for d in filtered_dicts}
+    return [(i, layer) for i, layer in enumerate(all_layers) if i in filtered_indices]
+
+
+def _extract_services_root(
+    url: str,
+    parsed: ParsedArcGISURL,
+    output_dir: Path,
+    *,
+    layer_filter: list[str] | None = None,
+    layer_exclude: list[str] | None = None,
+    service_filter: list[str] | None = None,
+    service_exclude: list[str] | None = None,
+    options: ExtractionOptions | None = None,
+    on_progress: Callable[[ExtractionProgress], None] | None = None,
+) -> ExtractionReport:
+    """Extract from a services root URL.
+
+    Services root URLs create a nested catalog structure:
+    - Root = Catalog
+    - Services = Sub-catalogs
+    - Layers = Collections
+    """
+    if options is None:
+        options = ExtractionOptions()
+
+    # Discover and filter services
+    services = _discover_and_filter_services(url, service_filter, service_exclude, options.timeout)
+
+    # Collect layers from all services
+    all_layers, service_for_layer = _collect_layers_from_services(
+        services, parsed.base_url, options.timeout
+    )
+
+    # Apply layer filters
+    filtered_layers = _filter_layers_by_index(all_layers, layer_filter, layer_exclude)
+
+    # Dry run - just return what would be extracted
+    if options.dry_run:
+        dry_run_results = [
+            LayerResult(
+                id=layer.id,
+                name=layer.name,
+                status="pending",
+                features=0,
+                size_bytes=0,
+                duration_seconds=0.0,
+                output_path="",
+                warnings=[],
+                error=None,
+                attempts=0,
+            )
+            for _idx, layer in filtered_layers
+        ]
+        # Create a minimal discovery result for the report
+        combined_discovery = ServiceDiscoveryResult(
+            layers=[layer for _, layer in filtered_layers],
+        )
+        return _build_report(
+            url=url,
+            discovery_result=combined_discovery,
+            layer_results=dry_run_results,
+        )
+
+    # Create output directory structure
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / ".portolan").mkdir(exist_ok=True)
+
+    # Extract each layer
+    layer_results: list[LayerResult] = []
+    retry_config = RetryConfig(max_attempts=options.retries)
+    total = len(filtered_layers)
+
+    for progress_idx, (layer_idx, layer) in enumerate(filtered_layers):
+        service = service_for_layer[layer_idx]
+        service_url = service.get_url(parsed.base_url)
+        service_slug = _slugify(service.name)
+        layer_slug = _slugify(layer.name)
+
+        _emit_progress(on_progress, progress_idx, total, layer.name, "starting")
+
+        # Build output path: service_name/layer_name/layer_name.parquet
+        # Service as subcatalog, layer as collection
+        service_dir = output_dir / service_slug
+        collection_dir = service_dir / layer_slug
+        output_path = collection_dir / f"{layer_slug}.parquet"
+
+        # Extract with retry
+        _emit_progress(on_progress, progress_idx, total, layer.name, "extracting")
+
+        result = retry_with_backoff(
+            _extract_single_layer,
+            retry_config,
+            service_url,
+            layer,
+            output_path,
+            options,
+            on_retry=lambda attempt, err: None,  # Silent retries
+        )
+
+        if result.success:
+            features, size_bytes, duration = result.value  # type: ignore[misc]
+            layer_results.append(
+                LayerResult(
+                    id=layer.id,
+                    name=layer.name,
+                    status="success",
+                    features=features,
+                    size_bytes=size_bytes,
+                    duration_seconds=duration,
+                    output_path=str(output_path.relative_to(output_dir)),
+                    warnings=[],
+                    error=None,
+                    attempts=result.attempts,
+                )
+            )
+            _emit_progress(on_progress, progress_idx, total, layer.name, "success")
+        else:
+            layer_results.append(
+                LayerResult(
+                    id=layer.id,
+                    name=layer.name,
+                    status="failed",
+                    features=0,
+                    size_bytes=0,
+                    duration_seconds=0.0,
+                    output_path="",
+                    warnings=[],
+                    error=str(result.error) if result.error else "Unknown error",
+                    attempts=result.attempts,
+                )
+            )
+            _emit_progress(on_progress, progress_idx, total, layer.name, "failed")
+
+    # Build and save report
+    combined_discovery = ServiceDiscoveryResult(
+        layers=[layer for _, layer in filtered_layers],
+    )
+    report = _build_report(
+        url=url,
+        discovery_result=combined_discovery,
+        layer_results=layer_results,
+    )
+    report_path = output_dir / ".portolan" / "extraction-report.json"
     save_report(report, report_path)
 
     return report
