@@ -115,24 +115,24 @@ portolan extract arcgis URL --auto
 
 ## Output Structure
 
-Extracted data follows the Portolan catalog structure:
+Extracted data follows the Portolan catalog structure with collection-level assets:
 
 ```
 output/
 ├── .portolan/
 │   └── extraction-report.json    # Extraction metadata
 ├── census_block_groups/
-│   └── census_block_groups/
-│       └── census_block_groups.parquet
+│   ├── collection.json
+│   └── census_block_groups.parquet
 ├── census_tracts/
-│   └── census_tracts/
-│       └── census_tracts.parquet
+│   ├── collection.json
+│   └── census_tracts.parquet
 └── boundaries/
-    └── boundaries/
-        └── boundaries.parquet
+    ├── collection.json
+    └── boundaries.parquet
 ```
 
-Each layer becomes a collection, and the parquet file is the item's asset.
+Each layer becomes a collection with the parquet file as a collection-level asset (per [ADR-0031](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0031-collection-level-assets-for-vector-data.md)).
 
 ## Extraction Report
 
@@ -162,7 +162,7 @@ Example:
       "name": "Census_Block_Groups",
       "status": "success",
       "features": 50000,
-      "output_path": "census_block_groups/census_block_groups/census_block_groups.parquet"
+      "output_path": "census_block_groups/census_block_groups.parquet"
     }
   ]
 }

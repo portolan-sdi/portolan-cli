@@ -34,9 +34,22 @@ The command accepts two types of URLs, with behavior determined implicitly:
 | `*/FeatureServer` or `*/MapServer` | FeatureServer = Catalog, Layers = Collections |
 | `*/rest/services` (root) | Root = Catalog, Services = Subcatalogs, Layers = Collections |
 
+### ArcGIS ↔ STAC Mapping
+
+| ArcGIS Concept | STAC Concept | Notes |
+|----------------|--------------|-------|
+| Services root (`/rest/services`) | Root Catalog | Entry point |
+| Folder (e.g., "Demographics") | Sub-catalog | Preserves organizational hierarchy |
+| FeatureServer/MapServer | Sub-catalog (if multi-layer) or Collection (if single-layer) | One service = one logical grouping |
+| Layer | Collection with collection-level asset | Per [ADR-0031](../adr/0031-collection-level-assets-for-vector-data.md) |
+| Features → GeoParquet | Collection-level asset | No nested items for single vector files |
+
 ### Output Structure
 
 **Single Service (FeatureServer URL):**
+
+Each layer becomes a collection with a **collection-level asset** (no nested items per [ADR-0031](../adr/0031-collection-level-assets-for-vector-data.md)):
+
 ```
 my-catalog/
 ├── catalog.json
@@ -44,17 +57,22 @@ my-catalog/
 │   ├── config.yaml
 │   ├── metadata.yaml          # source_url filled, required fields empty
 │   └── extraction-report.json # full provenance
-├── layer_name_0/
+├── census_tracts/
 │   ├── collection.json
-│   ├── layer_name_0/
-│   │   ├── item.json
-│   │   └── layer_name_0.parquet
-│   └── versions.json
-└── layer_name_1/
-    └── ...
+│   ├── census_tracts.parquet  # Collection-level asset (ADR-0031)
+│   └── .portolan/
+│       └── versions.json
+└── block_groups/
+    ├── collection.json
+    ├── block_groups.parquet
+    └── .portolan/
+        └── versions.json
 ```
 
 **Services Root (rest/services URL):**
+
+ArcGIS folders become sub-catalogs, services become sub-catalogs (if multi-layer) or collections, layers become collections with collection-level assets:
+
 ```
 my-catalog/
 ├── catalog.json
@@ -62,13 +80,25 @@ my-catalog/
 │   ├── config.yaml
 │   ├── metadata.yaml
 │   └── extraction-report.json
-├── Service_A/                   # FeatureServer → Subcatalog
+├── Demographics/                    # ArcGIS folder → Sub-catalog
 │   ├── catalog.json
-│   ├── layer_0/                 # Layer → Collection
-│   │   └── ...
-│   └── layer_1/
-└── Service_B/
-    └── ...
+│   ├── census_tracts/               # Layer → Collection
+│   │   ├── collection.json
+│   │   ├── census_tracts.parquet    # Collection-level asset
+│   │   └── .portolan/
+│   │       └── versions.json
+│   └── income_data/
+│       ├── collection.json
+│       ├── income_data.parquet
+│       └── .portolan/
+│           └── versions.json
+└── Transportation/                  # Another ArcGIS folder → Sub-catalog
+    ├── catalog.json
+    └── roads/
+        ├── collection.json
+        ├── roads.parquet
+        └── .portolan/
+            └── versions.json
 ```
 
 ### Parallelism Model
@@ -100,7 +130,7 @@ my-catalog/
 7. For each layer:
    a. Fetch layer metadata (get_layer_info)
    b. Extract to parquet via gpio (with retries)
-   c. Generate STAC item/collection
+   c. Generate STAC collection with collection-level asset (ADR-0031)
    d. Record result in extraction report
 8. Generate root catalog.json
 9. Write metadata.yaml with all extracted metadata
@@ -181,7 +211,7 @@ Written to `.portolan/extraction-report.json`:
       "features": 1336,
       "size_bytes": 1949696,
       "duration_seconds": 12.4,
-      "output_path": "census_block_groups/census_block_groups/census_block_groups.parquet",
+      "output_path": "census_block_groups/census_block_groups.parquet",
       "warnings": []
     },
     {
@@ -356,6 +386,8 @@ If no extraction report exists, `--resume` is a no-op (proceeds normally).
 - [Issue #6: Full ArcGIS Server → Portolan conversion](https://github.com/portolan-sdi/portolan-cli/issues/6)
 - [gpio extract arcgis documentation](https://geoparquet.io/cli/extract/?h=arcgis#extract-arcgis)
 - [Den Haag roundtrip workflow](../../../portolan-test-data/den-haag-roundtrip/ROUNDTRIP-WORKFLOW.md)
+- [ADR-0031: Collection-level assets for vector data](../adr/0031-collection-level-assets-for-vector-data.md)
+- [ADR-0032: Nested catalogs with flat collections](../adr/0032-nested-catalogs-with-flat-collections.md)
 - [ADR-0038: metadata.yaml enrichment](../adr/0038-metadata-yaml-enrichment.md)
 - [ADR-0030: Agent-native CLI design](../adr/0030-agent-native-cli-design.md)
 - [geoparquet-io #318: Unified auth for downstream tools](https://github.com/geoparquet/geoparquet-io/issues/318)

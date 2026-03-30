@@ -297,10 +297,10 @@ def extract_arcgis_catalog(
                 _emit_progress(on_progress, i, total, layer.name, "skipped")
                 continue
 
-        # Build output path: collection_name/item_name/item_name.parquet
+        # Build output path: collection_name/collection_name.parquet
+        # Collection-level asset per ADR-0031 (no nested items for single vector files)
         collection_dir = output_dir / layer_slug
-        item_dir = collection_dir / layer_slug
-        output_path = item_dir / f"{layer_slug}.parquet"
+        output_path = collection_dir / f"{layer_slug}.parquet"
 
         # Extract with retry
         _emit_progress(on_progress, i, total, layer.name, "extracting")
