@@ -156,6 +156,10 @@ class TestMultiLayerConversion:
         assert actual_names == expected_names
 
     @pytest.mark.unit
+    @pytest.mark.skipif(
+        sys.platform == "darwin",
+        reason="Flaky segfault in geoparquet-io on macOS, see geoparquet/geoparquet-io#322",
+    )
     def test_convert_multilayer_validates_output(self, tmp_path: Path) -> None:
         """Each converted layer produces valid GeoParquet."""
         from portolan_cli.convert import convert_multilayer_file
