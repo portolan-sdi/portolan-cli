@@ -121,15 +121,46 @@ class UploadMetrics:
     """Tracks upload performance metrics for summary display.
 
     Thread-safe accumulator for upload statistics.
+
+    Attributes:
+        total_bytes: Sum of all uploaded file sizes.
+        total_duration: Sum of individual task durations (for per-file stats only).
+        file_count: Number of files uploaded.
+        elapsed_seconds: Wall-clock time for the batch (used for average_speed).
     """
 
     total_bytes: int = 0
     total_duration: float = 0.0
     file_count: int = 0
+    elapsed_seconds: float = 0.0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _start_time: float | None = field(default=None, repr=False)
+
+    def start_timer(self) -> None:
+        """Start the wall-clock timer for this batch."""
+        self._start_time = time.perf_counter()
+
+    def stop_timer(self) -> None:
+        """Stop the wall-clock timer and record elapsed time."""
+        if self._start_time is not None:
+            self.elapsed_seconds = time.perf_counter() - self._start_time
+            self._start_time = None
+
+    def record_elapsed(self, elapsed: float) -> None:
+        """Record wall-clock elapsed time directly (thread-safe).
+
+        Args:
+            elapsed: Elapsed wall-clock time in seconds.
+        """
+        with self._lock:
+            self.elapsed_seconds += elapsed
 
     def record(self, size_bytes: int, duration_seconds: float) -> None:
-        """Record metrics for a single upload (thread-safe)."""
+        """Record metrics for a single upload (thread-safe).
+
+        Note: duration_seconds is per-file timing, not used for average_speed
+        when elapsed_seconds is available (parallel uploads overlap).
+        """
         with self._lock:
             self.total_bytes += size_bytes
             self.total_duration += duration_seconds
@@ -137,7 +168,15 @@ class UploadMetrics:
 
     @property
     def average_speed(self) -> float:
-        """Average upload speed in bytes per second."""
+        """Average upload speed in bytes per second.
+
+        Uses wall-clock elapsed_seconds when available (correct for parallel uploads),
+        falls back to total_duration only if elapsed_seconds is not set.
+        """
+        # Prefer wall-clock time for accurate speed calculation
+        if self.elapsed_seconds > 0:
+            return self.total_bytes / self.elapsed_seconds
+        # Fallback to total_duration (sum of individual task times)
         if self.total_duration == 0:
             return 0.0
         return self.total_bytes / self.total_duration
@@ -148,6 +187,7 @@ class UploadMetrics:
         Used to aggregate metrics across multiple collections.
         """
         with self._lock:
+            self.elapsed_seconds += other.elapsed_seconds
             self.total_bytes += other.total_bytes
             self.total_duration += other.total_duration
             self.file_count += other.file_count
@@ -480,6 +520,7 @@ def _upload_assets(
     workers: int | None = None,
     verbose: bool = False,
     json_mode: bool = False,
+    suppress_progress: bool = False,
 ) -> tuple[int, list[str], list[str], UploadMetrics]:
     """Upload asset files to object storage with parallel workers.
 
@@ -493,6 +534,8 @@ def _upload_assets(
         verbose: If True, show per-file upload details. Default quiet mode
             only shows failures.
         json_mode: If True, suppress progress bar (for --json output).
+        suppress_progress: If True, suppress progress bar (for nested calls
+            where parent owns the progress surface).
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys, metrics).
@@ -574,11 +617,11 @@ def _upload_assets(
                     speed_str = format_speed(speed)
                     detail(f"[{completed}/{total_count}] {rel_path} ({size_str}, {speed_str})")
 
-    # Use progress bar for live feedback (unless json_mode)
+    # Use progress bar for live feedback (unless json_mode or suppress_progress)
     with UploadProgressReporter(
         total_files=total,
         total_bytes=total_bytes,
-        json_mode=json_mode,
+        json_mode=json_mode or suppress_progress,
     ) as reporter:
         progress_reporter = reporter
         execute_parallel(
@@ -588,6 +631,8 @@ def _upload_assets(
             on_complete=on_complete,
             verbose=False,  # Progress bar handles display, not execute_parallel
         )
+        # Record wall-clock elapsed time for accurate average_speed calculation
+        metrics.record_elapsed(reporter.elapsed_seconds)
 
     return len(uploaded_keys), errors_list, uploaded_keys, metrics
 
@@ -950,6 +995,7 @@ def push(
     workers: int | None = None,
     verbose: bool = False,
     json_mode: bool = False,
+    suppress_progress: bool = False,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage.
 
@@ -973,6 +1019,8 @@ def push(
         verbose: If True, show per-file upload details with size and speed.
             Default is quiet mode (only shows failures).
         json_mode: If True, suppress progress bar (for --json output).
+        suppress_progress: If True, suppress progress bar (for nested calls
+            where parent owns the progress surface, e.g., catalog-wide push).
 
     Returns:
         PushResult with upload statistics.
@@ -1051,6 +1099,7 @@ def push(
         workers=workers,
         verbose=verbose,
         json_mode=json_mode,
+        suppress_progress=suppress_progress,
     )
 
     if upload_errors:
@@ -1317,6 +1366,8 @@ def push_all_collections(
         # Use workers=1 here since collection-level parallelism is already handled
         # by execute_parallel. File-level parallelism is controlled by the workers
         # param when pushing a single collection directly via CLI.
+        # suppress_progress=True prevents nested progress bars from interfering
+        # with the catalog-level progress output.
         return push(
             catalog_root=catalog_root,
             collection=collection,
@@ -1328,6 +1379,7 @@ def push_all_collections(
             workers=1,
             verbose=verbose,
             json_mode=json_mode,
+            suppress_progress=True,  # Catalog-level owns the progress surface
         )
 
     def on_complete(

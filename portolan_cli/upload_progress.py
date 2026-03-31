@@ -76,7 +76,7 @@ class UploadProgressReporter:
         """Enter the context and start progress display."""
         self._start_time = time.perf_counter()
 
-        if not self.json_mode and sys.stderr.isatty():
+        if not self.json_mode and sys.stdout.isatty():
             try:
                 from rich.console import Console
                 from rich.progress import (
