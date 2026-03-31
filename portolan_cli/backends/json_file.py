@@ -3,20 +3,20 @@
 This is the MVP implementation of VersioningBackend that stores version history
 in a JSON file. It assumes single-writer access (see ADR-0015).
 
-For multi-user concurrent access, use the portolake plugin with IcebergBackend.
+For multi-user concurrent access, use an enterprise plugin backend.
 
 Implementation Status (MINOR #9, #10):
     - get_current_version: Implemented
     - list_versions: Implemented
     - publish: Implemented (with schema and message support per ADR-0005)
     - check_drift: Stub (deferred to sync implementation)
-    - rollback: Deferred to portolake plugin for enterprise use
-    - prune: Deferred to portolake plugin for enterprise use
+    - rollback: Deferred to enterprise plugin backends
+    - prune: Deferred to enterprise plugin backends
 
 Deferred Features:
     rollback and prune are intentionally not implemented in the MVP file backend.
     These operations require careful handling of remote state and are better suited
-    for the enterprise portolake plugin with Iceberg's transactional guarantees.
+    for enterprise plugin backends with transactional guarantees.
 """
 
 from __future__ import annotations
@@ -49,10 +49,10 @@ class JsonFileBackend:
         - Single-writer access only (no concurrent safety)
         - No distributed locking
         - Conflict detection via drift checking, not prevention
-        - rollback and prune are deferred to enterprise portolake plugin
+        - rollback and prune are deferred to enterprise plugin backends
 
     For enterprise deployments requiring concurrent access, ACID transactions,
-    or distributed locking, use the portolake plugin with IcebergBackend.
+    or distributed locking, use an enterprise plugin backend.
     """
 
     def __init__(self, catalog_root: Path | None = None) -> None:
@@ -231,7 +231,7 @@ class JsonFileBackend:
     def rollback(self, collection: str, target_version: str) -> Version:
         """Rollback to a previous version.
 
-        Note: This feature is deferred to the enterprise portolake plugin.
+        Note: This feature is deferred to enterprise plugin backends.
         The MVP file backend does not implement rollback because it requires
         careful handling of remote state and transactional guarantees.
 
@@ -243,17 +243,17 @@ class JsonFileBackend:
             The newly created Version object (representing the rollback).
 
         Raises:
-            NotImplementedError: Rollback is deferred to portolake plugin.
+            NotImplementedError: Rollback is deferred to enterprise plugin backends.
         """
         raise NotImplementedError(
-            "Rollback is deferred to the portolake plugin for enterprise use. "
+            "Rollback is deferred to enterprise plugin backends. "
             "See ADR-0015 for details on the two-tier versioning architecture."
         )
 
     def prune(self, collection: str, keep: int, dry_run: bool) -> list[Version]:
         """Remove old versions, keeping the N most recent.
 
-        Note: This feature is deferred to the enterprise portolake plugin.
+        Note: This feature is deferred to enterprise plugin backends.
         The MVP file backend does not implement prune because it requires
         careful handling of remote state and transactional guarantees.
 
@@ -266,10 +266,10 @@ class JsonFileBackend:
             List of Version objects that were (or would be) deleted.
 
         Raises:
-            NotImplementedError: Prune is deferred to portolake plugin.
+            NotImplementedError: Prune is deferred to enterprise plugin backends.
         """
         raise NotImplementedError(
-            "Prune is deferred to the portolake plugin for enterprise use. "
+            "Prune is deferred to enterprise plugin backends. "
             "See ADR-0015 for details on the two-tier versioning architecture."
         )
 

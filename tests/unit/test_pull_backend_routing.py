@@ -1,7 +1,7 @@
 """Tests for pull command routing with non-file backends.
 
 Verifies that the CLI routes to backend.pull() when the backend
-provides a pull method (generic protocol dispatch, not iceberg-specific).
+provides a pull method (generic protocol dispatch).
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ def cli_runner() -> CliRunner:
 
 
 @pytest.fixture
-def catalog_with_iceberg_and_remote(tmp_path: Path) -> Path:
-    """Create a catalog with backend=iceberg and remote configured."""
+def catalog_with_backend_and_remote(tmp_path: Path) -> Path:
+    """Create a catalog with a non-file backend and remote configured."""
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
     (catalog_root / "catalog.json").write_text('{"type": "Catalog"}')
@@ -34,7 +34,7 @@ def catalog_with_iceberg_and_remote(tmp_path: Path) -> Path:
 
 
 @pytest.mark.unit
-def test_pull_routes_to_backend_pull_method(cli_runner, catalog_with_iceberg_and_remote):
+def test_pull_routes_to_backend_pull_method(cli_runner, catalog_with_backend_and_remote):
     """Pull with non-file backend should call backend.pull() if available."""
     from portolan_cli.cli import cli
 
@@ -57,7 +57,7 @@ def test_pull_routes_to_backend_pull_method(cli_runner, catalog_with_iceberg_and
                 "--collection",
                 "boundaries",
                 "--catalog",
-                str(catalog_with_iceberg_and_remote),
+                str(catalog_with_backend_and_remote),
             ],
         )
 
