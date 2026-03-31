@@ -142,6 +142,9 @@ class TestPushAllCollections:
             profile=None,
             region=None,
             workers=1,
+            verbose=False,
+            json_mode=False,
+            suppress_progress=True,
         )
 
     @patch("portolan_cli.push.push")
@@ -328,4 +331,7 @@ class TestPushAllCollections:
             profile=None,
             region=None,
             workers=1,
+            verbose=False,
+            json_mode=False,
+            suppress_progress=True,
         )

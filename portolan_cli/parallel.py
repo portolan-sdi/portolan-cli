@@ -89,6 +89,7 @@ def execute_parallel(
     *,
     workers: int | None = None,
     on_complete: Callable[[str, T | None, str | None, int, int], None] | None = None,
+    verbose: bool = True,
 ) -> list[ExecutionResult[T]]:
     """Execute an operation on multiple items with configurable parallelism.
 
@@ -102,6 +103,8 @@ def execute_parallel(
         workers: Number of parallel workers. None = auto-detect, 1 = sequential.
         on_complete: Optional callback called after each item completes.
             Signature: (item, result, error, completed_count, total)
+        verbose: If True (default), print progress messages. If False, only
+            failures are reported via on_complete callback.
 
     Returns:
         List of ExecutionResult objects, one per item.
@@ -131,7 +134,8 @@ def execute_parallel(
     if workers == 1:
         # Sequential execution (preserves order)
         for i, item in enumerate(items, 1):
-            info(f"-> Processing {i}/{total}: {item}")
+            if verbose:
+                info(f"-> Processing {i}/{total}: {item}")
             exec_result = execute_one(item)
             completed = progress.increment()
             if on_complete:
@@ -139,7 +143,8 @@ def execute_parallel(
             results.append(exec_result)
     else:
         # Parallel execution with ThreadPoolExecutor
-        info(f"Using {workers} parallel worker(s)")
+        if verbose:
+            info(f"Using {workers} parallel worker(s)")
         with ThreadPoolExecutor(max_workers=workers) as executor:
             # Submit all items
             futures = {executor.submit(execute_one, item): item for item in items}
@@ -148,7 +153,8 @@ def execute_parallel(
             for future in as_completed(futures):
                 exec_result = future.result()
                 completed = progress.increment()
-                detail(f"[{completed}/{total}] Completed: {exec_result.item}")
+                if verbose:
+                    detail(f"[{completed}/{total}] Completed: {exec_result.item}")
                 if on_complete:
                     on_complete(
                         exec_result.item,

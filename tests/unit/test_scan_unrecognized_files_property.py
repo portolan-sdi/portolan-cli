@@ -38,6 +38,10 @@ class TestUnrecognizedFileClassification:
         Tests that the classification system is robust to arbitrary extensions.
         """
         # Skip common extensions that might be generated
+        # These are either known formats or known non-data files
+        # Import GEO_ASSET_EXTENSIONS to ensure we skip all valid geo formats
+        from portolan_cli.scan_classify import GEO_ASSET_EXTENSIONS
+
         skip_exts = {
             ".md",
             ".txt",
@@ -47,10 +51,10 @@ class TestUnrecognizedFileClassification:
             ".html",
             ".png",
             ".jpg",
-            ".tif",
-            ".gpkg",
             ".py",
             ".exe",
+            # Include all GEO_ASSET_EXTENSIONS to avoid false positives
+            *GEO_ASSET_EXTENSIONS,
         }
         if ext in skip_exts:
             return

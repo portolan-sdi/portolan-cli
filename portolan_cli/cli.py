@@ -2752,9 +2752,16 @@ def rm_cmd(
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show per-file upload details with size and speed.",
+)
 def push(
     ctx: click.Context,
     json_output: bool,
+    verbose: bool,
     destination: str | None,
     collection: str | None,
     force: bool,
@@ -2833,6 +2840,8 @@ def push(
                 profile=resolved_profile,
                 region=resolved_region,
                 workers=workers,
+                verbose=verbose,
+                json_mode=use_json,
             )
 
             if use_json:
@@ -2876,6 +2885,8 @@ def push(
             profile=resolved_profile,
             region=resolved_region,
             workers=workers,
+            verbose=verbose,
+            json_mode=use_json,
         )
 
         if use_json:
