@@ -25,7 +25,7 @@ def catalog_with_versions(tmp_path: Path) -> Path:
     """Create a catalog with versions.json for integration tests.
 
     Per ADR-0023: STAC files (catalog.json, collection.json, versions.json)
-    live at root level; config.yaml and state.json go in .portolan/.
+    live at root level; config.yaml goes in .portolan/.
     """
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()

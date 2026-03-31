@@ -360,11 +360,10 @@ def init_catalog(
         warnings.append("Missing title (recommended for discoverability)")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # WRITE ORDER: config.yaml FIRST as sentinel (per issue #290)
+    # WRITE ORDER: config.yaml LAST for atomicity (per issue #290)
     # detect_state() checks for config.yaml to determine MANAGED state.
-    # Writing config.yaml first means init is atomic - once it exists, catalog
-    # is MANAGED. However, we still write catalog.json last to ensure a valid
-    # STAC catalog is in place before the directory is considered complete.
+    # Writing config.yaml LAST ensures that if init fails partway through,
+    # the directory stays in FRESH state and can be safely retried.
     # ─────────────────────────────────────────────────────────────────────────
 
     # Step 1: Create .portolan directory
@@ -374,17 +373,11 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot create .portolan directory: {e}") from e
 
-    # Step 2: config.yaml - sentinel file per issue #290 (sufficient for MANAGED state)
-    # Also serves as user configuration file for settings like remote, aws_profile, etc.
-    try:
-        (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
-    except OSError as e:
-        raise CatalogInitError(f"Cannot write config.yaml: {e}") from e
-
-    # Step 3: versions.json - minimal catalog-level versioning
+    # Step 2: versions.json - minimal catalog-level versioning
     # Per ADR-0023: versions.json is consumer-visible metadata and must live at
     # the catalog root alongside STAC files, NOT inside .portolan/ (which is
     # reserved for internal tooling state only).
+    # Written early so failure here leaves directory in FRESH state.
     now = datetime.now(timezone.utc)
     versions_data = {
         "schema_version": "1.0.0",
@@ -397,7 +390,7 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write versions.json: {e}") from e
 
-    # Step 4: Create STAC catalog using pystac
+    # Step 3: Create STAC catalog using pystac
     catalog = pystac.Catalog(
         id=catalog_id,
         description=description,
@@ -411,7 +404,7 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write catalog.json: {e}") from e
 
-    # Step 5: Add self link (STAC best practice)
+    # Step 4: Add self link (STAC best practice)
     # pystac SELF_CONTAINED doesn't add self link, so we add it manually
     try:
         data = json.loads(catalog_file.read_text())
@@ -429,8 +422,14 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot update catalog.json with self link: {e}") from e
 
-    # Note: state.json creation removed per issue #290
-    # config.yaml alone is sufficient for MANAGED state detection
+    # Step 5: config.yaml - sentinel file per issue #290 (sufficient for MANAGED state)
+    # Written LAST for atomicity: if any previous step fails, directory stays FRESH
+    # and init can be safely retried. Also serves as user configuration file for
+    # settings like remote, aws_profile, etc.
+    try:
+        (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write config.yaml: {e}") from e
 
     return catalog_file, warnings
 

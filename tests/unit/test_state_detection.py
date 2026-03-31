@@ -88,7 +88,7 @@ class TestDetectStateFresh:
     def test_portolan_with_only_state_is_fresh(self, tmp_path: Path) -> None:
         """Partial .portolan (only state.json, no config.yaml) is FRESH.
 
-        Both config.yaml AND state.json are required for MANAGED state.
+        Only config.yaml is required for MANAGED state (per issue #290).
         """
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
