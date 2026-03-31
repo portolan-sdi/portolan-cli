@@ -11,6 +11,7 @@ These tests verify:
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -170,6 +171,10 @@ class TestMultiLayerConversion:
             assert result.output.suffix == ".parquet"
 
     @pytest.mark.unit
+    @pytest.mark.skipif(
+        sys.platform == "darwin",
+        reason="Flaky SIGABRT in geoparquet-io on macOS ARM64, see geoparquet/geoparquet-io#322",
+    )
     def test_convert_multilayer_preserves_layer_name(self, tmp_path: Path) -> None:
         """Each result includes the original layer name."""
         from portolan_cli.convert import convert_multilayer_file
