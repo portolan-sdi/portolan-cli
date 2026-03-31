@@ -37,9 +37,15 @@ from portolan_cli.constants import (
     SIDECAR_PATTERNS,
     TABULAR_EXTENSIONS,
 )
+from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.crs import transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError
-from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
+from portolan_cli.formats import (
+    FormatType,
+    detect_format,
+    is_cloud_optimized_geotiff,
+    is_multilayer,
+)
 from portolan_cli.metadata import (
     extract_band_statistics,
     extract_cog_metadata,
@@ -2169,11 +2175,11 @@ def add_files(
     def prepare_single_file(
         file_path: Path, coll_id: str
     ) -> tuple[
-        PreparedDataset | None,
-        AddFailure | None,
+        list[PreparedDataset],
+        list[AddFailure],
         tuple[Path, Path, str] | None,  # deferred non-geo
     ]:
-        """Prepare a single file. Returns (prepared, failure, deferred).
+        """Prepare a single file. Returns (prepared_list, failures, deferred).
 
         This runs prepare_dataset() which does GDAL work but does NOT write
         versions.json or collection.json. Those writes are batched in finalize.
@@ -2181,7 +2187,52 @@ def add_files(
         Per Issue #281: This is the parallelizable phase. Each item writes to
         its own item.json (no conflict). versions.json and collection.json
         are written once at the end via finalize_datasets().
+
+        Per Issue #265: Multi-layer files (GeoPackage, FileGDB) are split into
+        separate parquet files, one per layer.
         """
+        prepared_list: list[PreparedDataset] = []
+        failure_list: list[AddFailure] = []
+
+        # Check for multi-layer files (GeoPackage, FileGDB) - Issue #265
+        if is_multilayer(file_path):
+            try:
+                # Convert all layers to separate parquet files
+                results = convert_multilayer_file(file_path, file_path.parent)
+
+                for result in results:
+                    if result.success and result.output:
+                        # Prepare each converted layer
+                        try:
+                            prepared = prepare_dataset(
+                                path=result.output,
+                                catalog_root=catalog_root,
+                                collection_id=coll_id,
+                                item_id=None,  # Derive from output filename
+                                item_datetime=item_datetime,
+                            )
+                            prepared_list.append(prepared)
+                        except Exception as err:
+                            failure_list.append(
+                                AddFailure(
+                                    path=result.output,
+                                    error=f"Layer {result.layer}: {err}",
+                                )
+                            )
+                    else:
+                        failure_list.append(
+                            AddFailure(
+                                path=file_path,
+                                error=f"Layer {result.layer}: {result.error}",
+                            )
+                        )
+
+                return (prepared_list, failure_list, None)
+
+            except Exception as err:
+                return ([], [AddFailure(path=file_path, error=str(err))], None)
+
+        # Single-layer file - original behavior
         try:
             prepared = prepare_dataset(
                 path=file_path,
@@ -2190,29 +2241,29 @@ def add_files(
                 item_id=item_id,
                 item_datetime=item_datetime,
             )
-            return (prepared, None, None)
+            return ([prepared], [], None)
 
         except click.ClickException as err:
             is_tabular = file_path.suffix.lower() in TABULAR_EXTENSIONS
             if _is_no_geometry_error(err) and is_tabular:
-                return (None, None, (file_path, file_path.parent, coll_id))
-            return (None, AddFailure(path=file_path, error=str(err)), None)
+                return ([], [], (file_path, file_path.parent, coll_id))
+            return ([], [AddFailure(path=file_path, error=str(err))], None)
 
         except NoGeometryError as err:
             if file_path.suffix.lower() in TABULAR_EXTENSIONS:
-                return (None, None, (file_path, file_path.parent, coll_id))
-            return (None, AddFailure(path=file_path, error=str(err)), None)
+                return ([], [], (file_path, file_path.parent, coll_id))
+            return ([], [AddFailure(path=file_path, error=str(err))], None)
 
         except ValueError as err:
             if (
                 _is_parquet_no_geometry_error(err)
                 and file_path.suffix.lower() in TABULAR_EXTENSIONS
             ):
-                return (None, None, (file_path, file_path.parent, coll_id))
-            return (None, AddFailure(path=file_path, error=str(err)), None)
+                return ([], [], (file_path, file_path.parent, coll_id))
+            return ([], [AddFailure(path=file_path, error=str(err))], None)
 
         except Exception as err:
-            return (None, AddFailure(path=file_path, error=str(err)), None)
+            return ([], [AddFailure(path=file_path, error=str(err))], None)
 
     total_files = len(files_to_process)
 
@@ -2222,14 +2273,13 @@ def add_files(
             if on_progress is not None:
                 on_progress(file_path)
 
-            prepared, failure, deferred = prepare_single_file(file_path, coll_id)
-            if prepared is not None:
+            prepared_list, failure_list, deferred = prepare_single_file(file_path, coll_id)
+            for prepared in prepared_list:
                 prepared_datasets.append(prepared)
                 source_dir = file_path.parent
                 item_dir = catalog_root / Path(*coll_id.split("/")) / prepared.item_id
                 source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
-            if failure is not None:
-                failures.append(failure)
+            failures.extend(failure_list)
             if deferred is not None:
                 deferred_non_geo.append(deferred)
     else:
@@ -2256,15 +2306,14 @@ def add_files(
                 # Process results as they complete
                 for future in as_completed(future_to_file):
                     file_path, coll_id = future_to_file[future]
-                    prepared, failure, deferred = future.result()
+                    prepared_list, failure_list, deferred = future.result()
 
-                    if prepared is not None:
+                    for prepared in prepared_list:
                         prepared_datasets.append(prepared)
                         source_dir = file_path.parent
                         item_dir = catalog_root / Path(*coll_id.split("/")) / prepared.item_id
                         source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
-                    if failure is not None:
-                        failures.append(failure)
+                    failures.extend(failure_list)
                     if deferred is not None:
                         deferred_non_geo.append(deferred)
 

@@ -1343,3 +1343,14 @@ class TestConvertFileSourceMtime:
         # Source should still exist with same mtime
         assert source.exists()
         assert source.stat().st_mtime == source_mtime
+
+
+# =============================================================================
+# SQL Injection Prevention Tests (Security)
+# =============================================================================
+
+
+# NOTE: TestValidateLayerName and TestBuildStReadExpr removed.
+# Those functions were part of the DuckDB workaround for multi-layer support.
+# Now using geoparquet-io's native layer parameter instead.
+# See: https://github.com/geoparquet/geoparquet-io/issues/315

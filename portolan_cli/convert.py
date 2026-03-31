@@ -543,3 +543,127 @@ def convert_directory(
             on_progress(result)
 
     return ConversionReport(results=results)
+
+
+# ---------------------------------------------------------------------------
+# Multi-layer conversion (GeoPackage, FileGDB)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LayerConversionResult:
+    """Result of converting a single layer from a multi-layer file.
+
+    Attributes:
+        source: Path to the source multi-layer file.
+        layer: Name of the layer that was converted.
+        output: Path to the output GeoParquet file (None if failed).
+        success: Whether the conversion succeeded.
+        error: Error message if conversion failed.
+    """
+
+    source: Path
+    layer: str
+    output: Path | None
+    success: bool
+    error: str | None = None
+
+
+def convert_multilayer_file(
+    source: Path,
+    output_dir: Path,
+) -> list[LayerConversionResult]:
+    """Convert all layers in a multi-layer file to separate GeoParquet files.
+
+    For GeoPackage and FileGDB files that contain multiple layers, this function
+    converts each layer to a separate GeoParquet file named:
+        {source_stem}_{layer_name}.parquet
+
+    Args:
+        source: Path to the multi-layer file (GeoPackage or FileGDB).
+        output_dir: Directory for output files.
+
+    Returns:
+        List of LayerConversionResult, one per layer.
+
+    Raises:
+        FileNotFoundError: If the source file does not exist.
+        ValueError: If the file has no layers or layer listing fails.
+
+    Note:
+        Uses geoparquet-io's layer parameter for multi-layer format support.
+    """
+    from portolan_cli.formats import list_layers
+
+    if not source.exists():
+        raise FileNotFoundError(f"Source file not found: {source}")
+
+    # Get all layers in the file
+    layers = list_layers(source)
+    if layers is None or len(layers) == 0:
+        raise ValueError(
+            f"Could not enumerate layers in {source}. "
+            "FileGDB requires GDAL; GeoPackage should work with sqlite3."
+        )
+
+    results: list[LayerConversionResult] = []
+
+    for layer_name in layers:
+        output_path = output_dir / f"{source.stem}_{layer_name}.parquet"
+
+        try:
+            _convert_vector_layer(source, layer_name, output_path)
+
+            # Validate output
+            validation_error = _validate_geoparquet(output_path)
+            if validation_error:
+                results.append(
+                    LayerConversionResult(
+                        source=source,
+                        layer=layer_name,
+                        output=output_path,
+                        success=False,
+                        error=validation_error,
+                    )
+                )
+            else:
+                results.append(
+                    LayerConversionResult(
+                        source=source,
+                        layer=layer_name,
+                        output=output_path,
+                        success=True,
+                    )
+                )
+
+        except Exception as e:
+            logger.exception("Failed to convert layer %s from %s", layer_name, source)
+            results.append(
+                LayerConversionResult(
+                    source=source,
+                    layer=layer_name,
+                    output=None,
+                    success=False,
+                    error=str(e),
+                )
+            )
+
+    return results
+
+
+def _convert_vector_layer(source: Path, layer: str, output: Path) -> None:
+    """Convert a single layer from a multi-layer file to GeoParquet.
+
+    Uses geoparquet-io's layer parameter for multi-layer format support.
+
+    Args:
+        source: Path to the multi-layer file.
+        layer: Name of the layer to convert.
+        output: Path for the output GeoParquet file.
+
+    Raises:
+        Exception: If conversion fails.
+    """
+    import geoparquet_io as gpio
+
+    gpio.convert(source, layer=layer).write(output)

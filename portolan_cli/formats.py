@@ -578,6 +578,98 @@ def detect_format(path: Path) -> FormatType:
     return FormatType.UNKNOWN
 
 
+# =============================================================================
+# Multi-Layer Format Support (Issue #265)
+# =============================================================================
+
+# Formats that can contain multiple layers
+MULTILAYER_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        ".gpkg",  # GeoPackage
+        ".gdb",  # FileGDB directory
+    }
+)
+
+
+def list_layers(path: Path) -> list[str] | None:
+    """List all layers in a multi-layer geospatial file.
+
+    For multi-layer formats (GeoPackage, FileGDB), returns all layer names.
+    For single-layer formats (GeoJSON, Shapefile), returns None.
+
+    Delegates to geoparquet-io which uses DuckDB's spatial extension internally.
+    No external GDAL installation required.
+
+    Args:
+        path: Path to the geospatial file.
+
+    Returns:
+        List of layer names for multi-layer formats, None for single-layer formats.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+
+    Example:
+        >>> list_layers(Path("multi.gpkg"))
+        ['points', 'lines', 'polygons']
+        >>> list_layers(Path("single.geojson"))
+        None
+    """
+    import geoparquet_io as gpio  # type: ignore[import-untyped]
+
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    extension = path.suffix.lower()
+
+    # Single-layer formats return None
+    if extension not in MULTILAYER_EXTENSIONS:
+        # Also check for directory-based formats
+        if not (path.is_dir() and extension == ".gdb"):
+            return None
+
+    # Delegate to geoparquet-io for both GeoPackage and FileGDB
+    try:
+        layers = gpio.list_layers(str(path.resolve()))
+        if not layers:
+            return None
+        # Filter out empty strings and internal tables (Workspace, feature datasets)
+        # Only return actual feature layers
+        feature_layers = [
+            layer
+            for layer in layers
+            if layer
+            and layer not in ("", "Workspace")
+            and not layer.startswith("fd")  # feature dataset containers
+            or "_" in layer  # but keep fd1_lyr1 style names
+        ]
+        return feature_layers if feature_layers else None
+    except Exception as e:
+        logger.error("Failed to list layers in %s: %s", path, e)
+        return None
+
+
+def is_multilayer(path: Path) -> bool:
+    """Check if a file contains multiple layers.
+
+    Args:
+        path: Path to the geospatial file.
+
+    Returns:
+        True if the file has more than one layer, False otherwise.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"File not found: {path}")
+
+    layers = list_layers(path)
+    if layers is None:
+        return False
+    return len(layers) > 1
+
+
 def _detect_json_type(path: Path) -> FormatType:
     """Check if a .json file is GeoJSON.
 
