@@ -751,9 +751,22 @@ def info_cmd(
             file_result = inspect_file(target, catalog_root=catalog_path)
             _output_file_info(file_result, use_json=use_json)
         elif target.is_dir():
-            # Collection-level info
-            collection_result = inspect_collection(target)
-            _output_collection_info(collection_result, use_json=use_json)
+            # Check what type of directory this is based on its contents.
+            # STAC structure is self-describing: catalog.json vs collection.json.
+            # Per ADR-0032 Pattern 2, a directory CAN have both (e.g., a collection
+            # with sub-catalogs organizing items). We prefer catalog.json since it
+            # represents the organizational structure.
+            if (target / "catalog.json").exists():
+                # It's a catalog (root or subcatalog)
+                catalog_result = inspect_catalog(target)
+                _output_catalog_info(catalog_result, use_json=use_json)
+            elif (target / "collection.json").exists():
+                # It's a collection
+                collection_result = inspect_collection(target)
+                _output_collection_info(collection_result, use_json=use_json)
+            else:
+                # Directory exists but isn't a catalog or collection
+                raise ValueError(f"Directory is not a catalog or collection: {target}")
         else:
             # Path doesn't exist
             raise FileNotFoundError(f"Path not found: {target}")
