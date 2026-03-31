@@ -591,9 +591,7 @@ def convert_multilayer_file(
         ValueError: If the file has no layers or layer listing fails.
 
     Note:
-        This function bypasses geoparquet-io and uses DuckDB directly with
-        ST_Read(path, layer='name') to support multi-layer formats.
-        See: https://github.com/geoparquet/geoparquet-io/issues/315
+        Uses geoparquet-io's layer parameter for multi-layer format support.
     """
     from portolan_cli.formats import list_layers
 
@@ -653,57 +651,10 @@ def convert_multilayer_file(
     return results
 
 
-def _validate_layer_name(layer: str) -> str:
-    """Validate and sanitize a layer name for use in SQL.
-
-    Layer names in GeoPackage/FileGDB can contain letters, numbers, underscores,
-    and spaces. We escape single quotes to prevent SQL injection.
-
-    Args:
-        layer: Layer name to validate.
-
-    Returns:
-        Sanitized layer name safe for SQL interpolation.
-
-    Raises:
-        ValueError: If layer name contains dangerous characters.
-    """
-    # Block obviously malicious patterns
-    dangerous_patterns = ["--", ";", "/*", "*/", "\\"]
-    for pattern in dangerous_patterns:
-        if pattern in layer:
-            raise ValueError(
-                f"Invalid layer name '{layer}': contains unsafe character sequence '{pattern}'"
-            )
-
-    # Escape single quotes (SQL standard: double them)
-    return layer.replace("'", "''")
-
-
-def _build_st_read_expr(input_path: str, layer: str | None = None) -> str:
-    """Build ST_Read expression with optional layer parameter.
-
-    Args:
-        input_path: Path or URL to the spatial file (already SQL-escaped).
-        layer: Optional layer name (will be validated and escaped).
-
-    Returns:
-        SQL expression for ST_Read.
-
-    Raises:
-        ValueError: If layer name contains invalid characters.
-    """
-    if layer:
-        safe_layer = _validate_layer_name(layer)
-        return f"ST_Read('{input_path}', layer := '{safe_layer}')"
-    return f"ST_Read('{input_path}')"
-
-
 def _convert_vector_layer(source: Path, layer: str, output: Path) -> None:
     """Convert a single layer from a multi-layer file to GeoParquet.
 
-    Uses DuckDB directly with ST_Read(path, layer='name') since geoparquet-io
-    doesn't yet support the layer parameter.
+    Uses geoparquet-io's layer parameter for multi-layer format support.
 
     Args:
         source: Path to the multi-layer file.
@@ -711,29 +662,8 @@ def _convert_vector_layer(source: Path, layer: str, output: Path) -> None:
         output: Path for the output GeoParquet file.
 
     Raises:
-        ValueError: If layer name contains SQL injection patterns.
         Exception: If conversion fails.
     """
-    import duckdb
+    import geoparquet_io as gpio
 
-    # Escape paths for SQL (single quotes)
-    source_escaped = str(source).replace("'", "''")
-    output_escaped = str(output).replace("'", "''")
-
-    # Build ST_Read expression with validated layer name
-    st_read_expr = _build_st_read_expr(source_escaped, layer)
-
-    con = duckdb.connect()
-    try:
-        con.execute("INSTALL spatial; LOAD spatial;")
-
-        # Use COPY to write GeoParquet with spatial metadata
-        query = f"""
-            COPY (
-                SELECT * FROM {st_read_expr}
-            ) TO '{output_escaped}'
-            WITH (FORMAT PARQUET)
-        """  # nosec B608 - layer name validated by _validate_layer_name()
-        con.execute(query)
-    finally:
-        con.close()
+    gpio.convert(source, layer=layer).write(output)

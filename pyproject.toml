@@ -28,8 +28,7 @@ classifiers = [
 dependencies = [
     "antimeridian>=0.3.11",  # RFC 7946 compliant antimeridian handling for STAC bbox
     "click>=8.3.1",
-    "duckdb>=1.0.0",  # Multi-layer format conversion (GeoPackage, FileGDB) via ST_Read
-    "geoparquet-io>=0.3.0",
+    "geoparquet-io @ git+https://github.com/geoparquet/geoparquet-io.git@main",  # git: layer param support
     "httpx>=0.27.0",  # HTTP client for ArcGIS REST API discovery
     "obstore>=0.8.2",  # Cloud object storage (S3, GCS, Azure) via Rust bindings
     "pyarrow>=12.0.0,<22.0.0",  # v22+ has ABI incompatibility with abseil on some systems
@@ -84,6 +83,9 @@ docs = [
     "mkdocstrings[python]>=1.0.0",
     "pymdown-extensions>=10.21.2",  # Fix filename=None bug in highlight extension
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true  # Allow git dependencies (geoparquet-io during rapid co-development)
 
 [tool.hatch.build.targets.wheel]
 packages = ["portolan_cli"]
