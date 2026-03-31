@@ -3935,6 +3935,14 @@ def metadata() -> None:
     default=False,
     help="Overwrite existing metadata.yaml file.",
 )
+@click.option(
+    "-r",
+    "--recursive",
+    is_flag=True,
+    default=False,
+    help="Create templates at all STAC levels (catalogs, subcatalogs, collections). "
+    "Skips items (item.json directories) and preserves existing files unless --force is used.",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def metadata_init(
@@ -3942,6 +3950,7 @@ def metadata_init(
     json_output: bool,
     path: str | None,
     force: bool,
+    recursive: bool,
 ) -> None:
     """Generate a metadata.yaml template.
 
@@ -3956,6 +3965,8 @@ def metadata_init(
         portolan metadata init                # Template at catalog root
         portolan metadata init demographics   # Template for collection
         portolan metadata init --force        # Overwrite existing
+        portolan metadata init --recursive    # All levels in catalog
+        portolan metadata init climate -r     # All levels under climate/
     """
     from portolan_cli.metadata_yaml import generate_metadata_template
 
@@ -3980,6 +3991,11 @@ def metadata_init(
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
+    # Handle recursive mode
+    if recursive:
+        _metadata_init_recursive(catalog_path, path, use_json, force)
+        return
+
     # Determine target directory
     if path:
         target_dir = catalog_path / path
@@ -3992,7 +4008,8 @@ def metadata_init(
 
     # Check for existing file
     metadata_file = portolan_dir / "metadata.yaml"
-    if metadata_file.exists() and not force:
+    file_existed = metadata_file.exists()
+    if file_existed and not force:
         if use_json:
             envelope = error_envelope(
                 "metadata init",
@@ -4017,7 +4034,7 @@ def metadata_init(
         relative_path = str(metadata_file.relative_to(catalog_path))
         envelope = success_envelope(
             "metadata init",
-            {"path": relative_path, "overwritten": force and metadata_file.exists()},
+            {"path": relative_path, "overwritten": force and file_existed},
         )
         output_json_envelope(envelope)
     else:
@@ -4175,6 +4192,152 @@ def _generate_readme_content(
         raise SystemExit(1) from err
 
     return generate_readme(stac=stac, metadata=metadata_dict), False
+
+
+def _recursive_init_error(use_json: bool, error_type: str, message: str) -> None:
+    """Output error for recursive init and exit."""
+    if use_json:
+        envelope = error_envelope(
+            "metadata init",
+            [ErrorDetail(type=error_type, message=message)],
+        )
+        output_json_envelope(envelope)
+    else:
+        error(message)
+    raise SystemExit(1)
+
+
+def _validate_recursive_start_path(
+    catalog_path: Path, start_path: str | None, use_json: bool
+) -> Path:
+    """Validate and return the starting directory for recursive init."""
+    if not start_path:
+        return catalog_path
+
+    base_dir = catalog_path / start_path
+    if not base_dir.exists():
+        _recursive_init_error(
+            use_json, "PathNotFoundError", f"Path '{start_path}' does not exist in catalog."
+        )
+    if not base_dir.is_dir():
+        _recursive_init_error(
+            use_json, "NotADirectoryError", f"Path '{start_path}' is not a directory."
+        )
+    return base_dir
+
+
+def _should_process_directory(dirpath: Path, catalog_path: Path) -> bool:
+    """Check if directory should be processed for metadata creation."""
+    if not dirpath.is_dir() or dirpath.is_symlink():
+        return False
+    # Skip hidden directories
+    if any(part.startswith(".") for part in dirpath.relative_to(catalog_path).parts):
+        return False
+    # Skip items (directories with item.json)
+    if (dirpath / "item.json").exists():
+        return False
+    # Only process STAC entities (catalogs/collections)
+    return (dirpath / "catalog.json").exists() or (dirpath / "collection.json").exists()
+
+
+def _metadata_init_recursive(
+    catalog_path: Path,
+    start_path: str | None,
+    use_json: bool,
+    force: bool,
+) -> None:
+    """Create metadata.yaml templates at all STAC levels recursively.
+
+    Walks the catalog tree and creates .portolan/metadata.yaml at each level
+    that contains a catalog.json or collection.json. Skips items (item.json)
+    and directories that already have metadata.yaml (unless force=True).
+
+    Args:
+        catalog_path: Path to catalog root.
+        start_path: Optional subdirectory to start from (relative to catalog root).
+        use_json: Output JSON format.
+        force: Overwrite existing metadata.yaml files.
+
+    Raises:
+        SystemExit: If start_path doesn't exist or permission errors occur.
+    """
+    from portolan_cli.metadata_yaml import generate_metadata_template
+
+    base_dir = _validate_recursive_start_path(catalog_path, start_path, use_json)
+
+    created_paths: list[str] = []
+    skipped_paths: list[str] = []
+    permission_errors: list[str] = []
+
+    def _create_metadata_at(dirpath: Path) -> bool:
+        """Create metadata.yaml at directory. Returns True if created."""
+        portolan_dir = dirpath / ".portolan"
+        metadata_file = portolan_dir / "metadata.yaml"
+        if metadata_file.exists() and not force:
+            return False
+        portolan_dir.mkdir(parents=True, exist_ok=True)
+        metadata_file.write_text(generate_metadata_template())
+        return True
+
+    def _process_dir(dirpath: Path, rel_path: str) -> None:
+        """Process a directory: create metadata or record skip/error."""
+        try:
+            if _create_metadata_at(dirpath):
+                created_paths.append(rel_path)
+            else:
+                skipped_paths.append(rel_path)
+        except PermissionError:
+            permission_errors.append(rel_path)
+
+    # Process base directory first (if it's a STAC entity or is catalog root)
+    is_catalog_root = base_dir == catalog_path
+    is_stac = (base_dir / "catalog.json").exists() or (base_dir / "collection.json").exists()
+    if is_catalog_root or is_stac:
+        rel_path = (
+            ".portolan/metadata.yaml"
+            if is_catalog_root
+            else str(base_dir.relative_to(catalog_path) / ".portolan/metadata.yaml")
+        )
+        _process_dir(base_dir, rel_path)
+
+    # Walk tree for subdirectories with permission error handling
+    try:
+        dir_iterator = sorted(base_dir.rglob("*"))
+    except PermissionError as e:
+        _recursive_init_error(use_json, "PermissionError", f"Permission denied during scan: {e}")
+
+    for dirpath in dir_iterator:
+        if not _should_process_directory(dirpath, catalog_path):
+            continue
+        rel_path = str(dirpath.relative_to(catalog_path) / ".portolan/metadata.yaml")
+        _process_dir(dirpath, rel_path)
+
+    # Output results
+    if use_json:
+        envelope = success_envelope(
+            "metadata init",
+            {
+                "mode": "recursive",
+                "created": created_paths,
+                "skipped": skipped_paths,
+                "permission_errors": permission_errors,
+                "count": len(created_paths),
+            },
+        )
+        output_json_envelope(envelope)
+    else:
+        if created_paths:
+            success(f"Created {len(created_paths)} metadata.yaml template(s)")
+            for p in created_paths:
+                detail(f"  {p}")
+        if skipped_paths:
+            info_output(f"Skipped {len(skipped_paths)} existing file(s)")
+        if permission_errors:
+            warn(f"Permission denied for {len(permission_errors)} location(s)")
+            for p in permission_errors:
+                detail(f"  {p}")
+        if not created_paths and not skipped_paths and not permission_errors:
+            warn("No catalogs or collections found")
 
 
 def _process_readme_entry(
