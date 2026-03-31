@@ -1589,9 +1589,7 @@ class TestPreValidationAtomicityProperties:
             files_after = set(catalog_root.rglob("*"))
             new_files = files_after - files_before
 
-            stac_artifacts = [
-                f for f in new_files if f.suffix == ".json" and f.name != "versions.json"
-            ]
+            stac_artifacts = [f for f in new_files if f.suffix == ".json"]
             assert not stac_artifacts, (
                 f"add_dataset() failure should not create STAC artifacts. "
                 f"Created: {[str(f.relative_to(catalog_root)) for f in stac_artifacts]}"
@@ -1641,9 +1639,7 @@ class TestPreValidationAtomicityProperties:
             files_after = set(catalog_root.rglob("*"))
             new_files = files_after - files_before
 
-            stac_artifacts = [
-                f for f in new_files if f.suffix == ".json" and f.name != "versions.json"
-            ]
+            stac_artifacts = [f for f in new_files if f.suffix == ".json"]
             assert not stac_artifacts, f"Should not create artifacts: {stac_artifacts}"
 
     @pytest.mark.unit
