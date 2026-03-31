@@ -33,7 +33,6 @@ def valid_catalog(tmp_path: Path) -> Path:
             }
         )
     )
-    (portolan_dir / "state.json").write_text("{}")
 
     # v2 structure: catalog.json at ROOT level
     catalog_file = tmp_path / "catalog.json"

@@ -361,11 +361,11 @@ class TestFindCatalogRootProperties:
         """find_catalog_root finds catalog from nested subdirectory."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            # Create managed catalog with .portolan/config.yaml + state.json (per ADR-0029)
+            # Create managed catalog with .portolan/config.yaml + catalog.json (per issue #290)
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-            (portolan_dir / "state.json").write_text("{}")  # Operational file required
+            (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
 
             # Create nested directory
             nested_dir = tmp_path / collection / subdir
@@ -385,11 +385,11 @@ class TestFindCatalogRootProperties:
         """find_catalog_root finds catalog when starting at catalog root."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            # Create managed catalog with .portolan/config.yaml + state.json (per ADR-0029)
+            # Create managed catalog with .portolan/config.yaml + catalog.json (per issue #290)
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-            (portolan_dir / "state.json").write_text("{}")  # Operational file required
+            (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
             (tmp_path / collection).mkdir(exist_ok=True)
 
             result = find_catalog_root(tmp_path)
@@ -422,7 +422,7 @@ class TestFindCatalogRootProperties:
             portolan_dir = tmp_path / ".portolan"
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-            (portolan_dir / "state.json").write_text("{}")  # Operational file required
+            (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
 
             nested_dir = tmp_path / collection / subdir
             nested_dir.mkdir(parents=True, exist_ok=True)
@@ -1381,7 +1381,8 @@ def _setup_managed_catalog(catalog_root: Path) -> None:
     Creates:
     - catalog.json (STAC root)
     - .portolan/config.yaml (sentinel)
-    - .portolan/state.json (operational state)
+
+    Note: state.json removed per issue #290.
     """
     import json
 
@@ -1392,7 +1393,6 @@ def _setup_managed_catalog(catalog_root: Path) -> None:
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir(exist_ok=True)
     (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-    (portolan_dir / "state.json").write_text("{}")
 
 
 class TestItemIdDerivationProperties:
@@ -1589,9 +1589,7 @@ class TestPreValidationAtomicityProperties:
             files_after = set(catalog_root.rglob("*"))
             new_files = files_after - files_before
 
-            stac_artifacts = [
-                f for f in new_files if f.suffix == ".json" and f.name != "state.json"
-            ]
+            stac_artifacts = [f for f in new_files if f.suffix == ".json"]
             assert not stac_artifacts, (
                 f"add_dataset() failure should not create STAC artifacts. "
                 f"Created: {[str(f.relative_to(catalog_root)) for f in stac_artifacts]}"
@@ -1641,9 +1639,7 @@ class TestPreValidationAtomicityProperties:
             files_after = set(catalog_root.rglob("*"))
             new_files = files_after - files_before
 
-            stac_artifacts = [
-                f for f in new_files if f.suffix == ".json" and f.name != "state.json"
-            ]
+            stac_artifacts = [f for f in new_files if f.suffix == ".json"]
             assert not stac_artifacts, f"Should not create artifacts: {stac_artifacts}"
 
     @pytest.mark.unit

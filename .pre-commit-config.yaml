@@ -106,8 +106,9 @@ repos:
         entry: uv run pytest
         language: system
         types: [python]
-        args: [tests/, -m, unit, --timeout=30, -q]
+        args: [tests/, -m, unit, --timeout=30, -q, -x]
         pass_filenames: false
+        stages: [pre-push]  # Moved from pre-commit for faster commits
 
       - id: import-linter
         name: architecture rules

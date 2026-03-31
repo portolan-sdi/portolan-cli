@@ -38,7 +38,6 @@ def setup_catalog(path: Path) -> None:
     portolan_dir.mkdir()
     # Create config.yaml as sentinel (per ADR-0029)
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
-    (portolan_dir / "state.json").write_text("{}")
     # Create catalog.json at root (STAC standard per ADR-0023)
     catalog_data = {
         "type": "Catalog",

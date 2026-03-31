@@ -43,7 +43,6 @@ def full_catalog(tmp_path: Path) -> Path:
         catalog/
             .portolan/
                 config.yaml
-                state.json
             catalog.json            <- root STAC catalog
             versions.json           <- root versions file
             test-collection/
@@ -60,7 +59,6 @@ def full_catalog(tmp_path: Path) -> Path:
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
-    (portolan_dir / "state.json").write_text("{}\n")
 
     # Create catalog.json at root
     catalog_json = {

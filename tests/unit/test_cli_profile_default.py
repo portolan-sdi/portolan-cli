@@ -36,7 +36,6 @@ class TestProfileDefaultBehavior:
         portolan_dir = catalog_root / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("remote: s3://test-bucket/test-catalog\n")
-        (portolan_dir / "state.json").write_text("{}")
 
         return catalog_root
 
@@ -205,7 +204,6 @@ class TestProfileConfigResolution:
         (portolan_dir / "config.yaml").write_text(
             "remote: s3://test-bucket/test-catalog\naws_profile: config-profile\n"
         )
-        (portolan_dir / "state.json").write_text("{}")
 
         return catalog_root
 
@@ -378,7 +376,6 @@ class TestProfileConfigResolution:
         portolan_dir.mkdir()
         # No aws_profile in config
         (portolan_dir / "config.yaml").write_text("remote: s3://test-bucket/test-catalog\n")
-        (portolan_dir / "state.json").write_text("{}")
 
         runner = CliRunner()
 

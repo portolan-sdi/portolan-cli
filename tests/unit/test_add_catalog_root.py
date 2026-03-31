@@ -35,13 +35,12 @@ def setup_catalog(path: Path) -> None:
 
     Creates full managed catalog structure with:
     - .portolan/config.yaml (sentinel per ADR-0029)
-    - .portolan/state.json (operational file)
+    (Note: state.json removed per issue #290)
     - catalog.json at root (STAC standard)
     """
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
-    (portolan_dir / "state.json").write_text("{}")
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",

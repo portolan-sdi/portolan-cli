@@ -28,7 +28,7 @@ def valid_catalog(tmp_path: Path) -> Path:
     Creates the v2 structure with:
     - catalog.json at root
     - .portolan/config.yaml (required for MANAGED state)
-    - .portolan/state.json (required for MANAGED state)
+    (Note: state.json removed per issue #290)
     """
     # Root catalog.json
     catalog_file = tmp_path / "catalog.json"
@@ -47,7 +47,6 @@ def valid_catalog(tmp_path: Path) -> Path:
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}")
-    (portolan_dir / "state.json").write_text("{}")
     return tmp_path
 
 

@@ -42,7 +42,6 @@ def managed_catalog(tmp_path: Path) -> Path:
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n")
-    (portolan_dir / "state.json").write_text("{}\n")
 
     # Create collection versions.json
     versions_dir = portolan_dir / "collections" / "test-collection"
@@ -405,7 +404,6 @@ class TestInitSkip:
             portolan_dir = path / ".portolan"
             portolan_dir.mkdir(parents=True, exist_ok=True)
             (portolan_dir / "config.yaml").write_text("{}\n")
-            (portolan_dir / "state.json").write_text("{}\n")
             return path / "catalog.json", []
 
         with (
@@ -984,12 +982,11 @@ class TestDryRunNetworkIsolation:
         catalog_dir = tmp_path / "catalog_dry_run"
         catalog_dir.mkdir()
 
-        # .portolan sentinel: both config.yaml AND state.json required for MANAGED state
+        # .portolan sentinel: config.yaml alone is sufficient for MANAGED state (per issue #290)
         # (per detect_state() in catalog.py which checks for both files)
         portolan_dir = catalog_dir / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("{}\n")
-        (portolan_dir / "state.json").write_text("{}\n")
 
         # Per ADR-0023: versions.json at <catalog_root>/<collection>/versions.json
         collection_dir = catalog_dir / "test-collection"

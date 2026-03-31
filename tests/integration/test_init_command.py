@@ -86,7 +86,7 @@ class TestInitCommandAutoMode:
         """portolan init --auto should create management files in correct locations.
 
         Per ADR-0023: versions.json is consumer-visible metadata at catalog root.
-        Internal state (config.yaml, state.json) lives in .portolan/.
+        Per issue #290: config.yaml alone is sufficient (state.json removed).
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto"])
@@ -94,7 +94,8 @@ class TestInitCommandAutoMode:
             assert result.exit_code == 0
             # Internal tooling state: lives in .portolan/
             assert Path(".portolan/config.yaml").exists()
-            assert Path(".portolan/state.json").exists()
+            # state.json removed per issue #290
+            assert not Path(".portolan/state.json").exists()
             # Consumer-visible metadata: lives at catalog root (ADR-0023)
             assert Path("versions.json").exists()
             assert not Path(".portolan/versions.json").exists()
@@ -112,11 +113,10 @@ class TestInitCommandErrors:
     def test_init_fails_if_managed_catalog_exists(self, runner: CliRunner, tmp_path: Path) -> None:
         """portolan init should fail with exit code 1 if MANAGED catalog exists."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            # Create managed catalog (both config and state required)
+            # Create managed catalog (config.yaml alone is sufficient per issue #290)
             portolan = Path(".portolan")
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
-            (portolan / "state.json").write_text("{}")
 
             # Use --auto to skip interactive prompts and test error path
             result = runner.invoke(cli, ["init", "--auto"])
@@ -146,7 +146,6 @@ class TestInitCommandErrors:
             portolan = Path(".portolan")
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
-            (portolan / "state.json").write_text("{}")
 
             result = runner.invoke(cli, ["--format", "json", "init"])
 
@@ -185,7 +184,6 @@ class TestInitCommandJsonOutput:
             portolan = Path(".portolan")
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
-            (portolan / "state.json").write_text("{}")
 
             result = runner.invoke(cli, ["--format", "json", "init"])
 

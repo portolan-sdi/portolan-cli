@@ -29,17 +29,16 @@ class CatalogState(Enum):
     """The state of a directory with respect to Portolan catalog management.
 
     States:
-        MANAGED: A fully managed Portolan catalog exists. Both .portolan/config.yaml
-            AND .portolan/state.json exist. This is the target state after `portolan init`.
-            Per ADR-0027, config.yaml serves as both the sentinel file and user config.
+        MANAGED: A fully managed Portolan catalog exists. .portolan/config.yaml exists.
+            This is the target state after `portolan init`.
+            Per issue #290, config.yaml alone is sufficient (state.json removed).
 
         UNMANAGED_STAC: An existing STAC catalog (catalog.json) exists but is not
             managed by Portolan. This happens when someone has a pre-existing STAC
             catalog that wasn't created by Portolan. Use `portolan adopt` to manage it.
 
         FRESH: No catalog exists. This is a clean directory suitable for `portolan init`.
-            Note: An empty .portolan directory or partial .portolan (only one of
-            config.yaml/state.json) is also considered FRESH.
+            Note: An empty .portolan directory is also considered FRESH.
     """
 
     MANAGED = "managed"
@@ -53,8 +52,8 @@ def detect_state(path: Path) -> CatalogState:
     Checks only file/directory existence - does NOT read file contents.
     This ensures fast detection without I/O overhead.
 
-    The detection logic (per ADR-0027):
-    1. If .portolan/config.yaml AND .portolan/state.json both exist -> MANAGED
+    The detection logic (per issue #290, updating ADR-0027):
+    1. If .portolan/config.yaml exists -> MANAGED
     2. If catalog.json exists at root (and not MANAGED) -> UNMANAGED_STAC
     3. Otherwise -> FRESH
 
@@ -68,7 +67,7 @@ def detect_state(path: Path) -> CatalogState:
         >>> detect_state(Path("/empty/dir"))
         CatalogState.FRESH
 
-        >>> detect_state(Path("/my-catalog"))  # where .portolan/config.yaml and state.json exist
+        >>> detect_state(Path("/my-catalog"))  # where .portolan/config.yaml exists
         CatalogState.MANAGED
 
         >>> detect_state(Path("/with/only/catalog.json"))
@@ -76,18 +75,17 @@ def detect_state(path: Path) -> CatalogState:
     """
     portolan_dir = path / ".portolan"
     config_file = portolan_dir / "config.yaml"
-    state_file = portolan_dir / "state.json"
     root_catalog = path / "catalog.json"
 
-    # Check for fully managed state first (both config AND state must exist)
-    if config_file.exists() and state_file.exists():
+    # Check for managed state first (config.yaml alone is sufficient per issue #290)
+    if config_file.exists():
         return CatalogState.MANAGED
 
     # Check for unmanaged STAC catalog (catalog.json at root, but not managed)
     if root_catalog.exists():
         return CatalogState.UNMANAGED_STAC
 
-    # Everything else is fresh (including empty .portolan, partial .portolan, etc.)
+    # Everything else is fresh (including empty .portolan)
     return CatalogState.FRESH
 
 
@@ -102,10 +100,9 @@ def find_catalog_root(
     and walking up parent directories. This provides git-style behavior
     where commands work from any subdirectory within a catalog.
 
-    Per ADR-0029, this uses .portolan/config.yaml as the primary sentinel,
+    Per ADR-0029 and issue #290, this uses .portolan/config.yaml as the sole sentinel,
     unifying detection across all CLI commands. By default (require_operational=True),
-    it also requires at least one operational file (catalog.json or state.json)
-    to avoid detecting half-initialized repos.
+    it also requires catalog.json to exist to avoid detecting half-initialized repos.
 
     Security: Limited to MAX_CATALOG_SEARCH_DEPTH levels to prevent
     traversing to filesystem root where a malicious .portolan might exist.
@@ -113,9 +110,8 @@ def find_catalog_root(
     Args:
         start_path: Starting directory for search (defaults to cwd).
         require_operational: If True (default), require .portolan/config.yaml
-            AND at least one of (catalog.json, .portolan/state.json) to exist.
-            Set to False during init_catalog() when creating a new catalog
-            where config.yaml is written before catalog.json.
+            AND catalog.json to exist. Set to False during init_catalog() when
+            creating a new catalog where config.yaml is written before catalog.json.
 
     Returns:
         Path to catalog root if found, None otherwise.
@@ -145,10 +141,9 @@ def find_catalog_root(
             # During init, config.yaml alone is sufficient
             return True
 
-        # Require operational file: catalog.json at root OR state.json in .portolan
+        # Require operational file: catalog.json at root (state.json removed per issue #290)
         catalog_json = path / "catalog.json"
-        state_json = path / ".portolan" / "state.json"
-        return catalog_json.exists() or state_json.exists()
+        return catalog_json.exists()
 
     # Handle non-existent paths gracefully
     if start_path is not None and not start_path.exists():
@@ -309,15 +304,17 @@ def init_catalog(
 
     Creates (in order for partial failure recovery):
     1. .portolan/ directory
-    2. .portolan/config.yaml (empty with comment header, per ADR-0027)
+    2. .portolan/config.yaml (sentinel file, per issue #290)
     3. versions.json at ROOT level (consumer-visible per ADR-0023)
     4. catalog.json at ROOT level (valid STAC catalog via pystac)
-    5. .portolan/state.json (empty {} for now) - LAST
 
     Write order ensures failed runs stay in FRESH state (retry-safe).
     Per ADR-0023: versions.json is user-visible metadata and lives at the
     catalog root alongside STAC files; only internal tooling state goes in
     .portolan/.
+
+    Note: state.json was removed per issue #290. config.yaml alone is now
+    sufficient for MANAGED state detection.
 
     Args:
         path: Directory path for the catalog. Will be created if doesn't exist.
@@ -363,10 +360,10 @@ def init_catalog(
         warnings.append("Missing title (recommended for discoverability)")
 
     # ─────────────────────────────────────────────────────────────────────────
-    # WRITE ORDER: state.json LAST to ensure atomic MANAGED transition
-    # detect_state() checks for BOTH config.yaml AND state.json to determine
-    # MANAGED state (per ADR-0027). Writing state.json last ensures that if
-    # init fails partway through, the directory stays in FRESH state (retry-safe).
+    # WRITE ORDER: config.yaml LAST for atomicity (per issue #290)
+    # detect_state() checks for config.yaml to determine MANAGED state.
+    # Writing config.yaml LAST ensures that if init fails partway through,
+    # the directory stays in FRESH state and can be safely retried.
     # ─────────────────────────────────────────────────────────────────────────
 
     # Step 1: Create .portolan directory
@@ -376,17 +373,11 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot create .portolan directory: {e}") from e
 
-    # Step 2: config.yaml - sentinel file per ADR-0027 (not enough for MANAGED alone)
-    # Also serves as user configuration file for settings like remote, aws_profile, etc.
-    try:
-        (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
-    except OSError as e:
-        raise CatalogInitError(f"Cannot write config.yaml: {e}") from e
-
-    # Step 3: versions.json - minimal catalog-level versioning
+    # Step 2: versions.json - minimal catalog-level versioning
     # Per ADR-0023: versions.json is consumer-visible metadata and must live at
     # the catalog root alongside STAC files, NOT inside .portolan/ (which is
     # reserved for internal tooling state only).
+    # Written early so failure here leaves directory in FRESH state.
     now = datetime.now(timezone.utc)
     versions_data = {
         "schema_version": "1.0.0",
@@ -399,7 +390,7 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write versions.json: {e}") from e
 
-    # Step 4: Create STAC catalog using pystac
+    # Step 3: Create STAC catalog using pystac
     catalog = pystac.Catalog(
         id=catalog_id,
         description=description,
@@ -413,7 +404,7 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write catalog.json: {e}") from e
 
-    # Step 5: Add self link (STAC best practice)
+    # Step 4: Add self link (STAC best practice)
     # pystac SELF_CONTAINED doesn't add self link, so we add it manually
     try:
         data = json.loads(catalog_file.read_text())
@@ -431,13 +422,14 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot update catalog.json with self link: {e}") from e
 
-    # Step 6: state.json - LAST (flips to MANAGED state)
-    # This MUST be the final write. Once state.json exists alongside config.yaml,
-    # detect_state() will report MANAGED (per ADR-0027). All files must be in place first.
+    # Step 5: config.yaml - sentinel file per issue #290 (sufficient for MANAGED state)
+    # Written LAST for atomicity: if any previous step fails, directory stays FRESH
+    # and init can be safely retried. Also serves as user configuration file for
+    # settings like remote, aws_profile, etc.
     try:
-        (portolan_dir / "state.json").write_text("{}\n")
+        (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
     except OSError as e:
-        raise CatalogInitError(f"Cannot write state.json: {e}") from e
+        raise CatalogInitError(f"Cannot write config.yaml: {e}") from e
 
     return catalog_file, warnings
 

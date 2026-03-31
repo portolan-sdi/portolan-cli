@@ -172,7 +172,6 @@ class TestCleanCollectFiles:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# config")
-        (portolan_dir / "state.json").write_text("{}")
         (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
         files, dirs = collect_files_to_remove(tmp_path)
@@ -188,7 +187,6 @@ class TestCleanCollectFiles:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# config")
-        (portolan_dir / "state.json").write_text("{}")
 
         catalog_file = tmp_path / "catalog.json"
         catalog_file.write_text(json.dumps({"type": "Catalog", "id": "test"}))
@@ -206,7 +204,6 @@ class TestCleanCollectFiles:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# config")
-        (portolan_dir / "state.json").write_text("{}")
         (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
         collection_dir = tmp_path / "census"
@@ -227,7 +224,6 @@ class TestCleanCollectFiles:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# config")
-        (portolan_dir / "state.json").write_text("{}")
         (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
         # Root versions.json
@@ -254,7 +250,6 @@ class TestCleanCollectFiles:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# config")
-        (portolan_dir / "state.json").write_text("{}")
         (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
         collection_dir = tmp_path / "census"
@@ -277,7 +272,6 @@ class TestCleanCollectFiles:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# config")
-        (portolan_dir / "state.json").write_text("{}")
         (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
         # Non-STAC JSON file (e.g., Mapbox style)
@@ -297,7 +291,6 @@ class TestCleanCollectFiles:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# config")
-        (portolan_dir / "state.json").write_text("{}")
         (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
         collection_dir = tmp_path / "census"
@@ -338,7 +331,6 @@ class TestCleanCommand:
             portolan_dir = Path(".portolan")
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
-            (portolan_dir / "state.json").write_text("{}")
             Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
             Path("versions.json").write_text(json.dumps({"schema_version": "1.0.0"}))
 
@@ -357,7 +349,6 @@ class TestCleanCommand:
             portolan_dir = Path(".portolan")
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
-            (portolan_dir / "state.json").write_text("{}")
             Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
             result = runner.invoke(cli, ["clean", "--dry-run"])
@@ -376,7 +367,6 @@ class TestCleanCommand:
             portolan_dir = Path(".portolan")
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
-            (portolan_dir / "state.json").write_text("{}")
             Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
             Path("versions.json").write_text(json.dumps({"schema_version": "1.0.0"}))
 
@@ -396,7 +386,6 @@ class TestCleanCommand:
             portolan_dir = Path(".portolan")
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
-            (portolan_dir / "state.json").write_text("{}")
             Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
             # Create collection with data
@@ -425,7 +414,6 @@ class TestCleanCommand:
             portolan_dir = Path(".portolan")
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
-            (portolan_dir / "state.json").write_text("{}")
             Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
             # Create non-STAC JSON file
@@ -446,7 +434,6 @@ class TestCleanCommand:
             portolan_dir = Path(".portolan")
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
-            (portolan_dir / "state.json").write_text("{}")
             Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
             result = runner.invoke(cli, ["clean"])
@@ -473,7 +460,6 @@ class TestCleanFromSubdirectory:
             portolan_dir = Path(".portolan")
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
-            (portolan_dir / "state.json").write_text("{}")
             Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
             # Create subdirectory
@@ -512,7 +498,6 @@ class TestCleanEmptyDirectoryCleanup:
             portolan_dir = Path(".portolan")
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
-            (portolan_dir / "state.json").write_text("{}")
             Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
             # Create item directory with only metadata
@@ -534,7 +519,6 @@ class TestCleanEmptyDirectoryCleanup:
             portolan_dir = Path(".portolan")
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
-            (portolan_dir / "state.json").write_text("{}")
             Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 
             # Create item directory with data

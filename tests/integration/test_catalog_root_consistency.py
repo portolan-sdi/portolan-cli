@@ -22,13 +22,12 @@ def setup_managed_catalog(path: Path) -> None:
     Per ADR-0023 and ADR-0027:
     - catalog.json at root (STAC standard)
     - .portolan/config.yaml (sentinel file per ADR-0027)
-    - .portolan/state.json (required for MANAGED state)
+    (Note: state.json removed per issue #290)
     """
     # Create .portolan directory with sentinel files
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir(parents=True)
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
-    (portolan_dir / "state.json").write_text("{}")
 
     # Create catalog.json at root (STAC standard)
     catalog_data = {
@@ -254,7 +253,6 @@ class TestCatalogRootEdgeCases:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("")  # Empty is valid
-        (portolan_dir / "state.json").write_text("{}")
         (tmp_path / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
@@ -268,7 +266,6 @@ class TestCatalogRootEdgeCases:
         # Create .portolan without config.yaml (partial setup)
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        (portolan_dir / "state.json").write_text("{}")  # Only state.json
         (tmp_path / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
 
         with runner.isolated_filesystem(temp_dir=tmp_path):

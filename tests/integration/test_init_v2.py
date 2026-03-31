@@ -1,10 +1,11 @@
 """Integration tests for `portolan init` command with new file structure.
 
-The new init command creates (per ADR-0023):
+The new init command creates (per ADR-0023, updated by issue #290):
 - catalog.json at ROOT level (valid STAC catalog via pystac)
 - versions.json at ROOT level (consumer-visible catalog-level versioning)
-- .portolan/config.yaml (empty {} for now) -- internal tooling state
-- .portolan/state.json (empty {} for now) -- internal tooling state
+- .portolan/config.yaml -- sentinel file and user config
+
+Note: state.json was removed per issue #290 (config.yaml alone is sufficient).
 
 Error cases:
 - MANAGED state: abort with "already a Portolan catalog"
@@ -55,16 +56,8 @@ class TestInitCreatesRequiredFiles:
             content = yaml.safe_load(config_file.read_text())
             assert content is None or content == {}  # Empty YAML or comment-only
 
-    @pytest.mark.integration
-    def test_init_creates_portolan_state(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Init should create .portolan/state.json (empty {} for now)."""
-        with runner.isolated_filesystem(temp_dir=tmp_path):
-            result = runner.invoke(cli, ["init", "--auto"])
-
-            assert result.exit_code == 0
-            state_file = Path(".portolan/state.json")
-            assert state_file.exists()
-            assert json.loads(state_file.read_text()) == {}
+    # Note: test_init_creates_portolan_state removed per issue #290
+    # state.json is no longer created during init
 
     @pytest.mark.integration
     def test_init_creates_portolan_versions(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -97,7 +90,8 @@ class TestInitCreatesRequiredFiles:
 
         .portolan/ (internal tooling state only):
           - config.yaml
-          - state.json
+
+        Note: state.json was removed per issue #290.
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             result = runner.invoke(cli, ["init", "--auto"])
@@ -106,9 +100,10 @@ class TestInitCreatesRequiredFiles:
             # Root level: STAC catalog + consumer-visible versioning
             assert Path("catalog.json").exists()
             assert Path("versions.json").exists()
-            # .portolan/ directory: internal tooling state only
+            # .portolan/ directory: config.yaml as sentinel (per issue #290)
             assert Path(".portolan/config.yaml").exists()
-            assert Path(".portolan/state.json").exists()
+            # state.json removed per issue #290
+            assert not Path(".portolan/state.json").exists()
             # versions.json must NOT be inside .portolan/ (ADR-0023)
             assert not Path(".portolan/versions.json").exists()
 
@@ -177,7 +172,6 @@ class TestInitErrorCases:
             portolan = Path(".portolan")
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
-            (portolan / "state.json").write_text("{}")
 
             # Use --auto to skip interactive prompts and test error path
             result = runner.invoke(cli, ["init", "--auto"])
@@ -232,21 +226,21 @@ class TestInitPartialState:
             assert Path("catalog.json").exists()
 
     @pytest.mark.integration
-    def test_init_succeeds_with_partial_portolan(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Partial .portolan (only config, no state) should allow init.
+    def test_init_fails_with_config_yaml_only(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config.yaml alone is now MANAGED state, so init should fail.
 
-        Both config.yaml AND state.json are required for MANAGED state.
+        Per issue #290, config.yaml alone is sufficient for MANAGED state.
         """
         with runner.isolated_filesystem(temp_dir=tmp_path):
             portolan = Path(".portolan")
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
-            # Note: state.json is missing
 
             result = runner.invoke(cli, ["init", "--auto"])
 
-            assert result.exit_code == 0
-            assert Path("catalog.json").exists()
+            # Should fail because config.yaml exists = MANAGED state
+            assert result.exit_code == 1
+            assert "already" in result.output.lower()
 
 
 class TestInitFlags:
@@ -338,7 +332,6 @@ class TestInitJsonOutput:
             portolan = Path(".portolan")
             portolan.mkdir()
             (portolan / "config.yaml").write_text("{}")
-            (portolan / "state.json").write_text("{}")
 
             result = runner.invoke(cli, ["--format", "json", "init"])
 

@@ -305,7 +305,7 @@ class TestCleanDryRun:
             assert Path("versions.json").exists()
             assert Path(".portolan").exists()
             assert Path(".portolan/config.yaml").exists()
-            assert Path(".portolan/state.json").exists()
+            # state.json removed per issue #290
 
 
 class TestCleanEmptyDirectories:
@@ -513,7 +513,6 @@ class TestCleanEdgeCases:
             portolan_dir = Path(".portolan")
             portolan_dir.mkdir()
             (portolan_dir / "config.yaml").write_text("# config")
-            (portolan_dir / "state.json").write_text("{}")
             # Create catalog.json (required for MANAGED state)
             Path("catalog.json").write_text(json.dumps({"type": "Catalog", "id": "test"}))
 

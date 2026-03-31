@@ -291,7 +291,7 @@ def init(
     """Initialize a new Portolan catalog.
 
     Creates a catalog.json at the root level and a .portolan directory with
-    management files (config.yaml, state.json, versions.json).
+    management files (config.yaml). Also creates versions.json at the root.
 
     Auto-extracts the catalog ID from the directory name.
 
