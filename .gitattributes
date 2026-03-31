@@ -6,3 +6,7 @@
 *.spx binary
 *.freelist binary
 tests/fixtures/multilayer/featuredataset.gdb/* binary
+tests/fixtures/multilayer/multilayer.gdb/* binary
+# Also catch the gdb file (not just by extension)
+tests/fixtures/multilayer/*.gdb/gdb binary
+tests/fixtures/multilayer/*.gdb/timestamps binary

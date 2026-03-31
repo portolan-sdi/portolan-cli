@@ -1962,7 +1962,7 @@ wheels = [
 [[package]]
 name = "menard"
 version = "0.3.0"
-source = { git = "https://github.com/nlebovits/menard.git?rev=main#2071c2e40843e8e101b0f054972721fb3f501119" }
+source = { git = "https://github.com/nlebovits/menard.git?rev=main#6263c3786d083aa48428889fce8887a22e88538b" }
 dependencies = [
     { name = "pathspec" },
     { name = "tomli", marker = "python_full_version < '3.11'" },

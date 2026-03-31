@@ -138,6 +138,7 @@ repos:
         entry: uv run menard check-protected
         language: system
         files: \.(md|py)$
+        exclude: \.gdb/
         pass_filenames: false
 
       # TODO: Enable when menard[brevity] is published to PyPI
