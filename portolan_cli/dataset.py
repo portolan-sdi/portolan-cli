@@ -74,7 +74,11 @@ from portolan_cli.stac import (
     update_collection_summaries,
 )
 from portolan_cli.versions import (
+    Asset,
+    VersionsFile,
+    add_version,
     read_versions,
+    write_versions,
 )
 
 logger = logging.getLogger(__name__)
@@ -1028,12 +1032,64 @@ def finalize_datasets(
         # Save collection.json ONCE for all items in this collection
         _save_collection_with_links(collection, collection_dir, catalog_root, collection_id)
 
-        # Batch update versions.json - single read-modify-write for all items
-        _batch_update_versions(
-            collection_dir=collection_dir,
-            collection_id=collection_id,
-            items=items,
-        )
+        # Resolve active backend for versioning routing
+        from portolan_cli.config import get_setting
+
+        active_backend = get_setting("backend", catalog_path=catalog_root)
+
+        if active_backend is not None and active_backend != "file":
+            # Plugin backend: route through publish_version()
+            from portolan_cli.version_ops import publish_version
+
+            assets: dict[str, str] = {}
+            for p in items:
+                for filename, (file_path, _checksum) in p.asset_files.items():
+                    if p.is_collection_level_asset:
+                        asset_key = filename
+                    else:
+                        asset_key = f"{p.item_id}/{filename}"
+                    assets[asset_key] = str(file_path)
+            publish_version(collection_id, assets=assets, catalog_root=catalog_root)
+        else:
+            # File backend: use optimized batch write (O(1) per collection)
+            _batch_update_versions(
+                collection_dir=collection_dir,
+                collection_id=collection_id,
+                items=items,
+            )
+
+        # NOTE: Plugin backends (e.g. Iceberg) may override table:* STAC extension
+        # fields in collection.json via on_post_add, since the backend's table state
+        # (actual row counts, schema excluding derived columns) is authoritative.
+        if active_backend is not None and active_backend != "file":
+            from portolan_cli.backends import get_backend
+
+            backend = get_backend(active_backend, catalog_root=catalog_root)
+            if hasattr(backend, "on_post_add"):
+                remote = get_setting(
+                    "remote", catalog_path=catalog_root, collection=collection_id
+                )
+                first = items[0]
+                backend.on_post_add(
+                    {
+                        "catalog_root": catalog_root,
+                        "collection_id": collection_id,
+                        "collection_dir": collection_dir,
+                        "collection": collection,
+                        "item_id": first.item_id,
+                        "item_dir": first.item_json_path.parent,
+                        "asset_files": first.asset_files,
+                        "items": [
+                            {
+                                "item_id": p.item_id,
+                                "item_dir": p.item_json_path.parent,
+                                "asset_files": p.asset_files,
+                            }
+                            for p in items
+                        ],
+                        "remote": remote,
+                    }
+                )
 
         # Build results
         for p in items:

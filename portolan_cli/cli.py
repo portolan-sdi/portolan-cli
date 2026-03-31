@@ -2828,6 +2828,8 @@ def push(
         catalog_path = require_catalog_root(use_json, "push")
 
     # Check if active backend supports push
+    from portolan_cli.config import get_setting
+
     active_backend = get_setting("backend", catalog_path=catalog_path)
     if active_backend is not None and active_backend != "file":
         from portolan_cli.backends import get_backend

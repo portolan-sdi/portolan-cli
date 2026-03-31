@@ -312,14 +312,14 @@ class TestJsonFileBackend:
     def test_rollback_raises_not_implemented_with_clear_message(self) -> None:
         """JsonFileBackend.rollback raises NotImplementedError with explanation."""
         backend = JsonFileBackend()
-        with pytest.raises(NotImplementedError, match="portolake plugin"):
+        with pytest.raises(NotImplementedError, match="enterprise plugin backends"):
             backend.rollback("test_collection", "1.0.0")
 
     @pytest.mark.unit
     def test_prune_raises_not_implemented_with_clear_message(self) -> None:
         """JsonFileBackend.prune raises NotImplementedError with explanation."""
         backend = JsonFileBackend()
-        with pytest.raises(NotImplementedError, match="portolake plugin"):
+        with pytest.raises(NotImplementedError, match="enterprise plugin backends"):
             backend.prune("test_collection", keep=5, dry_run=True)
 
 
