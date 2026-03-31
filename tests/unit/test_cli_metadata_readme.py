@@ -209,6 +209,106 @@ class TestMetadataInit:
             # demographics should NOT have metadata
             assert not Path("demographics/.portolan/metadata.yaml").exists()
 
+    @pytest.mark.unit
+    def test_recursive_nonexistent_path_fails(self, runner: CliRunner, tmp_path: Path) -> None:
+        """metadata init --recursive with non-existent path should fail with clear error."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(cli, ["metadata", "init", "nonexistent", "--recursive"])
+
+            assert result.exit_code != 0
+            assert "does not exist" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_recursive_nonexistent_path_json_output(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """metadata init --recursive with non-existent path should output JSON error."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(
+                cli, ["--format", "json", "metadata", "init", "nonexistent", "--recursive"]
+            )
+
+            assert result.exit_code != 0
+            output = json.loads(result.output)
+            assert output["success"] is False
+            assert any("PathNotFoundError" in e["type"] for e in output["errors"])
+
+    @pytest.mark.unit
+    def test_recursive_force_overwrites_content(self, runner: CliRunner, tmp_path: Path) -> None:
+        """metadata init --recursive --force should actually overwrite existing content."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            Path("demographics").mkdir()
+            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/.portolan").mkdir()
+            original_content = "# Custom content\nlicense: CC-BY-4.0\n"
+            Path("demographics/.portolan/metadata.yaml").write_text(original_content)
+
+            result = runner.invoke(cli, ["metadata", "init", "--recursive", "--force"])
+
+            assert result.exit_code == 0
+            # Content should be overwritten with template
+            new_content = Path("demographics/.portolan/metadata.yaml").read_text()
+            assert new_content != original_content
+            assert "contact:" in new_content  # Template has contact field
+
+    @pytest.mark.unit
+    def test_recursive_json_output_complete_schema(self, runner: CliRunner, tmp_path: Path) -> None:
+        """metadata init --recursive --json should have complete schema fields."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            # Create collection with existing metadata (to get skipped paths)
+            Path("demographics").mkdir()
+            Path("demographics/collection.json").write_text('{"type": "Collection"}')
+            Path("demographics/.portolan").mkdir()
+            Path("demographics/.portolan/metadata.yaml").write_text("license: MIT\n")
+            # Create another collection (to get created paths)
+            Path("climate").mkdir()
+            Path("climate/collection.json").write_text('{"type": "Collection"}')
+
+            result = runner.invoke(cli, ["--format", "json", "metadata", "init", "--recursive"])
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            data = output["data"]
+            # Verify all schema fields exist
+            assert "mode" in data
+            assert data["mode"] == "recursive"
+            assert "created" in data
+            assert "skipped" in data
+            assert "permission_errors" in data
+            assert "count" in data
+            # Verify count matches created list length
+            assert data["count"] == len(data["created"])
+            # Verify types
+            assert isinstance(data["created"], list)
+            assert isinstance(data["skipped"], list)
+            assert isinstance(data["permission_errors"], list)
+
+    @pytest.mark.unit
+    def test_recursive_skips_symlinks(self, runner: CliRunner, tmp_path: Path) -> None:
+        """metadata init --recursive should skip symlinks to prevent infinite loops."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            Path("climate").mkdir()
+            Path("climate/catalog.json").write_text('{"type": "Catalog"}')
+            # Create a symlink that would cause infinite loop
+            try:
+                Path("climate/loop").symlink_to(Path.cwd() / "climate")
+            except OSError:
+                pytest.skip("Symlinks not supported on this platform")
+
+            result = runner.invoke(cli, ["metadata", "init", "--recursive"])
+
+            # Should complete without hanging/crashing
+            assert result.exit_code == 0
+            assert Path("climate/.portolan/metadata.yaml").exists()
+
 
 class TestMetadataValidate:
     """Tests for `portolan metadata validate` command."""
