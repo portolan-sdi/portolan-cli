@@ -41,8 +41,8 @@ GeoPackage and FileGDB files can contain multiple vector layers. Portolan handle
 
 | Format | Layer Detection | Notes |
 |--------|-----------------|-------|
-| GeoPackage | ✅ Pure Python (sqlite3) | No external dependencies |
-| FileGDB | ❌ Not yet implemented | Use `ogrinfo` to list layers manually |
+| GeoPackage | ✅ geoparquet-io | No external dependencies |
+| FileGDB | ✅ geoparquet-io | No external GDAL required |
 
 ### API Functions
 

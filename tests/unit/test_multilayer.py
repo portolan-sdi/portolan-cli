@@ -18,22 +18,6 @@ import pytest
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "multilayer"
 
 
-def _has_gdal() -> bool:
-    """Check if GDAL/osgeo bindings are available."""
-    try:
-        from osgeo import ogr  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
-requires_gdal = pytest.mark.skipif(
-    not _has_gdal(),
-    reason="FileGDB layer listing requires GDAL (osgeo.ogr)",
-)
-
-
 class TestLayerEnumeration:
     """Tests for detecting layers in multi-layer files."""
 
@@ -49,7 +33,6 @@ class TestLayerEnumeration:
         assert len(layers) == 3
         assert set(layers) == {"points", "lines", "polygons"}
 
-    @requires_gdal
     @pytest.mark.unit
     def test_filegdb_lists_all_layers(self) -> None:
         """FileGDB with 4 layers (in feature datasets) returns all layer names."""
@@ -61,20 +44,6 @@ class TestLayerEnumeration:
         assert layers is not None
         assert len(layers) == 4
         assert set(layers) == {"standalone", "fd1_lyr1", "fd1_lyr2", "fd2_lyr"}
-
-    @pytest.mark.unit
-    def test_filegdb_returns_none_without_gdal(self) -> None:
-        """FileGDB returns None when GDAL is not available."""
-        if _has_gdal():
-            pytest.skip("GDAL is available, skipping no-GDAL test")
-
-        from portolan_cli.formats import list_layers
-
-        gdb_path = FIXTURES_DIR / "featuredataset.gdb"
-        layers = list_layers(gdb_path)
-
-        # Without GDAL, FileGDB layer listing returns None
-        assert layers is None
 
     @pytest.mark.unit
     def test_single_layer_file_returns_one_layer(self) -> None:
@@ -109,7 +78,6 @@ class TestMultiLayerDetection:
         gpkg_path = FIXTURES_DIR / "multilayer.gpkg"
         assert is_multilayer(gpkg_path) is True
 
-    @requires_gdal
     @pytest.mark.unit
     def test_filegdb_is_multilayer(self) -> None:
         """FileGDB with 4 layers is detected as multi-layer."""
@@ -117,18 +85,6 @@ class TestMultiLayerDetection:
 
         gdb_path = FIXTURES_DIR / "featuredataset.gdb"
         assert is_multilayer(gdb_path) is True
-
-    @pytest.mark.unit
-    def test_filegdb_not_multilayer_without_gdal(self) -> None:
-        """FileGDB returns False for is_multilayer when GDAL is not available."""
-        if _has_gdal():
-            pytest.skip("GDAL is available, skipping no-GDAL test")
-
-        from portolan_cli.formats import is_multilayer
-
-        gdb_path = FIXTURES_DIR / "featuredataset.gdb"
-        # Without GDAL, we can't enumerate layers so is_multilayer returns False
-        assert is_multilayer(gdb_path) is False
 
     @pytest.mark.unit
     def test_geojson_is_not_multilayer(self) -> None:
@@ -177,7 +133,6 @@ class TestMultiLayerConversion:
 
         assert actual_names == expected_names
 
-    @requires_gdal
     @pytest.mark.unit
     def test_convert_multilayer_filegdb(self, tmp_path: Path) -> None:
         """FileGDB multi-layer conversion produces one file per layer."""

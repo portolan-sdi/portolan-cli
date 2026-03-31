@@ -597,8 +597,8 @@ def list_layers(path: Path) -> list[str] | None:
     For multi-layer formats (GeoPackage, FileGDB), returns all layer names.
     For single-layer formats (GeoJSON, Shapefile), returns None.
 
-    GeoPackage: Uses sqlite3 (no external dependencies).
-    FileGDB: Uses DuckDB spatial extension (requires GDAL via DuckDB).
+    Delegates to geoparquet-io which uses DuckDB's spatial extension internally.
+    No external GDAL installation required.
 
     Args:
         path: Path to the geospatial file.
@@ -615,66 +615,38 @@ def list_layers(path: Path) -> list[str] | None:
         >>> list_layers(Path("single.geojson"))
         None
     """
+    import geoparquet_io as gpio  # type: ignore[import-untyped]
+
     if not path.exists():
         raise FileNotFoundError(f"File not found: {path}")
 
     extension = path.suffix.lower()
 
-    # Handle directory-based formats (FileGDB)
-    if path.is_dir() and extension == ".gdb":
-        return _list_filegdb_layers(path)
-
     # Single-layer formats return None
     if extension not in MULTILAYER_EXTENSIONS:
-        return None
+        # Also check for directory-based formats
+        if not (path.is_dir() and extension == ".gdb"):
+            return None
 
-    # GeoPackage: query SQLite directly (no external deps)
-    if extension == ".gpkg":
-        return _list_geopackage_layers(path)
-
-    return None
-
-
-def _list_geopackage_layers(path: Path) -> list[str] | None:
-    """List layers in a GeoPackage using sqlite3.
-
-    GeoPackage is a SQLite database with standardized tables.
-    Layer names are in gpkg_contents.table_name.
-    """
-    import sqlite3
-
+    # Delegate to geoparquet-io for both GeoPackage and FileGDB
     try:
-        conn = sqlite3.connect(str(path))
-        cursor = conn.cursor()
-        # Query gpkg_contents for feature and tile layers
-        cursor.execute(
-            "SELECT table_name FROM gpkg_contents WHERE data_type IN ('features', 'tiles')"
-        )
-        layers = [row[0] for row in cursor.fetchall()]
-        conn.close()
-        return layers if layers else None
-    except sqlite3.Error as e:
-        logger.error("Failed to read GeoPackage %s: %s", path, e)
+        layers = gpio.list_layers(str(path.resolve()))
+        if not layers:
+            return None
+        # Filter out empty strings and internal tables (Workspace, feature datasets)
+        # Only return actual feature layers
+        feature_layers = [
+            layer
+            for layer in layers
+            if layer
+            and layer not in ("", "Workspace")
+            and not layer.startswith("fd")  # feature dataset containers
+            or "_" in layer  # but keep fd1_lyr1 style names
+        ]
+        return feature_layers if feature_layers else None
+    except Exception as e:
+        logger.error("Failed to list layers in %s: %s", path, e)
         return None
-
-
-def _list_filegdb_layers(path: Path) -> list[str] | None:
-    """List layers in an ESRI FileGDB.
-
-    FileGDB is a proprietary format that requires GDAL to read.
-    Currently returns None with a warning - proper layer enumeration
-    requires adding this functionality to geoparquet-io.
-
-    See GitHub issue #265 for tracking multi-layer format support.
-    """
-    # FileGDB layer enumeration is not yet implemented
-    # The format is complex and requires GDAL bindings
-    # For now, log a warning and return None
-    logger.warning(
-        "FileGDB layer listing not yet implemented. Use ogrinfo to list layers: ogrinfo %s",
-        path,
-    )
-    return None
 
 
 def is_multilayer(path: Path) -> bool:
