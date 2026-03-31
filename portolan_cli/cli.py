@@ -3922,6 +3922,13 @@ def metadata() -> None:
     default=False,
     help="Overwrite existing metadata.yaml file.",
 )
+@click.option(
+    "-r",
+    "--recursive",
+    is_flag=True,
+    default=False,
+    help="Create templates at all STAC levels (catalogs, subcatalogs, collections).",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def metadata_init(
@@ -3929,6 +3936,7 @@ def metadata_init(
     json_output: bool,
     path: str | None,
     force: bool,
+    recursive: bool,
 ) -> None:
     """Generate a metadata.yaml template.
 
@@ -3943,6 +3951,8 @@ def metadata_init(
         portolan metadata init                # Template at catalog root
         portolan metadata init demographics   # Template for collection
         portolan metadata init --force        # Overwrite existing
+        portolan metadata init --recursive    # All levels in catalog
+        portolan metadata init climate -r     # All levels under climate/
     """
     from portolan_cli.metadata_yaml import generate_metadata_template
 
@@ -3966,6 +3976,11 @@ def metadata_init(
             error("Not inside a Portolan catalog")
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
+
+    # Handle recursive mode
+    if recursive:
+        _metadata_init_recursive(catalog_path, path, use_json, force)
+        return
 
     # Determine target directory
     if path:
@@ -4162,6 +4177,110 @@ def _generate_readme_content(
         raise SystemExit(1) from err
 
     return generate_readme(stac=stac, metadata=metadata_dict), False
+
+
+def _metadata_init_recursive(
+    catalog_path: Path,
+    start_path: str | None,
+    use_json: bool,
+    force: bool,
+) -> None:
+    """Create metadata.yaml templates at all STAC levels recursively.
+
+    Walks the catalog tree and creates .portolan/metadata.yaml at each level
+    that contains a catalog.json or collection.json. Skips items (item.json)
+    and directories that already have metadata.yaml (unless force=True).
+
+    Args:
+        catalog_path: Path to catalog root.
+        start_path: Optional subdirectory to start from (relative to catalog root).
+        use_json: Output JSON format.
+        force: Overwrite existing metadata.yaml files.
+    """
+    from portolan_cli.metadata_yaml import generate_metadata_template
+
+    # Determine starting directory
+    if start_path:
+        base_dir = catalog_path / start_path
+    else:
+        base_dir = catalog_path
+
+    created_paths: list[str] = []
+    skipped_paths: list[str] = []
+
+    def _is_stac_entity(dirpath: Path) -> bool:
+        """Check if directory is a catalog or collection (not an item)."""
+        return (dirpath / "catalog.json").exists() or (dirpath / "collection.json").exists()
+
+    def _has_item_json(dirpath: Path) -> bool:
+        """Check if directory is an item (should be skipped)."""
+        return (dirpath / "item.json").exists()
+
+    def _create_metadata_at(dirpath: Path) -> bool:
+        """Create metadata.yaml at directory. Returns True if created."""
+        portolan_dir = dirpath / ".portolan"
+        metadata_file = portolan_dir / "metadata.yaml"
+
+        # Skip if exists and not forcing
+        if metadata_file.exists() and not force:
+            return False
+
+        portolan_dir.mkdir(parents=True, exist_ok=True)
+        template = generate_metadata_template()
+        metadata_file.write_text(template)
+        return True
+
+    # Process base directory first (if it's a STAC entity or is catalog root)
+    is_catalog_root = base_dir == catalog_path
+    if is_catalog_root or _is_stac_entity(base_dir):
+        rel_path = str(base_dir.relative_to(catalog_path) / ".portolan/metadata.yaml")
+        if is_catalog_root:
+            rel_path = ".portolan/metadata.yaml"
+        if _create_metadata_at(base_dir):
+            created_paths.append(rel_path)
+        else:
+            skipped_paths.append(rel_path)
+
+    # Walk tree for subdirectories
+    for dirpath in sorted(base_dir.rglob("*")):
+        if not dirpath.is_dir():
+            continue
+        # Skip hidden directories
+        if any(part.startswith(".") for part in dirpath.relative_to(catalog_path).parts):
+            continue
+        # Skip items
+        if _has_item_json(dirpath):
+            continue
+        # Only process STAC entities (catalogs/collections)
+        if not _is_stac_entity(dirpath):
+            continue
+
+        rel_path = str(dirpath.relative_to(catalog_path) / ".portolan/metadata.yaml")
+        if _create_metadata_at(dirpath):
+            created_paths.append(rel_path)
+        else:
+            skipped_paths.append(rel_path)
+
+    # Output results
+    if use_json:
+        envelope = success_envelope(
+            "metadata init",
+            {
+                "created": created_paths,
+                "skipped": skipped_paths,
+                "count": len(created_paths),
+            },
+        )
+        output_json_envelope(envelope)
+    else:
+        if created_paths:
+            success(f"Created {len(created_paths)} metadata.yaml template(s)")
+            for p in created_paths:
+                detail(f"  {p}")
+        if skipped_paths:
+            info_output(f"Skipped {len(skipped_paths)} existing file(s)")
+        if not created_paths and not skipped_paths:
+            warn("No catalogs or collections found")
 
 
 def _process_readme_entry(
