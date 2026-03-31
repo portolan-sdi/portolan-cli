@@ -504,3 +504,72 @@ class TestInfoDotArgument:
             or "collection not found" in result.output.lower()
             or "catalog not found" in result.output.lower()
         )
+
+    @pytest.mark.unit
+    def test_info_directory_with_both_catalog_and_collection_prefers_catalog(
+        self, cli_runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """Test that catalog.json takes precedence when both files exist.
+
+        Per ADR-0032 Pattern 2, a directory CAN have both catalog.json and
+        collection.json (e.g., a collection with sub-catalogs organizing items).
+        When both exist, we prefer catalog.json since it represents the
+        organizational structure.
+        """
+        from portolan_cli.cli import cli
+
+        # Create a directory with BOTH catalog.json and collection.json
+        dual_dir = tmp_path / "dual"
+        dual_dir.mkdir()
+
+        # Create .portolan for root detection
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("# config\n")
+
+        # Root catalog.json
+        root_catalog = {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": "root",
+            "description": "Root",
+            "links": [{"rel": "child", "href": "./dual/catalog.json"}],
+        }
+        (tmp_path / "catalog.json").write_text(json.dumps(root_catalog))
+
+        # Dual directory has BOTH files
+        dual_catalog = {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": "dual-as-catalog",
+            "description": "This directory has both catalog.json and collection.json",
+            "links": [],
+        }
+        (dual_dir / "catalog.json").write_text(json.dumps(dual_catalog))
+
+        dual_collection = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "dual-as-collection",
+            "description": "This would be used if collection.json took precedence",
+            "license": "CC-BY-4.0",
+            "extent": {
+                "spatial": {"bbox": [[0, 0, 1, 1]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [],
+        }
+        (dual_dir / "collection.json").write_text(json.dumps(dual_collection))
+
+        # Run info on the dual directory
+        result = cli_runner.invoke(
+            cli,
+            ["info", str(dual_dir), "--catalog", str(tmp_path), "--json"],
+        )
+
+        assert result.exit_code == 0, f"Expected success, got: {result.output}"
+        data = json.loads(result.output)
+        assert data["success"] is True
+        # Should return catalog info, NOT collection info
+        assert "catalog_id" in data["data"], "Expected catalog info, got collection"
+        assert data["data"]["catalog_id"] == "dual-as-catalog"
