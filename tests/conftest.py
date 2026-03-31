@@ -244,7 +244,7 @@ def catalog_with_versions_for_dry_run(tmp_path: Path) -> Path:
     Structure:
     - <catalog_root>/catalog.json
     - <catalog_root>/.portolan/config.yaml
-    - <catalog_root>/.portolan/state.json
+    (Note: state.json removed per issue #290 - config.yaml alone is sufficient)
     - <catalog_root>/<collection>/versions.json
     - <catalog_root>/<collection>/data.parquet
     """
@@ -263,11 +263,10 @@ def catalog_with_versions_for_dry_run(tmp_path: Path) -> Path:
     }
     (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
-    # .portolan sentinel: both config.yaml AND state.json required for MANAGED state
+    # .portolan sentinel: config.yaml alone is sufficient for MANAGED state (per issue #290)
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n")
-    (portolan_dir / "state.json").write_text("{}\n")
 
     # Per ADR-0023: versions.json at <catalog_root>/<collection>/versions.json
     collection_dir = catalog_dir / "test-collection"
@@ -320,11 +319,10 @@ def fresh_catalog_no_versions(tmp_path: Path) -> Path:
     }
     (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
 
-    # .portolan sentinel
+    # .portolan sentinel: config.yaml alone is sufficient (per issue #290)
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("{}\n")
-    (portolan_dir / "state.json").write_text("{}\n")
 
     # Collection directory exists but NO versions.json
     collection_dir = catalog_dir / "test-collection"

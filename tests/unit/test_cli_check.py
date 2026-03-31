@@ -97,7 +97,6 @@ class TestCheckCommand:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("{}")
-        (portolan_dir / "state.json").write_text("{}")
         return tmp_path
 
     @pytest.mark.unit
@@ -185,7 +184,6 @@ class TestCheckCommandWithMockedRules:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("{}")
-        (portolan_dir / "state.json").write_text("{}")
         return tmp_path
 
     @pytest.mark.unit
@@ -308,7 +306,6 @@ class TestCheckMetadataGeoAssetsFlags:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("{}")
-        (portolan_dir / "state.json").write_text("{}")
         return tmp_path
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -437,7 +434,6 @@ class TestCheckFlagCombinationsHypothesis:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("{}")
-        (portolan_dir / "state.json").write_text("{}")
         return tmp_path
 
     @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], max_examples=20)
@@ -607,7 +603,6 @@ class TestCheckMetadataFixFlag:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("{}")
-        (portolan_dir / "state.json").write_text("{}")
         return tmp_path
 
     @pytest.mark.unit

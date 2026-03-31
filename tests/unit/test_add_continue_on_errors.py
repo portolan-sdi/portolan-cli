@@ -40,7 +40,6 @@ def setup_catalog(path: Path) -> None:
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
-    (portolan_dir / "state.json").write_text("{}")
     catalog_data = {
         "type": "Catalog",
         "stac_version": "1.0.0",

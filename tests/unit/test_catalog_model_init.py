@@ -357,27 +357,8 @@ class TestInitCatalogFilesystemErrors:
                 init_catalog(catalog_dir)
             assert "Cannot write config.yaml" in exc_info.value.message
 
-    @pytest.mark.unit
-    def test_init_catalog_raises_on_state_write_failure(self, tmp_path: Path) -> None:
-        """CatalogInitError raised when state.json write fails."""
-        from unittest.mock import patch
-
-        from portolan_cli.catalog import CatalogInitError, init_catalog
-
-        catalog_dir = tmp_path / "test"
-        catalog_dir.mkdir()
-
-        original_write_text = Path.write_text
-
-        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-            if "state.json" in str(self):
-                raise OSError("Disk full")
-            return original_write_text(self, *args, **kwargs)
-
-        with patch.object(Path, "write_text", failing_write_text):
-            with pytest.raises(CatalogInitError) as exc_info:
-                init_catalog(catalog_dir)
-            assert "Cannot write state.json" in exc_info.value.message
+    # Note: test_init_catalog_raises_on_state_write_failure removed per issue #290
+    # state.json is no longer created during init
 
     @pytest.mark.unit
     def test_init_catalog_raises_on_versions_write_failure(self, tmp_path: Path) -> None:

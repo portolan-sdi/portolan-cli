@@ -41,7 +41,6 @@ def catalog_with_tracked_file(tmp_path: Path, valid_points_parquet: Path) -> Pat
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-    (portolan_dir / "state.json").write_text("{}\n")
 
     # Create catalog.json
     catalog_json = {
@@ -144,7 +143,6 @@ def catalog_with_subcatalog(tmp_path: Path, valid_points_parquet: Path) -> Path:
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir()
     (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-    (portolan_dir / "state.json").write_text("{}\n")
 
     # Create root catalog.json
     root_catalog_json = {

@@ -33,7 +33,6 @@ class TestCheck:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("{}")
-        (portolan_dir / "state.json").write_text("{}")
         return tmp_path
 
     @pytest.mark.unit

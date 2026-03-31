@@ -21,11 +21,11 @@ class TestFindCatalogRoot:
         # Import here to allow tests to fail before implementation exists
         from portolan_cli.catalog import find_catalog_root
 
-        # Setup: Create full managed catalog structure (config.yaml + state.json)
+        # Setup: Create full managed catalog structure (config.yaml + catalog.json)
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-        (portolan_dir / "state.json").write_text("{}")  # Operational file required
+        (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file required
 
         # Act
         result = find_catalog_root(tmp_path)
@@ -42,7 +42,7 @@ class TestFindCatalogRoot:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-        (portolan_dir / "state.json").write_text("{}")  # Operational file required
+        (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file required
 
         nested_dir = tmp_path / "collection" / "item" / "assets"
         nested_dir.mkdir(parents=True)
@@ -136,7 +136,7 @@ class TestFindCatalogRoot:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-        (portolan_dir / "state.json").write_text("{}")  # Operational file required
+        (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file required
 
         # Create nested path exactly at MAX_CATALOG_SEARCH_DEPTH - 1 (should find)
         deep_path = tmp_path
@@ -161,7 +161,7 @@ class TestFindCatalogRoot:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-        (portolan_dir / "state.json").write_text("{}")  # Operational file required
+        (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file required
 
         monkeypatch.chdir(tmp_path)
 
@@ -180,7 +180,7 @@ class TestFindCatalogRoot:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-        (portolan_dir / "state.json").write_text("{}")  # Operational file required
+        (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file required
 
         # Act
         result = find_catalog_root(tmp_path)
@@ -202,7 +202,7 @@ class TestFindCatalogRoot:
         portolan_dir = catalog_dir / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-        (portolan_dir / "state.json").write_text("{}")  # Operational file required
+        (catalog_dir / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
 
         # Create symlink to catalog
         symlink_dir = tmp_path / "symlink_catalog"
@@ -236,7 +236,7 @@ class TestFindCatalogRoot:
         parent_portolan = tmp_path / ".portolan"
         parent_portolan.mkdir()
         (parent_portolan / "config.yaml").write_text("# Parent catalog\n")
-        (parent_portolan / "state.json").write_text("{}")  # Operational file required
+        (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
 
         # Setup: Nested child catalog
         child_dir = tmp_path / "child"
@@ -244,7 +244,7 @@ class TestFindCatalogRoot:
         child_portolan = child_dir / ".portolan"
         child_portolan.mkdir()
         (child_portolan / "config.yaml").write_text("# Child catalog\n")
-        (child_portolan / "state.json").write_text("{}")  # Operational file required
+        (child_dir / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file
 
         # Setup: Subdir inside child
         subdir = child_dir / "collection"
@@ -281,7 +281,7 @@ class TestFindCatalogRootEdgeCases:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("")
-        (portolan_dir / "state.json").write_text("{}")  # Operational file required
+        (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file required
 
         # Act
         result = find_catalog_root(tmp_path)
@@ -298,7 +298,7 @@ class TestFindCatalogRootEdgeCases:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("remote:\n  url: s3://my-bucket/catalog\n")
-        (portolan_dir / "state.json").write_text("{}")  # Operational file required
+        (tmp_path / "catalog.json").write_text('{"type": "Catalog"}')  # Operational file required
 
         # Act
         result = find_catalog_root(tmp_path)
@@ -364,7 +364,7 @@ class TestFindCatalogRootEdgeCases:
         """find_catalog_root with require_operational=False finds config.yaml-only repos.
 
         This mode is used during init_catalog() when config.yaml is written
-        before catalog.json/state.json are created.
+        before catalog.json is created.
         """
         from portolan_cli.catalog import find_catalog_root
 
@@ -372,7 +372,7 @@ class TestFindCatalogRootEdgeCases:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")
-        # No state.json or catalog.json
+        # No catalog.json yet
 
         # Act: With require_operational=True (default), should NOT find
         result_default = find_catalog_root(tmp_path)
@@ -387,7 +387,7 @@ class TestFindCatalogRootEdgeCases:
         """find_catalog_root accepts catalog.json at root as operational file."""
         from portolan_cli.catalog import find_catalog_root
 
-        # Setup: config.yaml + catalog.json (no state.json)
+        # Setup: config.yaml + catalog.json (standard managed catalog)
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("# Portolan config\n")

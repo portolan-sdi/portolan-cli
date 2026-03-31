@@ -35,7 +35,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
     This creates all required files for a managed catalog:
     - catalog.json at root (STAC entry point)
     - .portolan/config.yaml (sentinel file for root detection)
-    - .portolan/state.json (tracking state)
+    (Note: state.json removed per issue #290)
     """
     # Create .portolan for internal state
     portolan_dir = tmp_path / ".portolan"
@@ -54,8 +54,7 @@ def initialized_catalog(tmp_path: Path) -> Path:
     # config.yaml is the sentinel for catalog root detection (per ADR-0029)
     (portolan_dir / "config.yaml").write_text("version: 1\n")
 
-    # state.json for tracking state
-    (portolan_dir / "state.json").write_text(json.dumps({"collections": {}}))
+    # Note: state.json removed per issue #290
 
     return tmp_path
 

@@ -3,6 +3,20 @@
 ## Status
 Accepted
 
+## Update (2026-03-31): state.json Removed
+
+Per [GitHub Issue #290](https://github.com/portolan-sdi/portolan-cli/issues/290), `state.json` has been removed from the MANAGED state detection. `config.yaml` alone is now sufficient.
+
+**Updated detection logic:**
+
+| State | Condition |
+|-------|-----------|
+| MANAGED | `.portolan/config.yaml` exists |
+| UNMANAGED_STAC | `catalog.json` exists at root, but not MANAGED |
+| FRESH | Everything else |
+
+See issue #290 for the rationale: `state.json` was never implemented for its intended purpose (tracking sync state). All state tracking happens in `versions.json` at the collection level.
+
 ## Context
 
 Portolan has two configuration files in `.portolan/` with confusingly similar names:
@@ -33,7 +47,7 @@ The `detect_state()` function checks for the existence of both `config.json` AND
 
 | State | Condition |
 |-------|-----------|
-| MANAGED | `.portolan/config.yaml` AND `.portolan/state.json` both exist |
+| MANAGED | `.portolan/config.yaml` exists (state.json removed per issue #290) |
 | UNMANAGED_STAC | `catalog.json` exists at root, but not MANAGED |
 | FRESH | Everything else |
 
