@@ -78,6 +78,7 @@ nav:
   - Home: index.md
   - Guides:
     - Extracting from ArcGIS: guides/extract-arcgis.md
+    - Metadata Defaults: guides/metadata-defaults.md
     - Nested Catalogs: guides/nested-catalogs.md
   - Reference:
     - CLI: reference/cli.md

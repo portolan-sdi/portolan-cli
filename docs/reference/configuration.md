@@ -392,3 +392,33 @@ portolan readme --recursive
 - Aggregated spatial extent (envelope of all collections)
 - Aggregated temporal extent (earliest to latest)
 - List of collections with links
+
+### Data Defaults
+
+When source files lack certain metadata (nodata values, temporal info), you can specify defaults in `metadata.yaml`:
+
+```yaml
+# .portolan/metadata.yaml
+defaults:
+  temporal:
+    year: 2025              # Items default to 2025-01-01
+    # Or explicit bounds:
+    # start: "2025-04-15"
+    # end: "2025-05-30"
+
+  raster:
+    nodata: 0               # Uniform nodata for all bands
+    # Or per-band:
+    # nodata: [0, 0, 255]
+```
+
+**Behavior:**
+
+| Scenario | Result |
+|----------|--------|
+| Source file has value | File value used (defaults don't override) |
+| Source file lacks value | Default applied |
+| CLI flag provided | CLI flag overrides default |
+| No default, no source value | Field left null |
+
+See the [Metadata Defaults Guide](../guides/metadata-defaults.md) for detailed usage.
