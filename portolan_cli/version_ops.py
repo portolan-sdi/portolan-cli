@@ -25,7 +25,7 @@ def _resolve_backend_name(
 
     from portolan_cli.config import get_setting
 
-    resolved = get_setting("backend", catalog_path=catalog_root)
+    resolved: str | None = get_setting("backend", catalog_path=catalog_root)
     if resolved is not None:
         return resolved
 

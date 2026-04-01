@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
+    from portolan_cli.backends.protocol import VersioningBackend
     from portolan_cli.extract.arcgis.report import ExtractionReport
     from portolan_cli.pull import PullResult
 
@@ -5302,7 +5303,9 @@ def extract_arcgis_cmd(
 # =============================================================================
 
 
-def _require_iceberg_backend(catalog_path: Path, use_json: bool, command_name: str):
+def _require_iceberg_backend(
+    catalog_path: Path, use_json: bool, command_name: str
+) -> VersioningBackend:
     """Load the iceberg backend or exit with an error."""
     from portolan_cli.config import get_setting
 
