@@ -2733,6 +2733,42 @@ def rm_cmd(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _check_backend_push_support(
+    catalog_path: Path,
+    collection: str | None,
+    use_json: bool,
+) -> None:
+    """Exit with error if the active backend does not support file-based push.
+
+    This is backend routing logic added by the iceberg-backend-integration
+    branch. Extracted here to reduce cyclomatic complexity of push().
+    """
+    from portolan_cli.config import get_setting
+
+    active_backend = get_setting("backend", catalog_path=catalog_path)
+    if active_backend is None or active_backend == "file":
+        return
+
+    from portolan_cli.backends import get_backend
+
+    backend = get_backend(active_backend, catalog_root=catalog_path)
+    if not (hasattr(backend, "supports_push") and not backend.supports_push()):
+        return
+
+    remote = get_setting("remote", catalog_path=catalog_path, collection=collection)
+    if hasattr(backend, "push_blocked_message"):
+        msg = backend.push_blocked_message(remote)
+    else:
+        msg = f"Push is not supported with the '{active_backend}' backend."
+
+    if use_json:
+        envelope = error_envelope("push", [ErrorDetail(type="NotImplementedError", message=msg)])
+        output_json_envelope(envelope)
+    else:
+        error(msg)
+    raise SystemExit(1)
+
+
 @cli.command()
 @click.argument("destination", required=False, default=None)
 @click.option(
@@ -2828,27 +2864,7 @@ def push(
         catalog_path = require_catalog_root(use_json, "push")
 
     # Check if active backend supports push
-    from portolan_cli.config import get_setting
-
-    active_backend = get_setting("backend", catalog_path=catalog_path)
-    if active_backend is not None and active_backend != "file":
-        from portolan_cli.backends import get_backend
-
-        backend = get_backend(active_backend, catalog_root=catalog_path)
-        if hasattr(backend, "supports_push") and not backend.supports_push():
-            remote = get_setting("remote", catalog_path=catalog_path, collection=collection)
-            if hasattr(backend, "push_blocked_message"):
-                msg = backend.push_blocked_message(remote)
-            else:
-                msg = f"Push is not supported with the '{active_backend}' backend."
-            if use_json:
-                envelope = error_envelope(
-                    "push", [ErrorDetail(type="NotImplementedError", message=msg)]
-                )
-                output_json_envelope(envelope)
-            else:
-                error(msg)
-            raise SystemExit(1)
+    _check_backend_push_support(catalog_path, collection, use_json)
 
     resolved_destination = resolve_remote(destination, catalog_path, collection)
     resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
@@ -3021,6 +3037,66 @@ def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
             error("Pull failed")
 
 
+def _try_backend_pull(
+    catalog_path: Path,
+    remote_url: str,
+    collection: str | None,
+    dry_run: bool,
+    use_json: bool,
+) -> bool:
+    """Attempt a pull via the active non-file backend.
+
+    Returns True if the backend handled the pull (caller should return).
+    Returns False if the backend has no pull() method and the file-based pull
+    should proceed as normal.
+
+    This is backend routing logic added by the iceberg-backend-integration
+    branch. Extracted here to reduce cyclomatic complexity of pull_command().
+    """
+    from portolan_cli.config import get_setting
+
+    active_backend = get_setting("backend", catalog_path=catalog_path)
+    if active_backend is None or active_backend == "file":
+        return False
+
+    from portolan_cli.backends import get_backend
+
+    backend = get_backend(active_backend, catalog_root=catalog_path)
+    if not hasattr(backend, "pull"):
+        return False
+
+    result = backend.pull(
+        remote_url=remote_url,
+        local_root=catalog_path,
+        collection=collection,
+        dry_run=dry_run,
+    )
+
+    if use_json:
+        data = {
+            "files_downloaded": result.files_downloaded,
+            "files_skipped": result.files_skipped,
+            "local_version": result.local_version,
+            "remote_version": result.remote_version,
+            "up_to_date": getattr(result, "up_to_date", False),
+        }
+        if result.success:
+            envelope = success_envelope("pull", data)
+        else:
+            envelope = error_envelope(
+                "pull",
+                [ErrorDetail(type="PullError", message="Pull failed")],
+                data=data,
+            )
+        output_json_envelope(envelope)
+    else:
+        _output_pull_human(result, dry_run=dry_run)
+
+    if not result.success:
+        raise SystemExit(1)
+    return True
+
+
 @cli.command()
 @click.argument("remote_url")
 @click.option(
@@ -3100,7 +3176,6 @@ def pull_command(
         portolan pull s3://mybucket/catalog
         portolan pull s3://mybucket/catalog --workers 4
     """
-    from portolan_cli.config import get_setting
     from portolan_cli.pull import pull as pull_fn
     from portolan_cli.pull import pull_all_collections
 
@@ -3114,42 +3189,8 @@ def pull_command(
     resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
 
     # Route to backend-specific pull if using non-file backend
-    active_backend = get_setting("backend", catalog_path=catalog_path)
-    if active_backend is not None and active_backend != "file":
-        from portolan_cli.backends import get_backend
-
-        backend = get_backend(active_backend, catalog_root=catalog_path)
-        if hasattr(backend, "pull"):
-            result = backend.pull(
-                remote_url=remote_url,
-                local_root=catalog_path,
-                collection=collection,
-                dry_run=dry_run,
-            )
-
-            if use_json:
-                data = {
-                    "files_downloaded": result.files_downloaded,
-                    "files_skipped": result.files_skipped,
-                    "local_version": result.local_version,
-                    "remote_version": result.remote_version,
-                    "up_to_date": getattr(result, "up_to_date", False),
-                }
-                if result.success:
-                    envelope = success_envelope("pull", data)
-                else:
-                    envelope = error_envelope(
-                        "pull",
-                        [ErrorDetail(type="PullError", message="Pull failed")],
-                        data=data,
-                    )
-                output_json_envelope(envelope)
-            else:
-                _output_pull_human(result, dry_run=dry_run)
-
-            if not result.success:
-                raise SystemExit(1)
-            return
+    if _try_backend_pull(catalog_path, remote_url, collection, dry_run, use_json):
+        return
 
     # Catalog-wide pull (no --collection specified)
     if collection is None:
@@ -5098,9 +5139,7 @@ def extract_arcgis_cmd(
 # =============================================================================
 
 
-def _require_iceberg_backend(
-    catalog_path: Path, use_json: bool, command_name: str
-):
+def _require_iceberg_backend(catalog_path: Path, use_json: bool, command_name: str):
     """Load the iceberg backend or exit with an error."""
     from portolan_cli.config import get_setting
 

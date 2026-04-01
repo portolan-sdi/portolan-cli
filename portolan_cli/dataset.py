@@ -1038,18 +1038,15 @@ def finalize_datasets(
         active_backend = get_setting("backend", catalog_path=catalog_root)
 
         if active_backend is not None and active_backend != "file":
-            # Plugin backend: route through publish_version()
-            from portolan_cli.version_ops import publish_version
-
-            assets: dict[str, str] = {}
-            for p in items:
-                for filename, (file_path, _checksum) in p.asset_files.items():
-                    if p.is_collection_level_asset:
-                        asset_key = filename
-                    else:
-                        asset_key = f"{p.item_id}/{filename}"
-                    assets[asset_key] = str(file_path)
-            publish_version(collection_id, assets=assets, catalog_root=catalog_root)
+            # Plugin backend: publish version snapshot and run post-add hooks
+            _finalize_with_backend(
+                catalog_root=catalog_root,
+                collection_id=collection_id,
+                collection_dir=collection_dir,
+                collection=collection,
+                items=items,
+                active_backend=active_backend,
+            )
         else:
             # File backend: use optimized batch write (O(1) per collection)
             _batch_update_versions(
@@ -1057,39 +1054,6 @@ def finalize_datasets(
                 collection_id=collection_id,
                 items=items,
             )
-
-        # NOTE: Plugin backends (e.g. Iceberg) may override table:* STAC extension
-        # fields in collection.json via on_post_add, since the backend's table state
-        # (actual row counts, schema excluding derived columns) is authoritative.
-        if active_backend is not None and active_backend != "file":
-            from portolan_cli.backends import get_backend
-
-            backend = get_backend(active_backend, catalog_root=catalog_root)
-            if hasattr(backend, "on_post_add"):
-                remote = get_setting(
-                    "remote", catalog_path=catalog_root, collection=collection_id
-                )
-                first = items[0]
-                backend.on_post_add(
-                    {
-                        "catalog_root": catalog_root,
-                        "collection_id": collection_id,
-                        "collection_dir": collection_dir,
-                        "collection": collection,
-                        "item_id": first.item_id,
-                        "item_dir": first.item_json_path.parent,
-                        "asset_files": first.asset_files,
-                        "items": [
-                            {
-                                "item_id": p.item_id,
-                                "item_dir": p.item_json_path.parent,
-                                "asset_files": p.asset_files,
-                            }
-                            for p in items
-                        ],
-                        "remote": remote,
-                    }
-                )
 
         # Build results
         for p in items:
@@ -1104,6 +1068,68 @@ def finalize_datasets(
             )
 
     return results
+
+
+def _finalize_with_backend(
+    catalog_root: Path,
+    collection_id: str,
+    collection_dir: Path,
+    collection: object,
+    items: list[PreparedDataset],
+    active_backend: str,
+) -> None:
+    """Run backend versioning and post-add hooks for a non-file backend.
+
+    Handles both publish_version() and on_post_add() calls so that
+    finalize_datasets() stays within complexity rank C.
+
+    This is backend routing logic added by the iceberg-backend-integration
+    branch.
+    """
+    from portolan_cli.backends import get_backend
+    from portolan_cli.config import get_setting
+    from portolan_cli.version_ops import publish_version
+
+    # Publish version snapshot via the plugin backend
+    assets: dict[str, str] = {}
+    for p in items:
+        for filename, (file_path, _checksum) in p.asset_files.items():
+            if p.is_collection_level_asset:
+                asset_key = filename
+            else:
+                asset_key = f"{p.item_id}/{filename}"
+            assets[asset_key] = str(file_path)
+    publish_version(collection_id, assets=assets, catalog_root=catalog_root)
+
+    # NOTE: Plugin backends (e.g. Iceberg) may override table:* STAC extension
+    # fields in collection.json via on_post_add, since the backend's table state
+    # (actual row counts, schema excluding derived columns) is authoritative.
+    backend = get_backend(active_backend, catalog_root=catalog_root)
+    if not hasattr(backend, "on_post_add"):
+        return
+
+    remote = get_setting("remote", catalog_path=catalog_root, collection=collection_id)
+    first = items[0]
+    backend.on_post_add(
+        {
+            "catalog_root": catalog_root,
+            "collection_id": collection_id,
+            "collection_dir": collection_dir,
+            "collection": collection,
+            "item_id": first.item_id,
+            "item_dir": first.item_json_path.parent,
+            "asset_files": first.asset_files,
+            "items": [
+                {
+                    "item_id": p.item_id,
+                    "item_dir": p.item_json_path.parent,
+                    "asset_files": p.asset_files,
+                }
+                for p in items
+            ],
+            "remote": remote,
+        }
+    )
 
 
 def _batch_update_versions(
@@ -1467,7 +1493,6 @@ def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
         catalog.add_link(pystac.Link(rel="child", target=collection_href))
         # Re-save catalog
         catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
-
 
 
 def _update_versions(
