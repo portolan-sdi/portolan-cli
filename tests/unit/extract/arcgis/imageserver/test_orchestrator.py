@@ -63,19 +63,21 @@ class TestRunImageServerExtraction:
         mock_result.tiles_skipped = 0
         mock_result.total_bytes = 1000000
         mock_result.collection_path = tmp_path / "collection.json"
+        mock_result.report = MagicMock()
 
         with patch(
             "portolan_cli.extract.arcgis.imageserver.orchestrator.extract_imageserver",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
-            exit_code = await run_imageserver_extraction(
+            exit_code, report = await run_imageserver_extraction(
                 url="https://example.com/rest/services/Test/ImageServer",
                 output_dir=tmp_path,
                 options=ImageServerCLIOptions(),
             )
 
         assert exit_code == 0
+        assert report is not None
 
     @pytest.mark.asyncio
     async def test_extraction_with_failures(self, tmp_path: Path) -> None:
@@ -92,7 +94,7 @@ class TestRunImageServerExtraction:
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
-            exit_code = await run_imageserver_extraction(
+            exit_code, _ = await run_imageserver_extraction(
                 url="https://example.com/rest/services/Test/ImageServer",
                 output_dir=tmp_path,
                 options=ImageServerCLIOptions(),
@@ -116,7 +118,7 @@ class TestRunImageServerExtraction:
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
-            exit_code = await run_imageserver_extraction(
+            exit_code, _ = await run_imageserver_extraction(
                 url="https://example.com/rest/services/Test/ImageServer",
                 output_dir=tmp_path,
                 options=ImageServerCLIOptions(),
@@ -132,7 +134,7 @@ class TestRunImageServerExtraction:
             new_callable=AsyncMock,
             side_effect=Exception("Network error"),
         ):
-            exit_code = await run_imageserver_extraction(
+            exit_code, _ = await run_imageserver_extraction(
                 url="https://example.com/rest/services/Test/ImageServer",
                 output_dir=tmp_path,
                 options=ImageServerCLIOptions(),
@@ -155,7 +157,7 @@ class TestRunImageServerExtraction:
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
-            exit_code = await run_imageserver_extraction(
+            exit_code, _ = await run_imageserver_extraction(
                 url="https://example.com/rest/services/Test/ImageServer",
                 output_dir=tmp_path,
                 options=ImageServerCLIOptions(dry_run=True),

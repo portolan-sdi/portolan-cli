@@ -72,6 +72,12 @@ from rio_cogeo.profiles import cog_profiles
 
 from portolan_cli.conversion_config import CogSettings, get_cog_settings
 from portolan_cli.extract.arcgis.imageserver.discovery import discover_imageserver
+from portolan_cli.extract.arcgis.imageserver.report import (
+    ImageServerExtractionReport,
+    TileResult,
+    build_imageserver_report,
+    save_imageserver_report,
+)
 from portolan_cli.extract.arcgis.imageserver.resume import (
     ImageServerResumeState,
     load_resume_state,
@@ -81,7 +87,30 @@ from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec, compute_til
 from portolan_cli.output import detail, error, info, success, warn
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
+
+
+@dataclass
+class TileProgress:
+    """Progress callback data for tile extraction.
+
+    Matches FeatureServer's ExtractionProgress structure for consistency.
+
+    Attributes:
+        tile_index: Current tile index (0-based).
+        total_tiles: Total number of tiles to extract.
+        tile_id: ID of current tile (e.g., "0_0").
+        status: Current status - one of "starting", "downloading",
+            "converting", "success", "failed", or "skipped".
+    """
+
+    tile_index: int
+    total_tiles: int
+    tile_id: str
+    status: str
+
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +198,7 @@ class ExtractionResult:
         tiles_failed: Number of tiles that failed after retries.
         total_bytes: Total bytes downloaded.
         catalog_initialized: Whether Portolan catalog was auto-initialized.
+        report: Full extraction report with metadata and tile results.
     """
 
     output_dir: Path
@@ -177,6 +207,7 @@ class ExtractionResult:
     tiles_failed: int = 0
     total_bytes: int = 0
     catalog_initialized: bool = False
+    report: ImageServerExtractionReport | None = None
 
 
 def _validate_tiff(data: bytes) -> bool:
@@ -442,6 +473,19 @@ class _ProcessingStats:
     tiles_failed: int = 0
     total_bytes: int = 0
     tiles_since_last_save: int = 0
+    tile_results: list[TileResult] = field(default_factory=list)
+
+
+@dataclass
+class _TileProcessResult:
+    """Result of processing a single tile."""
+
+    tile: TileSpec
+    success: bool
+    bytes_downloaded: int
+    duration_seconds: float
+    error_msg: str | None
+    attempts: int
 
 
 async def _process_tile(
@@ -454,7 +498,7 @@ async def _process_tile(
     semaphore: asyncio.Semaphore,
     rate_limit_lock: asyncio.Lock,
     last_request_time: dict[str, float],
-) -> tuple[TileSpec, bool, int]:
+) -> _TileProcessResult:
     """Process a single tile: download and convert to COG.
 
     STAC metadata is NOT created here - that's handled by the Portolan API
@@ -472,19 +516,29 @@ async def _process_tile(
         last_request_time: Shared dict tracking last request time per slot.
 
     Returns:
-        Tuple of (tile, success, bytes_downloaded).
+        _TileProcessResult with tile, success status, bytes, duration, error, attempts.
     """
+    start_time = time.monotonic()
+    error_msg: str | None = None
+    attempts_made = 0
+
     async with semaphore:
         slot_id = str(id(asyncio.current_task()))
-        tile_dir = output_dir / "tiles"
-        raw_path = tile_dir / f"tile_{tile.get_id()}_raw.tif"
-        cog_path = tile_dir / f"tile_{tile.get_id()}.tif"
+        # Create proper STAC structure: collection/item/asset.tif
+        # The collection is named after the service (sanitized), items are tile IDs
+        # tile.get_id() already returns "tile_X_Y" format
+        tile_id = tile.get_id()
+        item_dir = output_dir / "tiles" / tile_id
+        item_dir.mkdir(parents=True, exist_ok=True)
+        raw_path = item_dir / f"{tile_id}_raw.tif"
+        cog_path = item_dir / f"{tile_id}.tif"
 
         rate_limit_delay = config.rate_limit_delay
         bytes_downloaded = 0
 
         try:
             for attempt in range(1, config.max_retries + 1):
+                attempts_made = attempt
                 try:
                     # Rate limiting: ensure minimum delay between requests
                     async with rate_limit_lock:
@@ -511,7 +565,15 @@ async def _process_tile(
                     if raw_path.exists():
                         raw_path.unlink()
 
-                    return tile, True, bytes_downloaded
+                    duration = time.monotonic() - start_time
+                    return _TileProcessResult(
+                        tile=tile,
+                        success=True,
+                        bytes_downloaded=bytes_downloaded,
+                        duration_seconds=duration,
+                        error_msg=None,
+                        attempts=attempts_made,
+                    )
 
                 except RateLimitError as e:
                     # Handle 429 with exponential backoff
@@ -521,8 +583,10 @@ async def _process_tile(
                     await asyncio.sleep(delay)
                     # Increase rate limit delay for future requests
                     rate_limit_delay = min(rate_limit_delay * 2, 2.0)
+                    error_msg = str(e)
 
                 except ImageServerExtractionError as e:
+                    error_msg = str(e)
                     if attempt < config.max_retries:
                         logger.warning(
                             "Tile %s failed (attempt %d/%d): %s",
@@ -539,13 +603,39 @@ async def _process_tile(
                             config.max_retries,
                             e,
                         )
-                        return tile, False, 0
+                        duration = time.monotonic() - start_time
+                        return _TileProcessResult(
+                            tile=tile,
+                            success=False,
+                            bytes_downloaded=0,
+                            duration_seconds=duration,
+                            error_msg=error_msg,
+                            attempts=attempts_made,
+                        )
 
                 except Exception as e:
+                    error_msg = str(e)
                     logger.error("Unexpected error processing tile %s: %s", tile.get_id(), e)
-                    return tile, False, 0
+                    duration = time.monotonic() - start_time
+                    return _TileProcessResult(
+                        tile=tile,
+                        success=False,
+                        bytes_downloaded=0,
+                        duration_seconds=duration,
+                        error_msg=error_msg,
+                        attempts=attempts_made,
+                    )
 
-            return tile, False, 0
+            # All retries exhausted
+            duration = time.monotonic() - start_time
+            return _TileProcessResult(
+                tile=tile,
+                success=False,
+                bytes_downloaded=0,
+                duration_seconds=duration,
+                error_msg=error_msg or "Max retries exceeded",
+                attempts=attempts_made,
+            )
 
         finally:
             # Clean up raw file on any exit (success or failure)
@@ -605,12 +695,20 @@ def _load_effective_config(config: ExtractionConfig, output_dir: Path) -> Extrac
     return config
 
 
-def _auto_init_catalog(output_dir: Path, service_name: str | None = None) -> bool:
+def _auto_init_catalog(
+    output_dir: Path,
+    service_name: str | None = None,
+) -> bool:
     """Initialize a Portolan catalog and add extracted COG files.
 
     Called automatically after extraction unless raw=True.
     Uses the Portolan API (init_catalog + add_files) to create
     proper STAC structure with items per raster (per ADR-0031).
+
+    Note: Does NOT write metadata.yaml - that contains human-enrichable fields
+    (contact, license) that must be filled in by the user after extraction.
+    Extracted service metadata is stored in extraction-report.json instead.
+    This matches FeatureServer's pattern.
 
     Args:
         output_dir: Directory containing extracted COG files.
@@ -622,9 +720,9 @@ def _auto_init_catalog(output_dir: Path, service_name: str | None = None) -> boo
     from portolan_cli.catalog import init_catalog
     from portolan_cli.dataset import add_files
 
-    # Get list of extracted COG files
+    # Get list of extracted COG files (nested in item directories)
     tiles_dir = output_dir / "tiles"
-    cog_files = list(tiles_dir.glob("*.tif"))
+    cog_files = list(tiles_dir.glob("*/*.tif"))
 
     if not cog_files:
         return False  # Nothing to add
@@ -649,6 +747,7 @@ async def _extract_all_tiles(
     metadata: ImageServerMetadata,
     resume_state: ImageServerResumeState,
     resume_path: Path,
+    on_progress: Callable[[TileProgress], None] | None = None,
 ) -> _ProcessingStats:
     """Extract all tiles with concurrency control.
 
@@ -660,9 +759,10 @@ async def _extract_all_tiles(
         metadata: Service metadata.
         resume_state: Resume state to update.
         resume_path: Path to save resume state.
+        on_progress: Optional progress callback (matches FeatureServer pattern).
 
     Returns:
-        Processing statistics.
+        Processing statistics with tile results.
     """
     semaphore = asyncio.Semaphore(config.max_concurrent)
     rate_limit_lock = asyncio.Lock()
@@ -686,14 +786,25 @@ async def _extract_all_tiles(
         ]
 
         for i, coro in enumerate(asyncio.as_completed(tasks)):
-            tile, succeeded, bytes_downloaded = await coro
+            result = await coro
             _update_stats_and_state(
-                tile, succeeded, bytes_downloaded, stats, resume_state, i, len(tiles)
+                tile=result.tile,
+                succeeded=result.success,
+                bytes_downloaded=result.bytes_downloaded,
+                stats=stats,
+                resume_state=resume_state,
+                index=i,
+                total=len(tiles),
+                output_dir=output_dir,
+                duration=result.duration_seconds,
+                error_msg=result.error_msg,
+                attempts=result.attempts,
+                on_progress=on_progress,
             )
 
             # Batch resume state saves
             stats.tiles_since_last_save += 1
-            if stats.tiles_since_last_save >= RESUME_SAVE_INTERVAL or not succeeded:
+            if stats.tiles_since_last_save >= RESUME_SAVE_INTERVAL or not result.success:
                 _save_resume_state_locked(resume_state, resume_path)
                 stats.tiles_since_last_save = 0
 
@@ -708,8 +819,13 @@ def _update_stats_and_state(
     resume_state: ImageServerResumeState,
     index: int,
     total: int,
+    output_dir: Path,
+    duration: float,
+    error_msg: str | None,
+    attempts: int,
+    on_progress: Callable[[TileProgress], None] | None = None,
 ) -> None:
-    """Update statistics and resume state after processing a tile.
+    """Update statistics, resume state, and tile results after processing a tile.
 
     Args:
         tile: Processed tile.
@@ -719,16 +835,72 @@ def _update_stats_and_state(
         resume_state: Resume state to update.
         index: Current tile index.
         total: Total tiles to process.
+        output_dir: Output directory for computing relative paths.
+        duration: Processing duration in seconds.
+        error_msg: Error message if failed.
+        attempts: Number of attempts.
+        on_progress: Optional progress callback.
     """
+    tile_id = tile.get_id()
+
     if succeeded:
         stats.tiles_downloaded += 1
         stats.total_bytes += bytes_downloaded
         resume_state.succeeded_tiles.add((tile.x, tile.y))
-        detail(f"Tile {tile.get_id()}: {bytes_downloaded:,} bytes [{index + 1}/{total}]")
+
+        # Compute relative output path (tile_id already includes "tile_" prefix)
+        output_path = f"tiles/{tile_id}/{tile_id}.tif"
+
+        stats.tile_results.append(
+            TileResult(
+                tile_id=tile_id,
+                status="success",
+                size_bytes=bytes_downloaded,
+                duration_seconds=duration,
+                output_path=output_path,
+                error=None,
+                attempts=attempts,
+            )
+        )
+
+        detail(f"Tile {tile_id}: {bytes_downloaded:,} bytes [{index + 1}/{total}]")
+
+        if on_progress:
+            on_progress(
+                TileProgress(
+                    tile_index=index,
+                    total_tiles=total,
+                    tile_id=tile_id,
+                    status="success",
+                )
+            )
     else:
         stats.tiles_failed += 1
         resume_state.failed_tiles.add((tile.x, tile.y))
-        error(f"Tile {tile.get_id()}: failed [{index + 1}/{total}]")
+
+        stats.tile_results.append(
+            TileResult(
+                tile_id=tile_id,
+                status="failed",
+                size_bytes=None,
+                duration_seconds=duration,
+                output_path=None,
+                error=error_msg,
+                attempts=attempts,
+            )
+        )
+
+        error(f"Tile {tile_id}: failed [{index + 1}/{total}]")
+
+        if on_progress:
+            on_progress(
+                TileProgress(
+                    tile_index=index,
+                    total_tiles=total,
+                    tile_id=tile_id,
+                    status="failed",
+                )
+            )
 
 
 async def extract_imageserver(
@@ -737,6 +909,7 @@ async def extract_imageserver(
     config: ExtractionConfig | None = None,
     resume: bool = False,
     bbox: tuple[float, float, float, float] | None = None,
+    on_progress: Callable[[TileProgress], None] | None = None,
 ) -> ExtractionResult:
     """Extract raster tiles from ImageServer to COG files.
 
@@ -749,15 +922,18 @@ async def extract_imageserver(
         config: Extraction configuration (defaults to ExtractionConfig()).
         resume: If True, resume from previous extraction.
         bbox: Optional bbox to subset extraction (minx, miny, maxx, maxy).
+        on_progress: Optional callback for progress updates (matches FeatureServer pattern).
 
     Returns:
-        ExtractionResult with extraction statistics.
+        ExtractionResult with extraction statistics and full report.
 
     Raises:
         ImageServerDiscoveryError: If service discovery fails.
     """
     if config is None:
         config = ExtractionConfig()
+
+    start_time = time.monotonic()
 
     # Setup
     _, portolan_dir = _setup_extraction_dirs(output_dir)
@@ -800,7 +976,9 @@ async def extract_imageserver(
     resume_state = _load_or_create_resume_state(resume, resume_path, url)
 
     tiles_to_process = [t for t in tiles if should_process_tile(t.x, t.y, resume_state)]
-    tiles_skipped = len(tiles) - len(tiles_to_process)
+    # Compute skipped tiles BEFORE extraction (resume_state changes during extraction)
+    skipped_tile_specs = [t for t in tiles if not should_process_tile(t.x, t.y, resume_state)]
+    tiles_skipped = len(skipped_tile_specs)
     if tiles_skipped > 0:
         info(f"Skipping {tiles_skipped} already-completed tiles")
 
@@ -813,12 +991,41 @@ async def extract_imageserver(
         metadata,
         resume_state,
         resume_path,
+        on_progress=on_progress,
     )
     _save_resume_state_locked(resume_state, resume_path)
+
+    # Add skipped tiles to results (computed BEFORE extraction)
+    for tile in skipped_tile_specs:
+        tile_id = tile.get_id()
+        stats.tile_results.append(
+            TileResult(
+                tile_id=tile_id,
+                status="skipped",
+                size_bytes=None,
+                duration_seconds=None,
+                output_path=f"tiles/{tile_id}/{tile_id}.tif",
+                error=None,
+                attempts=0,
+            )
+        )
+
+    total_duration = time.monotonic() - start_time
+
+    # Build and save extraction report
+    report = build_imageserver_report(
+        url=url,
+        metadata=metadata,
+        tile_results=stats.tile_results,
+        total_duration=total_duration,
+    )
+    report_path = portolan_dir / "extraction-report.json"
+    save_imageserver_report(report, report_path)
 
     success(f"Extracted {stats.tiles_downloaded} tiles ({stats.total_bytes:,} bytes)")
     if stats.tiles_failed > 0:
         error(f"Failed: {stats.tiles_failed} tiles")
+    info(f"Report: {report_path}")
 
     # Auto-init catalog using Portolan API (unless raw mode)
     catalog_initialized = False
@@ -837,6 +1044,7 @@ async def extract_imageserver(
         tiles_failed=stats.tiles_failed,
         total_bytes=stats.total_bytes,
         catalog_initialized=catalog_initialized,
+        report=report,
     )
 
 

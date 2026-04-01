@@ -1281,6 +1281,20 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
                 )
             )
             return
+        # Check for STAC item files: JSON files named after their parent directory
+        # Pattern: item_dir/item_dir.json (e.g., tile_0_0/tile_0_0.json)
+        # This is the standard Portolan item structure per ADR-0031
+        if path.stem.lower() == path.parent.name.lower():
+            ctx.skipped.append(
+                SkippedFile(
+                    path=path,
+                    relative_path=_get_relative_path(path, ctx.root),
+                    category=FileCategory.STAC_METADATA,
+                    reason_type=SkipReasonType.METADATA_FILE,
+                    reason_message=f"{path.name} is a STAC item metadata file",
+                )
+            )
+            return
         if _detect_json_type(path) != FormatsFormatType.VECTOR:
             # Plain JSON, not GeoJSON - skip with informative message
             # We override classify_file here because we have specific knowledge:

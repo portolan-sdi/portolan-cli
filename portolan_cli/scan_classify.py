@@ -243,6 +243,16 @@ def classify_file(
             f"{name} is STAC catalog metadata",
         )
 
+    # Check for STAC item files: JSON files named after their parent directory
+    # Pattern: item_dir/item_dir.json (e.g., tile_0_0/tile_0_0.json)
+    # This is the standard Portolan item structure per ADR-0031
+    if ext == ".json" and path.stem.lower() == path.parent.name.lower():
+        return (
+            FileCategory.STAC_METADATA,
+            SkipReasonType.METADATA_FILE,
+            f"{path.name} is a STAC item metadata file",
+        )
+
     if name in STYLE_FILENAMES:
         return (
             FileCategory.STYLE,

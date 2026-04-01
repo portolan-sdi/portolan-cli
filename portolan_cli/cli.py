@@ -4740,9 +4740,11 @@ def _handle_imageserver_extraction(
         max_concurrent=max_concurrent,
         dry_run=dry_run,
         resume=resume,
+        raw=False,  # ImageServer always creates STAC structure
         bbox=bbox_tuple,
         timeout=timeout,
         compression=cog_settings.compression,
+        use_json=json_output,
     )
 
     # Run extraction
@@ -4751,17 +4753,23 @@ def _handle_imageserver_extraction(
         if dry_run:
             info("[DRY RUN MODE]")
 
-    exit_code = run_imageserver_extraction_sync(url, output_dir, options)
+    exit_code, report = run_imageserver_extraction_sync(url, output_dir, options)
 
     # Output result
     if json_output:
-        data = {
+        data: dict[str, Any] = {
             "source_url": url,
             "output_dir": str(output_dir),
             "service_type": "ImageServer",
             "dry_run": dry_run,
-            "exit_code": exit_code,
         }
+
+        # Include report data if available
+        if report:
+            data["summary"] = report.summary.to_dict()
+            data["metadata_extracted"] = report.metadata_extracted.to_dict()
+            data["tiles"] = [t.to_dict() for t in report.tiles]
+
         if exit_code == 0:
             envelope = success_envelope("extract-arcgis", data)
         else:

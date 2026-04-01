@@ -43,6 +43,9 @@ class ImageServerMetadata:
     Contains raster service information needed for extraction planning:
     band count, pixel type, resolution, extent, and capabilities.
 
+    Also includes metadata fields matching FeatureServer extraction pattern
+    for consistent metadata.yaml population (see ADR-0038).
+
     Attributes:
         name: Service name
         band_count: Number of bands in the raster
@@ -55,8 +58,15 @@ class ImageServerMetadata:
         max_image_height: Maximum image height that can be requested
         capabilities: List of service capabilities (e.g., Image, Metadata, Catalog)
         description: Optional service description
-        copyright_text: Optional copyright information
+        copyright_text: Optional copyright information (maps to attribution)
         service_data_type: Optional service data type classification
+
+        # FeatureServer-parity fields (for metadata.yaml population):
+        service_description: Extended service description (processing_notes)
+        author: Author from documentInfo (contact_name)
+        keywords: Keywords from documentInfo (comma-separated list)
+        license_info: License text from licenseInfo
+        access_information: Access restrictions from accessInformation (known_issues)
     """
 
     name: str
@@ -71,6 +81,12 @@ class ImageServerMetadata:
     description: str | None = None
     copyright_text: str | None = None
     service_data_type: str | None = None
+    # FeatureServer-parity fields
+    service_description: str | None = None
+    author: str | None = None
+    keywords: list[str] | None = None
+    license_info: str | None = None
+    access_information: str | None = None
 
     def get_crs_string(self) -> str:
         """Get CRS as EPSG string from spatial reference.
@@ -283,6 +299,19 @@ def parse_imageserver_response(data: dict[str, Any]) -> ImageServerMetadata:
     # Parse capabilities
     capabilities = _parse_capabilities(data.get("capabilities"))
 
+    # Extract documentInfo fields (author, keywords)
+    doc_info = data.get("documentInfo", {})
+    author = doc_info.get("Author")
+    keywords_raw = doc_info.get("Keywords")
+
+    # Parse keywords - can be comma-separated string or already a list
+    keywords: list[str] | None = None
+    if keywords_raw:
+        if isinstance(keywords_raw, list):
+            keywords = keywords_raw
+        elif isinstance(keywords_raw, str):
+            keywords = [k.strip() for k in keywords_raw.split(",") if k.strip()]
+
     return ImageServerMetadata(
         name=data["name"],
         band_count=data["bandCount"],
@@ -296,6 +325,12 @@ def parse_imageserver_response(data: dict[str, Any]) -> ImageServerMetadata:
         description=data.get("description"),
         copyright_text=data.get("copyrightText"),
         service_data_type=data.get("serviceDataType"),
+        # FeatureServer-parity fields
+        service_description=data.get("serviceDescription"),
+        author=author,
+        keywords=keywords,
+        license_info=data.get("licenseInfo"),
+        access_information=data.get("accessInformation"),
     )
 
 
