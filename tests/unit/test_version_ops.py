@@ -14,8 +14,8 @@ from portolan_cli.version_ops import (
     _resolve_backend_name,
     get_current_version,
     list_versions,
-    publish_version,
     prune_versions,
+    publish_version,
     rollback_version,
 )
 

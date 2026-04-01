@@ -368,7 +368,8 @@ class TestInitCatalogBackendOption:
         init_catalog(catalog_dir, backend="file")
 
         assert (catalog_dir / "versions.json").exists()
-        assert (catalog_dir / ".portolan" / "state.json").exists()
+        # state.json was removed per issue #290; config.yaml is the sole sentinel
+        assert (catalog_dir / ".portolan" / "config.yaml").exists()
 
     @pytest.mark.unit
     def test_init_with_unavailable_backend_raises_error(self, tmp_path: Path) -> None:
