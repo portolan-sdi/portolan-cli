@@ -77,11 +77,27 @@ class ImageServerMetadata:
 
         Returns:
             CRS string like 'EPSG:4326' or 'EPSG:102719'
+
+        Note:
+            Logs a warning if CRS cannot be determined and falls back to WGS84.
+            This can result in incorrect coordinate transformations if the
+            service is not actually in WGS84.
         """
+        import logging
+
         sr = self.full_extent.get("spatialReference", {})
         wkid = sr.get("latestWkid") or sr.get("wkid")
         if wkid:
             return f"EPSG:{wkid}"
+
+        # Log warning when falling back to WGS84
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "Could not determine CRS from ImageServer metadata for '%s'. "
+            "Falling back to EPSG:4326 (WGS84). Coordinates may be incorrect "
+            "if the service uses a different CRS.",
+            self.name,
+        )
         return "EPSG:4326"  # Default fallback
 
     def get_bbox_tuple(self) -> tuple[float, float, float, float]:

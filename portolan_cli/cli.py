@@ -4668,6 +4668,112 @@ def _handle_list_services_mode(
             click.echo(f"Folders: {', '.join(result.folders)}")
 
 
+def _handle_imageserver_extraction(
+    ctx: click.Context,
+    url: str,
+    output_dir: Path,
+    tile_size: int,
+    bbox: str | None,
+    compression: str | None,
+    max_concurrent: int,
+    timeout: float,
+    retries: int,
+    resume: bool,
+    dry_run: bool,
+    json_output: bool,
+    auto: bool,
+) -> None:
+    """Handle ImageServer URL extraction (raster data)."""
+    from portolan_cli.conversion_config import CogSettings, get_cog_settings
+    from portolan_cli.extract.arcgis.imageserver.orchestrator import (
+        ImageServerCLIOptions,
+        run_imageserver_extraction_sync,
+    )
+    from portolan_cli.output import error, info
+
+    # Parse bbox if provided
+    bbox_tuple: tuple[float, float, float, float] | None = None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) != 4:
+                raise ValueError("bbox must have exactly 4 values")
+            bbox_tuple = (parts[0], parts[1], parts[2], parts[3])
+        except (ValueError, TypeError) as e:
+            _output_extract_error(
+                json_output,
+                "InvalidBboxError",
+                f"Invalid bbox format: {bbox}. Expected minx,miny,maxx,maxy. Error: {e}",
+                url,
+            )
+            raise SystemExit(1) from None
+
+    # Load COG settings from config, override with CLI args
+    try:
+        cog_settings = get_cog_settings(output_dir)
+    except Exception:
+        cog_settings = CogSettings()
+
+    if compression:
+        cog_settings = CogSettings(
+            compression=compression.upper(),
+            quality=cog_settings.quality,
+            tile_size=cog_settings.tile_size,
+            predictor=cog_settings.predictor,
+            resampling=cog_settings.resampling,
+        )
+
+    # Confirmation prompt
+    if not auto and not dry_run and not json_output:
+        click.echo(f"Extract from: {url}")
+        click.echo(f"Output to: {output_dir}")
+        click.echo(f"Tile size: {tile_size}px")
+        click.echo(f"Compression: {cog_settings.compression}")
+        if bbox_tuple:
+            click.echo(f"Bbox filter: {bbox_tuple}")
+        if not click.confirm("Continue?", default=True):
+            raise SystemExit(0)
+
+    # Build options
+    options = ImageServerCLIOptions(
+        tile_size=tile_size,
+        max_concurrent=max_concurrent,
+        dry_run=dry_run,
+        resume=resume,
+        bbox=bbox_tuple,
+        timeout=timeout,
+        compression=cog_settings.compression,
+    )
+
+    # Run extraction
+    if not json_output:
+        info(f"Extracting ImageServer: {url}")
+        if dry_run:
+            info("[DRY RUN MODE]")
+
+    exit_code = run_imageserver_extraction_sync(url, output_dir, options)
+
+    # Output result
+    if json_output:
+        data = {
+            "source_url": url,
+            "output_dir": str(output_dir),
+            "service_type": "ImageServer",
+            "dry_run": dry_run,
+            "exit_code": exit_code,
+        }
+        if exit_code == 0:
+            envelope = success_envelope("extract-arcgis", data)
+        else:
+            err = ErrorDetail(type="ExtractionError", message="ImageServer extraction failed")
+            envelope = error_envelope("extract-arcgis", [err], data=data)
+        output_json_envelope(envelope)
+    elif exit_code != 0:
+        error("ImageServer extraction failed")
+
+    raise SystemExit(exit_code)
+
+
 def _output_extract_error(use_json: bool, error_type: str, message: str, url: str) -> None:
     """Output extraction error in JSON or text format."""
     from portolan_cli.output import error
@@ -4858,6 +4964,31 @@ def extract() -> None:
     is_flag=True,
     help="Skip auto-init: create only extraction files, no STAC catalog.",
 )
+# ImageServer-specific options
+@click.option(
+    "--tile-size",
+    type=click.IntRange(min=256, max=8192),
+    default=4096,
+    help="[ImageServer] Tile size in pixels (default: 4096).",
+)
+@click.option(
+    "--bbox",
+    type=str,
+    default=None,
+    help="[ImageServer] Bounding box filter: minx,miny,maxx,maxy (in service CRS).",
+)
+@click.option(
+    "--compression",
+    type=click.Choice(["DEFLATE", "JPEG", "LZW", "ZSTD"], case_sensitive=False),
+    default=None,
+    help="[ImageServer] COG compression (default: from config or DEFLATE).",
+)
+@click.option(
+    "--max-concurrent",
+    type=click.IntRange(min=1, max=16),
+    default=4,
+    help="[ImageServer] Maximum concurrent tile downloads (default: 4).",
+)
 @click.pass_context
 def extract_arcgis_cmd(
     ctx: click.Context,
@@ -4877,18 +5008,23 @@ def extract_arcgis_cmd(
     json_output: bool,
     auto: bool,
     raw: bool,
+    tile_size: int,
+    bbox: str | None,
+    compression: str | None,
+    max_concurrent: int,
 ) -> None:
-    """Extract vector data from ArcGIS FeatureServer/MapServer.
+    """Extract data from ArcGIS FeatureServer/MapServer/ImageServer.
 
     Downloads layers from an ArcGIS REST service and creates a Portolan
-    catalog with GeoParquet files and STAC metadata.
+    catalog with GeoParquet files (vector) or COG files (raster) and STAC metadata.
 
-    URL is the ArcGIS service URL (FeatureServer, MapServer, or services root).
+    URL is the ArcGIS service URL (FeatureServer, MapServer, ImageServer, or services root).
     OUTPUT_DIR is the directory to write extracted data (default: inferred from service name).
 
     \b
     URL Types:
-        FeatureServer/MapServer: Extract layers from a single service
+        FeatureServer/MapServer: Extract vector layers to GeoParquet
+        ImageServer: Extract raster tiles to COG
         rest/services: Extract from all services (creates nested catalog)
 
     \b
@@ -4961,6 +5097,25 @@ def extract_arcgis_cmd(
         else:
             service_name = parsed.service_name or "arcgis_extract"
             output_dir = Path(service_name.replace("/", "_").lower())
+
+    # Handle ImageServer URLs (raster extraction)
+    if parsed.url_type == ArcGISURLType.IMAGE_SERVER:
+        _handle_imageserver_extraction(
+            ctx=ctx,
+            url=url,
+            output_dir=output_dir,
+            tile_size=tile_size,
+            bbox=bbox,
+            compression=compression,
+            max_concurrent=max_concurrent,
+            timeout=timeout,
+            retries=retries,
+            resume=resume,
+            dry_run=dry_run,
+            json_output=use_json,
+            auto=auto,
+        )
+        return
 
     # Build filter lists
     layer_include, layer_exclude = _build_layer_filters(layers, exclude_layers, unified_filter)

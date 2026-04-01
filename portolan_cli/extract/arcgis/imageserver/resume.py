@@ -110,6 +110,29 @@ def load_resume_state(
     return _parse_report_data(data, expected_service_url)
 
 
+def _validate_tile_coordinate(coord: tuple[int, int]) -> bool:
+    """Validate that a tile coordinate is within reasonable bounds.
+
+    Protects against unreasonably large coordinates that could indicate
+    data corruption or memory exhaustion attacks.
+
+    Note: Negative coordinates are allowed because some coordinate systems
+    use negative offsets. Security validation for file paths (path traversal)
+    should happen in the extractor where file paths are constructed.
+
+    Args:
+        coord: Tile (x, y) coordinate tuple.
+
+    Returns:
+        True if coordinate is valid, False otherwise.
+    """
+    x, y = coord
+    # Allow negative coordinates but cap magnitude
+    # (100M x 100M coordinate range covers any reasonable tiling scheme)
+    MAX_COORD = 100000
+    return -MAX_COORD <= x <= MAX_COORD and -MAX_COORD <= y <= MAX_COORD
+
+
 def _parse_report_data(
     data: dict[str, Any],
     expected_service_url: str | None = None,
@@ -146,6 +169,21 @@ def _parse_report_data(
         failed_tiles = {(int(coord[0]), int(coord[1])) for coord in failed_raw}
     except (TypeError, IndexError, ValueError):
         return None
+
+    # Validate coordinates are within reasonable bounds
+    # This protects against malicious resume state files
+    invalid_succeeded = [c for c in succeeded_tiles if not _validate_tile_coordinate(c)]
+    invalid_failed = [c for c in failed_tiles if not _validate_tile_coordinate(c)]
+
+    if invalid_succeeded or invalid_failed:
+        logger.warning(
+            "Resume state contains invalid coordinates (out of bounds): "
+            "succeeded=%s, failed=%s. These will be ignored.",
+            invalid_succeeded[:5],  # Only log first 5
+            invalid_failed[:5],
+        )
+        succeeded_tiles = {c for c in succeeded_tiles if _validate_tile_coordinate(c)}
+        failed_tiles = {c for c in failed_tiles if _validate_tile_coordinate(c)}
 
     # Parse timestamp
     started_at_str = data.get("started_at", "")

@@ -98,9 +98,12 @@ class TestExtractionConfig:
         assert config.tile_size == 4096
 
     def test_default_compression(self) -> None:
-        """Default compression is DEFLATE."""
+        """Default compression is DEFLATE (via cog_settings)."""
         config = ExtractionConfig()
-        assert config.compression == "DEFLATE"
+        # compression is now in cog_settings (per ADR-0019)
+        assert config.cog_settings.compression == "DEFLATE"
+        # Legacy field is None when using cog_settings
+        assert config.compression is None
 
     def test_default_max_retries(self) -> None:
         """Default max retries is 3."""
@@ -114,14 +117,17 @@ class TestExtractionConfig:
 
     def test_custom_values(self) -> None:
         """Custom config values are preserved."""
+        from portolan_cli.conversion_config import CogSettings
+
         config = ExtractionConfig(
             tile_size=2048,
-            compression="JPEG",
+            cog_settings=CogSettings(compression="JPEG", quality=85),
             max_retries=5,
             dry_run=True,
         )
         assert config.tile_size == 2048
-        assert config.compression == "JPEG"
+        assert config.cog_settings.compression == "JPEG"
+        assert config.cog_settings.quality == 85
         assert config.max_retries == 5
         assert config.dry_run is True
 
@@ -183,12 +189,17 @@ class TestErrorHandling:
 class TestDownloadTile:
     """Tests for download_tile async function."""
 
+    # Valid TIFF header (little-endian) for mock responses
+    # Magic bytes II (0x4949) + version 42 (0x002A) + offset to first IFD
+    VALID_TIFF_HEADER = b"II\x2a\x00" + b"\x08\x00\x00\x00" + b"\x00" * 100
+
     @pytest.mark.asyncio
     async def test_download_builds_correct_url(self, sample_tile: TileSpec, tmp_path: Path) -> None:
         """Download constructs correct exportImage URL."""
         mock_client = AsyncMock()
         mock_response = AsyncMock()
-        mock_response.content = b"fake tiff data"
+        # Use valid TIFF header to pass validation
+        mock_response.content = self.VALID_TIFF_HEADER
         mock_response.raise_for_status = MagicMock()
         mock_client.get.return_value = mock_response
 
@@ -210,7 +221,9 @@ class TestDownloadTile:
         """Download returns number of bytes downloaded."""
         mock_client = AsyncMock()
         mock_response = AsyncMock()
-        mock_response.content = b"x" * 1000  # 1000 bytes
+        # Use valid TIFF header + padding to get 1000 bytes
+        content = self.VALID_TIFF_HEADER + b"x" * (1000 - len(self.VALID_TIFF_HEADER))
+        mock_response.content = content
         mock_response.raise_for_status = MagicMock()
         mock_client.get.return_value = mock_response
 
@@ -225,7 +238,7 @@ class TestDownloadTile:
         assert result == 1000
         # Verify file was actually written
         assert output_path.exists()
-        assert output_path.read_bytes() == b"x" * 1000
+        assert output_path.read_bytes() == content
 
 
 @pytest.mark.unit

@@ -22,16 +22,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from portolan_cli.extract.arcgis.imageserver.extractor import (
     ExtractionConfig,
     extract_imageserver,
 )
 from portolan_cli.output import error, info, success
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass

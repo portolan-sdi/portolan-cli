@@ -50,7 +50,7 @@ def create_collection_metadata(
         - id: derived from service name (sanitized)
         - extent: spatial from fullExtent (WGS84), temporal open interval
         - summaries: band count, pixel type
-        - links: source link to ImageServer
+        - links: source link to ImageServer, self link
         - license: "proprietary" (default for unknown sources)
     """
     collection_id = _sanitize_id(service_metadata.name)
@@ -69,18 +69,18 @@ def create_collection_metadata(
     # Build summaries
     summaries = _build_summaries(service_metadata)
 
-    # Build links
+    # Build links (no root link - catalog.json is not created by extraction)
     links = [
+        {
+            "rel": "self",
+            "href": "./collection.json",
+            "type": "application/json",
+        },
         {
             "rel": "source",
             "href": service_url,
             "type": "application/json",
             "title": "Source ImageServer",
-        },
-        {
-            "rel": "root",
-            "href": "./catalog.json",
-            "type": "application/json",
         },
     ]
 
@@ -127,6 +127,7 @@ def create_item_metadata(
     tile: TileSpec,
     service_metadata: ImageServerMetadata,
     cog_path: str,
+    collection_id: str | None = None,
 ) -> dict[str, Any]:
     """Create STAC Item JSON for a single tile.
 
@@ -134,6 +135,7 @@ def create_item_metadata(
         tile: Tile specification with bbox and ID.
         service_metadata: Parent ImageServer metadata.
         cog_path: Relative or absolute path to the COG file.
+        collection_id: ID of the parent collection (required by STAC spec).
 
     Returns:
         Dict ready for json.dump() with STAC Item structure:
@@ -143,9 +145,14 @@ def create_item_metadata(
         - geometry: Polygon from tile bbox
         - bbox: tile bbox (transformed to WGS84 if needed)
         - properties: datetime (null), created timestamp
+        - collection: parent collection ID
         - assets: COG asset with href and media type
     """
     item_id = tile.get_id()
+
+    # Derive collection_id from service name if not provided
+    if collection_id is None:
+        collection_id = _sanitize_id(service_metadata.name)
 
     # Transform bbox to WGS84
     crs_string = service_metadata.get_crs_string()
@@ -175,14 +182,20 @@ def create_item_metadata(
             "datetime": None,
             "created": now,
         },
+        "collection": collection_id,
         "links": [
             {
-                "rel": "root",
-                "href": "./catalog.json",
-                "type": "application/json",
+                "rel": "self",
+                "href": f"./{item_id}.json",
+                "type": "application/geo+json",
             },
             {
                 "rel": "parent",
+                "href": "./collection.json",
+                "type": "application/json",
+            },
+            {
+                "rel": "collection",
                 "href": "./collection.json",
                 "type": "application/json",
             },
@@ -323,7 +336,10 @@ def _bbox_to_polygon(
     """
     minx, miny, maxx, maxy = bbox
 
-    # Create closed ring (counter-clockwise for exterior)
+    # Create closed ring following the right-hand rule (RFC 7946):
+    # For exterior rings, vertices are in counter-clockwise order when
+    # viewed from above (i.e., the interior is on the left as you traverse).
+    # This ordering: SW -> SE -> NE -> NW -> SW traces counter-clockwise.
     coordinates = [
         [
             [minx, miny],  # SW
