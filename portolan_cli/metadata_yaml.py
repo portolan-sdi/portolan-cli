@@ -30,12 +30,16 @@ Usage:
 
 from __future__ import annotations
 
+import logging
+import math
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from portolan_cli.config import load_merged_metadata
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Required fields per ADR-0038 (revised)
@@ -182,6 +186,110 @@ def validate_metadata(metadata: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _validate_temporal_defaults(temporal: dict[str, Any]) -> list[str]:
+    """Validate the 'defaults.temporal' section.
+
+    Args:
+        temporal: The temporal defaults dictionary.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+
+    # Validate year (must be integer in reasonable range)
+    year = temporal.get("year")
+    if year is not None:
+        if not isinstance(year, int):
+            errors.append(
+                f"Field 'defaults.temporal.year' must be an integer, got {type(year).__name__}"
+            )
+        elif year < 1800 or year > 2100:
+            errors.append(
+                f"Field 'defaults.temporal.year' must be between 1800 and 2100, got {year}"
+            )
+
+    # Validate start/end dates (must be valid ISO dates)
+    for field in ("start", "end"):
+        date_val = temporal.get(field)
+        if date_val is None:
+            continue
+        if not isinstance(date_val, str):
+            errors.append(f"Field 'defaults.temporal.{field}' must be a date string (YYYY-MM-DD)")
+        elif not ISO_DATE_PATTERN.match(date_val):
+            errors.append(
+                f"Invalid date format for 'defaults.temporal.{field}': '{date_val}'. "
+                f"Use ISO format YYYY-MM-DD"
+            )
+        else:
+            # Regex matched, but verify it's an actual valid date
+            try:
+                date.fromisoformat(date_val)
+            except ValueError:
+                errors.append(
+                    f"Invalid date for 'defaults.temporal.{field}': '{date_val}'. "
+                    f"Date does not exist (e.g., month 13 or day 32)"
+                )
+
+    # Warn if both year and start are specified (year takes precedence)
+    if temporal.get("year") is not None and temporal.get("start") is not None:
+        errors.append(
+            "Both 'defaults.temporal.year' and 'defaults.temporal.start' specified. "
+            "'year' takes precedence - remove 'start' to avoid confusion"
+        )
+
+    return errors
+
+
+def _validate_nodata_value(val: Any, index: int | None = None) -> str | None:
+    """Validate a single nodata value.
+
+    Args:
+        val: The nodata value to validate.
+        index: If provided, the band index (for per-band nodata).
+
+    Returns:
+        Error message if invalid, None if valid.
+    """
+    field = f"defaults.raster.nodata[{index}]" if index is not None else "defaults.raster.nodata"
+
+    if val is None:
+        return None
+    if not isinstance(val, (int, float)):
+        return f"Field '{field}' must be a number, got {type(val).__name__}"
+    if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+        return f"Field '{field}' must be a finite number, not NaN or Infinity"
+    return None
+
+
+def _validate_raster_defaults(raster: dict[str, Any]) -> list[str]:
+    """Validate the 'defaults.raster' section.
+
+    Args:
+        raster: The raster defaults dictionary.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+
+    nodata = raster.get("nodata")
+    if nodata is None:
+        return errors
+
+    if isinstance(nodata, list):
+        if len(nodata) == 0:
+            errors.append("Field 'defaults.raster.nodata' list cannot be empty")
+        else:
+            for i, val in enumerate(nodata):
+                if err := _validate_nodata_value(val, index=i):
+                    errors.append(err)
+    elif err := _validate_nodata_value(nodata):
+        errors.append(err)
+
+    return errors
+
+
 def _validate_defaults(defaults: dict[str, Any]) -> list[str]:
     """Validate the 'defaults' section of metadata.yaml.
 
@@ -199,26 +307,7 @@ def _validate_defaults(defaults: dict[str, Any]) -> list[str]:
         if not isinstance(temporal, dict):
             errors.append("Field 'defaults.temporal' must be a mapping")
         else:
-            # Validate year (must be integer)
-            year = temporal.get("year")
-            if year is not None and not isinstance(year, int):
-                errors.append(
-                    f"Field 'defaults.temporal.year' must be an integer, got {type(year).__name__}"
-                )
-
-            # Validate start/end dates (must be ISO format YYYY-MM-DD)
-            for field in ("start", "end"):
-                date_val = temporal.get(field)
-                if date_val is not None:
-                    if not isinstance(date_val, str):
-                        errors.append(
-                            f"Field 'defaults.temporal.{field}' must be a date string (YYYY-MM-DD)"
-                        )
-                    elif not ISO_DATE_PATTERN.match(date_val):
-                        errors.append(
-                            f"Invalid date format for 'defaults.temporal.{field}': '{date_val}'. "
-                            f"Use ISO format YYYY-MM-DD"
-                        )
+            errors.extend(_validate_temporal_defaults(temporal))
 
     # Validate raster defaults
     raster = defaults.get("raster")
@@ -226,22 +315,7 @@ def _validate_defaults(defaults: dict[str, Any]) -> list[str]:
         if not isinstance(raster, dict):
             errors.append("Field 'defaults.raster' must be a mapping")
         else:
-            # Validate nodata (must be number or list of numbers)
-            nodata = raster.get("nodata")
-            if nodata is not None:
-                if isinstance(nodata, list):
-                    # Per-band nodata: must be list of numbers
-                    for i, val in enumerate(nodata):
-                        if not isinstance(val, (int, float)) and val is not None:
-                            errors.append(
-                                f"Field 'defaults.raster.nodata[{i}]' must be a number, "
-                                f"got {type(val).__name__}"
-                            )
-                elif not isinstance(nodata, (int, float)):
-                    errors.append(
-                        f"Field 'defaults.raster.nodata' must be a number or list of numbers, "
-                        f"got {type(nodata).__name__}"
-                    )
+            errors.extend(_validate_raster_defaults(raster))
 
     return errors
 
@@ -326,6 +400,9 @@ def apply_temporal_defaults(
 
     Returns:
         A datetime object or None if no temporal defaults specified.
+
+    Raises:
+        ValueError: If date format is invalid (should be caught by validation).
     """
     temporal = defaults.get("temporal")
     if not temporal:
@@ -334,22 +411,40 @@ def apply_temporal_defaults(
     # Year takes precedence - produces Jan 1 of that year
     year = temporal.get("year")
     if year is not None:
+        if not isinstance(year, int):
+            raise ValueError(f"Year must be an integer, got {type(year).__name__}")
         return datetime(year, 1, 1, tzinfo=timezone.utc)
 
     # Fall back to start date
     start = temporal.get("start")
     if start is not None:
-        # Parse YYYY-MM-DD
-        parts = start.split("-")
-        return datetime(int(parts[0]), int(parts[1]), int(parts[2]), tzinfo=timezone.utc)
+        try:
+            # Use date.fromisoformat for safe parsing (validates month/day)
+            parsed_date = date.fromisoformat(start)
+            return datetime(
+                parsed_date.year,
+                parsed_date.month,
+                parsed_date.day,
+                tzinfo=timezone.utc,
+            )
+        except ValueError as e:
+            raise ValueError(f"Invalid date format for start: '{start}'. {e}") from e
 
     return None
+
+
+class NodataMismatchError(ValueError):
+    """Raised when per-band nodata list length doesn't match band count."""
+
+    pass
 
 
 def apply_raster_nodata_defaults(
     defaults: dict[str, Any],
     nodatavals: tuple[float | None, ...] | None,
     band_count: int,
+    *,
+    strict: bool = True,
 ) -> tuple[float | None, ...]:
     """Apply raster nodata defaults from metadata.yaml.
 
@@ -359,9 +454,15 @@ def apply_raster_nodata_defaults(
         defaults: The 'defaults' section from metadata.yaml.
         nodatavals: Current nodata values tuple (may be None or contain Nones).
         band_count: Number of bands in the raster.
+        strict: If True (default), raise error on per-band list length mismatch.
+            If False, log a warning and pad with last value.
 
     Returns:
         Updated nodatavals tuple with defaults applied.
+
+    Raises:
+        NodataMismatchError: If strict=True and per-band nodata list length
+            doesn't match band_count.
     """
     raster = defaults.get("raster")
     if not raster or "nodata" not in raster:
@@ -372,6 +473,22 @@ def apply_raster_nodata_defaults(
 
     default_nodata = raster["nodata"]
 
+    # Check for per-band nodata length mismatch
+    if isinstance(default_nodata, list) and len(default_nodata) != band_count:
+        msg = (
+            f"Per-band nodata list has {len(default_nodata)} values but raster has "
+            f"{band_count} bands. Either use uniform nodata (single value) or provide "
+            f"exactly {band_count} values."
+        )
+        if strict:
+            raise NodataMismatchError(msg)
+        else:
+            logger.warning(
+                "%s Padding with last value (%s) for remaining bands.",
+                msg,
+                default_nodata[-1] if default_nodata else "None",
+            )
+
     # Handle None input
     if nodatavals is None:
         nodatavals = tuple(None for _ in range(band_count))
@@ -381,17 +498,20 @@ def apply_raster_nodata_defaults(
         existing = nodatavals[i] if i < len(nodatavals) else None
 
         if existing is not None:
-            # Preserve existing nodata
-            result.append(existing)
+            # Preserve existing nodata (ensure float for type consistency)
+            result.append(float(existing))
         elif isinstance(default_nodata, list):
-            # Per-band defaults - use last value if list is shorter
+            # Per-band defaults
             if i < len(default_nodata):
-                result.append(default_nodata[i])
+                val = default_nodata[i]
+                result.append(float(val) if val is not None else None)
             else:
-                result.append(default_nodata[-1] if default_nodata else None)
+                # Pad with last value (only reached if strict=False)
+                last_val = default_nodata[-1] if default_nodata else None
+                result.append(float(last_val) if last_val is not None else None)
         else:
-            # Uniform default
-            result.append(default_nodata)
+            # Uniform default (ensure float for type consistency)
+            result.append(float(default_nodata) if default_nodata is not None else None)
 
     return tuple(result)
 

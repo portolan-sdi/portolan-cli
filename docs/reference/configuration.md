@@ -421,4 +421,12 @@ defaults:
 | CLI flag provided | CLI flag overrides default |
 | No default, no source value | Field left null |
 
+**Validation:**
+
+- `temporal.year` must be an integer between 1800 and 2100
+- `temporal.start`/`temporal.end` must be valid ISO dates (YYYY-MM-DD)
+- Specifying both `year` and `start` is an error (use one or the other)
+- `raster.nodata` must be a finite number (no NaN or Infinity)
+- Per-band nodata lists must match the raster's band count exactly
+
 See the [Metadata Defaults Guide](../guides/metadata-defaults.md) for detailed usage.

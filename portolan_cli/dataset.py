@@ -55,8 +55,10 @@ from portolan_cli.metadata import (
 from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 from portolan_cli.metadata_yaml import (
+    NodataMismatchError,
     apply_raster_nodata_defaults,
     apply_temporal_defaults,
+    validate_metadata,
 )
 from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
@@ -736,6 +738,7 @@ def _apply_nodata_defaults_to_bands(
     stac_properties: dict[str, Any],
     metadata: COGMetadata,
     defaults: dict[str, Any],
+    source_path: Path,
 ) -> None:
     """Apply nodata defaults from metadata.yaml to STAC band properties.
 
@@ -746,6 +749,10 @@ def _apply_nodata_defaults_to_bands(
         stac_properties: Properties dict to modify.
         metadata: COGMetadata with extraction results.
         defaults: The 'defaults' section from metadata.yaml.
+        source_path: Path to source file (for error messages).
+
+    Raises:
+        NodataMismatchError: If per-band nodata list doesn't match band count.
     """
     bands = stac_properties.get("bands", [])
     if not bands:
@@ -756,10 +763,15 @@ def _apply_nodata_defaults_to_bands(
         metadata.nodatavals if metadata.nodatavals else tuple(None for _ in range(len(bands)))
     )
 
-    # Apply defaults
-    updated_nodatavals = apply_raster_nodata_defaults(
-        defaults, current_nodatavals, band_count=len(bands)
-    )
+    # Apply defaults with strict checking (raises NodataMismatchError on mismatch)
+    try:
+        updated_nodatavals = apply_raster_nodata_defaults(
+            defaults, current_nodatavals, band_count=len(bands), strict=True
+        )
+    except NodataMismatchError as e:
+        raise NodataMismatchError(
+            f"Error applying nodata defaults to '{source_path.name}': {e}"
+        ) from e
 
     # Update bands with defaults where extraction returned None
     for i, band in enumerate(bands):
@@ -862,6 +874,17 @@ def prepare_dataset(
     metadata_yaml = load_merged_metadata(collection_dir, catalog_root)
     defaults = metadata_yaml.get("defaults", {})
 
+    # Validate defaults section if present (fail fast on invalid config)
+    if defaults:
+        validation_errors = validate_metadata({"defaults": defaults})
+        # Filter to only defaults-related errors
+        defaults_errors = [e for e in validation_errors if "defaults" in e.lower()]
+        if defaults_errors:
+            raise ValueError(
+                "Invalid metadata.yaml defaults configuration:\n"
+                + "\n".join(f"  - {e}" for e in defaults_errors)
+            )
+
     # Step 4: Extract and transform bbox
     if not metadata.bbox:
         _cleanup_orphaned_output(output_path, item_dir, path)
@@ -908,7 +931,7 @@ def prepare_dataset(
 
     # Raster nodata defaults: applied to bands missing nodata values
     if format_type == FormatType.RASTER and defaults and isinstance(metadata, COGMetadata):
-        _apply_nodata_defaults_to_bands(stac_properties, metadata, defaults)
+        _apply_nodata_defaults_to_bands(stac_properties, metadata, defaults, path)
 
     # Step 7: Create STAC item and save item.json (per-item file, no conflict)
     item = create_item(

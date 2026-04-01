@@ -127,20 +127,51 @@ defaults:
 
 ## Validation
 
-Portolan validates defaults when loading metadata.yaml:
+Portolan validates defaults when loading `metadata.yaml`. Invalid defaults cause `portolan add` to fail with a clear error message.
+
+### Temporal Validation
+
+| Constraint | Requirement |
+|------------|-------------|
+| `year` type | Must be an integer (not a string like `"2025"`) |
+| `year` range | Must be between 1800 and 2100 |
+| `start`/`end` format | ISO date string: `YYYY-MM-DD` |
+| `start`/`end` validity | Must be a real date (no `2025-02-30`) |
+| Mutual exclusion | Cannot specify both `year` and `start` |
+
+### Raster Validation
+
+| Constraint | Requirement |
+|------------|-------------|
+| `nodata` type | Must be a number or list of numbers |
+| `nodata` values | Must be finite (no NaN or Infinity) |
+| Per-band list | Must match the raster's band count exactly |
+| Empty list | Not allowed |
+
+### Examples
 
 ```yaml
-# Valid
+# ✓ Valid
 defaults:
   temporal:
-    year: 2025              # Integer
-    start: "2025-04-15"     # ISO date string
+    year: 2025              # Integer in range
 
-# Invalid - will error
+# ✗ Invalid - will error
 defaults:
   temporal:
     year: "2025"            # String instead of integer
-    start: "04-15-2025"     # Wrong date format
+    start: "04-15-2025"     # Wrong date format (must be YYYY-MM-DD)
+
+# ✗ Invalid - mutual exclusion
+defaults:
+  temporal:
+    year: 2025
+    start: "2025-04-15"     # Error: can't specify both
+
+# ✗ Invalid - per-band mismatch
+defaults:
+  raster:
+    nodata: [0, 0, 255, 127]  # Error if raster only has 3 bands
 ```
 
 ## Example: Philadelphia Aerial Imagery
