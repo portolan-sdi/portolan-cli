@@ -57,6 +57,36 @@ class TestPreparedDataset:
 
         assert prepared.is_collection_level_asset is True
 
+    @pytest.mark.unit
+    def test_prepared_dataset_has_metadata_field(self) -> None:
+        """PreparedDataset should have optional metadata field for table extension (Issue #304)."""
+        from portolan_cli.dataset import PreparedDataset
+        from portolan_cli.formats import FormatType
+        from portolan_cli.metadata.geoparquet import GeoParquetMetadata
+
+        metadata = GeoParquetMetadata(
+            bbox=(0, 0, 1, 1),
+            crs="EPSG:4326",
+            geometry_type="Polygon",
+            geometry_column="geometry",
+            feature_count=100,
+            schema={"id": "int64", "geometry": "binary"},
+        )
+
+        prepared = PreparedDataset(
+            item_id="test-item",
+            collection_id="test-collection",
+            format_type=FormatType.VECTOR,
+            bbox=[0, 0, 1, 1],
+            asset_files={"data.parquet": (Path("/tmp/data.parquet"), "abc123")},
+            item_json_path=Path("/tmp/item.json"),
+            metadata=metadata,
+        )
+
+        assert prepared.metadata is not None
+        assert prepared.metadata.feature_count == 100
+        assert prepared.metadata.geometry_column == "geometry"
+
 
 @pytest.fixture
 def initialized_catalog(tmp_path: Path) -> Path:

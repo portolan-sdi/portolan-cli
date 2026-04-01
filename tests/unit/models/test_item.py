@@ -18,6 +18,7 @@ from portolan_cli.models.catalog import Link
 
 # These will be implemented - tests first!
 from portolan_cli.models.item import AssetModel, ItemModel
+from portolan_cli.stac import STAC_VERSION
 
 
 class TestAssetModel:
@@ -119,7 +120,7 @@ class TestItemModel:
 
         assert item.id == "item-001"
         assert item.type == "Feature"
-        assert item.stac_version == "1.0.0"
+        assert item.stac_version == STAC_VERSION
         assert item.collection == "my-collection"
 
     @pytest.mark.unit
@@ -278,7 +279,7 @@ class TestItemSerialization:
         data = item.to_dict()
 
         assert data["type"] == "Feature"
-        assert data["stac_version"] == "1.0.0"
+        assert data["stac_version"] == STAC_VERSION
         assert data["id"] == "serialize-test"
         assert "geometry" in data
         assert "bbox" in data

@@ -21,6 +21,7 @@ from portolan_cli.models.collection import (
     TemporalExtent,
 )
 from portolan_cli.models.schema import ColumnSchema, SchemaModel
+from portolan_cli.stac import STAC_VERSION
 
 
 class TestCollectionCreation:
@@ -113,7 +114,7 @@ class TestCollectionCreation:
         )
 
         assert collection.type == "Collection"
-        assert collection.stac_version == "1.0.0"
+        assert collection.stac_version == STAC_VERSION
         assert collection.license is not None
 
     @pytest.mark.unit

@@ -15,6 +15,13 @@ from typing import Any
 ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
+def _get_stac_version() -> str:
+    """Get STAC_VERSION constant (avoids circular import)."""
+    from portolan_cli.stac import STAC_VERSION
+
+    return STAC_VERSION
+
+
 @dataclass
 class Link:
     """A STAC link object.
@@ -78,7 +85,7 @@ class CatalogModel:
         id: Unique identifier (auto-extracted from directory name).
         description: Catalog description (required by STAC).
         type: Always "Catalog".
-        stac_version: STAC spec version ("1.0.0").
+        stac_version: STAC spec version (uses STAC_VERSION constant).
         title: Human-readable title (optional best practice).
         created: Creation timestamp (auto-generated).
         updated: Last update timestamp (auto-generated).
@@ -88,7 +95,7 @@ class CatalogModel:
     id: str
     description: str
     type: str = field(default="Catalog", init=False)
-    stac_version: str = field(default="1.0.0", init=False)
+    stac_version: str = field(default_factory=_get_stac_version, init=False)
     title: str | None = None
     created: datetime | None = None
     updated: datetime | None = None

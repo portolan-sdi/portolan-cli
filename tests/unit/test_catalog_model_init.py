@@ -20,6 +20,7 @@ import pytest
 
 from portolan_cli.catalog import _sanitize_id, create_catalog
 from portolan_cli.errors import CatalogAlreadyExistsError
+from portolan_cli.stac import STAC_VERSION
 
 
 class TestSanitizeIdEdgeCases:
@@ -170,14 +171,14 @@ class TestCreateCatalogAutoExtraction:
         assert catalog.type == "Catalog"
 
     @pytest.mark.unit
-    def test_stac_version_set_to_1_0_0(self, tmp_path: Path) -> None:
-        """stac_version should be '1.0.0'."""
+    def test_stac_version_uses_stac_version_constant(self, tmp_path: Path) -> None:
+        """stac_version should use STAC_VERSION constant."""
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
         catalog = create_catalog(catalog_dir)
 
-        assert catalog.stac_version == "1.0.0"
+        assert catalog.stac_version == STAC_VERSION
 
     @pytest.mark.unit
     def test_links_default_to_empty(self, tmp_path: Path) -> None:

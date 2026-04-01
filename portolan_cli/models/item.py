@@ -12,6 +12,13 @@ from typing import Any
 from portolan_cli.models.catalog import Link
 
 
+def _get_stac_version() -> str:
+    """Get STAC_VERSION constant (avoids circular import)."""
+    from portolan_cli.stac import STAC_VERSION
+
+    return STAC_VERSION
+
+
 @dataclass
 class AssetModel:
     """A STAC asset (file reference).
@@ -64,7 +71,7 @@ class ItemModel:
         assets: Asset references keyed by asset name.
         collection: Parent collection ID.
         type: Always "Feature".
-        stac_version: STAC spec version ("1.0.0").
+        stac_version: STAC spec version (uses STAC_VERSION constant).
         title: Human-readable title (optional).
         description: Item description (optional).
         links: STAC links.
@@ -77,7 +84,7 @@ class ItemModel:
     assets: dict[str, AssetModel]
     collection: str
     type: str = field(default="Feature", init=False)
-    stac_version: str = field(default="1.0.0", init=False)
+    stac_version: str = field(default_factory=_get_stac_version, init=False)
     title: str | None = None
     description: str | None = None
     links: list[Link] = field(default_factory=list)

@@ -17,6 +17,13 @@ from portolan_cli.models.catalog import Link
 ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
+def _get_stac_version() -> str:
+    """Get STAC_VERSION constant (avoids circular import)."""
+    from portolan_cli.stac import STAC_VERSION
+
+    return STAC_VERSION
+
+
 @dataclass
 class Provider:
     """A data provider.
@@ -151,7 +158,7 @@ class CollectionModel:
         description: Collection description (required by STAC).
         extent: Spatial and temporal extent.
         type: Always "Collection".
-        stac_version: STAC spec version ("1.0.0").
+        stac_version: STAC spec version (uses STAC_VERSION constant).
         license: SPDX license identifier (default CC-BY-4.0).
         title: Human-readable title (optional).
         summaries: Aggregated metadata (CRS, geometry types).
@@ -166,7 +173,7 @@ class CollectionModel:
     description: str
     extent: ExtentModel
     type: str = field(default="Collection", init=False)
-    stac_version: str = field(default="1.0.0", init=False)
+    stac_version: str = field(default_factory=_get_stac_version, init=False)
     license: str = "CC-BY-4.0"
     title: str | None = None
     summaries: dict[str, Any] | None = None

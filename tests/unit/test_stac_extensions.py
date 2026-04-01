@@ -564,3 +564,186 @@ class TestPerBandNodata:
         d = metadata.to_dict()
 
         assert "transform" not in d
+
+
+class TestStacVersionInModels:
+    """Tests for STAC version consistency in model classes (Issue #305)."""
+
+    @pytest.mark.unit
+    def test_item_model_uses_stac_version_constant(self) -> None:
+        """ItemModel.stac_version should use STAC_VERSION constant (1.1.0)."""
+        from portolan_cli.models.item import ItemModel
+        from portolan_cli.stac import STAC_VERSION
+
+        item = ItemModel(
+            id="test-item",
+            geometry={"type": "Point", "coordinates": [0, 0]},
+            bbox=[0, 0, 1, 1],
+            properties={"datetime": None},
+            assets={},
+            collection="test",
+        )
+
+        assert item.stac_version == STAC_VERSION
+        assert item.stac_version == "1.1.0"
+
+    @pytest.mark.unit
+    def test_collection_model_uses_stac_version_constant(self) -> None:
+        """CollectionModel.stac_version should use STAC_VERSION constant (1.1.0)."""
+        from portolan_cli.models.collection import CollectionModel, ExtentModel
+        from portolan_cli.stac import STAC_VERSION
+
+        collection = CollectionModel(
+            id="test-collection",
+            description="Test",
+            extent=ExtentModel(
+                spatial={"bbox": [[-180, -90, 180, 90]]},
+                temporal={"interval": [[None, None]]},
+            ),
+        )
+
+        assert collection.stac_version == STAC_VERSION
+        assert collection.stac_version == "1.1.0"
+
+    @pytest.mark.unit
+    def test_catalog_model_uses_stac_version_constant(self) -> None:
+        """CatalogModel.stac_version should use STAC_VERSION constant (1.1.0)."""
+        from portolan_cli.models.catalog import CatalogModel
+        from portolan_cli.stac import STAC_VERSION
+
+        catalog = CatalogModel(
+            id="test-catalog",
+            description="Test catalog",
+        )
+
+        assert catalog.stac_version == STAC_VERSION
+        assert catalog.stac_version == "1.1.0"
+
+
+class TestTableExtensionAggregation:
+    """Tests for Table extension aggregation in finalize_datasets (Issue #304)."""
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_sums_row_counts(self) -> None:
+        """aggregate_table_metadata should sum row_count across all vector items."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Polygon",
+                geometry_column="geometry",
+                feature_count=100,
+                schema={"id": "int64", "geometry": "binary"},
+            ),
+            GeoParquetMetadata(
+                bbox=(1, 1, 2, 2),
+                crs="EPSG:4326",
+                geometry_type="Polygon",
+                geometry_column="geometry",
+                feature_count=200,
+                schema={"id": "int64", "geometry": "binary"},
+            ),
+            GeoParquetMetadata(
+                bbox=(2, 2, 3, 3),
+                crs="EPSG:4326",
+                geometry_type="Polygon",
+                geometry_column="geometry",
+                feature_count=300,
+                schema={"id": "int64", "geometry": "binary"},
+            ),
+        ]
+
+        aggregated = aggregate_table_metadata(metadata_list)
+
+        assert aggregated.feature_count == 600  # 100 + 200 + 300
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_merges_schemas(self) -> None:
+        """aggregate_table_metadata should merge schemas from all items."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=10,
+                schema={"id": "int64", "name": "string", "geometry": "binary"},
+            ),
+            GeoParquetMetadata(
+                bbox=(1, 1, 2, 2),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=20,
+                schema={"id": "int64", "value": "float64", "geometry": "binary"},
+            ),
+        ]
+
+        aggregated = aggregate_table_metadata(metadata_list)
+
+        # Should have union of all column names
+        assert "id" in aggregated.schema
+        assert "name" in aggregated.schema
+        assert "value" in aggregated.schema
+        assert "geometry" in aggregated.schema
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_uses_first_geometry_column(self) -> None:
+        """aggregate_table_metadata should use first item's geometry column."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geom",
+                feature_count=10,
+                schema={"geom": "binary"},
+            ),
+            GeoParquetMetadata(
+                bbox=(1, 1, 2, 2),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=20,
+                schema={"geometry": "binary"},
+            ),
+        ]
+
+        aggregated = aggregate_table_metadata(metadata_list)
+
+        assert aggregated.geometry_column == "geom"
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_single_item(self) -> None:
+        """aggregate_table_metadata should handle single item."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Polygon",
+                geometry_column="geometry",
+                feature_count=500,
+                schema={"id": "int64"},
+            ),
+        ]
+
+        aggregated = aggregate_table_metadata(metadata_list)
+
+        assert aggregated.feature_count == 500
+        assert aggregated.geometry_column == "geometry"
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_empty_list_raises(self) -> None:
+        """aggregate_table_metadata should raise on empty list."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        with pytest.raises(ValueError, match="empty"):
+            aggregate_table_metadata([])

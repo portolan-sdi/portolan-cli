@@ -18,6 +18,7 @@ import pytest
 from portolan_cli.models.catalog import CatalogModel
 from portolan_cli.models.collection import CollectionModel
 from portolan_cli.models.item import ItemModel
+from portolan_cli.stac import STAC_VERSION
 
 # Fixture directory paths
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures" / "metadata" / "stac"
@@ -122,7 +123,7 @@ class TestValidCatalogFixtures:
         catalog = CatalogModel.from_dict(data)
         assert catalog.id == "test-catalog"
         assert catalog.type == "Catalog"
-        assert catalog.stac_version == "1.0.0"
+        assert catalog.stac_version == STAC_VERSION
         assert catalog.description is not None
 
     @pytest.mark.unit
@@ -193,7 +194,7 @@ class TestValidCollectionFixtures:
         collection = CollectionModel.from_dict(data)
         assert collection.id is not None
         assert collection.type == "Collection"
-        assert collection.stac_version == "1.0.0"
+        assert collection.stac_version == STAC_VERSION
         assert collection.extent is not None
 
     @pytest.mark.unit

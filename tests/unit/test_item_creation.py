@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from portolan_cli.models.item import AssetModel, ItemModel
+from portolan_cli.stac import STAC_VERSION
 
 
 class TestItemCreation:
@@ -129,7 +130,7 @@ class TestItemCreation:
         )
 
         assert item.type == "Feature"
-        assert item.stac_version == "1.0.0"
+        assert item.stac_version == STAC_VERSION
         assert "datetime" in item.properties
 
 

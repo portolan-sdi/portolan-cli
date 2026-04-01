@@ -11,6 +11,7 @@ Key conventions:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -370,6 +371,60 @@ def add_table_extension(
         if collection.stac_extensions is None:
             collection.stac_extensions = []
         collection.stac_extensions.append(ext_url)
+
+
+def aggregate_table_metadata(
+    metadata_list: Sequence[object],
+) -> object:
+    """Aggregate table metadata from multiple vector items for collection-level extension.
+
+    Used to combine metadata from multiple GeoParquet files in a collection:
+    - Sums row_count (feature_count) across all items
+    - Merges schemas (union of all column names/types)
+    - Uses first item's geometry_column
+
+    Args:
+        metadata_list: List of GeoParquetMetadata-like objects.
+
+    Returns:
+        A GeoParquetMetadata-like object with aggregated values.
+
+    Raises:
+        ValueError: If metadata_list is empty.
+    """
+    if not metadata_list:
+        raise ValueError("Cannot aggregate empty metadata list")
+
+    # Import here to avoid circular dependency
+    from portolan_cli.metadata.geoparquet import GeoParquetMetadata
+
+    # Sum row counts
+    total_row_count = sum(getattr(m, "feature_count", 0) or 0 for m in metadata_list)
+
+    # Merge schemas (union of all columns)
+    merged_schema: dict[str, str] = {}
+    for m in metadata_list:
+        if hasattr(m, "schema") and m.schema:
+            for col_name, col_type in m.schema.items():
+                # First occurrence wins for type conflicts
+                if col_name not in merged_schema:
+                    merged_schema[col_name] = col_type
+
+    # Use first item's geometry column
+    first = metadata_list[0]
+    geometry_column = getattr(first, "geometry_column", "geometry")
+    geometry_type = getattr(first, "geometry_type", None)
+    crs = getattr(first, "crs", "EPSG:4326")
+    bbox = getattr(first, "bbox", (0, 0, 1, 1))
+
+    return GeoParquetMetadata(
+        bbox=bbox,
+        crs=crs,
+        geometry_type=geometry_type,
+        geometry_column=geometry_column,
+        feature_count=total_row_count,
+        schema=merged_schema,
+    )
 
 
 def add_projection_extension(
