@@ -30,7 +30,7 @@ import pystac
 from pystac.layout import AsIsLayoutStrategy
 
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
-from portolan_cli.config import get_setting
+from portolan_cli.config import get_setting, load_merged_metadata
 from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
     MTIME_TOLERANCE_SECONDS,
@@ -54,6 +54,10 @@ from portolan_cli.metadata import (
 )
 from portolan_cli.metadata.cog import COGMetadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
+from portolan_cli.metadata_yaml import (
+    apply_raster_nodata_defaults,
+    apply_temporal_defaults,
+)
 from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
     add_item_to_collection,
@@ -728,6 +732,43 @@ def _add_statistics_to_properties(
             stac_properties["table:column_statistics"] = col_stats
 
 
+def _apply_nodata_defaults_to_bands(
+    stac_properties: dict[str, Any],
+    metadata: COGMetadata,
+    defaults: dict[str, Any],
+) -> None:
+    """Apply nodata defaults from metadata.yaml to STAC band properties.
+
+    Only applies defaults to bands that don't already have nodata values.
+    Modifies stac_properties["bands"] in-place.
+
+    Args:
+        stac_properties: Properties dict to modify.
+        metadata: COGMetadata with extraction results.
+        defaults: The 'defaults' section from metadata.yaml.
+    """
+    bands = stac_properties.get("bands", [])
+    if not bands:
+        return
+
+    # Get current nodatavals from metadata extraction
+    current_nodatavals = (
+        metadata.nodatavals if metadata.nodatavals else tuple(None for _ in range(len(bands)))
+    )
+
+    # Apply defaults
+    updated_nodatavals = apply_raster_nodata_defaults(
+        defaults, current_nodatavals, band_count=len(bands)
+    )
+
+    # Update bands with defaults where extraction returned None
+    for i, band in enumerate(bands):
+        if i < len(updated_nodatavals) and updated_nodatavals[i] is not None:
+            # Only set if band doesn't already have nodata
+            if "nodata" not in band or band.get("nodata") is None:
+                band["nodata"] = updated_nodatavals[i]
+
+
 def _save_collection_with_links(
     collection: pystac.Collection,
     collection_dir: Path,
@@ -817,6 +858,10 @@ def prepare_dataset(
     # Step 3: Convert and extract metadata
     output_path, metadata = _convert_and_extract_metadata(path, item_dir, format_type)
 
+    # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
+    metadata_yaml = load_merged_metadata(collection_dir, catalog_root)
+    defaults = metadata_yaml.get("defaults", {})
+
     # Step 4: Extract and transform bbox
     if not metadata.bbox:
         _cleanup_orphaned_output(output_path, item_dir, path)
@@ -855,11 +900,21 @@ def prepare_dataset(
     if description:
         stac_properties["description"] = description
 
+    # Step 6b: Apply metadata.yaml defaults
+    # Temporal defaults: applied when no --datetime flag was provided
+    effective_datetime = item_datetime
+    if effective_datetime is None and defaults:
+        effective_datetime = apply_temporal_defaults(defaults)
+
+    # Raster nodata defaults: applied to bands missing nodata values
+    if format_type == FormatType.RASTER and defaults and isinstance(metadata, COGMetadata):
+        _apply_nodata_defaults_to_bands(stac_properties, metadata, defaults)
+
     # Step 7: Create STAC item and save item.json (per-item file, no conflict)
     item = create_item(
         item_id=item_id_resolved,
         bbox=bbox,
-        datetime=item_datetime,
+        datetime=effective_datetime,
         properties=stac_properties,
         assets=stac_assets,
     )
