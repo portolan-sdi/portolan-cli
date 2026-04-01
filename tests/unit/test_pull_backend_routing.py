@@ -61,5 +61,6 @@ def test_pull_routes_to_backend_pull_method(cli_runner, catalog_with_backend_and
             ],
         )
 
+    assert result.exit_code == 0
     assert "not supported" not in result.output.lower()
     mock_backend.pull.assert_called_once()
