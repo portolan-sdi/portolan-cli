@@ -1,13 +1,16 @@
 """ImageServer extraction orchestrator.
 
-This module orchestrates the full extraction pipeline for ArcGIS ImageServer:
+This module orchestrates the extraction pipeline for ArcGIS ImageServer:
 1. Discover service metadata (pixel type, extent, spatial reference)
 2. Compute tile grid based on service limits and desired tile size
 3. Download tiles via exportImage API (async, parallel with rate limiting)
 4. Convert each tile to COG format using rio-cogeo
-5. Generate STAC Items for each tile (streamed to disk)
-6. Generate STAC Collection for the service
-7. Save extraction report for resume support (with file locking)
+5. Save extraction report for resume support (with file locking)
+6. Auto-init Portolan catalog (unless raw mode) using standard API
+
+The extractor does NOT create STAC metadata directly. Instead, it extracts
+COG files and then calls the Portolan API (init_catalog + add_files) to
+create proper STAC structure with items per raster (per ADR-0031).
 
 Typical usage:
     from portolan_cli.extract.arcgis.imageserver.extractor import (
@@ -69,10 +72,6 @@ from rio_cogeo.profiles import cog_profiles
 
 from portolan_cli.conversion_config import CogSettings, get_cog_settings
 from portolan_cli.extract.arcgis.imageserver.discovery import discover_imageserver
-from portolan_cli.extract.arcgis.imageserver.metadata import (
-    create_collection_metadata,
-    create_item_metadata,
-)
 from portolan_cli.extract.arcgis.imageserver.resume import (
     ImageServerResumeState,
     load_resume_state,
@@ -124,6 +123,7 @@ class ExtractionConfig:
         cog_settings: COG conversion settings (from config.yaml or defaults per ADR-0019).
         max_retries: Maximum retry attempts per tile on failure.
         dry_run: If True, compute tiles but don't download anything.
+        raw: If True, skip auto-init (only create COGs + report, no STAC catalog).
         timeout: HTTP request timeout in seconds.
         max_concurrent: Maximum concurrent tile downloads.
         rate_limit_delay: Minimum delay between requests per slot (seconds).
@@ -133,6 +133,7 @@ class ExtractionConfig:
     cog_settings: CogSettings = field(default_factory=CogSettings)
     max_retries: int = 3
     dry_run: bool = False
+    raw: bool = False
     timeout: float = 120.0
     max_concurrent: int = 4
     rate_limit_delay: float = DEFAULT_RATE_LIMIT_DELAY
@@ -162,20 +163,20 @@ class ExtractionResult:
     """Result of an ImageServer extraction.
 
     Attributes:
-        collection_path: Path to the generated STAC collection.json.
-        items_created: Number of STAC items created.
+        output_dir: Directory containing extracted COG files.
         tiles_downloaded: Number of tiles successfully downloaded.
         tiles_skipped: Number of tiles skipped (from resume).
         tiles_failed: Number of tiles that failed after retries.
         total_bytes: Total bytes downloaded.
+        catalog_initialized: Whether Portolan catalog was auto-initialized.
     """
 
-    collection_path: Path
-    items_created: int
+    output_dir: Path
     tiles_downloaded: int
     tiles_skipped: int
     tiles_failed: int = 0
     total_bytes: int = 0
+    catalog_initialized: bool = False
 
 
 def _validate_tiff(data: bytes) -> bool:
@@ -414,72 +415,22 @@ def _save_resume_state_locked(state: ImageServerResumeState, path: Path) -> None
         raise
 
 
-def _count_item_files(output_dir: Path) -> int:
-    """Count existing item JSON files in output directory.
-
-    Used for resume to avoid loading all items into memory.
-
-    Args:
-        output_dir: Output directory containing item JSON files.
-
-    Returns:
-        Number of item JSON files found.
-    """
-    return len(list(output_dir.glob("tile_*.json")))
-
-
-def _write_collection_from_items_on_disk(
-    collection: dict[str, Any],
-    output_dir: Path,
-    collection_path: Path,
-) -> int:
-    """Write STAC collection with links to items found on disk.
-
-    Instead of accumulating items in memory, scans disk for item files.
-    This supports large extractions without OOM.
-
-    Args:
-        collection: Base collection metadata.
-        output_dir: Directory containing item JSON files.
-        collection_path: Path to write collection.json.
-
-    Returns:
-        Number of items linked.
-    """
-    # Scan for item files on disk
-    item_files = sorted(output_dir.glob("tile_*.json"))
-
-    item_links = [
-        {
-            "rel": "item",
-            "href": f"./{item_file.name}",
-            "type": "application/geo+json",
-        }
-        for item_file in item_files
-    ]
-
-    collection["links"].extend(item_links)
-    collection_path.write_text(json.dumps(collection, indent=2))
-
-    return len(item_files)
-
-
-def _create_empty_result(collection_path: Path) -> ExtractionResult:
+def _create_empty_result(output_dir: Path) -> ExtractionResult:
     """Create an empty ExtractionResult for early returns.
 
     Args:
-        collection_path: Path to the collection.json file.
+        output_dir: Output directory.
 
     Returns:
         ExtractionResult with all counts set to zero.
     """
     return ExtractionResult(
-        collection_path=collection_path,
-        items_created=0,
+        output_dir=output_dir,
         tiles_downloaded=0,
         tiles_skipped=0,
         tiles_failed=0,
         total_bytes=0,
+        catalog_initialized=False,
     )
 
 
@@ -500,14 +451,14 @@ async def _process_tile(
     config: ExtractionConfig,
     client: httpx.AsyncClient,
     metadata: ImageServerMetadata,
-    collection_id: str,
     semaphore: asyncio.Semaphore,
     rate_limit_lock: asyncio.Lock,
     last_request_time: dict[str, float],
-) -> tuple[TileSpec, bool, int, Path | None]:
-    """Process a single tile: download, convert to COG, create STAC item.
+) -> tuple[TileSpec, bool, int]:
+    """Process a single tile: download and convert to COG.
 
-    Writes item JSON directly to disk to avoid memory accumulation.
+    STAC metadata is NOT created here - that's handled by the Portolan API
+    via _auto_init_catalog() after extraction completes (per ADR-0007, ADR-0031).
 
     Args:
         tile: Tile to process.
@@ -516,20 +467,18 @@ async def _process_tile(
         config: Extraction configuration.
         client: HTTP client.
         metadata: Service metadata.
-        collection_id: Collection ID for STAC item.
         semaphore: Concurrency limiter.
         rate_limit_lock: Lock for rate limiting coordination.
         last_request_time: Shared dict tracking last request time per slot.
 
     Returns:
-        Tuple of (tile, success, bytes_downloaded, item_path or None).
+        Tuple of (tile, success, bytes_downloaded).
     """
     async with semaphore:
         slot_id = str(id(asyncio.current_task()))
         tile_dir = output_dir / "tiles"
         raw_path = tile_dir / f"tile_{tile.get_id()}_raw.tif"
         cog_path = tile_dir / f"tile_{tile.get_id()}.tif"
-        item_path = output_dir / f"tile_{tile.x}_{tile.y}.json"
 
         rate_limit_delay = config.rate_limit_delay
         bytes_downloaded = 0
@@ -562,12 +511,7 @@ async def _process_tile(
                     if raw_path.exists():
                         raw_path.unlink()
 
-                    # Create and write STAC item directly to disk
-                    relative_cog_path = str(cog_path.relative_to(output_dir))
-                    item = create_item_metadata(tile, metadata, relative_cog_path, collection_id)
-                    item_path.write_text(json.dumps(item, indent=2))
-
-                    return tile, True, bytes_downloaded, item_path
+                    return tile, True, bytes_downloaded
 
                 except RateLimitError as e:
                     # Handle 429 with exponential backoff
@@ -595,13 +539,13 @@ async def _process_tile(
                             config.max_retries,
                             e,
                         )
-                        return tile, False, 0, None
+                        return tile, False, 0
 
                 except Exception as e:
                     logger.error("Unexpected error processing tile %s: %s", tile.get_id(), e)
-                    return tile, False, 0, None
+                    return tile, False, 0
 
-            return tile, False, 0, None
+            return tile, False, 0
 
         finally:
             # Clean up raw file on any exit (success or failure)
@@ -661,25 +605,40 @@ def _load_effective_config(config: ExtractionConfig, output_dir: Path) -> Extrac
     return config
 
 
-def _write_empty_collection(
-    metadata: ImageServerMetadata,
-    url: str,
-    output_dir: Path,
-) -> ExtractionResult:
-    """Write empty STAC collection and return empty result.
+def _auto_init_catalog(output_dir: Path, service_name: str | None = None) -> bool:
+    """Initialize a Portolan catalog and add extracted COG files.
+
+    Called automatically after extraction unless raw=True.
+    Uses the Portolan API (init_catalog + add_files) to create
+    proper STAC structure with items per raster (per ADR-0031).
 
     Args:
-        metadata: Service metadata.
-        url: Service URL.
-        output_dir: Output directory.
+        output_dir: Directory containing extracted COG files.
+        service_name: Optional name for the catalog.
 
     Returns:
-        Empty ExtractionResult.
+        True if catalog was initialized, False if no files to add.
     """
-    collection_path = output_dir / "collection.json"
-    empty_collection = create_collection_metadata(metadata, url)
-    collection_path.write_text(json.dumps(empty_collection, indent=2))
-    return _create_empty_result(collection_path)
+    from portolan_cli.catalog import init_catalog
+    from portolan_cli.dataset import add_files
+
+    # Get list of extracted COG files
+    tiles_dir = output_dir / "tiles"
+    cog_files = list(tiles_dir.glob("*.tif"))
+
+    if not cog_files:
+        return False  # Nothing to add
+
+    # Initialize the catalog
+    init_catalog(output_dir, title=service_name)
+
+    # Add all COG files - this creates items per raster (per ADR-0031)
+    add_files(
+        paths=cog_files,
+        catalog_root=output_dir,
+    )
+
+    return True
 
 
 async def _extract_all_tiles(
@@ -688,7 +647,6 @@ async def _extract_all_tiles(
     output_dir: Path,
     config: ExtractionConfig,
     metadata: ImageServerMetadata,
-    collection_id: str,
     resume_state: ImageServerResumeState,
     resume_path: Path,
 ) -> _ProcessingStats:
@@ -700,7 +658,6 @@ async def _extract_all_tiles(
         output_dir: Output directory.
         config: Extraction config.
         metadata: Service metadata.
-        collection_id: STAC collection ID.
         resume_state: Resume state to update.
         resume_path: Path to save resume state.
 
@@ -721,7 +678,6 @@ async def _extract_all_tiles(
                 config=config,
                 client=client,
                 metadata=metadata,
-                collection_id=collection_id,
                 semaphore=semaphore,
                 rate_limit_lock=rate_limit_lock,
                 last_request_time=last_request_time,
@@ -730,7 +686,7 @@ async def _extract_all_tiles(
         ]
 
         for i, coro in enumerate(asyncio.as_completed(tasks)):
-            tile, succeeded, bytes_downloaded, _ = await coro
+            tile, succeeded, bytes_downloaded = await coro
             _update_stats_and_state(
                 tile, succeeded, bytes_downloaded, stats, resume_state, i, len(tiles)
             )
@@ -782,9 +738,10 @@ async def extract_imageserver(
     resume: bool = False,
     bbox: tuple[float, float, float, float] | None = None,
 ) -> ExtractionResult:
-    """Extract raster tiles from ImageServer to COG + STAC.
+    """Extract raster tiles from ImageServer to COG files.
 
-    This orchestrates the full extraction pipeline. See module docstring for details.
+    This orchestrates the extraction pipeline. STAC metadata is created
+    via the Portolan API after extraction (unless raw=True).
 
     Args:
         url: ImageServer URL.
@@ -811,16 +768,13 @@ async def extract_imageserver(
     metadata = await discover_imageserver(url, timeout=config.timeout)
     info(f"Service: {metadata.name} ({metadata.pixel_type}, {metadata.band_count} bands)")
 
-    collection_id = metadata.name.lower().replace(" ", "_").replace("-", "_")
-    collection_id = "".join(c for c in collection_id if c.isalnum() or c == "_")
-
     # Compute tiles
     extent = metadata.full_extent
     if bbox:
         intersected = _intersect_bbox(bbox, extent)
         if intersected is None:
             info("User bbox does not intersect service extent - no tiles to extract")
-            return _write_empty_collection(metadata, url, output_dir)
+            return _create_empty_result(output_dir)
         extent = intersected
 
     tiles = list(
@@ -835,11 +789,11 @@ async def extract_imageserver(
 
     if not tiles:
         success("No tiles to extract (bbox may not intersect service extent)")
-        return _write_empty_collection(metadata, url, output_dir)
+        return _create_empty_result(output_dir)
 
     if config.dry_run:
         info(f"[DRY RUN] Would extract {len(tiles)} tiles")
-        return _create_empty_result(output_dir / "collection.json")
+        return _create_empty_result(output_dir)
 
     # Resume state
     resume_path = portolan_dir / "imageserver-resume.json"
@@ -850,35 +804,39 @@ async def extract_imageserver(
     if tiles_skipped > 0:
         info(f"Skipping {tiles_skipped} already-completed tiles")
 
-    # Extract tiles
+    # Extract tiles (COG files only, no STAC metadata)
     stats = await _extract_all_tiles(
         tiles_to_process,
         url,
         output_dir,
         config,
         metadata,
-        collection_id,
         resume_state,
         resume_path,
     )
     _save_resume_state_locked(resume_state, resume_path)
 
-    # Write collection
-    collection_path = output_dir / "collection.json"
-    collection = create_collection_metadata(metadata, url)
-    items_created = _write_collection_from_items_on_disk(collection, output_dir, collection_path)
-
     success(f"Extracted {stats.tiles_downloaded} tiles ({stats.total_bytes:,} bytes)")
     if stats.tiles_failed > 0:
         error(f"Failed: {stats.tiles_failed} tiles")
 
+    # Auto-init catalog using Portolan API (unless raw mode)
+    catalog_initialized = False
+    if not config.raw:
+        info("Initializing Portolan catalog...")
+        catalog_initialized = _auto_init_catalog(output_dir, metadata.name)
+        if catalog_initialized:
+            success("Catalog initialized with STAC metadata")
+        else:
+            warn("No COG files found to add to catalog")
+
     return ExtractionResult(
-        collection_path=collection_path,
-        items_created=items_created,
+        output_dir=output_dir,
         tiles_downloaded=stats.tiles_downloaded,
         tiles_skipped=tiles_skipped,
         tiles_failed=stats.tiles_failed,
         total_bytes=stats.total_bytes,
+        catalog_initialized=catalog_initialized,
     )
 
 

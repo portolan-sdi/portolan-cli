@@ -7,9 +7,11 @@ Modules:
 - discovery: Metadata discovery from ImageServer endpoints
 - resume: Tile-based resume state tracking
 - tiling: Tile grid calculation for partitioning large extents
-- metadata: STAC metadata generation
-- extractor: Full extraction pipeline orchestrator
+- extractor: Full extraction pipeline orchestrator (COG files only)
 - orchestrator: CLI-facing wrapper for Click commands
+
+Note: STAC metadata is created via the Portolan API (init_catalog + add_files)
+after extraction, not by the extractor itself (per ADR-0007, ADR-0031).
 """
 
 from __future__ import annotations
@@ -26,10 +28,6 @@ from portolan_cli.extract.arcgis.imageserver.extractor import (
     ImageServerExtractionError,
     download_tile,
     extract_imageserver,
-)
-from portolan_cli.extract.arcgis.imageserver.metadata import (
-    create_collection_metadata,
-    create_item_metadata,
 )
 from portolan_cli.extract.arcgis.imageserver.orchestrator import (
     ImageServerCLIOptions,
@@ -49,6 +47,7 @@ from portolan_cli.extract.arcgis.imageserver.tiling import (
 )
 
 __all__ = [
+    # discovery
     "ImageServerDiscoveryError",
     "ImageServerMetadata",
     "discover_imageserver",
@@ -59,9 +58,6 @@ __all__ = [
     "ImageServerExtractionError",
     "download_tile",
     "extract_imageserver",
-    # metadata
-    "create_collection_metadata",
-    "create_item_metadata",
     # resume
     "ImageServerResumeState",
     "load_resume_state",

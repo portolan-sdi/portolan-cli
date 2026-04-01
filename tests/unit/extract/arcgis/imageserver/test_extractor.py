@@ -115,6 +115,11 @@ class TestExtractionConfig:
         config = ExtractionConfig()
         assert config.dry_run is False
 
+    def test_default_raw_false(self) -> None:
+        """Default raw is False (auto-init catalog by default)."""
+        config = ExtractionConfig()
+        assert config.raw is False
+
     def test_custom_values(self) -> None:
         """Custom config values are preserved."""
         from portolan_cli.conversion_config import CogSettings
@@ -144,17 +149,28 @@ class TestExtractionResult:
     def test_result_attributes(self) -> None:
         """ExtractionResult has expected attributes."""
         result = ExtractionResult(
-            collection_path=Path("/output/collection.json"),
-            items_created=10,
+            output_dir=Path("/output"),
             tiles_downloaded=10,
             tiles_skipped=0,
             total_bytes=1024000,
+            catalog_initialized=True,
         )
-        assert result.collection_path == Path("/output/collection.json")
-        assert result.items_created == 10
+        assert result.output_dir == Path("/output")
         assert result.tiles_downloaded == 10
         assert result.tiles_skipped == 0
         assert result.total_bytes == 1024000
+        assert result.catalog_initialized is True
+
+    def test_result_defaults(self) -> None:
+        """ExtractionResult has sensible defaults."""
+        result = ExtractionResult(
+            output_dir=Path("/output"),
+            tiles_downloaded=5,
+            tiles_skipped=0,
+        )
+        assert result.tiles_failed == 0
+        assert result.total_bytes == 0
+        assert result.catalog_initialized is False
 
 
 # =============================================================================
