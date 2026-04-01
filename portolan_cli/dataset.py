@@ -1012,15 +1012,20 @@ def finalize_datasets(
         # Add table extension if any items are vector format (Issue #304)
         # Aggregate metadata from all vector items and apply to collection
         # Include existing table metadata to handle incremental adds correctly
-        vector_metadata: list[object] = [
+        #
+        # Important: Only run aggregation if there's at least one NEW vector item
+        # in this batch. For raster-only batches, don't touch existing table extension.
+        new_vector_metadata: list[object] = [
             p.metadata
             for p in items
             if p.format_type == FormatType.VECTOR and p.metadata is not None
         ]
-        existing_meta = get_existing_table_metadata(collection)
-        if existing_meta is not None:
-            vector_metadata.insert(0, existing_meta)
-        if vector_metadata:
+        if new_vector_metadata:
+            # We have new vector items - include existing metadata for aggregation
+            existing_meta = get_existing_table_metadata(collection)
+            vector_metadata: list[object] = new_vector_metadata
+            if existing_meta is not None:
+                vector_metadata.insert(0, existing_meta)
             aggregated = aggregate_table_metadata(vector_metadata)
             add_table_extension(collection, aggregated)
 

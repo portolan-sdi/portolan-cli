@@ -45,3 +45,11 @@ docs = ["docs/reference/configuration.md#Environment Variables"]
 [[link]]
 code = "portolan_cli/parallel.py"
 docs = ["docs/contributing.md"]
+
+[[link]]
+code = "portolan_cli/extract/arcgis/orchestrator.py"
+docs = ["docs/guides/extract-arcgis.md"]
+
+[[link]]
+code = "portolan_cli/extract/arcgis/imageserver/extractor.py"
+docs = ["docs/guides/extract-arcgis.md#ImageServer Extraction"]

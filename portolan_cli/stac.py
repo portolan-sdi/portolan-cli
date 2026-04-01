@@ -442,14 +442,46 @@ def _compute_bbox_union(
     )
 
 
+def _canonicalize_crs(crs: object) -> str | None:
+    """Convert CRS to a canonical hashable string for comparison.
+
+    GeoParquetMetadata.crs can be a dict (PROJJSON), which isn't hashable.
+    This converts any CRS to a stable string form.
+
+    Args:
+        crs: CRS value (string, dict/PROJJSON, or None)
+
+    Returns:
+        Canonical string representation, or None if crs is None.
+    """
+    import json
+
+    if crs is None:
+        return None
+    if isinstance(crs, dict):
+        # PROJJSON - convert to stable JSON string
+        return json.dumps(crs, sort_keys=True)
+    return str(crs)
+
+
 def _warn_on_mismatches(metadata_list: Sequence[object]) -> None:
     """Warn if CRS or geometry types differ across items."""
     import warnings
 
-    crs_values = {getattr(m, "crs", None) for m in metadata_list} - {None}
+    # Canonicalize CRS values to handle dict (PROJJSON) CRS
+    crs_values = {_canonicalize_crs(getattr(m, "crs", None)) for m in metadata_list} - {None}
     if len(crs_values) > 1:
+        # For display, show original CRS values (truncate PROJJSON to avoid huge messages)
+        display_values = set()
+        for m in metadata_list:
+            crs = getattr(m, "crs", None)
+            if crs is not None:
+                if isinstance(crs, dict):
+                    display_values.add("<PROJJSON>")
+                else:
+                    display_values.add(str(crs))
         warnings.warn(
-            f"CRS mismatch detected across items: {crs_values}. Using first item's CRS.",
+            f"CRS mismatch detected across items: {display_values}. Using first item's CRS.",
             UserWarning,
             stacklevel=3,
         )

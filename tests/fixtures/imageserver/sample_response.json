@@ -1,0 +1,75 @@
+{
+  "currentVersion": 11.2,
+  "serviceDescription": "High-resolution aerial imagery for Wake County, NC captured in 2024.",
+  "name": "WakeCounty_Imagery_2024",
+  "description": "4-band (RGBI) aerial imagery at 6-inch resolution.",
+  "copyrightText": "Wake County GIS, 2024",
+  "bandCount": 4,
+  "pixelType": "U8",
+  "minPixelSize": 0.15,
+  "maxPixelSize": 0.15,
+  "minValues": [0, 0, 0, 0],
+  "maxValues": [255, 255, 255, 255],
+  "meanValues": [128.5, 125.3, 120.1, 145.8],
+  "stdvValues": [45.2, 42.1, 40.5, 55.3],
+  "fullExtent": {
+    "xmin": 2000000.0,
+    "ymin": 600000.0,
+    "xmax": 2150000.0,
+    "ymax": 750000.0,
+    "spatialReference": {
+      "wkid": 102719,
+      "latestWkid": 2264
+    }
+  },
+  "initialExtent": {
+    "xmin": 2050000.0,
+    "ymin": 650000.0,
+    "xmax": 2100000.0,
+    "ymax": 700000.0,
+    "spatialReference": {
+      "wkid": 102719,
+      "latestWkid": 2264
+    }
+  },
+  "spatialReference": {
+    "wkid": 102719,
+    "latestWkid": 2264
+  },
+  "tileInfo": {
+    "rows": 256,
+    "cols": 256,
+    "dpi": 96,
+    "format": "JPEG",
+    "compressionQuality": 75,
+    "origin": {
+      "x": -5120900.0,
+      "y": 9998100.0
+    },
+    "spatialReference": {
+      "wkid": 102719,
+      "latestWkid": 2264
+    },
+    "lods": [
+      {
+        "level": 0,
+        "resolution": 1344.0,
+        "scale": 4096000
+      },
+      {
+        "level": 1,
+        "resolution": 672.0,
+        "scale": 2048000
+      }
+    ]
+  },
+  "exportTilesAllowed": true,
+  "hasRasterAttributeTable": false,
+  "hasHistograms": true,
+  "hasMultidimensions": false,
+  "capabilities": "Image,Metadata,Catalog,Mensuration",
+  "documentInfo": {
+    "Author": "Wake County GIS",
+    "Keywords": "aerial, imagery, Wake County, 2024"
+  }
+}

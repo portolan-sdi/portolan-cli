@@ -1,12 +1,13 @@
 """ArcGIS REST URL parser.
 
 Parses ArcGIS REST URLs to determine:
-- URL type (FeatureServer, MapServer, or services root)
+- URL type (FeatureServer, MapServer, ImageServer, or services root)
 - Service name (for default output directory naming)
 - Layer ID (if a specific layer is targeted)
 
 Per design doc (context/shared/plans/extract-arcgis-design.md):
-- `*/FeatureServer` or `*/MapServer` -> single service extraction
+- `*/FeatureServer` or `*/MapServer` -> single service extraction (vector)
+- `*/ImageServer` -> single service extraction (raster)
 - `*/rest/services` -> multi-service discovery and extraction
 """
 
@@ -25,6 +26,7 @@ class ArcGISURLType(Enum):
 
     FEATURE_SERVER = "FeatureServer"
     MAP_SERVER = "MapServer"
+    IMAGE_SERVER = "ImageServer"
     SERVICES_ROOT = "services"
 
 
@@ -86,15 +88,15 @@ _SERVICE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Match: /rest/services at the end (services root)
-_SERVICES_ROOT_PATTERN = re.compile(
-    r"/rest/services/?$",
+# Match: /rest/services/ServiceName/ImageServer (no layer ID for ImageServer)
+_IMAGE_SERVER_PATTERN = re.compile(
+    r"/rest/services/(.+?)/ImageServer/?",
     re.IGNORECASE,
 )
 
-# Match ImageServer (to give helpful error)
-_IMAGE_SERVER_PATTERN = re.compile(
-    r"/ImageServer",
+# Match: /rest/services at the end (services root)
+_SERVICES_ROOT_PATTERN = re.compile(
+    r"/rest/services/?$",
     re.IGNORECASE,
 )
 
@@ -103,7 +105,7 @@ def parse_arcgis_url(url: str) -> ParsedArcGISURL:
     """Parse an ArcGIS REST URL to determine type and extract metadata.
 
     Args:
-        url: ArcGIS REST URL (FeatureServer, MapServer, or services root)
+        url: ArcGIS REST URL (FeatureServer, MapServer, ImageServer, or services root)
 
     Returns:
         ParsedArcGISURL with type, base URL, service name, and optional layer ID
@@ -117,6 +119,10 @@ def parse_arcgis_url(url: str) -> ParsedArcGISURL:
         <ArcGISURLType.FEATURE_SERVER: 'FeatureServer'>
         >>> result.service_name
         'Census'
+
+        >>> result = parse_arcgis_url("https://example.com/rest/services/Imagery/ImageServer")
+        >>> result.url_type
+        <ArcGISURLType.IMAGE_SERVER: 'ImageServer'>
 
         >>> result = parse_arcgis_url("https://example.com/rest/services")
         >>> result.url_type
@@ -136,11 +142,25 @@ def parse_arcgis_url(url: str) -> ParsedArcGISURL:
     # Strip query parameters for pattern matching
     url_path = url.split("?")[0]
 
-    # Check for ImageServer (not supported - raster out of scope)
-    if _IMAGE_SERVER_PATTERN.search(url_path):
-        raise InvalidArcGISURLError(
-            url,
-            "ImageServer (raster) is not supported; only FeatureServer and MapServer are supported",
+    # Try to match ImageServer first (before FeatureServer/MapServer pattern)
+    image_match = _IMAGE_SERVER_PATTERN.search(url_path)
+    if image_match:
+        service_name = image_match.group(1)
+
+        # Build base URL (without query params)
+        # Find where "ImageServer" ends (case-insensitive)
+        lower_path = url_path.lower()
+        server_end = lower_path.find("imageserver") + len("imageserver")
+        base_url = url_path[:server_end]
+
+        # Normalize trailing slash
+        base_url = base_url.rstrip("/")
+
+        return ParsedArcGISURL(
+            url_type=ArcGISURLType.IMAGE_SERVER,
+            base_url=base_url,
+            service_name=service_name,
+            layer_id=None,  # ImageServer doesn't have layer IDs
         )
 
     # Try to match FeatureServer or MapServer
@@ -189,5 +209,5 @@ def parse_arcgis_url(url: str) -> ParsedArcGISURL:
     # No match - not a recognized ArcGIS URL
     raise InvalidArcGISURLError(
         url,
-        "not a recognized ArcGIS REST URL; expected FeatureServer, MapServer, or rest/services",
+        "not a recognized ArcGIS REST URL; expected FeatureServer, MapServer, ImageServer, or rest/services",
     )

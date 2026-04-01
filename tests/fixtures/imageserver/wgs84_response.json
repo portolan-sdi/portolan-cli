@@ -1,0 +1,22 @@
+{
+  "name": "Global_DEM",
+  "serviceDescription": "Global digital elevation model at 30m resolution.",
+  "description": "Single-band elevation data.",
+  "copyrightText": "NASA SRTM",
+  "bandCount": 1,
+  "pixelType": "S16",
+  "fullExtent": {
+    "xmin": -180.0,
+    "ymin": -60.0,
+    "xmax": 180.0,
+    "ymax": 60.0,
+    "spatialReference": {
+      "wkid": 4326,
+      "latestWkid": 4326
+    }
+  },
+  "spatialReference": {
+    "wkid": 4326,
+    "latestWkid": 4326
+  }
+}

@@ -1,6 +1,9 @@
 # Extracting Data from ArcGIS Services
 
-Portolan can extract vector data directly from ArcGIS FeatureServer and MapServer endpoints into a well-structured catalog with GeoParquet files and STAC metadata.
+Portolan can extract data directly from ArcGIS REST services:
+
+- **FeatureServer/MapServer**: Vector data → GeoParquet files
+- **ImageServer**: Raster imagery → Cloud-Optimized GeoTIFF (COG) tiles
 
 ## Quick Start
 
@@ -8,13 +11,28 @@ Portolan can extract vector data directly from ArcGIS FeatureServer and MapServe
 # Extract all layers from a FeatureServer
 portolan extract arcgis https://services.arcgis.com/.../FeatureServer ./output
 
+# Extract tiles from an ImageServer (uses bbox to limit area)
+portolan extract arcgis https://example.com/.../ImageServer ./output --bbox "minx,miny,maxx,maxy"
+
 # Preview what would be extracted (dry run)
 portolan extract arcgis URL --dry-run
 ```
 
-## Basic Usage
+## Service Types
 
-### Extracting a Single Service
+Portolan auto-detects the service type from the URL:
+
+| URL Pattern | Service Type | Output Format |
+|-------------|--------------|---------------|
+| `.../FeatureServer` | Vector features | GeoParquet |
+| `.../MapServer` | Vector features | GeoParquet |
+| `.../ImageServer` | Raster imagery | COG tiles |
+
+---
+
+## FeatureServer / MapServer Extraction
+
+### Basic Usage
 
 Point Portolan at any ArcGIS FeatureServer or MapServer URL:
 
@@ -52,19 +70,125 @@ portolan extract arcgis URL --layers "Census*" --exclude-layers "*_2010"
 - `?` matches a single character
 - Examples: `sdn_*`, `*_2024`, `cod_ab_*`
 
-## Advanced Options
+### Output Structure
+
+Each layer becomes a collection with the parquet file as a collection-level asset:
+
+```
+output/
+├── .portolan/
+│   └── extraction-report.json    # Extraction metadata
+├── census_block_groups/
+│   ├── collection.json
+│   └── census_block_groups.parquet
+└── census_tracts/
+    ├── collection.json
+    └── census_tracts.parquet
+```
+
+---
+
+## ImageServer Extraction
+
+### Basic Usage
+
+Extract raster imagery from an ArcGIS ImageServer:
+
+```bash
+portolan extract arcgis \
+  https://sampleserver6.arcgisonline.com/arcgis/rest/services/Toronto/ImageServer \
+  ./toronto-imagery
+```
+
+This will:
+
+1. Query service metadata (extent, CRS, pixel size, bands)
+2. Compute a tile grid covering the service extent
+3. Download tiles via `exportImage` API
+4. Convert each tile to Cloud-Optimized GeoTIFF (COG)
+5. Create STAC items for each tile with spatial metadata
+6. Generate an extraction report
+
+### Limiting Extraction Area
+
+For large ImageServers, use `--bbox` to extract a subset:
+
+```bash
+# Extract only tiles within bounding box (in service CRS coordinates)
+portolan extract arcgis URL --bbox "-8841000,5405000,-8840000,5406000"
+```
+
+**Important**: The bbox coordinates must be in the service's native CRS (check the service metadata for `spatialReference.wkid`).
+
+### ImageServer Options
+
+```bash
+# Tile size in pixels (default: 4096)
+portolan extract arcgis URL --tile-size 2048
+
+# Maximum concurrent downloads (default: 4)
+portolan extract arcgis URL --max-concurrent 8
+
+# COG compression (default: deflate)
+portolan extract arcgis URL --compression jpeg  # Good for RGB imagery
+```
+
+### Output Structure
+
+Raster data uses item-level assets — each tile becomes a STAC item:
+
+```
+output/
+├── .portolan/
+│   ├── config.yaml
+│   ├── extraction-report.json
+│   └── imageserver-resume.json     # For resuming interrupted extractions
+├── catalog.json
+└── tiles/                          # Collection (one per ImageServer)
+    ├── collection.json
+    ├── versions.json
+    ├── tile_0_0/
+    │   ├── tile_0_0.json           # STAC item with tile bbox
+    │   └── tile_0_0.tif            # COG asset
+    ├── tile_0_1/
+    │   ├── tile_0_1.json
+    │   └── tile_0_1.tif
+    └── ...
+```
+
+### Adding Metadata After Extraction
+
+Extraction creates STAC metadata but **not** `metadata.yaml`. Per [ADR-0038](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0038-metadata-yaml-enrichment.md), contact and license info must be added manually:
+
+```bash
+# Create metadata.yaml in the collection's .portolan directory
+mkdir -p tiles/.portolan
+cat > tiles/.portolan/metadata.yaml << 'EOF'
+contact:
+  name: Your Name
+  email: your.email@example.com
+license: CC-BY-4.0
+source_url: https://example.com/.../ImageServer
+EOF
+
+# Generate README from STAC + metadata.yaml
+portolan readme tiles
+```
+
+---
+
+## Common Options
+
+These options work for both FeatureServer and ImageServer:
 
 ### Controlling Extraction
 
 ```bash
-# Parallel page requests per layer (default: 3)
-portolan extract arcgis URL --workers 5
-
-# Retry failed layers (default: 3 attempts)
-portolan extract arcgis URL --retries 5
-
-# Request timeout in seconds (default: 60)
+# Request timeout in seconds (default: 60 for vectors, 120 for rasters)
 portolan extract arcgis URL --timeout 120
+
+# Retry failed requests (default: 3 attempts)
+portolan extract arcgis URL --retries 5
 ```
 
 ### Resume Failed Extractions
@@ -72,14 +196,12 @@ portolan extract arcgis URL --timeout 120
 If an extraction fails partway through, resume from where you left off:
 
 ```bash
-# Initial extraction (fails on layer 5)
+# Initial extraction (fails partway)
 portolan extract arcgis URL ./output
 
-# Resume - skips already-extracted layers
+# Resume - skips already-extracted layers/tiles
 portolan extract arcgis URL ./output --resume
 ```
-
-The resume feature uses the extraction report in `.portolan/extraction-report.json` to determine which layers have already succeeded.
 
 ### Dry Run Mode
 
@@ -89,8 +211,6 @@ Preview what would be extracted without downloading any data:
 portolan extract arcgis URL --dry-run
 ```
 
-Output shows all layers that would be extracted.
-
 ### JSON Output
 
 For automation and scripts, use JSON output:
@@ -98,12 +218,6 @@ For automation and scripts, use JSON output:
 ```bash
 portolan extract arcgis URL --json
 ```
-
-Returns a structured JSON envelope with:
-
-- `source_url`: The ArcGIS service URL
-- `summary`: Counts of succeeded/failed/skipped layers
-- `layers`: Details for each layer including status and output path
 
 ### Non-Interactive Mode
 
@@ -113,37 +227,18 @@ Skip confirmation prompts (useful in scripts):
 portolan extract arcgis URL --auto
 ```
 
-## Output Structure
-
-Extracted data follows the Portolan catalog structure with collection-level assets:
-
-```
-output/
-├── .portolan/
-│   └── extraction-report.json    # Extraction metadata
-├── census_block_groups/
-│   ├── collection.json
-│   └── census_block_groups.parquet
-├── census_tracts/
-│   ├── collection.json
-│   └── census_tracts.parquet
-└── boundaries/
-    ├── collection.json
-    └── boundaries.parquet
-```
-
-Each layer becomes a collection with the parquet file as a collection-level asset (per [ADR-0031](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0031-collection-level-assets-for-vector-data.md)).
+---
 
 ## Extraction Report
 
-The extraction report (`extraction-report.json`) contains:
+The extraction report (`.portolan/extraction-report.json`) contains:
 
 - **Source URL** and extraction timestamp
-- **Metadata** extracted from the ArcGIS service (attribution, keywords, etc.)
-- **Per-layer results**: status, feature count, file size, duration, any errors
-- **Summary**: total layers, succeeded, failed, skipped
+- **Metadata** extracted from the ArcGIS service
+- **Per-layer/tile results**: status, count, file size, duration, any errors
+- **Summary**: totals for succeeded, failed, skipped
 
-Example:
+Example (FeatureServer):
 
 ```json
 {
@@ -155,18 +250,11 @@ Example:
     "failed": 1,
     "total_features": 125000,
     "total_size_bytes": 45000000
-  },
-  "layers": [
-    {
-      "id": 0,
-      "name": "Census_Block_Groups",
-      "status": "success",
-      "features": 50000,
-      "output_path": "census_block_groups/census_block_groups.parquet"
-    }
-  ]
+  }
 }
 ```
+
+---
 
 ## Tips
 
@@ -175,7 +263,7 @@ Example:
 ArcGIS services are typically found at URLs like:
 
 - `https://services.arcgis.com/{org_id}/ArcGIS/rest/services/{service_name}/FeatureServer`
-- `https://gis.example.com/arcgis/rest/services/{folder}/{service_name}/MapServer`
+- `https://gis.example.com/arcgis/rest/services/{folder}/{service_name}/ImageServer`
 
 You can browse available services at the root:
 
@@ -186,19 +274,22 @@ You can browse available services at the root:
 For services with many layers or large datasets:
 
 1. Use `--dry-run` first to see what will be extracted
-2. Filter to specific layers with `--layers`
+2. Filter with `--layers` (vectors) or `--bbox` (rasters)
 3. Use `--resume` if extraction is interrupted
-4. Increase `--workers` for faster extraction (if server allows)
+4. Increase parallelism with `--workers` (vectors) or `--max-concurrent` (rasters)
 
 ### Error Handling
 
-If a layer fails to extract:
+If a layer/tile fails to extract:
 
-- The extraction continues with remaining layers
-- Failed layers are recorded in the report with error details
-- Use `--resume` to retry only failed layers
+- The extraction continues with remaining items
+- Failed items are recorded in the report with error details
+- Use `--resume` to retry only failed items
+
+---
 
 ## Requirements
 
-- [geoparquet-io](https://github.com/geoparquet/geoparquet-io) (automatically installed with Portolan)
+- [geoparquet-io](https://github.com/geoparquet/geoparquet-io) — Vector extraction (automatically installed)
+- [rio-cogeo](https://github.com/cogeotiff/rio-cogeo) — COG conversion (automatically installed)
 - Network access to the ArcGIS service
