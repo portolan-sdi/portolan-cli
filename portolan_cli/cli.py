@@ -5257,11 +5257,51 @@ def extract_arcgis_cmd(
 
 
 # =============================================================================
-# Version management commands
+# Version management commands (iceberg backend only)
 # =============================================================================
 
 
-@cli.command("versions")
+def _require_iceberg_backend(
+    catalog_path: Path, use_json: bool, command_name: str
+):
+    """Load the iceberg backend or exit with an error."""
+    from portolan_cli.config import get_setting
+
+    backend_name = get_setting("backend", catalog_path=catalog_path)
+    if backend_name != "iceberg":
+        msg = (
+            f"'portolan version {command_name}' requires the 'iceberg' backend. "
+            f"Current backend: '{backend_name or 'file'}'"
+        )
+        if use_json:
+            envelope = error_envelope(
+                f"version {command_name}",
+                [ErrorDetail(type="BackendError", message=msg)],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(msg)
+        raise SystemExit(1)
+
+    from portolan_cli.backends import get_backend
+
+    return get_backend("iceberg", catalog_root=catalog_path)
+
+
+@cli.group()
+def version() -> None:
+    """Iceberg version management commands.
+
+    \b
+    Subcommands:
+        current   Show current version of a collection
+        list      List all versions of a collection
+        rollback  Rollback to a previous version
+        prune     Remove old versions
+    """
+
+
+@version.command()
 @click.argument("collection")
 @click.option(
     "--catalog",
@@ -5272,7 +5312,74 @@ def extract_arcgis_cmd(
 )
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 @click.pass_context
-def versions_cmd(
+def current(
+    ctx: click.Context,
+    collection: str,
+    catalog_path: Path | None,
+    json_output: bool,
+) -> None:
+    """Show the current version of a collection.
+
+    \b
+    Examples:
+        portolan version current boundaries
+        portolan version current boundaries --json
+    """
+    use_json = should_output_json(ctx, json_output)
+
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "version current")
+
+    backend = _require_iceberg_backend(catalog_path, use_json, "current")
+
+    try:
+        ver = backend.get_current_version(collection)
+    except (FileNotFoundError, Exception) as e:
+        if use_json:
+            envelope = error_envelope(
+                "version current",
+                [ErrorDetail(type=type(e).__name__, message=str(e))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
+
+    if use_json:
+        envelope = success_envelope(
+            "version current",
+            {
+                "collection": collection,
+                "version": ver.version,
+                "created": ver.created.isoformat(),
+                "breaking": ver.breaking,
+                "message": ver.message,
+                "assets": len(ver.assets),
+                "changes": ver.changes,
+            },
+        )
+        output_json_envelope(envelope)
+    else:
+        breaking_flag = " [BREAKING]" if ver.breaking else ""
+        timestamp = ver.created.strftime("%Y-%m-%d %H:%M:%S")
+        msg = f" — {ver.message}" if ver.message else ""
+        info_output(f"{collection}: {ver.version}  {timestamp}{breaking_flag}{msg}")
+        if ver.assets:
+            detail(f"  {len(ver.assets)} asset(s)")
+
+
+@version.command("list")
+@click.argument("collection")
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to catalog root (default: auto-detect).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def version_list_cmd(
     ctx: click.Context,
     collection: str,
     catalog_path: Path | None,
@@ -5280,26 +5387,24 @@ def versions_cmd(
 ) -> None:
     """List all versions of a collection.
 
-    Shows version history with timestamps, change type, and message.
-
     \b
     Examples:
-        portolan versions boundaries
-        portolan versions boundaries --json
+        portolan version list boundaries
+        portolan version list boundaries --json
     """
     use_json = should_output_json(ctx, json_output)
 
     if catalog_path is None:
-        catalog_path = require_catalog_root(use_json, "versions")
+        catalog_path = require_catalog_root(use_json, "version list")
 
-    from portolan_cli.version_ops import list_versions
+    backend = _require_iceberg_backend(catalog_path, use_json, "list")
 
     try:
-        versions = list_versions(collection, catalog_root=catalog_path)
+        versions = backend.list_versions(collection)
     except (FileNotFoundError, Exception) as e:
         if use_json:
             envelope = error_envelope(
-                "versions",
+                "version list",
                 [ErrorDetail(type=type(e).__name__, message=str(e))],
             )
             output_json_envelope(envelope)
@@ -5320,7 +5425,7 @@ def versions_cmd(
             for v in versions
         ]
         envelope = success_envelope(
-            "versions",
+            "version list",
             {"collection": collection, "versions": versions_data},
         )
         output_json_envelope(envelope)
@@ -5340,7 +5445,7 @@ def versions_cmd(
                     detail(f"    {change}")
 
 
-@cli.command()
+@version.command()
 @click.argument("collection")
 @click.argument("target_version")
 @click.option(
@@ -5361,42 +5466,27 @@ def rollback(
 ) -> None:
     """Rollback a collection to a previous version.
 
-    Creates a NEW version with the contents of TARGET_VERSION,
-    preserving full history. Does not delete intermediate versions.
-
-    Requires the 'iceberg' backend.
+    Uses Iceberg's native snapshot management to set the current snapshot
+    pointer back to TARGET_VERSION. No data is copied — this is instant.
 
     \b
     Examples:
-        portolan rollback boundaries 1.0.0
-        portolan rollback boundaries 2.0.0 --json
+        portolan version rollback boundaries 1.0.0
+        portolan version rollback boundaries 2.0.0 --json
     """
     use_json = should_output_json(ctx, json_output)
 
     if catalog_path is None:
-        catalog_path = require_catalog_root(use_json, "rollback")
+        catalog_path = require_catalog_root(use_json, "version rollback")
 
-    from portolan_cli.version_ops import rollback_version
+    backend = _require_iceberg_backend(catalog_path, use_json, "rollback")
 
     try:
-        new_version = rollback_version(
-            collection, target_version, catalog_root=catalog_path
-        )
-    except NotImplementedError:
-        msg = "Rollback is only supported with the 'iceberg' backend."
-        if use_json:
-            envelope = error_envelope(
-                "rollback",
-                [ErrorDetail(type="NotImplementedError", message=msg)],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(msg)
-        raise SystemExit(1) from None
+        restored = backend.rollback(collection, target_version)
     except (FileNotFoundError, ValueError, Exception) as e:
         if use_json:
             envelope = error_envelope(
-                "rollback",
+                "version rollback",
                 [ErrorDetail(type=type(e).__name__, message=str(e))],
             )
             output_json_envelope(envelope)
@@ -5406,23 +5496,19 @@ def rollback(
 
     if use_json:
         envelope = success_envelope(
-            "rollback",
+            "version rollback",
             {
                 "collection": collection,
-                "rolled_back_to": target_version,
-                "new_version": new_version.version,
-                "created": new_version.created.isoformat(),
+                "restored_version": restored.version,
+                "created": restored.created.isoformat(),
             },
         )
         output_json_envelope(envelope)
     else:
-        success(
-            f"Rolled back '{collection}' to {target_version} "
-            f"→ new version {new_version.version}"
-        )
+        success(f"Rolled back '{collection}' to version {restored.version}")
 
 
-@cli.command()
+@version.command()
 @click.argument("collection")
 @click.option(
     "--keep",
@@ -5456,40 +5542,25 @@ def prune(
 ) -> None:
     """Remove old versions, keeping the N most recent.
 
-    Requires the 'iceberg' backend.
-
     \b
     Examples:
-        portolan prune boundaries                # Keep 5 most recent
-        portolan prune boundaries --keep 3       # Keep 3 most recent
-        portolan prune boundaries --dry-run      # Preview without deleting
+        portolan version prune boundaries                # Keep 5 most recent
+        portolan version prune boundaries --keep 3       # Keep 3 most recent
+        portolan version prune boundaries --dry-run      # Preview without deleting
     """
     use_json = should_output_json(ctx, json_output)
 
     if catalog_path is None:
-        catalog_path = require_catalog_root(use_json, "prune")
+        catalog_path = require_catalog_root(use_json, "version prune")
 
-    from portolan_cli.version_ops import prune_versions
+    backend = _require_iceberg_backend(catalog_path, use_json, "prune")
 
     try:
-        pruned = prune_versions(
-            collection, keep=keep, dry_run=dry_run, catalog_root=catalog_path
-        )
-    except NotImplementedError:
-        msg = "Prune is only supported with the 'iceberg' backend."
-        if use_json:
-            envelope = error_envelope(
-                "prune",
-                [ErrorDetail(type="NotImplementedError", message=msg)],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(msg)
-        raise SystemExit(1) from None
+        pruned = backend.prune(collection, keep=keep, dry_run=dry_run)
     except (FileNotFoundError, Exception) as e:
         if use_json:
             envelope = error_envelope(
-                "prune",
+                "version prune",
                 [ErrorDetail(type=type(e).__name__, message=str(e))],
             )
             output_json_envelope(envelope)
@@ -5506,7 +5577,7 @@ def prune(
             for v in pruned
         ]
         envelope = success_envelope(
-            "prune",
+            "version prune",
             {
                 "collection": collection,
                 "pruned": pruned_data,
