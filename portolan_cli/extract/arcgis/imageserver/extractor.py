@@ -26,15 +26,42 @@ Typical usage:
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import json
 import logging
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
+
+# Cross-platform file locking
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_file(f: Any) -> None:
+        """Lock file on Windows using msvcrt."""
+        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+
+    def _unlock_file(f: Any) -> None:
+        """Unlock file on Windows using msvcrt."""
+        try:
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass  # May fail if not locked
+
+else:
+    import fcntl
+
+    def _lock_file(f: Any) -> None:
+        """Lock file on Unix using fcntl."""
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+
+    def _unlock_file(f: Any) -> None:
+        """Unlock file on Unix using fcntl."""
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
 
 import httpx
 from rio_cogeo.cogeo import cog_translate
@@ -348,8 +375,8 @@ def _intersect_bbox(
 def _save_resume_state_locked(state: ImageServerResumeState, path: Path) -> None:
     """Save resume state with file locking to prevent race conditions.
 
-    Uses fcntl.flock for atomic writes when multiple concurrent tasks
-    complete nearly simultaneously.
+    Uses platform-specific locking (fcntl on Unix, msvcrt on Windows)
+    for atomic writes when multiple concurrent tasks complete simultaneously.
 
     Args:
         state: Resume state to save.
@@ -362,8 +389,8 @@ def _save_resume_state_locked(state: ImageServerResumeState, path: Path) -> None
 
     try:
         with open(temp_path, "w") as f:
-            # Acquire exclusive lock
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            # Acquire exclusive lock (cross-platform)
+            _lock_file(f)
             try:
                 data = {
                     "extraction_type": "imageserver",
@@ -376,7 +403,7 @@ def _save_resume_state_locked(state: ImageServerResumeState, path: Path) -> None
                 }
                 json.dump(data, f, indent=2)
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                _unlock_file(f)
 
         # Atomic rename
         temp_path.rename(path)
