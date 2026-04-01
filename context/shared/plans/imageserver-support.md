@@ -2,7 +2,8 @@
 
 **Issue:** [portolan-sdi/portolan-cli#5](https://github.com/portolan-sdi/portolan-cli/issues/5)
 **Milestone:** v0.7.0
-**Status:** Research complete, ready for implementation
+**Status:** Design complete, ready for implementation
+**Last updated:** 2026-04-01
 
 ---
 
@@ -78,6 +79,60 @@ This confirms ImageServer support belongs in portolan-cli, not geoparquet-io.
 | Output format | **COG only** | Simpler, broader ecosystem support; Raquet later |
 | Auth scope | **Reuse geoparquet-io patterns** | Already battle-tested in `geoparquet_io/core/arcgis.py` |
 | CLI structure | **Extend `portolan extract arcgis`** | Auto-detect ImageServer vs FeatureServer URLs |
+| Mosaic vs tiles | **Individual tiles as items** | Per ADR-0031: raster → item-level assets; enables bbox-based discovery |
+| Resume support | **Adapt existing `resume.py`** | Track by tile coordinates `(x, y)` instead of layer ID |
+| Rate limiting | **Reuse existing `retry.py`** | Exponential backoff (1s→2s→4s), max 60s delay, 3 attempts default |
+
+### Output Structure (per ADR-0031)
+
+Raster data uses **item-level assets** — each tile becomes a STAC item:
+
+```
+output/
+├── .portolan/
+│   └── extraction-report.json    # Tracks tile status for resume
+├── catalog.json                  # Auto-init after extraction
+└── {service-name}/               # Collection (one per ImageServer)
+    ├── collection.json           # Service metadata, extent, CRS
+    ├── tile_0_0/
+    │   ├── item.json             # STAC item with tile bbox
+    │   └── tile_0_0.tif          # COG asset
+    ├── tile_0_1/
+    │   ├── item.json
+    │   └── tile_0_1.tif
+    └── ...
+```
+
+### Resume Implementation
+
+Adapt `ResumeState` to track tile coordinates:
+
+```python
+@dataclass
+class ImageServerResumeState:
+    succeeded_tiles: set[tuple[int, int]]  # (x, y) coordinates
+    failed_tiles: set[tuple[int, int]]
+
+def should_process_tile(x: int, y: int, state: ImageServerResumeState | None) -> bool:
+    if state is None:
+        return True
+    if (x, y) in state.succeeded_tiles:
+        return False
+    return True  # Failed or new → process
+```
+
+### Retry Configuration
+
+Reuse existing `RetryConfig` from `retry.py`:
+
+```python
+config = RetryConfig(
+    max_attempts=3,      # CLI: --retries
+    initial_delay=1.0,
+    backoff_factor=2.0,
+    max_delay=60.0,
+)
+```
 
 ---
 
@@ -130,9 +185,19 @@ GET {base_url}/ImageServer/exportImage
   &f=image
 ```
 
-Strategy options:
-- **Option A:** Use server `maxImageWidth/Height` to subdivide extent
-- **Option B:** Standard tile grid (4096×4096 chunks) - more predictable, easier to resume
+**Strategy: Standard tile grid** (Option B) — more predictable, easier to resume.
+
+1. Query service for `fullExtent` and `pixelSizeX/Y`
+2. Compute grid: `tile_size` pixels × `pixelSizeX` = tile width in map units
+3. Generate tile coordinates: `(x, y)` pairs covering extent
+4. For each tile:
+   - Check resume state → skip if succeeded
+   - Call `exportImage` with tile bbox
+   - Convert to COG via `rio_cogeo.cog_translate()`
+   - Create STAC item with tile bbox
+   - Update extraction report
+
+**Default tile size:** 4096×4096 pixels (configurable via `--tile-size`)
 
 ### Phase 5: COG Conversion
 
@@ -166,23 +231,100 @@ New options for ImageServer:
 | `portolan_cli/extract/arcgis/imageserver/discovery.py` | Service metadata query |
 | `portolan_cli/extract/arcgis/imageserver/extractor.py` | Tile iteration + download |
 | `portolan_cli/extract/arcgis/imageserver/metadata.py` | STAC metadata generation |
+| `portolan_cli/extract/arcgis/imageserver/tiling.py` | Tile grid calculation |
+| `portolan_cli/extract/arcgis/imageserver/resume.py` | Tile-based resume state |
 | `tests/unit/extract/arcgis/imageserver/` | Unit tests |
 | `tests/integration/extract/arcgis/test_imageserver.py` | Integration tests |
+| `tests/network/extract/arcgis/test_imageserver_live.py` | Live network tests (nightly) |
+| `tests/fixtures/imageserver/charlotte_las_metadata.json` | Mock service metadata |
+| `tests/fixtures/imageserver/README.md` | Fixture documentation |
 
 ---
 
 ## Verification Checklist
 
 - [ ] Unit tests pass: `uv run pytest tests/unit/extract/arcgis/imageserver/ -v`
-- [ ] Integration test: Extract from public ImageServer → COG
+- [ ] Integration tests pass: `uv run pytest tests/integration/extract/arcgis/test_imageserver.py -v`
+- [ ] Network test (Charlotte LAS): `uv run pytest tests/network/extract/arcgis/test_imageserver_live.py -v`
 - [ ] Catalog valid: `portolan check` passes on output
 - [ ] STAC valid: `stac-validator` on generated items
 - [ ] COG valid: `rio cogeo validate` on output files
+- [ ] Resume works: Interrupt extraction, resume with `--resume`, verify no duplicate downloads
+- [ ] Dry run works: `--dry-run` shows tile count without downloading
 
 ---
 
-## Open Questions
+## Test Fixtures
 
-1. **Mosaic vs. individual tiles:** Should output be one merged COG or multiple tile COGs?
-2. **Resume support:** How to handle interrupted downloads (checkpointing)?
-3. **Rate limiting:** Does the existing retry logic from geoparquet-io suffice?
+### Public ImageServers for Testing
+
+| Service | Size | Bands | Resolution | Capabilities | Use Case |
+|---------|------|-------|------------|--------------|----------|
+| **Charlotte LAS** | ~9 MB | 1 (F32) | 10m | Image ✓ | Unit/integration tests |
+| **Toronto** | ~1.2 GB | 4 (U16) | 1m | Image ✓ | Larger integration tests |
+| **Ogunquit 2022** | ~18 GB | 4 (U8) | 7.5cm | Image ✓ | Real-world (bbox subset) |
+
+**URLs:**
+```
+# Charlotte LAS (ESRI Sample) - RECOMMENDED for CI
+https://sampleserver6.arcgisonline.com/arcgis/rest/services/CharlotteLAS/ImageServer
+
+# Toronto (ESRI Sample) - 4-band imagery
+https://sampleserver6.arcgisonline.com/arcgis/rest/services/Toronto/ImageServer
+
+# Ogunquit 2022 (Maine) - high-res aerial (use small bbox only!)
+https://gis.maine.gov/image/rest/services/Municipal/orthoMunicipalOgunquit2022/ImageServer
+```
+
+### Test Strategy
+
+1. **Unit tests** (`@pytest.mark.unit`):
+   - Mock HTTP responses based on Charlotte LAS metadata
+   - Test tile grid calculation, resume logic, STAC generation
+   - No network calls
+
+2. **Integration tests** (`@pytest.mark.integration`):
+   - Use `responses` or `respx` to mock `exportImage` calls
+   - Test full extraction pipeline with mocked responses
+   - Verify COG output, STAC validity
+
+3. **Network tests** (`@pytest.mark.network`):
+   - Extract from Charlotte LAS (9 MB total, fast)
+   - Run in CI nightly, not on every PR
+   - Validate against `rio cogeo validate` and `stac-validator`
+
+4. **Real-world subset** (`@pytest.mark.realdata`):
+   - Extract small bbox from Ogunquit (~100m × 100m ≈ 1.8 MB)
+   - Tests high-resolution imagery handling
+   - Optional, for manual validation
+
+### Sample Mock Response
+
+```python
+# tests/fixtures/imageserver/charlotte_las_metadata.json
+{
+    "name": "CharlotteLAS",
+    "bandCount": 1,
+    "pixelType": "F32",
+    "pixelSizeX": 10,
+    "pixelSizeY": 10,
+    "fullExtent": {
+        "xmin": 1420000, "ymin": 460000,
+        "xmax": 1435000, "ymax": 475000,
+        "spatialReference": {"wkid": 102719}
+    },
+    "maxImageWidth": 15000,
+    "maxImageHeight": 4100,
+    "capabilities": "Image,Metadata,Catalog,Mensuration"
+}
+```
+
+---
+
+## Open Questions (Resolved)
+
+| Question | Resolution |
+|----------|------------|
+| ~~Mosaic vs. individual tiles~~ | **Individual tiles as items** — per ADR-0031 |
+| ~~Resume support~~ | **Adapt `resume.py`** — track `(x, y)` coordinates |
+| ~~Rate limiting~~ | **Reuse `retry.py`** — exponential backoff, configurable |
