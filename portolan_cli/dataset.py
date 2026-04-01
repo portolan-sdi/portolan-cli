@@ -1527,7 +1527,7 @@ def _update_versions(
     from portolan_cli.version_ops import publish_version
 
     if catalog_root is None:
-        catalog_root = collection_dir.parent
+        catalog_root = collection_dir.parents[len(Path(collection_id).parts) - 1]
 
     # Build assets dict (asset_key -> file_path) for the backend.
     # The backend (file or plugin) handles checksum/size computation internally.
@@ -2923,10 +2923,13 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
         # File wasn't tracked, nothing to do
         return
 
+    from portolan_cli.catalog import find_catalog_root
     from portolan_cli.version_ops import publish_version
 
-    collection_id = versions_path.parent.name
-    catalog_root = versions_path.parent.parent
+    catalog_root = find_catalog_root(versions_path.parent)
+    if catalog_root is None:
+        catalog_root = versions_path.parent.parent
+    collection_id = versions_path.parent.relative_to(catalog_root).as_posix()
 
     publish_version(
         collection_id,

@@ -5392,7 +5392,7 @@ def rollback(
 @click.option(
     "--keep",
     "-k",
-    type=int,
+    type=click.IntRange(min=1),
     default=5,
     show_default=True,
     help="Number of recent versions to keep.",
