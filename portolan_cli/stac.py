@@ -102,14 +102,15 @@ def create_item(
     # Merge any custom properties
     item_properties = dict(properties) if properties else {}
 
-    # Per ADR-0035: If datetime not provided, use open interval (null start/end)
-    # and mark as provisional so portolan check can flag incomplete items.
-    # STAC requires either datetime OR start_datetime+end_datetime.
+    # Per ADR-0035: If datetime not provided, mark as provisional so
+    # portolan check can flag incomplete items.
+    # STAC 1.1.0 and pystac require start_datetime/end_datetime to be valid
+    # ISO 8601 strings when datetime is null. We use an open-ended range
+    # to indicate unknown temporal extent.
     datetime_provisional = datetime is None
     if datetime_provisional:
-        # Use open temporal interval (both null = unknown temporal extent)
-        item_properties["start_datetime"] = None
-        item_properties["end_datetime"] = None
+        item_properties["start_datetime"] = "1900-01-01T00:00:00Z"
+        item_properties["end_datetime"] = "9999-12-31T23:59:59Z"
         item_properties["portolan:datetime_provisional"] = True
 
     item = pystac.Item(
