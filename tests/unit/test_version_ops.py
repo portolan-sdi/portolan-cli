@@ -42,7 +42,6 @@ class TestResolveBackendName:
 
 
 class TestGetCurrentVersion:
-
     @pytest.mark.unit
     def test_delegates_to_backend(self) -> None:
         mock_version = MagicMock()
@@ -67,7 +66,6 @@ class TestGetCurrentVersion:
 
 
 class TestListVersions:
-
     @pytest.mark.unit
     def test_delegates_to_backend(self) -> None:
         mock_versions = [MagicMock(), MagicMock()]
@@ -82,7 +80,6 @@ class TestListVersions:
 
 
 class TestPublishVersion:
-
     @pytest.mark.unit
     def test_delegates_to_backend(self) -> None:
         mock_version = MagicMock()
@@ -92,9 +89,7 @@ class TestPublishVersion:
         schema = {"columns": [], "types": {}, "hash": "h"}
 
         with patch("portolan_cli.backends.get_backend", return_value=mock_backend):
-            result = publish_version(
-                "col", assets={"a": "/path"}, schema=schema, message="test"
-            )
+            result = publish_version("col", assets={"a": "/path"}, schema=schema, message="test")
 
         mock_backend.publish.assert_called_once_with(
             "col", {"a": "/path"}, schema, False, "test", removed=None
@@ -122,7 +117,6 @@ class TestPublishVersion:
 
 
 class TestRollbackVersion:
-
     @pytest.mark.unit
     def test_delegates_to_backend(self) -> None:
         mock_version = MagicMock()
@@ -137,7 +131,6 @@ class TestRollbackVersion:
 
 
 class TestPruneVersions:
-
     @pytest.mark.unit
     def test_delegates_to_backend(self) -> None:
         mock_pruned = [MagicMock()]
