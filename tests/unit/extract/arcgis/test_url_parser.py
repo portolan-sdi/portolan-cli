@@ -204,12 +204,14 @@ class TestParseArcGISURLInvalid:
         with pytest.raises(InvalidArcGISURLError):
             parse_arcgis_url("https://example.com/rest/services/Census")
 
-    def test_invalid_image_server(self) -> None:
-        """ImageServer is not supported (raster out of scope)."""
-        with pytest.raises(InvalidArcGISURLError) as exc_info:
-            parse_arcgis_url("https://example.com/rest/services/Imagery/ImageServer")
-
-        assert "ImageServer" in str(exc_info.value)
+    def test_image_server_is_now_supported(self) -> None:
+        """ImageServer is now supported (raster extraction added)."""
+        # This test verifies ImageServer URLs no longer raise errors
+        # See tests/unit/extract/arcgis/imageserver/test_url_parser_imageserver.py
+        # for comprehensive ImageServer URL parsing tests
+        result = parse_arcgis_url("https://example.com/rest/services/Imagery/ImageServer")
+        assert result.url_type == ArcGISURLType.IMAGE_SERVER
+        assert result.service_name == "Imagery"
 
 
 class TestParsedArcGISURL:
