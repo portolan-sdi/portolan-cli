@@ -11,15 +11,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from portolan_cli.models._stac_version import get_stac_version
+
 # Valid STAC identifier pattern: alphanumeric, hyphens, underscores
 ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
-
-
-def _get_stac_version() -> str:
-    """Get STAC_VERSION constant (avoids circular import)."""
-    from portolan_cli.stac import STAC_VERSION
-
-    return STAC_VERSION
 
 
 @dataclass
@@ -95,7 +90,7 @@ class CatalogModel:
     id: str
     description: str
     type: str = field(default="Catalog", init=False)
-    stac_version: str = field(default_factory=_get_stac_version, init=False)
+    stac_version: str = field(default_factory=get_stac_version, init=False)
     title: str | None = None
     created: datetime | None = None
     updated: datetime | None = None

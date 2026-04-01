@@ -9,14 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from portolan_cli.models._stac_version import get_stac_version
 from portolan_cli.models.catalog import Link
-
-
-def _get_stac_version() -> str:
-    """Get STAC_VERSION constant (avoids circular import)."""
-    from portolan_cli.stac import STAC_VERSION
-
-    return STAC_VERSION
 
 
 @dataclass
@@ -84,7 +78,7 @@ class ItemModel:
     assets: dict[str, AssetModel]
     collection: str
     type: str = field(default="Feature", init=False)
-    stac_version: str = field(default_factory=_get_stac_version, init=False)
+    stac_version: str = field(default_factory=get_stac_version, init=False)
     title: str | None = None
     description: str | None = None
     links: list[Link] = field(default_factory=list)

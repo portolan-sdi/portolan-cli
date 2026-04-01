@@ -63,6 +63,7 @@ from portolan_cli.stac import (
     aggregate_table_metadata,
     create_collection,
     create_item,
+    get_existing_table_metadata,
     load_catalog,
     update_collection_summaries,
 )
@@ -932,11 +933,15 @@ def finalize_datasets(
 
         # Add table extension if any items are vector format (Issue #304)
         # Aggregate metadata from all vector items and apply to collection
-        vector_metadata = [
+        # Include existing table metadata to handle incremental adds correctly
+        vector_metadata: list[object] = [
             p.metadata
             for p in items
             if p.format_type == FormatType.VECTOR and p.metadata is not None
         ]
+        existing_meta = get_existing_table_metadata(collection)
+        if existing_meta is not None:
+            vector_metadata.insert(0, existing_meta)
         if vector_metadata:
             aggregated = aggregate_table_metadata(vector_metadata)
             add_table_extension(collection, aggregated)

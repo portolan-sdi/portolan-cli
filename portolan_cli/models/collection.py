@@ -11,17 +11,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from portolan_cli.models._stac_version import get_stac_version
 from portolan_cli.models.catalog import Link
 
 # Valid STAC identifier pattern
 ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
-
-
-def _get_stac_version() -> str:
-    """Get STAC_VERSION constant (avoids circular import)."""
-    from portolan_cli.stac import STAC_VERSION
-
-    return STAC_VERSION
 
 
 @dataclass
@@ -173,7 +167,7 @@ class CollectionModel:
     description: str
     extent: ExtentModel
     type: str = field(default="Collection", init=False)
-    stac_version: str = field(default_factory=_get_stac_version, init=False)
+    stac_version: str = field(default_factory=get_stac_version, init=False)
     license: str = "CC-BY-4.0"
     title: str | None = None
     summaries: dict[str, Any] | None = None

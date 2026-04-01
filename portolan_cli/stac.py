@@ -373,55 +373,141 @@ def add_table_extension(
         collection.stac_extensions.append(ext_url)
 
 
-def aggregate_table_metadata(
+def get_existing_table_metadata(collection: pystac.Collection) -> object | None:
+    """Extract existing table extension metadata from a collection.
+
+    Returns a GeoParquetMetadata-like object if the collection has table extension
+    fields, or None if not present. Used to include existing metadata when
+    incrementally adding items to a collection.
+
+    Args:
+        collection: The collection to extract metadata from.
+
+    Returns:
+        A GeoParquetMetadata object if table extension fields exist, None otherwise.
+    """
+    from portolan_cli.metadata.geoparquet import GeoParquetMetadata
+
+    row_count = collection.extra_fields.get("table:row_count")
+    if row_count is None:
+        return None
+
+    # Reconstruct schema from table:columns
+    columns = collection.extra_fields.get("table:columns", [])
+    schema = {col["name"]: col["type"] for col in columns if "name" in col and "type" in col}
+
+    return GeoParquetMetadata(
+        bbox=None,  # Not stored in table extension
+        crs=None,  # Not stored in table extension
+        geometry_type=None,  # Not stored in table extension
+        geometry_column=collection.extra_fields.get("table:primary_geometry", "geometry"),
+        feature_count=row_count,
+        schema=schema,
+    )
+
+
+def _merge_schemas(metadata_list: Sequence[object]) -> tuple[dict[str, str], list[str]]:
+    """Merge schemas from multiple metadata objects, tracking conflicts."""
+    merged_schema: dict[str, str] = {}
+    conflicts: list[str] = []
+    for m in metadata_list:
+        schema = getattr(m, "schema", None)
+        if schema:
+            for col_name, col_type in schema.items():
+                if col_name in merged_schema and merged_schema[col_name] != col_type:
+                    conflicts.append(
+                        f"Column '{col_name}': {merged_schema[col_name]} vs {col_type}"
+                    )
+                elif col_name not in merged_schema:
+                    merged_schema[col_name] = col_type
+    return merged_schema, conflicts
+
+
+def _compute_bbox_union(
     metadata_list: Sequence[object],
-) -> object:
+) -> tuple[float, float, float, float]:
+    """Compute bounding box union from multiple metadata objects."""
+    all_bboxes: list[tuple[float, float, float, float]] = []
+    for m in metadata_list:
+        bbox = getattr(m, "bbox", None)
+        if bbox is not None:
+            all_bboxes.append(bbox)
+    if not all_bboxes:
+        raise ValueError("Cannot aggregate metadata: no items have valid bboxes")
+    return (
+        min(b[0] for b in all_bboxes),
+        min(b[1] for b in all_bboxes),
+        max(b[2] for b in all_bboxes),
+        max(b[3] for b in all_bboxes),
+    )
+
+
+def _warn_on_mismatches(metadata_list: Sequence[object]) -> None:
+    """Warn if CRS or geometry types differ across items."""
+    import warnings
+
+    crs_values = {getattr(m, "crs", None) for m in metadata_list} - {None}
+    if len(crs_values) > 1:
+        warnings.warn(
+            f"CRS mismatch detected across items: {crs_values}. Using first item's CRS.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+    geometry_types = {getattr(m, "geometry_type", None) for m in metadata_list} - {None}
+    if len(geometry_types) > 1:
+        warnings.warn(
+            f"Mixed geometry types detected: {geometry_types}. Using first item's type.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
+def aggregate_table_metadata(metadata_list: Sequence[object]) -> object:
     """Aggregate table metadata from multiple vector items for collection-level extension.
 
     Used to combine metadata from multiple GeoParquet files in a collection:
+    - Computes union bbox (encompassing all items)
     - Sums row_count (feature_count) across all items
-    - Merges schemas (union of all column names/types)
+    - Merges schemas (union of all column names, warns on type conflicts)
     - Uses first item's geometry_column
+    - Warns if CRS values differ across items
 
     Args:
-        metadata_list: List of GeoParquetMetadata-like objects.
+        metadata_list: Sequence of GeoParquetMetadata objects.
 
     Returns:
-        A GeoParquetMetadata-like object with aggregated values.
+        A GeoParquetMetadata object with aggregated values.
 
     Raises:
-        ValueError: If metadata_list is empty.
+        ValueError: If metadata_list is empty or no items have valid bboxes.
     """
+    import warnings
+
+    from portolan_cli.metadata.geoparquet import GeoParquetMetadata
+
     if not metadata_list:
         raise ValueError("Cannot aggregate empty metadata list")
 
-    # Import here to avoid circular dependency
-    from portolan_cli.metadata.geoparquet import GeoParquetMetadata
-
-    # Sum row counts
     total_row_count = sum(getattr(m, "feature_count", 0) or 0 for m in metadata_list)
+    merged_schema, schema_conflicts = _merge_schemas(metadata_list)
 
-    # Merge schemas (union of all columns)
-    merged_schema: dict[str, str] = {}
-    for m in metadata_list:
-        if hasattr(m, "schema") and m.schema:
-            for col_name, col_type in m.schema.items():
-                # First occurrence wins for type conflicts
-                if col_name not in merged_schema:
-                    merged_schema[col_name] = col_type
+    if schema_conflicts:
+        warnings.warn(
+            f"Schema type conflicts detected (first type wins): {'; '.join(schema_conflicts)}",
+            UserWarning,
+            stacklevel=2,
+        )
 
-    # Use first item's geometry column
+    union_bbox = _compute_bbox_union(metadata_list)
+    _warn_on_mismatches(metadata_list)
+
     first = metadata_list[0]
-    geometry_column = getattr(first, "geometry_column", "geometry")
-    geometry_type = getattr(first, "geometry_type", None)
-    crs = getattr(first, "crs", "EPSG:4326")
-    bbox = getattr(first, "bbox", (0, 0, 1, 1))
-
     return GeoParquetMetadata(
-        bbox=bbox,
-        crs=crs,
-        geometry_type=geometry_type,
-        geometry_column=geometry_column,
+        bbox=union_bbox,
+        crs=getattr(first, "crs", None) or "EPSG:4326",
+        geometry_type=getattr(first, "geometry_type", None),
+        geometry_column=getattr(first, "geometry_column", None) or "geometry",
         feature_count=total_row_count,
         schema=merged_schema,
     )
