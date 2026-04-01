@@ -17,13 +17,6 @@ from portolan_cli.models._stac_version import get_stac_version
 ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
-def _get_stac_version() -> str:
-    """Get STAC_VERSION constant (avoids circular import)."""
-    from portolan_cli.stac import STAC_VERSION
-
-    return STAC_VERSION
-
-
 @dataclass
 class Link:
     """A STAC link object.
