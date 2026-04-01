@@ -1,6 +1,6 @@
 {
   "type": "Catalog",
-  "stac_version": "1.0.0",
+  "stac_version": "1.1.0",
   "id": "test-catalog",
   "description": "Minimal test catalog for STAC validation",
   "links": [

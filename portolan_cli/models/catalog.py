@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from portolan_cli.models._stac_version import get_stac_version
+
 # Valid STAC identifier pattern: alphanumeric, hyphens, underscores
 ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -78,7 +80,7 @@ class CatalogModel:
         id: Unique identifier (auto-extracted from directory name).
         description: Catalog description (required by STAC).
         type: Always "Catalog".
-        stac_version: STAC spec version ("1.0.0").
+        stac_version: STAC spec version (uses STAC_VERSION constant).
         title: Human-readable title (optional best practice).
         created: Creation timestamp (auto-generated).
         updated: Last update timestamp (auto-generated).
@@ -88,7 +90,7 @@ class CatalogModel:
     id: str
     description: str
     type: str = field(default="Catalog", init=False)
-    stac_version: str = field(default="1.0.0", init=False)
+    stac_version: str = field(default_factory=get_stac_version, init=False)
     title: str | None = None
     created: datetime | None = None
     updated: datetime | None = None

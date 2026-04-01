@@ -24,6 +24,7 @@ from portolan_cli.models.collection import (
     SpatialExtent,
     TemporalExtent,
 )
+from portolan_cli.stac import STAC_VERSION
 
 
 class TestCollectionModelCreation:
@@ -46,7 +47,7 @@ class TestCollectionModelCreation:
         assert collection.id == "test-collection"
         assert collection.description == "Test collection"
         assert collection.type == "Collection"
-        assert collection.stac_version == "1.0.0"
+        assert collection.stac_version == STAC_VERSION
 
     @pytest.mark.unit
     def test_create_collection_with_all_fields(self) -> None:
@@ -198,7 +199,7 @@ class TestCollectionSerialization:
         data = collection.to_dict()
 
         assert data["type"] == "Collection"
-        assert data["stac_version"] == "1.0.0"
+        assert data["stac_version"] == STAC_VERSION
         assert data["id"] == "test"
         assert data["description"] == "Test"
         assert data["license"] == "CC-BY-4.0"

@@ -16,6 +16,7 @@ import pytest
 
 # These will be implemented - tests first!
 from portolan_cli.models.catalog import CatalogModel, Link
+from portolan_cli.stac import STAC_VERSION
 
 
 class TestCatalogModelCreation:
@@ -32,7 +33,7 @@ class TestCatalogModelCreation:
         assert catalog.id == "test-catalog"
         assert catalog.description == "Test catalog"
         assert catalog.type == "Catalog"
-        assert catalog.stac_version == "1.0.0"
+        assert catalog.stac_version == STAC_VERSION
 
     @pytest.mark.unit
     def test_create_catalog_with_all_fields(self) -> None:
@@ -59,10 +60,10 @@ class TestCatalogModelCreation:
         assert catalog.type == "Catalog"
 
     @pytest.mark.unit
-    def test_stac_version_defaults_to_1_0_0(self) -> None:
-        """stac_version should default to '1.0.0'."""
+    def test_stac_version_defaults_to_stac_version_constant(self) -> None:
+        """stac_version should default to STAC_VERSION constant."""
         catalog = CatalogModel(id="test", description="Test")
-        assert catalog.stac_version == "1.0.0"
+        assert catalog.stac_version == STAC_VERSION
 
     @pytest.mark.unit
     def test_links_defaults_to_empty_list(self) -> None:
@@ -112,7 +113,7 @@ class TestCatalogModelSerialization:
         data = catalog.to_dict()
 
         assert data["type"] == "Catalog"
-        assert data["stac_version"] == "1.0.0"
+        assert data["stac_version"] == STAC_VERSION
         assert data["id"] == "test"
         assert data["description"] == "Test catalog"
         assert "links" in data

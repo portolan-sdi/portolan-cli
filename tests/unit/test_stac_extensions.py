@@ -564,3 +564,412 @@ class TestPerBandNodata:
         d = metadata.to_dict()
 
         assert "transform" not in d
+
+
+class TestStacVersionInModels:
+    """Tests for STAC version consistency in model classes (Issue #305)."""
+
+    @pytest.mark.unit
+    def test_item_model_uses_stac_version_constant(self) -> None:
+        """ItemModel.stac_version should use STAC_VERSION constant."""
+        from portolan_cli.models.item import ItemModel
+        from portolan_cli.stac import STAC_VERSION
+
+        item = ItemModel(
+            id="test-item",
+            geometry={"type": "Point", "coordinates": [0, 0]},
+            bbox=[0, 0, 1, 1],
+            properties={"datetime": None},
+            assets={},
+            collection="test",
+        )
+
+        assert item.stac_version == STAC_VERSION
+
+    @pytest.mark.unit
+    def test_collection_model_uses_stac_version_constant(self) -> None:
+        """CollectionModel.stac_version should use STAC_VERSION constant."""
+        from portolan_cli.models.collection import CollectionModel, ExtentModel
+        from portolan_cli.stac import STAC_VERSION
+
+        collection = CollectionModel(
+            id="test-collection",
+            description="Test",
+            extent=ExtentModel(
+                spatial={"bbox": [[-180, -90, 180, 90]]},
+                temporal={"interval": [[None, None]]},
+            ),
+        )
+
+        assert collection.stac_version == STAC_VERSION
+
+    @pytest.mark.unit
+    def test_catalog_model_uses_stac_version_constant(self) -> None:
+        """CatalogModel.stac_version should use STAC_VERSION constant."""
+        from portolan_cli.models.catalog import CatalogModel
+        from portolan_cli.stac import STAC_VERSION
+
+        catalog = CatalogModel(
+            id="test-catalog",
+            description="Test catalog",
+        )
+
+        assert catalog.stac_version == STAC_VERSION
+
+
+class TestTableExtensionAggregation:
+    """Tests for Table extension aggregation in finalize_datasets (Issue #304)."""
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_sums_row_counts(self) -> None:
+        """aggregate_table_metadata should sum row_count across all vector items."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Polygon",
+                geometry_column="geometry",
+                feature_count=100,
+                schema={"id": "int64", "geometry": "binary"},
+            ),
+            GeoParquetMetadata(
+                bbox=(1, 1, 2, 2),
+                crs="EPSG:4326",
+                geometry_type="Polygon",
+                geometry_column="geometry",
+                feature_count=200,
+                schema={"id": "int64", "geometry": "binary"},
+            ),
+            GeoParquetMetadata(
+                bbox=(2, 2, 3, 3),
+                crs="EPSG:4326",
+                geometry_type="Polygon",
+                geometry_column="geometry",
+                feature_count=300,
+                schema={"id": "int64", "geometry": "binary"},
+            ),
+        ]
+
+        aggregated = aggregate_table_metadata(metadata_list)
+
+        assert aggregated.feature_count == 600  # 100 + 200 + 300
+        # Bbox should be union of all items
+        assert aggregated.bbox == (0, 0, 3, 3)
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_merges_schemas(self) -> None:
+        """aggregate_table_metadata should merge schemas from all items."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=10,
+                schema={"id": "int64", "name": "string", "geometry": "binary"},
+            ),
+            GeoParquetMetadata(
+                bbox=(1, 1, 2, 2),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=20,
+                schema={"id": "int64", "value": "float64", "geometry": "binary"},
+            ),
+        ]
+
+        aggregated = aggregate_table_metadata(metadata_list)
+
+        # Should have union of all column names
+        assert "id" in aggregated.schema
+        assert "name" in aggregated.schema
+        assert "value" in aggregated.schema
+        assert "geometry" in aggregated.schema
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_uses_first_geometry_column(self) -> None:
+        """aggregate_table_metadata should use first item's geometry column."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geom",
+                feature_count=10,
+                schema={"geom": "binary"},
+            ),
+            GeoParquetMetadata(
+                bbox=(1, 1, 2, 2),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=20,
+                schema={"geometry": "binary"},
+            ),
+        ]
+
+        aggregated = aggregate_table_metadata(metadata_list)
+
+        assert aggregated.geometry_column == "geom"
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_single_item(self) -> None:
+        """aggregate_table_metadata should handle single item."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Polygon",
+                geometry_column="geometry",
+                feature_count=500,
+                schema={"id": "int64"},
+            ),
+        ]
+
+        aggregated = aggregate_table_metadata(metadata_list)
+
+        assert aggregated.feature_count == 500
+        assert aggregated.geometry_column == "geometry"
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_empty_list_raises(self) -> None:
+        """aggregate_table_metadata should raise on empty list."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        with pytest.raises(ValueError, match="empty"):
+            aggregate_table_metadata([])
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_computes_bbox_union(self) -> None:
+        """aggregate_table_metadata should compute union of all bboxes."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        # Three non-overlapping bboxes representing NYC, LA, and Chicago
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(-74.3, 40.5, -73.7, 40.9),  # NYC area
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=100,
+                schema={"id": "int64"},
+            ),
+            GeoParquetMetadata(
+                bbox=(-118.7, 33.7, -118.1, 34.3),  # LA area
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=200,
+                schema={"id": "int64"},
+            ),
+            GeoParquetMetadata(
+                bbox=(-87.9, 41.6, -87.5, 42.0),  # Chicago area
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=150,
+                schema={"id": "int64"},
+            ),
+        ]
+
+        aggregated = aggregate_table_metadata(metadata_list)
+
+        # Union should encompass all three cities
+        assert aggregated.bbox is not None
+        minx, miny, maxx, maxy = aggregated.bbox
+        assert minx == pytest.approx(-118.7)  # LA west
+        assert miny == pytest.approx(33.7)  # LA south
+        assert maxx == pytest.approx(-73.7)  # NYC east
+        assert maxy == pytest.approx(42.0)  # Chicago north
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_warns_on_crs_mismatch(self) -> None:
+        """aggregate_table_metadata should warn when CRS values differ."""
+        import warnings
+
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=100,
+                schema={"id": "int64"},
+            ),
+            GeoParquetMetadata(
+                bbox=(1, 1, 2, 2),
+                crs="EPSG:32618",  # Different CRS (UTM zone 18N)
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=200,
+                schema={"id": "int64"},
+            ),
+        ]
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            aggregated = aggregate_table_metadata(metadata_list)
+
+            # Should have raised a warning
+            assert len(w) == 1
+            assert "CRS mismatch" in str(w[0].message)
+            assert "EPSG:4326" in str(w[0].message)
+            assert "EPSG:32618" in str(w[0].message)
+
+        # Should use first item's CRS
+        assert aggregated.crs == "EPSG:4326"
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_warns_on_schema_type_conflict(self) -> None:
+        """aggregate_table_metadata should warn when same column has different types."""
+        import warnings
+
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=100,
+                schema={"id": "int64", "name": "string"},
+            ),
+            GeoParquetMetadata(
+                bbox=(1, 1, 2, 2),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=200,
+                schema={"id": "string", "value": "float64"},  # id is string here!
+            ),
+        ]
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            aggregated = aggregate_table_metadata(metadata_list)
+
+            # Should have raised a warning about type conflict
+            assert len(w) == 1
+            assert "Schema type conflicts" in str(w[0].message)
+            assert "id" in str(w[0].message)
+            assert "int64" in str(w[0].message)
+            assert "string" in str(w[0].message)
+
+        # First occurrence wins
+        assert aggregated.schema["id"] == "int64"
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_warns_on_geometry_type_mismatch(self) -> None:
+        """aggregate_table_metadata should warn when geometry types differ."""
+        import warnings
+
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=100,
+                schema={"id": "int64"},
+            ),
+            GeoParquetMetadata(
+                bbox=(1, 1, 2, 2),
+                crs="EPSG:4326",
+                geometry_type="Polygon",  # Different geometry type
+                geometry_column="geometry",
+                feature_count=200,
+                schema={"id": "int64"},
+            ),
+        ]
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            aggregated = aggregate_table_metadata(metadata_list)
+
+            # Should have raised a warning about mixed geometry types
+            assert len(w) == 1
+            assert "Mixed geometry types" in str(w[0].message)
+            assert "Point" in str(w[0].message)
+            assert "Polygon" in str(w[0].message)
+
+        # First item's type is used
+        assert aggregated.geometry_type == "Point"
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_raises_on_no_valid_bboxes(self) -> None:
+        """aggregate_table_metadata should raise when no items have valid bboxes."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=None,  # No bbox
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=100,
+                schema={"id": "int64"},
+            ),
+            GeoParquetMetadata(
+                bbox=None,  # No bbox either
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=200,
+                schema={"id": "int64"},
+            ),
+        ]
+
+        with pytest.raises(ValueError, match="no items have valid bboxes"):
+            aggregate_table_metadata(metadata_list)
+
+    @pytest.mark.unit
+    def test_aggregate_table_metadata_handles_partial_bboxes(self) -> None:
+        """aggregate_table_metadata should ignore items without bboxes when computing union."""
+        from portolan_cli.stac import aggregate_table_metadata
+
+        metadata_list = [
+            GeoParquetMetadata(
+                bbox=(0, 0, 1, 1),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=100,
+                schema={"id": "int64"},
+            ),
+            GeoParquetMetadata(
+                bbox=None,  # No bbox - should be ignored for union
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=200,
+                schema={"id": "int64"},
+            ),
+            GeoParquetMetadata(
+                bbox=(5, 5, 10, 10),
+                crs="EPSG:4326",
+                geometry_type="Point",
+                geometry_column="geometry",
+                feature_count=150,
+                schema={"id": "int64"},
+            ),
+        ]
+
+        aggregated = aggregate_table_metadata(metadata_list)
+
+        # Union should be computed from items 0 and 2 only
+        assert aggregated.bbox == (0, 0, 10, 10)
+        # But row count should include all items
+        assert aggregated.feature_count == 450

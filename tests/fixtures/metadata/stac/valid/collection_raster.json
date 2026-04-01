@@ -1,6 +1,6 @@
 {
   "type": "Collection",
-  "stac_version": "1.0.0",
+  "stac_version": "1.1.0",
   "id": "sf-imagery",
   "title": "San Francisco Aerial Imagery",
   "description": "Ortho-rectified aerial imagery for San Francisco, stored as COG",

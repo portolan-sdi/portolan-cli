@@ -58,9 +58,12 @@ from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
     add_item_to_collection,
     add_projection_extension,
+    add_table_extension,
     add_vector_extension,
+    aggregate_table_metadata,
     create_collection,
     create_item,
+    get_existing_table_metadata,
     load_catalog,
     update_collection_summaries,
 )
@@ -355,6 +358,7 @@ class PreparedDataset:
         item_json_path: Path to the item.json file that was created.
         is_collection_level_asset: If True, asset is at collection level (ADR-0031).
         stac_item: The PySTAC Item object (for collection link updates).
+        metadata: Extracted metadata (GeoParquet or COG) for table extension (Issue #304).
     """
 
     item_id: str
@@ -365,6 +369,7 @@ class PreparedDataset:
     item_json_path: Path
     is_collection_level_asset: bool = False
     stac_item: pystac.Item | None = None
+    metadata: GeoParquetMetadata | COGMetadata | None = None
 
 
 def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
@@ -876,6 +881,7 @@ def prepare_dataset(
         item_json_path=item_json_path,
         is_collection_level_asset=is_collection_level_asset,
         stac_item=item,
+        metadata=metadata,
     )
 
 
@@ -925,12 +931,20 @@ def finalize_datasets(
                 # Note: item_datetime would need to be passed through PreparedDataset
                 # if we want to update temporal extent per-item
 
-        # Add table extension if any items are vector format
-        for p in items:
-            if p.format_type == FormatType.VECTOR and p.stac_item is not None:
-                # Table extension needs metadata - skip for now as it's on collection
-                # The extension was already added by add_dataset in the old flow
-                break
+        # Add table extension if any items are vector format (Issue #304)
+        # Aggregate metadata from all vector items and apply to collection
+        # Include existing table metadata to handle incremental adds correctly
+        vector_metadata: list[object] = [
+            p.metadata
+            for p in items
+            if p.format_type == FormatType.VECTOR and p.metadata is not None
+        ]
+        existing_meta = get_existing_table_metadata(collection)
+        if existing_meta is not None:
+            vector_metadata.insert(0, existing_meta)
+        if vector_metadata:
+            aggregated = aggregate_table_metadata(vector_metadata)
+            add_table_extension(collection, aggregated)
 
         # Compute collection summaries from items (per ADR-0036)
         # Moved here from push.py for separation of concerns - summaries are now

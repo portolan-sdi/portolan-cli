@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from portolan_cli.models._stac_version import get_stac_version
 from portolan_cli.models.catalog import Link
 
 
@@ -64,7 +65,7 @@ class ItemModel:
         assets: Asset references keyed by asset name.
         collection: Parent collection ID.
         type: Always "Feature".
-        stac_version: STAC spec version ("1.0.0").
+        stac_version: STAC spec version (uses STAC_VERSION constant).
         title: Human-readable title (optional).
         description: Item description (optional).
         links: STAC links.
@@ -77,7 +78,7 @@ class ItemModel:
     assets: dict[str, AssetModel]
     collection: str
     type: str = field(default="Feature", init=False)
-    stac_version: str = field(default="1.0.0", init=False)
+    stac_version: str = field(default_factory=get_stac_version, init=False)
     title: str | None = None
     description: str | None = None
     links: list[Link] = field(default_factory=list)

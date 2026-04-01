@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from portolan_cli.models._stac_version import get_stac_version
 from portolan_cli.models.catalog import Link
 
 # Valid STAC identifier pattern
@@ -151,7 +152,7 @@ class CollectionModel:
         description: Collection description (required by STAC).
         extent: Spatial and temporal extent.
         type: Always "Collection".
-        stac_version: STAC spec version ("1.0.0").
+        stac_version: STAC spec version (uses STAC_VERSION constant).
         license: SPDX license identifier (default CC-BY-4.0).
         title: Human-readable title (optional).
         summaries: Aggregated metadata (CRS, geometry types).
@@ -166,7 +167,7 @@ class CollectionModel:
     description: str
     extent: ExtentModel
     type: str = field(default="Collection", init=False)
-    stac_version: str = field(default="1.0.0", init=False)
+    stac_version: str = field(default_factory=get_stac_version, init=False)
     license: str = "CC-BY-4.0"
     title: str | None = None
     summaries: dict[str, Any] | None = None
