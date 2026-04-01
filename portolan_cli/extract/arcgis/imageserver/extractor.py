@@ -289,18 +289,15 @@ def _create_stac_collection(
     minx, miny, maxx, maxy = metadata.get_bbox_tuple()
     now = datetime.now(timezone.utc).isoformat()
 
-    # Save individual item files and build links
-    item_links = []
-    for item in items:
-        item_path = output_dir / f"{item['id']}.json"
-        item_path.write_text(json.dumps(item, indent=2))
-        item_links.append(
-            {
-                "rel": "item",
-                "href": f"./{item['id']}.json",
-                "type": "application/geo+json",
-            }
-        )
+    # Build item links (items are already written to disk during extraction)
+    item_links = [
+        {
+            "rel": "item",
+            "href": f"./{item['id']}.json",
+            "type": "application/geo+json",
+        }
+        for item in items
+    ]
 
     return {
         "type": "Collection",
@@ -464,12 +461,39 @@ async def extract_imageserver(
     # compute_tile_grid expects extent dict and pixel sizes
     extent = metadata.full_extent
     if bbox:
-        # Override extent with user-provided bbox
+        # Intersect user-provided bbox with service extent to avoid
+        # generating tiles outside the actual data coverage
+        service_xmin = extent["xmin"]
+        service_ymin = extent["ymin"]
+        service_xmax = extent["xmax"]
+        service_ymax = extent["ymax"]
+
+        # Compute intersection
+        intersect_xmin = max(bbox[0], service_xmin)
+        intersect_ymin = max(bbox[1], service_ymin)
+        intersect_xmax = min(bbox[2], service_xmax)
+        intersect_ymax = min(bbox[3], service_ymax)
+
+        # Check if intersection is valid (non-empty)
+        if intersect_xmin >= intersect_xmax or intersect_ymin >= intersect_ymax:
+            info("User bbox does not intersect service extent - no tiles to extract")
+            collection_path = output_dir / "collection.json"
+            empty_collection = _create_stac_collection(metadata, [], output_dir, url)
+            collection_path.write_text(json.dumps(empty_collection, indent=2))
+            return ExtractionResult(
+                collection_path=collection_path,
+                items_created=0,
+                tiles_downloaded=0,
+                tiles_skipped=0,
+                tiles_failed=0,
+                total_bytes=0,
+            )
+
         extent = {
-            "xmin": bbox[0],
-            "ymin": bbox[1],
-            "xmax": bbox[2],
-            "ymax": bbox[3],
+            "xmin": intersect_xmin,
+            "ymin": intersect_ymin,
+            "xmax": intersect_xmax,
+            "ymax": intersect_ymax,
         }
     tiles = list(
         compute_tile_grid(
@@ -563,9 +587,17 @@ async def extract_imageserver(
             if succeeded:
                 tiles_downloaded += 1
                 total_bytes += bytes_downloaded
-                resume_state.succeeded_tiles.add((tile.x, tile.y))
+
+                # Write item JSON BEFORE marking success in resume state
+                # This ensures if we crash after saving resume state, the item
+                # JSON already exists on disk for collection reconstruction
                 if item:
+                    item_path = output_dir / f"{item['id']}.json"
+                    item_path.write_text(json.dumps(item, indent=2))
                     stac_items.append(item)
+
+                # Only mark success after item is persisted
+                resume_state.succeeded_tiles.add((tile.x, tile.y))
                 detail(
                     f"Tile {tile.get_id()}: {bytes_downloaded:,} bytes [{progress}/{len(tiles_to_process)}]"
                 )

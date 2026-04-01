@@ -85,13 +85,30 @@ class ImageServerMetadata:
         return "EPSG:4326"  # Default fallback
 
     def get_bbox_tuple(self) -> tuple[float, float, float, float]:
-        """Get extent as (minx, miny, maxx, maxy) tuple."""
-        return (
-            self.full_extent["xmin"],
-            self.full_extent["ymin"],
-            self.full_extent["xmax"],
-            self.full_extent["ymax"],
-        )
+        """Get extent as (minx, miny, maxx, maxy) tuple.
+
+        Returns:
+            Bounding box tuple (xmin, ymin, xmax, ymax).
+
+        Raises:
+            ValueError: If full_extent is missing required keys or values are not numeric.
+        """
+        required_keys = ("xmin", "ymin", "xmax", "ymax")
+        missing = [k for k in required_keys if k not in self.full_extent]
+        if missing:
+            raise ValueError(
+                f"full_extent missing required keys {missing}. Got: {self.full_extent}"
+            )
+
+        try:
+            return (
+                float(self.full_extent["xmin"]),
+                float(self.full_extent["ymin"]),
+                float(self.full_extent["xmax"]),
+                float(self.full_extent["ymax"]),
+            )
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"full_extent values must be numeric. Got: {self.full_extent}") from e
 
 
 def _ensure_json_format(url: str) -> str:
@@ -277,6 +294,9 @@ async def discover_imageserver(
     information about the raster data: band count, pixel type,
     resolution, extent, and capabilities.
 
+    This is the primary entry point for live service discovery. It fetches
+    JSON from the URL and delegates parsing to parse_imageserver_response().
+
     Args:
         url: ImageServer URL (e.g., "https://services.arcgis.com/.../ImageServer")
         timeout: Request timeout in seconds
@@ -290,26 +310,7 @@ async def discover_imageserver(
     """
     data = await _fetch_json(url, timeout=timeout)
 
-    # Check for ArcGIS error response
-    _check_arcgis_error(data, url)
-
-    # Validate required fields
-    _validate_required_fields(data, url)
-
-    # Parse capabilities
-    capabilities = _parse_capabilities(data.get("capabilities"))
-
-    return ImageServerMetadata(
-        name=data["name"],
-        band_count=data["bandCount"],
-        pixel_type=data["pixelType"],
-        pixel_size_x=float(data["pixelSizeX"]),
-        pixel_size_y=float(data["pixelSizeY"]),
-        full_extent=data["extent"],
-        max_image_width=data["maxImageWidth"],
-        max_image_height=data["maxImageHeight"],
-        capabilities=capabilities,
-        description=data.get("description"),
-        copyright_text=data.get("copyrightText"),
-        service_data_type=data.get("serviceDataType"),
-    )
+    # Delegate to parse_imageserver_response for validation and parsing
+    # Note: parse_imageserver_response uses "<parsed response>" for error context,
+    # but the URL context is already captured in _fetch_json errors
+    return parse_imageserver_response(data)

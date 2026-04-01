@@ -16,12 +16,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from portolan_cli.extract.arcgis.imageserver.resume import (
     ImageServerResumeState,
     load_resume_state,
     save_resume_state,
     should_process_tile,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class TestImageServerResumeState:

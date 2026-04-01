@@ -589,15 +589,20 @@ class TestStacVersionInModels:
     @pytest.mark.unit
     def test_collection_model_uses_stac_version_constant(self) -> None:
         """CollectionModel.stac_version should use STAC_VERSION constant."""
-        from portolan_cli.models.collection import CollectionModel, ExtentModel
+        from portolan_cli.models.collection import (
+            CollectionModel,
+            ExtentModel,
+            SpatialExtent,
+            TemporalExtent,
+        )
         from portolan_cli.stac import STAC_VERSION
 
         collection = CollectionModel(
             id="test-collection",
             description="Test",
             extent=ExtentModel(
-                spatial={"bbox": [[-180, -90, 180, 90]]},
-                temporal={"interval": [[None, None]]},
+                spatial=SpatialExtent(bbox=[[-180, -90, 180, 90]]),
+                temporal=TemporalExtent(interval=[[None, None]]),
             ),
         )
 
