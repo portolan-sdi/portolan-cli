@@ -13,6 +13,13 @@ from portolan_cli.models._stac_version import get_stac_version
 from portolan_cli.models.catalog import Link
 
 
+def _get_stac_version() -> str:
+    """Get STAC_VERSION constant (avoids circular import)."""
+    from portolan_cli.stac import STAC_VERSION
+
+    return STAC_VERSION
+
+
 @dataclass
 class AssetModel:
     """A STAC asset (file reference).
