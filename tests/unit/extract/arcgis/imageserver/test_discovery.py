@@ -10,7 +10,7 @@ TDD: These tests are written FIRST, before implementation.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -108,6 +108,18 @@ def _mock_httpx_response(data: dict[str, Any]) -> MagicMock:
     mock_response.json.return_value = data
     mock_response.raise_for_status = MagicMock()
     return mock_response
+
+
+def _setup_async_client_mock(mock_client_class: MagicMock, response: MagicMock) -> None:
+    """Configure an AsyncMock for httpx.AsyncClient context manager.
+
+    Args:
+        mock_client_class: The patched httpx.AsyncClient class
+        response: The mock response to return from client.get()
+    """
+    mock_client = AsyncMock()
+    mock_client.get.return_value = response
+    mock_client_class.return_value.__aenter__.return_value = mock_client
 
 
 # =============================================================================
@@ -227,21 +239,22 @@ class TestImageServerMetadata:
 
 
 # =============================================================================
-# discover_imageserver tests
+# discover_imageserver tests (async)
 # =============================================================================
 
 
 class TestDiscoverImageserver:
-    """Tests for discover_imageserver function."""
+    """Tests for discover_imageserver async function."""
 
-    def test_discovers_basic_metadata(self, imageserver_response: dict[str, Any]) -> None:
+    @pytest.mark.asyncio
+    async def test_discovers_basic_metadata(self, imageserver_response: dict[str, Any]) -> None:
         """Should discover basic metadata from ImageServer response."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                imageserver_response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(imageserver_response))
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert result.name == "NAIP_2020"
             assert result.band_count == 4
@@ -249,55 +262,63 @@ class TestDiscoverImageserver:
             assert result.pixel_size_x == 0.6
             assert result.pixel_size_y == 0.6
 
-    def test_discovers_extent_with_spatial_reference(
+    @pytest.mark.asyncio
+    async def test_discovers_extent_with_spatial_reference(
         self, imageserver_response: dict[str, Any]
     ) -> None:
         """Should extract full extent including spatial reference."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                imageserver_response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(imageserver_response))
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert result.full_extent["xmin"] == pytest.approx(-124.848974)
             assert result.full_extent["ymax"] == pytest.approx(49.384358)
             assert result.full_extent["spatialReference"]["wkid"] == 4326
 
-    def test_discovers_image_limits(self, imageserver_response: dict[str, Any]) -> None:
+    @pytest.mark.asyncio
+    async def test_discovers_image_limits(self, imageserver_response: dict[str, Any]) -> None:
         """Should extract max image dimensions."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                imageserver_response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(imageserver_response))
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert result.max_image_width == 4096
             assert result.max_image_height == 4096
 
-    def test_parses_capabilities_string(self, imageserver_response: dict[str, Any]) -> None:
+    @pytest.mark.asyncio
+    async def test_parses_capabilities_string(self, imageserver_response: dict[str, Any]) -> None:
         """Should parse comma-separated capabilities into list."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                imageserver_response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(imageserver_response))
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert "Image" in result.capabilities
             assert "Metadata" in result.capabilities
             assert "Catalog" in result.capabilities
             assert "Mensuration" in result.capabilities
 
-    def test_handles_minimal_response(self, minimal_imageserver_response: dict[str, Any]) -> None:
+    @pytest.mark.asyncio
+    async def test_handles_minimal_response(
+        self, minimal_imageserver_response: dict[str, Any]
+    ) -> None:
         """Should handle response with only required fields."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                minimal_imageserver_response
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(
+                mock_client_class, _mock_httpx_response(minimal_imageserver_response)
             )
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert result.name == "Minimal_Raster"
             assert result.band_count == 1
@@ -305,35 +326,44 @@ class TestDiscoverImageserver:
             assert result.description is None
             assert result.copyright_text is None
 
-    def test_handles_multispectral_imagery(self, multispectral_response: dict[str, Any]) -> None:
+    @pytest.mark.asyncio
+    async def test_handles_multispectral_imagery(
+        self, multispectral_response: dict[str, Any]
+    ) -> None:
         """Should correctly parse high band count imagery."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                multispectral_response
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(
+                mock_client_class, _mock_httpx_response(multispectral_response)
             )
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert result.band_count == 11
             assert result.pixel_type == "U16"
             assert "Download" in result.capabilities
 
-    def test_extracts_optional_metadata(self, imageserver_response: dict[str, Any]) -> None:
+    @pytest.mark.asyncio
+    async def test_extracts_optional_metadata(self, imageserver_response: dict[str, Any]) -> None:
         """Should extract optional description and copyright."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                imageserver_response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(imageserver_response))
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert result.description == "National Agriculture Imagery Program 2020"
             assert result.copyright_text == "USDA Farm Service Agency"
             assert result.service_data_type == "esriImageServiceDataTypeProcessed"
 
-    def test_adds_f_json_to_url(self) -> None:
+    @pytest.mark.asyncio
+    async def test_adds_f_json_to_url(self) -> None:
         """Should add f=json parameter to URL."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
             mock_response = _mock_httpx_response(
                 {
                     "name": "Test",
@@ -346,83 +376,103 @@ class TestDiscoverImageserver:
                     "maxImageWidth": 1024,
                 }
             )
-            mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             # Verify the URL used includes f=json
-            call_args = mock_client.return_value.__enter__.return_value.get.call_args
+            call_args = mock_client.get.call_args
             url_called = call_args[0][0]
             assert "f=json" in url_called
 
 
 # =============================================================================
-# Error handling tests
+# Error handling tests (async)
 # =============================================================================
 
 
 class TestDiscoverImageserverErrors:
     """Tests for error handling in discover_imageserver."""
 
-    def test_raises_on_http_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_raises_on_http_error(self) -> None:
         """Should raise ImageServerDiscoveryError on HTTP errors."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.side_effect = httpx.HTTPStatusError(
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.HTTPStatusError(
                 "Not Found",
                 request=httpx.Request("GET", "https://example.com"),
                 response=httpx.Response(404),
             )
+            mock_client_class.return_value.__aenter__.return_value = mock_client
 
             with pytest.raises(ImageServerDiscoveryError, match="Failed to fetch"):
-                discover_imageserver("https://services.arcgis.com/test/ImageServer")
+                await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
-    def test_raises_on_connection_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_raises_on_connection_error(self) -> None:
         """Should raise ImageServerDiscoveryError on connection errors."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.side_effect = httpx.ConnectError(
-                "Connection refused"
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.ConnectError("Connection refused")
+            mock_client_class.return_value.__aenter__.return_value = mock_client
 
             with pytest.raises(ImageServerDiscoveryError, match="Failed to connect"):
-                discover_imageserver("https://services.arcgis.com/test/ImageServer")
+                await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
-    def test_raises_on_timeout(self) -> None:
+    @pytest.mark.asyncio
+    async def test_raises_on_timeout(self) -> None:
         """Should raise ImageServerDiscoveryError on timeout."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.side_effect = (
-                httpx.TimeoutException("Request timed out")
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.TimeoutException("Request timed out")
+            mock_client_class.return_value.__aenter__.return_value = mock_client
 
             with pytest.raises(ImageServerDiscoveryError, match="timed out"):
-                discover_imageserver("https://services.arcgis.com/test/ImageServer")
+                await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
-    def test_raises_on_invalid_json(self) -> None:
+    @pytest.mark.asyncio
+    async def test_raises_on_invalid_json(self) -> None:
         """Should raise ImageServerDiscoveryError on invalid JSON response."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
             mock_response = MagicMock()
             mock_response.json.side_effect = ValueError("Invalid JSON")
             mock_response.raise_for_status = MagicMock()
-            mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client_class.return_value.__aenter__.return_value = mock_client
 
             with pytest.raises(ImageServerDiscoveryError, match="Invalid JSON"):
-                discover_imageserver("https://services.arcgis.com/test/ImageServer")
+                await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
-    def test_raises_on_missing_required_field(self) -> None:
+    @pytest.mark.asyncio
+    async def test_raises_on_missing_required_field(self) -> None:
         """Should raise ImageServerDiscoveryError when required field is missing."""
         incomplete_response = {
             "name": "Test",
             # Missing bandCount, pixelType, etc.
         }
 
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                incomplete_response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(incomplete_response))
 
             with pytest.raises(ImageServerDiscoveryError, match="Missing required field"):
-                discover_imageserver("https://services.arcgis.com/test/ImageServer")
+                await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
-    def test_raises_on_arcgis_error_response(self) -> None:
+    @pytest.mark.asyncio
+    async def test_raises_on_arcgis_error_response(self) -> None:
         """Should raise ImageServerDiscoveryError on ArcGIS error response."""
         error_response = {
             "error": {
@@ -432,36 +482,42 @@ class TestDiscoverImageserverErrors:
             }
         }
 
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                error_response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(error_response))
 
             with pytest.raises(ImageServerDiscoveryError, match="Token Required"):
-                discover_imageserver("https://services.arcgis.com/test/ImageServer")
+                await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
-    def test_handles_401_unauthorized(self) -> None:
+    @pytest.mark.asyncio
+    async def test_handles_401_unauthorized(self) -> None:
         """Should provide clear message for authentication errors."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.side_effect = httpx.HTTPStatusError(
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get.side_effect = httpx.HTTPStatusError(
                 "Unauthorized",
                 request=httpx.Request("GET", "https://example.com"),
                 response=httpx.Response(401),
             )
+            mock_client_class.return_value.__aenter__.return_value = mock_client
 
             with pytest.raises(ImageServerDiscoveryError, match="401"):
-                discover_imageserver("https://services.arcgis.com/test/ImageServer")
+                await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
 
 # =============================================================================
-# Edge cases
+# Edge cases (async)
 # =============================================================================
 
 
 class TestDiscoverImageserverEdgeCases:
     """Tests for edge cases in discover_imageserver."""
 
-    def test_handles_empty_capabilities(self) -> None:
+    @pytest.mark.asyncio
+    async def test_handles_empty_capabilities(self) -> None:
         """Should handle missing or empty capabilities."""
         response = {
             "name": "Test",
@@ -475,16 +531,17 @@ class TestDiscoverImageserverEdgeCases:
             # No capabilities field
         }
 
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(response))
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert result.capabilities == []
 
-    def test_handles_empty_string_capabilities(self) -> None:
+    @pytest.mark.asyncio
+    async def test_handles_empty_string_capabilities(self) -> None:
         """Should handle empty string capabilities."""
         response = {
             "name": "Test",
@@ -498,18 +555,21 @@ class TestDiscoverImageserverEdgeCases:
             "capabilities": "",
         }
 
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(response))
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert result.capabilities == []
 
-    def test_handles_url_with_existing_params(self) -> None:
+    @pytest.mark.asyncio
+    async def test_handles_url_with_existing_params(self) -> None:
         """Should preserve existing URL parameters."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
             mock_response = _mock_httpx_response(
                 {
                     "name": "Test",
@@ -522,16 +582,19 @@ class TestDiscoverImageserverEdgeCases:
                     "maxImageWidth": 1024,
                 }
             )
-            mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            discover_imageserver("https://services.arcgis.com/test/ImageServer?token=abc123")
+            await discover_imageserver("https://services.arcgis.com/test/ImageServer?token=abc123")
 
-            call_args = mock_client.return_value.__enter__.return_value.get.call_args
+            call_args = mock_client.get.call_args
             url_called = call_args[0][0]
             assert "token=abc123" in url_called
             assert "f=json" in url_called
 
-    def test_handles_extent_without_latest_wkid(self) -> None:
+    @pytest.mark.asyncio
+    async def test_handles_extent_without_latest_wkid(self) -> None:
         """Should handle spatial reference without latestWkid."""
         response = {
             "name": "Test",
@@ -550,18 +613,21 @@ class TestDiscoverImageserverEdgeCases:
             "maxImageWidth": 1024,
         }
 
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(response))
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert result.full_extent["spatialReference"]["wkid"] == 32618
 
-    def test_timeout_parameter_is_used(self) -> None:
+    @pytest.mark.asyncio
+    async def test_timeout_parameter_is_used(self) -> None:
         """Should pass timeout parameter to httpx client."""
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
             mock_response = _mock_httpx_response(
                 {
                     "name": "Test",
@@ -574,16 +640,19 @@ class TestDiscoverImageserverEdgeCases:
                     "maxImageWidth": 1024,
                 }
             )
-            mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client_class.return_value.__aenter__.return_value = mock_client
 
-            discover_imageserver(
+            await discover_imageserver(
                 "https://services.arcgis.com/test/ImageServer",
                 timeout=30.0,
             )
 
-            mock_client.assert_called_once_with(timeout=30.0)
+            mock_client_class.assert_called_once_with(timeout=30.0)
 
-    def test_handles_float_pixel_size(self) -> None:
+    @pytest.mark.asyncio
+    async def test_handles_float_pixel_size(self) -> None:
         """Should handle various pixel size formats."""
         response = {
             "name": "Test",
@@ -596,12 +665,12 @@ class TestDiscoverImageserverEdgeCases:
             "maxImageWidth": 1024,
         }
 
-        with patch("portolan_cli.extract.arcgis.imageserver.discovery.httpx.Client") as mock_client:
-            mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
-                response
-            )
+        with patch(
+            "portolan_cli.extract.arcgis.imageserver.discovery.httpx.AsyncClient"
+        ) as mock_client_class:
+            _setup_async_client_mock(mock_client_class, _mock_httpx_response(response))
 
-            result = discover_imageserver("https://services.arcgis.com/test/ImageServer")
+            result = await discover_imageserver("https://services.arcgis.com/test/ImageServer")
 
             assert result.pixel_size_x == pytest.approx(0.00027777777778)
             assert result.pixel_type == "F64"

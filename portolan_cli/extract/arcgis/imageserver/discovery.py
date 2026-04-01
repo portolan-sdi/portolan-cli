@@ -72,6 +72,27 @@ class ImageServerMetadata:
     copyright_text: str | None = None
     service_data_type: str | None = None
 
+    def get_crs_string(self) -> str:
+        """Get CRS as EPSG string from spatial reference.
+
+        Returns:
+            CRS string like 'EPSG:4326' or 'EPSG:102719'
+        """
+        sr = self.full_extent.get("spatialReference", {})
+        wkid = sr.get("latestWkid") or sr.get("wkid")
+        if wkid:
+            return f"EPSG:{wkid}"
+        return "EPSG:4326"  # Default fallback
+
+    def get_bbox_tuple(self) -> tuple[float, float, float, float]:
+        """Get extent as (minx, miny, maxx, maxy) tuple."""
+        return (
+            self.full_extent["xmin"],
+            self.full_extent["ymin"],
+            self.full_extent["xmax"],
+            self.full_extent["ymax"],
+        )
+
 
 def _ensure_json_format(url: str) -> str:
     """Ensure URL has f=json parameter for ArcGIS REST API.
@@ -118,7 +139,7 @@ def _parse_capabilities(capabilities_value: str | list[str] | None) -> list[str]
     return [cap.strip() for cap in capabilities_value.split(",") if cap.strip()]
 
 
-def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
+async def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
     """Fetch JSON from URL with standard error handling.
 
     Args:
@@ -134,8 +155,8 @@ def _fetch_json(url: str, timeout: float) -> dict[str, Any]:
     request_url = _ensure_json_format(url)
 
     try:
-        with httpx.Client(timeout=timeout) as client:
-            response = client.get(request_url)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(request_url)
             response.raise_for_status()
             return cast(dict[str, Any], response.json())
     except httpx.HTTPStatusError as e:
@@ -203,7 +224,49 @@ def _validate_required_fields(data: dict[str, Any], url: str) -> None:
             )
 
 
-def discover_imageserver(
+def parse_imageserver_response(data: dict[str, Any]) -> ImageServerMetadata:
+    """Parse ImageServer metadata from a JSON response.
+
+    Use this when you already have the JSON response (e.g., from a file
+    or mocked response). For fetching from a live service, use
+    `discover_imageserver()` instead.
+
+    Args:
+        data: Parsed JSON response from ImageServer REST API
+
+    Returns:
+        ImageServerMetadata with service information
+
+    Raises:
+        ImageServerDiscoveryError: If required fields are missing or
+            response contains an error
+    """
+    # Check for ArcGIS error response
+    _check_arcgis_error(data, "<parsed response>")
+
+    # Validate required fields
+    _validate_required_fields(data, "<parsed response>")
+
+    # Parse capabilities
+    capabilities = _parse_capabilities(data.get("capabilities"))
+
+    return ImageServerMetadata(
+        name=data["name"],
+        band_count=data["bandCount"],
+        pixel_type=data["pixelType"],
+        pixel_size_x=float(data["pixelSizeX"]),
+        pixel_size_y=float(data["pixelSizeY"]),
+        full_extent=data["extent"],
+        max_image_width=data["maxImageWidth"],
+        max_image_height=data["maxImageHeight"],
+        capabilities=capabilities,
+        description=data.get("description"),
+        copyright_text=data.get("copyrightText"),
+        service_data_type=data.get("serviceDataType"),
+    )
+
+
+async def discover_imageserver(
     url: str,
     *,
     timeout: float = 60.0,
@@ -225,7 +288,7 @@ def discover_imageserver(
         ImageServerDiscoveryError: If request fails, response is invalid,
             or required fields are missing
     """
-    data = _fetch_json(url, timeout=timeout)
+    data = await _fetch_json(url, timeout=timeout)
 
     # Check for ArcGIS error response
     _check_arcgis_error(data, url)

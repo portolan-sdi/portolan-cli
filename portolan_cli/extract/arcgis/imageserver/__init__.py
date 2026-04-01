@@ -6,6 +6,9 @@ ImageServer endpoints into Portolan catalogs.
 Modules:
 - discovery: Metadata discovery from ImageServer endpoints
 - resume: Tile-based resume state tracking
+- tiling: Tile grid calculation for partitioning large extents
+- metadata: STAC metadata generation
+- extractor: Full extraction pipeline orchestrator
 """
 
 from __future__ import annotations
@@ -14,6 +17,18 @@ from portolan_cli.extract.arcgis.imageserver.discovery import (
     ImageServerDiscoveryError,
     ImageServerMetadata,
     discover_imageserver,
+    parse_imageserver_response,
+)
+from portolan_cli.extract.arcgis.imageserver.extractor import (
+    ExtractionConfig,
+    ExtractionResult,
+    ImageServerExtractionError,
+    download_tile,
+    extract_imageserver,
+)
+from portolan_cli.extract.arcgis.imageserver.metadata import (
+    create_collection_metadata,
+    create_item_metadata,
 )
 from portolan_cli.extract.arcgis.imageserver.resume import (
     ImageServerResumeState,
@@ -26,6 +41,17 @@ __all__ = [
     "ImageServerDiscoveryError",
     "ImageServerMetadata",
     "discover_imageserver",
+    "parse_imageserver_response",
+    # extractor
+    "ExtractionConfig",
+    "ExtractionResult",
+    "ImageServerExtractionError",
+    "download_tile",
+    "extract_imageserver",
+    # metadata
+    "create_collection_metadata",
+    "create_item_metadata",
+    # resume
     "ImageServerResumeState",
     "load_resume_state",
     "save_resume_state",

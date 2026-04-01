@@ -1,0 +1,11 @@
+{
+  "name": "minimal_service",
+  "bandCount": 3,
+  "pixelType": "U8",
+  "fullExtent": {
+    "xmin": 0.0,
+    "ymin": 0.0,
+    "xmax": 100.0,
+    "ymax": 100.0
+  }
+}
