@@ -39,6 +39,10 @@ from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
 
 from portolan_cli.extract.arcgis.imageserver.discovery import discover_imageserver
+from portolan_cli.extract.arcgis.imageserver.metadata import (
+    create_collection_metadata,
+    create_item_metadata,
+)
 from portolan_cli.extract.arcgis.imageserver.resume import (
     ImageServerResumeState,
     load_resume_state,
@@ -211,85 +215,74 @@ async def _convert_to_cog(
     await loop.run_in_executor(None, _do_convert)
 
 
-def _create_stac_item(
-    tile: TileSpec,
-    cog_path: Path,
-    metadata: ImageServerMetadata,
-    output_dir: Path,
-) -> dict[str, Any]:
-    """Create a STAC Item for a tile.
+def _intersect_bbox(
+    bbox: tuple[float, float, float, float],
+    extent: dict[str, float],
+) -> dict[str, float] | None:
+    """Intersect user bbox with service extent.
 
     Args:
-        tile: Tile specification.
-        cog_path: Path to the COG file.
-        metadata: Service metadata.
-        output_dir: Output directory root for relative paths.
+        bbox: User-provided bbox (minx, miny, maxx, maxy).
+        extent: Service extent dict with xmin, ymin, xmax, ymax.
 
     Returns:
-        STAC Item as a dictionary.
+        Intersected extent dict, or None if no intersection.
     """
-    minx, miny, maxx, maxy = tile.bbox
-    now = datetime.now(timezone.utc).isoformat()
+    intersect_xmin = max(bbox[0], extent["xmin"])
+    intersect_ymin = max(bbox[1], extent["ymin"])
+    intersect_xmax = min(bbox[2], extent["xmax"])
+    intersect_ymax = min(bbox[3], extent["ymax"])
 
-    # Relative path for asset href
-    relative_path = cog_path.relative_to(output_dir)
+    # Check if intersection is valid (non-empty)
+    if intersect_xmin >= intersect_xmax or intersect_ymin >= intersect_ymax:
+        return None
 
     return {
-        "type": "Feature",
-        "stac_version": "1.0.0",
-        "id": tile.get_id(),
-        "geometry": {
-            "type": "Polygon",
-            "coordinates": [
-                [
-                    [minx, miny],
-                    [maxx, miny],
-                    [maxx, maxy],
-                    [minx, maxy],
-                    [minx, miny],
-                ]
-            ],
-        },
-        "bbox": [minx, miny, maxx, maxy],
-        "properties": {
-            "datetime": now,
-            "created": now,
-            "tile_col": tile.x,
-            "tile_row": tile.y,
-        },
-        "links": [],
-        "assets": {
-            "data": {
-                "href": str(relative_path),
-                "type": "image/tiff; application=geotiff; profile=cloud-optimized",
-                "title": f"Tile {tile.x},{tile.y}",
-                "roles": ["data"],
-            }
-        },
+        "xmin": intersect_xmin,
+        "ymin": intersect_ymin,
+        "xmax": intersect_xmax,
+        "ymax": intersect_ymax,
     }
 
 
-def _create_stac_collection(
-    metadata: ImageServerMetadata,
-    items: list[dict[str, Any]],
+def _rehydrate_items(
+    resume_state: ImageServerResumeState,
     output_dir: Path,
-    service_url: str,
-) -> dict[str, Any]:
-    """Create a STAC Collection for the extracted imagery.
+) -> list[dict[str, Any]]:
+    """Load existing item JSON files from disk when resuming.
 
     Args:
-        metadata: Service metadata.
-        items: List of STAC Items.
-        output_dir: Output directory for saving item files.
-        service_url: Original ImageServer URL for provenance.
+        resume_state: Resume state with succeeded tile coordinates.
+        output_dir: Output directory containing item JSON files.
 
     Returns:
-        STAC Collection as a dictionary.
+        List of rehydrated STAC items.
     """
-    minx, miny, maxx, maxy = metadata.get_bbox_tuple()
-    now = datetime.now(timezone.utc).isoformat()
+    rehydrated: list[dict[str, Any]] = []
+    for tile_x, tile_y in resume_state.succeeded_tiles:
+        item_id = f"{tile_x}_{tile_y}"
+        item_path = output_dir / f"{item_id}.json"
+        if item_path.exists():
+            try:
+                item_data = json.loads(item_path.read_text())
+                rehydrated.append(item_data)
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Failed to rehydrate item %s: %s", item_id, e)
+    return rehydrated
 
-    # Build item links (items are already written to disk during extraction)
+
+def _write_collection_with_items(
+    collection: dict[str, Any],
+    items: list[dict[str, Any]],
+    collection_path: Path,
+) -> None:
+    """Write STAC collection with item links.
+
+    Args:
+        collection: Base collection metadata.
+        items: STAC items to link.
+        collection_path: Path to write collection.json.
+    """
     item_links = [
         {
             "rel": "item",
@@ -298,35 +291,78 @@ def _create_stac_collection(
         }
         for item in items
     ]
+    collection["links"].extend(item_links)
+    collection_path.write_text(json.dumps(collection, indent=2))
 
-    return {
-        "type": "Collection",
-        "stac_version": "1.0.0",
-        "id": metadata.name.lower().replace(" ", "_"),
-        "title": metadata.name,
-        "description": metadata.description or f"Imagery extracted from {metadata.name}",
-        "license": "proprietary",
-        "extent": {
-            "spatial": {"bbox": [[minx, miny, maxx, maxy]]},
-            "temporal": {"interval": [[now, None]]},
-        },
-        "links": [
-            {"rel": "self", "href": "./collection.json", "type": "application/json"},
-            {"rel": "root", "href": "./collection.json", "type": "application/json"},
-            *item_links,
-        ],
-        "providers": [
-            {
-                "name": "ArcGIS ImageServer",
-                "roles": ["producer"],
-                "url": service_url,
-            }
-        ],
-        "summaries": {
-            "pixel_type": [metadata.pixel_type],
-            "band_count": [metadata.band_count],
-        },
-    }
+
+def _create_empty_result(collection_path: Path) -> ExtractionResult:
+    """Create an empty ExtractionResult for early returns.
+
+    Args:
+        collection_path: Path to the collection.json file.
+
+    Returns:
+        ExtractionResult with all counts set to zero.
+    """
+    return ExtractionResult(
+        collection_path=collection_path,
+        items_created=0,
+        tiles_downloaded=0,
+        tiles_skipped=0,
+        tiles_failed=0,
+        total_bytes=0,
+    )
+
+
+@dataclass
+class _ProcessingStats:
+    """Mutable container for tile processing statistics."""
+
+    tiles_downloaded: int = 0
+    tiles_failed: int = 0
+    total_bytes: int = 0
+    stac_items: list[dict[str, Any]] | None = None
+
+    def __post_init__(self) -> None:
+        if self.stac_items is None:
+            self.stac_items = []
+
+
+def _handle_tile_result(
+    tile: TileSpec,
+    succeeded: bool,
+    bytes_downloaded: int,
+    item: dict[str, Any] | None,
+    stats: _ProcessingStats,
+    output_dir: Path,
+    resume_state: ImageServerResumeState,
+    resume_path: Path,
+    progress: int,
+    total: int,
+) -> None:
+    """Handle the result of processing a single tile.
+
+    Updates stats, writes item JSON, updates resume state, and logs progress.
+    """
+    if succeeded:
+        stats.tiles_downloaded += 1
+        stats.total_bytes += bytes_downloaded
+
+        # Write item JSON BEFORE marking success in resume state
+        if item:
+            item_path = output_dir / f"{item['id']}.json"
+            item_path.write_text(json.dumps(item, indent=2))
+            if stats.stac_items is not None:
+                stats.stac_items.append(item)
+
+        resume_state.succeeded_tiles.add((tile.x, tile.y))
+        detail(f"Tile {tile.get_id()}: {bytes_downloaded:,} bytes [{progress}/{total}]")
+    else:
+        stats.tiles_failed += 1
+        resume_state.failed_tiles.add((tile.x, tile.y))
+        error(f"Tile {tile.get_id()}: failed [{progress}/{total}]")
+
+    save_resume_state(resume_state, resume_path)
 
 
 async def _process_tile(
@@ -377,8 +413,9 @@ async def _process_tile(
                 if raw_path.exists():
                     raw_path.unlink()
 
-                # Create STAC item
-                item = _create_stac_item(tile, cog_path, metadata, output_dir)
+                # Create STAC item using shared metadata function (WGS84-compliant)
+                relative_cog_path = str(cog_path.relative_to(output_dir))
+                item = create_item_metadata(tile, metadata, relative_cog_path)
 
                 return tile, True, bytes_downloaded, item
 
@@ -457,44 +494,18 @@ async def extract_imageserver(
     metadata = await discover_imageserver(url, timeout=config.timeout)
     info(f"Service: {metadata.name} ({metadata.pixel_type}, {metadata.band_count} bands)")
 
-    # Compute tile grid using correct API
-    # compute_tile_grid expects extent dict and pixel sizes
+    # Compute tile grid, optionally intersected with user bbox
     extent = metadata.full_extent
     if bbox:
-        # Intersect user-provided bbox with service extent to avoid
-        # generating tiles outside the actual data coverage
-        service_xmin = extent["xmin"]
-        service_ymin = extent["ymin"]
-        service_xmax = extent["xmax"]
-        service_ymax = extent["ymax"]
-
-        # Compute intersection
-        intersect_xmin = max(bbox[0], service_xmin)
-        intersect_ymin = max(bbox[1], service_ymin)
-        intersect_xmax = min(bbox[2], service_xmax)
-        intersect_ymax = min(bbox[3], service_ymax)
-
-        # Check if intersection is valid (non-empty)
-        if intersect_xmin >= intersect_xmax or intersect_ymin >= intersect_ymax:
+        intersected = _intersect_bbox(bbox, extent)
+        if intersected is None:
+            # No intersection - write empty collection and return
             info("User bbox does not intersect service extent - no tiles to extract")
             collection_path = output_dir / "collection.json"
-            empty_collection = _create_stac_collection(metadata, [], output_dir, url)
+            empty_collection = create_collection_metadata(metadata, url)
             collection_path.write_text(json.dumps(empty_collection, indent=2))
-            return ExtractionResult(
-                collection_path=collection_path,
-                items_created=0,
-                tiles_downloaded=0,
-                tiles_skipped=0,
-                tiles_failed=0,
-                total_bytes=0,
-            )
-
-        extent = {
-            "xmin": intersect_xmin,
-            "ymin": intersect_ymin,
-            "xmax": intersect_xmax,
-            "ymax": intersect_ymax,
-        }
+            return _create_empty_result(collection_path)
+        extent = intersected
     tiles = list(
         compute_tile_grid(
             extent=extent,
@@ -509,30 +520,14 @@ async def extract_imageserver(
     if total_tiles == 0:
         success("No tiles to extract (bbox may not intersect service extent)")
         collection_path = output_dir / "collection.json"
-        # Create empty collection
-        empty_collection = _create_stac_collection(metadata, [], output_dir, url)
+        empty_collection = create_collection_metadata(metadata, url)
         collection_path.write_text(json.dumps(empty_collection, indent=2))
-        return ExtractionResult(
-            collection_path=collection_path,
-            items_created=0,
-            tiles_downloaded=0,
-            tiles_skipped=0,
-            tiles_failed=0,
-            total_bytes=0,
-        )
+        return _create_empty_result(collection_path)
 
     # Handle dry run
     if config.dry_run:
         info(f"[DRY RUN] Would extract {total_tiles} tiles")
-        collection_path = output_dir / "collection.json"
-        return ExtractionResult(
-            collection_path=collection_path,
-            items_created=0,
-            tiles_downloaded=0,
-            tiles_skipped=0,
-            tiles_failed=0,
-            total_bytes=0,
-        )
+        return _create_empty_result(output_dir / "collection.json")
 
     # Load resume state
     resume_path = portolan_dir / "imageserver-resume.json"
@@ -558,12 +553,16 @@ async def extract_imageserver(
     if tiles_skipped > 0:
         info(f"Skipping {tiles_skipped} already-completed tiles")
 
+    # Rehydrate existing items from disk when resuming
+    rehydrated_items: list[dict[str, Any]] = []
+    if resume and resume_state and resume_state.succeeded_tiles:
+        rehydrated_items = _rehydrate_items(resume_state, output_dir)
+        if rehydrated_items:
+            detail(f"Rehydrated {len(rehydrated_items)} existing items from disk")
+
     # Extract tiles with concurrency control
     semaphore = asyncio.Semaphore(config.max_concurrent)
-    tiles_downloaded = 0
-    tiles_failed = 0
-    total_bytes = 0
-    stac_items: list[dict[str, Any]] = []
+    stats = _ProcessingStats(stac_items=rehydrated_items.copy())
 
     async with httpx.AsyncClient(timeout=config.timeout) as client:
         tasks = [
@@ -582,47 +581,34 @@ async def extract_imageserver(
 
         for i, coro in enumerate(asyncio.as_completed(tasks)):
             tile, succeeded, bytes_downloaded, item = await coro
-            progress = i + 1
+            _handle_tile_result(
+                tile,
+                succeeded,
+                bytes_downloaded,
+                item,
+                stats,
+                output_dir,
+                resume_state,
+                resume_path,
+                i + 1,
+                len(tiles_to_process),
+            )
 
-            if succeeded:
-                tiles_downloaded += 1
-                total_bytes += bytes_downloaded
-
-                # Write item JSON BEFORE marking success in resume state
-                # This ensures if we crash after saving resume state, the item
-                # JSON already exists on disk for collection reconstruction
-                if item:
-                    item_path = output_dir / f"{item['id']}.json"
-                    item_path.write_text(json.dumps(item, indent=2))
-                    stac_items.append(item)
-
-                # Only mark success after item is persisted
-                resume_state.succeeded_tiles.add((tile.x, tile.y))
-                detail(
-                    f"Tile {tile.get_id()}: {bytes_downloaded:,} bytes [{progress}/{len(tiles_to_process)}]"
-                )
-            else:
-                tiles_failed += 1
-                resume_state.failed_tiles.add((tile.x, tile.y))
-                error(f"Tile {tile.get_id()}: failed [{progress}/{len(tiles_to_process)}]")
-
-            # Save resume state after each tile
-            save_resume_state(resume_state, resume_path)
-
-    # Create STAC collection
+    # Create STAC collection using shared metadata module (WGS84-compliant)
     collection_path = output_dir / "collection.json"
-    collection = _create_stac_collection(metadata, stac_items, output_dir, url)
-    collection_path.write_text(json.dumps(collection, indent=2))
+    collection = create_collection_metadata(metadata, url)
+    stac_items = stats.stac_items or []
+    _write_collection_with_items(collection, stac_items, collection_path)
 
-    success(f"Extracted {tiles_downloaded} tiles ({total_bytes:,} bytes)")
-    if tiles_failed > 0:
-        error(f"Failed: {tiles_failed} tiles")
+    success(f"Extracted {stats.tiles_downloaded} tiles ({stats.total_bytes:,} bytes)")
+    if stats.tiles_failed > 0:
+        error(f"Failed: {stats.tiles_failed} tiles")
 
     return ExtractionResult(
         collection_path=collection_path,
         items_created=len(stac_items),
-        tiles_downloaded=tiles_downloaded,
+        tiles_downloaded=stats.tiles_downloaded,
         tiles_skipped=tiles_skipped,
-        tiles_failed=tiles_failed,
-        total_bytes=total_bytes,
+        tiles_failed=stats.tiles_failed,
+        total_bytes=stats.total_bytes,
     )
