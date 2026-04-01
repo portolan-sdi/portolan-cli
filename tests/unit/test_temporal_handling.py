@@ -109,11 +109,10 @@ class TestCreateItemDatetime:
             bbox=[-180, -90, 180, 90],
             datetime=None,
         )
-        # Per ADR-0035: Use null datetime with open interval (start/end both null)
-        # STAC allows datetime=null if start_datetime and end_datetime are set
+        # Per STAC 1.1.0: Use sentinel datetime range instead of null
         assert item.datetime is None  # Null datetime (open interval)
-        assert item.properties.get("start_datetime") is None
-        assert item.properties.get("end_datetime") is None
+        assert item.properties.get("start_datetime") == "1900-01-01T00:00:00Z"
+        assert item.properties.get("end_datetime") == "9999-12-31T23:59:59Z"
         assert item.properties.get("portolan:datetime_provisional") is True
 
     def test_create_item_explicit_datetime_clears_provisional(self) -> None:
