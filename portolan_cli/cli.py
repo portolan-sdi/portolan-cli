@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
 if TYPE_CHECKING:
+    from portolan_cli.backends.protocol import VersioningBackend
     from portolan_cli.extract.arcgis.report import ExtractionReport
     from portolan_cli.pull import PullResult
 
@@ -279,6 +280,12 @@ def cli(ctx: click.Context, output_format: str) -> None:
     default=None,
     help="Description of the catalog.",
 )
+@click.option(
+    "--backend",
+    type=str,
+    default="file",
+    help="Versioning backend to use (e.g., 'file', 'iceberg').",
+)
 @click.pass_context
 def init(
     ctx: click.Context,
@@ -287,6 +294,7 @@ def init(
     auto_mode: bool,
     title: str | None,
     description: str | None,
+    backend: str,
 ) -> None:
     """Initialize a new Portolan catalog.
 
@@ -306,6 +314,7 @@ def init(
         portolan init --auto                # Skip prompts, use defaults
         portolan init --title "My Catalog"  # Set title
         portolan init /path/to/data --auto  # Initialize in specific directory
+        portolan init --backend iceberg     # Use Iceberg backend
     """
 
     from portolan_cli.catalog import init_catalog
@@ -335,6 +344,7 @@ def init(
             path,
             title=title,
             description=description,
+            backend=backend,
         )
 
         # Read back catalog ID for display
@@ -2724,6 +2734,42 @@ def rm_cmd(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _check_backend_push_support(
+    catalog_path: Path,
+    collection: str | None,
+    use_json: bool,
+) -> None:
+    """Exit with error if the active backend does not support file-based push.
+
+    This is backend routing logic added by the iceberg-backend-integration
+    branch. Extracted here to reduce cyclomatic complexity of push().
+    """
+    from portolan_cli.config import get_setting
+
+    active_backend = get_setting("backend", catalog_path=catalog_path)
+    if active_backend is None or active_backend == "file":
+        return
+
+    from portolan_cli.backends import get_backend
+
+    backend = get_backend(active_backend, catalog_root=catalog_path)
+    if not (hasattr(backend, "supports_push") and not backend.supports_push()):
+        return
+
+    remote = get_setting("remote", catalog_path=catalog_path, collection=collection)
+    if hasattr(backend, "push_blocked_message"):
+        msg = backend.push_blocked_message(remote)
+    else:
+        msg = f"Push is not supported with the '{active_backend}' backend."
+
+    if use_json:
+        envelope = error_envelope("push", [ErrorDetail(type="NotImplementedError", message=msg)])
+        output_json_envelope(envelope)
+    else:
+        error(msg)
+    raise SystemExit(1)
+
+
 @cli.command()
 @click.argument("destination", required=False, default=None)
 @click.option(
@@ -2817,6 +2863,9 @@ def push(
     # Use explicit --catalog if provided, otherwise auto-detect
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "push")
+
+    # Check if active backend supports push
+    _check_backend_push_support(catalog_path, collection, use_json)
 
     resolved_destination = resolve_remote(destination, catalog_path, collection)
     resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
@@ -2989,6 +3038,66 @@ def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
             error("Pull failed")
 
 
+def _try_backend_pull(
+    catalog_path: Path,
+    remote_url: str,
+    collection: str | None,
+    dry_run: bool,
+    use_json: bool,
+) -> bool:
+    """Attempt a pull via the active non-file backend.
+
+    Returns True if the backend handled the pull (caller should return).
+    Returns False if the backend has no pull() method and the file-based pull
+    should proceed as normal.
+
+    This is backend routing logic added by the iceberg-backend-integration
+    branch. Extracted here to reduce cyclomatic complexity of pull_command().
+    """
+    from portolan_cli.config import get_setting
+
+    active_backend = get_setting("backend", catalog_path=catalog_path)
+    if active_backend is None or active_backend == "file":
+        return False
+
+    from portolan_cli.backends import get_backend
+
+    backend = get_backend(active_backend, catalog_root=catalog_path)
+    if not hasattr(backend, "pull"):
+        return False
+
+    result = backend.pull(
+        remote_url=remote_url,
+        local_root=catalog_path,
+        collection=collection,
+        dry_run=dry_run,
+    )
+
+    if use_json:
+        data = {
+            "files_downloaded": result.files_downloaded,
+            "files_skipped": result.files_skipped,
+            "local_version": result.local_version,
+            "remote_version": result.remote_version,
+            "up_to_date": getattr(result, "up_to_date", False),
+        }
+        if result.success:
+            envelope = success_envelope("pull", data)
+        else:
+            envelope = error_envelope(
+                "pull",
+                [ErrorDetail(type="PullError", message="Pull failed")],
+                data=data,
+            )
+        output_json_envelope(envelope)
+    else:
+        _output_pull_human(result, dry_run=dry_run)
+
+    if not result.success:
+        raise SystemExit(1)
+    return True
+
+
 @cli.command()
 @click.argument("remote_url")
 @click.option(
@@ -3079,6 +3188,10 @@ def pull_command(
         catalog_path = require_catalog_root(use_json, "pull")
 
     resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+
+    # Route to backend-specific pull if using non-file backend
+    if _try_backend_pull(catalog_path, remote_url, collection, dry_run, use_json):
+        return
 
     # Catalog-wide pull (no --collection specified)
     if collection is None:
@@ -5183,3 +5296,345 @@ def extract_arcgis_cmd(
         raise SystemExit(1) from None
 
     _output_extract_result(report, output_dir, use_json, dry_run)
+
+
+# =============================================================================
+# Version management commands (iceberg backend only)
+# =============================================================================
+
+
+def _require_iceberg_backend(
+    catalog_path: Path, use_json: bool, command_name: str
+) -> VersioningBackend:
+    """Load the iceberg backend or exit with an error."""
+    from portolan_cli.config import get_setting
+
+    backend_name = get_setting("backend", catalog_path=catalog_path)
+    if backend_name != "iceberg":
+        msg = (
+            f"'portolan version {command_name}' requires the 'iceberg' backend. "
+            f"Current backend: '{backend_name or 'file'}'"
+        )
+        if use_json:
+            envelope = error_envelope(
+                f"version {command_name}",
+                [ErrorDetail(type="BackendError", message=msg)],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(msg)
+        raise SystemExit(1)
+
+    from portolan_cli.backends import get_backend
+
+    return get_backend("iceberg", catalog_root=catalog_path)
+
+
+@cli.group()
+def version() -> None:
+    """Iceberg version management commands.
+
+    \b
+    Subcommands:
+        current   Show current version of a collection
+        list      List all versions of a collection
+        rollback  Rollback to a previous version
+        prune     Remove old versions
+    """
+
+
+@version.command()
+@click.argument("collection")
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to catalog root (default: auto-detect).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def current(
+    ctx: click.Context,
+    collection: str,
+    catalog_path: Path | None,
+    json_output: bool,
+) -> None:
+    """Show the current version of a collection.
+
+    \b
+    Examples:
+        portolan version current boundaries
+        portolan version current boundaries --json
+    """
+    use_json = should_output_json(ctx, json_output)
+
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "version current")
+
+    backend = _require_iceberg_backend(catalog_path, use_json, "current")
+
+    try:
+        ver = backend.get_current_version(collection)
+    except (FileNotFoundError, Exception) as e:
+        if use_json:
+            envelope = error_envelope(
+                "version current",
+                [ErrorDetail(type=type(e).__name__, message=str(e))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
+
+    if use_json:
+        envelope = success_envelope(
+            "version current",
+            {
+                "collection": collection,
+                "version": ver.version,
+                "created": ver.created.isoformat(),
+                "breaking": ver.breaking,
+                "message": ver.message,
+                "assets": len(ver.assets),
+                "changes": ver.changes,
+            },
+        )
+        output_json_envelope(envelope)
+    else:
+        breaking_flag = " [BREAKING]" if ver.breaking else ""
+        timestamp = ver.created.strftime("%Y-%m-%d %H:%M:%S")
+        msg = f" — {ver.message}" if ver.message else ""
+        info_output(f"{collection}: {ver.version}  {timestamp}{breaking_flag}{msg}")
+        if ver.assets:
+            detail(f"  {len(ver.assets)} asset(s)")
+
+
+@version.command("list")
+@click.argument("collection")
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to catalog root (default: auto-detect).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def version_list_cmd(
+    ctx: click.Context,
+    collection: str,
+    catalog_path: Path | None,
+    json_output: bool,
+) -> None:
+    """List all versions of a collection.
+
+    \b
+    Examples:
+        portolan version list boundaries
+        portolan version list boundaries --json
+    """
+    use_json = should_output_json(ctx, json_output)
+
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "version list")
+
+    backend = _require_iceberg_backend(catalog_path, use_json, "list")
+
+    try:
+        versions = backend.list_versions(collection)
+    except (FileNotFoundError, Exception) as e:
+        if use_json:
+            envelope = error_envelope(
+                "version list",
+                [ErrorDetail(type=type(e).__name__, message=str(e))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
+
+    if use_json:
+        versions_data = [
+            {
+                "version": v.version,
+                "created": v.created.isoformat(),
+                "breaking": v.breaking,
+                "message": v.message,
+                "assets": len(v.assets),
+                "changes": v.changes,
+            }
+            for v in versions
+        ]
+        envelope = success_envelope(
+            "version list",
+            {"collection": collection, "versions": versions_data},
+        )
+        output_json_envelope(envelope)
+    else:
+        if not versions:
+            info_output(f"No versions found for collection '{collection}'")
+            return
+
+        info_output(f"Versions for '{collection}' ({len(versions)} total):\n")
+        for v in versions:
+            breaking_flag = " [BREAKING]" if v.breaking else ""
+            timestamp = v.created.strftime("%Y-%m-%d %H:%M:%S")
+            msg = f" — {v.message}" if v.message else ""
+            info_output(f"  {v.version}  {timestamp}{breaking_flag}{msg}")
+            if v.changes:
+                for change in v.changes:
+                    detail(f"    {change}")
+
+
+@version.command()
+@click.argument("collection")
+@click.argument("target_version")
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to catalog root (default: auto-detect).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def rollback(
+    ctx: click.Context,
+    collection: str,
+    target_version: str,
+    catalog_path: Path | None,
+    json_output: bool,
+) -> None:
+    """Rollback a collection to a previous version.
+
+    Uses Iceberg's native snapshot management to set the current snapshot
+    pointer back to TARGET_VERSION. No data is copied — this is instant.
+
+    \b
+    Examples:
+        portolan version rollback boundaries 1.0.0
+        portolan version rollback boundaries 2.0.0 --json
+    """
+    use_json = should_output_json(ctx, json_output)
+
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "version rollback")
+
+    backend = _require_iceberg_backend(catalog_path, use_json, "rollback")
+
+    try:
+        restored = backend.rollback(collection, target_version)
+    except (FileNotFoundError, ValueError, Exception) as e:
+        if use_json:
+            envelope = error_envelope(
+                "version rollback",
+                [ErrorDetail(type=type(e).__name__, message=str(e))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
+
+    if use_json:
+        envelope = success_envelope(
+            "version rollback",
+            {
+                "collection": collection,
+                "restored_version": restored.version,
+                "created": restored.created.isoformat(),
+            },
+        )
+        output_json_envelope(envelope)
+    else:
+        success(f"Rolled back '{collection}' to version {restored.version}")
+
+
+@version.command()
+@click.argument("collection")
+@click.option(
+    "--keep",
+    "-k",
+    type=click.IntRange(min=1),
+    default=5,
+    show_default=True,
+    help="Number of recent versions to keep.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be pruned without deleting.",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to catalog root (default: auto-detect).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def prune(
+    ctx: click.Context,
+    collection: str,
+    keep: int,
+    dry_run: bool,
+    catalog_path: Path | None,
+    json_output: bool,
+) -> None:
+    """Remove old versions, keeping the N most recent.
+
+    \b
+    Examples:
+        portolan version prune boundaries                # Keep 5 most recent
+        portolan version prune boundaries --keep 3       # Keep 3 most recent
+        portolan version prune boundaries --dry-run      # Preview without deleting
+    """
+    use_json = should_output_json(ctx, json_output)
+
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "version prune")
+
+    backend = _require_iceberg_backend(catalog_path, use_json, "prune")
+
+    try:
+        pruned = backend.prune(collection, keep=keep, dry_run=dry_run)
+    except (FileNotFoundError, Exception) as e:
+        if use_json:
+            envelope = error_envelope(
+                "version prune",
+                [ErrorDetail(type=type(e).__name__, message=str(e))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
+
+    if use_json:
+        pruned_data = [
+            {
+                "version": v.version,
+                "created": v.created.isoformat(),
+            }
+            for v in pruned
+        ]
+        envelope = success_envelope(
+            "version prune",
+            {
+                "collection": collection,
+                "pruned": pruned_data,
+                "kept": keep,
+                "dry_run": dry_run,
+            },
+        )
+        output_json_envelope(envelope)
+    else:
+        prefix = "[DRY RUN] " if dry_run else ""
+        if not pruned:
+            info_output(f"{prefix}Nothing to prune (≤{keep} versions exist)")
+        else:
+            action = "Would prune" if dry_run else "Pruned"
+            info_output(f"{prefix}{action} {len(pruned)} version(s), keeping {keep}:")
+            for v in pruned:
+                timestamp = v.created.strftime("%Y-%m-%d %H:%M:%S")
+                detail(f"  {v.version}  {timestamp}")

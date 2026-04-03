@@ -24,7 +24,8 @@ Example usage for plugin authors:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, TypedDict, runtime_checkable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
 
 if TYPE_CHECKING:
     from portolan_cli.versions import Version
@@ -58,6 +59,31 @@ class SchemaFingerprint(TypedDict):
     columns: list[str]
     types: dict[str, str]
     hash: str
+
+
+class PostAddContext(TypedDict):
+    """Context passed to a backend's optional on_post_add() hook.
+
+    After add_dataset() completes local processing, portolan-cli checks
+    ``hasattr(backend, "on_post_add")`` and, if present, calls it with this
+    context.  Backends that do not implement on_post_add() are silently
+    skipped.
+
+    Optional backend methods (checked via hasattr, NOT part of VersioningBackend):
+        on_post_add(context: PostAddContext) -> None
+        pull(remote_url: str, local_root: Path, collection: str, *, dry_run: bool) -> PullResult
+        supports_push() -> bool
+        push_blocked_message(remote: str | None) -> str
+    """
+
+    catalog_root: Path
+    collection_id: str
+    collection_dir: Path
+    collection: Any  # pystac.Collection
+    item_id: str
+    item_dir: Path
+    asset_files: dict[str, tuple[Path, str]]
+    remote: str | None
 
 
 @runtime_checkable
@@ -110,6 +136,7 @@ class VersioningBackend(Protocol):
         schema: SchemaFingerprint,
         breaking: bool,
         message: str,
+        removed: set[str] | None = None,
     ) -> Version:
         """Publish a new version of a collection.
 
@@ -119,6 +146,7 @@ class VersioningBackend(Protocol):
             schema: Schema fingerprint for change detection.
             breaking: Whether this is a breaking change.
             message: Human-readable description of the change.
+            removed: Set of asset keys to remove from the version.
 
         Returns:
             The newly created Version object.

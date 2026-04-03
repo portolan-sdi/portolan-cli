@@ -149,6 +149,33 @@ class TestGetBackend:
             get_backend("")
 
     @pytest.mark.unit
+    def test_get_backend_file_passes_catalog_root(self, tmp_path: Any) -> None:
+        """get_backend('file', catalog_root=path) passes root to JsonFileBackend."""
+        from pathlib import Path
+
+        backend = get_backend("file", catalog_root=Path(tmp_path))
+        assert isinstance(backend, JsonFileBackend)
+        assert backend._catalog_root == Path(tmp_path)
+
+    @pytest.mark.unit
+    def test_get_backend_plugin_passes_catalog_root(self) -> None:
+        """get_backend('plugin', catalog_root=path) passes root to plugin constructor."""
+        from pathlib import Path
+
+        mock_backend = MagicMock(spec=VersioningBackend)
+        mock_backend_class = MagicMock(return_value=mock_backend)
+        mock_entry_point = MagicMock()
+        mock_entry_point.name = "iceberg"
+        mock_entry_point.load.return_value = mock_backend_class
+
+        root = Path("/some/catalog")
+        with patch("portolan_cli.backends.entry_points") as mock_eps:
+            mock_eps.return_value = [mock_entry_point]
+            get_backend("iceberg", catalog_root=root)
+
+        mock_backend_class.assert_called_once_with(catalog_root=root)
+
+    @pytest.mark.unit
     def test_get_backend_discovers_entry_point(self) -> None:
         """get_backend() discovers backends registered via entry points."""
         # Create a mock backend class that implements the protocol
@@ -213,9 +240,10 @@ class TestGetBackendErrorHandling:
     def test_get_backend_validates_protocol_compliance(self) -> None:
         """get_backend() validates that loaded plugins implement the protocol."""
 
-        # Create a class that doesn't implement VersioningBackend
+        # Create a class that doesn't implement VersioningBackend but accepts kwargs
         class NotABackend:
-            pass
+            def __init__(self, **_kwargs: Any) -> None:
+                pass
 
         mock_entry_point = MagicMock()
         mock_entry_point.name = "invalid"
@@ -284,14 +312,14 @@ class TestJsonFileBackend:
     def test_rollback_raises_not_implemented_with_clear_message(self) -> None:
         """JsonFileBackend.rollback raises NotImplementedError with explanation."""
         backend = JsonFileBackend()
-        with pytest.raises(NotImplementedError, match="portolake plugin"):
+        with pytest.raises(NotImplementedError, match="enterprise plugin backends"):
             backend.rollback("test_collection", "1.0.0")
 
     @pytest.mark.unit
     def test_prune_raises_not_implemented_with_clear_message(self) -> None:
         """JsonFileBackend.prune raises NotImplementedError with explanation."""
         backend = JsonFileBackend()
-        with pytest.raises(NotImplementedError, match="portolake plugin"):
+        with pytest.raises(NotImplementedError, match="enterprise plugin backends"):
             backend.prune("test_collection", keep=5, dry_run=True)
 
 
@@ -549,3 +577,112 @@ class TestJsonFileBackendIntegration:
         # First version is always 1.0.0 regardless of breaking flag
         assert version.version == "1.0.0"
         assert version.breaking is True
+
+    @pytest.mark.integration
+    def test_publish_with_removed_parameter(self, tmp_path: Any) -> None:
+        """publish(removed=...) delegates removal to add_version."""
+        from pathlib import Path
+
+        catalog_root = Path(tmp_path)
+        collection_dir = catalog_root / "test"
+        collection_dir.mkdir(parents=True)
+
+        backend = JsonFileBackend(catalog_root=catalog_root)
+        schema: SchemaFingerprint = {
+            "columns": [],
+            "types": {},
+            "hash": "h",
+        }
+
+        # Create a file asset
+        f = tmp_path / "data.parquet"
+        f.write_bytes(b"data")
+
+        # Publish v1 with an asset
+        backend.publish(
+            collection="test",
+            assets={"data.parquet": str(f)},
+            schema=schema,
+            breaking=False,
+            message="v1",
+        )
+
+        # Publish v2 removing the asset
+        v2 = backend.publish(
+            collection="test",
+            assets={},
+            schema=schema,
+            breaking=False,
+            message="remove data",
+            removed={"data.parquet"},
+        )
+        assert v2.version == "1.1.0"
+
+    @pytest.mark.integration
+    def test_publish_produces_catalog_root_relative_hrefs(self, tmp_path: Any) -> None:
+        """publish() stores hrefs as collection/asset_key (catalog-root-relative).
+
+        pull.py resolves files via `catalog_root / asset.href`, so the href
+        must be relative to catalog root, not an absolute filesystem path.
+        """
+        from pathlib import Path
+
+        catalog_root = Path(tmp_path)
+        collection_dir = catalog_root / "agriculture"
+        item_dir = collection_dir / "census"
+        item_dir.mkdir(parents=True)
+
+        # Create asset file inside the item directory
+        asset_file = item_dir / "census.parquet"
+        asset_file.write_bytes(b"fake parquet")
+
+        backend = JsonFileBackend(catalog_root=catalog_root)
+        schema: SchemaFingerprint = {
+            "columns": [],
+            "types": {},
+            "hash": "h",
+        }
+
+        version = backend.publish(
+            collection="agriculture",
+            assets={"census/census.parquet": str(asset_file)},
+            schema=schema,
+            breaking=False,
+            message="add census",
+        )
+
+        asset = version.assets["census/census.parquet"]
+        assert asset.href == "agriculture/census/census.parquet"
+        # Verify it resolves to the actual file
+        assert (catalog_root / asset.href).exists()
+
+    @pytest.mark.integration
+    def test_publish_stores_mtime(self, tmp_path: Any) -> None:
+        """publish() records file mtime for fast-path change detection."""
+        from pathlib import Path
+
+        catalog_root = Path(tmp_path)
+        collection_dir = catalog_root / "test"
+        collection_dir.mkdir(parents=True)
+
+        asset_file = collection_dir / "data.parquet"
+        asset_file.write_bytes(b"data")
+
+        backend = JsonFileBackend(catalog_root=catalog_root)
+        schema: SchemaFingerprint = {
+            "columns": [],
+            "types": {},
+            "hash": "h",
+        }
+
+        version = backend.publish(
+            collection="test",
+            assets={"data.parquet": str(asset_file)},
+            schema=schema,
+            breaking=False,
+            message="v1",
+        )
+
+        asset = version.assets["data.parquet"]
+        assert asset.mtime is not None
+        assert abs(asset.mtime - asset_file.stat().st_mtime) < 0.001

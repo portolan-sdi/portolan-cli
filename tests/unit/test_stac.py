@@ -148,10 +148,10 @@ class TestCreateItem:
             bbox=[0, 0, 1, 1],
         )
 
-        # Per ADR-0035: datetime is null with open interval (start/end both null)
+        # Per ADR-0035: datetime is null, start/end use sentinel range (STAC 1.1.0 compliance)
         assert item.datetime is None
-        assert item.properties.get("start_datetime") is None
-        assert item.properties.get("end_datetime") is None
+        assert item.properties["start_datetime"] == "1900-01-01T00:00:00Z"
+        assert item.properties["end_datetime"] == "9999-12-31T23:59:59Z"
         assert item.properties.get("portolan:datetime_provisional") is True
 
     @pytest.mark.unit
