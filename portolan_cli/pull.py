@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1023,23 +1022,23 @@ def pull(
 
 
 # =============================================================================
-# Catalog-wide Pull (Parallel)
+# Catalog-wide Pull (Async)
 # =============================================================================
 
 
-def pull_all_collections(
+async def pull_all_collections_async(
     remote_url: str,
     local_root: Path,
     *,
     force: bool = False,
     dry_run: bool = False,
     profile: str | None = None,
-    workers: int | None = None,
+    concurrency: int | None = None,
 ) -> PullAllResult:
-    """Pull all collections in a catalog from cloud storage.
+    """Pull all collections in a catalog from cloud storage asynchronously.
 
-    Processes collections with configurable parallelism.
-    Continues on individual failures and reports all errors at the end.
+    Primary async implementation. Uses asyncio.gather() for concurrent
+    collection pulls within a single event loop.
 
     Args:
         remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
@@ -1047,7 +1046,7 @@ def pull_all_collections(
         force: If True, overwrite uncommitted local changes.
         dry_run: If True, show what would be downloaded without downloading.
         profile: AWS profile name (for S3 only).
-        workers: Number of parallel workers. None = auto-detect, 1 = sequential.
+        concurrency: Maximum concurrent collection pulls. None = auto-detect.
 
     Returns:
         PullAllResult with aggregate statistics and per-collection errors.
@@ -1081,72 +1080,73 @@ def pull_all_collections(
     total_files = 0
     collection_errors: dict[str, list[str]] = {}
 
-    # Determine concurrency for collection-level parallelism
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    # Determine concurrency
+    max_concurrent = concurrency if concurrency is not None else min(total, DEFAULT_CONCURRENCY)
+    max_concurrent = min(max_concurrent, total)  # Don't exceed collection count
 
-    max_workers = workers if workers is not None else min(total, DEFAULT_CONCURRENCY)
-    max_workers = min(max_workers, total)  # Don't exceed collection count
-    completed_count = 0
-    completed_lock = threading.Lock()
+    info(f"Using concurrency: {max_concurrent}")
 
-    def pull_one(collection: str) -> tuple[str, PullResult | None, str | None]:
-        """Pull a single collection, returning (collection, result, error)."""
-        try:
-            result = pull(
-                remote_url=remote_url,
-                local_root=local_root,
-                collection=collection,
-                force=force,
-                dry_run=dry_run,
-                profile=profile,
-            )
-            return (collection, result, None)
-        except Exception as e:
-            return (collection, None, f"{type(e).__name__}: {e}")
+    # Semaphore for collection-level concurrency control
+    semaphore = asyncio.Semaphore(max_concurrent)
 
-    info(f"Using {max_workers} parallel worker(s)")
+    async def pull_one(collection: str) -> tuple[str, PullResult | None, str | None]:
+        """Pull a single collection with semaphore control."""
+        async with semaphore:
+            try:
+                result = await pull_async(
+                    remote_url=remote_url,
+                    local_root=local_root,
+                    collection=collection,
+                    force=force,
+                    dry_run=dry_run,
+                    profile=profile,
+                )
+                return (collection, result, None)
+            except Exception as e:
+                return (collection, None, f"{type(e).__name__}: {e}")
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(pull_one, coll): coll for coll in collections}
+    # Run all collection pulls concurrently
+    tasks = [pull_one(coll) for coll in collections]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for future in as_completed(futures):
-            coll, result, err_msg = future.result()
-
-            with completed_lock:
-                completed_count += 1
-                current_completed = completed_count
-
-            # Process result
-            with output_section():
-                if err_msg:
-                    error(f"[{current_completed}/{total}] Failed {coll}: {err_msg}")
-                    failed += 1
-                    collection_errors[coll] = [err_msg]
-                elif result and result.success:
-                    files = result.files_downloaded
-                    if result.up_to_date:
-                        success(f"[{current_completed}/{total}] {coll}: Already up to date")
-                    else:
-                        success(f"[{current_completed}/{total}] Pulled {coll}: {files} file(s)")
-                    successful += 1
-                    total_files += files
-                elif result:
-                    errors_list = []
-                    if result.uncommitted_changes:
-                        errors_list.append(
-                            f"Uncommitted changes: {', '.join(result.uncommitted_changes)}"
-                        )
-                    else:
-                        errors_list.append("Pull failed")
-                    error(f"[{current_completed}/{total}] Failed {coll}: {', '.join(errors_list)}")
-                    failed += 1
-                    collection_errors[coll] = errors_list
+    # Process results
+    for i, result in enumerate(results):
+        if isinstance(result, BaseException):
+            coll = collections[i]
+            error(f"[{i + 1}/{total}] Failed {coll}: {result}")
+            failed += 1
+            collection_errors[coll] = [str(result)]
+        elif isinstance(result, tuple):
+            coll, pull_result, err_msg = result
+            if err_msg:
+                error(f"[{i + 1}/{total}] Failed {coll}: {err_msg}")
+                failed += 1
+                collection_errors[coll] = [err_msg]
+            elif pull_result and pull_result.success:
+                files = pull_result.files_downloaded
+                if pull_result.up_to_date:
+                    success(f"[{i + 1}/{total}] {coll}: Already up to date")
                 else:
-                    error(f"[{current_completed}/{total}] Failed {coll}: Unknown error")
-                    failed += 1
-                    collection_errors[coll] = ["Unknown error"]
+                    success(f"[{i + 1}/{total}] Pulled {coll}: {files} file(s)")
+                successful += 1
+                total_files += files
+            elif pull_result:
+                errors_list = []
+                if pull_result.uncommitted_changes:
+                    errors_list.append(
+                        f"Uncommitted changes: {', '.join(pull_result.uncommitted_changes)}"
+                    )
+                else:
+                    errors_list.append("Pull failed")
+                error(f"[{i + 1}/{total}] Failed {coll}: {', '.join(errors_list)}")
+                failed += 1
+                collection_errors[coll] = errors_list
+            else:
+                error(f"[{i + 1}/{total}] Failed {coll}: Unknown error")
+                failed += 1
+                collection_errors[coll] = ["Unknown error"]
 
-    # Summary report (use output_section to keep summary together)
+    # Summary report
     with output_section():
         info(f"\n{'=' * 60}")
         if failed == 0:
@@ -1164,4 +1164,45 @@ def pull_all_collections(
         failed_collections=failed,
         total_files_downloaded=total_files,
         collection_errors=collection_errors,
+    )
+
+
+def pull_all_collections(
+    remote_url: str,
+    local_root: Path,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    profile: str | None = None,
+    workers: int | None = None,
+) -> PullAllResult:
+    """Pull all collections in a catalog from cloud storage (sync wrapper).
+
+    This is a thin wrapper around `pull_all_collections_async()` for
+    backward compatibility. All logic is in the async implementation.
+
+    Args:
+        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
+        local_root: Path to the local catalog root directory.
+        force: If True, overwrite uncommitted local changes.
+        dry_run: If True, show what would be downloaded without downloading.
+        profile: AWS profile name (for S3 only).
+        workers: Number of parallel workers. None = auto-detect, 1 = sequential.
+            (Maps to 'concurrency' in async implementation.)
+
+    Returns:
+        PullAllResult with aggregate statistics and per-collection errors.
+
+    Raises:
+        ValueError: If local_root is not a valid catalog.
+    """
+    return asyncio.run(
+        pull_all_collections_async(
+            remote_url=remote_url,
+            local_root=local_root,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+            concurrency=workers,
+        )
     )

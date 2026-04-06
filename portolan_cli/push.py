@@ -1649,7 +1649,7 @@ def _push_all_upload_catalog(
     return True
 
 
-def push_all_collections(
+async def push_all_collections_async(
     catalog_root: Path,
     destination: str,
     *,
@@ -1657,14 +1657,14 @@ def push_all_collections(
     dry_run: bool = False,
     profile: str | None = None,
     region: str | None = None,
-    workers: int | None = None,
+    concurrency: int | None = None,
     verbose: bool = False,
     json_mode: bool = False,
 ) -> PushAllResult:
-    """Push all collections in a catalog to cloud storage.
+    """Push all collections in a catalog to cloud storage asynchronously.
 
-    Processes collections with configurable parallelism.
-    Continues on individual failures and reports all errors at the end.
+    Primary async implementation. Uses asyncio.gather() for concurrent
+    collection pushes within a single event loop.
 
     Args:
         catalog_root: Path to the catalog root directory.
@@ -1673,7 +1673,7 @@ def push_all_collections(
         dry_run: If True, show what would be uploaded without uploading.
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only). Overrides profile/env config.
-        workers: Number of parallel workers. None = auto-detect, 1 = sequential.
+        concurrency: Maximum concurrent collection pushes. None = auto-detect.
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
 
@@ -1683,8 +1683,6 @@ def push_all_collections(
     Raises:
         ValueError: If catalog_root is not a valid catalog.
     """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
     collections = discover_collections(catalog_root)
     total = len(collections)
 
@@ -1712,16 +1710,21 @@ def push_all_collections(
         "errors": {},
     }
 
-    max_workers = workers if workers is not None else min(total, get_default_concurrency())
-    max_workers = min(max_workers, total)
-    completed_count = 0
-    completed_lock = threading.Lock()
+    max_concurrent = (
+        concurrency if concurrency is not None else min(total, get_default_concurrency())
+    )
+    max_concurrent = min(max_concurrent, total)
 
-    def push_one(collection: str) -> tuple[str, PushResult | None, str | None]:
-        """Push a single collection, returning (collection, result, error)."""
-        try:
-            result = asyncio.run(
-                push_async(
+    info(f"Using concurrency: {max_concurrent}")
+
+    # Semaphore for collection-level concurrency control
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def push_one(collection: str) -> tuple[str, PushResult | None, str | None]:
+        """Push a single collection with semaphore control."""
+        async with semaphore:
+            try:
+                result = await push_async(
                     catalog_root=catalog_root,
                     collection=collection,
                     destination=destination,
@@ -1732,21 +1735,24 @@ def push_all_collections(
                     json_mode=json_mode,
                     suppress_progress=True,
                 )
-            )
-            return (collection, result, None)
-        except Exception as e:
-            return (collection, None, f"{type(e).__name__}: {e}")
+                return (collection, result, None)
+            except Exception as e:
+                return (collection, None, f"{type(e).__name__}: {e}")
 
-    info(f"Using {max_workers} parallel worker(s)")
+    # Run all collection pushes concurrently
+    tasks = [push_one(coll) for coll in collections]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(push_one, coll): coll for coll in collections}
-        for future in as_completed(futures):
-            coll, result, err_msg = future.result()
-            with completed_lock:
-                completed_count += 1
-                current = completed_count
-            _push_all_process_result(coll, result, err_msg, current, total, stats)
+    # Process results
+    for i, result in enumerate(results):
+        if isinstance(result, BaseException):
+            coll = collections[i]
+            error(f"[{i + 1}/{total}] Failed {coll}: {result}")
+            stats["failed"] += 1
+            stats["errors"][coll] = [str(result)]
+        elif isinstance(result, tuple):
+            coll, push_result, err_msg = result
+            _push_all_process_result(coll, push_result, err_msg, i + 1, total, stats)
 
     catalog_ok = _push_all_upload_catalog(
         catalog_root, destination, profile, region, dry_run, stats
@@ -1778,4 +1784,54 @@ def push_all_collections(
         total_files_uploaded=stats["total_files"],
         total_versions_pushed=stats["total_versions"],
         collection_errors=stats["errors"],
+    )
+
+
+def push_all_collections(
+    catalog_root: Path,
+    destination: str,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    profile: str | None = None,
+    region: str | None = None,
+    workers: int | None = None,
+    verbose: bool = False,
+    json_mode: bool = False,
+) -> PushAllResult:
+    """Push all collections in a catalog to cloud storage (sync wrapper).
+
+    This is a thin wrapper around `push_all_collections_async()` for
+    backward compatibility. All logic is in the async implementation.
+
+    Args:
+        catalog_root: Path to the catalog root directory.
+        destination: Object store URL (e.g., s3://bucket/prefix).
+        force: If True, overwrite remote even if diverged.
+        dry_run: If True, show what would be uploaded without uploading.
+        profile: AWS profile name (for S3 only).
+        region: AWS region (for S3 only). Overrides profile/env config.
+        workers: Number of parallel workers. None = auto-detect, 1 = sequential.
+            (Maps to 'concurrency' in async implementation.)
+        verbose: If True, show per-file upload details.
+        json_mode: If True, suppress progress bar (for --json output).
+
+    Returns:
+        PushAllResult with aggregate statistics and per-collection errors.
+
+    Raises:
+        ValueError: If catalog_root is not a valid catalog.
+    """
+    return asyncio.run(
+        push_all_collections_async(
+            catalog_root=catalog_root,
+            destination=destination,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+            region=region,
+            concurrency=workers,
+            verbose=verbose,
+            json_mode=json_mode,
+        )
     )
