@@ -19,6 +19,7 @@ See ADR-0007 for CLI wraps Python API (all logic in library layer).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import time
@@ -36,14 +37,9 @@ from portolan_cli.async_utils import (
     get_default_concurrency,
 )
 from portolan_cli.output import detail, error, info, output_section, success, warn
-from portolan_cli.parallel import (
-    execute_parallel,
-    get_default_workers,  # Re-export for backwards compatibility
-)
 from portolan_cli.upload import ObjectStore, parse_object_store_url
 from portolan_cli.upload_progress import UploadProgressReporter
 
-# Re-export get_default_workers for backwards compatibility
 __all__ = [
     "get_default_workers",
     "push",
@@ -56,6 +52,18 @@ __all__ = [
     "PushVersionDiff",
     "VersionDiff",  # Deprecated alias
 ]
+
+
+def get_default_workers() -> int:
+    """Get default number of workers for parallel operations.
+
+    This is a backward-compatible wrapper around get_default_concurrency().
+    New code should use get_default_concurrency() from async_utils instead.
+
+    Returns:
+        Default number of workers (same as concurrency default).
+    """
+    return get_default_concurrency()
 
 
 # =============================================================================
@@ -523,133 +531,6 @@ def _get_assets_to_upload(
     return assets_to_upload
 
 
-def _upload_assets(
-    store: ObjectStore,
-    catalog_root: Path,
-    prefix: str,
-    assets: list[Path],
-    *,
-    dry_run: bool = False,
-    workers: int | None = None,
-    verbose: bool = False,
-    json_mode: bool = False,
-    suppress_progress: bool = False,
-) -> tuple[int, list[str], list[str], UploadMetrics]:
-    """Upload asset files to object storage with parallel workers.
-
-    Args:
-        store: Object store instance.
-        catalog_root: Path to catalog root (for relative path calculation).
-        prefix: Prefix in object storage.
-        assets: List of asset file paths to upload.
-        dry_run: If True, don't actually upload.
-        workers: Number of parallel upload workers. None = auto-detect.
-        verbose: If True, show per-file upload details. Default quiet mode
-            only shows failures.
-        json_mode: If True, suppress progress bar (for --json output).
-        suppress_progress: If True, suppress progress bar (for nested calls
-            where parent owns the progress surface).
-
-    Returns:
-        Tuple of (files_uploaded, errors, uploaded_keys, metrics).
-        uploaded_keys contains the object keys that were successfully uploaded,
-        useful for rollback on subsequent failures.
-        metrics contains upload performance data for summary display.
-    """
-    metrics = UploadMetrics()
-
-    if not assets:
-        return 0, [], [], metrics
-
-    total = len(assets)
-
-    if dry_run:
-        # Dry run stays sequential for readable output
-        for i, asset_path in enumerate(assets, 1):
-            rel_path = asset_path.relative_to(catalog_root)
-            target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
-            info(f"[DRY RUN] Would upload ({i}/{total}): {rel_path} -> {target_key}")
-        return 0, [], [], metrics
-
-    # Calculate total bytes for progress bar
-    total_bytes = sum(p.stat().st_size for p in assets)
-
-    # Thread-safe containers for parallel execution
-    uploaded_keys: list[str] = []
-    errors_list: list[str] = []
-    keys_lock = threading.Lock()
-    # Hold reference to progress reporter for on_complete callback
-    progress_reporter: UploadProgressReporter | None = None
-
-    def upload_one(asset_path_str: str) -> tuple[str, int, float]:
-        """Upload a single asset. Returns (target_key, size_bytes, duration_seconds)."""
-        asset_path = Path(asset_path_str)
-        rel_path = asset_path.relative_to(catalog_root)
-        target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
-
-        # Get file size before upload
-        size_bytes = asset_path.stat().st_size
-
-        # Time the upload
-        start = time.perf_counter()
-        obs.put(store, target_key, asset_path)
-        duration = time.perf_counter() - start
-
-        return target_key, size_bytes, duration
-
-    # Convert paths to strings for execute_parallel
-    asset_strs = [str(p) for p in assets]
-
-    def on_complete(
-        item: str,
-        result: tuple[str, int, float] | None,
-        err: str | None,
-        completed: int,
-        total_count: int,
-    ) -> None:
-        """Track results thread-safely."""
-        rel_path = Path(item).relative_to(catalog_root)
-        with keys_lock:
-            if err:
-                errors_list.append(f"Failed to upload {rel_path}: {err}")
-                # Always show failures
-                error(f"Failed: {rel_path} - {err}")
-            else:
-                target_key, size_bytes, duration = result  # type: ignore[misc]
-                uploaded_keys.append(target_key)
-                metrics.record(size_bytes, duration)
-
-                # Update progress bar
-                if progress_reporter is not None:
-                    progress_reporter.advance(bytes_uploaded=size_bytes)
-
-                # Only show per-file details in verbose mode (without progress bar)
-                if verbose and json_mode:
-                    size_str = format_file_size(size_bytes)
-                    speed = size_bytes / duration if duration > 0 else 0
-                    speed_str = format_speed(speed)
-                    detail(f"[{completed}/{total_count}] {rel_path} ({size_str}, {speed_str})")
-
-    # Use progress bar for live feedback (unless json_mode or suppress_progress)
-    with UploadProgressReporter(
-        total_files=total,
-        total_bytes=total_bytes,
-        json_mode=json_mode or suppress_progress,
-    ) as reporter:
-        progress_reporter = reporter
-        execute_parallel(
-            items=asset_strs,
-            operation=upload_one,
-            workers=workers,
-            on_complete=on_complete,
-            verbose=False,  # Progress bar handles display, not execute_parallel
-        )
-        # Record wall-clock elapsed time for accurate average_speed calculation
-        metrics.record_elapsed(reporter.elapsed_seconds)
-
-    return len(uploaded_keys), errors_list, uploaded_keys, metrics
-
-
 def _cleanup_uploaded_assets(store: ObjectStore, uploaded_keys: list[str]) -> None:
     """Clean up (delete) uploaded assets after a failed push.
 
@@ -1030,15 +911,10 @@ def push(
     json_mode: bool = False,
     suppress_progress: bool = False,
 ) -> PushResult:
-    """Push local catalog changes to cloud object storage.
+    """Push local catalog changes to cloud object storage (sync wrapper).
 
-    This function:
-    1. Reads local versions.json
-    2. Fetches remote versions.json (with etag)
-    3. Diffs local vs remote to find changes
-    4. Detects conflicts (unless --force)
-    5. Uploads changed assets (manifest-last)
-    6. Uploads versions.json with etag check
+    This is a thin wrapper around `push_async()` for backward compatibility.
+    All logic is in the async implementation.
 
     Args:
         catalog_root: Path to the local catalog root.
@@ -1048,12 +924,10 @@ def push(
         dry_run: If True, show what would be uploaded without uploading.
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only). Overrides profile/env config.
-        workers: Number of parallel upload workers. None = auto-detect.
-        verbose: If True, show per-file upload details with size and speed.
-            Default is quiet mode (only shows failures).
+        workers: Number of parallel upload workers (maps to concurrency).
+        verbose: If True, show per-file upload details (currently ignored in async).
         json_mode: If True, suppress progress bar (for --json output).
-        suppress_progress: If True, suppress progress bar (for nested calls
-            where parent owns the progress surface, e.g., catalog-wide push).
+        suppress_progress: If True, suppress progress bar (for nested calls).
 
     Returns:
         PushResult with upload statistics.
@@ -1063,174 +937,22 @@ def push(
         ValueError: If destination URL is invalid.
         PushConflictError: If remote diverged and force=False.
     """
-    # Validate catalog exists
-    if not catalog_root.exists():
-        raise FileNotFoundError(f"Catalog root not found: {catalog_root}")
+    # Map workers to concurrency (same concept, different naming)
+    concurrency = workers if workers is not None else None
 
-    # Resolve catalog_root to absolute path for consistent path operations
-    catalog_root = catalog_root.resolve()
-
-    # Read local versions
-    local_data = _read_local_versions(catalog_root, collection)
-    # Filter out None values (malformed version entries)
-    local_versions: list[str] = [
-        v.get("version") for v in local_data.get("versions", []) if v.get("version") is not None
-    ]
-
-    # Bug #137: dry-run must not make any network calls.
-    # Return early with a simulated "would push" result before any I/O.
-    if dry_run:
-        return _handle_push_dry_run(catalog_root, local_data, local_versions)
-
-    # Setup store
-    store, prefix = _setup_store(destination, profile=profile, region=region)
-
-    # Fetch remote versions
-    info(f"Checking remote state: {destination}")
-    remote_data, etag = _fetch_remote_versions(store, prefix, collection)
-
-    if remote_data is None:
-        info("No remote versions.json found (first push)")
-        remote_versions: list[str] = []
-    else:
-        remote_versions = [v.get("version") for v in remote_data.get("versions", [])]
-        detail(f"Remote version: {remote_data.get('current_version')}")
-
-    # Diff versions
-    diff = diff_version_lists(local_versions, remote_versions)
-
-    # Check for conflicts (dry_run already returned above, so we're always in live mode here)
-    if diff.has_conflict and not force:
-        conflict_msg = (
-            f"Remote has changes not present locally: {diff.remote_only}. "
-            "Pull changes first or use --force to overwrite."
+    return asyncio.run(
+        push_async(
+            catalog_root=catalog_root,
+            collection=collection,
+            destination=destination,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+            region=region,
+            concurrency=concurrency,
+            json_mode=json_mode,
+            suppress_progress=suppress_progress,
         )
-        raise PushConflictError(conflict_msg)
-
-    # Nothing to push?
-    # With --force, we still push if remote has versions we don't have (to overwrite remote state)
-    if not diff.local_only and not (force and diff.remote_only):
-        info("Nothing to push - local and remote are in sync")
-        return PushResult(
-            success=True,
-            files_uploaded=0,
-            versions_pushed=0,
-            conflicts=[],
-            errors=[],
-        )
-
-    # Get assets to upload
-    assets = _get_assets_to_upload(catalog_root, local_data, diff.local_only)
-
-    # Upload assets first (manifest-last pattern)
-    files_uploaded, upload_errors, uploaded_keys, metrics = _upload_assets(
-        store,
-        catalog_root,
-        prefix,
-        assets,
-        dry_run=False,
-        workers=workers,
-        verbose=verbose,
-        json_mode=json_mode,
-        suppress_progress=suppress_progress,
-    )
-
-    if upload_errors:
-        error("Asset upload failed, aborting push")
-        # Clean up any assets that were uploaded before the failure
-        _cleanup_uploaded_assets(store, uploaded_keys)
-        return PushResult(
-            success=False,
-            files_uploaded=files_uploaded,
-            versions_pushed=0,
-            conflicts=[],
-            errors=upload_errors,
-            metrics=metrics,
-        )
-
-    # Upload STAC metadata files (Issue #252)
-    # Order: item STAC -> collection.json -> catalog.json (leaf to root)
-    # Include catalog.json so standalone push() creates a clonable remote catalog
-    try:
-        stac_files = _discover_stac_files(catalog_root, collection, include_catalog=True)
-    except FileNotFoundError as e:
-        error(str(e))
-        _cleanup_uploaded_assets(store, uploaded_keys)
-        return PushResult(
-            success=False,
-            files_uploaded=files_uploaded,
-            versions_pushed=0,
-            conflicts=[],
-            errors=[str(e)],
-            metrics=metrics,
-        )
-
-    stac_uploaded, stac_errors, stac_keys = _upload_stac_files(
-        store, catalog_root, prefix, stac_files, dry_run=False, json_mode=json_mode, verbose=verbose
-    )
-    # Track STAC keys for rollback - if versions.json fails, STAC files should
-    # also be rolled back to avoid broken references to rolled-back assets
-    uploaded_keys.extend(stac_keys)
-    files_uploaded += stac_uploaded
-
-    if stac_errors:
-        error("STAC metadata upload failed, aborting push")
-        # Rollback both assets and STAC files
-        _cleanup_uploaded_assets(store, uploaded_keys)
-        return PushResult(
-            success=False,
-            files_uploaded=files_uploaded,
-            versions_pushed=0,
-            conflicts=[],
-            errors=stac_errors,
-            metrics=metrics,
-        )
-
-    # Upload versions.json (manifest-last pattern for data integrity)
-    info("Uploading versions.json...")
-    try:
-        _upload_versions_json(store, prefix, collection, local_data, etag, force=force)
-        # Build success message with optional metrics
-        msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
-        if metrics.total_bytes > 0:
-            size = format_file_size(metrics.total_bytes)
-            speed = format_speed(metrics.average_speed)
-            msg += f" ({size}, {speed})"
-        success(msg)
-    except PushConflictError as e:
-        # Clean up uploaded assets on versions.json failure (orphan prevention)
-        _cleanup_uploaded_assets(store, uploaded_keys)
-        raise PushConflictError("Remote changed during push, re-run push to try again") from e
-    except Exception as e:
-        # Clean up uploaded assets on any versions.json upload failure
-        _cleanup_uploaded_assets(store, uploaded_keys)
-        error(f"Failed to upload versions.json: {e}")
-        return PushResult(
-            success=False,
-            files_uploaded=files_uploaded,
-            versions_pushed=0,
-            conflicts=[],
-            errors=[f"Failed to upload versions.json: {e}"],
-            metrics=metrics,
-        )
-
-    # Upload READMEs last (derived from STAC + versions.json + metadata.yaml)
-    # README errors are warnings, not failures - the data is already pushed
-    readme_uploaded, readme_errors = _upload_readmes(
-        store, catalog_root, prefix, stac_files, dry_run=False
-    )
-    files_uploaded += readme_uploaded
-    if readme_errors:
-        for err in readme_errors:
-            warn(err)
-
-    return PushResult(
-        success=True,
-        files_uploaded=files_uploaded,
-        versions_pushed=len(diff.local_only),
-        conflicts=[],
-        errors=[],
-        metrics=metrics,
     )
 
 
@@ -1857,6 +1579,76 @@ def discover_collections(catalog_root: Path) -> list[str]:
     return sorted(collections)
 
 
+def _push_all_process_result(
+    coll: str,
+    result: PushResult | None,
+    err_msg: str | None,
+    current_completed: int,
+    total: int,
+    stats: dict[str, Any],
+) -> None:
+    """Process result of a single collection push (helper for push_all_collections)."""
+    with output_section():
+        if err_msg:
+            error(f"[{current_completed}/{total}] Failed {coll}: {err_msg}")
+            stats["failed"] += 1
+            stats["errors"][coll] = [err_msg]
+        elif result and result.success:
+            v = result.versions_pushed
+            f = result.files_uploaded
+            success(f"[{current_completed}/{total}] {coll}: {v} version(s), {f} file(s)")
+            stats["successful"] += 1
+            stats["total_files"] += f
+            stats["total_versions"] += v
+            if result.metrics:
+                stats["metrics"].merge(result.metrics)
+        elif result:
+            errors_list = result.errors + result.conflicts
+            error(f"[{current_completed}/{total}] Failed {coll}: {', '.join(errors_list)}")
+            stats["failed"] += 1
+            stats["errors"][coll] = errors_list
+        else:
+            error(f"[{current_completed}/{total}] Failed {coll}: Unknown error")
+            stats["failed"] += 1
+            stats["errors"][coll] = ["Unknown error"]
+
+
+def _push_all_upload_catalog(
+    catalog_root: Path,
+    destination: str,
+    profile: str | None,
+    region: str | None,
+    dry_run: bool,
+    stats: dict[str, Any],
+) -> bool:
+    """Upload catalog.json after all collections (helper for push_all_collections).
+
+    Returns True if upload succeeded or was skipped, False if failed.
+    """
+    catalog_json = catalog_root / "catalog.json"
+
+    if stats["successful"] > 0 and stats["failed"] == 0 and catalog_json.exists():
+        if dry_run:
+            info("[DRY RUN] Would upload catalog.json")
+            return True
+        try:
+            store, prefix = _setup_store(destination, profile=profile, region=region)
+            target_key = f"{prefix}/catalog.json".lstrip("/")
+            obs.put(store, target_key, catalog_json.read_bytes())
+            success("Uploaded catalog.json")
+            stats["total_files"] += 1
+            return True
+        except Exception as e:
+            error(f"Failed to upload catalog.json: {e}")
+            stats["errors"]["catalog.json"] = [str(e)]
+            return False
+    elif stats["failed"] > 0:
+        warn("Skipping catalog.json upload because some collections failed")
+    elif not catalog_json.exists():
+        warn(f"catalog.json not found at {catalog_json} - remote catalog may be incomplete")
+    return True
+
+
 def push_all_collections(
     catalog_root: Path,
     destination: str,
@@ -1891,7 +1683,8 @@ def push_all_collections(
     Raises:
         ValueError: If catalog_root is not a valid catalog.
     """
-    # discover_collections validates catalog and raises ValueError if invalid
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     collections = discover_collections(catalog_root)
     total = len(collections)
 
@@ -1899,7 +1692,7 @@ def push_all_collections(
         warn("No initialized collections found in catalog")
         warn("Collections need a versions.json file to be pushable")
         return PushAllResult(
-            success=True,  # Empty catalog is not a failure, just nothing to do
+            success=True,
             total_collections=0,
             successful_collections=0,
             failed_collections=0,
@@ -1909,129 +1702,80 @@ def push_all_collections(
 
     info(f"Found {total} collection(s) to push")
 
-    # Track aggregate stats (thread-safe via output_section for reporting)
-    successful = 0
-    failed = 0
-    total_files = 0
-    total_versions = 0
-    total_metrics = UploadMetrics()  # Aggregate upload metrics across collections
-    collection_errors: dict[str, list[str]] = {}
+    # Track aggregate stats in a dict for helper function access
+    stats: dict[str, Any] = {
+        "successful": 0,
+        "failed": 0,
+        "total_files": 0,
+        "total_versions": 0,
+        "metrics": UploadMetrics(),
+        "errors": {},
+    }
 
-    def push_one(collection: str) -> PushResult:
-        """Push a single collection."""
-        # Use workers=1 here since collection-level parallelism is already handled
-        # by execute_parallel. File-level parallelism is controlled by the workers
-        # param when pushing a single collection directly via CLI.
-        # suppress_progress=True prevents nested progress bars from interfering
-        # with the catalog-level progress output.
-        return push(
-            catalog_root=catalog_root,
-            collection=collection,
-            destination=destination,
-            force=force,
-            dry_run=dry_run,
-            profile=profile,
-            region=region,
-            workers=1,
-            verbose=verbose,
-            json_mode=json_mode,
-            suppress_progress=True,  # Catalog-level owns the progress surface
-        )
+    max_workers = workers if workers is not None else min(total, get_default_concurrency())
+    max_workers = min(max_workers, total)
+    completed_count = 0
+    completed_lock = threading.Lock()
 
-    def on_complete(
-        coll: str,
-        result: PushResult | None,
-        err_msg: str | None,
-        completed: int,
-        total_count: int,
-    ) -> None:
-        """Process completion of a single collection (called with thread-safe progress)."""
-        nonlocal successful, failed, total_files, total_versions
+    def push_one(collection: str) -> tuple[str, PushResult | None, str | None]:
+        """Push a single collection, returning (collection, result, error)."""
+        try:
+            result = asyncio.run(
+                push_async(
+                    catalog_root=catalog_root,
+                    collection=collection,
+                    destination=destination,
+                    force=force,
+                    dry_run=dry_run,
+                    profile=profile,
+                    region=region,
+                    json_mode=json_mode,
+                    suppress_progress=True,
+                )
+            )
+            return (collection, result, None)
+        except Exception as e:
+            return (collection, None, f"{type(e).__name__}: {e}")
 
-        # Use output_section to keep multi-line output together
-        with output_section():
-            if err_msg:
-                error(f"[{completed}/{total_count}] Failed {coll}: {err_msg}")
-                failed += 1
-                collection_errors[coll] = [err_msg]
-            elif result and result.success:
-                v = result.versions_pushed
-                f = result.files_uploaded
-                success(f"[{completed}/{total_count}] {coll}: {v} version(s), {f} file(s)")
-                successful += 1
-                total_files += f
-                total_versions += v
-                # Aggregate metrics from successful pushes
-                if result.metrics:
-                    total_metrics.merge(result.metrics)
-            elif result:
-                errors_list = result.errors + result.conflicts
-                error(f"[{completed}/{total_count}] Failed {coll}: {', '.join(errors_list)}")
-                failed += 1
-                collection_errors[coll] = errors_list
-            else:
-                error(f"[{completed}/{total_count}] Failed {coll}: Unknown error")
-                failed += 1
-                collection_errors[coll] = ["Unknown error"]
+    info(f"Using {max_workers} parallel worker(s)")
 
-    # Execute with common parallel infrastructure
-    execute_parallel(
-        items=collections,
-        operation=push_one,
-        workers=workers,
-        on_complete=on_complete,
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(push_one, coll): coll for coll in collections}
+        for future in as_completed(futures):
+            coll, result, err_msg = future.result()
+            with completed_lock:
+                completed_count += 1
+                current = completed_count
+            _push_all_process_result(coll, result, err_msg, current, total, stats)
+
+    catalog_ok = _push_all_upload_catalog(
+        catalog_root, destination, profile, region, dry_run, stats
     )
 
-    # Upload catalog.json once after all collections (Issue #252)
-    # Only upload when ALL collections succeeded to avoid publishing incomplete catalog
-    # Note: Individual push() calls also upload catalog.json for standalone use
-    catalog_json = catalog_root / "catalog.json"
-    catalog_upload_failed = False
-
-    if successful > 0 and failed == 0 and catalog_json.exists():
-        if dry_run:
-            info("[DRY RUN] Would upload catalog.json")
-        else:
-            try:
-                store, prefix = _setup_store(destination, profile=profile, region=region)
-                target_key = f"{prefix}/catalog.json".lstrip("/")
-                content = catalog_json.read_bytes()
-                obs.put(store, target_key, content)
-                success("Uploaded catalog.json")
-                total_files += 1
-            except Exception as e:
-                error(f"Failed to upload catalog.json: {e}")
-                catalog_upload_failed = True
-                collection_errors["catalog.json"] = [str(e)]
-    elif failed > 0:
-        warn("Skipping catalog.json upload because some collections failed")
-    elif not catalog_json.exists():
-        warn(f"catalog.json not found at {catalog_json} - remote catalog may be incomplete")
-
-    # Summary report (use output_section to keep summary together)
-    overall_success = failed == 0 and not catalog_upload_failed
+    overall_success = stats["failed"] == 0 and catalog_ok
     with output_section():
         info(f"\n{'=' * 60}")
         if overall_success:
-            msg = f"Pushed {successful} collection(s), "
-            msg += f"{total_versions} version(s), {total_files} file(s)"
-            # Add throughput summary if we have metrics
-            if total_metrics.total_bytes > 0:
-                size = format_file_size(total_metrics.total_bytes)
-                speed = format_speed(total_metrics.average_speed)
+            msg = f"Pushed {stats['successful']} collection(s), "
+            msg += f"{stats['total_versions']} version(s), {stats['total_files']} file(s)"
+            if stats["metrics"].total_bytes > 0:
+                size = format_file_size(stats["metrics"].total_bytes)
+                speed = format_speed(stats["metrics"].average_speed)
                 msg += f" ({size}, avg {speed})"
             success(msg)
         else:
-            warn(f"Completed with errors: {successful} succeeded, {failed} failed")
-            for coll_name, errs in collection_errors.items():
+            warn(
+                f"Completed with errors: {stats['successful']} succeeded, {stats['failed']} failed"
+            )
+            for coll_name, errs in stats["errors"].items():
                 warn(f"  {coll_name}: {', '.join(errs)}")
 
     return PushAllResult(
         success=overall_success,
         total_collections=total,
-        successful_collections=successful,
-        failed_collections=failed,
-        total_files_uploaded=total_files,
-        total_versions_pushed=total_versions,
-        collection_errors=collection_errors,
+        successful_collections=stats["successful"],
+        failed_collections=stats["failed"],
+        total_files_uploaded=stats["total_files"],
+        total_versions_pushed=stats["total_versions"],
+        collection_errors=stats["errors"],
     )

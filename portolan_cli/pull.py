@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -37,7 +38,6 @@ import obstore as obs
 from portolan_cli.dataset import compute_checksum
 from portolan_cli.download import download_file
 from portolan_cli.output import detail, error, info, output_section, success, warn
-from portolan_cli.parallel import execute_parallel
 from portolan_cli.upload import _setup_store_and_kwargs, parse_object_store_url
 from portolan_cli.versions import (
     VersionsFile,
@@ -1075,70 +1075,76 @@ def pull_all_collections(
 
     info(f"Found {total} collection(s) to pull")
 
-    # Track aggregate stats (thread-safe via output_section for reporting)
+    # Track aggregate stats
     successful = 0
     failed = 0
     total_files = 0
     collection_errors: dict[str, list[str]] = {}
 
-    def pull_one(collection: str) -> PullResult:
-        """Pull a single collection."""
-        return pull(
-            remote_url=remote_url,
-            local_root=local_root,
-            collection=collection,
-            force=force,
-            dry_run=dry_run,
-            profile=profile,
-        )
+    # Determine concurrency for collection-level parallelism
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    def on_complete(
-        coll: str,
-        result: PullResult | None,
-        err_msg: str | None,
-        completed: int,
-        total_count: int,
-    ) -> None:
-        """Process completion of a single collection (called with thread-safe progress)."""
-        nonlocal successful, failed, total_files
+    max_workers = workers if workers is not None else min(total, DEFAULT_CONCURRENCY)
+    max_workers = min(max_workers, total)  # Don't exceed collection count
+    completed_count = 0
+    completed_lock = threading.Lock()
 
-        # Use output_section to keep multi-line output together
-        with output_section():
-            if err_msg:
-                error(f"[{completed}/{total_count}] Failed {coll}: {err_msg}")
-                failed += 1
-                collection_errors[coll] = [err_msg]
-            elif result and result.success:
-                files = result.files_downloaded
-                if result.up_to_date:
-                    success(f"[{completed}/{total_count}] {coll}: Already up to date")
+    def pull_one(collection: str) -> tuple[str, PullResult | None, str | None]:
+        """Pull a single collection, returning (collection, result, error)."""
+        try:
+            result = pull(
+                remote_url=remote_url,
+                local_root=local_root,
+                collection=collection,
+                force=force,
+                dry_run=dry_run,
+                profile=profile,
+            )
+            return (collection, result, None)
+        except Exception as e:
+            return (collection, None, f"{type(e).__name__}: {e}")
+
+    info(f"Using {max_workers} parallel worker(s)")
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(pull_one, coll): coll for coll in collections}
+
+        for future in as_completed(futures):
+            coll, result, err_msg = future.result()
+
+            with completed_lock:
+                completed_count += 1
+                current_completed = completed_count
+
+            # Process result
+            with output_section():
+                if err_msg:
+                    error(f"[{current_completed}/{total}] Failed {coll}: {err_msg}")
+                    failed += 1
+                    collection_errors[coll] = [err_msg]
+                elif result and result.success:
+                    files = result.files_downloaded
+                    if result.up_to_date:
+                        success(f"[{current_completed}/{total}] {coll}: Already up to date")
+                    else:
+                        success(f"[{current_completed}/{total}] Pulled {coll}: {files} file(s)")
+                    successful += 1
+                    total_files += files
+                elif result:
+                    errors_list = []
+                    if result.uncommitted_changes:
+                        errors_list.append(
+                            f"Uncommitted changes: {', '.join(result.uncommitted_changes)}"
+                        )
+                    else:
+                        errors_list.append("Pull failed")
+                    error(f"[{current_completed}/{total}] Failed {coll}: {', '.join(errors_list)}")
+                    failed += 1
+                    collection_errors[coll] = errors_list
                 else:
-                    success(f"[{completed}/{total_count}] Pulled {coll}: {files} file(s)")
-                successful += 1
-                total_files += files
-            elif result:
-                errors_list = []
-                if result.uncommitted_changes:
-                    errors_list.append(
-                        f"Uncommitted changes: {', '.join(result.uncommitted_changes)}"
-                    )
-                else:
-                    errors_list.append("Pull failed")
-                error(f"[{completed}/{total_count}] Failed {coll}: {', '.join(errors_list)}")
-                failed += 1
-                collection_errors[coll] = errors_list
-            else:
-                error(f"[{completed}/{total_count}] Failed {coll}: Unknown error")
-                failed += 1
-                collection_errors[coll] = ["Unknown error"]
-
-    # Execute with common parallel infrastructure
-    execute_parallel(
-        items=collections,
-        operation=pull_one,
-        workers=workers,
-        on_complete=on_complete,
-    )
+                    error(f"[{current_completed}/{total}] Failed {coll}: Unknown error")
+                    failed += 1
+                    collection_errors[coll] = ["Unknown error"]
 
     # Summary report (use output_section to keep summary together)
     with output_section():
