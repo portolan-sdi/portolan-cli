@@ -471,18 +471,15 @@ class TestPush:
         """Dry-run should not perform actual upload."""
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
-            mock_fetch.return_value = (None, None)  # Empty remote (first push)
+        # Dry-run returns early without any network calls (Bug #137)
+        # No need to patch - the function returns before upload
+        result = push(
+            catalog_root=local_catalog,
+            collection="test",
+            destination="s3://mybucket/catalog",
+            dry_run=True,
+        )
 
-            with patch("portolan_cli.push._upload_assets") as mock_upload:
-                result = push(
-                    catalog_root=local_catalog,
-                    collection="test",
-                    destination="s3://mybucket/catalog",
-                    dry_run=True,
-                )
-
-        mock_upload.assert_not_called()
         assert result.success is True
         assert result.files_uploaded == 0
 

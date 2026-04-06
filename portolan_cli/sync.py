@@ -16,6 +16,7 @@ See ADR-0007 for CLI wraps Python API (all logic in library layer).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 from dataclasses import dataclass, field
@@ -27,7 +28,7 @@ from portolan_cli.check import CheckReport, check_directory
 from portolan_cli.download import download_file
 from portolan_cli.output import detail, error, info, success, warn
 from portolan_cli.pull import PullError, PullResult, pull
-from portolan_cli.push import PushConflictError, PushResult, push
+from portolan_cli.push import PushConflictError, PushResult, push_async
 from portolan_cli.scan import ScanResult, scan_directory
 
 if TYPE_CHECKING:
@@ -390,14 +391,16 @@ def _step_push(
     """Execute push step. Returns (push_result, error_msg)."""
     info(f"Pushing to {destination}...")
     try:
-        push_result = push(
-            catalog_root=catalog_root,
-            collection=collection,
-            destination=destination,
-            force=force,
-            dry_run=dry_run,
-            profile=profile,
-            region=region,
+        push_result = asyncio.run(
+            push_async(
+                catalog_root=catalog_root,
+                collection=collection,
+                destination=destination,
+                force=force,
+                dry_run=dry_run,
+                profile=profile,
+                region=region,
+            )
         )
 
         if not push_result.success:
