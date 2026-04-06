@@ -2739,34 +2739,20 @@ def _check_backend_push_support(
     collection: str | None,
     use_json: bool,
 ) -> None:
-    """Exit with error if the active backend does not support file-based push.
+    """Exit with error if the active backend does not support file-based push."""
+    from portolan_cli.version_ops import check_backend_supports_push
 
-    This is backend routing logic added by the iceberg-backend-integration
-    branch. Extracted here to reduce cyclomatic complexity of push().
-    """
-    from portolan_cli.config import get_setting
-
-    active_backend = get_setting("backend", catalog_path=catalog_path, collection=collection)
-    if active_backend is None or active_backend == "file":
+    result = check_backend_supports_push(catalog_path, collection)
+    if result is None:
         return
-
-    from portolan_cli.backends import get_backend
-
-    backend = get_backend(active_backend, catalog_root=catalog_path)
-    if not (hasattr(backend, "supports_push") and not backend.supports_push()):
-        return
-
-    remote = get_setting("remote", catalog_path=catalog_path, collection=collection)
-    if hasattr(backend, "push_blocked_message"):
-        msg = backend.push_blocked_message(remote)
-    else:
-        msg = f"Push is not supported with the '{active_backend}' backend."
 
     if use_json:
-        envelope = error_envelope("push", [ErrorDetail(type="NotImplementedError", message=msg)])
+        envelope = error_envelope(
+            "push", [ErrorDetail(type="NotImplementedError", message=result.message)]
+        )
         output_json_envelope(envelope)
     else:
-        error(msg)
+        error(result.message)
     raise SystemExit(1)
 
 
@@ -3050,28 +3036,12 @@ def _try_backend_pull(
     Returns True if the backend handled the pull (caller should return).
     Returns False if the backend has no pull() method and the file-based pull
     should proceed as normal.
-
-    This is backend routing logic added by the iceberg-backend-integration
-    branch. Extracted here to reduce cyclomatic complexity of pull_command().
     """
-    from portolan_cli.config import get_setting
+    from portolan_cli.version_ops import try_backend_pull
 
-    active_backend = get_setting("backend", catalog_path=catalog_path, collection=collection)
-    if active_backend is None or active_backend == "file":
+    result = try_backend_pull(catalog_path, remote_url, collection, dry_run)
+    if not result.handled:
         return False
-
-    from portolan_cli.backends import get_backend
-
-    backend = get_backend(active_backend, catalog_root=catalog_path)
-    if not hasattr(backend, "pull"):
-        return False
-
-    result = backend.pull(
-        remote_url=remote_url,
-        local_root=catalog_path,
-        collection=collection,
-        dry_run=dry_run,
-    )
 
     if use_json:
         data = {
@@ -3079,7 +3049,7 @@ def _try_backend_pull(
             "files_skipped": result.files_skipped,
             "local_version": result.local_version,
             "remote_version": result.remote_version,
-            "up_to_date": getattr(result, "up_to_date", False),
+            "up_to_date": result.up_to_date,
         }
         if result.success:
             envelope = success_envelope("pull", data)
@@ -3091,7 +3061,23 @@ def _try_backend_pull(
             )
         output_json_envelope(envelope)
     else:
-        _output_pull_human(result, dry_run=dry_run)
+        # Create a minimal PullResult-like object for _output_pull_human
+        from types import SimpleNamespace
+        from typing import cast
+
+        pull_result = cast(
+            "PullResult",
+            SimpleNamespace(
+                success=result.success,
+                files_downloaded=result.files_downloaded,
+                files_skipped=result.files_skipped,
+                local_version=result.local_version,
+                remote_version=result.remote_version,
+                up_to_date=result.up_to_date,
+                uncommitted_changes=[],
+            ),
+        )
+        _output_pull_human(pull_result, dry_run=dry_run)
 
     if not result.success:
         raise SystemExit(1)
@@ -5307,27 +5293,20 @@ def _require_iceberg_backend(
     catalog_path: Path, use_json: bool, command_name: str
 ) -> VersioningBackend:
     """Load the iceberg backend or exit with an error."""
-    from portolan_cli.config import get_setting
+    from portolan_cli.version_ops import BackendRequiredError, require_iceberg_backend
 
-    backend_name = get_setting("backend", catalog_path=catalog_path)
-    if backend_name != "iceberg":
-        msg = (
-            f"'portolan version {command_name}' requires the 'iceberg' backend. "
-            f"Current backend: '{backend_name or 'file'}'"
-        )
+    try:
+        return require_iceberg_backend(catalog_path, command_name)
+    except BackendRequiredError as e:
         if use_json:
             envelope = error_envelope(
                 f"version {command_name}",
-                [ErrorDetail(type="BackendError", message=msg)],
+                [ErrorDetail(type="BackendError", message=str(e))],
             )
             output_json_envelope(envelope)
         else:
-            error(msg)
-        raise SystemExit(1)
-
-    from portolan_cli.backends import get_backend
-
-    return get_backend("iceberg", catalog_root=catalog_path)
+            error(str(e))
+        raise SystemExit(1) from None
 
 
 @cli.group()

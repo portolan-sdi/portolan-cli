@@ -24,6 +24,13 @@ STAC_VERSION = "1.1.0"
 # Default license when not specified
 DEFAULT_LICENSE = "proprietary"
 
+# Sentinel datetime values for provisional items (ADR-0035, STAC 1.1.0 compliance)
+# STAC 1.1.0 and pystac require start_datetime/end_datetime to be valid ISO 8601 strings
+# when datetime is null. These sentinel values indicate "unknown temporal extent" while
+# remaining parseable. The portolan:datetime_provisional marker flags these for review.
+PROVISIONAL_START_DATETIME = "1900-01-01T00:00:00Z"
+PROVISIONAL_END_DATETIME = "9999-12-31T23:59:59Z"
+
 
 def create_collection(
     *,
@@ -109,8 +116,8 @@ def create_item(
     # to indicate unknown temporal extent.
     datetime_provisional = datetime is None
     if datetime_provisional:
-        item_properties["start_datetime"] = "1900-01-01T00:00:00Z"
-        item_properties["end_datetime"] = "9999-12-31T23:59:59Z"
+        item_properties["start_datetime"] = PROVISIONAL_START_DATETIME
+        item_properties["end_datetime"] = PROVISIONAL_END_DATETIME
         item_properties["portolan:datetime_provisional"] = True
 
     item = pystac.Item(

@@ -226,6 +226,15 @@ name = "CLI cannot import storage backends directly"
 type = "forbidden"
 source_modules = ["portolan_cli.cli"]
 forbidden_modules = ["portolan_cli.backends"]
+# Allow intermediate modules to access backends (ADR-0007: CLI wraps API).
+# cli.py uses these modules as a clean interface; direct cli->backends is still forbidden.
+ignore_imports = [
+    "portolan_cli.catalog -> portolan_cli.backends",
+    "portolan_cli.dataset -> portolan_cli.backends",
+    "portolan_cli.version_ops -> portolan_cli.backends",
+    "portolan_cli.version_ops -> portolan_cli.backends.protocol",
+    "portolan_cli.cli -> portolan_cli.backends.protocol",  # TYPE_CHECKING only
+]
 
 [[tool.importlinter.contracts]]
 id = "utilities-are-foundational"

@@ -1115,26 +1115,36 @@ def _finalize_with_backend(
 
     remote = get_setting("remote", catalog_path=catalog_root, collection=collection_id)
     first = items[0]
-    backend.on_post_add(
-        {
-            "catalog_root": catalog_root,
-            "collection_id": collection_id,
-            "collection_dir": collection_dir,
-            "collection": collection,
-            "item_id": first.item_id,
-            "item_dir": first.item_json_path.parent,
-            "asset_files": first.asset_files,
-            "items": [
-                {
-                    "item_id": p.item_id,
-                    "item_dir": p.item_json_path.parent,
-                    "asset_files": p.asset_files,
-                }
-                for p in items
-            ],
-            "remote": remote,
-        }
-    )
+    context = {
+        "catalog_root": catalog_root,
+        "collection_id": collection_id,
+        "collection_dir": collection_dir,
+        "collection": collection,
+        "item_id": first.item_id,
+        "item_dir": first.item_json_path.parent,
+        "asset_files": first.asset_files,
+        "items": [
+            {
+                "item_id": p.item_id,
+                "item_dir": p.item_json_path.parent,
+                "asset_files": p.asset_files,
+            }
+            for p in items
+        ],
+        "remote": remote,
+    }
+    try:
+        backend.on_post_add(context)
+    except Exception:
+        # Version was already published successfully. Log warning but don't fail
+        # the entire add operation. The backend hook is for optional enrichment
+        # (e.g., uploading STAC metadata to remote).
+        logger.warning(
+            "Backend on_post_add hook failed for collection '%s'. "
+            "Version was published but post-add actions may be incomplete.",
+            collection_id,
+            exc_info=True,
+        )
 
 
 def _batch_update_versions(

@@ -61,6 +61,14 @@ class SchemaFingerprint(TypedDict):
     hash: str
 
 
+class PostAddItemContext(TypedDict):
+    """Per-item context within PostAddContext.items list."""
+
+    item_id: str
+    item_dir: Path
+    asset_files: dict[str, tuple[Path, str]]
+
+
 class PostAddContext(TypedDict):
     """Context passed to a backend's optional on_post_add() hook.
 
@@ -74,16 +82,21 @@ class PostAddContext(TypedDict):
         pull(remote_url: str, local_root: Path, collection: str, *, dry_run: bool) -> PullResult
         supports_push() -> bool
         push_blocked_message(remote: str | None) -> str
+
+    Note:
+        The ``collection`` field is typed as Any to avoid a hard dependency on pystac.
+        At runtime, this will be a pystac.Collection instance.
     """
 
     catalog_root: Path
     collection_id: str
     collection_dir: Path
-    collection: Any  # pystac.Collection
+    collection: Any  # pystac.Collection (typed as Any to avoid import)
     item_id: str
     item_dir: Path
     asset_files: dict[str, tuple[Path, str]]
     remote: str | None
+    items: list[PostAddItemContext]
 
 
 @runtime_checkable
