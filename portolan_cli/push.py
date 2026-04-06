@@ -765,6 +765,8 @@ def _upload_stac_files(
     stac_files: dict[str, list[Path]],
     *,
     dry_run: bool = False,
+    json_mode: bool = False,
+    verbose: bool = False,
 ) -> tuple[int, list[str], list[str]]:
     """Upload STAC metadata files in manifest-last order.
 
@@ -786,10 +788,14 @@ def _upload_stac_files(
         prefix: Prefix in object storage.
         stac_files: Dict of STAC files from _discover_stac_files().
         dry_run: If True, don't actually upload.
+        json_mode: If True, suppress progress bar (for --json output).
+        verbose: If True, show per-file output instead of progress bar.
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys).
     """
+    import sys
+
     files_uploaded = 0
     errors: list[str] = []
     uploaded_keys: list[str] = []
@@ -805,28 +811,41 @@ def _upload_stac_files(
     if total == 0:
         return 0, [], []
 
-    info(f"Uploading {total} STAC metadata file(s)...")
+    # Calculate total bytes for progress (STAC files are small but still useful)
+    total_bytes = sum(f.stat().st_size for f in ordered_files)
 
-    for i, file_path in enumerate(ordered_files, 1):
-        try:
-            rel_path = file_path.relative_to(catalog_root)
-            # Use as_posix() to ensure forward slashes on Windows (cloud keys are always /)
-            target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+    # Use progress bar for STAC uploads (ADR-0040: unified progress output)
+    # Suppress in json_mode or when verbose (verbose shows per-file output)
+    suppress_progress = json_mode or verbose or not sys.stderr.isatty()
 
-            if dry_run:
-                info(f"[DRY RUN] Would upload STAC ({i}/{total}): {rel_path}")
-            else:
-                detail(f"Uploading STAC ({i}/{total}): {rel_path}")
-                # Read and upload the JSON file
-                content = file_path.read_bytes()
-                obs.put(store, target_key, content)
-                files_uploaded += 1
-                uploaded_keys.append(target_key)
+    with UploadProgressReporter(
+        total_files=total,
+        total_bytes=total_bytes,
+        json_mode=suppress_progress,
+    ) as reporter:
+        for file_path in ordered_files:
+            try:
+                rel_path = file_path.relative_to(catalog_root)
+                target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+                file_size = file_path.stat().st_size
 
-        except Exception as e:
-            error_msg = f"Failed to upload {file_path}: {e}"
-            errors.append(error_msg)
-            error(error_msg)
+                if dry_run:
+                    if verbose:
+                        info(f"[DRY RUN] Would upload STAC: {rel_path}")
+                    reporter.advance(bytes_uploaded=file_size)
+                else:
+                    if verbose:
+                        detail(f"Uploading STAC: {rel_path}")
+                    content = file_path.read_bytes()
+                    obs.put(store, target_key, content)
+                    files_uploaded += 1
+                    uploaded_keys.append(target_key)
+                    reporter.advance(bytes_uploaded=file_size)
+
+            except Exception as e:
+                error_msg = f"Failed to upload {file_path}: {e}"
+                errors.append(error_msg)
+                error(error_msg)
 
     return files_uploaded, errors, uploaded_keys
 
@@ -1133,7 +1152,7 @@ def push(
         )
 
     stac_uploaded, stac_errors, stac_keys = _upload_stac_files(
-        store, catalog_root, prefix, stac_files, dry_run=False
+        store, catalog_root, prefix, stac_files, dry_run=False, json_mode=json_mode, verbose=verbose
     )
     # Track STAC keys for rollback - if versions.json fails, STAC files should
     # also be rolled back to avoid broken references to rolled-back assets

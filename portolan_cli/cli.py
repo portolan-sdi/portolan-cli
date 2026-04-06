@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 import click
 
+from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root
 from portolan_cli.catalog_list import (
     AssetStatus,
@@ -2543,24 +2544,35 @@ def add_cmd(
     # add_files already does this correctly when collection_id=None, and batching
     # avoids duplicate item writes when the same item directory appears via
     # multiple CLI arguments (e.g. `portolan add . foo/data.parquet`).
-    # Progress callback for human-readable output (skip for JSON mode)
-    def show_add_progress(file_path: Path) -> None:
-        if not use_json:
+
+    # Pre-count files for progress bar (ADR-0040: unified progress output)
+    # Only count when progress will be displayed (not JSON mode, TTY available)
+    should_show_progress = not use_json and sys.stderr.isatty()
+    total_files = count_files(resolved_paths) if should_show_progress else 0
+
+    # Create progress reporter (suppressed in JSON mode or non-TTY)
+    progress_reporter = AddProgressReporter(total_files=total_files, json_mode=use_json)
+
+    # Progress callback wraps the reporter (verbose mode uses per-file output)
+    def on_file_progress(file_path: Path) -> None:
+        if verbose and not use_json:
             info_output(f"Adding: {file_path.name}")
+        progress_reporter.advance()
 
     # item_datetime is parsed by Click via FLEXIBLE_DATETIME type (ADR-0035)
     try:
-        all_added, all_skipped, all_failures = add_files(
-            paths=resolved_paths,
-            catalog_root=catalog_root,
-            collection_id=None,
-            item_id=item_id,
-            item_datetime=item_datetime,
-            verbose=verbose,
-            on_progress=show_add_progress,
-            workers=workers,
-            json_mode=use_json,
-        )
+        with progress_reporter:
+            all_added, all_skipped, all_failures = add_files(
+                paths=resolved_paths,
+                catalog_root=catalog_root,
+                collection_id=None,
+                item_id=item_id,
+                item_datetime=item_datetime,
+                verbose=verbose,
+                on_progress=on_file_progress,
+                workers=workers,
+                json_mode=use_json,
+            )
     except (ValueError, FileNotFoundError) as err:
         err_type = type(err).__name__
         # Include failed path context in error message when there's only one path
