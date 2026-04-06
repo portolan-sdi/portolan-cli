@@ -2746,7 +2746,7 @@ def _check_backend_push_support(
     """
     from portolan_cli.config import get_setting
 
-    active_backend = get_setting("backend", catalog_path=catalog_path)
+    active_backend = get_setting("backend", catalog_path=catalog_path, collection=collection)
     if active_backend is None or active_backend == "file":
         return
 
@@ -3056,7 +3056,7 @@ def _try_backend_pull(
     """
     from portolan_cli.config import get_setting
 
-    active_backend = get_setting("backend", catalog_path=catalog_path)
+    active_backend = get_setting("backend", catalog_path=catalog_path, collection=collection)
     if active_backend is None or active_backend == "file":
         return False
 
