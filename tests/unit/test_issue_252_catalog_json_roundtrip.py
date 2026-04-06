@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -193,13 +193,14 @@ class TestPushUploadsCatalogJson:
 
         uploaded_keys: list[str] = []
 
-        def mock_put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+        async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             uploaded_keys.append(key)
 
-        with patch("portolan_cli.push.obs.put", side_effect=mock_put):
-            with patch("portolan_cli.push.obs.get") as mock_get:
-                mock_get.side_effect = FileNotFoundError("Not found")
+        async def mock_get_async(store: Any, key: str) -> bytes:
+            raise FileNotFoundError("Not found")
 
+        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async):
+            with patch("portolan_cli.push.obs.get_async", side_effect=mock_get_async):
                 result = push(
                     catalog_root=full_catalog,
                     collection="test-collection",
@@ -224,17 +225,22 @@ class TestPushUploadsCatalogJson:
 
         uploaded_keys: list[str] = []
 
-        def mock_put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+        async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             uploaded_keys.append(key)
 
-        with patch("portolan_cli.push.obs.put", side_effect=mock_put):
-            with patch("portolan_cli.push.obs.get") as mock_get:
-                mock_get.side_effect = FileNotFoundError("Not found")
+        def mock_put_sync(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+            # Sync version for _upload_catalog_json helper
+            uploaded_keys.append(key)
 
-                result = push_all_collections(
-                    catalog_root=full_catalog,
-                    destination="s3://test-bucket/test-prefix",
-                )
+        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async):
+            with patch("portolan_cli.push.obs.put", side_effect=mock_put_sync):
+                with patch("portolan_cli.push.obs.get_async", new_callable=AsyncMock) as mock_get:
+                    mock_get.side_effect = FileNotFoundError("Not found")
+
+                    result = push_all_collections(
+                        catalog_root=full_catalog,
+                        destination="s3://test-bucket/test-prefix",
+                    )
 
         # Verify catalog.json was uploaded at least once (could be 2x: by push + push_all)
         catalog_json_keys = [k for k in uploaded_keys if k.endswith("catalog.json")]
@@ -250,14 +256,14 @@ class TestPushUploadsCatalogJson:
 
         uploaded_content: dict[str, bytes] = {}
 
-        def mock_put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+        async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             if isinstance(data, Path):
                 uploaded_content[key] = data.read_bytes()
             else:
                 uploaded_content[key] = bytes(data) if not isinstance(data, bytes) else data
 
-        with patch("portolan_cli.push.obs.put", side_effect=mock_put):
-            with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async):
+            with patch("portolan_cli.push.obs.get_async", new_callable=AsyncMock) as mock_get:
                 mock_get.side_effect = FileNotFoundError("Not found")
 
                 push_all_collections(
@@ -286,11 +292,11 @@ class TestPushUploadsCollectionJson:
 
         uploaded_keys: list[str] = []
 
-        def mock_put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+        async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             uploaded_keys.append(key)
 
-        with patch("portolan_cli.push.obs.put", side_effect=mock_put):
-            with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async):
+            with patch("portolan_cli.push.obs.get_async", new_callable=AsyncMock) as mock_get:
                 mock_get.side_effect = FileNotFoundError("Not found")
 
                 result = push(
@@ -327,11 +333,11 @@ class TestPushUploadsItemStacFiles:
 
         uploaded_keys: list[str] = []
 
-        def mock_put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+        async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             uploaded_keys.append(key)
 
-        with patch("portolan_cli.push.obs.put", side_effect=mock_put):
-            with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async):
+            with patch("portolan_cli.push.obs.get_async", new_callable=AsyncMock) as mock_get:
                 mock_get.side_effect = FileNotFoundError("Not found")
 
                 result = push(
@@ -370,11 +376,11 @@ class TestPushManifestLastOrdering:
 
         upload_order: list[str] = []
 
-        def mock_put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+        async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             upload_order.append(key)
 
-        with patch("portolan_cli.push.obs.put", side_effect=mock_put):
-            with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async):
+            with patch("portolan_cli.push.obs.get_async", new_callable=AsyncMock) as mock_get:
                 mock_get.side_effect = FileNotFoundError("Not found")
 
                 push(
@@ -431,11 +437,11 @@ class TestPushUploadsAllFiles:
 
         uploaded_keys: set[str] = set()
 
-        def mock_put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+        async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             uploaded_keys.add(key)
 
-        with patch("portolan_cli.push.obs.put", side_effect=mock_put):
-            with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async):
+            with patch("portolan_cli.push.obs.get_async", new_callable=AsyncMock) as mock_get:
                 mock_get.side_effect = FileNotFoundError("Not found")
 
                 push(
@@ -463,11 +469,11 @@ class TestPushUploadsAllFiles:
 
         uploaded_keys: set[str] = set()
 
-        def mock_put(store: Any, key: str, data: Any, **kwargs: Any) -> None:
+        async def mock_put_async(store: Any, key: str, data: Any, **kwargs: Any) -> None:
             uploaded_keys.add(key)
 
-        with patch("portolan_cli.push.obs.put", side_effect=mock_put):
-            with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async):
+            with patch("portolan_cli.push.obs.get_async", new_callable=AsyncMock) as mock_get:
                 mock_get.side_effect = FileNotFoundError("Not found")
 
                 push_all_collections(

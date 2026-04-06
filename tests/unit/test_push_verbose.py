@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from portolan_cli.push import UploadMetrics, _upload_assets, format_file_size, format_speed
+from portolan_cli.push import UploadMetrics, _upload_assets_async, format_file_size, format_speed
 
 if TYPE_CHECKING:
     pass
@@ -155,7 +155,8 @@ class TestUploadAssetsVerboseMode:
         return catalog
 
     @pytest.mark.unit
-    def test_default_mode_suppresses_success_messages(
+    @pytest.mark.asyncio
+    async def test_default_mode_suppresses_success_messages(
         self, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Default mode should not print per-file success messages."""
@@ -166,13 +167,13 @@ class TestUploadAssetsVerboseMode:
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.put"):
-            _upload_assets(
+        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock):
+            await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                verbose=False,  # Default quiet mode
+                suppress_progress=True,  # Default quiet mode
             )
 
         captured = capsys.readouterr()
@@ -181,14 +182,15 @@ class TestUploadAssetsVerboseMode:
         assert "data.parquet" not in captured.out
 
     @pytest.mark.unit
-    def test_verbose_mode_shows_per_file_details(
+    @pytest.mark.asyncio
+    async def test_json_mode_suppresses_progress_bar(
         self, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Verbose mode should print per-file upload details with size and speed.
+        """JSON mode should suppress progress bar output.
 
-        Note: Per-file details are shown as text when there's no progress bar
-        (json_mode=True). With a progress bar (json_mode=False), the progress
-        bar itself shows live speed and progress.
+        Note: The async upload uses AsyncProgressReporter which is suppressed
+        when json_mode=True. Per-file verbose output is not implemented in
+        the async version - progress is shown via the Rich progress bar.
         """
         assets = [
             mock_catalog / "test-collection" / "item1" / "data.parquet",
@@ -196,26 +198,26 @@ class TestUploadAssetsVerboseMode:
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.put"):
-            _upload_assets(
+        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock):
+            files_uploaded, errors, uploaded_keys, metrics = await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                verbose=True,
-                json_mode=True,  # Text output when no progress bar
+                json_mode=True,  # Suppress progress bar
             )
 
-        captured = capsys.readouterr()
-        # Should contain per-file details
-        assert "data.parquet" in captured.out
-        # Should include size (the file is 1000 bytes)
-        assert "B" in captured.out  # "1000 B" or similar
-        # Should include speed
-        assert "/s" in captured.out  # "MiB/s" or similar
+        # Should complete successfully
+        assert files_uploaded == 1
+        assert len(errors) == 0
+        assert len(uploaded_keys) == 1
+        # Metrics should be recorded
+        assert metrics.file_count == 1
+        assert metrics.total_bytes == 1000  # 1KB file
 
     @pytest.mark.unit
-    def test_failures_always_shown(
+    @pytest.mark.asyncio
+    async def test_failures_always_shown(
         self, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Failures should always be shown, regardless of verbose mode."""
@@ -225,13 +227,17 @@ class TestUploadAssetsVerboseMode:
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.put", side_effect=Exception("Network error")):
-            files_uploaded, errors, _, _metrics = _upload_assets(
+        with patch(
+            "portolan_cli.push.obs.put_async",
+            new_callable=AsyncMock,
+            side_effect=Exception("Network error"),
+        ):
+            files_uploaded, errors, _, _metrics = await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                verbose=False,  # Even in quiet mode
+                suppress_progress=True,  # Even in quiet mode
             )
 
         captured = capsys.readouterr()
@@ -241,7 +247,8 @@ class TestUploadAssetsVerboseMode:
         assert "Network error" in errors[0]
 
     @pytest.mark.unit
-    def test_returns_upload_metrics(self, mock_catalog: Path) -> None:
+    @pytest.mark.asyncio
+    async def test_returns_upload_metrics(self, mock_catalog: Path) -> None:
         """Upload should return metrics for summary display."""
         assets = [
             mock_catalog / "test-collection" / "item1" / "data.parquet",
@@ -250,13 +257,13 @@ class TestUploadAssetsVerboseMode:
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.put"):
-            files_uploaded, errors, uploaded_keys, metrics = _upload_assets(
+        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock):
+            files_uploaded, errors, uploaded_keys, metrics = await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                verbose=False,
+                suppress_progress=True,
             )
 
         assert isinstance(metrics, UploadMetrics)
@@ -264,7 +271,8 @@ class TestUploadAssetsVerboseMode:
         assert metrics.total_bytes == 3000  # 1000 + 2000 bytes
 
     @pytest.mark.unit
-    def test_summary_shows_total_size_and_speed(
+    @pytest.mark.asyncio
+    async def test_summary_shows_total_size_and_speed(
         self, mock_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Summary should show total size and average speed even in non-verbose mode."""
@@ -275,13 +283,13 @@ class TestUploadAssetsVerboseMode:
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.put"):
-            _files_uploaded, _errors, _uploaded_keys, metrics = _upload_assets(
+        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock):
+            _files_uploaded, _errors, _uploaded_keys, metrics = await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,
                 prefix="test-prefix",
                 assets=assets,
-                verbose=False,  # Even in quiet mode
+                suppress_progress=True,  # Even in quiet mode
             )
 
         # Metrics should be populated

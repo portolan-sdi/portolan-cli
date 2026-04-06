@@ -8,7 +8,7 @@ Tests verify:
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -44,7 +44,7 @@ class TestProfileDefaultBehavior:
         """portolan push should use 'default' profile when --profile not specified."""
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = MagicMock(
                 success=True,
                 files_uploaded=0,
@@ -68,7 +68,7 @@ class TestProfileDefaultBehavior:
         """portolan push should use explicit --profile when provided."""
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = MagicMock(
                 success=True,
                 files_uploaded=0,
@@ -212,7 +212,7 @@ class TestProfileConfigResolution:
         """portolan push should use aws_profile from config.yaml when --profile not specified."""
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = MagicMock(
                 success=True,
                 files_uploaded=0,
@@ -236,7 +236,7 @@ class TestProfileConfigResolution:
         """CLI --profile should override aws_profile from config.yaml."""
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = MagicMock(
                 success=True,
                 files_uploaded=0,
@@ -379,7 +379,7 @@ class TestProfileConfigResolution:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = MagicMock(
                 success=True,
                 files_uploaded=0,

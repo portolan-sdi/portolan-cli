@@ -280,9 +280,9 @@ class TestCliOutputWithFailures:
                     ["add", str(collection_dir)],
                 )
 
-                # Should show both successes and failures
-                assert "2" in result.output  # 2 added
-                assert "1" in result.output or "failed" in result.output.lower()
+                # Per ADR-0040: failures are shown with details
+                assert "failed" in result.output.lower()
+                assert "bad.parquet" in result.output
                 # Should exit with non-zero code due to failures
                 assert result.exit_code == 1
 
