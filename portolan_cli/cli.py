@@ -2301,16 +2301,26 @@ def _output_add_unchanged(skipped: list[Path], verbose: bool) -> None:
 
 
 def _output_add_summary(added: list[DatasetInfo]) -> None:
-    """Output final success summary after adding files."""
+    """Output final success summary after adding files (ADR-0040)."""
     total_added = len(added)
     unique_items = len({ds.item_id for ds in added})
+    unique_collections = len({ds.collection_id for ds in added})
+
+    # Build summary with file count, item count (if different), and collection count
+    parts = []
+
     if unique_items == total_added:
-        success(f"Added {total_added} item{'s' if total_added != 1 else ''}")
+        parts.append(f"{total_added} file{'s' if total_added != 1 else ''}")
     else:
-        success(
-            f"Added {total_added} file{'s' if total_added != 1 else ''} "
+        parts.append(
+            f"{total_added} file{'s' if total_added != 1 else ''} "
             f"({unique_items} item{'s' if unique_items != 1 else ''})"
         )
+
+    # Always show collection count for clarity
+    parts.append(f"to {unique_collections} collection{'s' if unique_collections != 1 else ''}")
+
+    success(f"Added {' '.join(parts)}")
 
 
 def _output_add_human(

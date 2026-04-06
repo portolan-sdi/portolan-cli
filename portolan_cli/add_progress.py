@@ -2,7 +2,7 @@
 
 This module provides:
 1. Fast file pre-counting for determinate progress bars
-2. A progress reporter context manager using Rich
+2. A thread-safe progress reporter context manager using Rich
 3. Suppression of progress in JSON mode (agent/batch usage)
 
 Example:
@@ -13,12 +13,17 @@ Example:
     ...         process(file)
     ...         reporter.advance()
     ... print(f"Added in {reporter.elapsed_seconds:.1f}s")
+
+Note:
+    The pre-count may differ slightly from actual processing if the filesystem
+    changes between counting and processing. This is acceptable for UX purposes.
 """
 
 from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,7 +46,9 @@ def count_files(
 
     Args:
         paths: List of file or directory paths to count.
-        include_hidden: Include hidden files (starting with .).
+        include_hidden: Include hidden files (starting with .) when recursing.
+            Note: Explicitly passed file paths are always counted regardless
+            of this flag—hidden filtering only applies to directory traversal.
 
     Returns:
         Total number of files.
@@ -49,13 +56,18 @@ def count_files(
     Note:
         This should complete quickly for typical directory trees.
         Uses os.scandir for efficient enumeration.
+
+        The count may differ from actual processing if:
+        - Files are added/removed between count and processing (race condition)
+        - Permission errors occur (silently skipped during count)
+        This is acceptable for progress bar UX purposes.
     """
     count = 0
 
     for path in paths:
         if path.is_file():
-            if include_hidden or not path.name.startswith("."):
-                count += 1
+            # Explicitly passed file paths are always counted (user intent)
+            count += 1
         elif path.is_dir():
             count += _count_dir_files(path, include_hidden=include_hidden)
 
@@ -86,10 +98,14 @@ def _count_dir_files(root: Path, *, include_hidden: bool = False) -> int:
 
 
 class AddProgressReporter:
-    """Context manager for add progress reporting.
+    """Thread-safe context manager for add progress reporting.
 
     Provides a progress bar using Rich library, with automatic
     suppression in JSON mode or non-TTY environments.
+
+    Thread Safety:
+        The advance() method is thread-safe and can be called from multiple
+        threads concurrently (e.g., when using parallel workers).
 
     Attributes:
         total_files: Total number of files to add.
@@ -118,6 +134,7 @@ class AddProgressReporter:
         self._start_time: float | None = None
         self._progress: Progress | None = None
         self._task_id: TaskID | None = None
+        self._lock = threading.Lock()  # Thread-safety for parallel workers
 
     def __enter__(self) -> AddProgressReporter:
         """Enter the context and start progress display."""
@@ -173,10 +190,13 @@ class AddProgressReporter:
     def advance(self, steps: int = 1) -> None:
         """Advance the progress by the given number of files.
 
+        Thread-safe: Can be called from multiple threads concurrently.
+
         Args:
             steps: Number of files processed.
         """
-        self.files_processed += steps
+        with self._lock:
+            self.files_processed += steps
 
-        if self._progress is not None and self._task_id is not None:
-            self._progress.advance(self._task_id, advance=steps)
+            if self._progress is not None and self._task_id is not None:
+                self._progress.advance(self._task_id, advance=steps)

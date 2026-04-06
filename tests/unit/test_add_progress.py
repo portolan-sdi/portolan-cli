@@ -4,6 +4,7 @@ Tests verify:
 1. File pre-counting is accurate
 2. Progress reporter tracks state correctly
 3. JSON mode suppresses output
+4. Thread-safety for parallel workers
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import pytest
 from portolan_cli.add_progress import AddProgressReporter, count_files
 
 
+@pytest.mark.unit
 class TestFilePreCount:
     """Tests for the count_files() function."""
 
@@ -64,12 +66,22 @@ class TestFilePreCount:
 
         assert count == 3  # single + a + b
 
-    def test_count_excludes_hidden_by_default(self, tmp_path: Path) -> None:
-        """Hidden files are excluded by default."""
+    def test_count_excludes_hidden_in_directories(self, tmp_path: Path) -> None:
+        """Hidden files are excluded when recursing directories."""
         (tmp_path / "visible.txt").write_text("v")
         (tmp_path / ".hidden.txt").write_text("h")
 
         count = count_files([tmp_path])
+
+        assert count == 1
+
+    def test_count_explicit_hidden_file_is_counted(self, tmp_path: Path) -> None:
+        """Explicitly passed hidden file paths are always counted."""
+        hidden = tmp_path / ".hidden.txt"
+        hidden.write_text("h")
+
+        # Explicitly passing a hidden file should count it (user intent)
+        count = count_files([hidden])
 
         assert count == 1
 
@@ -97,6 +109,7 @@ class TestFilePreCount:
         assert count == 0
 
 
+@pytest.mark.unit
 class TestAddProgressReporter:
     """Tests for the AddProgressReporter context manager."""
 
@@ -164,3 +177,24 @@ class TestAddProgressIntegration:
 
         assert len(processed) == 3
         assert reporter.files_processed == 3
+
+    def test_reporter_thread_safety(self) -> None:
+        """Reporter is thread-safe with concurrent advance() calls."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        total = 1000
+        reporter = AddProgressReporter(total_files=total, json_mode=True)
+
+        def advance_many(count: int) -> None:
+            for _ in range(count):
+                reporter.advance()
+
+        # Use 10 threads, each advancing 100 times
+        with reporter:
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = [executor.submit(advance_many, 100) for _ in range(10)]
+                for f in futures:
+                    f.result()
+
+        # All 1000 advances should be counted correctly
+        assert reporter.files_processed == total

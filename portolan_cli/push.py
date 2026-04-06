@@ -811,8 +811,9 @@ def _upload_stac_files(
     if total == 0:
         return 0, [], []
 
-    # Calculate total bytes for progress (STAC files are small but still useful)
-    total_bytes = sum(f.stat().st_size for f in ordered_files)
+    # Pre-cache file sizes to avoid double stat() calls (once for total, once per file)
+    file_sizes: dict[Path, int] = {f: f.stat().st_size for f in ordered_files}
+    total_bytes = sum(file_sizes.values())
 
     # Use progress bar for STAC uploads (ADR-0040: unified progress output)
     # Suppress in json_mode or when verbose (verbose shows per-file output)
@@ -827,7 +828,7 @@ def _upload_stac_files(
             try:
                 rel_path = file_path.relative_to(catalog_root)
                 target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
-                file_size = file_path.stat().st_size
+                file_size = file_sizes[file_path]  # Use cached size
 
                 if dry_run:
                     if verbose:
