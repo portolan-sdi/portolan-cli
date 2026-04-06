@@ -2229,27 +2229,39 @@ def _format_sidecar_note(ds: DatasetInfo) -> str:
     return f" (+ {len(sidecars)} sidecars)" if sidecars else ""
 
 
-def _output_added_single_collection(added: list[DatasetInfo]) -> None:
-    """Output added datasets for a single collection."""
-    coll = added[0].collection_id
-    count = len(added)
-    info_output(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
-    for ds in added:
-        success(f"  + {ds.item_id}{_format_sidecar_note(ds)}")
+def _output_added_single_collection(added: list[DatasetInfo], *, verbose: bool = False) -> None:
+    """Output added datasets for a single collection.
+
+    Per ADR-0040: Only show per-file output when verbose=True.
+    Default is summary only (progress bar + final count).
+    """
+    if verbose:
+        coll = added[0].collection_id
+        count = len(added)
+        info_output(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
+        for ds in added:
+            success(f"  + {ds.item_id}{_format_sidecar_note(ds)}")
 
 
-def _output_added_multi_collection(added: list[DatasetInfo]) -> None:
-    """Output added datasets grouped by collection."""
-    collections: dict[str, list[DatasetInfo]] = {}
-    for ds in added:
-        collections.setdefault(ds.collection_id, []).append(ds)
+def _output_added_multi_collection(added: list[DatasetInfo], *, verbose: bool = False) -> None:
+    """Output added datasets grouped by collection.
 
-    total = len(added)
-    info_output(f"Adding {total} file{'s' if total != 1 else ''} to {len(collections)} collections")
-    for coll, datasets in sorted(collections.items()):
-        info_output(f"  {coll}:")
-        for ds in datasets:
-            success(f"    + {ds.item_id}{_format_sidecar_note(ds)}")
+    Per ADR-0040: Only show per-file output when verbose=True.
+    Default is summary only (progress bar + final count).
+    """
+    if verbose:
+        collections: dict[str, list[DatasetInfo]] = {}
+        for ds in added:
+            collections.setdefault(ds.collection_id, []).append(ds)
+
+        total = len(added)
+        info_output(
+            f"Adding {total} file{'s' if total != 1 else ''} to {len(collections)} collections"
+        )
+        for coll, datasets in sorted(collections.items()):
+            info_output(f"  {coll}:")
+            for ds in datasets:
+                success(f"    + {ds.item_id}{_format_sidecar_note(ds)}")
 
 
 def _print_add_failures_batched(failures: list[AddFailure]) -> None:
@@ -2338,13 +2350,13 @@ def _output_add_human(
         _output_add_unchanged(skipped, verbose)
         return
 
-    # Output successful adds
+    # Output successful adds (per-file details only in verbose mode per ADR-0040)
     if added:
         unique_collections = {ds.collection_id for ds in added}
         if len(unique_collections) == 1:
-            _output_added_single_collection(added)
+            _output_added_single_collection(added, verbose=verbose)
         else:
-            _output_added_multi_collection(added)
+            _output_added_multi_collection(added, verbose=verbose)
 
     # Show skipped files in verbose mode
     if verbose and skipped:
