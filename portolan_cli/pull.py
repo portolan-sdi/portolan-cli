@@ -40,6 +40,7 @@ from portolan_cli.output import detail, error, info, output_section, success, wa
 from portolan_cli.upload import _setup_store_and_kwargs, parse_object_store_url
 from portolan_cli.versions import (
     VersionsFile,
+    _parse_versions_file,
     read_versions,
     write_versions,
 )
@@ -599,6 +600,10 @@ async def _download_file_async(
 ) -> tuple[bool, int]:
     """Download a single file asynchronously.
 
+    Uses atomic write pattern: writes to a temp file first, then renames
+    to the target path on success. This prevents data loss if download fails
+    when a valid file already exists at local_path.
+
     Args:
         store: Object store instance.
         remote_key: Remote object key to download.
@@ -607,6 +612,9 @@ async def _download_file_async(
     Returns:
         Tuple of (success, bytes_downloaded).
     """
+    # Use a temp file to avoid corrupting existing files on failure
+    temp_path = local_path.with_name(local_path.name + ".part")
+
     try:
         # Ensure parent directory exists
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -615,14 +623,17 @@ async def _download_file_async(
         response = await obs.get_async(store, remote_key)
         content = await response.bytes_async()
 
-        # Write to file
-        local_path.write_bytes(content)
+        # Write to temp file first
+        temp_path.write_bytes(content)
+
+        # Atomically replace target with temp file
+        temp_path.replace(local_path)
 
         return True, len(content)
     except Exception:
-        # Clean up partial file if it exists
-        if local_path.exists():
-            local_path.unlink()
+        # Clean up temp file only (preserve original if it exists)
+        if temp_path.exists():
+            temp_path.unlink()
         raise
 
 
@@ -645,6 +656,8 @@ async def _fetch_remote_versions_async(
         PullError: If fetch fails.
     """
     # Build remote versions.json path (per ADR-0023)
+    import json
+
     remote_versions_url = f"{remote_url.rstrip('/')}/{collection}/versions.json"
     bucket_url, prefix = parse_object_store_url(remote_versions_url)
 
@@ -656,53 +669,15 @@ async def _fetch_remote_versions_async(
         response = await obs.get_async(store, prefix)
         content = await response.bytes_async()
 
-        # Parse JSON content
-        import json
-
+        # Parse JSON content using canonical parser for validation
         # content is obstore.Bytes, convert to bytes then decode
         data = json.loads(bytes(content).decode("utf-8"))
 
-        # Convert to VersionsFile
-        from portolan_cli.versions import Asset, Version
-
-        versions = []
-        for v in data.get("versions", []):
-            assets = {}
-            for name, asset in v.get("assets", {}).items():
-                assets[name] = Asset(
-                    sha256=asset["sha256"],
-                    size_bytes=asset["size_bytes"],
-                    href=asset["href"],
-                    mtime=asset.get("mtime"),
-                )
-            # Parse created timestamp
-            from datetime import datetime
-
-            created_str = v["created"]
-            if isinstance(created_str, str):
-                # Handle ISO format with Z suffix
-                if created_str.endswith("Z"):
-                    created_str = created_str[:-1] + "+00:00"
-                created = datetime.fromisoformat(created_str)
-            else:
-                created = created_str
-
-            versions.append(
-                Version(
-                    version=v["version"],
-                    created=created,
-                    breaking=v.get("breaking", False),
-                    message=v.get("message"),
-                    assets=assets,
-                    changes=v.get("changes", []),
-                )
-            )
-
-        return VersionsFile(
-            spec_version=data.get("spec_version", "1.0.0"),
-            current_version=data.get("current_version"),
-            versions=versions,
-        )
+        # Use canonical parser (validates schema and required fields)
+        return _parse_versions_file(data)
+    except ValueError as e:
+        # Re-raise validation errors from parser with better context
+        raise PullError(f"Invalid remote versions.json: {e}") from e
     except Exception as e:
         raise PullError(f"Failed to fetch remote versions.json: {e}") from e
 
@@ -731,7 +706,7 @@ async def _download_assets_async(
     if not files_to_download:
         return 0, 0
 
-    bucket_url, _prefix = parse_object_store_url(remote_url)
+    bucket_url, prefix = parse_object_store_url(remote_url)
     store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=12)
 
     # Semaphore for concurrency control
@@ -747,10 +722,6 @@ async def _download_assets_async(
         """Download a single file with semaphore control."""
         nonlocal completed
 
-        # Check circuit breaker before attempting
-        if not circuit_breaker.allow_request():
-            return filename, False, "Circuit breaker open - too many failures"
-
         asset = remote_assets.get(filename)
         if not asset:
             return filename, False, "Asset metadata not found"
@@ -763,9 +734,18 @@ async def _download_assets_async(
         except ValueError as e:
             return filename, False, str(e)
 
-        remote_key = href  # href is relative to catalog root
+        # Construct remote_key by joining prefix and href
+        # Strip leading/trailing slashes for proper normalization
+        if prefix:
+            remote_key = f"{prefix.strip('/')}/{href.lstrip('/')}"
+        else:
+            remote_key = href.lstrip("/")
 
         async with semaphore:
+            # Check circuit breaker AFTER acquiring semaphore (execution time, not scheduling time)
+            if not circuit_breaker.allow_request():
+                return filename, False, "Circuit breaker open - too many failures"
+
             # Retry logic for rate limits
             max_retries = 3
             retry_delay = 1.0

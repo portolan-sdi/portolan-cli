@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -75,7 +76,7 @@ class TestPullAllCollectionsParallel:
 
         call_order: list[str] = []
 
-        def track_calls(**kwargs):  # type: ignore[no-untyped-def]
+        def track_calls(**kwargs: Any) -> PullResult:
             call_order.append(kwargs["collection"])
             return PullResult(
                 success=True,
@@ -112,7 +113,7 @@ class TestPullAllCollectionsParallel:
 
         processed_collections: list[str] = []
 
-        async def track_calls(**kwargs):  # type: ignore[no-untyped-def]
+        async def track_calls(**kwargs: Any) -> PullResult:
             collection = kwargs["collection"]
             processed_collections.append(collection)
             return PullResult(
@@ -172,7 +173,7 @@ class TestPullAllCollectionsParallel:
         for name in ["col1", "col2", "col3"]:
             _create_collection(tmp_path, name)
 
-        def return_results(**kwargs):  # type: ignore[no-untyped-def]
+        def return_results(**kwargs: Any) -> PullResult:
             # Each collection downloads different amounts
             files = {"col1": 2, "col2": 3, "col3": 5}
             return PullResult(
@@ -205,7 +206,7 @@ class TestPullAllCollectionsParallel:
         for name in ["col1", "col2", "col3"]:
             _create_collection(tmp_path, name)
 
-        def mixed_results(**kwargs):  # type: ignore[no-untyped-def]
+        def mixed_results(**kwargs: Any) -> PullResult:
             if kwargs["collection"] == "col2":
                 return PullResult(
                     success=False,
@@ -244,7 +245,7 @@ class TestPullAllCollectionsParallel:
         for name in ["col1", "col2", "col3"]:
             _create_collection(tmp_path, name)
 
-        def raise_on_col2(**kwargs):  # type: ignore[no-untyped-def]
+        def raise_on_col2(**kwargs: Any) -> PullResult:
             if kwargs["collection"] == "col2":
                 raise ValueError("Something went wrong")
             return PullResult(
@@ -331,7 +332,7 @@ class TestPullAllCollectionsParallel:
         for name in ["col1", "col2", "col3"]:
             _create_collection(tmp_path, name)
 
-        def raise_unexpected(**kwargs):  # type: ignore[no-untyped-def]
+        def raise_unexpected(**kwargs: Any) -> PullResult:
             if kwargs["collection"] == "col2":
                 raise KeyError("unexpected_key")
             return PullResult(

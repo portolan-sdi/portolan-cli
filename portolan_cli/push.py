@@ -1268,11 +1268,15 @@ async def _execute_push_uploads_async(
     json_mode: bool,
     suppress_progress: bool,
     force: bool,
+    include_catalog: bool = True,
 ) -> PushResult:
     """Execute the upload phase of push_async.
 
     Handles assets, STAC files, versions.json, and READMEs in order.
     This is extracted from push_async to reduce cyclomatic complexity.
+
+    Args:
+        include_catalog: If True, upload catalog.json and root README.md.
 
     Returns:
         PushResult with success or failure status and metrics.
@@ -1304,8 +1308,11 @@ async def _execute_push_uploads_async(
         )
 
     # Upload STAC metadata files (async)
+    # include_catalog controls whether catalog.json and root README.md are included.
+    # - True for standalone push() so remote is a complete clonable catalog
+    # - False when called from push_all_collections() (uploads once at end)
     try:
-        stac_files = _discover_stac_files(catalog_root, collection, include_catalog=True)
+        stac_files = _discover_stac_files(catalog_root, collection, include_catalog=include_catalog)
     except FileNotFoundError as e:
         error(str(e))
         _cleanup_uploaded_assets(store, uploaded_keys)
@@ -1391,6 +1398,7 @@ async def push_async(
     concurrency: int | None = None,
     json_mode: bool = False,
     suppress_progress: bool = False,
+    include_catalog: bool = True,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage (async version).
 
@@ -1408,6 +1416,8 @@ async def push_async(
         concurrency: Maximum concurrent uploads (default 50).
         json_mode: If True, suppress progress bar.
         suppress_progress: If True, suppress progress bar.
+        include_catalog: If True, upload catalog.json and root README.md.
+            Set to False when called from push_all_collections (uploads them once at end).
 
     Returns:
         PushResult with upload statistics.
@@ -1476,6 +1486,7 @@ async def push_async(
         json_mode=json_mode,
         suppress_progress=suppress_progress,
         force=force,
+        include_catalog=include_catalog,
     )
 
 
@@ -1734,6 +1745,7 @@ async def push_all_collections_async(
                     region=region,
                     json_mode=json_mode,
                     suppress_progress=True,
+                    include_catalog=False,  # Uploaded once at end by _push_all_upload_catalog
                 )
                 return (collection, result, None)
             except Exception as e:

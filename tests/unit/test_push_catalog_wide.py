@@ -8,13 +8,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from portolan_cli.push import (
     PushResult,
     discover_collections,
     push_all_collections,
 )
+
+# Mark all tests in this module as unit tests
+pytestmark = pytest.mark.unit
 
 
 def _setup_valid_catalog(catalog_root: Path) -> None:
@@ -143,6 +149,7 @@ class TestPushAllCollections:
             region=None,
             json_mode=False,
             suppress_progress=True,
+            include_catalog=False,  # push_all_collections uploads catalog.json once at end
         )
 
     @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
@@ -192,7 +199,7 @@ class TestPushAllCollections:
             (tmp_path / name).mkdir()
             (tmp_path / name / "versions.json").write_text(json.dumps({"versions": []}))
 
-        def push_side_effect(**kwargs):  # type: ignore[no-untyped-def]
+        def push_side_effect(**kwargs: Any) -> PushResult:
             if kwargs["collection"] == "col2":
                 return PushResult(
                     success=False,
@@ -239,7 +246,7 @@ class TestPushAllCollections:
             (tmp_path / name).mkdir()
             (tmp_path / name / "versions.json").write_text(json.dumps({"versions": []}))
 
-        def push_side_effect(**kwargs):  # type: ignore[no-untyped-def]
+        def push_side_effect(**kwargs: Any) -> PushResult:
             if kwargs["collection"] == "col1":
                 return PushResult(
                     success=False,
@@ -330,4 +337,5 @@ class TestPushAllCollections:
             region=None,
             json_mode=False,
             suppress_progress=True,
+            include_catalog=False,  # push_all_collections uploads catalog.json once at end
         )
