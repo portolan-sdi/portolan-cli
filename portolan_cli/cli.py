@@ -3064,6 +3064,15 @@ def _output_pull_human(result: PullResult, *, dry_run: bool) -> None:
         "CPU count; use 1 for sequential). Ignored when --collection is specified."
     ),
 )
+@click.option(
+    "--concurrency",
+    type=click.IntRange(min=1),
+    default=50,
+    help=(
+        "Maximum concurrent file downloads within a collection (default: 50). "
+        "Higher values speed up downloads but use more connections."
+    ),
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def pull_command(
@@ -3076,6 +3085,7 @@ def pull_command(
     dry_run: bool,
     profile: str | None,
     workers: int | None,
+    concurrency: int,
 ) -> None:
     """Pull updates from a remote catalog.
 
@@ -3174,6 +3184,7 @@ def pull_command(
             force=force,
             dry_run=dry_run,
             profile=resolved_profile,
+            concurrency=concurrency,
         )
 
         if use_json:
