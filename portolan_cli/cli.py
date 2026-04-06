@@ -2797,6 +2797,13 @@ def rm_cmd(
     help="Parallel workers for catalog-wide push (default: auto-detect based on CPU count; "
     "use 1 for sequential). Ignored when --collection is specified.",
 )
+@click.option(
+    "--concurrency",
+    type=click.IntRange(min=1, max=500),
+    default=50,
+    help="Maximum concurrent uploads for single-collection push (default: 50). "
+    "Higher values improve throughput but may hit rate limits.",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 @click.option(
@@ -2816,6 +2823,7 @@ def push(
     profile: str | None,
     catalog_path: Path | None,
     workers: int | None,
+    concurrency: int,
 ) -> None:
     """Push local catalog changes to cloud object storage.
 
@@ -2842,8 +2850,9 @@ def push(
         portolan push s3://mybucket/catalog
         portolan push --dry-run  # Uses configured remote
     """
-    from portolan_cli.push import PushConflictError, push_all_collections
-    from portolan_cli.push import push as push_fn
+    import asyncio
+
+    from portolan_cli.push import PushConflictError, push_all_collections, push_async
 
     use_json = should_output_json(ctx, json_output)
 
@@ -2923,17 +2932,19 @@ def push(
             raise SystemExit(1) from err
 
     try:
-        result = push_fn(
-            catalog_root=catalog_path,
-            collection=collection,
-            destination=resolved_destination,
-            force=force,
-            dry_run=dry_run,
-            profile=resolved_profile,
-            region=resolved_region,
-            workers=workers,
-            verbose=verbose,
-            json_mode=use_json,
+        # Use async push for single-collection push (concurrent uploads)
+        result = asyncio.run(
+            push_async(
+                catalog_root=catalog_path,
+                collection=collection,
+                destination=resolved_destination,
+                force=force,
+                dry_run=dry_run,
+                profile=resolved_profile,
+                region=resolved_region,
+                concurrency=concurrency,
+                json_mode=use_json,
+            )
         )
 
         if use_json:
