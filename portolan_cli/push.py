@@ -602,7 +602,13 @@ def _upload_stac_files(
         return 0, [], []
 
     # Pre-cache file sizes to avoid double stat() calls (once for total, once per file)
-    file_sizes: dict[Path, int] = {f: f.stat().st_size for f in ordered_files}
+    # Handle stat errors gracefully - files may have been deleted between discovery and upload
+    file_sizes: dict[Path, int] = {}
+    for f in ordered_files:
+        try:
+            file_sizes[f] = f.stat().st_size
+        except OSError as e:
+            errors.append(f"Failed to stat {f}: {e}")
     total_bytes = sum(file_sizes.values())
 
     # Use progress bar for STAC uploads (ADR-0040: unified progress output)
