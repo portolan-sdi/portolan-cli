@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 from importlib.metadata import EntryPoint, entry_points
+from pathlib import Path
 
 from portolan_cli.backends.protocol import DriftReport, SchemaFingerprint, VersioningBackend
 
@@ -33,7 +34,7 @@ __all__ = ["DriftReport", "SchemaFingerprint", "VersioningBackend", "get_backend
 logger = logging.getLogger(__name__)
 
 
-def get_backend(name: str = "file") -> VersioningBackend:
+def get_backend(name: str = "file", catalog_root: Path | None = None) -> VersioningBackend:
     """Get a versioning backend by name.
 
     Discovers backends through two mechanisms:
@@ -64,14 +65,14 @@ def get_backend(name: str = "file") -> VersioningBackend:
         from portolan_cli.backends.json_file import JsonFileBackend
 
         logger.debug("Creating JsonFileBackend instance")
-        return JsonFileBackend()
+        return JsonFileBackend(catalog_root=catalog_root)
 
     # Discover plugin backends via entry points
     eps = entry_points(group="portolan.backends")
     for ep in eps:
         logger.debug("Found backend plugin: %s", ep.name)
         if ep.name == name:
-            return _load_plugin_backend(ep, name)
+            return _load_plugin_backend(ep, name, catalog_root=catalog_root)
 
     # Build helpful error message
     plugin_names = [ep.name for ep in eps]
@@ -79,7 +80,9 @@ def get_backend(name: str = "file") -> VersioningBackend:
     raise ValueError(f"Unknown backend: {name}. Available: {', '.join(available)}")
 
 
-def _load_plugin_backend(ep: EntryPoint, name: str) -> VersioningBackend:
+def _load_plugin_backend(
+    ep: EntryPoint, name: str, catalog_root: Path | None = None
+) -> VersioningBackend:
     """Load and validate a plugin backend from an entry point.
 
     Args:
@@ -104,7 +107,7 @@ def _load_plugin_backend(ep: EntryPoint, name: str) -> VersioningBackend:
     # Instantiate the backend
     try:
         logger.debug("Instantiating backend: %s", name)
-        backend = backend_class()
+        backend = backend_class(catalog_root=catalog_root)
     except Exception as e:
         msg = f"Failed to instantiate backend '{name}': {e}"
         logger.error(msg)

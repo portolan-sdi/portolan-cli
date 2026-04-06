@@ -11,6 +11,51 @@ profile: production    # AWS profile (alias: aws_profile)
 region: us-west-2      # AWS region for S3
 ```
 
+## Backend (Enterprise)
+
+By default, Portolan uses a file-based backend (`versions.json`) for version tracking. For enterprise deployments requiring ACID transactions, distributed locking, and advanced versioning features, install the [portolake](https://github.com/portolan-sdi/portolake) plugin:
+
+```bash
+uv add portolake
+# or: pip install portolake
+```
+
+Then configure the backend:
+
+```yaml
+# .portolan/config.yaml
+backend: iceberg
+```
+
+Or initialize a new catalog with the Iceberg backend:
+
+```bash
+portolan init --backend iceberg
+```
+
+### Version Management Commands
+
+With the Iceberg backend, additional commands become available:
+
+```bash
+# Show current version of a collection
+portolan version current boundaries
+
+# List all versions
+portolan version list boundaries
+
+# Rollback to a previous version (instant, uses Iceberg snapshots)
+portolan version rollback boundaries 1.0.0
+
+# Remove old versions, keeping N most recent
+portolan version prune boundaries --keep 5
+```
+
+!!! note "Backend-specific commands"
+    The `portolan version` subcommands require the `iceberg` backend. Running them with the default `file` backend will display an error message.
+
+See the [portolake documentation](https://github.com/portolan-sdi/portolake) for full setup instructions and enterprise features.
+
 ## Setting Configuration
 
 ```bash

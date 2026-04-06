@@ -175,6 +175,9 @@ portolan sync s3://mybucket/catalog -c data --fix --force
 portolan sync s3://mybucket/catalog -c data --profile prod
 ```
 
+### `portolan version`
+Iceberg version management commands.
+
 <!-- END GENERATED: cli-commands -->
 
 <!-- BEGIN GENERATED: python-api -->
