@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
+    from portolan_cli.metadata_seeding import ExtractedMetadata
 
 
 @dataclass
@@ -260,6 +261,47 @@ class ImageServerMetadataExtracted:
             keywords=metadata.keywords,
             license_info=metadata.license_info,
             access_information=metadata.access_information,
+        )
+
+    def to_extracted(self) -> ExtractedMetadata:
+        """Convert to common ExtractedMetadata for seeding.
+
+        Maps ImageServer-specific fields to the common ExtractedMetadata
+        format used by seed_metadata_yaml(). Includes raster technical
+        specs (pixel_type, band_count, pixel_size) in processing_notes.
+
+        Returns:
+            ExtractedMetadata with fields populated from this instance.
+        """
+        from portolan_cli.metadata_seeding import ExtractedMetadata
+
+        # Build processing_notes with service description and technical specs
+        processing_notes_parts: list[str] = []
+
+        if self.service_description:
+            processing_notes_parts.append(self.service_description)
+
+        # Add raster technical specifications
+        tech_specs = [
+            f"pixel_type: {self.pixel_type}",
+            f"band_count: {self.band_count}",
+            f"pixel_size: {self.pixel_size_x}x{self.pixel_size_y}",
+        ]
+        if self.spatial_reference_wkid:
+            tech_specs.append(f"spatial_reference: EPSG:{self.spatial_reference_wkid}")
+
+        processing_notes_parts.append("Technical specs: " + ", ".join(tech_specs))
+
+        return ExtractedMetadata(
+            source_url=self.source_url,
+            source_type="imageserver",
+            description=self.description,
+            attribution=self.copyright_text,
+            keywords=self.keywords,
+            contact_name=self.author,
+            processing_notes="\n".join(processing_notes_parts),
+            known_issues=self.access_information,
+            license_info_raw=self.license_info,
         )
 
 
