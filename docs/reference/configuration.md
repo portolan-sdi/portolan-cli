@@ -457,7 +457,9 @@ The `portolan readme` command generates `README.md` by combining:
 
 **From metadata.yaml (human):**
 - License, contact
-- Citation, DOI
+- Authors (with ORCID links)
+- Citation, DOI, related DOIs
+- Upstream version (with optional URL)
 - Known issues
 - Source URL, processing notes
 - Keywords (as badges), attribution
