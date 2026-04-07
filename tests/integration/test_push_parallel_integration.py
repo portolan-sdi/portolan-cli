@@ -10,11 +10,11 @@ These tests verify:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
-import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -92,13 +92,11 @@ class TestParallelPushIntegration:
     """Integration tests for parallel push_all_collections."""
 
     @pytest.mark.integration
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push._setup_store")
-    @patch("portolan_cli.push.push")
+    @patch("portolan_cli.push.obs.put")  # For catalog.json upload
+    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
     def test_parallel_execution_observes_worker_count(
         self,
-        mock_push: MagicMock,
-        mock_setup_store: MagicMock,
+        mock_push_async: AsyncMock,
         _mock_obs_put: MagicMock,
         multi_collection_catalog: Path,
     ) -> None:
@@ -106,19 +104,18 @@ class TestParallelPushIntegration:
         active_count: list[int] = []
         lock = threading.Lock()
 
-        def track_concurrent(**kwargs):  # type: ignore[no-untyped-def]
+        async def track_concurrent(**kwargs):  # type: ignore[no-untyped-def]
             with lock:
                 active_count.append(threading.active_count())
 
-            # Simulate work
-            time.sleep(0.02)
+            # Simulate work (use asyncio.sleep for async)
+            await asyncio.sleep(0.02)
 
             return PushResult(
                 success=True, files_uploaded=1, versions_pushed=1, conflicts=[], errors=[]
             )
 
-        mock_push.side_effect = track_concurrent
-        mock_setup_store.return_value = (MagicMock(), "test-prefix")
+        mock_push_async.side_effect = track_concurrent
 
         result = push_all_collections(
             catalog_root=multi_collection_catalog,
@@ -128,30 +125,27 @@ class TestParallelPushIntegration:
 
         assert result.success is True
         assert result.total_collections == 4
-        assert mock_push.call_count == 4
+        assert mock_push_async.call_count == 4
 
     @pytest.mark.integration
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push._setup_store")
-    @patch("portolan_cli.push.push")
+    @patch("portolan_cli.push.obs.put")  # For catalog.json upload
+    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
     def test_sequential_execution_with_workers_1(
         self,
-        mock_push: MagicMock,
-        mock_setup_store: MagicMock,
+        mock_push_async: AsyncMock,
         _mock_obs_put: MagicMock,
         multi_collection_catalog: Path,
     ) -> None:
         """workers=1 executes collections sequentially."""
         call_order: list[str] = []
 
-        def track_order(**kwargs):  # type: ignore[no-untyped-def]
+        async def track_order(**kwargs):  # type: ignore[no-untyped-def]
             call_order.append(kwargs["collection"])
             return PushResult(
                 success=True, files_uploaded=1, versions_pushed=1, conflicts=[], errors=[]
             )
 
-        mock_push.side_effect = track_order
-        mock_setup_store.return_value = (MagicMock(), "test-prefix")
+        mock_push_async.side_effect = track_order
 
         result = push_all_collections(
             catalog_root=multi_collection_catalog,
@@ -164,13 +158,14 @@ class TestParallelPushIntegration:
         assert call_order == ["collection_a", "collection_b", "collection_c", "collection_d"]
 
     @pytest.mark.integration
-    @patch("portolan_cli.push.push")
+    @patch("portolan_cli.push.obs.put")  # For catalog.json upload (skipped on failure)
+    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
     def test_parallel_continues_on_individual_failure(
-        self, mock_push: MagicMock, multi_collection_catalog: Path
+        self, mock_push_async: AsyncMock, _mock_obs_put: MagicMock, multi_collection_catalog: Path
     ) -> None:
         """Parallel execution continues when individual collections fail."""
 
-        def mixed_results(**kwargs):  # type: ignore[no-untyped-def]
+        async def mixed_results(**kwargs):  # type: ignore[no-untyped-def]
             if kwargs["collection"] == "collection_b":
                 return PushResult(
                     success=False,
@@ -183,7 +178,7 @@ class TestParallelPushIntegration:
                 success=True, files_uploaded=1, versions_pushed=1, conflicts=[], errors=[]
             )
 
-        mock_push.side_effect = mixed_results
+        mock_push_async.side_effect = mixed_results
 
         result = push_all_collections(
             catalog_root=multi_collection_catalog,

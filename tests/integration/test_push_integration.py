@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -275,12 +275,15 @@ class TestPushCLI:
     @pytest.mark.integration
     def test_push_dry_run_flag(self, catalog_with_versions: Path) -> None:
         """Push --dry-run should show what would be uploaded."""
+        from unittest.mock import AsyncMock
+
         from portolan_cli.cli import cli
         from portolan_cli.push import PushResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        # CLI calls push_async directly (not push) for single-collection push
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -310,12 +313,15 @@ class TestPushCLI:
     @pytest.mark.integration
     def test_push_force_flag(self, catalog_with_versions: Path) -> None:
         """Push --force should enable force mode."""
+        from unittest.mock import AsyncMock
+
         from portolan_cli.cli import cli
         from portolan_cli.push import PushResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        # CLI calls push_async directly (not push) for single-collection push
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=1,
@@ -349,7 +355,7 @@ class TestPushCLI:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=1,
@@ -388,7 +394,7 @@ class TestPushCLI:
         config_file = catalog_with_versions / ".portolan" / "config.yaml"
         config_file.write_text("remote: s3://test-bucket/catalog\naws_profile: config-profile\n")
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -425,7 +431,7 @@ class TestPushCLI:
         config_file = catalog_with_versions / ".portolan" / "config.yaml"
         config_file.write_text("remote: s3://test-bucket/catalog\naws_profile: config-profile\n")
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -460,7 +466,7 @@ class TestPushCLI:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.side_effect = PushConflictError(
                 "Remote has changes not present locally. Use --force to overwrite."
             )
@@ -497,7 +503,7 @@ class TestPushJSONOutput:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=1,
@@ -534,7 +540,7 @@ class TestPushJSONOutput:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.side_effect = PushConflictError("Remote diverged")
 
             result = runner.invoke(
@@ -569,7 +575,9 @@ class TestDryRunBehavior:
         """Dry-run should show which files would be uploaded."""
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             mock_fetch.return_value = (None, None)  # First push
 
             result = push(
@@ -593,7 +601,9 @@ class TestDryRunBehavior:
         """
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             mock_fetch.return_value = (
                 {
                     "spec_version": "1.0.0",
@@ -632,7 +642,7 @@ class TestDryRunBehavior:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             # Simulate dry-run where there IS work to do
             # (versions_pushed=0 because dry-run doesn't actually push)
             mock_push.return_value = PushResult(
@@ -670,7 +680,7 @@ class TestDryRunBehavior:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -706,7 +716,7 @@ class TestDryRunBehavior:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -747,7 +757,9 @@ class TestDryRunBehavior:
         versions_path = catalog_with_versions / "demographics" / "versions.json"
         local_versions = json.loads(versions_path.read_text())
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             # Remote has same versions as local = nothing to push
             mock_fetch.return_value = (local_versions, "etag-123")
 
@@ -771,7 +783,9 @@ class TestDryRunBehavior:
         """
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             # Remote is empty = local has versions to push
             mock_fetch.return_value = (None, None)
 
@@ -803,7 +817,9 @@ class TestDryRunBehavior:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             mock_fetch.return_value = (local_versions, "etag-123")
 
             result = runner.invoke(
@@ -840,7 +856,9 @@ class TestDryRunBehavior:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             # Remote is empty = local has versions to push
             mock_fetch.return_value = (None, None)
 
@@ -1020,7 +1038,7 @@ class TestPushCLIErrorBranches:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.side_effect = ValueError("Invalid destination URL format")
 
             result = runner.invoke(
@@ -1049,7 +1067,7 @@ class TestPushCLIErrorBranches:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.side_effect = ValueError("Unsupported URL scheme: invalid")
 
             result = runner.invoke(
@@ -1075,7 +1093,7 @@ class TestPushCLIErrorBranches:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=False,
                 files_uploaded=0,
@@ -1106,7 +1124,7 @@ class TestPushCLIErrorBranches:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.side_effect = PushConflictError("Remote has diverged")
 
             result = runner.invoke(
@@ -1165,7 +1183,7 @@ class TestPushOutputInvariants:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=files_uploaded,
@@ -1217,7 +1235,7 @@ class TestPushOutputInvariants:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=files_uploaded,
@@ -1271,7 +1289,7 @@ class TestPushOutputInvariants:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=files_uploaded,
@@ -1328,7 +1346,9 @@ class TestDryRunRealCodePath:
         """
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             # Simulate remote having same versions as local (nothing to push)
             mock_fetch.return_value = (
                 {
@@ -1363,7 +1383,9 @@ class TestDryRunRealCodePath:
         """
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             # Simulate remote having same versions as local (nothing to push)
             mock_fetch.return_value = (
                 {
@@ -1399,7 +1421,9 @@ class TestDryRunRealCodePath:
         """
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             # Simulate remote having fewer versions than local (work to do)
             mock_fetch.return_value = (
                 {
@@ -1447,7 +1471,9 @@ class TestTrailingSlashNormalization:
         """
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             mock_fetch.return_value = (None, None)  # First push
 
             # This should NOT fail with trailing slash
@@ -1467,7 +1493,9 @@ class TestTrailingSlashNormalization:
         """Push should handle multiple trailing slashes gracefully."""
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             mock_fetch.return_value = (None, None)
 
             result = push(
@@ -1484,7 +1512,9 @@ class TestTrailingSlashNormalization:
         """Push to bucket root with trailing slash should work."""
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._fetch_remote_versions") as mock_fetch:
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
             mock_fetch.return_value = (None, None)
 
             # s3://bucket/ should work (empty prefix)
