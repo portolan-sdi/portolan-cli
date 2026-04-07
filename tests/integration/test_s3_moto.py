@@ -157,8 +157,11 @@ def catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path:
 
 
 @pytest.fixture
-def aws_env(s3_bucket: tuple[str, str]) -> Generator[None, None, None]:
-    """Set up AWS environment variables for obstore to use moto server."""
+def _aws_env(s3_bucket: tuple[str, str]) -> Generator[None, None, None]:
+    """Set up AWS environment variables for obstore to use moto server.
+
+    Note: Named with underscore prefix to indicate it's used for side effects only.
+    """
     bucket_name, endpoint_url = s3_bucket
 
     old_env = {
