@@ -139,6 +139,37 @@ portolan readme --recursive
 portolan check
 ```
 
+## Cloning Remote Nested Catalogs
+
+Clone nested catalogs from object storage:
+
+```bash
+# Clone recursively discovers all subcatalogs and collections
+portolan clone s3://bucket/nested-catalog ./local-copy --profile my-profile
+```
+
+Portolan automatically traverses subcatalog `catalog.json` files to find actual collections. For the structure above, clone would find:
+
+- `climate/temperature` (collection)
+- `climate/precipitation` (collection)
+- `demographics/census-2020` (collection)
+
+Not the intermediate subcatalogs (`climate/catalog.json`, `demographics/catalog.json`).
+
+## Restoring Missing Files
+
+If you accidentally delete local data files, use `--restore` to re-download them:
+
+```bash
+# Normal pull - won't download if versions match
+portolan pull s3://bucket/my-catalog
+
+# Restore pull - re-downloads missing files even when versions match
+portolan pull s3://bucket/my-catalog --restore
+```
+
+The `--restore` flag checks file existence locally and downloads any missing assets, regardless of version metadata. Useful for recovering from accidental deletions.
+
 ## Tips
 
 **Start flat, restructure later.** You can reorganize directories and re-run `portolan add .` — Portolan regenerates the STAC hierarchy from the current structure.
