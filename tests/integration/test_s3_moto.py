@@ -38,7 +38,8 @@ def moto_server() -> Generator[str, None, None]:
     HTTP calls and doesn't integrate with boto3's patching mechanism.
     """
     # Start moto server on a random available port
-    server = ThreadedMotoServer(port=0, verbose=False)
+    # Use 127.0.0.1 explicitly - Windows can't bind to 0.0.0.0
+    server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
     server.start()
 
     # Get the actual port
