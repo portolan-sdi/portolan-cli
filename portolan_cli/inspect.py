@@ -120,7 +120,6 @@ class CollectionInfo:
         item_count: Number of items in the collection.
         total_size_bytes: Total size of tracked assets in bytes.
         bbox: Spatial extent bounding box.
-        has_parquet: Whether items.parquet exists for this collection.
     """
 
     collection_id: str
@@ -129,7 +128,6 @@ class CollectionInfo:
     item_count: int = 0
     total_size_bytes: int = 0
     bbox: list[float] | None = None
-    has_parquet: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
@@ -140,7 +138,6 @@ class CollectionInfo:
             "item_count": self.item_count,
             "total_size_bytes": self.total_size_bytes,
             "bbox": self.bbox,
-            "has_parquet": self.has_parquet,
         }
 
     def format_human(self) -> list[str]:
@@ -158,9 +155,6 @@ class CollectionInfo:
         if self.bbox:
             bbox_str = f"[{self.bbox[0]}, {self.bbox[1]}, {self.bbox[2]}, {self.bbox[3]}]"
             lines.append(f"Bbox: {bbox_str}")
-        # Show parquet status
-        parquet_status = "Yes" if self.has_parquet else "No"
-        lines.append(f"GeoParquet Index: {parquet_status}")
         return lines
 
 
@@ -398,9 +392,6 @@ def inspect_collection(collection_path: Path) -> CollectionInfo:
     if bbox_list and len(bbox_list) > 0:
         bbox = bbox_list[0]
 
-    # Check for items.parquet (stac-geoparquet index)
-    has_parquet = (collection_path / "items.parquet").exists()
-
     return CollectionInfo(
         collection_id=data.get("id", collection_path.name),
         title=data.get("title"),
@@ -408,7 +399,6 @@ def inspect_collection(collection_path: Path) -> CollectionInfo:
         item_count=item_count,
         total_size_bytes=total_size,
         bbox=bbox,
-        has_parquet=has_parquet,
     )
 
 

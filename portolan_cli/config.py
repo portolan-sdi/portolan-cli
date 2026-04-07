@@ -42,8 +42,6 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "backend",
         "statistics.enabled",
         "statistics.raster_mode",
-        "parquet.enabled",  # Generate items.parquet for large collections
-        "parquet.threshold",  # Item count threshold to suggest parquet generation
     }
 )
 
@@ -57,8 +55,6 @@ SETTING_ALIASES: dict[str, list[str]] = {
 DEFAULT_SETTINGS: dict[str, Any] = {
     "statistics.enabled": True,
     "statistics.raster_mode": "approx",
-    "parquet.enabled": False,  # Disabled by default (100% optional per issue #319)
-    "parquet.threshold": 100,  # Suggest parquet generation when items > threshold
 }
 
 # Default glob patterns for files to exclude from asset tracking (per ADR-0028).
