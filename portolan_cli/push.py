@@ -548,6 +548,29 @@ def _discover_stac_files(
     return stac_files
 
 
+def _stat_files_safely(files: list[Path], errors: list[str]) -> tuple[dict[Path, int], list[Path]]:
+    """Stat files safely, recording errors for files that can't be stat'd.
+
+    This handles the case where files are deleted between discovery and upload.
+    Returns both the file sizes dict and the list of successfully stat'd files.
+
+    Args:
+        files: List of file paths to stat.
+        errors: List to append error messages to.
+
+    Returns:
+        Tuple of (file_sizes dict, list of files that were successfully stat'd).
+    """
+    file_sizes: dict[Path, int] = {}
+    for f in files:
+        try:
+            file_sizes[f] = f.stat().st_size
+        except OSError as e:
+            errors.append(f"Failed to stat {f}: {e}")
+    uploadable = [f for f in files if f in file_sizes]
+    return file_sizes, uploadable
+
+
 def _upload_stac_files(
     store: ObjectStore,
     catalog_root: Path,
@@ -597,19 +620,16 @@ def _upload_stac_files(
     ordered_files.extend(stac_files.get("collection", []))
     ordered_files.extend(stac_files.get("catalog", []))
 
-    total = len(ordered_files)
-    if total == 0:
+    if not ordered_files:
         return 0, [], []
 
-    # Pre-cache file sizes to avoid double stat() calls (once for total, once per file)
-    # Handle stat errors gracefully - files may have been deleted between discovery and upload
-    file_sizes: dict[Path, int] = {}
-    for f in ordered_files:
-        try:
-            file_sizes[f] = f.stat().st_size
-        except OSError as e:
-            errors.append(f"Failed to stat {f}: {e}")
+    # Pre-cache file sizes, handling stat errors for files deleted between discovery and upload
+    file_sizes, uploadable_files = _stat_files_safely(ordered_files, errors)
+    total = len(uploadable_files)
     total_bytes = sum(file_sizes.values())
+
+    if total == 0:
+        return 0, errors, []
 
     # Use progress bar for STAC uploads (ADR-0040: unified progress output)
     # Suppress in json_mode or when verbose (verbose shows per-file output)
@@ -620,7 +640,7 @@ def _upload_stac_files(
         total_bytes=total_bytes,
         json_mode=suppress_progress,
     ) as reporter:
-        for file_path in ordered_files:
+        for file_path in uploadable_files:
             try:
                 rel_path = file_path.relative_to(catalog_root)
                 target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
@@ -1058,9 +1078,17 @@ async def _upload_stac_files_async(
     if not all_files:
         return 0, [], []
 
-    # Pre-cache file sizes
-    file_sizes: dict[Path, int] = {f: f.stat().st_size for f in all_files}
+    # Pre-cache file sizes, handling stat errors for files deleted between discovery and upload
+    file_sizes, uploadable_files = _stat_files_safely(all_files, errors)
+    if not uploadable_files:
+        return 0, errors, []
+
     total_bytes = sum(file_sizes.values())
+
+    # Filter file lists to only include uploadable files
+    item_files = [f for f in item_files if f in file_sizes]
+    collection_files = [f for f in collection_files if f in file_sizes]
+    catalog_files = [f for f in catalog_files if f in file_sizes]
 
     # Semaphore for bounded concurrency
     semaphore = asyncio.Semaphore(concurrency)
@@ -1084,12 +1112,12 @@ async def _upload_stac_files_async(
 
     # Suppress progress bar when verbose (verbose replaces progress bar per ADR-0040)
     async with AsyncProgressReporter(
-        total_files=len(all_files),
+        total_files=len(uploadable_files),
         total_bytes=total_bytes,
         json_mode=json_mode or verbose,
     ) as reporter:
         completed = 0
-        total_count = len(all_files)
+        total_count = len(uploadable_files)
 
         def log_verbose(file_path: Path, size: int) -> None:
             """Log verbose output for a file upload."""

@@ -601,15 +601,20 @@ def _upload_one_file(
     file_path: Path,
     source: Path,
     prefix: str,
+    verbose: bool = False,
     **kwargs: int,
 ) -> tuple[Path, Exception | None, int]:
     """Upload a single file and return result tuple for parallel processing.
+
+    Per ADR-0040: Per-file output only shown in verbose mode when used in
+    batch operations. Errors are always shown.
 
     Args:
         store: Object store instance
         file_path: Path to file to upload
         source: Source directory for relative path calculation
         prefix: Prefix for target key
+        verbose: If True, show per-file upload/success messages.
         **kwargs: Additional args passed to obs.put
 
     Returns:
@@ -621,16 +626,21 @@ def _upload_one_file(
         size_mb = file_size / (1024 * 1024)
         start_time = time.time()
 
-        info(f"Uploading {file_path.name} ({size_mb:.2f} MB) -> {target_key}")
+        # Per ADR-0040: per-file output only in verbose mode
+        if verbose:
+            info(f"Uploading {file_path.name} ({size_mb:.2f} MB) -> {target_key}")
 
         obs.put(store, target_key, file_path, max_concurrency=kwargs.get("max_concurrency", 12))
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        success(f"{file_path.name} ({speed_mbps:.2f} MB/s)")
+        # Per ADR-0040: per-file output only in verbose mode
+        if verbose:
+            success(f"{file_path.name} ({speed_mbps:.2f} MB/s)")
         return file_path, None, file_size
     except Exception as e:
+        # Errors are always shown per ADR-0040
         error(f"{file_path.name}: {e}")
         return file_path, e, 0
 
@@ -760,8 +770,12 @@ def _execute_parallel_uploads(
     max_files: int,
     fail_fast: bool,
     kwargs: dict[str, int],
+    *,
+    verbose: bool = False,
 ) -> list[tuple[Path, Exception | None, int]]:
     """Execute parallel uploads using ThreadPoolExecutor.
+
+    Per ADR-0040: Per-file output controlled by verbose parameter.
 
     Args:
         store: Object store instance
@@ -771,6 +785,7 @@ def _execute_parallel_uploads(
         max_files: Max concurrent file uploads
         fail_fast: Stop on first error if True
         kwargs: Additional args for obs.put
+        verbose: If True, show per-file upload messages.
 
     Returns:
         List of (file_path, error_or_none, bytes_uploaded) tuples
@@ -790,7 +805,7 @@ def _execute_parallel_uploads(
             # Submit initial batch up to max_files
             for f in files_iter:
                 future: UploadResultFuture = executor.submit(
-                    _upload_one_file, store, f, source, prefix, **kwargs
+                    _upload_one_file, store, f, source, prefix, verbose, **kwargs
                 )
                 pending[future] = f
                 if len(pending) >= max_files:
@@ -813,7 +828,7 @@ def _execute_parallel_uploads(
                 try:
                     next_file = next(files_iter)
                     new_future: UploadResultFuture = executor.submit(
-                        _upload_one_file, store, next_file, source, prefix, **kwargs
+                        _upload_one_file, store, next_file, source, prefix, verbose, **kwargs
                     )
                     pending[new_future] = next_file
                 except StopIteration:
@@ -822,7 +837,7 @@ def _execute_parallel_uploads(
         # For non-fail_fast mode, submit all futures upfront for maximum parallelism
         with ThreadPoolExecutor(max_workers=max_files) as executor:
             future_to_file = {
-                executor.submit(_upload_one_file, store, f, source, prefix, **kwargs): f
+                executor.submit(_upload_one_file, store, f, source, prefix, verbose, **kwargs): f
                 for f in files
             }
 
@@ -846,8 +861,12 @@ def upload_directory(
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
     s3_use_ssl: bool = True,
+    verbose: bool = False,
 ) -> UploadResult:
     """Upload a directory to S3/GCS/Azure with parallel uploads.
+
+    Per ADR-0040: Per-file output controlled by verbose parameter.
+    Progress is shown via summary messages at start/end.
 
     Args:
         source: Local directory path
@@ -861,6 +880,7 @@ def upload_directory(
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
+        verbose: If True, show per-file upload messages (ADR-0040).
 
     Returns:
         UploadResult with upload statistics
@@ -907,7 +927,9 @@ def upload_directory(
     # Ensure max_files is at least 1 to avoid ThreadPoolExecutor ValueError
     max_files = max(1, max_files)
 
-    results = _execute_parallel_uploads(store, files, source, prefix, max_files, fail_fast, kwargs)
+    results = _execute_parallel_uploads(
+        store, files, source, prefix, max_files, fail_fast, kwargs, verbose=verbose
+    )
 
     # Calculate results
     errors = [(path, err) for path, err, _ in results if err is not None]

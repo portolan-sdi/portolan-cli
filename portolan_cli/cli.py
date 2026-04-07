@@ -1292,9 +1292,9 @@ def _run_fix_workflow(
 
     # Fix geo-assets if in scope
     if run_geo_assets:
-        # Progress callback for conversion (skip for JSON mode)
+        # Progress callback for conversion (skip for JSON mode, per ADR-0040: per-file only in verbose)
         def show_conversion_progress(result: ConversionResult) -> None:
-            if not use_json and result.source:
+            if not use_json and verbose and result.source:
                 info_output(f"Converting: {result.source.name}")
 
         format_fix_report = check_directory(

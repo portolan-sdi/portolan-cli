@@ -210,14 +210,20 @@ def _download_one_file(
     remote_key: str,
     local_path: Path,
     file_size: int,
+    *,
+    verbose: bool = False,
 ) -> tuple[Path, Exception | None, int]:
     """Download a single file and return result tuple for parallel processing.
+
+    Per ADR-0040: Per-file output only shown in verbose mode when used in
+    batch operations. Errors are always shown.
 
     Args:
         store: Object store instance
         remote_key: Remote object key to download
         local_path: Local path to save the file
         file_size: Expected file size in bytes
+        verbose: If True, show per-file download/success messages.
 
     Returns:
         Tuple of (local_path, error_or_none, bytes_downloaded)
@@ -228,7 +234,9 @@ def _download_one_file(
         start_time = time.time()
 
         filename = local_path.name
-        info(f"Downloading {filename} ({size_mb:.2f} MB) <- {remote_key}")
+        # Per ADR-0040: per-file output only in verbose mode
+        if verbose:
+            info(f"Downloading {filename} ({size_mb:.2f} MB) <- {remote_key}")
 
         # Ensure parent directory exists
         local_path.parent.mkdir(parents=True, exist_ok=True)
@@ -257,12 +265,15 @@ def _download_one_file(
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
 
-        success(f"{filename} ({speed_mbps:.2f} MB/s)")
+        # Per ADR-0040: per-file output only in verbose mode
+        if verbose:
+            success(f"{filename} ({speed_mbps:.2f} MB/s)")
         return local_path, None, actual_size
     except Exception as e:
         # Clean up partial file if it exists (for any uncaught exceptions)
         if local_path.exists():
             local_path.unlink()
+        # Errors are always shown per ADR-0040
         error(f"{local_path.name}: {e}")
         return local_path, e, 0
 
@@ -453,8 +464,12 @@ def _execute_parallel_downloads(
     max_files: int,
     fail_fast: bool,
     overwrite: bool = True,
+    *,
+    verbose: bool = False,
 ) -> list[tuple[Path, Exception | None, int]]:
     """Execute parallel downloads using ThreadPoolExecutor.
+
+    Per ADR-0040: Per-file output controlled by verbose parameter.
 
     Args:
         store: Object store instance
@@ -464,6 +479,7 @@ def _execute_parallel_downloads(
         max_files: Max concurrent file downloads
         fail_fast: Stop on first error if True
         overwrite: If False, skip existing files
+        verbose: If True, show per-file download messages.
 
     Returns:
         List of (local_path, error_or_none, bytes_downloaded) tuples
@@ -508,7 +524,7 @@ def _execute_parallel_downloads(
             # Submit initial batch up to max_files
             for remote_key, file_size, local_path in files_iter:
                 future: DownloadResultFuture = executor.submit(
-                    _download_one_file, store, remote_key, local_path, file_size
+                    _download_one_file, store, remote_key, local_path, file_size, verbose=verbose
                 )
                 pending[future] = remote_key
                 if len(pending) >= max_files:
@@ -531,7 +547,12 @@ def _execute_parallel_downloads(
                 try:
                     remote_key, file_size, local_path = next(files_iter)
                     new_future: DownloadResultFuture = executor.submit(
-                        _download_one_file, store, remote_key, local_path, file_size
+                        _download_one_file,
+                        store,
+                        remote_key,
+                        local_path,
+                        file_size,
+                        verbose=verbose,
                     )
                     pending[new_future] = remote_key
                 except StopIteration:
@@ -541,7 +562,7 @@ def _execute_parallel_downloads(
         with ThreadPoolExecutor(max_workers=max_files) as executor:
             future_to_file = {
                 executor.submit(
-                    _download_one_file, store, remote_key, local_path, file_size
+                    _download_one_file, store, remote_key, local_path, file_size, verbose=verbose
                 ): remote_key
                 for remote_key, file_size, local_path in files_to_download
             }
@@ -567,8 +588,12 @@ def download_directory(
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
     s3_use_ssl: bool = True,
+    verbose: bool = False,
 ) -> DownloadResult:
     """Download a directory from S3/GCS/Azure with parallel downloads.
+
+    Per ADR-0040: Per-file output controlled by verbose parameter.
+    Progress is shown via summary messages at start/end.
 
     Args:
         source: Object store URL (e.g., s3://bucket/prefix/)
@@ -583,6 +608,7 @@ def download_directory(
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
+        verbose: If True, show per-file download messages (ADR-0040).
 
     Returns:
         DownloadResult with download statistics
@@ -641,7 +667,7 @@ def download_directory(
     max_files = max(1, max_files)
 
     results = _execute_parallel_downloads(
-        store, files, prefix, destination, max_files, fail_fast, overwrite
+        store, files, prefix, destination, max_files, fail_fast, overwrite, verbose=verbose
     )
 
     # Calculate results
