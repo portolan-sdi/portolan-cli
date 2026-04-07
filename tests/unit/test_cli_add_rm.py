@@ -442,9 +442,10 @@ class TestAdd:
                 )
 
                 assert result.exit_code == 0
-                # Output should say "2 files to data" (single collection), not "2 collections"
-                assert "2 collection" not in result.output
-                assert "data" in result.output
+                # Per ADR-0040: summary-only output, shows file and collection count
+                # Collection name only shown with --verbose
+                assert "2 files" in result.output
+                assert "1 collection" in result.output
 
     @pytest.mark.unit
     def test_add_multiple_paths_failure_on_nth_path(self, runner: CliRunner) -> None:

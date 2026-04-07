@@ -300,7 +300,10 @@ class TestMultiCollectionOutput:
         initialized_catalog: Path,
         valid_points_geojson: Path,
     ) -> None:
-        """add . at catalog root shows all collections in output, not just the first."""
+        """add . at catalog root shows all collections in output, not just the first.
+
+        Per ADR-0040: collection names only appear in --verbose mode.
+        """
         # Set up: two collections with different files
         (initialized_catalog / "rivers").mkdir()
         (initialized_catalog / "cities").mkdir()
@@ -309,7 +312,13 @@ class TestMultiCollectionOutput:
 
         result = runner.invoke(
             cli,
-            ["add", "--portolan-dir", str(initialized_catalog), str(initialized_catalog)],
+            [
+                "add",
+                "--verbose",
+                "--portolan-dir",
+                str(initialized_catalog),
+                str(initialized_catalog),
+            ],
             catch_exceptions=False,
         )
 

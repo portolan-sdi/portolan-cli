@@ -110,6 +110,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0037](context/shared/adr/0037-experimental-extension-policy.md) | Use experimental extensions, accept migration cost, no fallback prefixes |
 | [0038](context/shared/adr/0038-metadata-yaml-enrichment.md) | metadata.yaml as human enrichment layer (supplements STAC, generates README) |
 | [0039](context/shared/adr/0039-hierarchical-portolan-folders.md) | Hierarchical .portolan/ at collection/subcatalog levels |
+| [0040](context/shared/adr/0040-unified-progress-output.md) | Progress + summary model: Rich progress bars, immediate errors, batched warnings |
 
 ## Common Commands
 

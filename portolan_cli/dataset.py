@@ -2436,7 +2436,7 @@ def add_files(
             if deferred is not None:
                 deferred_non_geo.append(deferred)
     else:
-        # Parallel execution with progress bar
+        # Parallel execution with ThreadPoolExecutor
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         from portolan_cli.output import info
@@ -2445,33 +2445,31 @@ def add_files(
         if not json_mode:
             info(f"Using {workers} parallel workers for {total_files} files")
 
-        # Use rich progress bar if available and not in JSON mode
-        progress_ctx = _create_add_progress_context(total_files, json_mode)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            # Submit all tasks
+            future_to_file = {
+                executor.submit(prepare_single_file, fp, cid): (fp, cid)
+                for fp, cid in files_to_process
+            }
 
-        with progress_ctx as advance_progress:
-            with ThreadPoolExecutor(max_workers=workers) as executor:
-                # Submit all tasks
-                future_to_file = {
-                    executor.submit(prepare_single_file, fp, cid): (fp, cid)
-                    for fp, cid in files_to_process
-                }
+            # Process results as they complete (main thread)
+            for future in as_completed(future_to_file):
+                file_path, coll_id = future_to_file[future]
+                prepared_list, failure_list, deferred = future.result()
 
-                # Process results as they complete
-                for future in as_completed(future_to_file):
-                    file_path, coll_id = future_to_file[future]
-                    prepared_list, failure_list, deferred = future.result()
+                # Call progress callback from main thread (thread-safe)
+                # This ensures CLI's AddProgressReporter works in parallel mode
+                if on_progress is not None:
+                    on_progress(file_path)
 
-                    for prepared in prepared_list:
-                        prepared_datasets.append(prepared)
-                        source_dir = file_path.parent
-                        item_dir = catalog_root / Path(*coll_id.split("/")) / prepared.item_id
-                        source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
-                    failures.extend(failure_list)
-                    if deferred is not None:
-                        deferred_non_geo.append(deferred)
-
-                    # Advance progress
-                    advance_progress()
+                for prepared in prepared_list:
+                    prepared_datasets.append(prepared)
+                    source_dir = file_path.parent
+                    item_dir = catalog_root / Path(*coll_id.split("/")) / prepared.item_id
+                    source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
+                failures.extend(failure_list)
+                if deferred is not None:
+                    deferred_non_geo.append(deferred)
 
     # ========================================================================
     # PHASE 2.5: Batch finalize all prepared datasets (Issue #281)
@@ -2492,73 +2490,6 @@ def add_files(
     )
 
     return added, skipped, failures
-
-
-class _AddProgressContext:
-    """Context manager for add progress reporting (matches scan_progress style)."""
-
-    def __init__(self, total: int, json_mode: bool) -> None:
-        self.total = total
-        self.json_mode = json_mode
-        self.completed = 0
-        self._progress: Any = None  # rich.progress.Progress or None
-        self._task_id: Any = None  # TaskID or None
-        self._start_time: float | None = None
-
-    def __enter__(self) -> Callable[[], None]:
-        import sys
-        import time
-
-        self._start_time = time.perf_counter()
-
-        if not self.json_mode and sys.stderr.isatty():
-            try:
-                from rich.console import Console
-                from rich.progress import (
-                    BarColumn,
-                    MofNCompleteColumn,
-                    Progress,
-                    SpinnerColumn,
-                    TextColumn,
-                    TimeElapsedColumn,
-                )
-
-                console = Console(file=sys.stderr, force_terminal=None)
-                self._progress = Progress(
-                    SpinnerColumn(),
-                    TextColumn("[bold blue]Adding..."),
-                    BarColumn(),
-                    MofNCompleteColumn(),
-                    TextColumn("files"),
-                    TimeElapsedColumn(),
-                    transient=True,
-                    console=console,
-                )
-                self._progress.__enter__()
-                self._task_id = self._progress.add_task("Adding", total=self.total)
-            except ImportError:
-                pass
-
-        return self._advance
-
-    def _advance(self) -> None:
-        self.completed += 1
-        if self._progress is not None and self._task_id is not None:
-            self._progress.advance(self._task_id)
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: Any,
-    ) -> None:
-        if self._progress is not None:
-            self._progress.__exit__(exc_type, exc_val, exc_tb)
-
-
-def _create_add_progress_context(total: int, json_mode: bool) -> _AddProgressContext:
-    """Create a progress context for parallel add operations."""
-    return _AddProgressContext(total, json_mode)
 
 
 def _process_deferred_non_geo_files(

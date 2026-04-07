@@ -43,10 +43,6 @@ code = "portolan_cli/sync.py"
 docs = ["docs/reference/configuration.md#Environment Variables"]
 
 [[link]]
-code = "portolan_cli/parallel.py"
-docs = ["docs/contributing.md"]
-
-[[link]]
 code = "portolan_cli/extract/arcgis/orchestrator.py"
 docs = ["docs/guides/extract-arcgis.md"]
 

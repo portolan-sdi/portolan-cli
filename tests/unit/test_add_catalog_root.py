@@ -174,9 +174,9 @@ class TestAddAtCatalogRoot:
                 )
 
                 assert result.exit_code == 0, f"Expected success, got: {result.output}"
-                # Verify multi-collection output format shows BOTH collections
-                assert "col1" in result.output, f"Expected col1 in output: {result.output}"
-                assert "col2" in result.output, f"Expected col2 in output: {result.output}"
+                # Per ADR-0040: default output is summary only, no per-collection details
+                # Collection names only shown with --verbose flag
+                assert "2 files" in result.output, f"Expected '2 files' in output: {result.output}"
                 assert "2 collections" in result.output, (
                     f"Expected '2 collections' in output: {result.output}"
                 )

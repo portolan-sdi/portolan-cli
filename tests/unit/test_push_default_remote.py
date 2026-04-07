@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -122,7 +122,7 @@ class TestPushDefaultRemote:
         """Push should use configured remote when no DESTINATION provided."""
         from portolan_cli.push import PushResult
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -155,7 +155,7 @@ class TestPushDefaultRemote:
         """Explicit DESTINATION argument should override configured remote."""
         from portolan_cli.push import PushResult
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -224,7 +224,7 @@ class TestPushRemoteConfigPrecedence:
 
         monkeypatch.setenv("PORTOLAN_REMOTE", "s3://env-bucket/catalog")
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -258,7 +258,7 @@ class TestPushRemoteConfigPrecedence:
 
         monkeypatch.setenv("PORTOLAN_REMOTE", "s3://env-bucket/catalog")
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -295,7 +295,7 @@ class TestPushDefaultRemoteJSONOutput:
         """Push with --json should work with configured remote."""
         from portolan_cli.push import PushResult
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -360,7 +360,7 @@ class TestPushDefaultRemoteDryRun:
         """Push --dry-run should work with configured remote."""
         from portolan_cli.push import PushResult
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -425,7 +425,7 @@ class TestPushDefaultRemoteInvariants:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -480,7 +480,7 @@ class TestPushDefaultRemoteInvariants:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push") as mock_push:
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -543,7 +543,7 @@ class TestPushDefaultRemoteIntegration:
             )
 
             # Push without destination - should use config
-            with patch("portolan_cli.push.push") as mock_push:
+            with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
                 mock_push.return_value = PushResult(
                     success=True,
                     files_uploaded=0,

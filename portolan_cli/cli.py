@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 import click
 
+from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root
 from portolan_cli.catalog_list import (
     AssetStatus,
@@ -2238,27 +2239,39 @@ def _format_sidecar_note(ds: DatasetInfo) -> str:
     return f" (+ {len(sidecars)} sidecars)" if sidecars else ""
 
 
-def _output_added_single_collection(added: list[DatasetInfo]) -> None:
-    """Output added datasets for a single collection."""
-    coll = added[0].collection_id
-    count = len(added)
-    info_output(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
-    for ds in added:
-        success(f"  + {ds.item_id}{_format_sidecar_note(ds)}")
+def _output_added_single_collection(added: list[DatasetInfo], *, verbose: bool = False) -> None:
+    """Output added datasets for a single collection.
+
+    Per ADR-0040: Only show per-file output when verbose=True.
+    Default is summary only (progress bar + final count).
+    """
+    if verbose:
+        coll = added[0].collection_id
+        count = len(added)
+        info_output(f"Adding {count} file{'s' if count != 1 else ''} to {coll}")
+        for ds in added:
+            success(f"  + {ds.item_id}{_format_sidecar_note(ds)}")
 
 
-def _output_added_multi_collection(added: list[DatasetInfo]) -> None:
-    """Output added datasets grouped by collection."""
-    collections: dict[str, list[DatasetInfo]] = {}
-    for ds in added:
-        collections.setdefault(ds.collection_id, []).append(ds)
+def _output_added_multi_collection(added: list[DatasetInfo], *, verbose: bool = False) -> None:
+    """Output added datasets grouped by collection.
 
-    total = len(added)
-    info_output(f"Adding {total} file{'s' if total != 1 else ''} to {len(collections)} collections")
-    for coll, datasets in sorted(collections.items()):
-        info_output(f"  {coll}:")
-        for ds in datasets:
-            success(f"    + {ds.item_id}{_format_sidecar_note(ds)}")
+    Per ADR-0040: Only show per-file output when verbose=True.
+    Default is summary only (progress bar + final count).
+    """
+    if verbose:
+        collections: dict[str, list[DatasetInfo]] = {}
+        for ds in added:
+            collections.setdefault(ds.collection_id, []).append(ds)
+
+        total = len(added)
+        info_output(
+            f"Adding {total} file{'s' if total != 1 else ''} to {len(collections)} collections"
+        )
+        for coll, datasets in sorted(collections.items()):
+            info_output(f"  {coll}:")
+            for ds in datasets:
+                success(f"    + {ds.item_id}{_format_sidecar_note(ds)}")
 
 
 def _print_add_failures_batched(failures: list[AddFailure]) -> None:
@@ -2310,16 +2323,26 @@ def _output_add_unchanged(skipped: list[Path], verbose: bool) -> None:
 
 
 def _output_add_summary(added: list[DatasetInfo]) -> None:
-    """Output final success summary after adding files."""
+    """Output final success summary after adding files (ADR-0040)."""
     total_added = len(added)
     unique_items = len({ds.item_id for ds in added})
+    unique_collections = len({ds.collection_id for ds in added})
+
+    # Build summary with file count, item count (if different), and collection count
+    parts = []
+
     if unique_items == total_added:
-        success(f"Added {total_added} item{'s' if total_added != 1 else ''}")
+        parts.append(f"{total_added} file{'s' if total_added != 1 else ''}")
     else:
-        success(
-            f"Added {total_added} file{'s' if total_added != 1 else ''} "
+        parts.append(
+            f"{total_added} file{'s' if total_added != 1 else ''} "
             f"({unique_items} item{'s' if unique_items != 1 else ''})"
         )
+
+    # Always show collection count for clarity
+    parts.append(f"to {unique_collections} collection{'s' if unique_collections != 1 else ''}")
+
+    success(f"Added {' '.join(parts)}")
 
 
 def _output_add_human(
@@ -2337,13 +2360,13 @@ def _output_add_human(
         _output_add_unchanged(skipped, verbose)
         return
 
-    # Output successful adds
+    # Output successful adds (per-file details only in verbose mode per ADR-0040)
     if added:
         unique_collections = {ds.collection_id for ds in added}
         if len(unique_collections) == 1:
-            _output_added_single_collection(added)
+            _output_added_single_collection(added, verbose=verbose)
         else:
-            _output_added_multi_collection(added)
+            _output_added_multi_collection(added, verbose=verbose)
 
     # Show skipped files in verbose mode
     if verbose and skipped:
@@ -2553,24 +2576,35 @@ def add_cmd(
     # add_files already does this correctly when collection_id=None, and batching
     # avoids duplicate item writes when the same item directory appears via
     # multiple CLI arguments (e.g. `portolan add . foo/data.parquet`).
-    # Progress callback for human-readable output (skip for JSON mode)
-    def show_add_progress(file_path: Path) -> None:
-        if not use_json:
+
+    # Pre-count files for progress bar (ADR-0040: unified progress output)
+    # Only count when progress will be displayed (not JSON mode, TTY available)
+    should_show_progress = not use_json and sys.stderr.isatty()
+    total_files = count_files(resolved_paths) if should_show_progress else 0
+
+    # Create progress reporter (suppressed in JSON mode or non-TTY)
+    progress_reporter = AddProgressReporter(total_files=total_files, json_mode=use_json)
+
+    # Progress callback wraps the reporter (verbose mode uses per-file output)
+    def on_file_progress(file_path: Path) -> None:
+        if verbose and not use_json:
             info_output(f"Adding: {file_path.name}")
+        progress_reporter.advance()
 
     # item_datetime is parsed by Click via FLEXIBLE_DATETIME type (ADR-0035)
     try:
-        all_added, all_skipped, all_failures = add_files(
-            paths=resolved_paths,
-            catalog_root=catalog_root,
-            collection_id=None,
-            item_id=item_id,
-            item_datetime=item_datetime,
-            verbose=verbose,
-            on_progress=show_add_progress,
-            workers=workers,
-            json_mode=use_json,
-        )
+        with progress_reporter:
+            all_added, all_skipped, all_failures = add_files(
+                paths=resolved_paths,
+                catalog_root=catalog_root,
+                collection_id=None,
+                item_id=item_id,
+                item_datetime=item_datetime,
+                verbose=verbose,
+                on_progress=on_file_progress,
+                workers=workers,
+                json_mode=use_json,
+            )
     except (ValueError, FileNotFoundError) as err:
         err_type = type(err).__name__
         # Include failed path context in error message when there's only one path
@@ -2795,6 +2829,13 @@ def _check_backend_push_support(
     help="Parallel workers for catalog-wide push (default: auto-detect based on CPU count; "
     "use 1 for sequential). Ignored when --collection is specified.",
 )
+@click.option(
+    "--concurrency",
+    type=click.IntRange(min=1, max=500),
+    default=50,
+    help="Maximum concurrent uploads for single-collection push (default: 50). "
+    "Higher values improve throughput but may hit rate limits.",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 @click.option(
@@ -2814,6 +2855,7 @@ def push(
     profile: str | None,
     catalog_path: Path | None,
     workers: int | None,
+    concurrency: int,
 ) -> None:
     """Push local catalog changes to cloud object storage.
 
@@ -2840,8 +2882,9 @@ def push(
         portolan push s3://mybucket/catalog
         portolan push --dry-run  # Uses configured remote
     """
-    from portolan_cli.push import PushConflictError, push_all_collections
-    from portolan_cli.push import push as push_fn
+    import asyncio
+
+    from portolan_cli.push import PushConflictError, push_all_collections, push_async
 
     use_json = should_output_json(ctx, json_output)
 
@@ -2924,17 +2967,19 @@ def push(
             raise SystemExit(1) from err
 
     try:
-        result = push_fn(
-            catalog_root=catalog_path,
-            collection=collection,
-            destination=resolved_destination,
-            force=force,
-            dry_run=dry_run,
-            profile=resolved_profile,
-            region=resolved_region,
-            workers=workers,
-            verbose=verbose,
-            json_mode=use_json,
+        # Use async push for single-collection push (concurrent uploads)
+        result = asyncio.run(
+            push_async(
+                catalog_root=catalog_path,
+                collection=collection,
+                destination=resolved_destination,
+                force=force,
+                dry_run=dry_run,
+                profile=resolved_profile,
+                region=resolved_region,
+                concurrency=concurrency,
+                json_mode=use_json,
+            )
         )
 
         if use_json:
@@ -3125,6 +3170,15 @@ def _try_backend_pull(
         "CPU count; use 1 for sequential). Ignored when --collection is specified."
     ),
 )
+@click.option(
+    "--concurrency",
+    type=click.IntRange(min=1),
+    default=50,
+    help=(
+        "Maximum concurrent file downloads within a collection (default: 50). "
+        "Higher values speed up downloads but use more connections."
+    ),
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def pull_command(
@@ -3137,6 +3191,7 @@ def pull_command(
     dry_run: bool,
     profile: str | None,
     workers: int | None,
+    concurrency: int,
 ) -> None:
     """Pull updates from a remote catalog.
 
@@ -3239,6 +3294,7 @@ def pull_command(
             force=force,
             dry_run=dry_run,
             profile=resolved_profile,
+            concurrency=concurrency,
         )
 
         if use_json:

@@ -155,7 +155,7 @@ class TestPullCommandIntegration:
         )
 
         assert result.exit_code == 0
-        assert "Using 2 parallel worker(s)" in result.output
+        assert "Using concurrency: 2" in result.output
 
     def test_pull_workers_validation(self, tmp_path: Path) -> None:
         """portolan pull --workers rejects invalid values."""
@@ -224,5 +224,5 @@ class TestPullCommandIntegration:
             ],
         )
 
-        # Should NOT mention "parallel workers" since single collection
-        assert "parallel worker" not in result.output.lower()
+        # Should NOT mention concurrency since single collection
+        assert "concurrency" not in result.output.lower()

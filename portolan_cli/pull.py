@@ -16,28 +16,55 @@ Mental model: `portolan pull` is like `git pull`
 
 See ADR-0005 for versions.json as single source of truth.
 See ADR-0017 for MTIME + heuristics change detection.
+
+Async Migration (Wave 2A):
+- `pull_async()` is the primary implementation using asyncio
+- `pull()` is a sync wrapper for backward compatibility
+- Concurrent downloads via asyncio.Semaphore with configurable concurrency
+- Circuit breaker pattern for resilience against repeated failures
 """
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import obstore as obs
+
+from portolan_cli.async_utils import (
+    CircuitBreaker,
+    CircuitBreakerError,
+    get_default_concurrency,
+)
 from portolan_cli.dataset import compute_checksum
 from portolan_cli.download import download_file
 from portolan_cli.output import detail, error, info, output_section, success, warn
-from portolan_cli.parallel import execute_parallel
-from portolan_cli.upload import parse_object_store_url
+from portolan_cli.upload import _setup_store_and_kwargs, parse_object_store_url
 from portolan_cli.versions import (
     VersionsFile,
+    _parse_versions_file,
     read_versions,
     write_versions,
 )
 
 if TYPE_CHECKING:
-    pass
+    from obstore.store import (
+        AzureStore,
+        GCSStore,
+        HTTPStore,
+        LocalStore,
+        MemoryStore,
+        S3Store,
+    )
+
+    ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
+
+
+# Default concurrency for async downloads (imported from async_utils)
+DEFAULT_CONCURRENCY = get_default_concurrency()
 
 
 # =============================================================================
@@ -535,11 +562,213 @@ def _check_uncommitted_conflicts(
 
 
 # =============================================================================
-# Main Pull Function
+# Async Download Primitives
 # =============================================================================
 
 
-def pull(
+async def _download_file_async(
+    store: ObjectStore,
+    remote_key: str,
+    local_path: Path,
+) -> tuple[bool, int]:
+    """Download a single file asynchronously.
+
+    Uses atomic write pattern: writes to a temp file first, then renames
+    to the target path on success. This prevents data loss if download fails
+    when a valid file already exists at local_path.
+
+    Args:
+        store: Object store instance.
+        remote_key: Remote object key to download.
+        local_path: Local path to save the file.
+
+    Returns:
+        Tuple of (success, bytes_downloaded).
+    """
+    # Use a temp file to avoid corrupting existing files on failure
+    temp_path = local_path.with_name(local_path.name + ".part")
+
+    try:
+        # Ensure parent directory exists
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Use obstore's async get
+        response = await obs.get_async(store, remote_key)
+        content = await response.bytes_async()
+
+        # Write to temp file first
+        temp_path.write_bytes(content)
+
+        # Atomically replace target with temp file
+        temp_path.replace(local_path)
+
+        return True, len(content)
+    except Exception:
+        # Clean up temp file only (preserve original if it exists)
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+
+
+async def _fetch_remote_versions_async(
+    remote_url: str,
+    collection: str,
+    profile: str | None = None,
+) -> VersionsFile:
+    """Fetch remote versions.json asynchronously.
+
+    Args:
+        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
+        collection: Collection name.
+        profile: AWS profile name (for S3).
+
+    Returns:
+        Parsed VersionsFile from remote.
+
+    Raises:
+        PullError: If fetch fails.
+    """
+    # Build remote versions.json path (per ADR-0023)
+    import json
+
+    remote_versions_url = f"{remote_url.rstrip('/')}/{collection}/versions.json"
+    bucket_url, prefix = parse_object_store_url(remote_versions_url)
+
+    # Setup store (chunk_concurrency=12 matches download.py default)
+    store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=12)
+
+    try:
+        # Fetch using async get
+        response = await obs.get_async(store, prefix)
+        content = await response.bytes_async()
+
+        # Parse JSON content using canonical parser for validation
+        # content is obstore.Bytes, convert to bytes then decode
+        data = json.loads(bytes(content).decode("utf-8"))
+
+        # Use canonical parser (validates schema and required fields)
+        return _parse_versions_file(data)
+    except ValueError as e:
+        # Re-raise validation errors from parser with better context
+        raise PullError(f"Invalid remote versions.json: {e}") from e
+    except Exception as e:
+        raise PullError(f"Failed to fetch remote versions.json: {e}") from e
+
+
+async def _download_assets_async(
+    store: ObjectStore,
+    prefix: str,
+    local_root: Path,
+    files_to_download: list[str],
+    remote_assets: dict[str, dict[str, str | int]],
+    concurrency: int = DEFAULT_CONCURRENCY,
+) -> tuple[int, int]:
+    """Download assets concurrently using asyncio.
+
+    Args:
+        store: Object store instance (pre-configured connection).
+        prefix: Remote path prefix within the bucket.
+        local_root: Local catalog root directory.
+        files_to_download: List of filenames to download.
+        remote_assets: Dict mapping filename to asset metadata.
+        concurrency: Maximum concurrent downloads.
+
+    Returns:
+        Tuple of (files_downloaded, files_failed).
+    """
+    if not files_to_download:
+        return 0, 0
+
+    # Semaphore for concurrency control
+    semaphore = asyncio.Semaphore(concurrency)
+    circuit_breaker = CircuitBreaker(failure_threshold=10)
+
+    downloaded = 0
+    failed = 0
+    total = len(files_to_download)
+    completed = 0
+
+    async def download_one(filename: str) -> tuple[str, bool, str | None]:
+        """Download a single file with semaphore control."""
+        nonlocal completed
+
+        asset = remote_assets.get(filename)
+        if not asset:
+            return filename, False, "Asset metadata not found"
+
+        href = str(asset["href"])
+
+        # Security: Validate path before any filesystem operations
+        try:
+            local_path = _validate_safe_path(local_root, href)
+        except ValueError as e:
+            return filename, False, str(e)
+
+        # Construct remote_key by joining prefix and href
+        # Strip leading/trailing slashes for proper normalization
+        if prefix:
+            remote_key = f"{prefix.strip('/')}/{href.lstrip('/')}"
+        else:
+            remote_key = href.lstrip("/")
+
+        async with semaphore:
+            # Check circuit breaker AFTER acquiring semaphore (execution time, not scheduling time)
+            try:
+                circuit_breaker.check()
+            except CircuitBreakerError:
+                return filename, False, "Circuit breaker open - too many failures"
+
+            # Retry logic for rate limits
+            max_retries = 3
+            retry_delay = 1.0
+
+            for attempt in range(max_retries):
+                try:
+                    await _download_file_async(store, remote_key, local_path)
+                    circuit_breaker.record_success()
+                    completed += 1
+                    info(f"Downloaded ({completed}/{total}): {filename}")
+                    return filename, True, None
+                except Exception as e:
+                    error_str = str(e)
+                    if "429" in error_str and attempt < max_retries - 1:
+                        # Rate limited - wait and retry
+                        await asyncio.sleep(retry_delay * (attempt + 1))
+                        continue
+                    circuit_breaker.record_failure()
+                    return filename, False, error_str
+
+            return filename, False, "Max retries exceeded"
+
+    # Create tasks for all downloads
+    tasks = [download_one(filename) for filename in files_to_download]
+
+    # Execute all tasks concurrently
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Process results
+    for result in results:
+        if isinstance(result, BaseException):
+            failed += 1
+            error(f"Download error: {result}")
+        elif isinstance(result, tuple):
+            filename, success_flag, err_msg = result
+            if success_flag:
+                downloaded += 1
+            else:
+                failed += 1
+                if err_msg:
+                    error(f"Failed {filename}: {err_msg}")
+
+    return downloaded, failed
+
+
+# =============================================================================
+# Async Pull Function
+# =============================================================================
+
+
+async def pull_async(
     remote_url: str,
     local_root: Path,
     collection: str,
@@ -547,14 +776,19 @@ def pull(
     force: bool = False,
     dry_run: bool = False,
     profile: str | None = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    store: ObjectStore | None = None,
 ) -> PullResult:
-    """Pull updates from a remote catalog.
+    """Pull updates from a remote catalog asynchronously.
+
+    Primary async implementation of pull. The sync `pull()` function
+    wraps this with `asyncio.run()`.
 
     Similar to `git pull`, this:
     1. Fetches remote versions.json
     2. Compares with local versions.json
     3. Checks for uncommitted local changes
-    4. Downloads changed files (unless blocked by uncommitted changes)
+    4. Downloads changed files concurrently (unless blocked)
     5. Updates local versions.json
 
     Args:
@@ -564,6 +798,9 @@ def pull(
         force: If True, overwrite uncommitted local changes.
         dry_run: If True, show what would happen without downloading.
         profile: AWS profile name (for S3).
+        concurrency: Maximum concurrent downloads (default: 50).
+        store: Optional pre-configured object store. If provided, reuses
+            this connection instead of creating a new one (for connection pooling).
 
     Returns:
         PullResult with operation results.
@@ -571,11 +808,15 @@ def pull(
     Raises:
         ValueError: If remote_url is invalid.
     """
-    # Validate URL
+    # Validate URL and parse components
     try:
-        parse_object_store_url(remote_url)
+        bucket_url, base_prefix = parse_object_store_url(remote_url)
     except ValueError as e:
         raise ValueError(f"Invalid remote URL: {e}") from e
+
+    # Create store if not provided (connection pooling support)
+    if store is None:
+        store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=12)
 
     # Path to local versions.json (per ADR-0023)
     versions_path = local_root / collection / "versions.json"
@@ -591,7 +832,6 @@ def pull(
         )
 
     # Bug #137: dry-run must not make any network calls.
-    # Return early with a simulated "would pull" result before any I/O.
     if dry_run:
         info(f"[DRY RUN] Would pull from {remote_url}/{collection}")
         info(f"[DRY RUN] Local version: {local_versions.current_version or '(none)'}")
@@ -605,9 +845,9 @@ def pull(
             dry_run=True,
         )
 
-    # Fetch remote versions
+    # Fetch remote versions asynchronously
     try:
-        remote_versions = _fetch_remote_versions(remote_url, collection, profile)
+        remote_versions = await _fetch_remote_versions_async(remote_url, collection, profile)
     except PullError as e:
         error(f"Failed to fetch remote: {e}")
         return PullResult(
@@ -621,7 +861,7 @@ def pull(
     # Diff versions
     diff = diff_versions(local_versions, remote_versions)
 
-    # Check if up to date (no changes either way)
+    # Check if up to date
     if not diff.is_behind and not diff.is_local_ahead and not diff.is_diverged:
         info("Already up to date")
         return PullResult(
@@ -633,29 +873,31 @@ def pull(
             up_to_date=True,
         )
 
-    # Data loss prevention: Check for local-ahead or diverged states
+    # Data loss prevention checks
     sync_conflict = _check_sync_state_conflicts(diff, force)
     if sync_conflict is not None:
         return sync_conflict
 
-    # Check for uncommitted changes that would be overwritten
     uncommitted_conflict = _check_uncommitted_conflicts(local_root, collection, diff, force)
     if uncommitted_conflict is not None:
         return uncommitted_conflict
 
     # Report what will be downloaded
     info(f"Pulling {len(diff.files_to_download)} file(s) from {remote_url}")
-    for filename in diff.files_to_download:
+    info(f"Using concurrency: {concurrency}")
+    for filename in diff.files_to_download[:5]:
         detail(f"  {filename}")
+    if len(diff.files_to_download) > 5:
+        detail(f"  ... and {len(diff.files_to_download) - 5} more")
 
-    # Download assets
-    downloaded, failed = _download_assets(
-        remote_url=remote_url,
+    # Download assets concurrently (reuses store connection)
+    downloaded, failed = await _download_assets_async(
+        store=store,
+        prefix=base_prefix,
         local_root=local_root,
         files_to_download=diff.files_to_download,
         remote_assets=diff.remote_assets,
-        profile=profile,
-        dry_run=dry_run,
+        concurrency=concurrency,
     )
 
     # Handle failures
@@ -669,40 +911,93 @@ def pull(
             remote_version=diff.remote_version,
         )
 
-    # Update local versions.json (unless dry-run)
-    if not dry_run:
-        # Write remote versions.json to local
-        versions_path.parent.mkdir(parents=True, exist_ok=True)
-        write_versions(versions_path, remote_versions)
-        success(f"Updated to version {diff.remote_version}")
+    # Update local versions.json
+    versions_path.parent.mkdir(parents=True, exist_ok=True)
+    write_versions(versions_path, remote_versions)
+    success(f"Updated to version {diff.remote_version}")
 
     return PullResult(
         success=True,
-        files_downloaded=downloaded if not dry_run else 0,
-        files_skipped=len(diff.files_to_download) - downloaded if not dry_run else 0,
+        files_downloaded=downloaded,
+        files_skipped=len(diff.files_to_download) - downloaded,
         local_version=diff.local_version,
         remote_version=diff.remote_version,
     )
 
 
 # =============================================================================
-# Catalog-wide Pull (Parallel)
+# Main Pull Function (Sync Wrapper)
 # =============================================================================
 
 
-def pull_all_collections(
+def pull(
+    remote_url: str,
+    local_root: Path,
+    collection: str,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    profile: str | None = None,
+    concurrency: int = DEFAULT_CONCURRENCY,
+) -> PullResult:
+    """Pull updates from a remote catalog (sync wrapper).
+
+    This is a thin wrapper around `pull_async()` for backward compatibility.
+    All logic is in the async implementation.
+
+    Similar to `git pull`, this:
+    1. Fetches remote versions.json
+    2. Compares with local versions.json
+    3. Checks for uncommitted local changes
+    4. Downloads changed files concurrently (unless blocked)
+    5. Updates local versions.json
+
+    Args:
+        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
+        local_root: Local catalog root directory.
+        collection: Collection name to pull.
+        force: If True, overwrite uncommitted local changes.
+        dry_run: If True, show what would happen without downloading.
+        profile: AWS profile name (for S3).
+        concurrency: Maximum concurrent downloads (default: 50).
+
+    Returns:
+        PullResult with operation results.
+
+    Raises:
+        ValueError: If remote_url is invalid.
+    """
+    return asyncio.run(
+        pull_async(
+            remote_url=remote_url,
+            local_root=local_root,
+            collection=collection,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+            concurrency=concurrency,
+        )
+    )
+
+
+# =============================================================================
+# Catalog-wide Pull (Async)
+# =============================================================================
+
+
+async def pull_all_collections_async(
     remote_url: str,
     local_root: Path,
     *,
     force: bool = False,
     dry_run: bool = False,
     profile: str | None = None,
-    workers: int | None = None,
+    concurrency: int | None = None,
 ) -> PullAllResult:
-    """Pull all collections in a catalog from cloud storage.
+    """Pull all collections in a catalog from cloud storage asynchronously.
 
-    Processes collections with configurable parallelism.
-    Continues on individual failures and reports all errors at the end.
+    Primary async implementation. Uses asyncio.gather() for concurrent
+    collection pulls within a single event loop.
 
     Args:
         remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
@@ -710,7 +1005,7 @@ def pull_all_collections(
         force: If True, overwrite uncommitted local changes.
         dry_run: If True, show what would be downloaded without downloading.
         profile: AWS profile name (for S3 only).
-        workers: Number of parallel workers. None = auto-detect, 1 = sequential.
+        concurrency: Maximum concurrent collection pulls. None = auto-detect.
 
     Returns:
         PullAllResult with aggregate statistics and per-collection errors.
@@ -720,6 +1015,14 @@ def pull_all_collections(
     """
     # Import here to avoid circular dependency
     from portolan_cli.push import discover_collections
+
+    # Validate URL and create shared store (connection pooling)
+    try:
+        bucket_url, _prefix = parse_object_store_url(remote_url)
+    except ValueError as e:
+        raise ValueError(f"Invalid remote URL: {e}") from e
+
+    shared_store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=12)
 
     # discover_collections validates catalog and raises ValueError if invalid
     collections = discover_collections(local_root)
@@ -738,72 +1041,80 @@ def pull_all_collections(
 
     info(f"Found {total} collection(s) to pull")
 
-    # Track aggregate stats (thread-safe via output_section for reporting)
+    # Track aggregate stats
     successful = 0
     failed = 0
     total_files = 0
     collection_errors: dict[str, list[str]] = {}
 
-    def pull_one(collection: str) -> PullResult:
-        """Pull a single collection."""
-        return pull(
-            remote_url=remote_url,
-            local_root=local_root,
-            collection=collection,
-            force=force,
-            dry_run=dry_run,
-            profile=profile,
-        )
+    # Determine concurrency
+    max_concurrent = concurrency if concurrency is not None else min(total, DEFAULT_CONCURRENCY)
+    max_concurrent = min(max_concurrent, total)  # Don't exceed collection count
 
-    def on_complete(
-        coll: str,
-        result: PullResult | None,
-        err_msg: str | None,
-        completed: int,
-        total_count: int,
-    ) -> None:
-        """Process completion of a single collection (called with thread-safe progress)."""
-        nonlocal successful, failed, total_files
+    info(f"Using concurrency: {max_concurrent}")
 
-        # Use output_section to keep multi-line output together
-        with output_section():
+    # Semaphore for collection-level concurrency control
+    semaphore = asyncio.Semaphore(max_concurrent)
+
+    async def pull_one(collection: str) -> tuple[str, PullResult | None, str | None]:
+        """Pull a single collection with semaphore control."""
+        async with semaphore:
+            try:
+                result = await pull_async(
+                    remote_url=remote_url,
+                    local_root=local_root,
+                    collection=collection,
+                    force=force,
+                    dry_run=dry_run,
+                    profile=profile,
+                    store=shared_store,  # Reuse connection across collections
+                )
+                return (collection, result, None)
+            except Exception as e:
+                return (collection, None, f"{type(e).__name__}: {e}")
+
+    # Run all collection pulls concurrently
+    tasks = [pull_one(coll) for coll in collections]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Process results
+    for i, result in enumerate(results):
+        if isinstance(result, BaseException):
+            coll = collections[i]
+            error(f"[{i + 1}/{total}] Failed {coll}: {result}")
+            failed += 1
+            collection_errors[coll] = [str(result)]
+        elif isinstance(result, tuple):
+            coll, pull_result, err_msg = result
             if err_msg:
-                error(f"[{completed}/{total_count}] Failed {coll}: {err_msg}")
+                error(f"[{i + 1}/{total}] Failed {coll}: {err_msg}")
                 failed += 1
                 collection_errors[coll] = [err_msg]
-            elif result and result.success:
-                files = result.files_downloaded
-                if result.up_to_date:
-                    success(f"[{completed}/{total_count}] {coll}: Already up to date")
+            elif pull_result and pull_result.success:
+                files = pull_result.files_downloaded
+                if pull_result.up_to_date:
+                    success(f"[{i + 1}/{total}] {coll}: Already up to date")
                 else:
-                    success(f"[{completed}/{total_count}] Pulled {coll}: {files} file(s)")
+                    success(f"[{i + 1}/{total}] Pulled {coll}: {files} file(s)")
                 successful += 1
                 total_files += files
-            elif result:
+            elif pull_result:
                 errors_list = []
-                if result.uncommitted_changes:
+                if pull_result.uncommitted_changes:
                     errors_list.append(
-                        f"Uncommitted changes: {', '.join(result.uncommitted_changes)}"
+                        f"Uncommitted changes: {', '.join(pull_result.uncommitted_changes)}"
                     )
                 else:
                     errors_list.append("Pull failed")
-                error(f"[{completed}/{total_count}] Failed {coll}: {', '.join(errors_list)}")
+                error(f"[{i + 1}/{total}] Failed {coll}: {', '.join(errors_list)}")
                 failed += 1
                 collection_errors[coll] = errors_list
             else:
-                error(f"[{completed}/{total_count}] Failed {coll}: Unknown error")
+                error(f"[{i + 1}/{total}] Failed {coll}: Unknown error")
                 failed += 1
                 collection_errors[coll] = ["Unknown error"]
 
-    # Execute with common parallel infrastructure
-    execute_parallel(
-        items=collections,
-        operation=pull_one,
-        workers=workers,
-        on_complete=on_complete,
-    )
-
-    # Summary report (use output_section to keep summary together)
+    # Summary report
     with output_section():
         info(f"\n{'=' * 60}")
         if failed == 0:
@@ -821,4 +1132,45 @@ def pull_all_collections(
         failed_collections=failed,
         total_files_downloaded=total_files,
         collection_errors=collection_errors,
+    )
+
+
+def pull_all_collections(
+    remote_url: str,
+    local_root: Path,
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    profile: str | None = None,
+    workers: int | None = None,
+) -> PullAllResult:
+    """Pull all collections in a catalog from cloud storage (sync wrapper).
+
+    This is a thin wrapper around `pull_all_collections_async()` for
+    backward compatibility. All logic is in the async implementation.
+
+    Args:
+        remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
+        local_root: Path to the local catalog root directory.
+        force: If True, overwrite uncommitted local changes.
+        dry_run: If True, show what would be downloaded without downloading.
+        profile: AWS profile name (for S3 only).
+        workers: Number of parallel workers. None = auto-detect, 1 = sequential.
+            (Maps to 'concurrency' in async implementation.)
+
+    Returns:
+        PullAllResult with aggregate statistics and per-collection errors.
+
+    Raises:
+        ValueError: If local_root is not a valid catalog.
+    """
+    return asyncio.run(
+        pull_all_collections_async(
+            remote_url=remote_url,
+            local_root=local_root,
+            force=force,
+            dry_run=dry_run,
+            profile=profile,
+            concurrency=workers,
+        )
     )

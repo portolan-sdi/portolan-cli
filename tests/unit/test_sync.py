@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -229,7 +229,7 @@ class TestOrchestrationSequence:
             patch("portolan_cli.sync.init_catalog", side_effect=track_init),
             patch("portolan_cli.sync.scan_directory", side_effect=track_scan),
             patch("portolan_cli.sync.check_directory", side_effect=track_check),
-            patch("portolan_cli.sync.push", side_effect=track_push),
+            patch("portolan_cli.sync.push_async", new_callable=AsyncMock, side_effect=track_push),
         ):
             sync(
                 catalog_root=managed_catalog,
@@ -279,7 +279,7 @@ class TestEarlyExit:
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push") as mock_push,
+            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
         ):
             result = sync(
                 catalog_root=managed_catalog,
@@ -317,7 +317,9 @@ class TestEarlyExit:
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push", side_effect=successful_push),
+            patch(
+                "portolan_cli.sync.push_async", new_callable=AsyncMock, side_effect=successful_push
+            ),
         ):
             # Set up mock returns
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
@@ -366,7 +368,9 @@ class TestInitSkip:
             patch("portolan_cli.sync.init_catalog") as mock_init,
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push", side_effect=successful_push),
+            patch(
+                "portolan_cli.sync.push_async", new_callable=AsyncMock, side_effect=successful_push
+            ),
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -411,7 +415,9 @@ class TestInitSkip:
             patch("portolan_cli.sync.init_catalog", side_effect=mock_init_catalog) as mock_init,
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push", side_effect=successful_push),
+            patch(
+                "portolan_cli.sync.push_async", new_callable=AsyncMock, side_effect=successful_push
+            ),
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -451,7 +457,7 @@ class TestDryRunMode:
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push") as mock_push,
+            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -479,7 +485,7 @@ class TestDryRunMode:
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push") as mock_push,
+            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_pull.return_value = MagicMock(success=True, up_to_date=True)
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
@@ -523,7 +529,7 @@ class TestForceMode:
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push") as mock_push,
+            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -551,7 +557,7 @@ class TestForceMode:
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push") as mock_push,
+            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_pull.return_value = MagicMock(success=True, up_to_date=True)
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
@@ -595,7 +601,7 @@ class TestFixMode:
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push") as mock_push,
+            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -632,7 +638,7 @@ class TestProfilePassthrough:
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push") as mock_push,
+            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_pull.return_value = MagicMock(success=True, up_to_date=True)
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
@@ -699,7 +705,7 @@ class TestErrorHandling:
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
             patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push") as mock_push,
+            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -1039,7 +1045,7 @@ class TestDryRunNetworkIsolation:
 
         with (
             patch("portolan_cli.pull._fetch_remote_versions") as mock_pull_fetch,
-            patch("portolan_cli.push._setup_store") as mock_push_setup,
+            patch("portolan_cli.push.setup_store") as mock_push_setup,
             patch("portolan_cli.push._fetch_remote_versions") as mock_push_fetch,
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
@@ -1070,7 +1076,7 @@ class TestDryRunNetworkIsolation:
 
         with (
             patch("portolan_cli.pull._fetch_remote_versions") as mock_pull_fetch,
-            patch("portolan_cli.push._setup_store") as mock_setup,
+            patch("portolan_cli.push.setup_store") as mock_setup,
             patch("portolan_cli.push._fetch_remote_versions") as mock_push_fetch,
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,

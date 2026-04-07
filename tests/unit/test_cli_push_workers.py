@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -136,11 +136,11 @@ class TestPushWorkersFlag:
             assert call_kwargs["workers"] is None
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push")
-    def test_workers_passed_for_single_collection(
-        self, mock_push: MagicMock, runner: CliRunner, tmp_path: Path
+    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    def test_concurrency_passed_for_single_collection(
+        self, mock_push: AsyncMock, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """--workers is passed to push() for file-level parallelism."""
+        """--concurrency is passed to push_async() for file-level parallelism."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             _setup_catalog_with_collections(Path("."), ["col1"])
 
@@ -152,16 +152,16 @@ class TestPushWorkersFlag:
                 errors=[],
             )
 
-            # When --collection is specified, single push is called with workers
+            # When --collection is specified, single push is called with concurrency
             result = runner.invoke(
-                cli, ["push", "--catalog", ".", "--collection", "col1", "--workers", "4"]
+                cli, ["push", "--catalog", ".", "--collection", "col1", "--concurrency", "4"]
             )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
-            # Single collection push now uses workers for file-level parallelism
+            # Single collection push uses --concurrency for file-level parallelism
             mock_push.assert_called_once()
             call_kwargs = mock_push.call_args.kwargs
-            assert call_kwargs["workers"] == 4
+            assert call_kwargs["concurrency"] == 4
 
     @pytest.mark.unit
     def test_workers_requires_positive_integer(self, runner: CliRunner, tmp_path: Path) -> None:
