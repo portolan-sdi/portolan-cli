@@ -402,7 +402,7 @@ def run_async(coro: Coroutine[None, None, T]) -> T:
     """Run an async coroutine from sync code.
 
     Handles the common case of calling async code from a sync CLI entry point.
-    Creates a new event loop if necessary.
+    Creates a new event loop.
 
     Args:
         coro: The coroutine to run.
@@ -410,13 +410,4 @@ def run_async(coro: Coroutine[None, None, T]) -> T:
     Returns:
         The coroutine's result.
     """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is None:
-        return asyncio.run(coro)
-    else:
-        # Already in an event loop - schedule and run
-        return loop.run_until_complete(coro)
+    return asyncio.run(coro)

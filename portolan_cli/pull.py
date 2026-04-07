@@ -34,6 +34,11 @@ from typing import TYPE_CHECKING
 
 import obstore as obs
 
+from portolan_cli.async_utils import (
+    CircuitBreaker,
+    CircuitBreakerError,
+    get_default_concurrency,
+)
 from portolan_cli.dataset import compute_checksum
 from portolan_cli.download import download_file
 from portolan_cli.output import detail, error, info, output_section, success, warn
@@ -58,8 +63,8 @@ if TYPE_CHECKING:
     ObjectStore = S3Store | GCSStore | AzureStore | HTTPStore | LocalStore | MemoryStore
 
 
-# Default concurrency for async downloads
-DEFAULT_CONCURRENCY = 50
+# Default concurrency for async downloads (imported from async_utils)
+DEFAULT_CONCURRENCY = get_default_concurrency()
 
 
 # =============================================================================
@@ -561,38 +566,6 @@ def _check_uncommitted_conflicts(
 # =============================================================================
 
 
-class CircuitBreaker:
-    """Circuit breaker for resilient async operations.
-
-    Trips after N consecutive failures to prevent cascading failures
-    and wasted requests to a failing service.
-    """
-
-    def __init__(self, failure_threshold: int = 10) -> None:
-        """Initialize circuit breaker.
-
-        Args:
-            failure_threshold: Number of consecutive failures before tripping.
-        """
-        self.failure_threshold = failure_threshold
-        self.consecutive_failures = 0
-        self.is_open = False
-
-    def record_success(self) -> None:
-        """Record a successful operation, resetting the failure count."""
-        self.consecutive_failures = 0
-
-    def record_failure(self) -> None:
-        """Record a failed operation, potentially tripping the breaker."""
-        self.consecutive_failures += 1
-        if self.consecutive_failures >= self.failure_threshold:
-            self.is_open = True
-
-    def allow_request(self) -> bool:
-        """Check if requests should be allowed through."""
-        return not self.is_open
-
-
 async def _download_file_async(
     store: ObjectStore,
     remote_key: str,
@@ -743,7 +716,9 @@ async def _download_assets_async(
 
         async with semaphore:
             # Check circuit breaker AFTER acquiring semaphore (execution time, not scheduling time)
-            if not circuit_breaker.allow_request():
+            try:
+                circuit_breaker.check()
+            except CircuitBreakerError:
                 return filename, False, "Circuit breaker open - too many failures"
 
             # Retry logic for rate limits
