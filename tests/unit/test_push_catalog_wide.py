@@ -147,6 +147,7 @@ class TestPushAllCollections:
             dry_run=False,
             profile=None,
             region=None,
+            concurrency=None,  # file_concurrency defaults to None
             json_mode=False,
             suppress_progress=True,
             verbose=False,
@@ -336,6 +337,7 @@ class TestPushAllCollections:
             dry_run=True,
             profile=None,
             region=None,
+            concurrency=None,  # file_concurrency defaults to None
             json_mode=False,
             suppress_progress=True,
             verbose=False,

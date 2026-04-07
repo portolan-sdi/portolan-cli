@@ -1735,6 +1735,7 @@ async def push_all_collections_async(
     profile: str | None = None,
     region: str | None = None,
     concurrency: int | None = None,
+    file_concurrency: int | None = None,
     verbose: bool = False,
     json_mode: bool = False,
 ) -> PushAllResult:
@@ -1751,6 +1752,8 @@ async def push_all_collections_async(
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only). Overrides profile/env config.
         concurrency: Maximum concurrent collection pushes. None = auto-detect.
+        file_concurrency: Maximum concurrent file uploads within each collection.
+            None = use push_async default. (Maps to --concurrency CLI flag.)
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
 
@@ -1809,6 +1812,7 @@ async def push_all_collections_async(
                     dry_run=dry_run,
                     profile=profile,
                     region=region,
+                    concurrency=file_concurrency,  # Pass file-level concurrency
                     json_mode=json_mode,
                     suppress_progress=True,
                     verbose=verbose,
@@ -1875,6 +1879,7 @@ def push_all_collections(
     profile: str | None = None,
     region: str | None = None,
     workers: int | None = None,
+    file_concurrency: int | None = None,
     verbose: bool = False,
     json_mode: bool = False,
 ) -> PushAllResult:
@@ -1892,6 +1897,8 @@ def push_all_collections(
         region: AWS region (for S3 only). Overrides profile/env config.
         workers: Number of parallel workers. None = auto-detect, 1 = sequential.
             (Maps to 'concurrency' in async implementation.)
+        file_concurrency: Maximum concurrent file uploads within each collection.
+            None = use push_async default. (Maps to --concurrency CLI flag.)
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
 
@@ -1910,6 +1917,7 @@ def push_all_collections(
             profile=profile,
             region=region,
             concurrency=workers,
+            file_concurrency=file_concurrency,
             verbose=verbose,
             json_mode=json_mode,
         )

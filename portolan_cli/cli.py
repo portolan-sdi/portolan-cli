@@ -3004,7 +3004,7 @@ def _check_backend_push_support(
     "--concurrency",
     type=click.IntRange(min=1, max=500),
     default=50,
-    help="Maximum concurrent uploads for single-collection push (default: 50). "
+    help="Maximum concurrent file uploads within each collection (default: 50). "
     "Higher values improve throughput but may hit rate limits.",
 )
 @click.pass_context
@@ -3102,6 +3102,7 @@ def push(
                 profile=resolved_profile,
                 region=resolved_region,
                 workers=workers,
+                file_concurrency=concurrency,
                 verbose=verbose,
                 json_mode=use_json,
             )
@@ -3346,7 +3347,7 @@ def _try_backend_pull(
     type=click.IntRange(min=1),
     default=50,
     help=(
-        "Maximum concurrent file downloads within a collection (default: 50). "
+        "Maximum concurrent file downloads within each collection (default: 50). "
         "Higher values speed up downloads but use more connections."
     ),
 )
@@ -3415,6 +3416,7 @@ def pull_command(
                 dry_run=dry_run,
                 profile=resolved_profile,
                 workers=workers,
+                file_concurrency=concurrency,
             )
 
             if use_json:

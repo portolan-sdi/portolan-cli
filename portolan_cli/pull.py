@@ -30,7 +30,7 @@ import asyncio
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import obstore as obs
 
@@ -1027,6 +1027,7 @@ async def pull_all_collections_async(
     dry_run: bool = False,
     profile: str | None = None,
     concurrency: int | None = None,
+    file_concurrency: int | None = None,
     verbose: bool = False,
     json_mode: bool = False,
 ) -> PullAllResult:
@@ -1042,6 +1043,8 @@ async def pull_all_collections_async(
         dry_run: If True, show what would be downloaded without downloading.
         profile: AWS profile name (for S3 only).
         concurrency: Maximum concurrent collection pulls. None = auto-detect.
+        file_concurrency: Maximum concurrent file downloads within each collection.
+            None = use pull_async default. (Maps to --concurrency CLI flag.)
         verbose: If True, show per-file download messages (ADR-0040).
         json_mode: If True, suppress progress output (for agent/batch usage).
 
@@ -1098,17 +1101,22 @@ async def pull_all_collections_async(
         """Pull a single collection with semaphore control."""
         async with semaphore:
             try:
-                result = await pull_async(
-                    remote_url=remote_url,
-                    local_root=local_root,
-                    collection=collection,
-                    force=force,
-                    dry_run=dry_run,
-                    profile=profile,
-                    store=shared_store,  # Reuse connection across collections
-                    verbose=verbose,
-                    json_mode=json_mode,
-                )
+                # Build kwargs, only including concurrency if explicitly set
+                pull_kwargs: dict[str, Any] = {
+                    "remote_url": remote_url,
+                    "local_root": local_root,
+                    "collection": collection,
+                    "force": force,
+                    "dry_run": dry_run,
+                    "profile": profile,
+                    "store": shared_store,  # Reuse connection across collections
+                    "verbose": verbose,
+                    "json_mode": json_mode,
+                }
+                if file_concurrency is not None:
+                    pull_kwargs["concurrency"] = file_concurrency
+
+                result = await pull_async(**pull_kwargs)
                 return (collection, result, None)
             except Exception as e:
                 return (collection, None, f"{type(e).__name__}: {e}")
@@ -1183,6 +1191,7 @@ def pull_all_collections(
     dry_run: bool = False,
     profile: str | None = None,
     workers: int | None = None,
+    file_concurrency: int | None = None,
     verbose: bool = False,
     json_mode: bool = False,
 ) -> PullAllResult:
@@ -1199,6 +1208,8 @@ def pull_all_collections(
         profile: AWS profile name (for S3 only).
         workers: Number of parallel workers. None = auto-detect, 1 = sequential.
             (Maps to 'concurrency' in async implementation.)
+        file_concurrency: Maximum concurrent file downloads within each collection.
+            None = use pull_async default. (Maps to --concurrency CLI flag.)
         verbose: If True, show per-file download messages (ADR-0040).
         json_mode: If True, suppress progress output (for agent/batch usage).
 
@@ -1216,6 +1227,7 @@ def pull_all_collections(
             dry_run=dry_run,
             profile=profile,
             concurrency=workers,
+            file_concurrency=file_concurrency,
             verbose=verbose,
             json_mode=json_mode,
         )
