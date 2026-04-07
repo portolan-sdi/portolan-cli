@@ -382,26 +382,59 @@ def _fetch_remote_versions(
 # =============================================================================
 
 
+def _build_remote_sha256_set(remote_versions_data: dict[str, Any] | None) -> set[str]:
+    """Build set of sha256 hashes from all assets in all remote versions.
+
+    Args:
+        remote_versions_data: Remote versions.json data, or None if no remote.
+
+    Returns:
+        Set of sha256 hashes from all remote assets.
+    """
+    if remote_versions_data is None:
+        return set()
+
+    remote_sha256s: set[str] = set()
+    for version_entry in remote_versions_data.get("versions", []):
+        for asset_data in version_entry.get("assets", {}).values():
+            sha256 = asset_data.get("sha256")
+            if sha256:
+                remote_sha256s.add(sha256)
+
+    return remote_sha256s
+
+
 def _get_assets_to_upload(
     catalog_root: Path,
     versions_data: dict[str, Any],
     versions_to_push: list[str],
+    remote_versions_data: dict[str, Any] | None = None,
 ) -> list[Path]:
     """Get list of asset files that need to be uploaded.
+
+    Compares local assets against remote by sha256 hash. Only assets that are
+    new or changed (different sha256) are included. This prevents re-uploading
+    unchanged assets when adding a single file to a large catalog (Issue #329).
 
     Args:
         catalog_root: Path to catalog root.
         versions_data: Local versions.json data.
         versions_to_push: List of version strings to push.
+        remote_versions_data: Remote versions.json data for sha256 comparison.
+            If None, all assets from versions_to_push are uploaded (first push).
 
     Returns:
-        List of absolute paths to asset files.
+        List of absolute paths to asset files that need to be uploaded.
 
     Raises:
         FileNotFoundError: If a referenced asset file doesn't exist.
     """
+    # Build set of sha256 hashes from all remote versions
+    remote_sha256s = _build_remote_sha256_set(remote_versions_data)
+
     assets_to_upload: list[Path] = []
     seen_hrefs: set[str] = set()
+    skipped_count = 0
 
     for version_entry in versions_data.get("versions", []):
         version_str = version_entry.get("version")
@@ -411,10 +444,19 @@ def _get_assets_to_upload(
         for asset_name, asset_data in version_entry.get("assets", {}).items():
             href = asset_data.get("href", asset_name)
 
-            # Skip if we've already added this asset
+            # Skip if we've already processed this asset path
             if href in seen_hrefs:
                 continue
             seen_hrefs.add(href)
+
+            # Get local sha256 (may be None if malformed)
+            local_sha256 = asset_data.get("sha256")
+
+            # Skip upload if sha256 already exists on remote
+            # Only skip if we have a valid local sha256 to compare
+            if local_sha256 and local_sha256 in remote_sha256s:
+                skipped_count += 1
+                continue
 
             # Resolve path relative to catalog root
             asset_path = catalog_root / href
@@ -423,6 +465,11 @@ def _get_assets_to_upload(
                     f"Asset referenced in version {version_str} not found: {href}"
                 )
             assets_to_upload.append(asset_path.resolve())
+
+    # Log diffing results for user feedback (Issue #329)
+    new_count = len(assets_to_upload)
+    if skipped_count > 0 or (remote_sha256s and new_count > 0):
+        info(f"Uploading {new_count} new/changed asset(s), skipping {skipped_count} unchanged")
 
     return assets_to_upload
 
@@ -1272,6 +1319,7 @@ async def _execute_push_uploads_async(
     verbose: bool,
     force: bool,
     include_catalog: bool = True,
+    remote_data: dict[str, Any] | None = None,
 ) -> PushResult:
     """Execute the upload phase of push_async.
 
@@ -1281,12 +1329,15 @@ async def _execute_push_uploads_async(
     Args:
         include_catalog: If True, upload catalog.json and root README.md.
         verbose: If True, print per-file upload details (ADR-0040).
+        remote_data: Remote versions.json for sha256 diffing (Issue #329).
 
     Returns:
         PushResult with success or failure status and metrics.
     """
-    # Get assets to upload
-    assets = _get_assets_to_upload(catalog_root, local_data, diff.local_only)
+    # Get assets to upload (only new/changed, per Issue #329)
+    assets = _get_assets_to_upload(
+        catalog_root, local_data, diff.local_only, remote_versions_data=remote_data
+    )
 
     # Upload assets first (async, manifest-last pattern)
     files_uploaded, upload_errors, uploaded_keys, metrics = await _upload_assets_async(
@@ -1486,7 +1537,7 @@ async def push_async(
             success=True, files_uploaded=0, versions_pushed=0, conflicts=[], errors=[]
         )
 
-    # Execute uploads
+    # Execute uploads (with remote data for sha256 diffing, Issue #329)
     return await _execute_push_uploads_async(
         store,
         catalog_root,
@@ -1501,6 +1552,7 @@ async def push_async(
         verbose=verbose,
         force=force,
         include_catalog=include_catalog,
+        remote_data=remote_data,
     )
 
 

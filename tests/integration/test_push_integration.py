@@ -1557,3 +1557,172 @@ class TestTrailingSlashNormalization:
                 assert "//" not in test_path, (
                     f"Path {test_path!r} contains double slash (from prefix={prefix!r})"
                 )
+
+
+# =============================================================================
+# Asset Diffing Integration Tests (Issue #329)
+# =============================================================================
+
+
+class TestPushAssetDiffingIntegration:
+    """Integration tests for push asset diffing (Issue #329).
+
+    These tests verify that the full push flow correctly diffs assets
+    against remote and only uploads new/changed files.
+    """
+
+    @pytest.mark.integration
+    @pytest.mark.asyncio
+    async def test_push_only_uploads_new_assets(self, tmp_path: Path) -> None:
+        """Issue #329: Push should only upload assets not on remote.
+
+        Scenario: Local version 2.0.0 adds 1 new file to a catalog that
+        has 2 existing files on remote (version 1.0.0). Only the new file
+        should be uploaded.
+        """
+        from portolan_cli.push import push_async
+
+        # Setup catalog
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+
+        # Create .portolan/config.yaml (sentinel per ADR-0029)
+        portolan_dir = catalog_dir / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("version: 1\n")
+
+        # Create catalog.json
+        (catalog_dir / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": "test",
+                    "stac_version": "1.0.0",
+                    "description": "Test",
+                    "links": [],
+                }
+            )
+        )
+
+        # Create collection
+        collection_dir = catalog_dir / "test"
+        collection_dir.mkdir()
+        (collection_dir / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "test",
+                    "stac_version": "1.0.0",
+                    "description": "Test",
+                    "license": "CC0-1.0",
+                    "extent": {
+                        "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [],
+                }
+            )
+        )
+
+        # Create 3 asset files (2 existing + 1 new)
+        (collection_dir / "existing1.parquet").write_bytes(b"data1")
+        (collection_dir / "existing2.parquet").write_bytes(b"data2")
+        (collection_dir / "new_file.parquet").write_bytes(b"new data")
+
+        # Create local versions.json with both 1.0.0 (base) and 2.0.0 (new version)
+        # Per ADR-0005, each version has a complete snapshot of all assets
+        local_versions = {
+            "spec_version": "1.0.0",
+            "current_version": "2.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-01T00:00:00Z",
+                    "assets": {
+                        "existing1.parquet": {
+                            "sha256": "sha256_existing1",
+                            "href": "test/existing1.parquet",
+                        },
+                        "existing2.parquet": {
+                            "sha256": "sha256_existing2",
+                            "href": "test/existing2.parquet",
+                        },
+                    },
+                },
+                {
+                    "version": "2.0.0",
+                    "created": "2024-02-01T00:00:00Z",
+                    "assets": {
+                        "existing1.parquet": {
+                            "sha256": "sha256_existing1",
+                            "href": "test/existing1.parquet",
+                        },
+                        "existing2.parquet": {
+                            "sha256": "sha256_existing2",
+                            "href": "test/existing2.parquet",
+                        },
+                        "new_file.parquet": {
+                            "sha256": "sha256_new",
+                            "href": "test/new_file.parquet",
+                        },
+                    },
+                },
+            ],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(local_versions, indent=2))
+
+        # Remote has version 1.0.0 with only the 2 existing files
+        remote_versions = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-01T00:00:00Z",
+                    "assets": {
+                        "existing1.parquet": {
+                            "sha256": "sha256_existing1",  # Same sha256!
+                            "href": "test/existing1.parquet",
+                        },
+                        "existing2.parquet": {
+                            "sha256": "sha256_existing2",  # Same sha256!
+                            "href": "test/existing2.parquet",
+                        },
+                    },
+                },
+            ],
+        }
+
+        # Track which assets are uploaded
+        uploaded_assets: list[str] = []
+
+        async def mock_put(store, path, data, **kwargs):
+            """Mock put that accepts any keyword arguments."""
+            uploaded_assets.append(path)
+            return None
+
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = (remote_versions, "etag123")
+
+            with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock) as mock_put_call:
+                mock_put_call.side_effect = mock_put
+
+                result = await push_async(
+                    catalog_root=catalog_dir,
+                    collection="test",
+                    destination="s3://bucket/prefix",
+                )
+
+        # Verify only the new file was uploaded (not the 2 existing ones)
+        assert result.success is True
+
+        # Filter to just parquet files (ignore STAC metadata)
+        parquet_uploads = [p for p in uploaded_assets if p.endswith(".parquet")]
+        assert len(parquet_uploads) == 1
+        assert "new_file.parquet" in parquet_uploads[0]
+
+        # The existing files should NOT be in the upload list
+        assert not any("existing1.parquet" in p for p in parquet_uploads)
+        assert not any("existing2.parquet" in p for p in parquet_uploads)
