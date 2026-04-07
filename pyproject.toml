@@ -271,6 +271,7 @@ DEP002 = ["requests", "pygments"]
 dev = [
     "fastembed>=0.8.0",
     "menard[brevity] @ git+https://github.com/nlebovits/menard.git@main",
+    "moto[s3,server]>=5.0.0",
     "numpy>=2.2.6",
     "pylint>=4.0.5",
     "pytest-asyncio>=1.3.0",

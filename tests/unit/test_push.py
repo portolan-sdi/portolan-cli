@@ -2721,3 +2721,221 @@ class TestAssetDiffing:
 
         # Should upload since local has no sha256 to compare
         assert len(assets) == 1
+
+
+# =============================================================================
+# Real SHA256 Hash Tests (Issue #329)
+# =============================================================================
+
+
+class TestRealSHA256Diffing:
+    """Tests for asset diffing using real SHA256 hashes (Issue #329).
+
+    These tests verify the diffing logic works with actual computed hashes,
+    not placeholder strings like 'sha256_existing1'.
+    """
+
+    @pytest.mark.unit
+    def test_real_sha256_diffing_skips_identical_files(self, tmp_path: Path) -> None:
+        """Assets with identical content (same real SHA256) should be skipped.
+
+        This test creates real files, computes actual SHA256 hashes, and verifies
+        that the diffing logic correctly identifies unchanged files.
+        """
+        import hashlib
+
+        from portolan_cli.push import _get_assets_to_upload
+
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+
+        # Create a file with known content
+        content = b"This is test data that will be hashed"
+        real_sha256 = hashlib.sha256(content).hexdigest()
+
+        # Create the local file
+        data_file = catalog_dir / "data.parquet"
+        data_file.write_bytes(content)
+
+        # Local versions.json references the file with its REAL hash
+        local_versions_data = {
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": real_sha256,
+                            "size_bytes": len(content),
+                            "href": "data.parquet",
+                        },
+                    },
+                },
+            ]
+        }
+
+        # Remote also has the same file with the SAME real hash
+        remote_versions_data = {
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": real_sha256,  # Same hash!
+                            "size_bytes": len(content),
+                            "href": "data.parquet",
+                        },
+                    },
+                },
+            ]
+        }
+
+        assets = _get_assets_to_upload(
+            catalog_root=catalog_dir,
+            versions_data=local_versions_data,
+            versions_to_push=["1.0.0"],
+            remote_versions_data=remote_versions_data,
+        )
+
+        # File should be SKIPPED because SHA256 matches
+        assert len(assets) == 0
+
+    @pytest.mark.unit
+    def test_real_sha256_diffing_uploads_modified_files(self, tmp_path: Path) -> None:
+        """Assets with different content (different real SHA256) should be uploaded.
+
+        This test verifies that even a small content change results in a different
+        hash and triggers an upload.
+        """
+        import hashlib
+
+        from portolan_cli.push import _get_assets_to_upload
+
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+
+        # Original content and hash (what's on remote)
+        original_content = b"Original data version 1"
+        original_sha256 = hashlib.sha256(original_content).hexdigest()
+
+        # Modified content and hash (what's local)
+        modified_content = b"Modified data version 2"
+        modified_sha256 = hashlib.sha256(modified_content).hexdigest()
+
+        # Verify the hashes are actually different
+        assert original_sha256 != modified_sha256
+
+        # Create the local file with MODIFIED content
+        data_file = catalog_dir / "data.parquet"
+        data_file.write_bytes(modified_content)
+
+        # Local has the modified version
+        local_versions_data = {
+            "versions": [
+                {
+                    "version": "2.0.0",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": modified_sha256,
+                            "size_bytes": len(modified_content),
+                            "href": "data.parquet",
+                        },
+                    },
+                },
+            ]
+        }
+
+        # Remote has the original version
+        remote_versions_data = {
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": original_sha256,  # Different hash!
+                            "size_bytes": len(original_content),
+                            "href": "data.parquet",
+                        },
+                    },
+                },
+            ]
+        }
+
+        assets = _get_assets_to_upload(
+            catalog_root=catalog_dir,
+            versions_data=local_versions_data,
+            versions_to_push=["2.0.0"],
+            remote_versions_data=remote_versions_data,
+        )
+
+        # File should be UPLOADED because SHA256 differs
+        assert len(assets) == 1
+        assert assets[0].name == "data.parquet"
+
+    @pytest.mark.unit
+    def test_real_sha256_incremental_add_scenario(self, tmp_path: Path) -> None:
+        """Issue #329 core scenario: adding 1 file to a large catalog.
+
+        Simulates adding 1 new file to a catalog with 100 existing files.
+        Only the new file should be uploaded.
+        """
+        import hashlib
+
+        from portolan_cli.push import _get_assets_to_upload
+
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+
+        # Create 100 "existing" files with real hashes
+        existing_assets = {}
+        for i in range(100):
+            content = f"Existing file {i} content".encode()
+            sha256 = hashlib.sha256(content).hexdigest()
+            filename = f"file_{i:03d}.parquet"
+
+            # Create the actual file
+            (catalog_dir / filename).write_bytes(content)
+
+            existing_assets[filename] = {
+                "sha256": sha256,
+                "size_bytes": len(content),
+                "href": filename,
+            }
+
+        # Create 1 NEW file
+        new_content = b"This is the new file being added"
+        new_sha256 = hashlib.sha256(new_content).hexdigest()
+        new_filename = "new_file.parquet"
+        (catalog_dir / new_filename).write_bytes(new_content)
+
+        # Local version 2.0.0 has all 101 files (100 existing + 1 new)
+        all_assets = dict(existing_assets)
+        all_assets[new_filename] = {
+            "sha256": new_sha256,
+            "size_bytes": len(new_content),
+            "href": new_filename,
+        }
+
+        local_versions_data = {
+            "versions": [
+                {"version": "1.0.0", "assets": existing_assets},
+                {"version": "2.0.0", "assets": all_assets},
+            ]
+        }
+
+        # Remote only has version 1.0.0 with 100 files
+        remote_versions_data = {
+            "versions": [
+                {"version": "1.0.0", "assets": existing_assets},
+            ]
+        }
+
+        assets = _get_assets_to_upload(
+            catalog_root=catalog_dir,
+            versions_data=local_versions_data,
+            versions_to_push=["2.0.0"],
+            remote_versions_data=remote_versions_data,
+        )
+
+        # Only the NEW file should be uploaded (not all 101!)
+        assert len(assets) == 1
+        assert assets[0].name == new_filename
