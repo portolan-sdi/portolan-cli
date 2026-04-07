@@ -309,12 +309,12 @@ class TestSeedMetadataYaml:
         assert "license" in content
 
 
+@pytest.mark.asyncio
 class TestImageServerExtractionSeeding:
     """Tests for end-to-end ImageServer extraction with metadata seeding."""
 
-    def test_extraction_creates_metadata_yaml(self, tmp_path: Path) -> None:
+    async def test_extraction_creates_metadata_yaml(self, tmp_path: Path) -> None:
         """extract_imageserver creates .portolan/metadata.yaml after extraction."""
-        import asyncio
         from unittest.mock import MagicMock
 
         from portolan_cli.extract.arcgis.imageserver.extractor import (
@@ -360,21 +360,20 @@ class TestImageServerExtractionSeeding:
                 # Skip catalog init for this test
                 config = ExtractionConfig(dry_run=False, raw=True)
 
-                asyncio.run(
-                    extract_imageserver(
-                        url="https://services.arcgis.com/test/ImageServer",
-                        output_dir=output_dir,
-                        config=config,
-                    )
+                await extract_imageserver(
+                    url="https://services.arcgis.com/test/ImageServer",
+                    output_dir=output_dir,
+                    config=config,
                 )
 
         # Verify metadata.yaml was created
         metadata_path = output_dir / ".portolan" / "metadata.yaml"
         assert metadata_path.exists(), "metadata.yaml should be created after extraction"
 
-    def test_extraction_does_not_overwrite_existing_metadata_yaml(self, tmp_path: Path) -> None:
+    async def test_extraction_does_not_overwrite_existing_metadata_yaml(
+        self, tmp_path: Path
+    ) -> None:
         """extract_imageserver does NOT overwrite existing metadata.yaml."""
-        import asyncio
         from unittest.mock import MagicMock
 
         from portolan_cli.extract.arcgis.imageserver.extractor import (
@@ -429,12 +428,10 @@ class TestImageServerExtractionSeeding:
 
                 config = ExtractionConfig(dry_run=False, raw=True)
 
-                asyncio.run(
-                    extract_imageserver(
-                        url="https://services.arcgis.com/new/ImageServer",
-                        output_dir=output_dir,
-                        config=config,
-                    )
+                await extract_imageserver(
+                    url="https://services.arcgis.com/new/ImageServer",
+                    output_dir=output_dir,
+                    config=config,
                 )
 
         # metadata.yaml should be unchanged
@@ -442,9 +439,8 @@ class TestImageServerExtractionSeeding:
         assert content["source_url"] == "https://existing-service.com/ImageServer"
         assert content["contact"]["name"] == "Custom User"
 
-    def test_extraction_metadata_contains_service_url(self, tmp_path: Path) -> None:
+    async def test_extraction_metadata_contains_service_url(self, tmp_path: Path) -> None:
         """Seeded metadata.yaml contains the source ImageServer URL."""
-        import asyncio
         from unittest.mock import MagicMock
 
         from portolan_cli.extract.arcgis.imageserver.extractor import (
@@ -487,12 +483,10 @@ class TestImageServerExtractionSeeding:
 
                 config = ExtractionConfig(dry_run=False, raw=True)
 
-                asyncio.run(
-                    extract_imageserver(
-                        url="https://elevation.arcgis.com/DEM/ImageServer",
-                        output_dir=output_dir,
-                        config=config,
-                    )
+                await extract_imageserver(
+                    url="https://elevation.arcgis.com/DEM/ImageServer",
+                    output_dir=output_dir,
+                    config=config,
                 )
 
         metadata_path = output_dir / ".portolan" / "metadata.yaml"

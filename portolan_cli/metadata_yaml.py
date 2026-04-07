@@ -97,9 +97,9 @@ COMMON_SPDX_LICENSES = frozenset(
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # DOI pattern: 10.XXXX/suffix (where XXXX is 4+ digits)
-# Suffix must be alphanumeric, dots, hyphens, underscores, slashes (safe URL chars)
+# Suffix can contain any non-whitespace characters
 # See: https://www.doi.org/doi_handbook/2_Numbering.html
-DOI_PATTERN = re.compile(r"^10\.\d{4,}/[A-Za-z0-9._/-]+$")
+DOI_PATTERN = re.compile(r"^10\.\d{4,}/\S+$")
 
 # LicenseRef pattern: LicenseRef-[idstring] per SPDX spec Section 6
 # idstring: alphanumeric plus dot, hyphen; must have at least one character

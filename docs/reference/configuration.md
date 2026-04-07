@@ -314,6 +314,7 @@ Some settings have aliases for convenience:
 
 Both names work interchangeably in config files and environment variables.
 
+<!-- freshness: last-verified: 2026-04-07 -->
 ## Metadata Enrichment
 
 In addition to `config.yaml`, Portolan supports `.portolan/metadata.yaml` for human-enrichable metadata that supplements STAC.

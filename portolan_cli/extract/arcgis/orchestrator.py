@@ -174,11 +174,6 @@ def _emit_progress(
 def _slugify(name: str) -> str:
     """Convert a name to a filesystem-safe slug.
 
-    Preserves distinction between different separators to avoid collisions:
-    - "Layer A" -> "layer_a" (space to underscore)
-    - "Layer-A" -> "layer-a" (hyphen preserved)
-    - "Layer.A" -> "layer_a" (dot to underscore)
-
     Args:
         name: Original name (e.g., "Census Block Groups")
 
@@ -187,13 +182,12 @@ def _slugify(name: str) -> str:
     """
     # Lowercase first
     slug = name.lower()
-    # Preserve hyphens (filesystem-safe and distinct from underscore)
-    # Replace other non-alphanumeric chars with underscore
-    slug = re.sub(r"[^a-z0-9-]+", "_", slug)
+    # Replace all non-alphanumeric chars with underscore
+    slug = re.sub(r"[^a-z0-9]+", "_", slug)
     # Collapse multiple underscores
     slug = re.sub(r"_+", "_", slug)
-    # Strip leading/trailing underscores and hyphens
-    slug = slug.strip("_-")
+    # Strip leading/trailing underscores
+    slug = slug.strip("_")
     return slug or "unnamed"
 
 
