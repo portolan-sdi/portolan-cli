@@ -129,6 +129,85 @@ class TestMixedFlatMultiitem:
             or "hierarch" in mixed_issues[0].suggestion.lower()
         )
 
+    def test_mixed_structure_deep_nesting_flags_correct_directory(self, tmp_path: Path) -> None:
+        """Issue #314: Mixed structure detection flags parent with files, not child.
+
+        Structure:
+            root/
+                data.geojson          <- files here
+                level1/
+                    level2/
+                        level3/
+                            deep.geojson  <- AND files here
+
+        Should flag root (has files AND descendant with files), not level3.
+        """
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # Create file at root
+        (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        # Create deeply nested file
+        deep = tmp_path / "level1" / "level2" / "level3"
+        deep.mkdir(parents=True)
+        (deep / "deep.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        mixed_issues = [i for i in result.issues if i.issue_type == IssueType.MIXED_FLAT_MULTIITEM]
+        assert len(mixed_issues) == 1, f"Expected 1 issue, got {len(mixed_issues)}"
+
+        # The flagged directory should be the root (which has files AND a descendant with files)
+        assert mixed_issues[0].path == tmp_path, (
+            f"Expected root to be flagged, got {mixed_issues[0].path}"
+        )
+
+    def test_mixed_structure_multiple_levels_with_files(self, tmp_path: Path) -> None:
+        """Issue #314: When multiple levels have files, flag each parent correctly.
+
+        Structure:
+            root/
+                data.geojson          <- level 0
+                mid/
+                    mid_data.geojson  <- level 1
+                    deep/
+                        deep.geojson  <- level 2
+
+        Should flag root (has files + descendant mid has files)
+        Should flag mid (has files + descendant deep has files)
+        Should NOT flag deep (no descendants with files)
+        """
+        from portolan_cli.scan import IssueType, scan_directory
+
+        # Level 0: root
+        (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        # Level 1: mid
+        mid = tmp_path / "mid"
+        mid.mkdir()
+        (mid / "mid_data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        # Level 2: deep
+        deep = mid / "deep"
+        deep.mkdir()
+        (deep / "deep.geojson").write_text('{"type": "FeatureCollection", "features": []}')
+
+        result = scan_directory(tmp_path)
+
+        mixed_issues = [i for i in result.issues if i.issue_type == IssueType.MIXED_FLAT_MULTIITEM]
+        flagged_paths = {i.path for i in mixed_issues}
+
+        # Root should be flagged (has files AND mid/deep have files)
+        assert tmp_path in flagged_paths, "Root should be flagged"
+
+        # Mid should be flagged (has files AND deep has files)
+        assert mid in flagged_paths, "Mid should be flagged"
+
+        # Deep should NOT be flagged (no children with files)
+        assert deep not in flagged_paths, "Deep should NOT be flagged (leaf)"
+
+        assert len(mixed_issues) == 2, f"Expected 2 issues, got {len(mixed_issues)}"
+
 
 # =============================================================================
 # Test Case 3: One GeoParquet + Multiple Plain Parquet = VALID
