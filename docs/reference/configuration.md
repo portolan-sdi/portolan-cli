@@ -209,6 +209,52 @@ conversion:
 | `JPEG` | RGB imagery | Lossy, smallest files for photos |
 | `WEBP` | Web display | Lossy, modern browsers only |
 
+## STAC GeoParquet Settings
+
+Generate `items.parquet` for collections with many items, enabling efficient spatial/temporal queries without N HTTP requests.
+
+```yaml
+# .portolan/config.yaml
+parquet.enabled: true     # Auto-generate during add (default: false)
+parquet.threshold: 100    # Hint when items exceed threshold (default: 100)
+```
+
+!!! note "Flat key syntax"
+    Config keys use dot notation as literal keys (e.g., `parquet.enabled`), not nested YAML mappings.
+
+### Commands
+
+```bash
+# Generate items.parquet for a collection
+portolan stac-geoparquet -c eurosat
+
+# Preview without creating files
+portolan stac-geoparquet -c eurosat --dry-run
+
+# Auto-generate during add
+portolan add imagery/ --stac-geoparquet
+```
+
+### How It Works
+
+- Uses [stac-geoparquet](https://github.com/stac-utils/stac-geoparquet) library
+- Adds `items.parquet` as a collection-level asset (per [ADR-0031](../contributing.md)) and link with `rel: items`
+- Enables spatial filtering with a single HTTP request (vs N requests for items)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `parquet.enabled` | `false` | Auto-generate during `add` command |
+| `parquet.threshold` | `100` | Show hint when items exceed threshold |
+
+### When to Use
+
+- Collections with >100 items (e.g., satellite imagery time series)
+- Raster collections with many scenes
+- Partitioned vector datasets
+
+!!! warning "Known Limitation"
+    For existing catalogs with thousands of items, `push` after generating items.parquet may be slow ([#329](https://github.com/portolan-sdi/portolan-cli/issues/329)). This affects incremental updates to large catalogs. New catalogs and small catalogs work normally.
+
 ## Collection-Level Configuration
 
 Override settings for specific collections using the `collections:` section:

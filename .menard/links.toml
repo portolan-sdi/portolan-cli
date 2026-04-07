@@ -49,3 +49,7 @@ docs = ["docs/guides/extract-arcgis.md"]
 [[link]]
 code = "portolan_cli/extract/arcgis/imageserver/extractor.py"
 docs = ["docs/guides/extract-arcgis.md#ImageServer Extraction"]
+
+[[link]]
+code = "portolan_cli/stac_parquet.py"
+docs = ["docs/reference/configuration.md#STAC GeoParquet"]

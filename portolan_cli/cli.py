@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -2401,6 +2402,194 @@ def _output_add_results(
         _output_add_human(added, skipped, failures, verbose)
 
 
+def _resolve_catalog_root_for_add(
+    catalog_path: Path | None,
+    use_json: bool,
+) -> Path:
+    """Resolve and validate catalog root for add command.
+
+    Args:
+        catalog_path: Explicit catalog path from --portolan-dir, or None for auto-detect.
+        use_json: Whether to output errors as JSON.
+
+    Returns:
+        Resolved catalog root path.
+
+    Raises:
+        SystemExit: If not inside a catalog or catalog is invalid.
+    """
+    if catalog_path is not None:
+        catalog_root = catalog_path.resolve()
+        # Validate catalog exists (when explicitly specified)
+        # Per ADR-0029, use .portolan/config.yaml as the single sentinel
+        if not (catalog_root / ".portolan" / "config.yaml").exists():
+            _handle_cmd_error("add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json)
+            if not use_json:
+                detail("Run 'portolan init' to create a catalog")
+            raise SystemExit(1)
+        return catalog_root
+
+    # Auto-detect catalog root (git-style)
+    detected_root = find_catalog_root()
+    if detected_root is None:
+        _handle_cmd_error(
+            "add",
+            "NotACatalogError",
+            "Not inside a Portolan catalog (no .portolan/config.yaml found)",
+            use_json,
+        )
+        if not use_json:
+            detail("Run 'portolan init' to create a catalog, or cd into one")
+        raise SystemExit(1)
+    return detected_root
+
+
+def _validate_item_id_usage(
+    item_id: str | None,
+    paths: tuple[Path, ...],
+    use_json: bool,
+) -> None:
+    """Validate --item-id is only used with a single file.
+
+    Args:
+        item_id: Item ID override, or None if not specified.
+        paths: Paths from CLI arguments.
+        use_json: Whether to output errors as JSON.
+
+    Raises:
+        SystemExit: If --item-id is used with multiple paths or a directory.
+    """
+    if item_id is None:
+        return
+
+    if len(paths) != 1:
+        _handle_cmd_error(
+            "add",
+            "ValueError",
+            "--item-id can only be used with a single file, not multiple paths",
+            use_json,
+        )
+        raise SystemExit(1)
+
+    # Exactly 1 path: check if it's a directory
+    if paths[0].resolve().is_dir():
+        _handle_cmd_error(
+            "add",
+            "ValueError",
+            "--item-id can only be used with a single file, not a directory",
+            use_json,
+        )
+        raise SystemExit(1)
+
+
+def _handle_parquet_after_add(
+    catalog_root: Path,
+    affected_collections: set[str],
+    generate_parquet: bool,
+    verbose: bool,
+    *,
+    show_hints: bool = True,
+) -> None:
+    """Handle stac-geoparquet generation/hints after add command.
+
+    If generate_parquet is True or parquet.enabled config is set, generates
+    items.parquet for affected collections. Otherwise, shows hints for
+    collections exceeding the threshold.
+
+    Args:
+        catalog_root: Path to catalog root.
+        affected_collections: Set of collection IDs that were modified.
+        generate_parquet: Whether --stac-geoparquet flag was passed.
+        verbose: Whether to show verbose output.
+        show_hints: Whether to show hints (disabled in JSON output mode).
+    """
+    if not affected_collections:
+        return
+
+    from portolan_cli.config import get_setting
+    from portolan_cli.stac_parquet import (
+        add_parquet_link_to_collection,
+        count_items,
+        generate_items_parquet,
+        should_suggest_parquet,
+        track_parquet_in_versions,
+    )
+
+    for coll_id in affected_collections:
+        coll_path = catalog_root / coll_id
+        if not (coll_path / "collection.json").exists():
+            continue
+
+        # Get settings per-collection with hierarchical lookup (ADR-0039)
+        parquet_enabled_raw = get_setting(
+            "parquet.enabled",
+            catalog_path=catalog_root,
+            collection=coll_id,
+            collection_path=coll_path,
+        )
+        threshold_raw = get_setting(
+            "parquet.threshold",
+            catalog_path=catalog_root,
+            collection=coll_id,
+            collection_path=coll_path,
+        )
+
+        # Type coercion: parquet.enabled can be string from env var
+        parquet_enabled = _coerce_bool(parquet_enabled_raw, default=False)
+        threshold = _coerce_int(threshold_raw, default=100)
+
+        # Count items first to apply threshold gate
+        item_count = count_items(coll_path)
+
+        # Generate when:
+        # - Explicit --stac-geoparquet flag (always generate), OR
+        # - Auto-generation enabled AND item count exceeds threshold
+        should_generate = generate_parquet or (parquet_enabled and item_count > threshold)
+
+        if should_generate and item_count > 0:
+            try:
+                generate_items_parquet(coll_path)
+                add_parquet_link_to_collection(coll_path)
+                track_parquet_in_versions(coll_path)
+                if verbose:
+                    info_output(f"Generated items.parquet for '{coll_id}'")
+            except Exception as e:
+                # Explicit --stac-geoparquet should fail the command
+                if generate_parquet:
+                    raise
+                # Auto-generation failures just warn
+                warn(f"Failed to generate parquet for '{coll_id}': {e}")
+        elif show_hints and should_suggest_parquet(coll_path, threshold=threshold):
+            info_output(
+                f"Hint: Collection '{coll_id}' has {item_count} items (>{threshold}). "
+                f"Consider running: portolan stac-geoparquet -c {coll_id}"
+            )
+
+
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    """Coerce a value to boolean.
+
+    Handles string values like "true", "1", "yes" from env vars.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "yes", "on")
+    return bool(value)
+
+
+def _coerce_int(value: Any, *, default: int) -> int:
+    """Coerce a value to integer with safe fallback."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
 @cli.command("add")
 @click.argument(
     "paths",
@@ -2447,6 +2636,12 @@ def _output_add_results(
         "Default is 1 (sequential). Use higher values for large catalogs."
     ),
 )
+@click.option(
+    "--stac-geoparquet",
+    "generate_parquet",
+    is_flag=True,
+    help="Generate items.parquet for affected collections after add.",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
@@ -2458,6 +2653,7 @@ def add_cmd(
     catalog_path: Path | None,
     item_datetime: datetime | None,
     workers: int,
+    generate_parquet: bool,
 ) -> None:
     """Track files in the catalog.
 
@@ -2503,53 +2699,11 @@ def add_cmd(
     """
     use_json = should_output_json(ctx, json_output)
 
-    # Auto-detect catalog root (git-style)
-    catalog_root: Path
-    if catalog_path is not None:
-        catalog_root = catalog_path.resolve()
-    else:
-        detected_root = find_catalog_root()
-        if detected_root is None:
-            _handle_cmd_error(
-                "add",
-                "NotACatalogError",
-                "Not inside a Portolan catalog (no .portolan/config.yaml found)",
-                use_json,
-            )
-            if not use_json:
-                detail("Run 'portolan init' to create a catalog, or cd into one")
-            raise SystemExit(1)
-        catalog_root = detected_root
+    # Resolve and validate catalog root (git-style auto-detection)
+    catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
 
-    # Validate catalog exists (when explicitly specified)
-    # Per ADR-0029, use .portolan/config.yaml as the single sentinel
-    if catalog_path is not None and not (catalog_root / ".portolan" / "config.yaml").exists():
-        _handle_cmd_error("add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json)
-        if not use_json:
-            detail("Run 'portolan init' to create a catalog")
-        raise SystemExit(1)
-
-    # Validate --item-id is only used with a single file, not multiple paths or directories.
-    # Applying the same item_id to multiple geo files would cause them to overwrite
-    # each other's STAC items. (Issue #136, Issue #176)
-    if item_id is not None:
-        if len(paths) != 1:
-            _handle_cmd_error(
-                "add",
-                "ValueError",
-                "--item-id can only be used with a single file, not multiple paths",
-                use_json,
-            )
-            raise SystemExit(1)
-        # Exactly 1 path: check if it's a directory
-        if paths[0].resolve().is_dir():
-            _handle_cmd_error(
-                "add",
-                "ValueError",
-                "--item-id can only be used with a single file, not a directory",
-                use_json,
-            )
-            raise SystemExit(1)
+    # Validate --item-id usage (only valid with single file, not directory)
+    _validate_item_id_usage(item_id, paths, use_json)
 
     # Resolve all CLI paths upfront and deduplicate by resolved path.
     # Using dict.fromkeys preserves order while deduplicating.
@@ -2621,6 +2775,16 @@ def add_cmd(
 
     # Output combined results
     _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
+
+    # Handle stac-geoparquet generation/hints for affected collections
+    # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
+    # Only show hints in non-JSON mode
+    affected = {
+        a.collection_id for a in all_added if hasattr(a, "collection_id") and a.collection_id
+    }
+    _handle_parquet_after_add(
+        catalog_root, affected, generate_parquet, verbose, show_hints=not use_json
+    )
 
     # Exit with non-zero code if any failures occurred
     if all_failures:
@@ -5680,3 +5844,300 @@ def prune(
             for v in pruned:
                 timestamp = v.created.strftime("%Y-%m-%d %H:%M:%S")
                 detail(f"  {v.version}  {timestamp}")
+
+
+# =============================================================================
+# STAC GeoParquet Command
+# =============================================================================
+
+
+def _discover_collections_with_items(catalog_root: Path) -> list[str]:
+    """Find all collections that have STAC items (collection.json with item links).
+
+    Args:
+        catalog_root: Path to the catalog root directory.
+
+    Returns:
+        Sorted list of collection IDs relative to catalog_root.
+    """
+    import json
+
+    collections: list[str] = []
+
+    # Find all collection.json files
+    for collection_file in catalog_root.rglob("collection.json"):
+        # Skip files in .portolan directory
+        if ".portolan" in collection_file.parts:
+            continue
+
+        # Check if collection has any items
+        try:
+            data = json.loads(collection_file.read_text())
+            links = data.get("links", [])
+            has_items = any(link.get("rel") == "item" for link in links)
+
+            if has_items:
+                # Get relative path as collection ID
+                rel_path = collection_file.parent.relative_to(catalog_root)
+                collections.append(str(rel_path))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    return sorted(collections)
+
+
+@dataclass
+class _ParquetResult:
+    """Result of processing one collection for stac-geoparquet."""
+
+    collection: str
+    item_count: int
+    parquet_path: str
+    dry_run: bool = False
+    error: ErrorDetail | None = None
+
+
+def _process_collection_for_parquet(
+    coll_id: str,
+    catalog_path: Path,
+    dry_run: bool,
+    is_bulk: bool,
+    use_json: bool,
+) -> _ParquetResult | None:
+    """Process a single collection for stac-geoparquet generation.
+
+    Args:
+        coll_id: Collection ID to process.
+        catalog_path: Path to catalog root.
+        dry_run: If True, don't actually generate files.
+        is_bulk: If True, suppress per-collection output.
+        use_json: If True, suppress non-JSON output.
+
+    Returns:
+        _ParquetResult on success/dry-run, None on skip (empty collection in bulk mode),
+        or _ParquetResult with error field set on failure.
+    """
+    from portolan_cli.stac_parquet import (
+        add_parquet_link_to_collection,
+        count_items,
+        generate_items_parquet,
+        track_parquet_in_versions,
+    )
+
+    collection_path = catalog_path / coll_id
+
+    if not (collection_path / "collection.json").exists():
+        err = ErrorDetail(
+            type="CollectionNotFoundError",
+            message=f"Collection '{coll_id}' not found at {collection_path}",
+        )
+        if not use_json and not is_bulk:
+            error(f"Collection '{coll_id}' not found")
+        return _ParquetResult(coll_id, 0, "", error=err)
+
+    # Count items
+    try:
+        item_count = count_items(collection_path)
+    except Exception as e:
+        err = ErrorDetail(type=type(e).__name__, message=f"{coll_id}: {e}")
+        if not use_json and not is_bulk:
+            error(f"Failed to count items in '{coll_id}': {e}")
+        return _ParquetResult(coll_id, 0, "", error=err)
+
+    if item_count == 0:
+        # For bulk processing, skip silently; for explicit, return error
+        if is_bulk:
+            return None
+        err = ErrorDetail(
+            type="EmptyCollectionError",
+            message=f"No items found in collection '{coll_id}'",
+        )
+        if not use_json:
+            error(f"No items found in collection '{coll_id}'")
+        return _ParquetResult(coll_id, 0, "", error=err)
+
+    parquet_path = collection_path / "items.parquet"
+
+    if dry_run:
+        if not use_json and not is_bulk:
+            info_output(f"[DRY RUN] Would generate items.parquet for '{coll_id}'")
+            detail(f"    Items: {item_count}")
+            detail(f"    Output: {parquet_path}")
+        return _ParquetResult(coll_id, item_count, str(parquet_path), dry_run=True)
+
+    # Generate parquet
+    try:
+        parquet_path = generate_items_parquet(collection_path)
+        add_parquet_link_to_collection(collection_path)
+        track_parquet_in_versions(collection_path)
+        if not use_json and not is_bulk:
+            success(f"Generated items.parquet for '{coll_id}'")
+            detail(f"    Items: {item_count}")
+            detail(f"    Output: {parquet_path}")
+        return _ParquetResult(coll_id, item_count, str(parquet_path))
+    except Exception as e:
+        err = ErrorDetail(type=type(e).__name__, message=f"{coll_id}: {e}")
+        if not use_json and not is_bulk:
+            error(f"Failed to generate parquet for '{coll_id}': {e}")
+        return _ParquetResult(coll_id, 0, "", error=err)
+
+
+def _output_parquet_results(
+    results: list[dict[str, Any]],
+    errors_list: list[ErrorDetail],
+    total_items: int,
+    is_bulk: bool,
+    dry_run: bool,
+    use_json: bool,
+) -> None:
+    """Output results of stac-geoparquet command."""
+    had_errors = bool(errors_list)
+
+    # Summary output for bulk operations
+    if not use_json and is_bulk and results:
+        if dry_run:
+            success(
+                f"[DRY RUN] Would generate items.parquet for {len(results)} "
+                f"collections ({total_items:,} total items)"
+            )
+        else:
+            success(
+                f"Generated items.parquet for {len(results)} collections "
+                f"({total_items:,} total items)"
+            )
+        if errors_list:
+            warn(f"  {len(errors_list)} collection(s) failed")
+
+    # JSON output
+    if use_json:
+        if had_errors and not results:
+            envelope = error_envelope("stac-geoparquet", errors_list)
+        else:
+            envelope = success_envelope(
+                "stac-geoparquet",
+                {
+                    "collections_processed": len(results),
+                    "results": results,
+                    "errors": [{"type": e.type, "message": e.message} for e in errors_list],
+                },
+            )
+        output_json_envelope(envelope)
+
+    if had_errors:
+        raise SystemExit(1)
+
+
+@cli.command("stac-geoparquet")
+@click.option(
+    "--collection",
+    "-c",
+    required=False,
+    default=None,
+    help="Collection ID to generate parquet for. If omitted, generates for all collections.",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to catalog root (default: auto-detect).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be generated without creating files.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def stac_geoparquet(
+    ctx: click.Context,
+    collection: str | None,
+    catalog_path: Path | None,
+    dry_run: bool,
+    json_output: bool,
+) -> None:
+    """Generate items.parquet for efficient STAC queries.
+
+    Creates a GeoParquet file containing all items in a collection,
+    enabling fast spatial/temporal queries without N HTTP requests.
+
+    This is optional but recommended for collections with >100 items.
+    The parquet file is added as a link in collection.json.
+
+    If --collection is omitted, generates for ALL collections in the catalog.
+
+    \b
+    Examples:
+        portolan stac-geoparquet                    # Generate for ALL collections
+        portolan stac-geoparquet -c landsat         # Generate for landsat collection
+        portolan stac-geoparquet -c imagery --dry-run  # Preview without creating
+        portolan stac-geoparquet --json             # JSON output for all collections
+    """
+    use_json = should_output_json(ctx, json_output)
+
+    # Find catalog root
+    if catalog_path is None:
+        catalog_path = find_catalog_root()
+        if catalog_path is None:
+            if use_json:
+                envelope = error_envelope(
+                    "stac-geoparquet",
+                    [
+                        ErrorDetail(
+                            type="CatalogNotFoundError",
+                            message="Not inside a Portolan catalog. Run 'portolan init' first.",
+                        )
+                    ],
+                )
+                output_json_envelope(envelope)
+            else:
+                error("Not inside a Portolan catalog")
+                info_output("Run 'portolan init' to create one")
+            raise SystemExit(1)
+
+    # Determine which collections to process
+    if collection is not None:
+        collections_to_process = [collection]
+    else:
+        # Discover all collections with items
+        collections_to_process = _discover_collections_with_items(catalog_path)
+        if not collections_to_process:
+            if use_json:
+                envelope = error_envelope(
+                    "stac-geoparquet",
+                    [
+                        ErrorDetail(
+                            type="NoCollectionsError",
+                            message="No collections with items found in catalog",
+                        )
+                    ],
+                )
+                output_json_envelope(envelope)
+            else:
+                error("No collections with items found in catalog")
+            raise SystemExit(1)
+
+    # Process each collection
+    results: list[dict[str, Any]] = []
+    errors_list: list[ErrorDetail] = []
+    total_items = 0
+    is_bulk = collection is None  # Catalog-level operation
+
+    for coll_id in collections_to_process:
+        result = _process_collection_for_parquet(coll_id, catalog_path, dry_run, is_bulk, use_json)
+        if result is None:
+            continue  # Skipped (empty collection in bulk mode)
+        if result.error:
+            errors_list.append(result.error)
+        else:
+            results.append(
+                {
+                    "collection": result.collection,
+                    "item_count": result.item_count,
+                    "parquet_path": result.parquet_path,
+                    **({"dry_run": True} if result.dry_run else {}),
+                }
+            )
+            total_items += result.item_count
+
+    _output_parquet_results(results, errors_list, total_items, is_bulk, dry_run, use_json)
