@@ -1292,9 +1292,9 @@ def _run_fix_workflow(
 
     # Fix geo-assets if in scope
     if run_geo_assets:
-        # Progress callback for conversion (skip for JSON mode)
+        # Progress callback for conversion (skip for JSON mode, per ADR-0040: per-file only in verbose)
         def show_conversion_progress(result: ConversionResult) -> None:
-            if not use_json and result.source:
+            if not use_json and verbose and result.source:
                 info_output(f"Converting: {result.source.name}")
 
         format_fix_report = check_directory(
@@ -2373,13 +2373,14 @@ def _output_add_human(
         for p in skipped:
             detail(f"Skipping {p.name} (unchanged)")
 
+    # Final success summary (always show if we added something, even with failures)
+    # Per ADR-0040: Summary is always shown, failures are shown separately
+    if added:
+        _output_add_summary(added)
+
     # Output failures batched by error message (Issue #199)
     if failures:
         _print_add_failures_batched(failures)
-
-    # Final success summary (only if we added something and had no failures)
-    if added and not failures:
-        _output_add_summary(added)
 
 
 def _output_add_results(
@@ -2578,18 +2579,24 @@ def add_cmd(
     # multiple CLI arguments (e.g. `portolan add . foo/data.parquet`).
 
     # Pre-count files for progress bar (ADR-0040: unified progress output)
-    # Only count when progress will be displayed (not JSON mode, TTY available)
-    should_show_progress = not use_json and sys.stderr.isatty()
+    # Only count when progress will be displayed:
+    # - Not JSON mode (agents get structured output)
+    # - Not verbose mode (verbose gets per-file output instead)
+    # - TTY available (progress bars need terminal)
+    should_show_progress = not use_json and not verbose and sys.stderr.isatty()
     total_files = count_files(resolved_paths) if should_show_progress else 0
 
-    # Create progress reporter (suppressed in JSON mode or non-TTY)
-    progress_reporter = AddProgressReporter(total_files=total_files, json_mode=use_json)
+    # Create progress reporter (suppressed unless should_show_progress)
+    progress_reporter = AddProgressReporter(
+        total_files=total_files, json_mode=not should_show_progress
+    )
 
-    # Progress callback wraps the reporter (verbose mode uses per-file output)
+    # Progress callback: verbose mode prints per-file, otherwise advances progress bar
     def on_file_progress(file_path: Path) -> None:
         if verbose and not use_json:
             info_output(f"Adding: {file_path.name}")
-        progress_reporter.advance()
+        if should_show_progress:
+            progress_reporter.advance()
 
     # item_datetime is parsed by Click via FLEXIBLE_DATETIME type (ADR-0035)
     try:

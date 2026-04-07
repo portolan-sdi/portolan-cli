@@ -662,8 +662,14 @@ async def _download_assets_async(
     files_to_download: list[str],
     remote_assets: dict[str, dict[str, str | int]],
     concurrency: int = DEFAULT_CONCURRENCY,
+    *,
+    verbose: bool = False,
+    json_mode: bool = False,
 ) -> tuple[int, int]:
     """Download assets concurrently using asyncio.
+
+    Per ADR-0040: Uses progress bar for batch downloads. Per-file output
+    only shown in verbose mode.
 
     Args:
         store: Object store instance (pre-configured connection).
@@ -672,12 +678,19 @@ async def _download_assets_async(
         files_to_download: List of filenames to download.
         remote_assets: Dict mapping filename to asset metadata.
         concurrency: Maximum concurrent downloads.
+        verbose: If True, show per-file download messages.
+        json_mode: If True, suppress progress output (for agent/batch usage).
 
     Returns:
         Tuple of (files_downloaded, files_failed).
     """
+    from portolan_cli.async_utils import AsyncProgressReporter
+
     if not files_to_download:
         return 0, 0
+
+    # Calculate total bytes for progress bar
+    total_bytes = sum(int(remote_assets.get(f, {}).get("size_bytes", 0)) for f in files_to_download)
 
     # Semaphore for concurrency control
     semaphore = asyncio.Semaphore(concurrency)
@@ -686,79 +699,88 @@ async def _download_assets_async(
     downloaded = 0
     failed = 0
     total = len(files_to_download)
-    completed = 0
 
-    async def download_one(filename: str) -> tuple[str, bool, str | None]:
-        """Download a single file with semaphore control."""
-        nonlocal completed
+    async with AsyncProgressReporter(
+        total_files=total,
+        total_bytes=total_bytes,
+        json_mode=json_mode,
+        description="Downloading",
+    ) as progress:
 
-        asset = remote_assets.get(filename)
-        if not asset:
-            return filename, False, "Asset metadata not found"
+        async def download_one(filename: str) -> tuple[str, bool, str | None, int]:
+            """Download a single file with semaphore control."""
+            asset = remote_assets.get(filename)
+            if not asset:
+                return filename, False, "Asset metadata not found", 0
 
-        href = str(asset["href"])
+            href = str(asset["href"])
+            file_size = int(asset.get("size_bytes", 0))
 
-        # Security: Validate path before any filesystem operations
-        try:
-            local_path = _validate_safe_path(local_root, href)
-        except ValueError as e:
-            return filename, False, str(e)
-
-        # Construct remote_key by joining prefix and href
-        # Strip leading/trailing slashes for proper normalization
-        if prefix:
-            remote_key = f"{prefix.strip('/')}/{href.lstrip('/')}"
-        else:
-            remote_key = href.lstrip("/")
-
-        async with semaphore:
-            # Check circuit breaker AFTER acquiring semaphore (execution time, not scheduling time)
+            # Security: Validate path before any filesystem operations
             try:
-                circuit_breaker.check()
-            except CircuitBreakerError:
-                return filename, False, "Circuit breaker open - too many failures"
+                local_path = _validate_safe_path(local_root, href)
+            except ValueError as e:
+                return filename, False, str(e), 0
 
-            # Retry logic for rate limits
-            max_retries = 3
-            retry_delay = 1.0
-
-            for attempt in range(max_retries):
-                try:
-                    await _download_file_async(store, remote_key, local_path)
-                    circuit_breaker.record_success()
-                    completed += 1
-                    info(f"Downloaded ({completed}/{total}): {filename}")
-                    return filename, True, None
-                except Exception as e:
-                    error_str = str(e)
-                    if "429" in error_str and attempt < max_retries - 1:
-                        # Rate limited - wait and retry
-                        await asyncio.sleep(retry_delay * (attempt + 1))
-                        continue
-                    circuit_breaker.record_failure()
-                    return filename, False, error_str
-
-            return filename, False, "Max retries exceeded"
-
-    # Create tasks for all downloads
-    tasks = [download_one(filename) for filename in files_to_download]
-
-    # Execute all tasks concurrently
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Process results
-    for result in results:
-        if isinstance(result, BaseException):
-            failed += 1
-            error(f"Download error: {result}")
-        elif isinstance(result, tuple):
-            filename, success_flag, err_msg = result
-            if success_flag:
-                downloaded += 1
+            # Construct remote_key by joining prefix and href
+            # Strip leading/trailing slashes for proper normalization
+            if prefix:
+                remote_key = f"{prefix.strip('/')}/{href.lstrip('/')}"
             else:
+                remote_key = href.lstrip("/")
+
+            async with semaphore:
+                # Check circuit breaker AFTER acquiring semaphore (execution time, not scheduling time)
+                try:
+                    circuit_breaker.check()
+                except CircuitBreakerError:
+                    return filename, False, "Circuit breaker open - too many failures", 0
+
+                # Retry logic for rate limits
+                max_retries = 3
+                retry_delay = 1.0
+
+                for attempt in range(max_retries):
+                    try:
+                        await _download_file_async(store, remote_key, local_path)
+                        circuit_breaker.record_success()
+                        # Per ADR-0040: per-file output only in verbose mode
+                        if verbose:
+                            info(f"Downloaded: {filename}")
+                        return filename, True, None, file_size
+                    except Exception as e:
+                        error_str = str(e)
+                        if "429" in error_str and attempt < max_retries - 1:
+                            # Rate limited - wait and retry
+                            await asyncio.sleep(retry_delay * (attempt + 1))
+                            continue
+                        circuit_breaker.record_failure()
+                        return filename, False, error_str, 0
+
+                return filename, False, "Max retries exceeded", 0
+
+        # Create tasks for all downloads
+        tasks = [download_one(filename) for filename in files_to_download]
+
+        # Execute all tasks concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process results
+        for result in results:
+            if isinstance(result, BaseException):
                 failed += 1
-                if err_msg:
-                    error(f"Failed {filename}: {err_msg}")
+                error(f"Download error: {result}")
+                progress.advance(0)
+            elif isinstance(result, tuple):
+                filename, success_flag, err_msg, bytes_downloaded = result
+                if success_flag:
+                    downloaded += 1
+                    progress.advance(bytes_downloaded)
+                else:
+                    failed += 1
+                    progress.advance(0)
+                    if err_msg:
+                        error(f"Failed {filename}: {err_msg}")
 
     return downloaded, failed
 
@@ -778,6 +800,8 @@ async def pull_async(
     profile: str | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
     store: ObjectStore | None = None,
+    verbose: bool = False,
+    json_mode: bool = False,
 ) -> PullResult:
     """Pull updates from a remote catalog asynchronously.
 
@@ -801,6 +825,8 @@ async def pull_async(
         concurrency: Maximum concurrent downloads (default: 50).
         store: Optional pre-configured object store. If provided, reuses
             this connection instead of creating a new one (for connection pooling).
+        verbose: If True, show per-file download messages (ADR-0040).
+        json_mode: If True, suppress progress output (for agent/batch usage).
 
     Returns:
         PullResult with operation results.
@@ -898,6 +924,8 @@ async def pull_async(
         files_to_download=diff.files_to_download,
         remote_assets=diff.remote_assets,
         concurrency=concurrency,
+        verbose=verbose,
+        json_mode=json_mode,
     )
 
     # Handle failures
@@ -939,6 +967,8 @@ def pull(
     dry_run: bool = False,
     profile: str | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
+    verbose: bool = False,
+    json_mode: bool = False,
 ) -> PullResult:
     """Pull updates from a remote catalog (sync wrapper).
 
@@ -960,6 +990,8 @@ def pull(
         dry_run: If True, show what would happen without downloading.
         profile: AWS profile name (for S3).
         concurrency: Maximum concurrent downloads (default: 50).
+        verbose: If True, show per-file download messages (ADR-0040).
+        json_mode: If True, suppress progress output (for agent/batch usage).
 
     Returns:
         PullResult with operation results.
@@ -976,6 +1008,8 @@ def pull(
             dry_run=dry_run,
             profile=profile,
             concurrency=concurrency,
+            verbose=verbose,
+            json_mode=json_mode,
         )
     )
 
@@ -993,6 +1027,8 @@ async def pull_all_collections_async(
     dry_run: bool = False,
     profile: str | None = None,
     concurrency: int | None = None,
+    verbose: bool = False,
+    json_mode: bool = False,
 ) -> PullAllResult:
     """Pull all collections in a catalog from cloud storage asynchronously.
 
@@ -1006,6 +1042,8 @@ async def pull_all_collections_async(
         dry_run: If True, show what would be downloaded without downloading.
         profile: AWS profile name (for S3 only).
         concurrency: Maximum concurrent collection pulls. None = auto-detect.
+        verbose: If True, show per-file download messages (ADR-0040).
+        json_mode: If True, suppress progress output (for agent/batch usage).
 
     Returns:
         PullAllResult with aggregate statistics and per-collection errors.
@@ -1068,6 +1106,8 @@ async def pull_all_collections_async(
                     dry_run=dry_run,
                     profile=profile,
                     store=shared_store,  # Reuse connection across collections
+                    verbose=verbose,
+                    json_mode=json_mode,
                 )
                 return (collection, result, None)
             except Exception as e:
@@ -1143,6 +1183,8 @@ def pull_all_collections(
     dry_run: bool = False,
     profile: str | None = None,
     workers: int | None = None,
+    verbose: bool = False,
+    json_mode: bool = False,
 ) -> PullAllResult:
     """Pull all collections in a catalog from cloud storage (sync wrapper).
 
@@ -1157,6 +1199,8 @@ def pull_all_collections(
         profile: AWS profile name (for S3 only).
         workers: Number of parallel workers. None = auto-detect, 1 = sequential.
             (Maps to 'concurrency' in async implementation.)
+        verbose: If True, show per-file download messages (ADR-0040).
+        json_mode: If True, suppress progress output (for agent/batch usage).
 
     Returns:
         PullAllResult with aggregate statistics and per-collection errors.
@@ -1172,5 +1216,7 @@ def pull_all_collections(
             dry_run=dry_run,
             profile=profile,
             concurrency=workers,
+            verbose=verbose,
+            json_mode=json_mode,
         )
     )
