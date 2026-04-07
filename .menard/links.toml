@@ -41,6 +41,7 @@ ignore = true
 [[link]]
 code = "portolan_cli/sync.py"
 docs = ["docs/reference/configuration.md#Environment Variables"]
+ignore = true
 
 [[link]]
 code = "portolan_cli/extract/arcgis/orchestrator.py"

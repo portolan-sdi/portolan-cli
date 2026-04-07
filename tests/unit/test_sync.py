@@ -1174,7 +1174,8 @@ class TestListRemoteCollectionsNestedCatalogs:
         with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
-        assert collections == ["hittekaart"]
+        # Full path includes the subcatalog directory for proper clone/pull
+        assert collections == ["climate/hittekaart"]
 
     @pytest.mark.unit
     def test_list_remote_collections_deeply_nested(self) -> None:
@@ -1220,7 +1221,8 @@ class TestListRemoteCollectionsNestedCatalogs:
         with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
-        assert collections == ["amsterdam"]
+        # Full path includes all subcatalog directories
+        assert collections == ["europe/netherlands/amsterdam"]
         assert call_count["n"] == 3  # root + europe + netherlands
 
     @pytest.mark.unit
@@ -1258,7 +1260,8 @@ class TestListRemoteCollectionsNestedCatalogs:
         with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
-        assert set(collections) == {"quick-data", "nested-data"}
+        # Full paths: direct collection keeps path, nested gets subcatalog prefix
+        assert set(collections) == {"quick-data", "organized/nested-data"}
 
     @pytest.mark.unit
     def test_list_remote_collections_max_depth_limit(self) -> None:
@@ -1357,8 +1360,8 @@ class TestListRemoteCollectionsNestedCatalogs:
         with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
-        # Should find the collection without infinite loop
-        assert "real-data" in collections
+        # Should find the collection without infinite loop (full path includes subcatalogs)
+        assert "a/b/real-data" in collections
         # Should not have fetched more than 4 times (root, a, b; 'a' is skipped on second visit)
         assert len(fetch_calls) <= 4, f"Too many fetches: {fetch_calls}"
 
@@ -1397,7 +1400,8 @@ class TestListRemoteCollectionsNestedCatalogs:
         with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
-        assert "data" in collections
+        # Full path includes subcatalog directory
+        assert "region/data" in collections
 
     @pytest.mark.unit
     def test_list_remote_collections_preserves_collection_path(self) -> None:
@@ -1428,10 +1432,8 @@ class TestListRemoteCollectionsNestedCatalogs:
         with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
-        # The returned collection name should include the path
-        assert "climate/hittekaart" in collections or "hittekaart" in collections
-        # NOTE: Depending on implementation, we may want full paths or just names.
-        # For now, just ensure we find the collection at all.
+        # Full path is required for clone/pull to work correctly
+        assert collections == ["climate/hittekaart"]
 
 
 class TestCloneNestedCatalogs:

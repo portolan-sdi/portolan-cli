@@ -193,6 +193,7 @@ def list_remote_collections(
         max_depth=max_depth,
         current_depth=0,
         visited_urls=visited_urls,
+        path_prefix="",  # Start with empty prefix at root
     )
 
 
@@ -256,10 +257,15 @@ def _list_remote_collections_recursive(
     max_depth: int,
     current_depth: int,
     visited_urls: set[str],
+    path_prefix: str = "",
 ) -> list[str]:
     """Recursively list collections from a catalog and its subcatalogs.
 
     Internal recursive helper for list_remote_collections.
+
+    Args:
+        path_prefix: The accumulated path from the root catalog to this point.
+            Used to construct full collection paths like "climate/hittekaart".
     """
     # Normalize URL for visited check
     normalized_url = remote_url.rstrip("/")
@@ -296,42 +302,86 @@ def _list_remote_collections_recursive(
             # This is a subcatalog - recurse into it
             subcatalog_url = _extract_catalog_url_from_href(remote_url, href)
 
+            # Extract the subcatalog directory name to build the path prefix
+            # e.g., "./climate/catalog.json" -> "climate"
+            subcatalog_dir = _extract_subcatalog_dir_from_href(href)
+            new_prefix = f"{path_prefix}{subcatalog_dir}/" if subcatalog_dir else path_prefix
+
             nested_collections = _list_remote_collections_recursive(
                 remote_url=subcatalog_url,
                 profile=profile,
                 max_depth=max_depth,
                 current_depth=current_depth + 1,
                 visited_urls=visited_urls,
+                path_prefix=new_prefix,
             )
             collections.extend(nested_collections)
 
         elif href.endswith("collection.json"):
-            # This is an actual collection - extract the name
+            # This is an actual collection - extract the name with full path
             collection_name = _extract_collection_name_from_href(href)
             if collection_name:
-                collections.append(collection_name)
+                # Prepend path prefix for nested collections
+                full_path = f"{path_prefix}{collection_name}" if path_prefix else collection_name
+                collections.append(full_path)
 
         else:
             # Unknown link type - could be a collection without .json suffix
             # Try to extract a name anyway (backwards compatibility)
             collection_name = _extract_collection_name_from_href(href)
             if collection_name:
-                collections.append(collection_name)
+                full_path = f"{path_prefix}{collection_name}" if path_prefix else collection_name
+                collections.append(full_path)
 
     return collections
 
 
-def _extract_collection_name_from_href(href: str) -> str:
-    """Extract collection name from an href.
+def _extract_subcatalog_dir_from_href(href: str) -> str:
+    """Extract the subcatalog directory name from an href.
 
-    Handles both relative (./collection-name/collection.json)
+    Used to build path prefixes for nested collections.
+
+    Args:
+        href: The href pointing to a catalog.json file.
+            e.g., "./climate/catalog.json" or "s3://bucket/catalog/climate/catalog.json"
+
+    Returns:
+        The subcatalog directory name (e.g., "climate").
+    """
+    # Remove catalog.json suffix
+    if href.endswith("/catalog.json"):
+        href = href[: -len("/catalog.json")]
+    elif href.endswith("catalog.json"):
+        href = href[: -len("catalog.json")]
+
+    # Remove any trailing slashes
+    href = href.rstrip("/")
+
+    # Handle relative paths
+    if href.startswith("./"):
+        href = href[2:]
+
+    # Get the last path component (subcatalog directory name)
+    if "/" in href:
+        return href.split("/")[-1]
+
+    return href
+
+
+def _extract_collection_name_from_href(href: str) -> str:
+    """Extract collection path from an href.
+
+    Handles both relative (./environment/collection-name/collection.json)
     and absolute (s3://bucket/catalog/collection-name/collection.json) paths.
+
+    For relative paths, preserves the full path structure (e.g., "environment/bodemkwaliteit").
+    For absolute paths, extracts only the leaf directory name.
 
     Args:
         href: The href pointing to a collection.json file.
 
     Returns:
-        The collection name (directory containing collection.json).
+        The collection path relative to the catalog root.
     """
     # Remove collection.json suffix if present
     if href.endswith("/collection.json"):
@@ -342,14 +392,20 @@ def _extract_collection_name_from_href(href: str) -> str:
     # Remove any trailing slashes
     href = href.rstrip("/")
 
-    # Get the last path component (collection name)
-    if "/" in href:
-        collection_name = href.split("/")[-1]
-    else:
-        # Handle case like "./collection-name"
-        collection_name = href.lstrip("./")
+    # Handle relative paths - preserve full structure
+    if href.startswith("./"):
+        return href[2:]  # Remove "./" prefix, keep rest (e.g., "environment/bodemkwaliteit")
 
-    return collection_name
+    # Handle absolute URLs - extract only leaf directory
+    # (absolute URLs are already resolved to a specific location)
+    if "://" in href:
+        # Get the last path component for absolute URLs
+        if "/" in href:
+            return href.split("/")[-1]
+        return href
+
+    # For other cases (bare relative paths), return as-is
+    return href
 
 
 # =============================================================================
