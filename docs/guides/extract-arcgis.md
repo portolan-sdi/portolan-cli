@@ -189,24 +189,29 @@ output/
     └── ...
 ```
 
-### Adding Metadata After Extraction
+### Metadata After Extraction
 
-Extraction creates STAC metadata but **not** `metadata.yaml`. Per [ADR-0038](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0038-metadata-yaml-enrichment.md), contact and license info must be added manually:
+Extraction automatically seeds `.portolan/metadata.yaml` with values from the ArcGIS service (source URL, description, attribution, keywords). Fields that require human input are marked with `TODO: Add value`:
+
+```yaml
+# Auto-seeded .portolan/metadata.yaml (example)
+contact:
+  name: "TODO: Add value"      # Required - add your name
+  email: "TODO: Add value"     # Required - add your email
+license: "TODO: Add value"     # Required - add SPDX identifier (e.g., CC-BY-4.0)
+source_url: https://example.com/.../ImageServer  # Auto-populated
+attribution: "Copyright © 2024 Example Org"      # Auto-populated from copyrightText
+```
+
+Complete the `TODO` fields, then generate the README:
 
 ```bash
-# Create metadata.yaml in the collection's .portolan directory
-mkdir -p tiles/.portolan
-cat > tiles/.portolan/metadata.yaml << 'EOF'
-contact:
-  name: Your Name
-  email: your.email@example.com
-license: CC-BY-4.0
-source_url: https://example.com/.../ImageServer
-EOF
-
 # Generate README from STAC + metadata.yaml
 portolan readme tiles
 ```
+
+!!! tip "Overriding auto-seeded metadata"
+    To replace auto-seeded values, edit the generated `metadata.yaml` directly. The file is never overwritten on subsequent extractions.
 
 ---
 
