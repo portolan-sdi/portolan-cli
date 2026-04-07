@@ -382,26 +382,31 @@ def _fetch_remote_versions(
 # =============================================================================
 
 
-def _build_remote_sha256_set(remote_versions_data: dict[str, Any] | None) -> set[str]:
-    """Build set of sha256 hashes from all assets in all remote versions.
+def _build_remote_asset_set(
+    remote_versions_data: dict[str, Any] | None,
+) -> set[tuple[str, str]]:
+    """Build set of (href, sha256) pairs from all assets in all remote versions.
 
     Args:
         remote_versions_data: Remote versions.json data, or None if no remote.
 
     Returns:
-        Set of sha256 hashes from all remote assets.
+        Set of (href, sha256) tuples from all remote assets.
+        Both href and sha256 must match for an asset to be considered "already exists".
+        This ensures renamed files (same sha256, different href) are still uploaded.
     """
     if remote_versions_data is None:
         return set()
 
-    remote_sha256s: set[str] = set()
+    remote_assets: set[tuple[str, str]] = set()
     for version_entry in remote_versions_data.get("versions", []):
-        for asset_data in version_entry.get("assets", {}).values():
+        for asset_name, asset_data in version_entry.get("assets", {}).items():
+            href = asset_data.get("href", asset_name)
             sha256 = asset_data.get("sha256")
-            if sha256:
-                remote_sha256s.add(sha256)
+            if sha256 and href:
+                remote_assets.add((href, sha256))
 
-    return remote_sha256s
+    return remote_assets
 
 
 def _get_assets_to_upload(
@@ -429,8 +434,8 @@ def _get_assets_to_upload(
     Raises:
         FileNotFoundError: If a referenced asset file doesn't exist.
     """
-    # Build set of sha256 hashes from all remote versions
-    remote_sha256s = _build_remote_sha256_set(remote_versions_data)
+    # Build set of (href, sha256) pairs from all remote versions
+    remote_assets = _build_remote_asset_set(remote_versions_data)
 
     assets_to_upload: list[Path] = []
     seen_hrefs: set[str] = set()
@@ -452,9 +457,9 @@ def _get_assets_to_upload(
             # Get local sha256 (may be None if malformed)
             local_sha256 = asset_data.get("sha256")
 
-            # Skip upload if sha256 already exists on remote
-            # Only skip if we have a valid local sha256 to compare
-            if local_sha256 and local_sha256 in remote_sha256s:
+            # Skip upload only if BOTH href AND sha256 match remote
+            # This ensures renamed files (same sha256, different href) are uploaded
+            if local_sha256 and (href, local_sha256) in remote_assets:
                 skipped_count += 1
                 continue
 
@@ -468,7 +473,7 @@ def _get_assets_to_upload(
 
     # Log diffing results for user feedback (Issue #329)
     new_count = len(assets_to_upload)
-    if skipped_count > 0 or (remote_sha256s and new_count > 0):
+    if skipped_count > 0 or (remote_assets and new_count > 0):
         info(f"Uploading {new_count} new/changed asset(s), skipping {skipped_count} unchanged")
 
     return assets_to_upload

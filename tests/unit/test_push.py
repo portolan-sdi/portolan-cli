@@ -2411,6 +2411,66 @@ class TestAssetDiffing:
         assert assets[0].name == "data.parquet"
 
     @pytest.mark.unit
+    def test_uploads_renamed_file_even_with_same_sha256(self, tmp_path: Path) -> None:
+        """Renamed files (same sha256, different href) must be uploaded.
+
+        Regression test: if only sha256 is checked, renamed files are incorrectly
+        skipped because the bytes already exist remotely. But the new href doesn't
+        exist on S3, so the upload is required.
+
+        Scenario: data.parquet renamed to renamed.parquet (same content).
+        """
+        from portolan_cli.push import _get_assets_to_upload
+
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+
+        # Create the renamed file
+        renamed_file = catalog_dir / "renamed.parquet"
+        renamed_file.write_bytes(b"same data")
+
+        local_versions_data = {
+            "versions": [
+                {
+                    "version": "2.0.0",
+                    "assets": {
+                        "renamed.parquet": {
+                            "sha256": "sha256_same",  # Same sha256 as old file
+                            "size_bytes": 9,
+                            "href": "renamed.parquet",  # Different href!
+                        },
+                    },
+                },
+            ]
+        }
+
+        remote_versions_data = {
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": "sha256_same",  # Same sha256
+                            "size_bytes": 9,
+                            "href": "data.parquet",  # Old href
+                        },
+                    },
+                },
+            ]
+        }
+
+        assets = _get_assets_to_upload(
+            catalog_root=catalog_dir,
+            versions_data=local_versions_data,
+            versions_to_push=["2.0.0"],
+            remote_versions_data=remote_versions_data,
+        )
+
+        # renamed.parquet MUST be uploaded (different href, even though same sha256)
+        assert len(assets) == 1
+        assert assets[0].name == "renamed.parquet"
+
+    @pytest.mark.unit
     def test_uploads_all_assets_when_no_remote(self, tmp_path: Path) -> None:
         """When remote has no versions.json, all assets should be uploaded.
 
