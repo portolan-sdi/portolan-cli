@@ -149,6 +149,7 @@ class TestPushAllCollections:
             region=None,
             json_mode=False,
             suppress_progress=True,
+            verbose=False,
             include_catalog=False,  # push_all_collections uploads catalog.json once at end
         )
 
@@ -337,5 +338,6 @@ class TestPushAllCollections:
             region=None,
             json_mode=False,
             suppress_progress=True,
+            verbose=False,
             include_catalog=False,  # push_all_collections uploads catalog.json once at end
         )
