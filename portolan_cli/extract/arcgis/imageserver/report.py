@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from portolan_cli.extract.arcgis.imageserver.discovery import ImageServerMetadata
+    from portolan_cli.metadata_extraction import ExtractedMetadata
 
 
 @dataclass
@@ -214,6 +215,44 @@ class ImageServerMetadataExtracted:
             keywords=data.get("keywords"),
             license_info=data.get("license_info"),
             access_information=data.get("access_information"),
+        )
+
+    def to_extracted(self) -> ExtractedMetadata:
+        """Convert to canonical ExtractedMetadata for metadata.yaml seeding.
+
+        Maps ImageServer-specific fields to the common ExtractedMetadata format
+        used across all extraction sources. Technical specifications (band count,
+        pixel type, spatial reference) are appended to processing_notes.
+
+        Returns:
+            ExtractedMetadata instance with mapped fields.
+        """
+        from portolan_cli.metadata_extraction import ExtractedMetadata
+
+        # Build processing notes with technical specs
+        notes = self.description or ""
+        if self.service_description:
+            notes = f"{notes}\n\n{self.service_description}" if notes else self.service_description
+
+        specs = f"Technical specs: {self.band_count} bands, {self.pixel_type} pixel type"
+        if self.spatial_reference_wkid:
+            specs += f", EPSG:{self.spatial_reference_wkid}"
+        notes = f"{notes}\n\n{specs}" if notes else specs
+
+        # Handle keyword fallback
+        keywords = self.keywords
+        if not keywords:  # None or empty list
+            keywords = [self.service_name.lower()] if self.service_name else None
+
+        return ExtractedMetadata(
+            source_url=self.source_url,
+            source_type="arcgis_imageserver",
+            attribution=self.copyright_text,
+            keywords=keywords,
+            contact_name=self.author,
+            processing_notes=notes.strip() if notes else None,
+            known_issues=self.access_information,
+            license_hint=self.license_info,
         )
 
     @classmethod
