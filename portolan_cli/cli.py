@@ -3327,6 +3327,11 @@ def _try_backend_pull(
     help="Show what would be downloaded without actually downloading. Note: skips remote state check (no network I/O), so remote changes won't be detected.",
 )
 @click.option(
+    "--restore",
+    is_flag=True,
+    help="Re-download files that are missing locally even if version metadata matches. Use to recover accidentally deleted files. Note: slower than normal pull (checks file existence).",
+)
+@click.option(
     "--profile",
     type=str,
     default=None,
@@ -3361,6 +3366,7 @@ def pull_command(
     catalog_path: Path | None,
     force: bool,
     dry_run: bool,
+    restore: bool,
     profile: str | None,
     workers: int | None,
     concurrency: int,
@@ -3414,6 +3420,7 @@ def pull_command(
                 local_root=catalog_path,
                 force=force,
                 dry_run=dry_run,
+                restore=restore,
                 profile=resolved_profile,
                 workers=workers,
                 file_concurrency=concurrency,
@@ -3466,6 +3473,7 @@ def pull_command(
             collection=collection,
             force=force,
             dry_run=dry_run,
+            restore=restore,
             profile=resolved_profile,
             concurrency=concurrency,
         )
@@ -3474,6 +3482,7 @@ def pull_command(
             data = {
                 "files_downloaded": single_result.files_downloaded,
                 "files_skipped": single_result.files_skipped,
+                "files_restored": single_result.files_restored,
                 "local_version": single_result.local_version,
                 "remote_version": single_result.remote_version,
                 "up_to_date": single_result.up_to_date,

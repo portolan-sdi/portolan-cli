@@ -96,6 +96,7 @@ class PullResult:
         uncommitted_changes: List of files with uncommitted changes that blocked pull.
         up_to_date: True if already at remote version (nothing to pull).
         dry_run: True if this was a dry-run operation (no network calls made).
+        files_restored: Number of files restored (re-downloaded because missing locally).
     """
 
     success: bool
@@ -106,6 +107,7 @@ class PullResult:
     uncommitted_changes: list[str] = field(default_factory=list)
     up_to_date: bool = False
     dry_run: bool = False
+    files_restored: int = 0
 
 
 @dataclass
@@ -226,6 +228,52 @@ def detect_uncommitted_changes(
     return uncommitted
 
 
+def find_missing_files(
+    catalog_root: Path,
+    collection: str,
+) -> list[str]:
+    """Find files that are tracked in versions.json but missing from disk.
+
+    Used by --restore to identify files that need re-downloading even when
+    version metadata matches. This addresses issue #325 where deleted local
+    files aren't restored by normal pull (which only checks version metadata).
+
+    Note: This is slower than metadata-only checks (requires filesystem stat
+    for each asset), but necessary for restore functionality.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection: Collection name/identifier.
+
+    Returns:
+        List of asset names (filenames) that are missing from disk.
+    """
+    # versions.json at collection root (per ADR-0023)
+    versions_path = catalog_root / collection / "versions.json"
+
+    try:
+        versions_file = read_versions(versions_path)
+    except FileNotFoundError:
+        # No versions.json means no tracked files, nothing to restore
+        return []
+
+    if not versions_file.versions:
+        return []
+
+    # Get the current version's assets
+    current_version = versions_file.versions[-1]
+    missing = []
+
+    for asset_name, asset in current_version.assets.items():
+        # Determine local file path (href is relative to catalog root)
+        local_path = catalog_root / asset.href
+
+        if not local_path.exists():
+            missing.append(asset_name)
+
+    return missing
+
+
 # =============================================================================
 # Version Diffing
 # =============================================================================
@@ -259,21 +307,12 @@ def diff_versions(
     local_only = local_version_strs - remote_version_strs
     remote_only = remote_version_strs - local_version_strs
 
-    # If versions match completely, nothing to do
-    if local_version == remote_version and not local_only and not remote_only:
-        return VersionDiff(
-            local_version=local_version,
-            remote_version=remote_version,
-            is_behind=False,
-            files_to_download=[],
-        )
-
     # Determine sync state
     is_local_ahead = bool(local_only) and not remote_only
     is_diverged = bool(local_only) and bool(remote_only)
     is_behind = bool(remote_only) and not local_only
 
-    # Get remote's current assets
+    # Get remote's current assets (always populate for restore support, issue #325)
     remote_assets: dict[str, dict[str, str | int]] = {}
     if remote_versions.versions:
         current_remote = remote_versions.versions[-1]
@@ -561,6 +600,40 @@ def _check_uncommitted_conflicts(
     return None
 
 
+def _report_pull_plan(
+    remote_url: str,
+    update_files: list[str],
+    restore_files: list[str],
+    concurrency: int,
+) -> None:
+    """Report what will be downloaded during a pull operation.
+
+    Extracted from pull_async to reduce function complexity.
+
+    Args:
+        remote_url: Remote catalog URL for display.
+        update_files: Files to download due to version changes.
+        restore_files: Files to restore (missing locally).
+        concurrency: Concurrency setting for display.
+    """
+    update_count = len(update_files)
+    restore_count = len(restore_files)
+    all_files = update_files + restore_files
+
+    if restore_count > 0 and update_count > 0:
+        info(f"Pulling {update_count} updated file(s) + {restore_count} missing file(s)")
+    elif restore_count > 0:
+        info(f"Restoring {restore_count} missing file(s) from {remote_url}")
+    else:
+        info(f"Pulling {update_count} file(s) from {remote_url}")
+
+    info(f"Using concurrency: {concurrency}")
+    for filename in all_files[:5]:
+        detail(f"  {filename}")
+    if len(all_files) > 5:
+        detail(f"  ... and {len(all_files) - 5} more")
+
+
 # =============================================================================
 # Async Download Primitives
 # =============================================================================
@@ -797,6 +870,7 @@ async def pull_async(
     *,
     force: bool = False,
     dry_run: bool = False,
+    restore: bool = False,
     profile: str | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
     store: ObjectStore | None = None,
@@ -821,6 +895,9 @@ async def pull_async(
         collection: Collection name to pull.
         force: If True, overwrite uncommitted local changes.
         dry_run: If True, show what would happen without downloading.
+        restore: If True, re-download files that are missing locally even if
+            version metadata matches. Use this to recover deleted files.
+            See issue #325.
         profile: AWS profile name (for S3).
         concurrency: Maximum concurrent downloads (default: 50).
         store: Optional pre-configured object store. If provided, reuses
@@ -887,8 +964,16 @@ async def pull_async(
     # Diff versions
     diff = diff_versions(local_versions, remote_versions)
 
-    # Check if up to date
-    if not diff.is_behind and not diff.is_local_ahead and not diff.is_diverged:
+    # Handle restore mode: check for missing files even if versions match
+    files_to_restore: list[str] = []
+    if restore:
+        missing_files = find_missing_files(local_root, collection)
+        # Only restore files that aren't already in the diff's download list
+        files_to_restore = [f for f in missing_files if f not in diff.files_to_download]
+
+    # Check if up to date (considering restore mode)
+    versions_match = not diff.is_behind and not diff.is_local_ahead and not diff.is_diverged
+    if versions_match and not files_to_restore:
         info("Already up to date")
         return PullResult(
             success=True,
@@ -898,6 +983,9 @@ async def pull_async(
             remote_version=diff.remote_version,
             up_to_date=True,
         )
+
+    # Merge restore files into download list
+    all_files_to_download = diff.files_to_download + files_to_restore
 
     # Data loss prevention checks
     sync_conflict = _check_sync_state_conflicts(diff, force)
@@ -909,19 +997,15 @@ async def pull_async(
         return uncommitted_conflict
 
     # Report what will be downloaded
-    info(f"Pulling {len(diff.files_to_download)} file(s) from {remote_url}")
-    info(f"Using concurrency: {concurrency}")
-    for filename in diff.files_to_download[:5]:
-        detail(f"  {filename}")
-    if len(diff.files_to_download) > 5:
-        detail(f"  ... and {len(diff.files_to_download) - 5} more")
+    restore_count = len(files_to_restore)
+    _report_pull_plan(remote_url, diff.files_to_download, files_to_restore, concurrency)
 
     # Download assets concurrently (reuses store connection)
     downloaded, failed = await _download_assets_async(
         store=store,
         prefix=base_prefix,
         local_root=local_root,
-        files_to_download=diff.files_to_download,
+        files_to_download=all_files_to_download,
         remote_assets=diff.remote_assets,
         concurrency=concurrency,
         verbose=verbose,
@@ -937,19 +1021,24 @@ async def pull_async(
             files_skipped=0,
             local_version=diff.local_version,
             remote_version=diff.remote_version,
+            files_restored=min(downloaded, restore_count),
         )
 
-    # Update local versions.json
+    # Update local versions.json (only if version actually changed)
     versions_path.parent.mkdir(parents=True, exist_ok=True)
-    write_versions(versions_path, remote_versions)
-    success(f"Updated to version {diff.remote_version}")
+    if diff.remote_version != diff.local_version:
+        write_versions(versions_path, remote_versions)
+        success(f"Updated to version {diff.remote_version}")
+    elif restore_count > 0:
+        success(f"Restored {restore_count} missing file(s)")
 
     return PullResult(
         success=True,
         files_downloaded=downloaded,
-        files_skipped=len(diff.files_to_download) - downloaded,
+        files_skipped=len(all_files_to_download) - downloaded,
         local_version=diff.local_version,
         remote_version=diff.remote_version,
+        files_restored=restore_count,
     )
 
 
@@ -965,6 +1054,7 @@ def pull(
     *,
     force: bool = False,
     dry_run: bool = False,
+    restore: bool = False,
     profile: str | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
     verbose: bool = False,
@@ -988,6 +1078,9 @@ def pull(
         collection: Collection name to pull.
         force: If True, overwrite uncommitted local changes.
         dry_run: If True, show what would happen without downloading.
+        restore: If True, re-download files that are missing locally even if
+            version metadata matches. Use this to recover deleted files.
+            See issue #325.
         profile: AWS profile name (for S3).
         concurrency: Maximum concurrent downloads (default: 50).
         verbose: If True, show per-file download messages (ADR-0040).
@@ -1006,6 +1099,7 @@ def pull(
             collection=collection,
             force=force,
             dry_run=dry_run,
+            restore=restore,
             profile=profile,
             concurrency=concurrency,
             verbose=verbose,
@@ -1025,6 +1119,7 @@ async def pull_all_collections_async(
     *,
     force: bool = False,
     dry_run: bool = False,
+    restore: bool = False,
     profile: str | None = None,
     concurrency: int | None = None,
     file_concurrency: int | None = None,
@@ -1041,6 +1136,9 @@ async def pull_all_collections_async(
         local_root: Path to the local catalog root directory.
         force: If True, overwrite uncommitted local changes.
         dry_run: If True, show what would be downloaded without downloading.
+        restore: If True, re-download files that are missing locally even if
+            version metadata matches. Use this to recover deleted files.
+            See issue #325.
         profile: AWS profile name (for S3 only).
         concurrency: Maximum concurrent collection pulls. None = auto-detect.
         file_concurrency: Maximum concurrent file downloads within each collection.
@@ -1108,6 +1206,7 @@ async def pull_all_collections_async(
                     "collection": collection,
                     "force": force,
                     "dry_run": dry_run,
+                    "restore": restore,
                     "profile": profile,
                     "store": shared_store,  # Reuse connection across collections
                     "verbose": verbose,
@@ -1189,6 +1288,7 @@ def pull_all_collections(
     *,
     force: bool = False,
     dry_run: bool = False,
+    restore: bool = False,
     profile: str | None = None,
     workers: int | None = None,
     file_concurrency: int | None = None,
@@ -1205,6 +1305,9 @@ def pull_all_collections(
         local_root: Path to the local catalog root directory.
         force: If True, overwrite uncommitted local changes.
         dry_run: If True, show what would be downloaded without downloading.
+        restore: If True, re-download files that are missing locally even if
+            version metadata matches. Use this to recover deleted files.
+            See issue #325.
         profile: AWS profile name (for S3 only).
         workers: Number of parallel workers. None = auto-detect, 1 = sequential.
             (Maps to 'concurrency' in async implementation.)
@@ -1225,6 +1328,7 @@ def pull_all_collections(
             local_root=local_root,
             force=force,
             dry_run=dry_run,
+            restore=restore,
             profile=profile,
             concurrency=workers,
             file_concurrency=file_concurrency,
