@@ -169,9 +169,10 @@ portolan scan /large/tree --max-depth=2
 Generate items.parquet for efficient STAC queries.
 
 ```bash
+portolan stac-geoparquet                    # Generate for ALL collections
 portolan stac-geoparquet -c landsat         # Generate for landsat collection
 portolan stac-geoparquet -c imagery --dry-run  # Preview without creating
-portolan stac-geoparquet -c eurosat --json  # JSON output
+portolan stac-geoparquet --json             # JSON output for all collections
 ```
 
 ### `portolan sync`

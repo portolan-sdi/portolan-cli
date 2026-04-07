@@ -252,6 +252,9 @@ portolan add imagery/ --stac-geoparquet
 - Raster collections with many scenes
 - Partitioned vector datasets
 
+!!! warning "Known Limitation"
+    For existing catalogs with thousands of items, `push` after generating items.parquet may be slow ([#329](https://github.com/portolan-sdi/portolan-cli/issues/329)). This affects incremental updates to large catalogs. New catalogs and small catalogs work normally.
+
 ## Collection-Level Configuration
 
 Override settings for specific collections using the `collections:` section:

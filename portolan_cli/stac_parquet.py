@@ -7,6 +7,7 @@ Per issue #319:
 - Optional but recommended for collections exceeding threshold (default: 100 items)
 - Uses stac-geoparquet library for STAC → GeoParquet conversion
 - Adds items.parquet link to collection.json with rel=items, type=application/x-parquet
+- Tracks items.parquet in versions.json so push detects changes
 
 Usage:
     from portolan_cli.stac_parquet import (
@@ -24,6 +25,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -93,10 +95,12 @@ def has_parquet_link(collection_path: Path) -> bool:
     if has_link:
         return True
 
-    # Check asset
+    # Check asset (both old key "items_parquet" and new key "geoparquet-items")
     assets = data.get("assets", {})
-    has_asset = "items_parquet" in assets or any(
-        asset.get("href") == f"./{PARQUET_FILENAME}" for asset in assets.values()
+    has_asset = (
+        "geoparquet-items" in assets
+        or "items_parquet" in assets
+        or any(asset.get("href") == f"./{PARQUET_FILENAME}" for asset in assets.values())
     )
     return has_asset
 
@@ -237,8 +241,10 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
         modified = True
 
     # --- Add collection-level asset (per ADR-0031) ---
+    # Uses community convention: key="geoparquet-items", roles=["stac-items"]
+    # Ref: https://planetarycomputer.microsoft.com/api/stac/v1/collections/naip
     assets = data.get("assets", {})
-    asset_key = "items_parquet"
+    asset_key = "geoparquet-items"
 
     # Check if asset already exists (by key or by href)
     has_asset = asset_key in assets or any(
@@ -250,7 +256,7 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
             "href": f"./{PARQUET_FILENAME}",
             "type": PARQUET_MEDIA_TYPE,
             "title": "STAC items as GeoParquet",
-            "roles": ["metadata", "index"],
+            "roles": ["stac-items"],
         }
         data["assets"] = assets
         modified = True
@@ -291,11 +297,14 @@ def remove_parquet_link_from_collection(collection_path: Path) -> bool:
         modified = True
 
     # Remove asset (by key or by href)
+    # Check both old key (items_parquet) and new key (geoparquet-items)
     assets = data.get("assets", {})
-    if "items_parquet" in assets:
-        del assets["items_parquet"]
-        data["assets"] = assets
-        modified = True
+    for key_to_remove in ("geoparquet-items", "items_parquet"):
+        if key_to_remove in assets:
+            del assets[key_to_remove]
+            data["assets"] = assets
+            modified = True
+            break
     else:
         # Check by href in case it was added with a different key
         for key, asset in list(assets.items()):
@@ -309,3 +318,75 @@ def remove_parquet_link_from_collection(collection_path: Path) -> bool:
         collection_json_path.write_text(json.dumps(data, indent=2))
 
     return modified
+
+
+def track_parquet_in_versions(collection_path: Path) -> None:
+    """Track items.parquet in versions.json so push detects changes.
+
+    Updates the collection's versions.json to include items.parquet as an asset.
+    This ensures `portolan push` will upload the generated parquet file.
+
+    Args:
+        collection_path: Path to collection directory.
+
+    Raises:
+        FileNotFoundError: If items.parquet or versions.json doesn't exist.
+    """
+    from portolan_cli.versions import (
+        Asset,
+        VersionsFile,
+        add_version,
+        parse_version,
+        read_versions,
+        write_versions,
+    )
+
+    parquet_path = collection_path / PARQUET_FILENAME
+    versions_path = collection_path / "versions.json"
+
+    if not parquet_path.exists():
+        raise FileNotFoundError(f"items.parquet not found at {parquet_path}")
+
+    # If no versions.json, create a minimal one
+    if not versions_path.exists():
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version=None,
+            versions=[],
+        )
+    else:
+        versions_file = read_versions(versions_path)
+
+    # Compute checksum and stats for parquet file
+    stat = parquet_path.stat()
+    sha256 = hashlib.sha256(parquet_path.read_bytes()).hexdigest()
+
+    # Href is relative to catalog root: {collection_name}/items.parquet
+    collection_name = collection_path.name
+    parquet_asset = Asset(
+        sha256=sha256,
+        size_bytes=stat.st_size,
+        href=f"{collection_name}/{PARQUET_FILENAME}",
+        mtime=stat.st_mtime,
+    )
+
+    # Determine next version
+    if versions_file.current_version:
+        major, minor, patch = parse_version(versions_file.current_version)
+        new_version = f"{major}.{minor}.{patch + 1}"
+    else:
+        new_version = "1.0.0"
+
+    # Add version with parquet asset
+    # NOTE: add_version creates full snapshots per ADR-0005, which means push
+    # will try to re-upload all existing assets. See GitHub issue for push
+    # optimization to diff assets instead of uploading entire snapshots.
+    updated = add_version(
+        versions_file,
+        version=new_version,
+        assets={PARQUET_FILENAME: parquet_asset},
+        breaking=False,
+        message="Generated items.parquet for STAC GeoParquet queries",
+    )
+
+    write_versions(versions_path, updated)

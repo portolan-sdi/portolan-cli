@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -2511,6 +2512,7 @@ def _handle_parquet_after_add(
         count_items,
         generate_items_parquet,
         should_suggest_parquet,
+        track_parquet_in_versions,
     )
 
     for coll_id in affected_collections:
@@ -2518,30 +2520,46 @@ def _handle_parquet_after_add(
         if not (coll_path / "collection.json").exists():
             continue
 
-        # Get settings per-collection to support collection-level overrides
+        # Get settings per-collection with hierarchical lookup (ADR-0039)
         parquet_enabled_raw = get_setting(
-            "parquet.enabled", catalog_path=catalog_root, collection=coll_id
+            "parquet.enabled",
+            catalog_path=catalog_root,
+            collection=coll_id,
+            collection_path=coll_path,
         )
         threshold_raw = get_setting(
-            "parquet.threshold", catalog_path=catalog_root, collection=coll_id
+            "parquet.threshold",
+            catalog_path=catalog_root,
+            collection=coll_id,
+            collection_path=coll_path,
         )
 
         # Type coercion: parquet.enabled can be string from env var
         parquet_enabled = _coerce_bool(parquet_enabled_raw, default=False)
         threshold = _coerce_int(threshold_raw, default=100)
 
-        if generate_parquet or parquet_enabled:
+        # Count items first to apply threshold gate
+        item_count = count_items(coll_path)
+
+        # Generate when:
+        # - Explicit --stac-geoparquet flag (always generate), OR
+        # - Auto-generation enabled AND item count exceeds threshold
+        should_generate = generate_parquet or (parquet_enabled and item_count > threshold)
+
+        if should_generate and item_count > 0:
             try:
-                item_count = count_items(coll_path)
-                if item_count > 0:
-                    generate_items_parquet(coll_path)
-                    add_parquet_link_to_collection(coll_path)
-                    if verbose:
-                        info_output(f"Generated items.parquet for '{coll_id}'")
+                generate_items_parquet(coll_path)
+                add_parquet_link_to_collection(coll_path)
+                track_parquet_in_versions(coll_path)
+                if verbose:
+                    info_output(f"Generated items.parquet for '{coll_id}'")
             except Exception as e:
+                # Explicit --stac-geoparquet should fail the command
+                if generate_parquet:
+                    raise
+                # Auto-generation failures just warn
                 warn(f"Failed to generate parquet for '{coll_id}': {e}")
         elif show_hints and should_suggest_parquet(coll_path, threshold=threshold):
-            item_count = count_items(coll_path)
             info_output(
                 f"Hint: Collection '{coll_id}' has {item_count} items (>{threshold}). "
                 f"Consider running: portolan stac-geoparquet -c {coll_id}"
@@ -5833,12 +5851,189 @@ def prune(
 # =============================================================================
 
 
+def _discover_collections_with_items(catalog_root: Path) -> list[str]:
+    """Find all collections that have STAC items (collection.json with item links).
+
+    Args:
+        catalog_root: Path to the catalog root directory.
+
+    Returns:
+        Sorted list of collection IDs relative to catalog_root.
+    """
+    import json
+
+    collections: list[str] = []
+
+    # Find all collection.json files
+    for collection_file in catalog_root.rglob("collection.json"):
+        # Skip files in .portolan directory
+        if ".portolan" in collection_file.parts:
+            continue
+
+        # Check if collection has any items
+        try:
+            data = json.loads(collection_file.read_text())
+            links = data.get("links", [])
+            has_items = any(link.get("rel") == "item" for link in links)
+
+            if has_items:
+                # Get relative path as collection ID
+                rel_path = collection_file.parent.relative_to(catalog_root)
+                collections.append(str(rel_path))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    return sorted(collections)
+
+
+@dataclass
+class _ParquetResult:
+    """Result of processing one collection for stac-geoparquet."""
+
+    collection: str
+    item_count: int
+    parquet_path: str
+    dry_run: bool = False
+    error: ErrorDetail | None = None
+
+
+def _process_collection_for_parquet(
+    coll_id: str,
+    catalog_path: Path,
+    dry_run: bool,
+    is_bulk: bool,
+    use_json: bool,
+) -> _ParquetResult | None:
+    """Process a single collection for stac-geoparquet generation.
+
+    Args:
+        coll_id: Collection ID to process.
+        catalog_path: Path to catalog root.
+        dry_run: If True, don't actually generate files.
+        is_bulk: If True, suppress per-collection output.
+        use_json: If True, suppress non-JSON output.
+
+    Returns:
+        _ParquetResult on success/dry-run, None on skip (empty collection in bulk mode),
+        or _ParquetResult with error field set on failure.
+    """
+    from portolan_cli.stac_parquet import (
+        add_parquet_link_to_collection,
+        count_items,
+        generate_items_parquet,
+        track_parquet_in_versions,
+    )
+
+    collection_path = catalog_path / coll_id
+
+    if not (collection_path / "collection.json").exists():
+        err = ErrorDetail(
+            type="CollectionNotFoundError",
+            message=f"Collection '{coll_id}' not found at {collection_path}",
+        )
+        if not use_json and not is_bulk:
+            error(f"Collection '{coll_id}' not found")
+        return _ParquetResult(coll_id, 0, "", error=err)
+
+    # Count items
+    try:
+        item_count = count_items(collection_path)
+    except Exception as e:
+        err = ErrorDetail(type=type(e).__name__, message=f"{coll_id}: {e}")
+        if not use_json and not is_bulk:
+            error(f"Failed to count items in '{coll_id}': {e}")
+        return _ParquetResult(coll_id, 0, "", error=err)
+
+    if item_count == 0:
+        # For bulk processing, skip silently; for explicit, return error
+        if is_bulk:
+            return None
+        err = ErrorDetail(
+            type="EmptyCollectionError",
+            message=f"No items found in collection '{coll_id}'",
+        )
+        if not use_json:
+            error(f"No items found in collection '{coll_id}'")
+        return _ParquetResult(coll_id, 0, "", error=err)
+
+    parquet_path = collection_path / "items.parquet"
+
+    if dry_run:
+        if not use_json and not is_bulk:
+            info_output(f"[DRY RUN] Would generate items.parquet for '{coll_id}'")
+            detail(f"    Items: {item_count}")
+            detail(f"    Output: {parquet_path}")
+        return _ParquetResult(coll_id, item_count, str(parquet_path), dry_run=True)
+
+    # Generate parquet
+    try:
+        parquet_path = generate_items_parquet(collection_path)
+        add_parquet_link_to_collection(collection_path)
+        track_parquet_in_versions(collection_path)
+        if not use_json and not is_bulk:
+            success(f"Generated items.parquet for '{coll_id}'")
+            detail(f"    Items: {item_count}")
+            detail(f"    Output: {parquet_path}")
+        return _ParquetResult(coll_id, item_count, str(parquet_path))
+    except Exception as e:
+        err = ErrorDetail(type=type(e).__name__, message=f"{coll_id}: {e}")
+        if not use_json and not is_bulk:
+            error(f"Failed to generate parquet for '{coll_id}': {e}")
+        return _ParquetResult(coll_id, 0, "", error=err)
+
+
+def _output_parquet_results(
+    results: list[dict[str, Any]],
+    errors_list: list[ErrorDetail],
+    total_items: int,
+    is_bulk: bool,
+    dry_run: bool,
+    use_json: bool,
+) -> None:
+    """Output results of stac-geoparquet command."""
+    had_errors = bool(errors_list)
+
+    # Summary output for bulk operations
+    if not use_json and is_bulk and results:
+        if dry_run:
+            success(
+                f"[DRY RUN] Would generate items.parquet for {len(results)} "
+                f"collections ({total_items:,} total items)"
+            )
+        else:
+            success(
+                f"Generated items.parquet for {len(results)} collections "
+                f"({total_items:,} total items)"
+            )
+        if errors_list:
+            warn(f"  {len(errors_list)} collection(s) failed")
+
+    # JSON output
+    if use_json:
+        if had_errors and not results:
+            envelope = error_envelope("stac-geoparquet", errors_list)
+        else:
+            envelope = success_envelope(
+                "stac-geoparquet",
+                {
+                    "collections_processed": len(results),
+                    "results": results,
+                    "errors": [{"type": e.type, "message": e.message} for e in errors_list],
+                },
+            )
+        output_json_envelope(envelope)
+
+    if had_errors:
+        raise SystemExit(1)
+
+
 @cli.command("stac-geoparquet")
 @click.option(
     "--collection",
     "-c",
-    required=True,
-    help="Collection ID to generate parquet for.",
+    required=False,
+    default=None,
+    help="Collection ID to generate parquet for. If omitted, generates for all collections.",
 )
 @click.option(
     "--catalog",
@@ -5856,7 +6051,7 @@ def prune(
 @click.pass_context
 def stac_geoparquet(
     ctx: click.Context,
-    collection: str,
+    collection: str | None,
     catalog_path: Path | None,
     dry_run: bool,
     json_output: bool,
@@ -5869,18 +6064,15 @@ def stac_geoparquet(
     This is optional but recommended for collections with >100 items.
     The parquet file is added as a link in collection.json.
 
+    If --collection is omitted, generates for ALL collections in the catalog.
+
     \b
     Examples:
+        portolan stac-geoparquet                    # Generate for ALL collections
         portolan stac-geoparquet -c landsat         # Generate for landsat collection
         portolan stac-geoparquet -c imagery --dry-run  # Preview without creating
-        portolan stac-geoparquet -c eurosat --json  # JSON output
+        portolan stac-geoparquet --json             # JSON output for all collections
     """
-    from portolan_cli.stac_parquet import (
-        add_parquet_link_to_collection,
-        count_items,
-        generate_items_parquet,
-    )
-
     use_json = should_output_json(ctx, json_output)
 
     # Find catalog root
@@ -5903,102 +6095,49 @@ def stac_geoparquet(
                 info_output("Run 'portolan init' to create one")
             raise SystemExit(1)
 
-    # Find collection path
-    collection_path = catalog_path / collection
-    if not (collection_path / "collection.json").exists():
-        if use_json:
-            envelope = error_envelope(
-                "stac-geoparquet",
-                [
-                    ErrorDetail(
-                        type="CollectionNotFoundError",
-                        message=f"Collection '{collection}' not found at {collection_path}",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Collection '{collection}' not found")
-            detail(f"Expected: {collection_path}/collection.json")
-        raise SystemExit(1)
-
-    # Count items for preview
-    try:
-        item_count = count_items(collection_path)
-    except Exception as e:
-        if use_json:
-            envelope = error_envelope(
-                "stac-geoparquet",
-                [ErrorDetail(type=type(e).__name__, message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Failed to count items: {e}")
-        raise SystemExit(1) from None
-
-    if item_count == 0:
-        if use_json:
-            envelope = error_envelope(
-                "stac-geoparquet",
-                [
-                    ErrorDetail(
-                        type="EmptyCollectionError",
-                        message=f"No items found in collection '{collection}'",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"No items found in collection '{collection}'")
-        raise SystemExit(1)
-
-    # Dry run mode
-    if dry_run:
-        parquet_path = collection_path / "items.parquet"
-        if use_json:
-            envelope = success_envelope(
-                "stac-geoparquet",
-                {
-                    "collection": collection,
-                    "item_count": item_count,
-                    "parquet_path": str(parquet_path),
-                    "dry_run": True,
-                },
-            )
-            output_json_envelope(envelope)
-        else:
-            info_output(f"[DRY RUN] Would generate items.parquet for '{collection}'")
-            detail(f"  Items: {item_count}")
-            detail(f"  Output: {parquet_path}")
-        return
-
-    # Generate parquet
-    try:
-        parquet_path = generate_items_parquet(collection_path)
-        add_parquet_link_to_collection(collection_path)
-    except Exception as e:
-        if use_json:
-            envelope = error_envelope(
-                "stac-geoparquet",
-                [ErrorDetail(type=type(e).__name__, message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Failed to generate parquet: {e}")
-        raise SystemExit(1) from None
-
-    # Success output
-    if use_json:
-        envelope = success_envelope(
-            "stac-geoparquet",
-            {
-                "collection": collection,
-                "item_count": item_count,
-                "parquet_path": str(parquet_path),
-            },
-        )
-        output_json_envelope(envelope)
+    # Determine which collections to process
+    if collection is not None:
+        collections_to_process = [collection]
     else:
-        success(f"Generated items.parquet for '{collection}'")
-        detail(f"  Items: {item_count}")
-        detail(f"  Output: {parquet_path}")
+        # Discover all collections with items
+        collections_to_process = _discover_collections_with_items(catalog_path)
+        if not collections_to_process:
+            if use_json:
+                envelope = error_envelope(
+                    "stac-geoparquet",
+                    [
+                        ErrorDetail(
+                            type="NoCollectionsError",
+                            message="No collections with items found in catalog",
+                        )
+                    ],
+                )
+                output_json_envelope(envelope)
+            else:
+                error("No collections with items found in catalog")
+            raise SystemExit(1)
+
+    # Process each collection
+    results: list[dict[str, Any]] = []
+    errors_list: list[ErrorDetail] = []
+    total_items = 0
+    is_bulk = collection is None  # Catalog-level operation
+
+    for coll_id in collections_to_process:
+        result = _process_collection_for_parquet(coll_id, catalog_path, dry_run, is_bulk, use_json)
+        if result is None:
+            continue  # Skipped (empty collection in bulk mode)
+        if result.error:
+            errors_list.append(result.error)
+        else:
+            results.append(
+                {
+                    "collection": result.collection,
+                    "item_count": result.item_count,
+                    "parquet_path": result.parquet_path,
+                    **({"dry_run": True} if result.dry_run else {}),
+                }
+            )
+            total_items += result.item_count
+
+    _output_parquet_results(results, errors_list, total_items, is_bulk, dry_run, use_json)

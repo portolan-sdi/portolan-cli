@@ -205,7 +205,57 @@ class TestStacGeoparquetCommand:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["success"] is True
-        assert "parquet_path" in data["data"]
+        # When processing single collection, results is an array with one entry
+        assert data["data"]["collections_processed"] == 1
+        assert len(data["data"]["results"]) == 1
+        assert "parquet_path" in data["data"]["results"][0]
+
+
+# =============================================================================
+# Test: Catalog-Level Operation
+# =============================================================================
+
+
+class TestStacGeoparquetCatalogLevel:
+    """Tests for catalog-level stac-geoparquet generation."""
+
+    @pytest.mark.unit
+    def test_generate_all_collections(
+        self, runner: CliRunner, catalog_with_collection: Path
+    ) -> None:
+        """Test that omitting --collection generates for all collections."""
+        result = runner.invoke(
+            cli,
+            [
+                "stac-geoparquet",
+                "--catalog",
+                str(catalog_with_collection),
+            ],
+        )
+
+        assert result.exit_code == 0
+        # Should have generated parquet for the imagery collection
+        assert (catalog_with_collection / "imagery" / "items.parquet").exists()
+
+    @pytest.mark.unit
+    def test_generate_all_collections_json(
+        self, runner: CliRunner, catalog_with_collection: Path
+    ) -> None:
+        """Test JSON output for catalog-level generation."""
+        result = runner.invoke(
+            cli,
+            [
+                "stac-geoparquet",
+                "--catalog",
+                str(catalog_with_collection),
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["success"] is True
+        assert data["data"]["collections_processed"] >= 1
 
 
 # =============================================================================

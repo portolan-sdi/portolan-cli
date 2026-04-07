@@ -538,14 +538,14 @@ class TestCollectionLevelAsset:
 
         collection_json = json.loads((collection_with_items / "collection.json").read_text())
 
-        # Should have assets dict with items_parquet
+        # Should have assets dict with geoparquet-items (community convention)
         assert "assets" in collection_json
-        assert "items_parquet" in collection_json["assets"]
+        assert "geoparquet-items" in collection_json["assets"]
 
-        asset = collection_json["assets"]["items_parquet"]
+        asset = collection_json["assets"]["geoparquet-items"]
         assert asset["href"] == "./items.parquet"
         assert asset["type"] == "application/x-parquet"
-        assert "metadata" in asset["roles"]
+        assert "stac-items" in asset["roles"]
 
     @pytest.mark.unit
     def test_collection_asset_idempotent(self, collection_with_items: Path) -> None:
@@ -585,7 +585,7 @@ class TestCollectionLevelAsset:
 
         # Verify asset exists
         collection_json = json.loads((collection_with_items / "collection.json").read_text())
-        assert "items_parquet" in collection_json.get("assets", {})
+        assert "geoparquet-items" in collection_json.get("assets", {})
 
         # Remove
         result = remove_parquet_link_from_collection(collection_with_items)
@@ -593,4 +593,4 @@ class TestCollectionLevelAsset:
 
         # Verify asset was removed
         collection_json = json.loads((collection_with_items / "collection.json").read_text())
-        assert "items_parquet" not in collection_json.get("assets", {})
+        assert "geoparquet-items" not in collection_json.get("assets", {})
