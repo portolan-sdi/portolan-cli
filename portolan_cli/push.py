@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import Any
 
 import obstore as obs
-from obstore.store import S3Store
 
 from portolan_cli.async_utils import (
     AsyncIOExecutor,
@@ -37,7 +36,7 @@ from portolan_cli.async_utils import (
     get_default_concurrency,
 )
 from portolan_cli.output import detail, error, info, output_section, success, warn
-from portolan_cli.upload import ObjectStore, parse_object_store_url
+from portolan_cli.upload import ObjectStore, setup_store
 from portolan_cli.upload_progress import UploadProgressReporter
 
 __all__ = [
@@ -330,109 +329,6 @@ def _read_local_versions(catalog_root: Path, collection: str) -> dict[str, Any]:
 # =============================================================================
 # Remote Versions Fetching
 # =============================================================================
-
-
-def _setup_store(
-    destination: str,
-    *,
-    profile: str | None = None,
-    region: str | None = None,
-) -> tuple[ObjectStore, str]:
-    """Setup object store and extract prefix from destination URL.
-
-    Supports:
-    - S3 (s3://): Uses AWS credentials from profile or environment
-    - GCS (gs://): Uses GOOGLE_APPLICATION_CREDENTIALS or service account path
-    - Azure (az://): Uses AZURE_STORAGE_ACCOUNT + key/SAS token
-
-    Args:
-        destination: Object store URL (e.g., s3://bucket/prefix, gs://bucket/prefix,
-            az://container/prefix).
-        profile: AWS profile name (for S3 only).
-        region: AWS region (for S3 only). Takes precedence over profile/env config.
-
-    Returns:
-        Tuple of (store, prefix).
-    """
-    import os
-
-    from obstore.store import AzureStore, GCSStore
-
-    bucket_url, prefix = parse_object_store_url(destination)
-
-    if bucket_url.startswith("s3://"):
-        bucket = bucket_url.replace("s3://", "")
-
-        # Load credentials
-        access_key: str | None = None
-        secret_key: str | None = None
-        profile_region: str | None = None
-
-        if profile:
-            from portolan_cli.upload import _load_aws_credentials_from_profile
-
-            access_key, secret_key, profile_region = _load_aws_credentials_from_profile(profile)
-        else:
-            access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-            secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-
-        # Region precedence: explicit param > env var > profile config
-        resolved_region = region
-        if not resolved_region:
-            resolved_region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-        if not resolved_region:
-            resolved_region = profile_region
-
-        store_kwargs: dict[str, Any] = {}
-        if resolved_region:
-            store_kwargs["region"] = resolved_region
-        if access_key and secret_key:
-            store_kwargs["access_key_id"] = access_key
-            store_kwargs["secret_access_key"] = secret_key
-
-        # Bucket names with dots (e.g., us-west-2.opendata.source.coop) require
-        # path-style requests because virtual-hosted style would create invalid
-        # DNS names (bucket.s3.region.amazonaws.com doesn't work with dots)
-        if "." in bucket:
-            store_kwargs["virtual_hosted_style_request"] = False
-
-        store: ObjectStore = S3Store(bucket, **store_kwargs)
-
-    elif bucket_url.startswith("gs://"):
-        bucket = bucket_url.replace("gs://", "")
-
-        # GCS credentials from environment
-        service_account_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-
-        gcs_kwargs: dict[str, str] = {}
-        if service_account_path:
-            gcs_kwargs["service_account_path"] = service_account_path
-
-        store = GCSStore(bucket, **gcs_kwargs)  # type: ignore[arg-type]
-
-    elif bucket_url.startswith("az://"):
-        container = bucket_url.replace("az://", "")
-
-        # Azure credentials from environment
-        account = os.environ.get("AZURE_STORAGE_ACCOUNT")
-        access_key_azure = os.environ.get("AZURE_STORAGE_KEY")
-        sas_token = os.environ.get("AZURE_STORAGE_SAS_TOKEN")
-
-        azure_kwargs: dict[str, str] = {}
-        if account:
-            azure_kwargs["account"] = account
-        if access_key_azure:
-            azure_kwargs["access_key"] = access_key_azure
-        elif sas_token:
-            azure_kwargs["sas_token"] = sas_token
-
-        store = AzureStore(container, **azure_kwargs)  # type: ignore[arg-type]
-
-    else:
-        # Fallback to generic URL parsing (for local/memory stores or unknown schemes)
-        store = obs.store.from_url(bucket_url)
-
-    return store, prefix
 
 
 def _fetch_remote_versions(
@@ -925,7 +821,7 @@ def push(
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only). Overrides profile/env config.
         workers: Number of parallel upload workers (maps to concurrency).
-        verbose: If True, show per-file upload details (currently ignored in async).
+        verbose: If True, show per-file upload details (ADR-0040).
         json_mode: If True, suppress progress bar (for --json output).
         suppress_progress: If True, suppress progress bar (for nested calls).
 
@@ -952,6 +848,7 @@ def push(
             concurrency=concurrency,
             json_mode=json_mode,
             suppress_progress=suppress_progress,
+            verbose=verbose,
         )
     )
 
@@ -1013,6 +910,7 @@ async def _upload_assets_async(
     concurrency: int = 50,
     json_mode: bool = False,
     suppress_progress: bool = False,
+    verbose: bool = False,
 ) -> tuple[int, list[str], list[str], UploadMetrics]:
     """Upload asset files to object storage with async concurrent uploads.
 
@@ -1026,6 +924,7 @@ async def _upload_assets_async(
         concurrency: Maximum concurrent uploads (default 50).
         json_mode: If True, suppress progress bar.
         suppress_progress: If True, suppress progress bar.
+        verbose: If True, print per-file upload details (ADR-0040).
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys, metrics).
@@ -1061,10 +960,11 @@ async def _upload_assets_async(
 
     asset_strs = [str(p) for p in assets]
 
+    # Suppress progress bar when verbose (verbose replaces progress bar per ADR-0040)
     async with AsyncProgressReporter(
         total_files=total,
         total_bytes=total_bytes,
-        json_mode=json_mode or suppress_progress,
+        json_mode=json_mode or suppress_progress or verbose,
     ) as reporter:
 
         def on_complete(
@@ -1084,6 +984,12 @@ async def _upload_assets_async(
                 uploaded_keys.append(target_key)
                 metrics.record(size_bytes, duration)
                 reporter.advance(bytes_uploaded=size_bytes)
+                # Verbose mode: print per-file details (ADR-0040)
+                if verbose:
+                    speed = size_bytes / duration if duration > 0 else 0
+                    detail(
+                        f"Uploaded ({completed}/{total_count}): {rel_path} ({format_file_size(size_bytes)}, {format_speed(speed)})"
+                    )
 
         executor = AsyncIOExecutor[tuple[str, int, float]](
             concurrency=concurrency,
@@ -1113,6 +1019,7 @@ async def _upload_stac_files_async(
     *,
     concurrency: int = 50,
     json_mode: bool = False,
+    verbose: bool = False,
 ) -> tuple[int, list[str], list[str]]:
     """Upload STAC metadata files asynchronously.
 
@@ -1128,6 +1035,7 @@ async def _upload_stac_files_async(
         stac_files: Dict of STAC files from _discover_stac_files().
         concurrency: Maximum concurrent uploads.
         json_mode: If True, suppress progress bar.
+        verbose: If True, print per-file upload details (ADR-0040).
 
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys).
@@ -1168,20 +1076,35 @@ async def _upload_stac_files_async(
                 error(error_msg)
                 return None
 
+    # Suppress progress bar when verbose (verbose replaces progress bar per ADR-0040)
     async with AsyncProgressReporter(
         total_files=len(all_files),
         total_bytes=total_bytes,
-        json_mode=json_mode,
+        json_mode=json_mode or verbose,
     ) as reporter:
+        completed = 0
+        total_count = len(all_files)
+
+        def log_verbose(file_path: Path, size: int) -> None:
+            """Log verbose output for a file upload."""
+            nonlocal completed
+            completed += 1
+            if verbose:
+                rel_path = file_path.relative_to(catalog_root)
+                detail(
+                    f"Uploaded STAC ({completed}/{total_count}): {rel_path} ({format_file_size(size)})"
+                )
+
         # Wave 1: Upload all item STAC files in parallel
         if item_files:
             tasks = [upload_one(f) for f in item_files]
             results = await asyncio.gather(*tasks)
-            for result in results:
+            for i, result in enumerate(results):
                 if result:
                     key, size = result
                     uploaded_keys.append(key)
                     reporter.advance(bytes_uploaded=size)
+                    log_verbose(item_files[i], size)
 
         # Wave 2: Upload collection.json files sequentially (after items)
         for file_path in collection_files:
@@ -1190,6 +1113,7 @@ async def _upload_stac_files_async(
                 key, size = result
                 uploaded_keys.append(key)
                 reporter.advance(bytes_uploaded=size)
+                log_verbose(file_path, size)
 
         # Wave 3: Upload catalog.json last (manifest-last pattern)
         for file_path in catalog_files:
@@ -1198,6 +1122,7 @@ async def _upload_stac_files_async(
                 key, size = result
                 uploaded_keys.append(key)
                 reporter.advance(bytes_uploaded=size)
+                log_verbose(file_path, size)
 
     return len(uploaded_keys), errors, uploaded_keys
 
@@ -1308,6 +1233,7 @@ async def _execute_push_uploads_async(
     concurrency: int,
     json_mode: bool,
     suppress_progress: bool,
+    verbose: bool,
     force: bool,
     include_catalog: bool = True,
 ) -> PushResult:
@@ -1318,6 +1244,7 @@ async def _execute_push_uploads_async(
 
     Args:
         include_catalog: If True, upload catalog.json and root README.md.
+        verbose: If True, print per-file upload details (ADR-0040).
 
     Returns:
         PushResult with success or failure status and metrics.
@@ -1334,6 +1261,7 @@ async def _execute_push_uploads_async(
         concurrency=concurrency,
         json_mode=json_mode,
         suppress_progress=suppress_progress,
+        verbose=verbose,
     )
 
     if upload_errors:
@@ -1367,7 +1295,13 @@ async def _execute_push_uploads_async(
         )
 
     stac_uploaded, stac_errors, stac_keys = await _upload_stac_files_async(
-        store, catalog_root, prefix, stac_files, concurrency=concurrency, json_mode=json_mode
+        store,
+        catalog_root,
+        prefix,
+        stac_files,
+        concurrency=concurrency,
+        json_mode=json_mode,
+        verbose=verbose,
     )
     uploaded_keys.extend(stac_keys)
     files_uploaded += stac_uploaded
@@ -1439,6 +1373,7 @@ async def push_async(
     concurrency: int | None = None,
     json_mode: bool = False,
     suppress_progress: bool = False,
+    verbose: bool = False,
     include_catalog: bool = True,
 ) -> PushResult:
     """Push local catalog changes to cloud object storage (async version).
@@ -1457,6 +1392,7 @@ async def push_async(
         concurrency: Maximum concurrent uploads (default 50).
         json_mode: If True, suppress progress bar.
         suppress_progress: If True, suppress progress bar.
+        verbose: If True, print per-file upload details (ADR-0040).
         include_catalog: If True, upload catalog.json and root README.md.
             Set to False when called from push_all_collections (uploads them once at end).
 
@@ -1487,7 +1423,7 @@ async def push_async(
         return _handle_push_dry_run(catalog_root, local_data, local_versions)
 
     # Setup store and fetch remote versions
-    store, prefix = _setup_store(destination, profile=profile, region=region)
+    store, prefix = setup_store(destination, profile=profile, region=region)
     info(f"Checking remote state: {destination}")
     remote_data, etag = await _fetch_remote_versions_async(store, prefix, collection)
 
@@ -1526,6 +1462,7 @@ async def push_async(
         concurrency=concurrency,
         json_mode=json_mode,
         suppress_progress=suppress_progress,
+        verbose=verbose,
         force=force,
         include_catalog=include_catalog,
     )
@@ -1684,7 +1621,7 @@ def _push_all_upload_catalog(
             info("[DRY RUN] Would upload catalog.json")
             return True
         try:
-            store, prefix = _setup_store(destination, profile=profile, region=region)
+            store, prefix = setup_store(destination, profile=profile, region=region)
             target_key = f"{prefix}/catalog.json".lstrip("/")
             obs.put(store, target_key, catalog_json.read_bytes())
             success("Uploaded catalog.json")
@@ -1786,6 +1723,7 @@ async def push_all_collections_async(
                     region=region,
                     json_mode=json_mode,
                     suppress_progress=True,
+                    verbose=verbose,
                     include_catalog=False,  # Uploaded once at end by _push_all_upload_catalog
                 )
                 return (collection, result, None)

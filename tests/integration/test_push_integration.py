@@ -1536,7 +1536,7 @@ class TestTrailingSlashNormalization:
         This test verifies the fix by checking the actual paths that would
         be used for upload/fetch operations.
         """
-        from portolan_cli.push import _setup_store
+        from portolan_cli.upload import setup_store
 
         # Test various trailing slash scenarios
         test_cases = [
@@ -1547,8 +1547,8 @@ class TestTrailingSlashNormalization:
         ]
 
         for destination, expected_prefix in test_cases:
-            with patch("portolan_cli.push.S3Store"):
-                _, prefix = _setup_store(destination)
+            with patch("portolan_cli.upload.S3Store"):
+                _, prefix = setup_store(destination)
                 assert prefix == expected_prefix, (
                     f"For {destination!r}, expected prefix {expected_prefix!r}, got {prefix!r}"
                 )

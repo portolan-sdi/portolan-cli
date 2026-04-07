@@ -473,11 +473,19 @@ def _setup_store_and_kwargs(
             region = _try_infer_region_from_bucket(bucket)
 
         # Build S3Store with appropriate configuration
-        store_kwargs: dict[str, str] = {"region": region} if region else {}
+        store_kwargs: dict[str, str | bool] = {}
+        if region:
+            store_kwargs["region"] = region
 
         if access_key and secret_key:
             store_kwargs["access_key_id"] = access_key
             store_kwargs["secret_access_key"] = secret_key
+
+        # Bucket names with dots (e.g., us-west-2.opendata.source.coop) require
+        # path-style requests because virtual-hosted style would create invalid
+        # DNS names (bucket.s3.region.amazonaws.com doesn't work with dots)
+        if "." in bucket:
+            store_kwargs["virtual_hosted_style_request"] = False
 
         if s3_endpoint:
             # Strip existing scheme if present to avoid double-protocol
@@ -498,6 +506,46 @@ def _setup_store_and_kwargs(
 
     kwargs = {"max_concurrency": chunk_concurrency}
     return store, kwargs
+
+
+def setup_store(
+    destination: str,
+    *,
+    profile: str | None = None,
+    region: str | None = None,
+) -> tuple[ObjectStore, str]:
+    """Setup object store from a destination URL.
+
+    This is a convenience wrapper that parses the destination URL and creates
+    the appropriate object store. Use this when you need the store and prefix
+    but don't need upload-specific kwargs.
+
+    Supports:
+    - S3 (s3://): Uses AWS credentials from profile or environment
+    - GCS (gs://): Uses GOOGLE_APPLICATION_CREDENTIALS or gcloud auth
+    - Azure (az://): Uses AZURE_STORAGE_ACCOUNT + key/SAS token
+
+    Args:
+        destination: Object store URL (e.g., s3://bucket/prefix, gs://bucket/prefix,
+            az://container/prefix).
+        profile: AWS profile name (for S3 only).
+        region: AWS region (for S3 only). Takes precedence over profile/env config.
+
+    Returns:
+        Tuple of (store, prefix).
+
+    Example:
+        >>> store, prefix = setup_store("s3://mybucket/data/v1")
+        >>> # store is S3Store instance, prefix is "data/v1"
+    """
+    bucket_url, prefix = parse_object_store_url(destination)
+    store, _ = _setup_store_and_kwargs(
+        bucket_url,
+        profile=profile,
+        chunk_concurrency=12,  # Default, not used for non-upload operations
+        s3_region=region,
+    )
+    return store, prefix
 
 
 # =============================================================================
