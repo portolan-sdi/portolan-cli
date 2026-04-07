@@ -209,6 +209,47 @@ conversion:
 | `JPEG` | RGB imagery | Lossy, smallest files for photos |
 | `WEBP` | Web display | Lossy, modern browsers only |
 
+## STAC GeoParquet Settings
+
+Generate `items.parquet` for collections with many items, enabling efficient spatial/temporal queries without N HTTP requests.
+
+```yaml
+# .portolan/config.yaml
+parquet:
+  enabled: true     # Auto-generate during add (default: false)
+  threshold: 100    # Hint when items exceed threshold (default: 100)
+```
+
+### Commands
+
+```bash
+# Generate items.parquet for a collection
+portolan stac-geoparquet -c eurosat
+
+# Preview without creating files
+portolan stac-geoparquet -c eurosat --dry-run
+
+# Auto-generate during add
+portolan add imagery/ --stac-geoparquet
+```
+
+### How It Works
+
+- Uses [stac-geoparquet](https://github.com/stac-utils/stac-geoparquet) library
+- Adds `items.parquet` link to `collection.json` with `rel: items`
+- Enables spatial filtering with a single HTTP request (vs N requests for items)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `parquet.enabled` | `false` | Auto-generate during `add` command |
+| `parquet.threshold` | `100` | Show hint when items exceed threshold |
+
+### When to Use
+
+- Collections with >100 items (e.g., satellite imagery time series)
+- Raster collections with many scenes
+- Partitioned vector datasets
+
 ## Collection-Level Configuration
 
 Override settings for specific collections using the `collections:` section:
