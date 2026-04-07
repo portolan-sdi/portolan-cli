@@ -33,7 +33,10 @@ Usage:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from portolan_cli.metadata_extraction import ExtractedMetadata
 
 
 @dataclass(frozen=True)
@@ -66,6 +69,30 @@ class ArcGISMetadata:
 
     license_info_raw: str | None
     """Raw license text (not SPDX mapped) from licenseInfo."""
+
+    def to_extracted(self) -> ExtractedMetadata:
+        """Convert to source-agnostic ExtractedMetadata.
+
+        Maps ArcGIS-specific fields to the generic ExtractedMetadata model
+        used for seeding metadata.yaml.
+
+        Returns:
+            ExtractedMetadata instance with mapped fields.
+        """
+        from portolan_cli.metadata_extraction import ExtractedMetadata
+
+        return ExtractedMetadata(
+            source_type="arcgis_featureserver",
+            source_url=self.source_url,
+            attribution=self.attribution,
+            description=self.description,
+            keywords=self.keywords,
+            contact_name=self.contact_name,
+            contact_email=None,  # ArcGIS doesn't provide email
+            license_raw=self.license_info_raw,
+            processing_notes=self.processing_notes,
+            known_issues=self.known_issues,
+        )
 
 
 def extract_arcgis_metadata(
