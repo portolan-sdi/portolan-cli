@@ -1106,14 +1106,16 @@ async def _upload_stac_files_async(
                     reporter.advance(bytes_uploaded=size)
                     log_verbose(item_files[i], size)
 
-        # Wave 2: Upload collection.json files sequentially (after items)
-        for file_path in collection_files:
-            result = await upload_one(file_path)
-            if result:
-                key, size = result
-                uploaded_keys.append(key)
-                reporter.advance(bytes_uploaded=size)
-                log_verbose(file_path, size)
+        # Wave 2: Upload collection.json files in parallel (after items complete)
+        if collection_files:
+            tasks = [upload_one(f) for f in collection_files]
+            results = await asyncio.gather(*tasks)
+            for i, result in enumerate(results):
+                if result:
+                    key, size = result
+                    uploaded_keys.append(key)
+                    reporter.advance(bytes_uploaded=size)
+                    log_verbose(collection_files[i], size)
 
         # Wave 3: Upload catalog.json last (manifest-last pattern)
         for file_path in catalog_files:

@@ -1045,7 +1045,7 @@ class TestDryRunNetworkIsolation:
 
         with (
             patch("portolan_cli.pull._fetch_remote_versions") as mock_pull_fetch,
-            patch("portolan_cli.push._setup_store") as mock_push_setup,
+            patch("portolan_cli.push.setup_store") as mock_push_setup,
             patch("portolan_cli.push._fetch_remote_versions") as mock_push_fetch,
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,
@@ -1076,7 +1076,7 @@ class TestDryRunNetworkIsolation:
 
         with (
             patch("portolan_cli.pull._fetch_remote_versions") as mock_pull_fetch,
-            patch("portolan_cli.push._setup_store") as mock_setup,
+            patch("portolan_cli.push.setup_store") as mock_setup,
             patch("portolan_cli.push._fetch_remote_versions") as mock_push_fetch,
             patch("portolan_cli.sync.init_catalog"),
             patch("portolan_cli.sync.scan_directory") as mock_scan,

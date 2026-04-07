@@ -826,7 +826,7 @@ class TestStoreSetup:
         ) as mock_fetch:
             mock_fetch.return_value = (None, None)
 
-            with patch("portolan_cli.push._setup_store") as mock_setup:
+            with patch("portolan_cli.push.setup_store") as mock_setup:
                 mock_store = MagicMock()
                 mock_setup.return_value = (mock_store, "prefix")
 
@@ -1288,16 +1288,16 @@ class TestMultiCloudStoreSetup:
 
     @pytest.mark.unit
     def test_setup_store_s3_with_profile(self) -> None:
-        """_setup_store should load credentials from AWS profile."""
-        from portolan_cli.push import _setup_store
+        """setup_store should load credentials from AWS profile."""
+        from portolan_cli.upload import setup_store
 
         with patch("portolan_cli.upload._load_aws_credentials_from_profile") as mock_load:
             mock_load.return_value = ("access_key", "secret_key", "us-east-1")
 
-            with patch("portolan_cli.push.S3Store") as mock_s3:
+            with patch("portolan_cli.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
 
-                store, prefix = _setup_store("s3://mybucket/catalog", profile="myprofile")
+                store, prefix = setup_store("s3://mybucket/catalog", profile="myprofile")
 
         mock_load.assert_called_once_with("myprofile")
         mock_s3.assert_called_once_with(
@@ -1310,8 +1310,8 @@ class TestMultiCloudStoreSetup:
 
     @pytest.mark.unit
     def test_setup_store_s3_from_environment(self) -> None:
-        """_setup_store should use AWS credentials from environment."""
-        from portolan_cli.push import _setup_store
+        """setup_store should use AWS credentials from environment."""
+        from portolan_cli.upload import setup_store
 
         with patch.dict(
             "os.environ",
@@ -1322,10 +1322,10 @@ class TestMultiCloudStoreSetup:
             },
             clear=True,
         ):
-            with patch("portolan_cli.push.S3Store") as mock_s3:
+            with patch("portolan_cli.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
 
-                store, prefix = _setup_store("s3://mybucket/prefix")
+                store, prefix = setup_store("s3://mybucket/prefix")
 
         mock_s3.assert_called_once_with(
             "mybucket",
@@ -1336,8 +1336,8 @@ class TestMultiCloudStoreSetup:
 
     @pytest.mark.unit
     def test_setup_store_s3_uses_default_region_env(self) -> None:
-        """_setup_store should fallback to AWS_DEFAULT_REGION if AWS_REGION not set."""
-        from portolan_cli.push import _setup_store
+        """setup_store should fallback to AWS_DEFAULT_REGION if AWS_REGION not set."""
+        from portolan_cli.upload import setup_store
 
         with patch.dict(
             "os.environ",
@@ -1348,18 +1348,18 @@ class TestMultiCloudStoreSetup:
             },
             clear=True,
         ):
-            with patch("portolan_cli.push.S3Store") as mock_s3:
+            with patch("portolan_cli.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
 
-                _setup_store("s3://mybucket/prefix")
+                setup_store("s3://mybucket/prefix")
 
         call_kwargs = mock_s3.call_args[1]
         assert call_kwargs["region"] == "ap-southeast-1"
 
     @pytest.mark.unit
     def test_setup_store_s3_no_region(self) -> None:
-        """_setup_store should work without region (uses AWS SDK defaults)."""
-        from portolan_cli.push import _setup_store
+        """setup_store should work without region (uses AWS SDK defaults)."""
+        from portolan_cli.upload import setup_store
 
         with patch.dict(
             "os.environ",
@@ -1369,142 +1369,119 @@ class TestMultiCloudStoreSetup:
             },
             clear=True,
         ):
-            with patch("portolan_cli.push.S3Store") as mock_s3:
+            with patch("portolan_cli.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
 
-                _setup_store("s3://mybucket/data")
+                setup_store("s3://mybucket/data")
 
         call_kwargs = mock_s3.call_args[1]
         assert "region" not in call_kwargs
 
     @pytest.mark.unit
     def test_setup_store_gcs(self) -> None:
-        """_setup_store should create GCSStore for gs:// URLs."""
-        from portolan_cli.push import _setup_store
+        """setup_store should create store for gs:// URLs via obs.store.from_url.
 
-        with patch.dict(
-            "os.environ",
-            {"GOOGLE_APPLICATION_CREDENTIALS": "/path/to/service-account.json"},
-        ):
-            with patch("obstore.store.GCSStore") as mock_gcs:
-                mock_gcs.return_value = MagicMock()
+        Note: GCS credential handling is delegated to obstore library.
+        We just verify the URL is parsed correctly and from_url is called.
+        """
+        from portolan_cli.upload import setup_store
 
-                store, prefix = _setup_store("gs://mybucket/catalog")
+        with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+            mock_from_url.return_value = MagicMock()
 
-        mock_gcs.assert_called_once_with(
-            "mybucket",
-            service_account_path="/path/to/service-account.json",
-        )
+            store, prefix = setup_store("gs://mybucket/catalog")
+
+        mock_from_url.assert_called_once_with("gs://mybucket")
         assert prefix == "catalog"
 
     @pytest.mark.unit
     def test_setup_store_gcs_no_credentials(self) -> None:
-        """_setup_store should work for GCS without explicit credentials."""
-        from portolan_cli.push import _setup_store
+        """setup_store should work for GCS without explicit credentials.
 
-        with patch.dict("os.environ", {}, clear=True):
-            with patch("obstore.store.GCSStore") as mock_gcs:
-                mock_gcs.return_value = MagicMock()
+        Note: GCS credential handling is delegated to obstore library.
+        We just verify the URL is parsed correctly and from_url is called.
+        """
+        from portolan_cli.upload import setup_store
 
-                store, prefix = _setup_store("gs://mybucket/prefix")
+        with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+            mock_from_url.return_value = MagicMock()
 
-        # Called without service_account_path (uses default credentials)
-        mock_gcs.assert_called_once_with("mybucket")
+            store, prefix = setup_store("gs://mybucket/prefix")
+
+        mock_from_url.assert_called_once_with("gs://mybucket")
+        assert prefix == "prefix"
 
     @pytest.mark.unit
     def test_setup_store_azure_with_key(self) -> None:
-        """_setup_store should create AzureStore with access key."""
-        from portolan_cli.push import _setup_store
+        """setup_store should create store for az:// URLs via obs.store.from_url.
 
-        # Azure URL format is az://account/container/path
-        # The bucket_url after parse is az://account/container
-        with patch.dict(
-            "os.environ",
-            {
-                "AZURE_STORAGE_ACCOUNT": "mystorageaccount",
-                "AZURE_STORAGE_KEY": "myaccesskey",
-            },
-        ):
-            with patch("obstore.store.AzureStore") as mock_azure:
-                mock_azure.return_value = MagicMock()
+        Note: Azure credential handling is delegated to obstore library.
+        We just verify the URL is parsed correctly and from_url is called.
+        """
+        from portolan_cli.upload import setup_store
 
-                store, prefix = _setup_store("az://account/mycontainer/catalog")
+        with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+            mock_from_url.return_value = MagicMock()
 
-        # Container includes account/container from URL parsing
-        mock_azure.assert_called_once_with(
-            "account/mycontainer",
-            account="mystorageaccount",
-            access_key="myaccesskey",
-        )
+            store, prefix = setup_store("az://account/mycontainer/catalog")
+
+        mock_from_url.assert_called_once_with("az://account/mycontainer")
         assert prefix == "catalog"
 
     @pytest.mark.unit
     def test_setup_store_azure_with_sas_token(self) -> None:
-        """_setup_store should create AzureStore with SAS token when no key."""
-        from portolan_cli.push import _setup_store
+        """setup_store should create store for az:// URLs via obs.store.from_url.
 
-        # Azure URL format is az://account/container/path
-        with patch.dict(
-            "os.environ",
-            {
-                "AZURE_STORAGE_ACCOUNT": "mystorageaccount",
-                "AZURE_STORAGE_SAS_TOKEN": "sv=2021-12-02&...",
-            },
-            clear=True,
-        ):
-            with patch("obstore.store.AzureStore") as mock_azure:
-                mock_azure.return_value = MagicMock()
+        Note: Azure credential handling (SAS tokens) is delegated to obstore library.
+        We just verify the URL is parsed correctly and from_url is called.
+        """
+        from portolan_cli.upload import setup_store
 
-                store, prefix = _setup_store("az://account/mycontainer/data")
+        with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+            mock_from_url.return_value = MagicMock()
 
-        mock_azure.assert_called_once_with(
-            "account/mycontainer",
-            account="mystorageaccount",
-            sas_token="sv=2021-12-02&...",
-        )
+            store, prefix = setup_store("az://account/mycontainer/data")
+
+        mock_from_url.assert_called_once_with("az://account/mycontainer")
         assert prefix == "data"
 
     @pytest.mark.unit
-    def test_setup_store_azure_key_takes_precedence(self) -> None:
-        """_setup_store should prefer access_key over sas_token."""
-        from portolan_cli.push import _setup_store
+    def test_setup_store_azure_parses_prefix(self) -> None:
+        """setup_store should correctly parse Azure URL prefix.
 
-        with patch.dict(
-            "os.environ",
-            {
-                "AZURE_STORAGE_ACCOUNT": "account",
-                "AZURE_STORAGE_KEY": "key",
-                "AZURE_STORAGE_SAS_TOKEN": "sas",
-            },
-        ):
-            with patch("obstore.store.AzureStore") as mock_azure:
-                mock_azure.return_value = MagicMock()
+        Azure URLs have format: az://account/container/path
+        Note: Azure credential precedence is delegated to obstore library.
+        """
+        from portolan_cli.upload import setup_store
 
-                _setup_store("az://container/prefix")
+        with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+            mock_from_url.return_value = MagicMock()
 
-        # Should use access_key, not sas_token
-        call_kwargs = mock_azure.call_args[1]
-        assert "access_key" in call_kwargs
-        assert "sas_token" not in call_kwargs
+            # Azure format: az://account/container/prefix
+            store, prefix = setup_store("az://myaccount/mycontainer/data/v1")
+
+        # bucket_url = az://account/container, prefix = data/v1
+        mock_from_url.assert_called_once_with("az://myaccount/mycontainer")
+        assert prefix == "data/v1"
 
     @pytest.mark.unit
     def test_setup_store_unknown_scheme_uses_from_url(self) -> None:
-        """_setup_store should fallback to from_url for unknown schemes.
+        """setup_store should fallback to from_url for unknown schemes.
 
-        NOTE: This tests line 249 of push.py, but since parse_object_store_url
+        NOTE: This tests upload.py, but since parse_object_store_url
         validates the scheme first and raises ValueError for unsupported schemes,
         we need to mock it to allow the unknown scheme through.
         """
-        from portolan_cli.push import _setup_store
+        from portolan_cli.upload import setup_store
 
-        with patch("portolan_cli.push.parse_object_store_url") as mock_parse:
+        with patch("portolan_cli.upload.parse_object_store_url") as mock_parse:
             # Return a fake bucket URL with unsupported scheme
             mock_parse.return_value = ("custom://bucket", "catalog")
 
-            with patch("portolan_cli.push.obs.store.from_url") as mock_from_url:
+            with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
                 mock_from_url.return_value = MagicMock()
 
-                store, prefix = _setup_store("custom://bucket/catalog")
+                store, prefix = setup_store("custom://bucket/catalog")
 
         mock_from_url.assert_called_once_with("custom://bucket")
         assert prefix == "catalog"
@@ -2076,7 +2053,7 @@ class TestDryRunNetworkIsolation:
         with patch(
             "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
-            with patch("portolan_cli.push._setup_store") as mock_setup:
+            with patch("portolan_cli.push.setup_store") as mock_setup:
                 mock_setup.return_value = (MagicMock(), "prefix")
 
                 result = push(
@@ -2095,7 +2072,7 @@ class TestDryRunNetworkIsolation:
         """push(dry_run=True) must not call _setup_store (which creates cloud connections)."""
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._setup_store") as mock_setup:
+        with patch("portolan_cli.push.setup_store") as mock_setup:
             result = push(
                 catalog_root=local_catalog,
                 collection="test",
@@ -2111,7 +2088,7 @@ class TestDryRunNetworkIsolation:
         """push(dry_run=True) should report files that would be uploaded."""
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._setup_store"):
+        with patch("portolan_cli.push.setup_store"):
             with patch("portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock):
                 result = push(
                     catalog_root=local_catalog,
@@ -2130,7 +2107,7 @@ class TestDryRunNetworkIsolation:
         """push(dry_run=True) must not call _upload_assets."""
         from portolan_cli.push import push
 
-        with patch("portolan_cli.push._setup_store"):
+        with patch("portolan_cli.push.setup_store"):
             with patch("portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock):
                 with patch(
                     "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
@@ -2152,7 +2129,7 @@ class TestDryRunNetworkIsolation:
         with patch(
             "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
-            with patch("portolan_cli.push._setup_store") as mock_setup:
+            with patch("portolan_cli.push.setup_store") as mock_setup:
                 mock_fetch.return_value = (None, None)
                 mock_setup.return_value = (MagicMock(), "prefix")
 
@@ -2215,7 +2192,7 @@ class TestDryRunNetworkIsolation:
         (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
         # NOTE: We deliberately do NOT create the asset file
 
-        with patch("portolan_cli.push._setup_store"):
+        with patch("portolan_cli.push.setup_store"):
             with patch("portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock):
                 # Should NOT raise - dry-run is forgiving
                 result = push(
