@@ -215,10 +215,12 @@ Generate `items.parquet` for collections with many items, enabling efficient spa
 
 ```yaml
 # .portolan/config.yaml
-parquet:
-  enabled: true     # Auto-generate during add (default: false)
-  threshold: 100    # Hint when items exceed threshold (default: 100)
+parquet.enabled: true     # Auto-generate during add (default: false)
+parquet.threshold: 100    # Hint when items exceed threshold (default: 100)
 ```
+
+!!! note "Flat key syntax"
+    Config keys use dot notation as literal keys (e.g., `parquet.enabled`), not nested YAML mappings.
 
 ### Commands
 
@@ -236,7 +238,7 @@ portolan add imagery/ --stac-geoparquet
 ### How It Works
 
 - Uses [stac-geoparquet](https://github.com/stac-utils/stac-geoparquet) library
-- Adds `items.parquet` link to `collection.json` with `rel: items`
+- Adds `items.parquet` as a collection-level asset (per [ADR-0031](../contributing.md)) and link with `rel: items`
 - Enables spatial filtering with a single HTTP request (vs N requests for items)
 
 | Setting | Default | Description |

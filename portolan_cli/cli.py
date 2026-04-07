@@ -2486,6 +2486,8 @@ def _handle_parquet_after_add(
     affected_collections: set[str],
     generate_parquet: bool,
     verbose: bool,
+    *,
+    show_hints: bool = True,
 ) -> None:
     """Handle stac-geoparquet generation/hints after add command.
 
@@ -2498,6 +2500,7 @@ def _handle_parquet_after_add(
         affected_collections: Set of collection IDs that were modified.
         generate_parquet: Whether --stac-geoparquet flag was passed.
         verbose: Whether to show verbose output.
+        show_hints: Whether to show hints (disabled in JSON output mode).
     """
     if not affected_collections:
         return
@@ -2510,13 +2513,22 @@ def _handle_parquet_after_add(
         should_suggest_parquet,
     )
 
-    parquet_enabled = get_setting("parquet.enabled", catalog_path=catalog_root)
-    threshold = get_setting("parquet.threshold", catalog_path=catalog_root) or 100
-
     for coll_id in affected_collections:
         coll_path = catalog_root / coll_id
         if not (coll_path / "collection.json").exists():
             continue
+
+        # Get settings per-collection to support collection-level overrides
+        parquet_enabled_raw = get_setting(
+            "parquet.enabled", catalog_path=catalog_root, collection=coll_id
+        )
+        threshold_raw = get_setting(
+            "parquet.threshold", catalog_path=catalog_root, collection=coll_id
+        )
+
+        # Type coercion: parquet.enabled can be string from env var
+        parquet_enabled = _coerce_bool(parquet_enabled_raw, default=False)
+        threshold = _coerce_int(threshold_raw, default=100)
 
         if generate_parquet or parquet_enabled:
             try:
@@ -2528,12 +2540,36 @@ def _handle_parquet_after_add(
                         info_output(f"Generated items.parquet for '{coll_id}'")
             except Exception as e:
                 warn(f"Failed to generate parquet for '{coll_id}': {e}")
-        elif should_suggest_parquet(coll_path, threshold=threshold):
+        elif show_hints and should_suggest_parquet(coll_path, threshold=threshold):
             item_count = count_items(coll_path)
             info_output(
                 f"Hint: Collection '{coll_id}' has {item_count} items (>{threshold}). "
                 f"Consider running: portolan stac-geoparquet -c {coll_id}"
             )
+
+
+def _coerce_bool(value: Any, *, default: bool = False) -> bool:
+    """Coerce a value to boolean.
+
+    Handles string values like "true", "1", "yes" from env vars.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "yes", "on")
+    return bool(value)
+
+
+def _coerce_int(value: Any, *, default: int) -> int:
+    """Coerce a value to integer with safe fallback."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
 
 
 @cli.command("add")
@@ -2723,11 +2759,14 @@ def add_cmd(
     _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
 
     # Handle stac-geoparquet generation/hints for affected collections
-    if not use_json:
-        affected = {
-            a.collection_id for a in all_added if hasattr(a, "collection_id") and a.collection_id
-        }
-        _handle_parquet_after_add(catalog_root, affected, generate_parquet, verbose)
+    # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
+    # Only show hints in non-JSON mode
+    affected = {
+        a.collection_id for a in all_added if hasattr(a, "collection_id") and a.collection_id
+    }
+    _handle_parquet_after_add(
+        catalog_root, affected, generate_parquet, verbose, show_hints=not use_json
+    )
 
     # Exit with non-zero code if any failures occurred
     if all_failures:

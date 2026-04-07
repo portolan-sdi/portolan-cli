@@ -477,3 +477,120 @@ class TestFullWorkflow:
         # Verify new item count (5 original + 1 new = 6)
         table = pq.read_table(parquet_path)
         assert len(table) == 6
+
+
+# =============================================================================
+# Test: Error Handling
+# =============================================================================
+
+
+class TestErrorHandling:
+    """Tests for error handling in stac-parquet module."""
+
+    @pytest.mark.unit
+    def test_stale_item_link_raises_error(self, tmp_path: Path) -> None:
+        """Test that missing item files raise ValueError with clear message."""
+        from portolan_cli.stac_parquet import generate_items_parquet
+
+        # Create collection with item link but no actual item file
+        collection_dir = tmp_path / "stale-collection"
+        collection_dir.mkdir()
+
+        collection_json = {
+            "type": "Collection",
+            "stac_version": "1.0.0",
+            "id": "stale",
+            "description": "Collection with stale links",
+            "license": "CC-BY-4.0",
+            "extent": {
+                "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [
+                {"rel": "self", "href": "./collection.json"},
+                {"rel": "item", "href": "./missing-item/item.json"},  # This doesn't exist
+            ],
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json, indent=2))
+
+        with pytest.raises(ValueError, match="stale item links"):
+            generate_items_parquet(collection_dir)
+
+
+# =============================================================================
+# Test: Collection-Level Asset (ADR-0031)
+# =============================================================================
+
+
+class TestCollectionLevelAsset:
+    """Tests for collection-level asset per ADR-0031."""
+
+    @pytest.mark.unit
+    def test_add_parquet_creates_collection_asset(self, collection_with_items: Path) -> None:
+        """Test that add_parquet_link_to_collection also adds collection-level asset."""
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+
+        collection_json = json.loads((collection_with_items / "collection.json").read_text())
+
+        # Should have assets dict with items_parquet
+        assert "assets" in collection_json
+        assert "items_parquet" in collection_json["assets"]
+
+        asset = collection_json["assets"]["items_parquet"]
+        assert asset["href"] == "./items.parquet"
+        assert asset["type"] == "application/x-parquet"
+        assert "metadata" in asset["roles"]
+
+    @pytest.mark.unit
+    def test_collection_asset_idempotent(self, collection_with_items: Path) -> None:
+        """Test that calling add_parquet_link twice doesn't duplicate asset."""
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+
+        # Add twice
+        add_parquet_link_to_collection(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+
+        collection_json = json.loads((collection_with_items / "collection.json").read_text())
+
+        # Should have exactly one parquet asset
+        parquet_assets = [
+            (k, v)
+            for k, v in collection_json.get("assets", {}).items()
+            if v.get("href") == "./items.parquet"
+        ]
+        assert len(parquet_assets) == 1
+
+    @pytest.mark.unit
+    def test_remove_parquet_also_removes_asset(self, collection_with_items: Path) -> None:
+        """Test that remove_parquet_link_from_collection also removes asset."""
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+            remove_parquet_link_from_collection,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+
+        # Verify asset exists
+        collection_json = json.loads((collection_with_items / "collection.json").read_text())
+        assert "items_parquet" in collection_json.get("assets", {})
+
+        # Remove
+        result = remove_parquet_link_from_collection(collection_with_items)
+        assert result is True
+
+        # Verify asset was removed
+        collection_json = json.loads((collection_with_items / "collection.json").read_text())
+        assert "items_parquet" not in collection_json.get("assets", {})

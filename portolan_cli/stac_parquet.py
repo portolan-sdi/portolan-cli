@@ -69,24 +69,36 @@ def should_suggest_parquet(collection_path: Path, threshold: int = 100) -> bool:
 
 
 def has_parquet_link(collection_path: Path) -> bool:
-    """Check if collection.json has an items.parquet link.
+    """Check if collection.json has items.parquet (link or asset).
+
+    Checks for both the rel="items" link and the collection-level asset.
 
     Args:
         collection_path: Path to collection directory.
 
     Returns:
-        True if items.parquet link exists.
+        True if items.parquet link or asset exists.
     """
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         return False
 
     data = json.loads(collection_json_path.read_text())
-    links = data.get("links", [])
 
-    return any(
+    # Check link
+    links = data.get("links", [])
+    has_link = any(
         link.get("type") == PARQUET_MEDIA_TYPE and link.get("rel") == "items" for link in links
     )
+    if has_link:
+        return True
+
+    # Check asset
+    assets = data.get("assets", {})
+    has_asset = "items_parquet" in assets or any(
+        asset.get("href") == f"./{PARQUET_FILENAME}" for asset in assets.values()
+    )
+    return has_asset
 
 
 def _load_item_dicts(collection_path: Path) -> list[dict[str, Any]]:
@@ -111,6 +123,8 @@ def _load_item_dicts(collection_path: Path) -> list[dict[str, Any]]:
         raise ValueError(f"No items found in collection at {collection_path}")
 
     items = []
+    missing_hrefs = []
+
     for link in item_links:
         href = link.get("href", "")
         # Resolve relative paths
@@ -124,6 +138,18 @@ def _load_item_dicts(collection_path: Path) -> list[dict[str, Any]]:
         if item_path.exists():
             item_data = json.loads(item_path.read_text())
             items.append(item_data)
+        else:
+            missing_hrefs.append(href)
+
+    # Fail fast on stale links - items.parquet must be in sync with collection.json
+    if missing_hrefs:
+        missing_list = ", ".join(missing_hrefs[:5])
+        if len(missing_hrefs) > 5:
+            missing_list += f" ... and {len(missing_hrefs) - 5} more"
+        raise ValueError(
+            f"collection.json at {collection_path} has stale item links. "
+            f"Missing items: {missing_list}"
+        )
 
     if not items:
         raise ValueError(f"No items found in collection at {collection_path}")
@@ -172,10 +198,13 @@ def generate_items_parquet(collection_path: Path) -> Path:
 
 
 def add_parquet_link_to_collection(collection_path: Path) -> None:
-    """Add items.parquet link to collection.json.
+    """Add items.parquet link and asset to collection.json.
 
-    Adds a link with rel="items" and type="application/x-parquet" pointing
-    to items.parquet. Idempotent - won't duplicate if already present.
+    Per ADR-0031 (collection-level assets), adds:
+    1. A link with rel="items" and type="application/x-parquet"
+    2. A collection-level asset for the GeoParquet file
+
+    Idempotent - won't duplicate if already present.
 
     Args:
         collection_path: Path to collection directory.
@@ -188,56 +217,95 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
 
     data = json.loads(collection_json_path.read_text())
-    links = data.get("links", [])
+    modified = False
 
-    # Check if link already exists (idempotent)
-    existing = any(
+    # --- Add link (rel="items") ---
+    links = data.get("links", [])
+    has_link = any(
         link.get("type") == PARQUET_MEDIA_TYPE and link.get("rel") == "items" for link in links
     )
 
-    if existing:
-        return  # Already has the link
+    if not has_link:
+        parquet_link = {
+            "rel": "items",
+            "href": f"./{PARQUET_FILENAME}",
+            "type": PARQUET_MEDIA_TYPE,
+            "title": "STAC items as GeoParquet",
+        }
+        links.append(parquet_link)
+        data["links"] = links
+        modified = True
 
-    # Add the new link
-    parquet_link = {
-        "rel": "items",
-        "href": f"./{PARQUET_FILENAME}",
-        "type": PARQUET_MEDIA_TYPE,
-        "title": "STAC items as GeoParquet",
-    }
-    links.append(parquet_link)
-    data["links"] = links
+    # --- Add collection-level asset (per ADR-0031) ---
+    assets = data.get("assets", {})
+    asset_key = "items_parquet"
 
-    # Write back
-    collection_json_path.write_text(json.dumps(data, indent=2))
+    # Check if asset already exists (by key or by href)
+    has_asset = asset_key in assets or any(
+        asset.get("href") == f"./{PARQUET_FILENAME}" for asset in assets.values()
+    )
+
+    if not has_asset:
+        assets[asset_key] = {
+            "href": f"./{PARQUET_FILENAME}",
+            "type": PARQUET_MEDIA_TYPE,
+            "title": "STAC items as GeoParquet",
+            "roles": ["metadata", "index"],
+        }
+        data["assets"] = assets
+        modified = True
+
+    # Write back only if changes were made
+    if modified:
+        collection_json_path.write_text(json.dumps(data, indent=2))
 
 
 def remove_parquet_link_from_collection(collection_path: Path) -> bool:
-    """Remove items.parquet link from collection.json.
+    """Remove items.parquet link and asset from collection.json.
+
+    Removes both the rel="items" link and the collection-level asset.
 
     Args:
         collection_path: Path to collection directory.
 
     Returns:
-        True if link was removed, False if it didn't exist.
+        True if link or asset was removed, False if neither existed.
     """
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         return False
 
     data = json.loads(collection_json_path.read_text())
-    links = data.get("links", [])
+    modified = False
 
-    original_count = len(links)
+    # Remove link
+    links = data.get("links", [])
+    original_link_count = len(links)
     links = [
         link
         for link in links
         if not (link.get("type") == PARQUET_MEDIA_TYPE and link.get("rel") == "items")
     ]
+    if len(links) != original_link_count:
+        data["links"] = links
+        modified = True
 
-    if len(links) == original_count:
-        return False  # No link was removed
+    # Remove asset (by key or by href)
+    assets = data.get("assets", {})
+    if "items_parquet" in assets:
+        del assets["items_parquet"]
+        data["assets"] = assets
+        modified = True
+    else:
+        # Check by href in case it was added with a different key
+        for key, asset in list(assets.items()):
+            if asset.get("href") == f"./{PARQUET_FILENAME}":
+                del assets[key]
+                data["assets"] = assets
+                modified = True
+                break
 
-    data["links"] = links
-    collection_json_path.write_text(json.dumps(data, indent=2))
-    return True
+    if modified:
+        collection_json_path.write_text(json.dumps(data, indent=2))
+
+    return modified
