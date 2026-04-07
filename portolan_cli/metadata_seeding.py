@@ -26,6 +26,8 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -51,6 +53,9 @@ def seed_metadata_yaml(
     Creates a metadata.yaml file with pre-filled values from extraction and
     TODO markers for required fields that need human input.
 
+    Uses atomic write (write to temp file + rename) to prevent race conditions
+    when multiple processes attempt to seed the same file.
+
     Args:
         extracted: Extracted metadata from a data source.
         metadata_path: Path to write metadata.yaml (usually .portolan/metadata.yaml).
@@ -59,23 +64,48 @@ def seed_metadata_yaml(
     Returns:
         True if file was written, False if skipped (file exists and overwrite=False).
     """
-    # Check if file exists and respect overwrite flag
-    if metadata_path.exists() and not overwrite:
-        logger.debug(
-            "Skipping metadata seeding: %s already exists (overwrite=False)",
-            metadata_path,
-        )
-        return False
+    # Ensure parent directory exists first
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Use exclusive create (O_EXCL) to atomically check and create
+    # This prevents TOCTOU race conditions
+    if not overwrite:
+        try:
+            # Atomic "create if not exists" using O_CREAT | O_EXCL
+            fd = os.open(metadata_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            logger.debug(
+                "Skipping metadata seeding: %s already exists (overwrite=False)",
+                metadata_path,
+            )
+            return False
+        else:
+            # File created successfully, close it and proceed to write content
+            os.close(fd)
 
     # Build metadata structure
     metadata = _build_metadata_dict(extracted)
 
-    # Ensure parent directory exists
-    metadata_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Write with header comment
+    # Write with header comment using atomic write (temp + rename)
     content = _format_metadata_yaml(metadata, extracted.source_type)
-    metadata_path.write_text(content)
+
+    # Write to temp file in same directory (ensures same filesystem for rename)
+    temp_fd, temp_path = tempfile.mkstemp(
+        dir=metadata_path.parent,
+        prefix=".metadata_yaml_",
+        suffix=".tmp",
+    )
+    try:
+        os.write(temp_fd, content.encode("utf-8"))
+        os.close(temp_fd)
+        # Atomic rename (on POSIX systems)
+        os.replace(temp_path, metadata_path)
+    except Exception:
+        # Clean up temp file on failure
+        os.close(temp_fd) if not os.get_inheritable(temp_fd) else None
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
 
     logger.debug("Seeded metadata.yaml from %s", extracted.source_type)
     return True
@@ -114,7 +144,8 @@ def _build_metadata_dict(extracted: ExtractedMetadata) -> dict[str, Any]:
         metadata["attribution"] = extracted.attribution
 
     if extracted.keywords:
-        metadata["keywords"] = extracted.keywords
+        # Ensure all keywords are strings (defensive - ExtractedMetadata types this as list[str])
+        metadata["keywords"] = [str(k) for k in extracted.keywords if k is not None]
 
     if extracted.processing_notes:
         metadata["processing_notes"] = extracted.processing_notes

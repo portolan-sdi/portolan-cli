@@ -337,6 +337,7 @@ STAC provides machine-extractable metadata (title, description, extent, columns)
 | `related_dois` | List of related DOIs for linked publications |
 | `citations` | List of citation strings for referencing |
 | `upstream_version` | Version string of upstream data source |
+| `upstream_version_url` | URL to upstream version (e.g., Zenodo record) |
 
 ### Quick Start
 
@@ -391,6 +392,7 @@ related_dois:
 citations:
   - "Doe, J. (2024). Census Analysis Methods. J. Demographics, 1(1), 1-10."
 upstream_version: "2024.1"
+upstream_version_url: https://data.census.gov/releases/2024.1
 ```
 
 ### Required Fields
@@ -436,7 +438,8 @@ The `portolan readme` command generates `README.md` by combining:
 - Upstream version (with optional URL)
 - Known issues
 - Source URL, processing notes
-- Keywords (as badges), attribution
+- Keywords (as [shields.io](https://shields.io) badges with proper URL encoding)
+- Attribution
 
 ```bash
 # Generate README.md

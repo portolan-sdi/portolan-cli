@@ -365,6 +365,8 @@ class TestOrcidPattern:
             "0000-0001-2345-6789",
             "0000-0002-9876-5432",
             "9999-9999-9999-9999",
+            "0000-0001-2345-678X",  # X check digit (valid per ISO 7064 Mod 11-2)
+            "0000-0002-1825-009X",  # Real ORCID with X (Josiah Carberry)
         ]
 
         for orcid in valid_orcids:
@@ -378,7 +380,7 @@ class TestOrcidPattern:
         invalid_orcids = [
             "0000-0001-2345",  # Too short
             "0000-0001-2345-67890",  # Too long
-            "0000-0001-2345-678X",  # Letter in wrong position
+            "0000-0001-234X-6789",  # X in wrong position (not last char)
             "XXXX-XXXX-XXXX-XXXX",  # All letters
             "0000000123456789",  # No dashes
         ]

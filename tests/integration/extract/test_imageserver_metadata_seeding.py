@@ -163,11 +163,11 @@ class TestImageServerMetadataExtractedToExtracted:
         assert extracted.contact_name is None
         assert extracted.keywords is None
 
-    def test_to_extracted_source_type_is_imageserver(self) -> None:
-        """to_extracted() includes source_type as imageserver."""
+    def test_to_extracted_source_type_is_arcgis_imageserver(self) -> None:
+        """to_extracted() includes source_type as arcgis_imageserver (consistent with featureserver)."""
         metadata = make_imageserver_metadata_extracted()
         extracted = metadata.to_extracted()
-        assert extracted.source_type == "imageserver"
+        assert extracted.source_type == "arcgis_imageserver"
 
 
 class TestSeedMetadataYaml:

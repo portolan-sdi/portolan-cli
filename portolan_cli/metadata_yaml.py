@@ -97,8 +97,9 @@ COMMON_SPDX_LICENSES = frozenset(
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 # DOI pattern: 10.XXXX/suffix (where XXXX is 4+ digits)
+# Suffix must be alphanumeric, dots, hyphens, underscores, slashes (safe URL chars)
 # See: https://www.doi.org/doi_handbook/2_Numbering.html
-DOI_PATTERN = re.compile(r"^10\.\d{4,}/\S+$")
+DOI_PATTERN = re.compile(r"^10\.\d{4,}/[A-Za-z0-9._/-]+$")
 
 # LicenseRef pattern: LicenseRef-[idstring] per SPDX spec Section 6
 # idstring: alphanumeric plus dot, hyphen; must have at least one character
@@ -108,9 +109,14 @@ LICENSEREF_PATTERN = re.compile(r"^LicenseRef-[A-Za-z0-9.\-]+$")
 # ISO date pattern: YYYY-MM-DD
 ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
-# ORCID pattern: 0000-0000-0000-0000 (four groups of 4 digits)
+# ORCID pattern: 0000-0000-0000-000X (four groups of 4 chars, last can be X check digit)
 # See: https://support.orcid.org/hc/en-us/articles/360006897674
-ORCID_PATTERN = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{4}$")
+# Check digit uses ISO 7064 Mod 11-2, so final char can be 0-9 or X
+ORCID_PATTERN = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{3}[\dX]$")
+
+# URL pattern: Basic validation for http/https URLs
+# Not comprehensive, but catches obviously malformed URLs
+URL_PATTERN = re.compile(r"^https?://[^\s<>\"{}|\\^`\[\]]+$")
 
 
 # =============================================================================
@@ -137,14 +143,21 @@ def _validate_authors(authors: Any) -> list[str]:
         return errors
 
     for i, author in enumerate(authors):
+        if author is None:
+            errors.append(f"Author entry {i} is None (expected a mapping with 'name' field)")
+            continue
         if not isinstance(author, dict):
             errors.append(f"Author entry {i} must be a mapping with 'name' field")
             continue
 
-        # Name is required
+        # Name is required and must be a non-empty string
         if "name" not in author:
             errors.append(f"Author entry {i} is missing required 'name' field")
-        elif not author["name"] or not str(author["name"]).strip():
+        elif not isinstance(author["name"], str):
+            errors.append(
+                f"Author entry {i} 'name' must be a string, got {type(author['name']).__name__}"
+            )
+        elif not author["name"].strip():
             errors.append(f"Author entry {i} has empty 'name' field")
 
         # Validate ORCID format if present
@@ -184,6 +197,9 @@ def _validate_related_dois(related_dois: Any) -> list[str]:
         if not isinstance(doi, str):
             errors.append(f"Item {i} in 'related_dois' must be a string")
             continue
+        if not doi.strip():
+            errors.append(f"Item {i} in 'related_dois' cannot be empty")
+            continue
         if not DOI_PATTERN.match(doi):
             errors.append(
                 f"Invalid DOI format in 'related_dois[{i}]': '{doi}'. "
@@ -211,6 +227,8 @@ def _validate_citations(citations: Any) -> list[str]:
     for i, citation in enumerate(citations):
         if not isinstance(citation, str):
             errors.append(f"Citation entry {i} must be a string")
+        elif not citation.strip():
+            errors.append(f"Citation entry {i} cannot be empty or whitespace")
 
     return errors
 
@@ -229,6 +247,35 @@ def _validate_upstream_version(upstream_version: Any) -> list[str]:
     if not isinstance(upstream_version, str):
         errors.append(
             f"Field 'upstream_version' must be a string, got {type(upstream_version).__name__}"
+        )
+
+    return errors
+
+
+def _validate_upstream_version_url(upstream_version_url: Any) -> list[str]:
+    """Validate the 'upstream_version_url' field (URL string).
+
+    Args:
+        upstream_version_url: The upstream_version_url field value to validate.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+
+    if not isinstance(upstream_version_url, str):
+        errors.append(
+            f"Field 'upstream_version_url' must be a string, got {type(upstream_version_url).__name__}"
+        )
+        return errors
+
+    if not upstream_version_url.strip():
+        errors.append("Field 'upstream_version_url' cannot be empty")
+        return errors
+
+    if not URL_PATTERN.match(upstream_version_url):
+        errors.append(
+            f"Field 'upstream_version_url' must be a valid http/https URL, got '{upstream_version_url}'"
         )
 
     return errors
@@ -372,6 +419,9 @@ def validate_metadata(metadata: dict[str, Any]) -> list[str]:
 
     if (upstream_version := metadata.get("upstream_version")) is not None:
         errors.extend(_validate_upstream_version(upstream_version))
+
+    if (upstream_version_url := metadata.get("upstream_version_url")) is not None:
+        errors.extend(_validate_upstream_version_url(upstream_version_url))
 
     return errors
 

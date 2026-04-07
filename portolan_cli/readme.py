@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from portolan_cli.config import load_merged_metadata
 
@@ -365,9 +366,18 @@ def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None
 
     badges = []
     for keyword in keywords:
-        # URL-encode spaces and special chars
-        safe_keyword = str(keyword).replace(" ", "_").replace("-", "--")
-        badge = f"![{keyword}](https://img.shields.io/badge/{safe_keyword}-blue)"
+        # Shield.io badge format requires:
+        # - Spaces become underscores (or %20)
+        # - Hyphens become double hyphens (--)
+        # - Other special chars need URL encoding
+        keyword_str = str(keyword)
+        # First handle shield.io-specific escaping
+        safe_keyword = keyword_str.replace("-", "--")
+        # Then URL-encode the rest (safe='' encodes everything except alphanumerics)
+        safe_keyword = quote(safe_keyword, safe="")
+        # Replace %20 (encoded space) with underscore for better readability
+        safe_keyword = safe_keyword.replace("%20", "_")
+        badge = f"![{keyword_str}](https://img.shields.io/badge/{safe_keyword}-blue)"
         badges.append(badge)
 
     sections.append(" ".join(badges))
