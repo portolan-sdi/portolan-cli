@@ -47,7 +47,9 @@ This will:
 1. Discover all layers in the service
 2. Extract each layer to GeoParquet format
 3. Apply Hilbert spatial sorting for efficient queries
-4. Generate an extraction report in `.portolan/extraction-report.json`
+4. Initialize a Portolan catalog with STAC metadata
+5. Seed `.portolan/metadata.yaml` with values from the service
+6. Generate an extraction report in `.portolan/extraction-report.json`
 
 ### Filtering Layers
 
@@ -77,7 +79,9 @@ Each layer becomes a collection with the parquet file as a collection-level asse
 ```
 output/
 ├── .portolan/
-│   └── extraction-report.json    # Extraction metadata
+│   ├── extraction-report.json    # Extraction metadata
+│   └── metadata.yaml             # Pre-seeded with service metadata
+├── catalog.json                  # STAC catalog
 ├── census_block_groups/
 │   ├── collection.json
 │   └── census_block_groups.parquet
@@ -85,6 +89,33 @@ output/
     ├── collection.json
     └── census_tracts.parquet
 ```
+
+### Auto-Seeded Metadata
+
+The extraction process automatically seeds `.portolan/metadata.yaml` with values from the ArcGIS service metadata:
+
+| ArcGIS Field | metadata.yaml Field |
+|-------------|---------------------|
+| `copyrightText` | `attribution` |
+| `documentInfo.Author` | `contact.name` |
+| `documentInfo.Keywords` | `keywords` |
+| `serviceDescription` | `processing_notes` |
+| `accessInformation` | `known_issues` |
+| Service URL | `source_url` |
+
+Fields that require human input (like `contact.email` and `license`) are marked with `TODO` placeholders:
+
+```yaml
+contact:
+  name: "Philadelphia GIS Team"  # Auto-filled from service
+  email: "TODO: Add value"       # Needs human input
+license: "TODO: Add value"       # Needs SPDX identifier
+source_url: "https://services.arcgis.com/..."
+attribution: "City of Philadelphia"
+```
+
+!!! tip "Won't Overwrite Existing Files"
+    If `.portolan/metadata.yaml` already exists, extraction will **not** overwrite it. This preserves any manual edits you've made.
 
 ---
 
