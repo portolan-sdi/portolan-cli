@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from portolan_cli.config import load_merged_metadata
 
@@ -296,6 +297,63 @@ def _add_processing_section(sections: list[str], metadata: dict[str, Any]) -> No
     sections.append("")
 
 
+def _add_authors_section(sections: list[str], metadata: dict[str, Any]) -> None:
+    """Add authors section with ORCID links (#316).
+
+    Renders original dataset authors (separate from contact/maintainer).
+    Authors with ORCID IDs are rendered as clickable links.
+    """
+    authors = metadata.get("authors")
+    if not authors or not isinstance(authors, list) or len(authors) == 0:
+        return
+
+    sections.append("## Authors")
+    sections.append("")
+
+    for author in authors:
+        if not isinstance(author, dict):
+            continue
+
+        name = author.get("name", "")
+        orcid = author.get("orcid")
+        affiliation = author.get("affiliation")
+
+        # Build author line
+        if orcid:
+            author_text = f"[{name}](https://orcid.org/{orcid})"
+        else:
+            author_text = name
+
+        if affiliation:
+            author_text = f"{author_text} ({affiliation})"
+
+        sections.append(f"- {author_text}")
+
+    sections.append("")
+
+
+def _add_version_section(sections: list[str], metadata: dict[str, Any]) -> None:
+    """Add upstream version section (#316).
+
+    Renders upstream_version with optional link to upstream_version_url.
+    """
+    version = metadata.get("upstream_version")
+    if not version:
+        return
+
+    version_url = metadata.get("upstream_version_url")
+
+    sections.append("## Version")
+    sections.append("")
+
+    if version_url:
+        sections.append(f"**Upstream Version**: [{version}]({version_url})")
+    else:
+        sections.append(f"**Upstream Version**: {version}")
+
+    sections.append("")
+
+
 def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None:
     """Add keywords as shield.io badges.
 
@@ -308,9 +366,18 @@ def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None
 
     badges = []
     for keyword in keywords:
-        # URL-encode spaces and special chars
-        safe_keyword = str(keyword).replace(" ", "_").replace("-", "--")
-        badge = f"![{keyword}](https://img.shields.io/badge/{safe_keyword}-blue)"
+        # Shield.io badge format requires:
+        # - Spaces become underscores (or %20)
+        # - Hyphens become double hyphens (--)
+        # - Other special chars need URL encoding
+        keyword_str = str(keyword)
+        # First handle shield.io-specific escaping
+        safe_keyword = keyword_str.replace("-", "--")
+        # Then URL-encode the rest (safe='' encodes everything except alphanumerics)
+        safe_keyword = quote(safe_keyword, safe="")
+        # Replace %20 (encoded space) with underscore for better readability
+        safe_keyword = safe_keyword.replace("%20", "_")
+        badge = f"![{keyword_str}](https://img.shields.io/badge/{safe_keyword}-blue)"
         badges.append(badge)
 
     sections.append(" ".join(badges))
@@ -334,20 +401,38 @@ def _add_attribution_section(sections: list[str], metadata: dict[str, Any]) -> N
 
 
 def _add_citation_section(sections: list[str], metadata: dict[str, Any]) -> None:
-    """Add citation and DOI from metadata."""
-    citation = metadata.get("citation")
-    doi = metadata.get("doi")
+    """Add citation and DOI from metadata.
 
-    if not citation and not doi:
+    Supports both single citation (backward compat) and citations list (#316).
+    Also supports related_dois in addition to primary doi.
+    """
+    # Support both single citation (backward compat) and citations list (#316)
+    citations: list[str] = []
+    if metadata.get("citation"):
+        citations.append(str(metadata["citation"]))
+    citations.extend(metadata.get("citations", []))
+
+    doi = metadata.get("doi")
+    related_dois = metadata.get("related_dois", [])
+
+    if not citations and not doi and not related_dois:
         return
 
     sections.append("## Citation")
     sections.append("")
-    if citation:
+
+    for citation in citations:
         sections.append(str(citation))
         sections.append("")
+
     if doi:
         sections.append(f"**DOI**: [{doi}](https://doi.org/{doi})")
+        sections.append("")
+
+    if related_dois:
+        sections.append("**Related DOIs**:")
+        for rdoi in related_dois:
+            sections.append(f"- [{rdoi}](https://doi.org/{rdoi})")
         sections.append("")
 
 
@@ -462,6 +547,8 @@ def generate_readme(
     # Metadata-sourced sections (human enrichment)
     _add_source_section(sections, metadata)
     _add_processing_section(sections, metadata)
+    _add_version_section(sections, metadata)  # #316: upstream version
+    _add_authors_section(sections, metadata)  # #316: authors before citation
     _add_citation_section(sections, metadata)
     _add_attribution_section(sections, metadata)
     _add_license_section(sections, metadata)
@@ -745,6 +832,8 @@ def generate_catalog_readme(catalog_path: Path) -> str:
     # Metadata sections (from catalog-level metadata.yaml)
     _add_source_section(sections, metadata)
     _add_processing_section(sections, metadata)
+    _add_version_section(sections, metadata)  # #316: upstream version
+    _add_authors_section(sections, metadata)  # #316: authors before citation
     _add_citation_section(sections, metadata)
     _add_attribution_section(sections, metadata)
     _add_license_section(sections, metadata)

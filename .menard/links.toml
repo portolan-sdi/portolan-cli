@@ -28,6 +28,7 @@ docs = ["docs/reference/configuration.md#Conversion Configuration"]
 [[link]]
 code = "portolan_cli/metadata_yaml.py"
 docs = ["docs/reference/configuration.md#Metadata Enrichment"]
+ignore = true
 
 [[link]]
 code = "portolan_cli/readme.py"

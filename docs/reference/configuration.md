@@ -360,6 +360,7 @@ Some settings have aliases for convenience:
 
 Both names work interchangeably in config files and environment variables.
 
+<!-- freshness: last-verified: 2026-04-07 -->
 ## Metadata Enrichment
 
 In addition to `config.yaml`, Portolan supports `.portolan/metadata.yaml` for human-enrichable metadata that supplements STAC.
@@ -379,6 +380,11 @@ STAC provides machine-extractable metadata (title, description, extent, columns)
 | `processing_notes` | Documentation of transformations applied |
 | `keywords` | Tags for search/discovery (rendered as badges) |
 | `attribution` | Credit to data provider or organization |
+| `authors` | List of authors with name, optional ORCID and email |
+| `related_dois` | List of related DOIs for linked publications |
+| `citations` | List of citation strings for referencing |
+| `upstream_version` | Version string of upstream data source |
+| `upstream_version_url` | URL to upstream version (e.g., Zenodo record) |
 
 ### Quick Start
 
@@ -420,6 +426,20 @@ keywords:
   - demographics
   - population
 attribution: "U.S. Census Bureau"
+
+# Author and citation metadata
+authors:
+  - name: Jane Doe
+    orcid: 0000-0001-2345-6789
+    email: jane.doe@university.edu
+  - name: John Smith
+related_dois:
+  - 10.5281/zenodo.1234567
+  - 10.1000/related-paper
+citations:
+  - "Doe, J. (2024). Census Analysis Methods. J. Demographics, 1(1), 1-10."
+upstream_version: "2024.1"
+upstream_version_url: https://data.census.gov/releases/2024.1
 ```
 
 ### Required Fields
@@ -460,10 +480,13 @@ The `portolan readme` command generates `README.md` by combining:
 
 **From metadata.yaml (human):**
 - License, contact
-- Citation, DOI
+- Authors (with ORCID links)
+- Citation, DOI, related DOIs
+- Upstream version (with optional URL)
 - Known issues
 - Source URL, processing notes
-- Keywords (as badges), attribution
+- Keywords (as [shields.io](https://shields.io) badges with proper URL encoding)
+- Attribution
 
 ```bash
 # Generate README.md

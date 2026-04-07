@@ -47,7 +47,9 @@ This will:
 1. Discover all layers in the service
 2. Extract each layer to GeoParquet format
 3. Apply Hilbert spatial sorting for efficient queries
-4. Generate an extraction report in `.portolan/extraction-report.json`
+4. Initialize a Portolan catalog with STAC metadata
+5. Seed `.portolan/metadata.yaml` with values from the service
+6. Generate an extraction report in `.portolan/extraction-report.json`
 
 ### Filtering Layers
 
@@ -77,7 +79,9 @@ Each layer becomes a collection with the parquet file as a collection-level asse
 ```
 output/
 ├── .portolan/
-│   └── extraction-report.json    # Extraction metadata
+│   ├── extraction-report.json    # Extraction metadata
+│   └── metadata.yaml             # Pre-seeded with service metadata
+├── catalog.json                  # STAC catalog
 ├── census_block_groups/
 │   ├── collection.json
 │   └── census_block_groups.parquet
@@ -85,6 +89,33 @@ output/
     ├── collection.json
     └── census_tracts.parquet
 ```
+
+### Auto-Seeded Metadata
+
+The extraction process automatically seeds `.portolan/metadata.yaml` with values from the ArcGIS service metadata:
+
+| ArcGIS Field | metadata.yaml Field |
+|-------------|---------------------|
+| `copyrightText` | `attribution` |
+| `documentInfo.Author` | `contact.name` |
+| `documentInfo.Keywords` | `keywords` |
+| `serviceDescription` | `processing_notes` |
+| `accessInformation` | `known_issues` |
+| Service URL | `source_url` |
+
+Fields that require human input (like `contact.email` and `license`) are marked with `TODO` placeholders:
+
+```yaml
+contact:
+  name: "Philadelphia GIS Team"  # Auto-filled from service
+  email: "TODO: Add value"       # Needs human input
+license: "TODO: Add value"       # Needs SPDX identifier
+source_url: "https://services.arcgis.com/..."
+attribution: "City of Philadelphia"
+```
+
+!!! tip "Won't Overwrite Existing Files"
+    If `.portolan/metadata.yaml` already exists, extraction will **not** overwrite it. This preserves any manual edits you've made.
 
 ---
 
@@ -108,6 +139,7 @@ This will:
 4. Convert each tile to Cloud-Optimized GeoTIFF (COG)
 5. Create STAC items for each tile with spatial metadata
 6. Generate an extraction report
+7. Seed `metadata.yaml` with service metadata (source URL, attribution, keywords)
 
 ### Limiting Extraction Area
 
@@ -142,7 +174,8 @@ output/
 ├── .portolan/
 │   ├── config.yaml
 │   ├── extraction-report.json
-│   └── imageserver-resume.json     # For resuming interrupted extractions
+│   ├── imageserver-resume.json     # For resuming interrupted extractions
+│   └── metadata.yaml               # Seeded from service metadata
 ├── catalog.json
 └── tiles/                          # Collection (one per ImageServer)
     ├── collection.json
@@ -156,24 +189,29 @@ output/
     └── ...
 ```
 
-### Adding Metadata After Extraction
+### Metadata After Extraction
 
-Extraction creates STAC metadata but **not** `metadata.yaml`. Per [ADR-0038](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0038-metadata-yaml-enrichment.md), contact and license info must be added manually:
+Extraction automatically seeds `.portolan/metadata.yaml` with values from the ArcGIS service (source URL, description, attribution, keywords). Fields that require human input are marked with `TODO: Add value`:
+
+```yaml
+# Auto-seeded .portolan/metadata.yaml (example)
+contact:
+  name: "TODO: Add value"      # Required - add your name
+  email: "TODO: Add value"     # Required - add your email
+license: "TODO: Add value"     # Required - add SPDX identifier (e.g., CC-BY-4.0)
+source_url: https://example.com/.../ImageServer  # Auto-populated
+attribution: "Copyright © 2024 Example Org"      # Auto-populated from copyrightText
+```
+
+Complete the `TODO` fields, then generate the README:
 
 ```bash
-# Create metadata.yaml in the collection's .portolan directory
-mkdir -p tiles/.portolan
-cat > tiles/.portolan/metadata.yaml << 'EOF'
-contact:
-  name: Your Name
-  email: your.email@example.com
-license: CC-BY-4.0
-source_url: https://example.com/.../ImageServer
-EOF
-
 # Generate README from STAC + metadata.yaml
 portolan readme tiles
 ```
+
+!!! tip "Overriding auto-seeded metadata"
+    To replace auto-seeded values, edit the generated `metadata.yaml` directly. The file is never overwritten on subsequent extractions.
 
 ---
 

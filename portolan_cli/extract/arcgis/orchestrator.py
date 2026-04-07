@@ -57,6 +57,8 @@ from portolan_cli.extract.arcgis.url_parser import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from portolan_cli.extract.arcgis.metadata import ArcGISMetadata
+
 logger = logging.getLogger(__name__)
 
 
@@ -178,9 +180,13 @@ def _slugify(name: str) -> str:
     Returns:
         Slugified name (e.g., "census_block_groups")
     """
-    # Lowercase and replace spaces/special chars with underscores
+    # Lowercase first
     slug = name.lower()
+    # Replace all non-alphanumeric chars with underscore
     slug = re.sub(r"[^a-z0-9]+", "_", slug)
+    # Collapse multiple underscores
+    slug = re.sub(r"_+", "_", slug)
+    # Strip leading/trailing underscores
     slug = slug.strip("_")
     return slug or "unnamed"
 
@@ -547,6 +553,7 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
 
     Called automatically after extraction unless raw=True.
     Creates catalog.json, config.yaml, and collection.json for each layer.
+    Also seeds metadata.yaml from extracted service metadata.
     """
     from portolan_cli.catalog import init_catalog
     from portolan_cli.dataset import add_files
@@ -580,6 +587,65 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
     add_files(
         paths=parquet_files,
         catalog_root=output_dir,
+    )
+
+    # Seed metadata.yaml from extracted service metadata
+    _seed_metadata_from_extraction(output_dir, report)
+
+
+def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -> None:
+    """Seed metadata.yaml from extracted service metadata.
+
+    Called after catalog initialization to pre-populate metadata.yaml with
+    values extracted from the ArcGIS service. Fields that couldn't be
+    extracted are marked with TODO placeholders.
+
+    Args:
+        output_dir: The catalog output directory.
+        report: The extraction report containing metadata.
+    """
+    from portolan_cli.metadata_seeding import seed_metadata_yaml
+    from portolan_cli.output import info
+
+    if not report.metadata_extracted:
+        return
+
+    # Convert MetadataExtracted from report to ArcGISMetadata, then to ExtractedMetadata
+    # We need to reconstruct ArcGISMetadata from the report data
+    arcgis_metadata = _report_metadata_to_arcgis_metadata(report.metadata_extracted)
+    extracted = arcgis_metadata.to_extracted()
+
+    metadata_path = output_dir / ".portolan" / "metadata.yaml"
+    if seed_metadata_yaml(extracted, metadata_path):
+        info(f"Seeded metadata.yaml from {extracted.source_type}")
+
+
+def _report_metadata_to_arcgis_metadata(
+    report_metadata: MetadataExtracted,
+) -> ArcGISMetadata:
+    """Convert report MetadataExtracted to ArcGISMetadata.
+
+    The extraction report stores a flattened version of the metadata.
+    This function reconstructs the ArcGISMetadata object for conversion
+    to ExtractedMetadata.
+
+    Args:
+        report_metadata: MetadataExtracted from the extraction report.
+
+    Returns:
+        ArcGISMetadata instance with the same data.
+    """
+    from portolan_cli.extract.arcgis.metadata import ArcGISMetadata
+
+    return ArcGISMetadata(
+        source_url=report_metadata.source_url,
+        attribution=report_metadata.attribution,
+        description=report_metadata.description,
+        processing_notes=report_metadata.processing_notes,
+        contact_name=report_metadata.contact_name,
+        keywords=report_metadata.keywords,
+        known_issues=report_metadata.known_issues,
+        license_info_raw=report_metadata.license_info_raw,
     )
 
 
