@@ -3004,7 +3004,7 @@ def _check_backend_push_support(
     "--concurrency",
     type=click.IntRange(min=1, max=500),
     default=50,
-    help="Maximum concurrent uploads for single-collection push (default: 50). "
+    help="Maximum concurrent file uploads within each collection (default: 50). "
     "Higher values improve throughput but may hit rate limits.",
 )
 @click.pass_context
@@ -3102,6 +3102,7 @@ def push(
                 profile=resolved_profile,
                 region=resolved_region,
                 workers=workers,
+                file_concurrency=concurrency,
                 verbose=verbose,
                 json_mode=use_json,
             )
@@ -3326,6 +3327,11 @@ def _try_backend_pull(
     help="Show what would be downloaded without actually downloading. Note: skips remote state check (no network I/O), so remote changes won't be detected.",
 )
 @click.option(
+    "--restore",
+    is_flag=True,
+    help="Re-download files that are missing locally even if version metadata matches. Use to recover accidentally deleted files. Note: slower than normal pull (checks file existence).",
+)
+@click.option(
     "--profile",
     type=str,
     default=None,
@@ -3346,7 +3352,7 @@ def _try_backend_pull(
     type=click.IntRange(min=1),
     default=50,
     help=(
-        "Maximum concurrent file downloads within a collection (default: 50). "
+        "Maximum concurrent file downloads within each collection (default: 50). "
         "Higher values speed up downloads but use more connections."
     ),
 )
@@ -3360,6 +3366,7 @@ def pull_command(
     catalog_path: Path | None,
     force: bool,
     dry_run: bool,
+    restore: bool,
     profile: str | None,
     workers: int | None,
     concurrency: int,
@@ -3413,8 +3420,10 @@ def pull_command(
                 local_root=catalog_path,
                 force=force,
                 dry_run=dry_run,
+                restore=restore,
                 profile=resolved_profile,
                 workers=workers,
+                file_concurrency=concurrency,
             )
 
             if use_json:
@@ -3464,6 +3473,7 @@ def pull_command(
             collection=collection,
             force=force,
             dry_run=dry_run,
+            restore=restore,
             profile=resolved_profile,
             concurrency=concurrency,
         )
@@ -3472,6 +3482,7 @@ def pull_command(
             data = {
                 "files_downloaded": single_result.files_downloaded,
                 "files_skipped": single_result.files_skipped,
+                "files_restored": single_result.files_restored,
                 "local_version": single_result.local_version,
                 "remote_version": single_result.remote_version,
                 "up_to_date": single_result.up_to_date,

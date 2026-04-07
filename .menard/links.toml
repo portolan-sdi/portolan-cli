@@ -41,7 +41,11 @@ ignore = true
 
 [[link]]
 code = "portolan_cli/sync.py"
-docs = ["docs/reference/configuration.md#Environment Variables"]
+docs = ["docs/guides/nested-catalogs.md#Cloning Remote Nested Catalogs"]
+
+[[link]]
+code = "portolan_cli/pull.py"
+docs = ["docs/guides/nested-catalogs.md#Restoring Missing Files"]
 
 [[link]]
 code = "portolan_cli/extract/arcgis/orchestrator.py"

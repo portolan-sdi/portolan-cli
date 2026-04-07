@@ -1096,3 +1096,390 @@ class TestDryRunNetworkIsolation:
         mock_setup.assert_not_called()
         mock_push_fetch.assert_not_called()
         mock_pull_fetch.assert_not_called()
+
+
+# =============================================================================
+# Nested Catalog Tests (Issue #324)
+# =============================================================================
+
+
+class TestListRemoteCollectionsNestedCatalogs:
+    """Tests for list_remote_collections() with nested catalog structures.
+
+    Issue #324: clone fails on nested catalog structures because
+    list_remote_collections() only looks one level deep and doesn't
+    distinguish between subcatalog catalog.json and collection.json.
+    """
+
+    @pytest.mark.unit
+    def test_list_remote_collections_simple_flat_structure(self, tmp_path: Path) -> None:
+        """list_remote_collections should work with flat catalog structure."""
+        from portolan_cli.sync import list_remote_collections
+
+        # Mock catalog with direct child collections (no nesting)
+        catalog_data = {
+            "type": "Catalog",
+            "id": "test-catalog",
+            "links": [
+                {"rel": "child", "href": "./demographics/collection.json"},
+                {"rel": "child", "href": "./environment/collection.json"},
+            ],
+        }
+
+        with patch("portolan_cli.sync._fetch_remote_catalog_json") as mock_fetch:
+            mock_fetch.return_value = catalog_data
+
+            collections = list_remote_collections("s3://bucket/catalog")
+
+        assert set(collections) == {"demographics", "environment"}
+
+    @pytest.mark.unit
+    def test_list_remote_collections_nested_subcatalogs(self, tmp_path: Path) -> None:
+        """list_remote_collections should recurse into nested subcatalogs.
+
+        Structure being tested:
+            catalog.json
+            └── climate/
+                └── catalog.json (subcatalog)
+                    └── hittekaart/
+                        └── collection.json (actual collection)
+        """
+        from portolan_cli.sync import list_remote_collections
+
+        # Root catalog points to subcatalog (NOT a collection)
+        root_catalog = {
+            "type": "Catalog",
+            "id": "root",
+            "links": [
+                {"rel": "child", "href": "./climate/catalog.json"},  # subcatalog
+            ],
+        }
+
+        # Subcatalog points to actual collection
+        climate_catalog = {
+            "type": "Catalog",
+            "id": "climate",
+            "links": [
+                {"rel": "child", "href": "./hittekaart/collection.json"},  # collection
+            ],
+        }
+
+        def mock_fetch(remote_url: str, **kwargs: Any) -> dict[str, Any]:
+            if remote_url.endswith("/catalog"):
+                return root_catalog
+            elif "climate" in remote_url:
+                return climate_catalog
+            raise ValueError(f"Unexpected URL: {remote_url}")
+
+        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+            collections = list_remote_collections("s3://bucket/catalog")
+
+        # Full path includes the subcatalog directory for proper clone/pull
+        assert collections == ["climate/hittekaart"]
+
+    @pytest.mark.unit
+    def test_list_remote_collections_deeply_nested(self) -> None:
+        """list_remote_collections should handle multiple levels of nesting.
+
+        Structure:
+            catalog.json
+            └── europe/catalog.json
+                └── netherlands/catalog.json
+                    └── amsterdam/collection.json
+        """
+        from portolan_cli.sync import list_remote_collections
+
+        root_catalog = {
+            "type": "Catalog",
+            "id": "root",
+            "links": [{"rel": "child", "href": "./europe/catalog.json"}],
+        }
+
+        europe_catalog = {
+            "type": "Catalog",
+            "id": "europe",
+            "links": [{"rel": "child", "href": "./netherlands/catalog.json"}],
+        }
+
+        netherlands_catalog = {
+            "type": "Catalog",
+            "id": "netherlands",
+            "links": [{"rel": "child", "href": "./amsterdam/collection.json"}],
+        }
+
+        call_count = {"n": 0}
+
+        def mock_fetch(remote_url: str, **kwargs: Any) -> dict[str, Any]:
+            call_count["n"] += 1
+            if "netherlands" in remote_url:
+                return netherlands_catalog
+            elif "europe" in remote_url:
+                return europe_catalog
+            else:
+                return root_catalog
+
+        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+            collections = list_remote_collections("s3://bucket/catalog")
+
+        # Full path includes all subcatalog directories
+        assert collections == ["europe/netherlands/amsterdam"]
+        assert call_count["n"] == 3  # root + europe + netherlands
+
+    @pytest.mark.unit
+    def test_list_remote_collections_mixed_structure(self) -> None:
+        """list_remote_collections should handle mixed subcatalogs and collections.
+
+        Structure:
+            catalog.json
+            ├── quick-data/collection.json (direct collection)
+            └── organized/catalog.json (subcatalog)
+                └── nested-data/collection.json
+        """
+        from portolan_cli.sync import list_remote_collections
+
+        root_catalog = {
+            "type": "Catalog",
+            "id": "root",
+            "links": [
+                {"rel": "child", "href": "./quick-data/collection.json"},  # direct
+                {"rel": "child", "href": "./organized/catalog.json"},  # subcatalog
+            ],
+        }
+
+        organized_catalog = {
+            "type": "Catalog",
+            "id": "organized",
+            "links": [{"rel": "child", "href": "./nested-data/collection.json"}],
+        }
+
+        def mock_fetch(remote_url: str, **kwargs: Any) -> dict[str, Any]:
+            if "organized" in remote_url:
+                return organized_catalog
+            return root_catalog
+
+        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+            collections = list_remote_collections("s3://bucket/catalog")
+
+        # Full paths: direct collection keeps path, nested gets subcatalog prefix
+        assert set(collections) == {"quick-data", "organized/nested-data"}
+
+    @pytest.mark.unit
+    def test_list_remote_collections_max_depth_limit(self) -> None:
+        """list_remote_collections should enforce max depth to prevent infinite loops.
+
+        Even without circular references, deeply nested structures should be bounded.
+        """
+        from portolan_cli.sync import list_remote_collections
+
+        # Create a deeply nested structure (more than reasonable depth)
+        def make_catalog(level: int, max_level: int = 20) -> dict[str, Any]:
+            if level >= max_level:
+                return {
+                    "type": "Catalog",
+                    "id": f"level-{level}",
+                    "links": [{"rel": "child", "href": "./final/collection.json"}],
+                }
+            return {
+                "type": "Catalog",
+                "id": f"level-{level}",
+                "links": [{"rel": "child", "href": f"./level{level + 1}/catalog.json"}],
+            }
+
+        levels_fetched = {"max": 0}
+
+        def mock_fetch(remote_url: str, **kwargs: Any) -> dict[str, Any]:
+            # Extract level from URL
+            if "level" in remote_url:
+                import re
+
+                match = re.search(r"level(\d+)", remote_url)
+                if match:
+                    level = int(match.group(1))
+                    levels_fetched["max"] = max(levels_fetched["max"], level)
+                    return make_catalog(level)
+            return make_catalog(0)
+
+        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+            # Should not raise, should stop at max depth
+            _ = list_remote_collections("s3://bucket/catalog")
+
+        # Should have stopped before infinite recursion (default max_depth should be ~10)
+        assert levels_fetched["max"] < 15, "Should have hit max depth limit"
+
+    @pytest.mark.unit
+    def test_list_remote_collections_circular_reference_detection(self) -> None:
+        """list_remote_collections should detect and handle circular references.
+
+        Structure (circular via absolute URL):
+            catalog.json
+            └── a/catalog.json
+                └── b/catalog.json
+                    └── s3://bucket/catalog/a/catalog.json (circular - absolute URL)
+                    └── ./real-data/collection.json
+        """
+        from portolan_cli.sync import list_remote_collections
+
+        root_catalog = {
+            "type": "Catalog",
+            "id": "root",
+            "links": [{"rel": "child", "href": "./a/catalog.json"}],
+        }
+
+        a_catalog = {
+            "type": "Catalog",
+            "id": "a",
+            "links": [{"rel": "child", "href": "./b/catalog.json"}],
+        }
+
+        b_catalog = {
+            "type": "Catalog",
+            "id": "b",
+            "links": [
+                # Circular reference using absolute URL back to 'a'
+                {"rel": "child", "href": "s3://bucket/catalog/a/catalog.json"},
+                {"rel": "child", "href": "./real-data/collection.json"},  # Real collection
+            ],
+        }
+
+        fetch_calls: list[str] = []
+
+        def mock_fetch(remote_url: str, **kwargs: Any) -> dict[str, Any]:
+            fetch_calls.append(remote_url)
+            if len(fetch_calls) > 10:
+                raise RuntimeError("Too many fetch calls - infinite loop!")
+
+            # Normalize URL for matching
+            url = remote_url.rstrip("/")
+
+            if url.endswith("/b") or "/b/" in url:
+                return b_catalog
+            elif url.endswith("/a") or "/a/" in url:
+                return a_catalog
+            return root_catalog
+
+        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+            collections = list_remote_collections("s3://bucket/catalog")
+
+        # Should find the collection without infinite loop (full path includes subcatalogs)
+        assert "a/b/real-data" in collections
+        # Should not have fetched more than 4 times (root, a, b; 'a' is skipped on second visit)
+        assert len(fetch_calls) <= 4, f"Too many fetches: {fetch_calls}"
+
+    @pytest.mark.unit
+    def test_list_remote_collections_absolute_urls(self) -> None:
+        """list_remote_collections should handle absolute URLs in child links."""
+        from portolan_cli.sync import list_remote_collections
+
+        root_catalog = {
+            "type": "Catalog",
+            "id": "root",
+            "links": [
+                {
+                    "rel": "child",
+                    "href": "s3://bucket/catalog/region/catalog.json",  # absolute URL
+                },
+            ],
+        }
+
+        region_catalog = {
+            "type": "Catalog",
+            "id": "region",
+            "links": [
+                {
+                    "rel": "child",
+                    "href": "s3://bucket/catalog/region/data/collection.json",
+                },
+            ],
+        }
+
+        def mock_fetch(remote_url: str, **kwargs: Any) -> dict[str, Any]:
+            if "region" in remote_url and "data" not in remote_url:
+                return region_catalog
+            return root_catalog
+
+        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+            collections = list_remote_collections("s3://bucket/catalog")
+
+        # Full path includes subcatalog directory
+        assert "region/data" in collections
+
+    @pytest.mark.unit
+    def test_list_remote_collections_preserves_collection_path(self) -> None:
+        """Collection names should include full path for nested collections.
+
+        When cloning nested catalogs, we need the full path to pull correctly:
+        e.g., 'climate/hittekaart' not just 'hittekaart'
+        """
+        from portolan_cli.sync import list_remote_collections
+
+        root_catalog = {
+            "type": "Catalog",
+            "id": "root",
+            "links": [{"rel": "child", "href": "./climate/catalog.json"}],
+        }
+
+        climate_catalog = {
+            "type": "Catalog",
+            "id": "climate",
+            "links": [{"rel": "child", "href": "./hittekaart/collection.json"}],
+        }
+
+        def mock_fetch(remote_url: str, **kwargs: Any) -> dict[str, Any]:
+            if "climate" in remote_url:
+                return climate_catalog
+            return root_catalog
+
+        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+            collections = list_remote_collections("s3://bucket/catalog")
+
+        # Full path is required for clone/pull to work correctly
+        assert collections == ["climate/hittekaart"]
+
+
+class TestCloneNestedCatalogs:
+    """Integration-style tests for clone() with nested catalog structures."""
+
+    @pytest.mark.unit
+    def test_clone_discovers_nested_collections(self, tmp_path: Path) -> None:
+        """clone() without collection arg should discover nested collections."""
+        from portolan_cli.sync import clone
+
+        root_catalog = {
+            "type": "Catalog",
+            "id": "nested-example",
+            "links": [{"rel": "child", "href": "./theme/catalog.json"}],
+        }
+
+        theme_catalog = {
+            "type": "Catalog",
+            "id": "theme",
+            "links": [{"rel": "child", "href": "./data/collection.json"}],
+        }
+
+        def mock_fetch(remote_url: str, **kwargs: Any) -> dict[str, Any]:
+            if "theme" in remote_url:
+                return theme_catalog
+            return root_catalog
+
+        target = tmp_path / "cloned"
+
+        with (
+            patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch),
+            patch("portolan_cli.sync.init_catalog"),
+            patch("portolan_cli.sync.pull") as mock_pull,
+        ):
+            mock_pull.return_value = MagicMock(
+                success=True,
+                files_downloaded=3,
+                remote_version="1.0.0",
+            )
+
+            result = clone(
+                remote_url="s3://bucket/nested",
+                local_path=target,
+                collection=None,  # Discover all
+            )
+
+        assert result.success
+        # Should have found and pulled the nested collection
+        assert mock_pull.called
