@@ -108,10 +108,223 @@ LICENSEREF_PATTERN = re.compile(r"^LicenseRef-[A-Za-z0-9.\-]+$")
 # ISO date pattern: YYYY-MM-DD
 ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# ORCID pattern: 0000-0000-0000-0000 (four groups of 4 digits)
+# See: https://support.orcid.org/hc/en-us/articles/360006897674
+ORCID_PATTERN = re.compile(r"^\d{4}-\d{4}-\d{4}-\d{4}$")
+
 
 # =============================================================================
 # Validation
 # =============================================================================
+
+
+def _validate_authors(authors: Any) -> list[str]:
+    """Validate the 'authors' field (list of author dicts).
+
+    Each author must have 'name'. Optional 'orcid' and 'email' are validated
+    for format if present.
+
+    Args:
+        authors: The authors field value to validate.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+
+    if not isinstance(authors, list):
+        errors.append("Field 'authors' must be a list")
+        return errors
+
+    for i, author in enumerate(authors):
+        if not isinstance(author, dict):
+            errors.append(f"Author entry {i} must be a mapping with 'name' field")
+            continue
+
+        # Name is required
+        if "name" not in author:
+            errors.append(f"Author entry {i} is missing required 'name' field")
+        elif not author["name"] or not str(author["name"]).strip():
+            errors.append(f"Author entry {i} has empty 'name' field")
+
+        # Validate ORCID format if present
+        orcid = author.get("orcid")
+        if orcid and str(orcid).strip():
+            if not ORCID_PATTERN.match(str(orcid)):
+                errors.append(
+                    f"Author entry {i} has invalid ORCID format: '{orcid}'. "
+                    f"ORCIDs should be like '0000-0001-2345-6789'"
+                )
+
+        # Validate email format if present
+        email = author.get("email")
+        if email and str(email).strip():
+            if not EMAIL_PATTERN.match(str(email)):
+                errors.append(f"Author entry {i} has invalid email format: '{email}'")
+
+    return errors
+
+
+def _validate_related_dois(related_dois: Any) -> list[str]:
+    """Validate the 'related_dois' field (list of DOI strings).
+
+    Args:
+        related_dois: The related_dois field value to validate.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+
+    if not isinstance(related_dois, list):
+        errors.append("Field 'related_dois' must be a list")
+        return errors
+
+    for i, doi in enumerate(related_dois):
+        if not isinstance(doi, str):
+            errors.append(f"Item {i} in 'related_dois' must be a string")
+            continue
+        if not DOI_PATTERN.match(doi):
+            errors.append(
+                f"Invalid DOI format in 'related_dois[{i}]': '{doi}'. "
+                f"DOIs should be like '10.5281/zenodo.1234567'"
+            )
+
+    return errors
+
+
+def _validate_citations(citations: Any) -> list[str]:
+    """Validate the 'citations' field (list of citation strings).
+
+    Args:
+        citations: The citations field value to validate.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+
+    if not isinstance(citations, list):
+        errors.append("Field 'citations' must be a list of strings")
+        return errors
+
+    for i, citation in enumerate(citations):
+        if not isinstance(citation, str):
+            errors.append(f"Citation entry {i} must be a string")
+
+    return errors
+
+
+def _validate_upstream_version(upstream_version: Any) -> list[str]:
+    """Validate the 'upstream_version' field (string).
+
+    Args:
+        upstream_version: The upstream_version field value to validate.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+
+    if not isinstance(upstream_version, str):
+        errors.append(
+            f"Field 'upstream_version' must be a string, got {type(upstream_version).__name__}"
+        )
+
+    return errors
+
+
+def _validate_contact(metadata: dict[str, Any]) -> list[str]:
+    """Validate the required 'contact' field.
+
+    Contact must be a dict with 'name' and 'email' subfields.
+    Email format is validated.
+
+    Args:
+        metadata: The full metadata dictionary.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+
+    if "contact" not in metadata:
+        errors.append("Required field 'contact' is missing")
+        return errors
+
+    contact = metadata.get("contact")
+    if not isinstance(contact, dict):
+        errors.append("Field 'contact' must be a mapping with 'name' and 'email'")
+        return errors
+
+    for subfield in REQUIRED_CONTACT_FIELDS:
+        if subfield not in contact:
+            errors.append(f"Required field 'contact.{subfield}' is missing")
+        elif not contact[subfield] or not str(contact[subfield]).strip():
+            errors.append(f"Field 'contact.{subfield}' cannot be empty")
+
+    # Validate email format if present
+    email = contact.get("email")
+    if email and not EMAIL_PATTERN.match(str(email)):
+        errors.append(f"Invalid email format: '{email}'")
+
+    return errors
+
+
+def _validate_license(metadata: dict[str, Any]) -> list[str]:
+    """Validate the required 'license' field.
+
+    License must be a valid SPDX identifier or LicenseRef-* custom identifier.
+
+    Args:
+        metadata: The full metadata dictionary.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+
+    if "license" not in metadata:
+        errors.append("Required field 'license' is missing")
+        return errors
+
+    if not metadata["license"] or not str(metadata["license"]).strip():
+        errors.append("Field 'license' cannot be empty")
+        return errors
+
+    # Validate license is SPDX identifier or valid LicenseRef-* custom identifier
+    license_id = str(metadata.get("license"))
+    is_standard_license = license_id in COMMON_SPDX_LICENSES
+    is_custom_license = LICENSEREF_PATTERN.match(license_id) is not None
+    if not is_standard_license and not is_custom_license:
+        errors.append(
+            f"Invalid SPDX license identifier: '{license_id}'. "
+            f"Use a standard license (MIT, Apache-2.0, CC-BY-4.0, CC0-1.0) "
+            f"or custom format LicenseRef-YourLicense"
+        )
+
+    return errors
+
+
+def _validate_doi(metadata: dict[str, Any]) -> list[str]:
+    """Validate the optional 'doi' field format.
+
+    Args:
+        metadata: The full metadata dictionary.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+
+    doi = metadata.get("doi")
+    if doi and str(doi).strip():
+        if not DOI_PATTERN.match(str(doi)):
+            errors.append(
+                f"Invalid DOI format: '{doi}'. DOIs should be like '10.5281/zenodo.1234567'"
+            )
+
+    return errors
 
 
 def validate_metadata(metadata: dict[str, Any]) -> list[str]:
@@ -132,48 +345,12 @@ def validate_metadata(metadata: dict[str, Any]) -> list[str]:
     """
     errors: list[str] = []
 
-    # Check required fields (contact and license only)
-    if "contact" not in metadata:
-        errors.append("Required field 'contact' is missing")
-    else:
-        contact = metadata.get("contact")
-        if not isinstance(contact, dict):
-            errors.append("Field 'contact' must be a mapping with 'name' and 'email'")
-        else:
-            for subfield in REQUIRED_CONTACT_FIELDS:
-                if subfield not in contact:
-                    errors.append(f"Required field 'contact.{subfield}' is missing")
-                elif not contact[subfield] or not str(contact[subfield]).strip():
-                    errors.append(f"Field 'contact.{subfield}' cannot be empty")
-            # Validate email format if present
-            email = contact.get("email")
-            if email and not EMAIL_PATTERN.match(str(email)):
-                errors.append(f"Invalid email format: '{email}'")
+    # Required fields
+    errors.extend(_validate_contact(metadata))
+    errors.extend(_validate_license(metadata))
 
-    if "license" not in metadata:
-        errors.append("Required field 'license' is missing")
-    elif not metadata["license"] or not str(metadata["license"]).strip():
-        errors.append("Field 'license' cannot be empty")
-    else:
-        # Validate license is SPDX identifier or valid LicenseRef-* custom identifier
-        # Per SPDX spec, LicenseRef-[idstring] is valid for proprietary/custom licenses
-        license_id = str(metadata.get("license"))
-        is_standard_license = license_id in COMMON_SPDX_LICENSES
-        is_custom_license = LICENSEREF_PATTERN.match(license_id) is not None
-        if not is_standard_license and not is_custom_license:
-            errors.append(
-                f"Invalid SPDX license identifier: '{license_id}'. "
-                f"Use a standard license (MIT, Apache-2.0, CC-BY-4.0, CC0-1.0) "
-                f"or custom format LicenseRef-YourLicense"
-            )
-
-    # Validate DOI format if present (optional field)
-    doi = metadata.get("doi")
-    if doi and str(doi).strip():
-        if not DOI_PATTERN.match(str(doi)):
-            errors.append(
-                f"Invalid DOI format: '{doi}'. DOIs should be like '10.5281/zenodo.1234567'"
-            )
+    # Optional fields with format validation
+    errors.extend(_validate_doi(metadata))
 
     # Validate defaults section if present (optional)
     defaults = metadata.get("defaults")
@@ -182,6 +359,19 @@ def validate_metadata(metadata: dict[str, Any]) -> list[str]:
             errors.append("Field 'defaults' must be a mapping")
         else:
             errors.extend(_validate_defaults(defaults))
+
+    # Validate #316 fields if present (all optional)
+    if (authors := metadata.get("authors")) is not None:
+        errors.extend(_validate_authors(authors))
+
+    if (related_dois := metadata.get("related_dois")) is not None:
+        errors.extend(_validate_related_dois(related_dois))
+
+    if (citations := metadata.get("citations")) is not None:
+        errors.extend(_validate_citations(citations))
+
+    if (upstream_version := metadata.get("upstream_version")) is not None:
+        errors.extend(_validate_upstream_version(upstream_version))
 
     return errors
 

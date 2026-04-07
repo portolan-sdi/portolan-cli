@@ -376,6 +376,10 @@ STAC provides machine-extractable metadata (title, description, extent, columns)
 | `processing_notes` | Documentation of transformations applied |
 | `keywords` | Tags for search/discovery (rendered as badges) |
 | `attribution` | Credit to data provider or organization |
+| `authors` | List of authors with name, optional ORCID and email |
+| `related_dois` | List of related DOIs for linked publications |
+| `citations` | List of citation strings for referencing |
+| `upstream_version` | Version string of upstream data source |
 
 ### Quick Start
 
@@ -417,6 +421,19 @@ keywords:
   - demographics
   - population
 attribution: "U.S. Census Bureau"
+
+# Author and citation metadata
+authors:
+  - name: Jane Doe
+    orcid: 0000-0001-2345-6789
+    email: jane.doe@university.edu
+  - name: John Smith
+related_dois:
+  - 10.5281/zenodo.1234567
+  - 10.1000/related-paper
+citations:
+  - "Doe, J. (2024). Census Analysis Methods. J. Demographics, 1(1), 1-10."
+upstream_version: "2024.1"
 ```
 
 ### Required Fields
