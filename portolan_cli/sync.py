@@ -164,27 +164,124 @@ def list_remote_collections(
     remote_url: str,
     *,
     profile: str | None = None,
+    max_depth: int = 10,
 ) -> list[str]:
     """List all collections available in a remote catalog.
 
-    Fetches the remote catalog.json and parses STAC child links
-    to discover collection names.
+    Recursively fetches catalog.json files and parses STAC child links
+    to discover collection names. Handles nested catalog structures
+    per ADR-0032 (nested catalogs with flat collections).
 
     Args:
         remote_url: Remote catalog URL (e.g., s3://bucket/catalog).
         profile: AWS profile name (for S3).
+        max_depth: Maximum recursion depth to prevent infinite loops.
+            Default is 10, which should handle most reasonable hierarchies.
 
     Returns:
-        List of collection names found in the catalog.
+        List of collection names found in the catalog (including nested).
 
     Raises:
         CloneError: If unable to fetch or parse the catalog.
     """
+    # Track visited URLs to detect circular references
+    visited_urls: set[str] = set()
+
+    return _list_remote_collections_recursive(
+        remote_url=remote_url,
+        profile=profile,
+        max_depth=max_depth,
+        current_depth=0,
+        visited_urls=visited_urls,
+    )
+
+
+def _resolve_href(base_url: str, href: str) -> str:
+    """Resolve a potentially relative href against a base URL.
+
+    Args:
+        base_url: The base catalog URL (e.g., s3://bucket/catalog).
+        href: The href to resolve (relative or absolute).
+
+    Returns:
+        Absolute URL for the href.
+    """
+    # If href is already absolute (has scheme), return as-is
+    if "://" in href:
+        return href
+
+    # Handle relative paths
+    # Strip trailing slash from base
+    base = base_url.rstrip("/")
+
+    # Handle "./" prefix
+    if href.startswith("./"):
+        href = href[2:]
+
+    # Handle "../" prefix
+    while href.startswith("../"):
+        href = href[3:]
+        # Go up one directory in base
+        if "/" in base:
+            base = base.rsplit("/", 1)[0]
+
+    return f"{base}/{href}"
+
+
+def _extract_catalog_url_from_href(base_url: str, href: str) -> str:
+    """Extract the catalog directory URL from a catalog.json href.
+
+    Args:
+        base_url: The base catalog URL.
+        href: The href pointing to a catalog.json file.
+
+    Returns:
+        The catalog directory URL (without catalog.json suffix).
+    """
+    full_url = _resolve_href(base_url, href)
+
+    # Remove the catalog.json suffix to get the catalog directory
+    if full_url.endswith("/catalog.json"):
+        return full_url[: -len("/catalog.json")]
+    elif full_url.endswith("catalog.json"):
+        return full_url[: -len("catalog.json")].rstrip("/")
+
+    return full_url
+
+
+def _list_remote_collections_recursive(
+    remote_url: str,
+    *,
+    profile: str | None,
+    max_depth: int,
+    current_depth: int,
+    visited_urls: set[str],
+) -> list[str]:
+    """Recursively list collections from a catalog and its subcatalogs.
+
+    Internal recursive helper for list_remote_collections.
+    """
+    # Normalize URL for visited check
+    normalized_url = remote_url.rstrip("/")
+
+    # Check for circular reference
+    if normalized_url in visited_urls:
+        return []
+
+    # Check depth limit
+    if current_depth >= max_depth:
+        warn(f"Maximum catalog depth ({max_depth}) reached at {remote_url}")
+        return []
+
+    # Mark as visited
+    visited_urls.add(normalized_url)
+
+    # Fetch this catalog
     catalog_data = _fetch_remote_catalog_json(remote_url, profile=profile)
 
     collections: list[str] = []
 
-    # Parse STAC links to find child collections
+    # Parse STAC links to find child collections and subcatalogs
     links = catalog_data.get("links", [])
     for link in links:
         if link.get("rel") != "child":
@@ -194,31 +291,65 @@ def list_remote_collections(
         if not href:
             continue
 
-        # Extract collection name from href
-        # Handles both relative (./collection-name/collection.json)
-        # and absolute (s3://bucket/catalog/collection-name/collection.json)
-        # The collection name is the directory containing collection.json
+        # Determine if this is a subcatalog or a collection
+        if href.endswith("catalog.json"):
+            # This is a subcatalog - recurse into it
+            subcatalog_url = _extract_catalog_url_from_href(remote_url, href)
 
-        # Remove collection.json suffix if present
-        if href.endswith("/collection.json"):
-            href = href[: -len("/collection.json")]
+            nested_collections = _list_remote_collections_recursive(
+                remote_url=subcatalog_url,
+                profile=profile,
+                max_depth=max_depth,
+                current_depth=current_depth + 1,
+                visited_urls=visited_urls,
+            )
+            collections.extend(nested_collections)
+
         elif href.endswith("collection.json"):
-            href = href[: -len("collection.json")]
+            # This is an actual collection - extract the name
+            collection_name = _extract_collection_name_from_href(href)
+            if collection_name:
+                collections.append(collection_name)
 
-        # Remove any trailing slashes
-        href = href.rstrip("/")
-
-        # Get the last path component (collection name)
-        if "/" in href:
-            collection_name = href.split("/")[-1]
         else:
-            # Handle case like "./collection-name"
-            collection_name = href.lstrip("./")
-
-        if collection_name:
-            collections.append(collection_name)
+            # Unknown link type - could be a collection without .json suffix
+            # Try to extract a name anyway (backwards compatibility)
+            collection_name = _extract_collection_name_from_href(href)
+            if collection_name:
+                collections.append(collection_name)
 
     return collections
+
+
+def _extract_collection_name_from_href(href: str) -> str:
+    """Extract collection name from an href.
+
+    Handles both relative (./collection-name/collection.json)
+    and absolute (s3://bucket/catalog/collection-name/collection.json) paths.
+
+    Args:
+        href: The href pointing to a collection.json file.
+
+    Returns:
+        The collection name (directory containing collection.json).
+    """
+    # Remove collection.json suffix if present
+    if href.endswith("/collection.json"):
+        href = href[: -len("/collection.json")]
+    elif href.endswith("collection.json"):
+        href = href[: -len("collection.json")]
+
+    # Remove any trailing slashes
+    href = href.rstrip("/")
+
+    # Get the last path component (collection name)
+    if "/" in href:
+        collection_name = href.split("/")[-1]
+    else:
+        # Handle case like "./collection-name"
+        collection_name = href.lstrip("./")
+
+    return collection_name
 
 
 # =============================================================================
