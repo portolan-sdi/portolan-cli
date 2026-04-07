@@ -656,21 +656,21 @@ async def _fetch_remote_versions_async(
 
 
 async def _download_assets_async(
-    remote_url: str,
+    store: ObjectStore,
+    prefix: str,
     local_root: Path,
     files_to_download: list[str],
     remote_assets: dict[str, dict[str, str | int]],
-    profile: str | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
 ) -> tuple[int, int]:
     """Download assets concurrently using asyncio.
 
     Args:
-        remote_url: Remote catalog base URL.
+        store: Object store instance (pre-configured connection).
+        prefix: Remote path prefix within the bucket.
         local_root: Local catalog root directory.
         files_to_download: List of filenames to download.
         remote_assets: Dict mapping filename to asset metadata.
-        profile: AWS profile name (for S3).
         concurrency: Maximum concurrent downloads.
 
     Returns:
@@ -678,9 +678,6 @@ async def _download_assets_async(
     """
     if not files_to_download:
         return 0, 0
-
-    bucket_url, prefix = parse_object_store_url(remote_url)
-    store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=12)
 
     # Semaphore for concurrency control
     semaphore = asyncio.Semaphore(concurrency)
@@ -780,6 +777,7 @@ async def pull_async(
     dry_run: bool = False,
     profile: str | None = None,
     concurrency: int = DEFAULT_CONCURRENCY,
+    store: ObjectStore | None = None,
 ) -> PullResult:
     """Pull updates from a remote catalog asynchronously.
 
@@ -801,6 +799,8 @@ async def pull_async(
         dry_run: If True, show what would happen without downloading.
         profile: AWS profile name (for S3).
         concurrency: Maximum concurrent downloads (default: 50).
+        store: Optional pre-configured object store. If provided, reuses
+            this connection instead of creating a new one (for connection pooling).
 
     Returns:
         PullResult with operation results.
@@ -808,11 +808,15 @@ async def pull_async(
     Raises:
         ValueError: If remote_url is invalid.
     """
-    # Validate URL
+    # Validate URL and parse components
     try:
-        parse_object_store_url(remote_url)
+        bucket_url, base_prefix = parse_object_store_url(remote_url)
     except ValueError as e:
         raise ValueError(f"Invalid remote URL: {e}") from e
+
+    # Create store if not provided (connection pooling support)
+    if store is None:
+        store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=12)
 
     # Path to local versions.json (per ADR-0023)
     versions_path = local_root / collection / "versions.json"
@@ -886,13 +890,13 @@ async def pull_async(
     if len(diff.files_to_download) > 5:
         detail(f"  ... and {len(diff.files_to_download) - 5} more")
 
-    # Download assets concurrently
+    # Download assets concurrently (reuses store connection)
     downloaded, failed = await _download_assets_async(
-        remote_url=remote_url,
+        store=store,
+        prefix=base_prefix,
         local_root=local_root,
         files_to_download=diff.files_to_download,
         remote_assets=diff.remote_assets,
-        profile=profile,
         concurrency=concurrency,
     )
 
@@ -1012,6 +1016,14 @@ async def pull_all_collections_async(
     # Import here to avoid circular dependency
     from portolan_cli.push import discover_collections
 
+    # Validate URL and create shared store (connection pooling)
+    try:
+        bucket_url, _prefix = parse_object_store_url(remote_url)
+    except ValueError as e:
+        raise ValueError(f"Invalid remote URL: {e}") from e
+
+    shared_store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=12)
+
     # discover_collections validates catalog and raises ValueError if invalid
     collections = discover_collections(local_root)
     total = len(collections)
@@ -1055,6 +1067,7 @@ async def pull_all_collections_async(
                     force=force,
                     dry_run=dry_run,
                     profile=profile,
+                    store=shared_store,  # Reuse connection across collections
                 )
                 return (collection, result, None)
             except Exception as e:

@@ -1117,9 +1117,9 @@ async def _upload_stac_files_async(
     """Upload STAC metadata files asynchronously.
 
     Upload order (manifest-last pattern for atomicity):
-    1. Item STAC files
-    2. collection.json
-    3. catalog.json
+    1. Item STAC files (parallel)
+    2. collection.json (sequential, after items)
+    3. catalog.json (last)
 
     Args:
         store: Object store instance.
@@ -1132,29 +1132,28 @@ async def _upload_stac_files_async(
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys).
     """
-    files_uploaded = 0
     errors: list[str] = []
     uploaded_keys: list[str] = []
 
-    # Build ordered list
-    ordered_files: list[Path] = []
-    ordered_files.extend(stac_files.get("items", []))
-    ordered_files.extend(stac_files.get("collection", []))
-    ordered_files.extend(stac_files.get("catalog", []))
+    # Get file lists by type
+    item_files = stac_files.get("items", [])
+    collection_files = stac_files.get("collection", [])
+    catalog_files = stac_files.get("catalog", [])
 
-    if not ordered_files:
+    all_files = item_files + collection_files + catalog_files
+    if not all_files:
         return 0, [], []
 
     # Pre-cache file sizes
-    file_sizes: dict[Path, int] = {f: f.stat().st_size for f in ordered_files}
+    file_sizes: dict[Path, int] = {f: f.stat().st_size for f in all_files}
     total_bytes = sum(file_sizes.values())
 
-    async with AsyncProgressReporter(
-        total_files=len(ordered_files),
-        total_bytes=total_bytes,
-        json_mode=json_mode,
-    ) as reporter:
-        for file_path in ordered_files:
+    # Semaphore for bounded concurrency
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def upload_one(file_path: Path) -> tuple[str, int] | None:
+        """Upload a single STAC file with semaphore control."""
+        async with semaphore:
             try:
                 rel_path = file_path.relative_to(catalog_root)
                 target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
@@ -1162,16 +1161,45 @@ async def _upload_stac_files_async(
 
                 content = file_path.read_bytes()
                 await obs.put_async(store, target_key, content)
-                files_uploaded += 1
-                uploaded_keys.append(target_key)
-                reporter.advance(bytes_uploaded=file_size)
-
+                return target_key, file_size
             except Exception as e:
                 error_msg = f"Failed to upload {file_path}: {e}"
                 errors.append(error_msg)
                 error(error_msg)
+                return None
 
-    return files_uploaded, errors, uploaded_keys
+    async with AsyncProgressReporter(
+        total_files=len(all_files),
+        total_bytes=total_bytes,
+        json_mode=json_mode,
+    ) as reporter:
+        # Wave 1: Upload all item STAC files in parallel
+        if item_files:
+            tasks = [upload_one(f) for f in item_files]
+            results = await asyncio.gather(*tasks)
+            for result in results:
+                if result:
+                    key, size = result
+                    uploaded_keys.append(key)
+                    reporter.advance(bytes_uploaded=size)
+
+        # Wave 2: Upload collection.json files sequentially (after items)
+        for file_path in collection_files:
+            result = await upload_one(file_path)
+            if result:
+                key, size = result
+                uploaded_keys.append(key)
+                reporter.advance(bytes_uploaded=size)
+
+        # Wave 3: Upload catalog.json last (manifest-last pattern)
+        for file_path in catalog_files:
+            result = await upload_one(file_path)
+            if result:
+                key, size = result
+                uploaded_keys.append(key)
+                reporter.advance(bytes_uploaded=size)
+
+    return len(uploaded_keys), errors, uploaded_keys
 
 
 async def _upload_versions_json_async(
@@ -1216,14 +1244,17 @@ async def _upload_readmes_async(
     catalog_root: Path,
     prefix: str,
     stac_files: dict[str, list[Path]],
+    *,
+    concurrency: int = 50,
 ) -> tuple[int, list[str]]:
-    """Upload README.md files asynchronously.
+    """Upload README.md files asynchronously in parallel.
 
     Args:
         store: Object store instance.
         catalog_root: Path to catalog root.
         prefix: Prefix in object storage.
         stac_files: Dict from _discover_stac_files() containing 'readmes' key.
+        concurrency: Maximum concurrent uploads.
 
     Returns:
         Tuple of (files_uploaded, errors).
@@ -1232,27 +1263,37 @@ async def _upload_readmes_async(
     if not readmes:
         return 0, []
 
-    files_uploaded = 0
     errors: list[str] = []
+    uploaded_count = 0
 
     info(f"Uploading {len(readmes)} README file(s)...")
 
-    for readme_path in readmes:
-        try:
-            rel_path = readme_path.relative_to(catalog_root)
-            target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+    # Semaphore for bounded concurrency
+    semaphore = asyncio.Semaphore(concurrency)
 
-            detail(f"Uploading README: {rel_path}")
-            content = readme_path.read_bytes()
-            await obs.put_async(store, target_key, content)
-            files_uploaded += 1
+    async def upload_one(readme_path: Path) -> bool:
+        """Upload a single README file with semaphore control."""
+        async with semaphore:
+            try:
+                rel_path = readme_path.relative_to(catalog_root)
+                target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
 
-        except Exception as e:
-            error_msg = f"Failed to upload {readme_path}: {e}"
-            errors.append(error_msg)
-            error(error_msg)
+                detail(f"Uploading README: {rel_path}")
+                content = readme_path.read_bytes()
+                await obs.put_async(store, target_key, content)
+                return True
+            except Exception as e:
+                error_msg = f"Failed to upload {readme_path}: {e}"
+                errors.append(error_msg)
+                error(error_msg)
+                return False
 
-    return files_uploaded, errors
+    # Upload all READMEs in parallel (no ordering constraint)
+    tasks = [upload_one(readme) for readme in readmes]
+    results = await asyncio.gather(*tasks)
+    uploaded_count = sum(1 for r in results if r)
+
+    return uploaded_count, errors
 
 
 async def _execute_push_uploads_async(
@@ -1368,9 +1409,9 @@ async def _execute_push_uploads_async(
             metrics=metrics,
         )
 
-    # Upload READMEs last (async)
+    # Upload READMEs last (async, parallel)
     readme_uploaded, readme_errors = await _upload_readmes_async(
-        store, catalog_root, prefix, stac_files
+        store, catalog_root, prefix, stac_files, concurrency=concurrency
     )
     files_uploaded += readme_uploaded
     for err in readme_errors:
