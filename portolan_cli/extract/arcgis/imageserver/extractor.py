@@ -84,6 +84,7 @@ from portolan_cli.extract.arcgis.imageserver.resume import (
     should_process_tile,
 )
 from portolan_cli.extract.arcgis.imageserver.tiling import TileSpec, compute_tile_grid
+from portolan_cli.metadata_seeding import seed_metadata_yaml
 from portolan_cli.output import detail, error, info, success, warn
 
 if TYPE_CHECKING:
@@ -695,6 +696,26 @@ def _load_effective_config(config: ExtractionConfig, output_dir: Path) -> Extrac
     return config
 
 
+def _seed_metadata_from_report(
+    output_dir: Path,
+    report: ImageServerExtractionReport,
+) -> None:
+    """Seed metadata.yaml from extraction report.
+
+    Converts the ImageServerMetadataExtracted to the common ExtractedMetadata
+    format and seeds the metadata.yaml file. Does NOT overwrite existing files.
+
+    Args:
+        output_dir: Output directory containing .portolan/.
+        report: Extraction report with metadata_extracted.
+    """
+    extracted = report.metadata_extracted.to_extracted()
+
+    metadata_path = output_dir / ".portolan" / "metadata.yaml"
+    if seed_metadata_yaml(extracted, metadata_path):
+        info(f"Seeded metadata.yaml from {extracted.source_type}")
+
+
 def _auto_init_catalog(
     output_dir: Path,
     service_name: str | None = None,
@@ -704,11 +725,6 @@ def _auto_init_catalog(
     Called automatically after extraction unless raw=True.
     Uses the Portolan API (init_catalog + add_files) to create
     proper STAC structure with items per raster (per ADR-0031).
-
-    Note: Does NOT write metadata.yaml - that contains human-enrichable fields
-    (contact, license) that must be filled in by the user after extraction.
-    Extracted service metadata is stored in extraction-report.json instead.
-    This matches FeatureServer's pattern.
 
     Args:
         output_dir: Directory containing extracted COG files.
@@ -1021,6 +1037,9 @@ async def extract_imageserver(
     )
     report_path = portolan_dir / "extraction-report.json"
     save_imageserver_report(report, report_path)
+
+    # Seed metadata.yaml from extracted service metadata
+    _seed_metadata_from_report(output_dir, report)
 
     success(f"Extracted {stats.tiles_downloaded} tiles ({stats.total_bytes:,} bytes)")
     if stats.tiles_failed > 0:

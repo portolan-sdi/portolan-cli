@@ -139,6 +139,7 @@ This will:
 4. Convert each tile to Cloud-Optimized GeoTIFF (COG)
 5. Create STAC items for each tile with spatial metadata
 6. Generate an extraction report
+7. Seed `metadata.yaml` with service metadata (source URL, attribution, keywords)
 
 ### Limiting Extraction Area
 
@@ -173,7 +174,8 @@ output/
 ├── .portolan/
 │   ├── config.yaml
 │   ├── extraction-report.json
-│   └── imageserver-resume.json     # For resuming interrupted extractions
+│   ├── imageserver-resume.json     # For resuming interrupted extractions
+│   └── metadata.yaml               # Seeded from service metadata
 ├── catalog.json
 └── tiles/                          # Collection (one per ImageServer)
     ├── collection.json
