@@ -80,6 +80,10 @@ jobs:
             python-version: '3.10'
           - os: windows-latest
             python-version: '3.10'
+    env:
+      # Prevent obstore from attempting EC2 metadata service calls
+      # GitHub Actions runners aren't EC2 instances, so IMDS requests fail
+      AWS_EC2_METADATA_DISABLED: "true"
     steps:
       - uses: actions/checkout@v6
 
