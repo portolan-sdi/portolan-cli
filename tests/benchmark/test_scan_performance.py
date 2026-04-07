@@ -307,3 +307,85 @@ class TestScanPerformanceSimple:
 def fixtures_dir() -> Path:
     """Return path to test fixtures."""
     return Path(__file__).parent.parent / "fixtures" / "scan"
+
+
+# =============================================================================
+# Issue #314: O(n²) Performance Regression Tests
+# =============================================================================
+
+
+@pytest.fixture(scope="session")
+def benchmark_dir_many_dirs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Create EuroSAT-like structure: many directories, 1 file each.
+
+    Structure: 27,000 directories with 1 TIF file each.
+    This pattern triggers O(n²) behavior in _check_mixed_structure.
+
+    See: https://github.com/portolan-sdi/portolan-cli/issues/314
+    """
+    base = tmp_path_factory.mktemp("benchmark_many_dirs")
+    _create_many_dirs_structure(base, num_dirs=27_000)
+    return base
+
+
+def _create_many_dirs_structure(base: Path, num_dirs: int) -> None:
+    """Create many directories with 1 file each (EuroSAT pattern).
+
+    Structure mimics satellite imagery datasets where each scene
+    is in its own subdirectory.
+    """
+    for i in range(num_dirs):
+        subdir = base / f"scene_{i:05d}"
+        subdir.mkdir(parents=True, exist_ok=True)
+        (subdir / "data.tif").write_bytes(b"dummy tif content")
+
+
+@pytest.mark.benchmark
+@pytest.mark.slow
+class TestScanManyDirectoriesPerformance:
+    """Regression tests for issue #314: O(n²) in _check_mixed_structure.
+
+    The old implementation had nested loops over all directories,
+    causing 27K × 27K = 729 million operations. The fix uses O(n)
+    parent-chain traversal instead.
+
+    Target: <60 seconds for 27K directories.
+    """
+
+    def test_issue_314_many_dirs_under_60_seconds(
+        self,
+        benchmark_dir_many_dirs: Path,
+    ) -> None:
+        """Issue #314: Scan 27K directories completes in under 60 seconds.
+
+        This is a regression test for the O(n²) performance bug.
+        Before the fix, this would hang for 3+ minutes.
+        """
+        start = time.perf_counter()
+        result = scan_directory(benchmark_dir_many_dirs)
+        elapsed = time.perf_counter() - start
+
+        assert elapsed < 60.0, (
+            f"Issue #314 regression: Scan took {elapsed:.1f}s, expected <60s. "
+            f"O(n²) bug may have returned."
+        )
+
+        # Sanity check: we actually scanned all directories
+        assert result.directories_scanned >= 27_000, (
+            f"Expected 27K+ directories scanned, got {result.directories_scanned}"
+        )
+
+    def test_many_dirs_no_mixed_structure_issues(
+        self,
+        benchmark_dir_many_dirs: Path,
+    ) -> None:
+        """EuroSAT structure (files only at leaf) should have no mixed structure issues."""
+        from portolan_cli.scan import IssueType
+
+        result = scan_directory(benchmark_dir_many_dirs)
+
+        mixed_issues = [i for i in result.issues if i.issue_type == IssueType.MIXED_FLAT_MULTIITEM]
+        assert len(mixed_issues) == 0, (
+            f"Expected no MIXED_FLAT_MULTIITEM issues for leaf-only structure, "
+            f"got {len(mixed_issues)}"
+        )

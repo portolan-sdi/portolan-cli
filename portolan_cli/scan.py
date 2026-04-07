@@ -762,43 +762,39 @@ def _check_mixed_structure(ctx: _ScanContext) -> None:
     subdirectory a separate item?
 
     This check applies to ALL directories with geo-assets, not just root.
+
+    Algorithm: O(n × depth) where depth is tree depth (typically ~10).
+    For each directory with files, walk UP the parent chain checking if
+    any ancestor also has files. This replaces the previous O(n²) approach
+    that compared all pairs of directories.
+
+    See: https://github.com/portolan-sdi/portolan-cli/issues/314
     """
+    # Build set of directories with files for O(1) lookup
+    dirs_with_files: set[Path] = {d for d, files in ctx.primaries_by_dir.items() if files}
+
     # Track directories we've already flagged to avoid duplicates
     flagged_dirs: set[Path] = set()
 
-    # Check each directory that has geo-assets
-    for dir_with_files in ctx.primaries_by_dir:
-        if dir_with_files in flagged_dirs:
-            continue
-
-        # Does this directory have files AND any subdirectory with files?
-        dir_has_files = len(ctx.primaries_by_dir[dir_with_files]) > 0
-        if not dir_has_files:
-            continue
-
-        # Check if any subdirectory (at any depth) also has files
-        for other_dir in ctx.primaries_by_dir:
-            if other_dir == dir_with_files:
-                continue
-            # Check if other_dir is a subdirectory of dir_with_files
-            try:
-                other_dir.relative_to(dir_with_files)
-                # Found files in a subdirectory
-                flagged_dirs.add(dir_with_files)
+    # For each directory with files, check if any ANCESTOR also has files
+    for dir_path in dirs_with_files:
+        # Walk up the parent chain
+        parent = dir_path.parent
+        while parent != ctx.root.parent and parent != dir_path:
+            if parent in dirs_with_files and parent not in flagged_dirs:
+                # Parent has files AND we (descendant) have files = mixed structure
+                flagged_dirs.add(parent)
                 ctx.issues.append(
                     ScanIssue(
-                        path=dir_with_files,
-                        relative_path=_get_relative_path(dir_with_files, ctx.root),
+                        path=parent,
+                        relative_path=_get_relative_path(parent, ctx.root),
                         issue_type=IssueType.MIXED_FLAT_MULTIITEM,
                         severity=Severity.WARNING,
                         message="Directory has both data files AND subdirectories with data",
                         suggestion="Organize as either flat (all files here) or hierarchical (files only in subdirectories)",
                     )
                 )
-                break  # Only report once per directory
-            except ValueError:
-                # other_dir is not a subdirectory of dir_with_files
-                continue
+            parent = parent.parent
 
 
 def _check_multiple_geo_primaries(ctx: _ScanContext) -> None:
