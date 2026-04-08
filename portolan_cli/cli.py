@@ -5005,6 +5005,44 @@ def _handle_list_services_mode(
             click.echo(f"Folders: {', '.join(result.folders)}")
 
 
+def _validate_collection_name_cli(
+    collection_name: str | None,
+    json_output: bool,
+    url: str,
+) -> None:
+    """Validate collection_name at CLI layer (fail fast, per ADR-0023).
+
+    Args:
+        collection_name: User-provided collection name (may be None).
+        json_output: If True, output errors as JSON.
+        url: Source URL for error context.
+
+    Raises:
+        SystemExit: If collection_name is invalid.
+    """
+    if collection_name is None:
+        return
+    # Reject path separators and parent references
+    if "/" in collection_name or "\\" in collection_name or ".." in collection_name:
+        _output_extract_error(
+            json_output,
+            "InvalidCollectionNameError",
+            f"Invalid collection name: '{collection_name}'. "
+            "Collection name must be a single directory name without path separators or '..'.",
+            url,
+        )
+        raise SystemExit(1)
+    # Reject empty or dot-only names
+    if not collection_name or collection_name in (".", ".."):
+        _output_extract_error(
+            json_output,
+            "InvalidCollectionNameError",
+            f"Invalid collection name: '{collection_name}'. Collection name cannot be empty.",
+            url,
+        )
+        raise SystemExit(1)
+
+
 def _handle_imageserver_extraction(
     ctx: click.Context,
     url: str,
@@ -5061,6 +5099,9 @@ def _handle_imageserver_extraction(
             predictor=cog_settings.predictor,
             resampling=cog_settings.resampling,
         )
+
+    # Validate collection_name at CLI layer (fail fast, per ADR-0023 flat catalog rule)
+    _validate_collection_name_cli(collection_name, json_output, url)
 
     # Confirmation prompt
     if not auto and not dry_run and not json_output:

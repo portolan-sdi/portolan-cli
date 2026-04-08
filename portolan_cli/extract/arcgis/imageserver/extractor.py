@@ -327,6 +327,19 @@ async def download_tile(
         return len(content)
 
     except httpx.HTTPStatusError as e:
+        # Try to extract ArcGIS JSON error details from 4xx/5xx responses
+        content = e.response.content
+        if content.startswith(b"{"):
+            try:
+                error_data = json.loads(content.decode("utf-8"))
+                if "error" in error_data:
+                    arcgis_error = error_data["error"]
+                    code = arcgis_error.get("code", e.response.status_code)
+                    message = arcgis_error.get("message", "Unknown error")
+                    msg = f"ArcGIS error for tile {tile.get_id()}: [{code}] {message}"
+                    raise ImageServerExtractionError(msg) from e
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass  # Fall through to generic error
         msg = f"Tile download failed ({tile.get_id()}): HTTP {e.response.status_code}"
         raise ImageServerExtractionError(msg) from e
     except httpx.TimeoutException as e:
