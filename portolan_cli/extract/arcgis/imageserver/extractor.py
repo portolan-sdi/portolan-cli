@@ -302,6 +302,19 @@ async def download_tile(
             # Check if it's an HTML error page
             if content.startswith(b"<!") or content.startswith(b"<html"):
                 msg = f"Server returned HTML instead of TIFF for tile {tile.get_id()}"
+            # Check if it's a JSON error response from ArcGIS
+            elif content.startswith(b"{"):
+                try:
+                    error_data = json.loads(content.decode("utf-8"))
+                    if "error" in error_data:
+                        arcgis_error = error_data["error"]
+                        code = arcgis_error.get("code", "unknown")
+                        message = arcgis_error.get("message", "Unknown error")
+                        msg = f"ArcGIS error for tile {tile.get_id()}: [{code}] {message}"
+                    else:
+                        msg = f"Unexpected JSON response for tile {tile.get_id()}: {content[:200].decode('utf-8', errors='replace')}"
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    msg = f"Invalid TIFF data for tile {tile.get_id()} (bad magic bytes)"
             else:
                 msg = f"Invalid TIFF data for tile {tile.get_id()} (bad magic bytes)"
             raise ImageServerExtractionError(msg)
@@ -373,6 +386,96 @@ async def _convert_to_cog(
         )
 
     await loop.run_in_executor(None, _do_convert)
+
+
+def _is_likely_wgs84(bbox: tuple[float, float, float, float]) -> bool:
+    """Detect if bbox coordinates appear to be in WGS84 (EPSG:4326).
+
+    WGS84 coordinates have characteristic ranges:
+    - Longitude: -180 to 180
+    - Latitude: -90 to 90
+
+    This heuristic checks if all values fall within these ranges.
+    False positives are possible for small-extent projected coordinates,
+    but unlikely for typical imagery bboxes.
+
+    Args:
+        bbox: Bounding box (minx, miny, maxx, maxy).
+
+    Returns:
+        True if bbox appears to be in WGS84, False otherwise.
+    """
+    minx, miny, maxx, maxy = bbox
+    return -180 <= minx <= 180 and -180 <= maxx <= 180 and -90 <= miny <= 90 and -90 <= maxy <= 90
+
+
+def _reproject_bbox(
+    bbox: tuple[float, float, float, float],
+    from_crs: str,
+    to_crs: str,
+) -> tuple[float, float, float, float]:
+    """Reproject a bounding box between coordinate reference systems.
+
+    Args:
+        bbox: Bounding box (minx, miny, maxx, maxy) in source CRS.
+        from_crs: Source CRS (e.g., "EPSG:4326").
+        to_crs: Target CRS (e.g., "EPSG:3857").
+
+    Returns:
+        Reprojected bounding box (minx, miny, maxx, maxy).
+
+    Raises:
+        ValueError: If CRS transformation fails.
+    """
+    from pyproj import CRS, Transformer
+
+    try:
+        transformer = Transformer.from_crs(
+            CRS.from_string(from_crs),
+            CRS.from_string(to_crs),
+            always_xy=True,  # Ensure x=lon, y=lat order
+        )
+        minx, miny, maxx, maxy = bbox
+        # Transform corners
+        new_minx, new_miny = transformer.transform(minx, miny)
+        new_maxx, new_maxy = transformer.transform(maxx, maxy)
+        return (new_minx, new_miny, new_maxx, new_maxy)
+    except Exception as e:
+        raise ValueError(f"Failed to reproject bbox from {from_crs} to {to_crs}: {e}") from e
+
+
+def reproject_bbox_if_needed(
+    bbox: tuple[float, float, float, float],
+    service_crs: str,
+) -> tuple[float, float, float, float]:
+    """Auto-detect WGS84 bbox and reproject to service CRS if needed.
+
+    If the bbox appears to be in WGS84 (based on coordinate ranges) and the
+    service uses a different CRS, the bbox is automatically reprojected.
+
+    Args:
+        bbox: User-provided bounding box (minx, miny, maxx, maxy).
+        service_crs: Service CRS string (e.g., "EPSG:3857").
+
+    Returns:
+        Bbox in service CRS (reprojected if needed, original otherwise).
+    """
+    # If service is already WGS84, no reprojection needed
+    service_crs_upper = service_crs.upper()
+    if service_crs_upper in ("EPSG:4326", "CRS:84"):
+        return bbox
+
+    # Check if bbox appears to be WGS84
+    if _is_likely_wgs84(bbox):
+        logger.info(
+            "Bbox appears to be WGS84 (coordinates in -180/180, -90/90 range). "
+            "Reprojecting to service CRS %s.",
+            service_crs,
+        )
+        return _reproject_bbox(bbox, "EPSG:4326", service_crs)
+
+    # Bbox doesn't look like WGS84, assume it's already in service CRS
+    return bbox
 
 
 def _intersect_bbox(
@@ -499,6 +602,7 @@ async def _process_tile(
     semaphore: asyncio.Semaphore,
     rate_limit_lock: asyncio.Lock,
     last_request_time: dict[str, float],
+    collection_name: str = "tiles",
 ) -> _TileProcessResult:
     """Process a single tile: download and convert to COG.
 
@@ -515,6 +619,7 @@ async def _process_tile(
         semaphore: Concurrency limiter.
         rate_limit_lock: Lock for rate limiting coordination.
         last_request_time: Shared dict tracking last request time per slot.
+        collection_name: Name for the collection directory (default: 'tiles').
 
     Returns:
         _TileProcessResult with tile, success status, bytes, duration, error, attempts.
@@ -526,10 +631,10 @@ async def _process_tile(
     async with semaphore:
         slot_id = str(id(asyncio.current_task()))
         # Create proper STAC structure: collection/item/asset.tif
-        # The collection is named after the service (sanitized), items are tile IDs
+        # The collection is named per --collection-name flag (default: 'tiles')
         # tile.get_id() already returns "tile_X_Y" format
         tile_id = tile.get_id()
-        item_dir = output_dir / "tiles" / tile_id
+        item_dir = output_dir / collection_name / tile_id
         item_dir.mkdir(parents=True, exist_ok=True)
         raw_path = item_dir / f"{tile_id}_raw.tif"
         cog_path = item_dir / f"{tile_id}.tif"
@@ -647,21 +752,22 @@ async def _process_tile(
                     pass  # Best effort cleanup
 
 
-def _setup_extraction_dirs(output_dir: Path) -> tuple[Path, Path]:
+def _setup_extraction_dirs(output_dir: Path, collection_name: str = "tiles") -> tuple[Path, Path]:
     """Create extraction output directories.
 
     Args:
         output_dir: Base output directory.
+        collection_name: Name for the collection directory (default: 'tiles').
 
     Returns:
-        Tuple of (tiles_dir, portolan_dir).
+        Tuple of (collection_dir, portolan_dir).
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    tiles_dir = output_dir / "tiles"
-    tiles_dir.mkdir(exist_ok=True)
+    collection_dir = output_dir / collection_name
+    collection_dir.mkdir(exist_ok=True)
     portolan_dir = output_dir / ".portolan"
     portolan_dir.mkdir(exist_ok=True)
-    return tiles_dir, portolan_dir
+    return collection_dir, portolan_dir
 
 
 def _load_effective_config(config: ExtractionConfig, output_dir: Path) -> ExtractionConfig:
@@ -719,6 +825,7 @@ def _seed_metadata_from_report(
 def _auto_init_catalog(
     output_dir: Path,
     service_name: str | None = None,
+    collection_name: str = "tiles",
 ) -> bool:
     """Initialize a Portolan catalog and add extracted COG files.
 
@@ -729,6 +836,7 @@ def _auto_init_catalog(
     Args:
         output_dir: Directory containing extracted COG files.
         service_name: Optional name for the catalog.
+        collection_name: Name for the collection directory (default: 'tiles').
 
     Returns:
         True if catalog was initialized, False if no files to add.
@@ -737,8 +845,8 @@ def _auto_init_catalog(
     from portolan_cli.dataset import add_files
 
     # Get list of extracted COG files (nested in item directories)
-    tiles_dir = output_dir / "tiles"
-    cog_files = list(tiles_dir.glob("*/*.tif"))
+    collection_dir = output_dir / collection_name
+    cog_files = list(collection_dir.glob("*/*.tif"))
 
     if not cog_files:
         return False  # Nothing to add
@@ -764,6 +872,7 @@ async def _extract_all_tiles(
     resume_state: ImageServerResumeState,
     resume_path: Path,
     on_progress: Callable[[TileProgress], None] | None = None,
+    collection_name: str = "tiles",
 ) -> _ProcessingStats:
     """Extract all tiles with concurrency control.
 
@@ -776,6 +885,7 @@ async def _extract_all_tiles(
         resume_state: Resume state to update.
         resume_path: Path to save resume state.
         on_progress: Optional progress callback (matches FeatureServer pattern).
+        collection_name: Name for the collection directory (default: 'tiles').
 
     Returns:
         Processing statistics with tile results.
@@ -797,6 +907,7 @@ async def _extract_all_tiles(
                 semaphore=semaphore,
                 rate_limit_lock=rate_limit_lock,
                 last_request_time=last_request_time,
+                collection_name=collection_name,
             )
             for tile in tiles
         ]
@@ -816,6 +927,7 @@ async def _extract_all_tiles(
                 error_msg=result.error_msg,
                 attempts=result.attempts,
                 on_progress=on_progress,
+                collection_name=collection_name,
             )
 
             # Batch resume state saves
@@ -840,6 +952,7 @@ def _update_stats_and_state(
     error_msg: str | None,
     attempts: int,
     on_progress: Callable[[TileProgress], None] | None = None,
+    collection_name: str = "tiles",
 ) -> None:
     """Update statistics, resume state, and tile results after processing a tile.
 
@@ -855,6 +968,7 @@ def _update_stats_and_state(
         duration: Processing duration in seconds.
         error_msg: Error message if failed.
         attempts: Number of attempts.
+        collection_name: Name for the collection directory (default: 'tiles').
         on_progress: Optional progress callback.
     """
     tile_id = tile.get_id()
@@ -865,7 +979,7 @@ def _update_stats_and_state(
         resume_state.succeeded_tiles.add((tile.x, tile.y))
 
         # Compute relative output path (tile_id already includes "tile_" prefix)
-        output_path = f"tiles/{tile_id}/{tile_id}.tif"
+        output_path = f"{collection_name}/{tile_id}/{tile_id}.tif"
 
         stats.tile_results.append(
             TileResult(
@@ -926,6 +1040,7 @@ async def extract_imageserver(
     resume: bool = False,
     bbox: tuple[float, float, float, float] | None = None,
     on_progress: Callable[[TileProgress], None] | None = None,
+    collection_name: str | None = None,
 ) -> ExtractionResult:
     """Extract raster tiles from ImageServer to COG files.
 
@@ -939,6 +1054,7 @@ async def extract_imageserver(
         resume: If True, resume from previous extraction.
         bbox: Optional bbox to subset extraction (minx, miny, maxx, maxy).
         on_progress: Optional callback for progress updates (matches FeatureServer pattern).
+        collection_name: Name for the collection directory (default: 'tiles').
 
     Returns:
         ExtractionResult with extraction statistics and full report.
@@ -949,10 +1065,14 @@ async def extract_imageserver(
     if config is None:
         config = ExtractionConfig()
 
+    # Default collection name to 'tiles' if not provided
+    if collection_name is None:
+        collection_name = "tiles"
+
     start_time = time.monotonic()
 
     # Setup
-    _, portolan_dir = _setup_extraction_dirs(output_dir)
+    _, portolan_dir = _setup_extraction_dirs(output_dir, collection_name)
     config = _load_effective_config(config, output_dir)
 
     # Discover service
@@ -960,9 +1080,32 @@ async def extract_imageserver(
     metadata = await discover_imageserver(url, timeout=config.timeout)
     info(f"Service: {metadata.name} ({metadata.pixel_type}, {metadata.band_count} bands)")
 
+    # Validate tile size against service limits (proactive check per issue #335)
+    max_tile_size = min(metadata.max_image_width, metadata.max_image_height)
+    if config.tile_size > max_tile_size:
+        warn(
+            f"Requested tile size ({config.tile_size}px) exceeds service limit "
+            f"({max_tile_size}px). Auto-adjusting to {max_tile_size}px."
+        )
+        config = ExtractionConfig(
+            tile_size=max_tile_size,
+            cog_settings=config.cog_settings,
+            max_retries=config.max_retries,
+            dry_run=config.dry_run,
+            raw=config.raw,
+            timeout=config.timeout,
+            max_concurrent=config.max_concurrent,
+            rate_limit_delay=config.rate_limit_delay,
+        )
+
+    # Get service CRS for bbox reprojection
+    service_crs = metadata.get_crs_string()
+
     # Compute tiles
     extent = metadata.full_extent
     if bbox:
+        # Auto-reproject bbox from WGS84 to service CRS if needed (per issue #335)
+        bbox = reproject_bbox_if_needed(bbox, service_crs)
         intersected = _intersect_bbox(bbox, extent)
         if intersected is None:
             info("User bbox does not intersect service extent - no tiles to extract")
@@ -1008,6 +1151,7 @@ async def extract_imageserver(
         resume_state,
         resume_path,
         on_progress=on_progress,
+        collection_name=collection_name,
     )
     _save_resume_state_locked(resume_state, resume_path)
 
@@ -1020,7 +1164,7 @@ async def extract_imageserver(
                 status="skipped",
                 size_bytes=None,
                 duration_seconds=None,
-                output_path=f"tiles/{tile_id}/{tile_id}.tif",
+                output_path=f"{collection_name}/{tile_id}/{tile_id}.tif",
                 error=None,
                 attempts=0,
             )
@@ -1050,7 +1194,7 @@ async def extract_imageserver(
     catalog_initialized = False
     if not config.raw:
         info("Initializing Portolan catalog...")
-        catalog_initialized = _auto_init_catalog(output_dir, metadata.name)
+        catalog_initialized = _auto_init_catalog(output_dir, metadata.name, collection_name)
         if catalog_initialized:
             success("Catalog initialized with STAC metadata")
         else:

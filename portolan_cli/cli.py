@@ -5019,6 +5019,7 @@ def _handle_imageserver_extraction(
     dry_run: bool,
     json_output: bool,
     auto: bool,
+    collection_name: str | None,
 ) -> None:
     """Handle ImageServer URL extraction (raster data)."""
     from portolan_cli.conversion_config import CogSettings, get_cog_settings
@@ -5082,6 +5083,7 @@ def _handle_imageserver_extraction(
         timeout=timeout,
         compression=cog_settings.compression,
         use_json=json_output,
+        collection_name=collection_name,
     )
 
     # Run extraction
@@ -5320,7 +5322,7 @@ def extract() -> None:
     "--bbox",
     type=str,
     default=None,
-    help="[ImageServer] Bounding box filter: minx,miny,maxx,maxy (in service CRS).",
+    help="[ImageServer] Bounding box filter: minx,miny,maxx,maxy. WGS84 coords auto-converted to service CRS.",
 )
 @click.option(
     "--compression",
@@ -5333,6 +5335,12 @@ def extract() -> None:
     type=click.IntRange(min=1, max=16),
     default=4,
     help="[ImageServer] Maximum concurrent tile downloads (default: 4).",
+)
+@click.option(
+    "--collection-name",
+    type=str,
+    default=None,
+    help="[ImageServer] Name for the collection (default: 'tiles').",
 )
 @click.pass_context
 def extract_arcgis_cmd(
@@ -5357,6 +5365,7 @@ def extract_arcgis_cmd(
     bbox: str | None,
     compression: str | None,
     max_concurrent: int,
+    collection_name: str | None,
 ) -> None:
     """Extract data from ArcGIS FeatureServer/MapServer/ImageServer.
 
@@ -5459,6 +5468,7 @@ def extract_arcgis_cmd(
             dry_run=dry_run,
             json_output=use_json,
             auto=auto,
+            collection_name=collection_name,
         )
         return
 

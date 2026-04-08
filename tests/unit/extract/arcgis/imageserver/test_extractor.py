@@ -360,3 +360,115 @@ class TestModuleImports:
         from dataclasses import is_dataclass
 
         assert is_dataclass(ExtractionResult)
+
+
+# =============================================================================
+# Tests for Issue #335 Fixes
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestBboxCrsDetection:
+    """Tests for WGS84 bbox detection and reprojection (issue #335 fix)."""
+
+    def test_is_likely_wgs84_with_lat_lon_coords(self) -> None:
+        """Bbox with WGS84-range coordinates is detected."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _is_likely_wgs84
+
+        # Philadelphia area in WGS84
+        bbox = (-75.17, 39.95, -75.15, 39.97)
+        assert _is_likely_wgs84(bbox) is True
+
+    def test_is_likely_wgs84_with_web_mercator_coords(self) -> None:
+        """Bbox with Web Mercator coordinates is NOT detected as WGS84."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _is_likely_wgs84
+
+        # Philadelphia area in Web Mercator (large numbers)
+        bbox = (-8367886, 4858679, -8365659, 4861583)
+        assert _is_likely_wgs84(bbox) is False
+
+    def test_is_likely_wgs84_edge_case_poles(self) -> None:
+        """Bbox at edge of WGS84 range is detected."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _is_likely_wgs84
+
+        # Global extent
+        bbox = (-180, -90, 180, 90)
+        assert _is_likely_wgs84(bbox) is True
+
+    def test_reproject_bbox_wgs84_to_web_mercator(self) -> None:
+        """Bbox is correctly reprojected from WGS84 to Web Mercator."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _reproject_bbox
+
+        # Simple point near origin
+        bbox = (0.0, 0.0, 1.0, 1.0)
+        result = _reproject_bbox(bbox, "EPSG:4326", "EPSG:3857")
+
+        # Web Mercator coords should be much larger than WGS84
+        assert abs(result[0]) < 200000  # minx
+        assert abs(result[1]) < 200000  # miny
+        assert abs(result[2]) < 200000  # maxx
+        assert abs(result[3]) < 200000  # maxy
+        # But non-zero
+        assert result[2] > result[0]  # maxx > minx
+        assert result[3] > result[1]  # maxy > miny
+
+    def test_reproject_bbox_if_needed_passthrough_for_wgs84_service(self) -> None:
+        """Bbox is not reprojected if service is already WGS84."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import reproject_bbox_if_needed
+
+        bbox = (-75.17, 39.95, -75.15, 39.97)
+        result = reproject_bbox_if_needed(bbox, "EPSG:4326")
+
+        # Should be unchanged
+        assert result == bbox
+
+    def test_reproject_bbox_if_needed_converts_wgs84_to_service_crs(self) -> None:
+        """WGS84 bbox is auto-reprojected to service CRS."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import reproject_bbox_if_needed
+
+        # WGS84 coords
+        bbox = (-75.17, 39.95, -75.15, 39.97)
+        result = reproject_bbox_if_needed(bbox, "EPSG:3857")
+
+        # Should be reprojected to Web Mercator (much larger numbers)
+        assert abs(result[0]) > 1000  # Web Mercator x values are large
+        assert abs(result[2]) > 1000
+
+
+@pytest.mark.unit
+class TestJsonErrorParsing:
+    """Tests for JSON error response parsing (issue #335 fix)."""
+
+    @pytest.mark.asyncio
+    async def test_download_tile_parses_arcgis_json_error(
+        self, sample_tile: TileSpec, tmp_path: Path
+    ) -> None:
+        """JSON error responses from ArcGIS are parsed correctly."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import (
+            ImageServerExtractionError,
+            download_tile,
+        )
+
+        mock_client = AsyncMock()
+        mock_response = AsyncMock()
+        # Simulate ArcGIS JSON error response (not a TIFF)
+        error_json = (
+            b'{"error":{"code":400,"message":"The requested image exceeds the size limit."}}'
+        )
+        mock_response.content = error_json
+        mock_response.status_code = 200  # ArcGIS returns 200 with error in body
+        mock_response.raise_for_status = MagicMock()
+        mock_client.get.return_value = mock_response
+
+        output_path = tmp_path / "out.tif"
+        with pytest.raises(ImageServerExtractionError) as exc_info:
+            await download_tile(
+                "https://example.com/ImageServer",
+                sample_tile,
+                output_path,
+                mock_client,
+            )
+
+        # Error message should contain the ArcGIS error details
+        assert "400" in str(exc_info.value)
+        assert "exceeds the size limit" in str(exc_info.value)
