@@ -28,8 +28,8 @@ A file-based versioning system that:
 - Assumes single-writer access (documented limitation)
 - Provides linear, append-only version history
 - Stores schema fingerprints for change detection
-- Supports rollback (creates new version from old)
-- Includes prune with safety mechanisms
+
+> **Implementation Note (2026-04-08):** Rollback and prune are **deferred to Portolake** (Iceberg backend). The MVP JsonFileBackend raises `NotImplementedError` for these operations. This is intentional — these features require transactional guarantees that file-based storage cannot provide safely.
 
 **Target users:** Municipalities, small teams, individual publishers. Anyone who doesn't need concurrent access.
 

@@ -3,6 +3,8 @@
 ## Status
 Accepted
 
+> **Partially Superseded (2026-04-08):** The "Nested .portolan/ per collection" alternative rejected here was later accepted in [ADR-0039](0039-hierarchical-portolan-folders.md) to support large catalogs with per-collection metadata. The core principle (STAC at root, Portolan internals in .portolan/) remains valid.
+
 ## Context
 
 ADR-0012 placed all catalog structure inside `.portolan/`:

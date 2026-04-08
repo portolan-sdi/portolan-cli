@@ -23,8 +23,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from portolan_cli.formats import FormatType
 from portolan_cli.scan import (
-    FormatType,
     IssueType,
     ScanIssue,
     ScannedFile,

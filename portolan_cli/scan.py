@@ -49,13 +49,11 @@ from portolan_cli.constants import PARQUET_EXTENSION, WINDOWS_RESERVED_NAMES
 from portolan_cli.formats import (
     CloudNativeStatus,
     FormatInfo,
+    FormatType,
     _detect_json_type,
     get_cloud_native_status,
     is_geoparquet,
     is_valid_parquet,
-)
-from portolan_cli.formats import (
-    FormatType as FormatsFormatType,
 )
 from portolan_cli.scan_classify import (
     STAC_FILENAMES,
@@ -161,13 +159,6 @@ class IssueType(Enum):
 
     # NEW: Collection ID validation
     INVALID_COLLECTION_ID = "invalid_collection_id"
-
-
-class FormatType(Enum):
-    """Type of geospatial format."""
-
-    VECTOR = "vector"
-    RASTER = "raster"
 
 
 # =============================================================================
@@ -1291,7 +1282,7 @@ def _process_file(ctx: _ScanContext, path: Path, size: int) -> None:
                 )
             )
             return
-        if _detect_json_type(path) != FormatsFormatType.VECTOR:
+        if _detect_json_type(path) != FormatType.VECTOR:
             # Plain JSON, not GeoJSON - skip with informative message
             # We override classify_file here because we have specific knowledge:
             # we inspected the content and determined it's not GeoJSON.

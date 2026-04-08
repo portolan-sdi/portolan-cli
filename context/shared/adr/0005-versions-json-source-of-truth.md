@@ -3,6 +3,8 @@
 ## Status
 Accepted (amended 2025-02-11 to add schema fingerprints)
 
+> **Implementation Note (2026-04-08):** The `prune` functionality described below is implemented in [Portolake](https://github.com/portolan-sdi/portolake) (Iceberg backend), not in the MVP JsonFileBackend. See [ADR-0015](0015-two-tier-versioning-architecture.md) for the two-tier architecture.
+
 ## Context
 
 Portolan needs to track:
