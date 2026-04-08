@@ -3,6 +3,8 @@
 ## Status
 Accepted
 
+> **Implementation Note (2026-04-08):** The `portolan repair` command and `portolan check --remote` described below are **not yet implemented**. Drift detection is planned but deferred. The ownership model principles remain valid for when these features are built.
+
 ## Context
 
 Portolan syncs local catalogs to remote object storage (S3, GCS, Azure, etc.). A key question: what happens if someone modifies files in the bucket outside of Portolan?

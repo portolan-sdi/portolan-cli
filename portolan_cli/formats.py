@@ -61,16 +61,6 @@ class FormatInfo:
     error_message: str | None
 
 
-class UnsupportedFormatError(ValueError):
-    """Raised when attempting to add an unsupported file format.
-
-    This error is raised for formats that cannot be converted to cloud-native
-    formats (e.g., NetCDF, HDF5, non-COPC LAS/LAZ).
-    """
-
-    pass
-
-
 # =============================================================================
 # Cloud-Native Format Constants
 # =============================================================================

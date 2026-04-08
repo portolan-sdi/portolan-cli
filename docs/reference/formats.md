@@ -15,6 +15,7 @@ Portolan converts data to cloud-native formats (GeoParquet, COG) for efficient c
 | GeoParquet | GeoParquet | Already cloud-native |
 | COG | COG | Already cloud-native |
 | FlatGeobuf | — | Accepted as-is (cloud-native) |
+| PMTiles | — | Accepted as-is (cloud-native vector tiles) |
 
 ## ESRI File Geodatabase Rasters
 

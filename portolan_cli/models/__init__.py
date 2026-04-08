@@ -16,7 +16,6 @@ from portolan_cli.models.collection import (
 )
 from portolan_cli.models.item import AssetModel, ItemModel
 from portolan_cli.models.schema import BandSchema, ColumnSchema, SchemaModel
-from portolan_cli.models.version import AssetVersion, SchemaFingerprint, VersionModel
 
 __all__ = [
     # Catalog
@@ -35,8 +34,4 @@ __all__ = [
     # Item
     "ItemModel",
     "AssetModel",
-    # Version
-    "VersionModel",
-    "SchemaFingerprint",
-    "AssetVersion",
 ]

@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
+from portolan_cli.errors import UnsupportedFormatError
 from portolan_cli.formats import (
     CloudNativeStatus,
-    UnsupportedFormatError,
     get_cloud_native_status,
 )
 
