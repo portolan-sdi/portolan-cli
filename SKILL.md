@@ -165,6 +165,14 @@ portolan scan /data/geospatial
 portolan scan /large/tree --max-depth=2
 ```
 
+### `portolan skills`
+List and view AI skills for Portolan workflows.
+
+```bash
+portolan skills list              # List available skills
+portolan skills show sourcecoop   # View Source Co-op upload skill
+```
+
 ### `portolan stac-geoparquet`
 Generate items.parquet for efficient STAC queries.
 

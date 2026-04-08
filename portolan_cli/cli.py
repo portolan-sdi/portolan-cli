@@ -6152,3 +6152,97 @@ def stac_geoparquet(
             total_items += result.item_count
 
     _output_parquet_results(results, errors_list, total_items, is_bulk, dry_run, use_json)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Skills Commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@cli.group()
+def skills() -> None:
+    """List and view AI skills for Portolan workflows.
+
+    Skills are markdown files that help AI agents assist users with specific
+    workflows like uploading to Source Cooperative.
+
+    \b
+    Examples:
+        portolan skills list              # List available skills
+        portolan skills show sourcecoop   # View Source Co-op upload skill
+    """
+
+
+@skills.command("list")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def skills_list_cmd(ctx: click.Context, json_output: bool) -> None:
+    """List all available skills.
+
+    \b
+    Examples:
+        portolan skills list
+        portolan skills list --json
+    """
+    from portolan_cli.skills import list_skills
+
+    use_json = should_output_json(ctx, json_output)
+    skill_names = list_skills()
+
+    if use_json:
+        envelope = success_envelope("skills list", {"skills": skill_names})
+        output_json_envelope(envelope)
+    else:
+        if not skill_names:
+            info_output("No skills available")
+        else:
+            info_output(f"Available skills ({len(skill_names)}):")
+            for name in skill_names:
+                detail(f"  {name}")
+            info_output("\nUse 'portolan skills show <name>' to view a skill")
+
+
+@skills.command("show")
+@click.argument("name")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def skills_show_cmd(ctx: click.Context, name: str, json_output: bool) -> None:
+    """View the content of a skill.
+
+    NAME is the skill name (e.g., 'sourcecoop').
+
+    \b
+    Examples:
+        portolan skills show sourcecoop
+        portolan skills show sourcecoop --json
+    """
+    from portolan_cli.skills import get_skill, list_skills
+
+    use_json = should_output_json(ctx, json_output)
+    content = get_skill(name)
+
+    if content is None:
+        available = list_skills()
+        if use_json:
+            envelope = error_envelope(
+                "skills show",
+                [
+                    ErrorDetail(
+                        type="SkillNotFoundError",
+                        message=f"Skill '{name}' not found. Available: {', '.join(available)}",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Skill '{name}' not found")
+            if available:
+                info_output(f"Available skills: {', '.join(available)}")
+        raise SystemExit(1)
+
+    if use_json:
+        envelope = success_envelope("skills show", {"name": name, "content": content})
+        output_json_envelope(envelope)
+    else:
+        # Print raw content for AI agents to ingest
+        click.echo(content)

@@ -109,7 +109,7 @@ class TestListStatusHypothesis:
         assume(item_name not in {"collection"})
         # Skip STAC metadata filenames - these are intentionally excluded from list output
         # by _STAC_METADATA_FILES in catalog_list.py (they're catalog infrastructure, not assets)
-        assume(filename not in {"item.json", "collection.json", "catalog.json"})
+        assume(filename not in {"item.json", "collection.json", "catalog.json", "versions.json"})
         # Skip patterns that match default ignored files
         for pattern in DEFAULT_IGNORED_FILES:
             if pattern.startswith("*"):
