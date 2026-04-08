@@ -5005,12 +5005,51 @@ def _handle_list_services_mode(
             click.echo(f"Folders: {', '.join(result.folders)}")
 
 
+def _validate_collection_name_cli(
+    collection_name: str | None,
+    json_output: bool,
+    url: str,
+) -> None:
+    """Validate collection_name at CLI layer (fail fast, per ADR-0023).
+
+    Args:
+        collection_name: User-provided collection name (may be None).
+        json_output: If True, output errors as JSON.
+        url: Source URL for error context.
+
+    Raises:
+        SystemExit: If collection_name is invalid.
+    """
+    if collection_name is None:
+        return
+    # Reject path separators and parent references
+    if "/" in collection_name or "\\" in collection_name or ".." in collection_name:
+        _output_extract_error(
+            json_output,
+            "InvalidCollectionNameError",
+            f"Invalid collection name: '{collection_name}'. "
+            "Collection name must be a single directory name without path separators or '..'.",
+            url,
+        )
+        raise SystemExit(1)
+    # Reject empty or dot-only names
+    if not collection_name or collection_name in (".", ".."):
+        _output_extract_error(
+            json_output,
+            "InvalidCollectionNameError",
+            f"Invalid collection name: '{collection_name}'. Collection name cannot be empty.",
+            url,
+        )
+        raise SystemExit(1)
+
+
 def _handle_imageserver_extraction(
     ctx: click.Context,
     url: str,
     output_dir: Path,
     tile_size: int,
     bbox: str | None,
+    bbox_crs: str | None,
     compression: str | None,
     max_concurrent: int,
     timeout: float,
@@ -5019,6 +5058,7 @@ def _handle_imageserver_extraction(
     dry_run: bool,
     json_output: bool,
     auto: bool,
+    collection_name: str | None,
 ) -> None:
     """Handle ImageServer URL extraction (raster data)."""
     from portolan_cli.conversion_config import CogSettings, get_cog_settings
@@ -5060,6 +5100,9 @@ def _handle_imageserver_extraction(
             resampling=cog_settings.resampling,
         )
 
+    # Validate collection_name at CLI layer (fail fast, per ADR-0023 flat catalog rule)
+    _validate_collection_name_cli(collection_name, json_output, url)
+
     # Confirmation prompt
     if not auto and not dry_run and not json_output:
         click.echo(f"Extract from: {url}")
@@ -5079,9 +5122,11 @@ def _handle_imageserver_extraction(
         resume=resume,
         raw=False,  # ImageServer always creates STAC structure
         bbox=bbox_tuple,
+        bbox_crs=bbox_crs,
         timeout=timeout,
         compression=cog_settings.compression,
         use_json=json_output,
+        collection_name=collection_name,
     )
 
     # Run extraction
@@ -5320,7 +5365,13 @@ def extract() -> None:
     "--bbox",
     type=str,
     default=None,
-    help="[ImageServer] Bounding box filter: minx,miny,maxx,maxy (in service CRS).",
+    help="[ImageServer] Bounding box filter: minx,miny,maxx,maxy. WGS84 coords auto-converted to service CRS.",
+)
+@click.option(
+    "--bbox-crs",
+    type=str,
+    default=None,
+    help="[ImageServer] Explicit CRS of --bbox (e.g., EPSG:4326, EPSG:3857). Skips auto-detection.",
 )
 @click.option(
     "--compression",
@@ -5333,6 +5384,12 @@ def extract() -> None:
     type=click.IntRange(min=1, max=16),
     default=4,
     help="[ImageServer] Maximum concurrent tile downloads (default: 4).",
+)
+@click.option(
+    "--collection-name",
+    type=str,
+    default=None,
+    help="[ImageServer] Name for the collection (default: 'tiles').",
 )
 @click.pass_context
 def extract_arcgis_cmd(
@@ -5355,8 +5412,10 @@ def extract_arcgis_cmd(
     raw: bool,
     tile_size: int,
     bbox: str | None,
+    bbox_crs: str | None,
     compression: str | None,
     max_concurrent: int,
+    collection_name: str | None,
 ) -> None:
     """Extract data from ArcGIS FeatureServer/MapServer/ImageServer.
 
@@ -5451,6 +5510,7 @@ def extract_arcgis_cmd(
             output_dir=output_dir,
             tile_size=tile_size,
             bbox=bbox,
+            bbox_crs=bbox_crs,
             compression=compression,
             max_concurrent=max_concurrent,
             timeout=timeout,
@@ -5459,6 +5519,7 @@ def extract_arcgis_cmd(
             dry_run=dry_run,
             json_output=use_json,
             auto=auto,
+            collection_name=collection_name,
         )
         return
 

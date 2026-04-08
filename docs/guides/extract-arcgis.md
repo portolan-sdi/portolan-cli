@@ -28,6 +28,13 @@ Portolan auto-detects the service type from the URL:
 | `.../MapServer` | Vector features | GeoParquet |
 | `.../ImageServer` | Raster imagery | COG tiles |
 
+!!! warning "MapServer Raster Limitation"
+    **MapServer endpoints only support vector extraction.** Even if a MapServer hosts imagery, Portolan extracts the vector tile indexes and boundaries—not the imagery itself.
+
+    This is a fundamental ArcGIS limitation: MapServer's `/export` endpoint returns **rendered 8-bit visualization**, not source raster data. For source imagery extraction, you need an **ImageServer** endpoint.
+
+    If you're working with a data provider that only offers MapServer (e.g., PASDA), contact them to request ImageServer access, or use their download links for the source data.
+
 ---
 
 ## FeatureServer / MapServer Extraction
@@ -146,16 +153,25 @@ This will:
 For large ImageServers, use `--bbox` to extract a subset:
 
 ```bash
-# Extract only tiles within bounding box (in service CRS coordinates)
-portolan extract arcgis URL --bbox "-8841000,5405000,-8840000,5406000"
+# WGS84 coordinates (minx,miny,maxx,maxy = lon,lat order) - auto-converted to service CRS
+portolan extract arcgis URL --bbox "-75.17,39.95,-75.15,39.97"
+
+# Or explicit service CRS coordinates (Web Mercator in this example)
+portolan extract arcgis URL --bbox "-8367886,4858679,-8365659,4861583"
+
+# Override CRS auto-detection with --bbox-crs
+portolan extract arcgis URL --bbox "100,200,300,400" --bbox-crs "EPSG:2269"
 ```
 
-**Important**: The bbox coordinates must be in the service's native CRS (check the service metadata for `spatialReference.wkid`).
+**Bbox format**: The `--bbox` flag expects coordinates as `minx,miny,maxx,maxy` (longitude,latitude order for WGS84). When values fall within the WGS84 range (-180/180, -90/90), Portolan automatically reprojects them to the service's native CRS. Use `--bbox-crs` to specify an explicit CRS and skip auto-detection.
+
+!!! tip "Overriding CRS Detection"
+    If you're working with a local CRS (like State Plane) where coordinates happen to fall in the WGS84 range, use `--bbox-crs` to specify the exact CRS and skip auto-detection.
 
 ### ImageServer Options
 
 ```bash
-# Tile size in pixels (default: 4096)
+# Tile size in pixels (default: 4096, auto-adjusted if exceeds service limit)
 portolan extract arcgis URL --tile-size 2048
 
 # Maximum concurrent downloads (default: 4)
@@ -163,7 +179,13 @@ portolan extract arcgis URL --max-concurrent 8
 
 # COG compression (default: deflate)
 portolan extract arcgis URL --compression jpeg  # Good for RGB imagery
+
+# Custom collection name (default: 'tiles')
+portolan extract arcgis URL --collection-name "naip-philly-2024"
 ```
+
+!!! tip "Tile Size Validation"
+    Portolan automatically fetches the service's maximum allowed tile dimensions during discovery. If your `--tile-size` exceeds this limit, it's auto-adjusted down with a warning—no more cryptic "bad magic bytes" errors.
 
 ### Output Structure
 
@@ -177,7 +199,7 @@ output/
 │   ├── imageserver-resume.json     # For resuming interrupted extractions
 │   └── metadata.yaml               # Seeded from service metadata
 ├── catalog.json
-└── tiles/                          # Collection (one per ImageServer)
+└── tiles/                          # Collection name (customizable via --collection-name)
     ├── collection.json
     ├── versions.json
     ├── tile_0_0/
@@ -188,6 +210,8 @@ output/
     │   └── tile_0_1.tif
     └── ...
 ```
+
+Use `--collection-name` to give the collection a meaningful name instead of the generic "tiles".
 
 ### Metadata After Extraction
 
@@ -209,6 +233,11 @@ Complete the `TODO` fields, then generate the README:
 # Generate README from STAC + metadata.yaml
 portolan readme tiles
 ```
+
+!!! info "metadata.yaml Supplements STAC"
+    The `metadata.yaml` file **supplements** STAC metadata—it doesn't replace or modify it. This separation keeps machine-extracted metadata (STAC) distinct from human-enriched metadata (metadata.yaml).
+
+    There is no `portolan metadata generate` command because `metadata.yaml` is for human enrichment only. The README command (`portolan readme`) reads from both STAC (machine-extracted) and metadata.yaml (human-enriched) to generate documentation.
 
 !!! tip "Overriding auto-seeded metadata"
     To replace auto-seeded values, edit the generated `metadata.yaml` directly. The file is never overwritten on subsequent extractions.

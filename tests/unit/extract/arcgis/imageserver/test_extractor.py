@@ -360,3 +360,190 @@ class TestModuleImports:
         from dataclasses import is_dataclass
 
         assert is_dataclass(ExtractionResult)
+
+
+# =============================================================================
+# Tests for Issue #335 Fixes
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestBboxCrsDetection:
+    """Tests for WGS84 bbox detection and reprojection (issue #335 fix)."""
+
+    def test_is_likely_wgs84_with_lat_lon_coords(self) -> None:
+        """Bbox with WGS84-range coordinates is detected."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _is_likely_wgs84
+
+        # Philadelphia area in WGS84
+        bbox = (-75.17, 39.95, -75.15, 39.97)
+        assert _is_likely_wgs84(bbox) is True
+
+    def test_is_likely_wgs84_with_web_mercator_coords(self) -> None:
+        """Bbox with Web Mercator coordinates is NOT detected as WGS84."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _is_likely_wgs84
+
+        # Philadelphia area in Web Mercator (large numbers)
+        bbox = (-8367886, 4858679, -8365659, 4861583)
+        assert _is_likely_wgs84(bbox) is False
+
+    def test_is_likely_wgs84_edge_case_poles(self) -> None:
+        """Bbox at edge of WGS84 range is detected."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _is_likely_wgs84
+
+        # Global extent
+        bbox = (-180, -90, 180, 90)
+        assert _is_likely_wgs84(bbox) is True
+
+    def test_reproject_bbox_wgs84_to_web_mercator(self) -> None:
+        """Bbox is correctly reprojected from WGS84 to Web Mercator."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _reproject_bbox
+
+        # Philadelphia area: known coordinates for verification
+        # WGS84: (-75.17, 39.95, -75.15, 39.97)
+        # Expected Web Mercator (approximately):
+        # minx: -8367886, miny: 4858679, maxx: -8365659, maxy: 4861583
+        bbox = (-75.17, 39.95, -75.15, 39.97)
+        result = _reproject_bbox(bbox, "EPSG:4326", "EPSG:3857")
+
+        # Verify against known correct values (within 100m tolerance)
+        assert -8368000 < result[0] < -8367000  # minx ~ -8367886
+        assert 4858000 < result[1] < 4859000  # miny ~ 4858679
+        assert -8366000 < result[2] < -8365000  # maxx ~ -8365659
+        assert 4861000 < result[3] < 4862000  # maxy ~ 4861583
+
+    def test_reproject_bbox_if_needed_passthrough_for_wgs84_service(self) -> None:
+        """Bbox is not reprojected if service is already WGS84."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import reproject_bbox_if_needed
+
+        bbox = (-75.17, 39.95, -75.15, 39.97)
+        result = reproject_bbox_if_needed(bbox, "EPSG:4326")
+
+        # Should be unchanged
+        assert result == bbox
+
+    def test_reproject_bbox_if_needed_converts_wgs84_to_service_crs(self) -> None:
+        """WGS84 bbox is auto-reprojected to service CRS."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import reproject_bbox_if_needed
+
+        # WGS84 coords (Philadelphia)
+        bbox = (-75.17, 39.95, -75.15, 39.97)
+        result = reproject_bbox_if_needed(bbox, "EPSG:3857")
+
+        # Verify against known correct Web Mercator values
+        assert -8368000 < result[0] < -8367000  # minx ~ -8367886
+        assert 4858000 < result[1] < 4859000  # miny ~ 4858679
+        assert -8366000 < result[2] < -8365000  # maxx ~ -8365659
+        assert 4861000 < result[3] < 4862000  # maxy ~ 4861583
+
+    def test_reproject_bbox_if_needed_explicit_bbox_crs(self) -> None:
+        """Explicit bbox_crs parameter overrides auto-detection."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import reproject_bbox_if_needed
+
+        # State Plane coords that happen to be in WGS84 range (would trigger false positive)
+        bbox = (100.0, 50.0, 150.0, 80.0)
+
+        # Without explicit bbox_crs, this would be detected as WGS84 and reprojected
+        # With explicit bbox_crs matching service CRS, no reprojection happens
+        result = reproject_bbox_if_needed(bbox, "EPSG:3857", bbox_crs="EPSG:3857")
+
+        # Should be unchanged (same CRS)
+        assert result == bbox
+
+    def test_reproject_bbox_if_needed_explicit_bbox_crs_different(self) -> None:
+        """Explicit bbox_crs triggers reprojection when different from service CRS."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import reproject_bbox_if_needed
+
+        # Explicit WGS84 bbox
+        bbox = (-75.17, 39.95, -75.15, 39.97)
+        result = reproject_bbox_if_needed(bbox, "EPSG:3857", bbox_crs="EPSG:4326")
+
+        # Should be reprojected to Web Mercator
+        assert -8368000 < result[0] < -8367000
+
+
+@pytest.mark.unit
+class TestCollectionNameValidation:
+    """Tests for collection name validation (path traversal prevention)."""
+
+    def test_validate_collection_name_simple(self) -> None:
+        """Simple collection names pass validation."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _validate_collection_name
+
+        assert _validate_collection_name("tiles") == "tiles"
+        assert _validate_collection_name("naip-2024") == "naip-2024"
+        assert _validate_collection_name("my_collection") == "my_collection"
+
+    def test_validate_collection_name_strips_path_components(self) -> None:
+        """Path traversal attempts are sanitized."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _validate_collection_name
+
+        # Path traversal attempts get stripped to just the base name
+        assert _validate_collection_name("../../../etc") == "etc"
+        assert _validate_collection_name("/etc/passwd") == "passwd"
+        assert _validate_collection_name("foo/bar/baz") == "baz"
+
+    def test_validate_collection_name_rejects_empty(self) -> None:
+        """Empty names are rejected."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _validate_collection_name
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            _validate_collection_name("")
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            _validate_collection_name(".")
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            _validate_collection_name("..")
+
+    def test_validate_collection_name_rejects_invalid_chars(self) -> None:
+        """Names with invalid characters are rejected."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _validate_collection_name
+
+        with pytest.raises(ValueError, match="cannot contain"):
+            _validate_collection_name("foo<bar")
+
+        with pytest.raises(ValueError, match="cannot contain"):
+            _validate_collection_name("foo|bar")
+
+        with pytest.raises(ValueError, match="cannot contain"):
+            _validate_collection_name("foo?bar")
+
+
+@pytest.mark.unit
+class TestJsonErrorParsing:
+    """Tests for JSON error response parsing (issue #335 fix)."""
+
+    @pytest.mark.asyncio
+    async def test_download_tile_parses_arcgis_json_error(
+        self, sample_tile: TileSpec, tmp_path: Path
+    ) -> None:
+        """JSON error responses from ArcGIS are parsed correctly."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import (
+            ImageServerExtractionError,
+            download_tile,
+        )
+
+        mock_client = AsyncMock()
+        mock_response = AsyncMock()
+        # Simulate ArcGIS JSON error response (not a TIFF)
+        error_json = (
+            b'{"error":{"code":400,"message":"The requested image exceeds the size limit."}}'
+        )
+        mock_response.content = error_json
+        mock_response.status_code = 200  # ArcGIS returns 200 with error in body
+        mock_response.raise_for_status = MagicMock()
+        mock_client.get.return_value = mock_response
+
+        output_path = tmp_path / "out.tif"
+        with pytest.raises(ImageServerExtractionError) as exc_info:
+            await download_tile(
+                "https://example.com/ImageServer",
+                sample_tile,
+                output_path,
+                mock_client,
+            )
+
+        # Error message should contain the ArcGIS error details
+        assert "400" in str(exc_info.value)
+        assert "exceeds the size limit" in str(exc_info.value)

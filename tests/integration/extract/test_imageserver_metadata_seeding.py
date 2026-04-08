@@ -332,6 +332,9 @@ class TestImageServerExtractionSeeding:
         mock_metadata.pixel_size_x = 0.5
         mock_metadata.pixel_size_y = 0.5
         mock_metadata.full_extent = {"xmin": -122.5, "ymin": 37.5, "xmax": -122.0, "ymax": 38.0}
+        mock_metadata.max_image_width = 4096
+        mock_metadata.max_image_height = 4096
+        mock_metadata.get_crs_string.return_value = "EPSG:4326"
         mock_metadata.description = "Test imagery"
         mock_metadata.copyright_text = "City of Test"
         mock_metadata.service_description = "Municipal aerial imagery"
@@ -402,6 +405,9 @@ class TestImageServerExtractionSeeding:
         mock_metadata.pixel_size_x = 0.5
         mock_metadata.pixel_size_y = 0.5
         mock_metadata.full_extent = {"xmin": -122.5, "ymin": 37.5, "xmax": -122.0, "ymax": 38.0}
+        mock_metadata.max_image_width = 4096
+        mock_metadata.max_image_height = 4096
+        mock_metadata.get_crs_string.return_value = "EPSG:4326"
         mock_metadata.description = "New imagery"
         mock_metadata.copyright_text = "New Copyright"
         mock_metadata.service_description = None
@@ -457,6 +463,9 @@ class TestImageServerExtractionSeeding:
         mock_metadata.pixel_size_x = 1.0
         mock_metadata.pixel_size_y = 1.0
         mock_metadata.full_extent = {"xmin": 0, "ymin": 0, "xmax": 100, "ymax": 100}
+        mock_metadata.max_image_width = 4096
+        mock_metadata.max_image_height = 4096
+        mock_metadata.get_crs_string.return_value = "EPSG:4326"
         mock_metadata.description = "Elevation"
         mock_metadata.copyright_text = None
         mock_metadata.service_description = "DEM data"

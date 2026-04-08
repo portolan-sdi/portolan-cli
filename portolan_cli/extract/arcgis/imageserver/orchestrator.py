@@ -53,9 +53,11 @@ class ImageServerCLIOptions:
         resume: If True, resume from previous extraction.
         raw: If True, skip auto-init (only create COGs + report, no STAC catalog).
         bbox: Optional bounding box to subset extraction (minx, miny, maxx, maxy).
+        bbox_crs: Optional explicit CRS of bbox (e.g., "EPSG:4326"). Skips auto-detection.
         timeout: HTTP request timeout in seconds (default 120).
         compression: COG compression method ("DEFLATE" or "JPEG").
         use_json: If True, suppress progress output (for JSON mode).
+        collection_name: Optional name for the collection (default: 'tiles').
     """
 
     tile_size: int = 4096
@@ -64,9 +66,11 @@ class ImageServerCLIOptions:
     resume: bool = False
     raw: bool = False
     bbox: tuple[float, float, float, float] | None = None
+    bbox_crs: str | None = None
     timeout: float = 120.0
     compression: str = "DEFLATE"
     use_json: bool = False
+    collection_name: str | None = None
 
 
 def _create_progress_callback(
@@ -154,6 +158,8 @@ async def run_imageserver_extraction(
             resume=options.resume,
             bbox=options.bbox,
             on_progress=on_progress,
+            collection_name=options.collection_name,
+            bbox_crs=options.bbox_crs,
         )
 
         # Determine exit code based on results
