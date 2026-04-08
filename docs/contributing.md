@@ -128,19 +128,6 @@ Merging that PR triggers the release workflow: it creates a git tag, builds the 
 - Use `portolan_cli/output.py` for all user-facing terminal messages
 - Non-obvious design decisions require an ADR in `context/shared/adr/`
 
-## AI-Assisted Development (Optional)
-
-We use AI assistants (Claude Code, etc.) extensively. Useful tools:
-
-| Tool | Purpose | Install |
-|------|---------|---------|
-| [Speckit](https://github.com/speckit/speckit) | Specification-driven development | Claude Code plugin |
-| [Context7](https://context7.io) | Up-to-date library docs via MCP | MCP server config |
-| [Gitingest](https://github.com/cyclotruc/gitingest) | Source code exploration | `pipx install gitingest` |
-| [grepai](https://yoanbernabeu.github.io/grepai/) | Semantic code search via MCP | `pipx install grepai` |
-
-The project includes `.mcp.json` for automatic MCP registration. grepai must be installed locally (`pipx install grepai`) and initialized with `grepai init` in the project directory. The `.grepai/` index is gitignored — it's regenerated per-developer.
-
 ## Questions?
 
 - **Bug reports / feature requests:** Open an issue
