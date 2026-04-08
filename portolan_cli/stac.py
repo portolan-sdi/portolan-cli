@@ -332,7 +332,8 @@ def build_stac_extensions(properties: dict[str, object]) -> list[str]:
         extensions.append(EXTENSION_URLS["projection"])
 
     # Check for raster extension fields
-    if any(k.startswith("raster:") for k in properties):
+    # STAC v1.1.0 uses unified 'bands' array at top level (not raster:bands)
+    if any(k.startswith("raster:") for k in properties) or "bands" in properties:
         extensions.append(EXTENSION_URLS["raster"])
 
     # Check for file extension fields
@@ -649,6 +650,115 @@ def add_vector_extension(
         if item.stac_extensions is None:
             item.stac_extensions = []
         item.stac_extensions.append(ext_url)
+
+
+def _get_stac_properties(metadata: object) -> dict[str, object]:
+    """Extract STAC properties from metadata if to_stac_properties() is available."""
+    if hasattr(metadata, "to_stac_properties") and callable(metadata.to_stac_properties):
+        result = metadata.to_stac_properties()
+        if isinstance(result, dict):
+            return result
+    return {}
+
+
+def _compute_spatial_resolution(metadata: object) -> float | None:
+    """Extract spatial resolution from metadata, returning None if unavailable."""
+    resolution = getattr(metadata, "resolution", None)
+    if not isinstance(resolution, (list, tuple)) or len(resolution) < 2:
+        return None
+    x_res, y_res = resolution[0], resolution[1]
+    if isinstance(x_res, (int, float)) and isinstance(y_res, (int, float)):
+        return (abs(x_res) + abs(y_res)) / 2
+    return None
+
+
+def _build_bands_from_metadata(metadata: object) -> list[dict[str, object]] | None:
+    """Build bands array from metadata, returning None if not possible."""
+    band_count = getattr(metadata, "band_count", None)
+    if not isinstance(band_count, int) or band_count <= 0:
+        return None
+
+    # Get dtype and nodata, validating they're real values (not MagicMock)
+    dtype = getattr(metadata, "dtype", None)
+    if not isinstance(dtype, str):
+        dtype = "unknown"
+    nodata = getattr(metadata, "nodata", None)
+    if not isinstance(nodata, (int, float, type(None))):
+        nodata = None
+
+    bands: list[dict[str, object]] = []
+    for i in range(band_count):
+        band: dict[str, object] = {"name": f"band_{i + 1}", "data_type": dtype}
+        if nodata is not None:
+            band["nodata"] = nodata
+        bands.append(band)
+    return bands
+
+
+def add_raster_extension(
+    item: pystac.Item,
+    metadata: object,
+) -> None:
+    """Add Raster extension fields to an item from COG metadata.
+
+    Sets raster:spatial_resolution and unified bands array based on the metadata.
+    Per STAC v1.1.0: uses top-level 'bands' array instead of raster:bands.
+
+    Args:
+        item: The STAC item to add extension fields to.
+        metadata: A metadata object with resolution and band information.
+    """
+    stac_props = _get_stac_properties(metadata)
+
+    # Set raster:spatial_resolution
+    spatial_res = _compute_spatial_resolution(metadata)
+    if spatial_res is not None:
+        item.properties["raster:spatial_resolution"] = spatial_res
+    elif "raster:spatial_resolution" in stac_props:
+        item.properties["raster:spatial_resolution"] = stac_props["raster:spatial_resolution"]
+
+    # Set unified bands array (STAC v1.1.0)
+    if "bands" in stac_props and isinstance(stac_props["bands"], list):
+        item.properties["bands"] = stac_props["bands"]
+    else:
+        bands = _build_bands_from_metadata(metadata)
+        if bands is not None:
+            item.properties["bands"] = bands
+
+    # Update stac_extensions if not already present
+    ext_url = EXTENSION_URLS["raster"]
+    if ext_url not in (item.stac_extensions or []):
+        if item.stac_extensions is None:
+            item.stac_extensions = []
+        item.stac_extensions.append(ext_url)
+
+
+def add_collection_extensions_from_summaries(
+    collection: pystac.Collection,
+    summaries: dict[str, object],
+) -> None:
+    """Add extension URLs to collection based on fields in summaries.
+
+    Scans summary keys for extension-prefixed fields and adds the corresponding
+    extension schema URLs to the collection's stac_extensions array.
+
+    This ensures collections declare extensions used by their items (Issue #336).
+
+    Args:
+        collection: The collection to add extension URLs to.
+        summaries: Summary dict to scan for extension fields.
+    """
+    # Use build_stac_extensions to detect which extensions are needed
+    extensions_needed = build_stac_extensions(summaries)
+
+    # Ensure collection has stac_extensions list
+    if collection.stac_extensions is None:
+        collection.stac_extensions = []
+
+    # Add any missing extensions
+    for ext_url in extensions_needed:
+        if ext_url not in collection.stac_extensions:
+            collection.stac_extensions.append(ext_url)
 
 
 # Per ADR-0036: Hybrid field detection for collection summaries

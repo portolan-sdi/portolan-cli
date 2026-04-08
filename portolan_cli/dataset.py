@@ -62,8 +62,10 @@ from portolan_cli.metadata_yaml import (
 )
 from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
+    add_collection_extensions_from_summaries,
     add_item_to_collection,
     add_projection_extension,
+    add_raster_extension,
     add_table_extension,
     add_vector_extension,
     aggregate_table_metadata,
@@ -944,6 +946,8 @@ def prepare_dataset(
     add_projection_extension(item, metadata)
     if format_type == FormatType.VECTOR:
         add_vector_extension(item, metadata)
+    elif format_type == FormatType.RASTER:
+        add_raster_extension(item, metadata)
 
     item_json_path = item_dir / f"{item_id_resolved}.json"
     item.set_self_href(str(item_json_path))
@@ -1033,6 +1037,11 @@ def finalize_datasets(
         # Moved here from push.py for separation of concerns - summaries are now
         # available immediately after add, not just after push.
         update_collection_summaries(collection)
+
+        # Add extension declarations based on summaries (Issue #336)
+        # Collections should declare extensions used by their items
+        if collection.summaries is not None:
+            add_collection_extensions_from_summaries(collection, collection.summaries.to_dict())
 
         # Save collection.json ONCE for all items in this collection
         _save_collection_with_links(collection, collection_dir, catalog_root, collection_id)
