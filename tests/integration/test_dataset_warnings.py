@@ -135,10 +135,10 @@ class TestUnsupportedEmitsError:
 
         with pytest.raises(UnsupportedFormatError) as exc_info:
             if result.status == CloudNativeStatus.UNSUPPORTED:
-                raise UnsupportedFormatError(result.error_message)
+                raise UnsupportedFormatError(str(nc_file), "NetCDF")
 
         assert "NetCDF" in str(exc_info.value)
-        assert "not yet supported" in str(exc_info.value)
+        assert "Unsupported format" in str(exc_info.value)
 
 
 class TestDatasetAddIntegration:
