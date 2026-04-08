@@ -109,12 +109,27 @@ portolan config list
 
 ## Step 5: Add Files
 
+**Important:** Files must be organized in collection subdirectories. Files at the catalog root are skipped.
+
+```
+my-catalog/
+├── catalog.json
+├── buildings/          # <-- Collection subdirectory
+│   └── data.parquet    # <-- Files go here
+└── imagery/            # <-- Another collection
+    └── ortho.tif
+```
+
 ```bash
-# Add all geospatial files
+# Organize files into collection subdirectories first if needed
+mkdir -p buildings
+mv *.parquet buildings/
+
+# Add all collections
 portolan add .
 
 # Or add specific collections
-portolan add demographics/
+portolan add buildings/
 portolan add imagery/
 ```
 
