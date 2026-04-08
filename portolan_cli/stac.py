@@ -718,12 +718,14 @@ def add_raster_extension(
         item.properties["raster:spatial_resolution"] = stac_props["raster:spatial_resolution"]
 
     # Set unified bands array (STAC v1.1.0)
-    if "bands" in stac_props and isinstance(stac_props["bands"], list):
-        item.properties["bands"] = stac_props["bands"]
-    else:
-        bands = _build_bands_from_metadata(metadata)
-        if bands is not None:
-            item.properties["bands"] = bands
+    # Only set bands if not already present (preserve defaults applied earlier in flow)
+    if "bands" not in item.properties:
+        if "bands" in stac_props and isinstance(stac_props["bands"], list):
+            item.properties["bands"] = stac_props["bands"]
+        else:
+            bands = _build_bands_from_metadata(metadata)
+            if bands is not None:
+                item.properties["bands"] = bands
 
     # Update stac_extensions if not already present
     ext_url = EXTENSION_URLS["raster"]
