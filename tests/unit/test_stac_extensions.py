@@ -978,3 +978,270 @@ class TestTableExtensionAggregation:
         assert aggregated.bbox == (0, 0, 10, 10)
         # But row count should include all items
         assert aggregated.feature_count == 450
+
+
+class TestRasterExtension:
+    """Tests for Raster extension compliance (Issue #336).
+
+    The raster extension should be declared when:
+    1. Properties contain raster:* fields (e.g., raster:spatial_resolution)
+    2. Properties contain a top-level 'bands' array (STAC v1.1.0 unified bands)
+    """
+
+    @pytest.mark.unit
+    def test_build_stac_extensions_detects_bands_key(self) -> None:
+        """build_stac_extensions includes raster extension when 'bands' key present.
+
+        STAC v1.1.0 uses a unified 'bands' array instead of 'raster:bands'.
+        The raster extension should be declared when bands array exists.
+        """
+        from portolan_cli.stac import EXTENSION_URLS, build_stac_extensions
+
+        properties: dict[str, Any] = {
+            "bands": [{"name": "red", "data_type": "uint8"}],
+        }
+        result = build_stac_extensions(properties)
+
+        assert EXTENSION_URLS["raster"] in result
+
+    @pytest.mark.unit
+    def test_build_stac_extensions_detects_bands_with_raster_fields(self) -> None:
+        """build_stac_extensions includes raster extension for combined raster fields."""
+        from portolan_cli.stac import EXTENSION_URLS, build_stac_extensions
+
+        properties: dict[str, Any] = {
+            "bands": [{"name": "band1", "data_type": "float32"}],
+            "raster:spatial_resolution": 10.0,
+        }
+        result = build_stac_extensions(properties)
+
+        # Should only include raster extension once, not twice
+        raster_count = sum(1 for ext in result if "raster" in ext)
+        assert raster_count == 1
+        assert EXTENSION_URLS["raster"] in result
+
+    @pytest.mark.unit
+    def test_add_raster_extension_sets_spatial_resolution(self) -> None:
+        """add_raster_extension sets raster:spatial_resolution from metadata."""
+        from portolan_cli.stac import add_raster_extension, create_item
+
+        item = create_item(item_id="test-raster", bbox=[0, 0, 1, 1])
+        metadata = COGMetadata(
+            bbox=(0, 0, 1, 1),
+            crs="EPSG:4326",
+            width=100,
+            height=100,
+            band_count=1,
+            dtype="uint8",
+            nodata=None,
+            resolution=(10.0, 10.0),
+        )
+
+        add_raster_extension(item, metadata)
+
+        assert item.properties.get("raster:spatial_resolution") == 10.0
+
+    @pytest.mark.unit
+    def test_add_raster_extension_sets_bands_array(self) -> None:
+        """add_raster_extension sets unified bands array from metadata."""
+        from portolan_cli.stac import add_raster_extension, create_item
+
+        item = create_item(item_id="test-bands", bbox=[0, 0, 1, 1])
+        metadata = COGMetadata(
+            bbox=(0, 0, 1, 1),
+            crs="EPSG:4326",
+            width=100,
+            height=100,
+            band_count=3,
+            dtype="uint8",
+            nodata=0,
+            resolution=(1.0, 1.0),
+        )
+
+        add_raster_extension(item, metadata)
+
+        bands = item.properties.get("bands")
+        assert bands is not None
+        assert len(bands) == 3
+
+    @pytest.mark.unit
+    def test_add_raster_extension_adds_stac_extensions_url(self) -> None:
+        """add_raster_extension adds raster extension URL to stac_extensions."""
+        from portolan_cli.stac import EXTENSION_URLS, add_raster_extension, create_item
+
+        item = create_item(item_id="test-ext-url", bbox=[0, 0, 1, 1])
+        metadata = COGMetadata(
+            bbox=(0, 0, 1, 1),
+            crs="EPSG:4326",
+            width=100,
+            height=100,
+            band_count=1,
+            dtype="float32",
+            nodata=-9999.0,
+            resolution=(30.0, 30.0),
+        )
+
+        add_raster_extension(item, metadata)
+
+        assert EXTENSION_URLS["raster"] in (item.stac_extensions or [])
+
+    @pytest.mark.unit
+    def test_add_raster_extension_skips_when_no_resolution(self) -> None:
+        """add_raster_extension doesn't set spatial_resolution when resolution is None."""
+        from portolan_cli.stac import add_raster_extension, create_item
+
+        item = create_item(item_id="test-no-res", bbox=[0, 0, 1, 1])
+        metadata = COGMetadata(
+            bbox=(0, 0, 1, 1),
+            crs="EPSG:4326",
+            width=100,
+            height=100,
+            band_count=1,
+            dtype="uint8",
+            nodata=None,
+            resolution=None,
+        )
+
+        add_raster_extension(item, metadata)
+
+        assert "raster:spatial_resolution" not in item.properties
+
+    @pytest.mark.unit
+    def test_add_raster_extension_idempotent(self) -> None:
+        """add_raster_extension doesn't duplicate extension URL on multiple calls."""
+        from portolan_cli.stac import EXTENSION_URLS, add_raster_extension, create_item
+
+        item = create_item(item_id="test-idempotent", bbox=[0, 0, 1, 1])
+        metadata = COGMetadata(
+            bbox=(0, 0, 1, 1),
+            crs="EPSG:4326",
+            width=100,
+            height=100,
+            band_count=1,
+            dtype="uint8",
+            nodata=None,
+            resolution=(10.0, 10.0),
+        )
+
+        add_raster_extension(item, metadata)
+        add_raster_extension(item, metadata)
+
+        raster_count = sum(
+            1 for ext in (item.stac_extensions or []) if ext == EXTENSION_URLS["raster"]
+        )
+        assert raster_count == 1
+
+
+class TestCollectionExtensionAggregation:
+    """Tests for collection-level extension declaration (Issue #336).
+
+    Collections should declare extensions used by their items, detected via summaries.
+    """
+
+    @pytest.mark.unit
+    def test_add_collection_extensions_from_summaries_adds_projection(self) -> None:
+        """add_collection_extensions_from_summaries declares projection when proj: in summaries."""
+        from portolan_cli.stac import add_collection_extensions_from_summaries, create_collection
+
+        collection = create_collection(
+            collection_id="test-proj-summary",
+            description="Test projection in summaries",
+        )
+        summaries: dict[str, Any] = {
+            "proj:code": ["EPSG:4326", "EPSG:32618"],
+            "proj:shape": [[100, 100], [200, 200]],
+        }
+
+        add_collection_extensions_from_summaries(collection, summaries)
+
+        from portolan_cli.stac import EXTENSION_URLS
+
+        assert EXTENSION_URLS["projection"] in (collection.stac_extensions or [])
+
+    @pytest.mark.unit
+    def test_add_collection_extensions_from_summaries_adds_raster(self) -> None:
+        """add_collection_extensions_from_summaries declares raster when raster: in summaries."""
+        from portolan_cli.stac import add_collection_extensions_from_summaries, create_collection
+
+        collection = create_collection(
+            collection_id="test-raster-summary",
+            description="Test raster in summaries",
+        )
+        summaries: dict[str, Any] = {
+            "raster:spatial_resolution": [10.0, 30.0],
+        }
+
+        add_collection_extensions_from_summaries(collection, summaries)
+
+        from portolan_cli.stac import EXTENSION_URLS
+
+        assert EXTENSION_URLS["raster"] in (collection.stac_extensions or [])
+
+    @pytest.mark.unit
+    def test_add_collection_extensions_from_summaries_adds_vector(self) -> None:
+        """add_collection_extensions_from_summaries declares vector when vector: in summaries."""
+        from portolan_cli.stac import add_collection_extensions_from_summaries, create_collection
+
+        collection = create_collection(
+            collection_id="test-vector-summary",
+            description="Test vector in summaries",
+        )
+        summaries: dict[str, Any] = {
+            "vector:geometry_types": ["Point", "Polygon"],
+        }
+
+        add_collection_extensions_from_summaries(collection, summaries)
+
+        from portolan_cli.stac import EXTENSION_URLS
+
+        assert EXTENSION_URLS["vector"] in (collection.stac_extensions or [])
+
+    @pytest.mark.unit
+    def test_add_collection_extensions_preserves_existing(self) -> None:
+        """add_collection_extensions_from_summaries doesn't remove existing extensions."""
+        from portolan_cli.stac import (
+            EXTENSION_URLS,
+            add_collection_extensions_from_summaries,
+            create_collection,
+        )
+
+        collection = create_collection(
+            collection_id="test-preserve",
+            description="Test preservation",
+        )
+        # Pre-populate with table extension
+        collection.stac_extensions = [EXTENSION_URLS["table"]]
+
+        summaries: dict[str, Any] = {
+            "proj:code": ["EPSG:4326"],
+        }
+
+        add_collection_extensions_from_summaries(collection, summaries)
+
+        assert EXTENSION_URLS["table"] in collection.stac_extensions
+        assert EXTENSION_URLS["projection"] in collection.stac_extensions
+
+    @pytest.mark.unit
+    def test_add_collection_extensions_idempotent(self) -> None:
+        """add_collection_extensions_from_summaries doesn't duplicate extensions."""
+        from portolan_cli.stac import (
+            EXTENSION_URLS,
+            add_collection_extensions_from_summaries,
+            create_collection,
+        )
+
+        collection = create_collection(
+            collection_id="test-idempotent",
+            description="Test idempotence",
+        )
+        summaries: dict[str, Any] = {
+            "proj:code": ["EPSG:4326"],
+        }
+
+        add_collection_extensions_from_summaries(collection, summaries)
+        add_collection_extensions_from_summaries(collection, summaries)
+
+        proj_count = sum(
+            1 for ext in (collection.stac_extensions or []) if ext == EXTENSION_URLS["projection"]
+        )
+        assert proj_count == 1
