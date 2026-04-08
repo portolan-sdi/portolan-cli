@@ -57,11 +57,8 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | Architecture | `pyproject.toml` [tool.importlinter] + [ADR-0025](context/shared/adr/0025-architecture-as-code.md) |
 | CI/CD documentation | `context/shared/documentation/ci.md` |
 | **Real-world test fixtures** | `context/shared/documentation/test-fixtures.md` |
-| Distill MCP tools | `context/shared/documentation/distill-mcp.md` |
 | ADRs | `context/shared/adr/` |
 | Plans & research | `context/shared/` |
-| **Speckit constitution** | `.specify/memory/constitution.md` |
-| Speckit templates | `.specify/templates/` |
 
 **Target Python version:** 3.10+ (matches geoparquet-io dependency)
 
@@ -334,15 +331,6 @@ Use the template at `context/shared/adr/0000-template.md`.
 | **Humans** | `docs/` (mkdocs) | *How to use* — tutorials, visual guides |
 | **AI agents** | Docstrings, CLAUDE.md, ADRs | *How to modify* — dense, structured, co-located with code |
 
-### AI Tools: Document in Both Places
-
-When adding or documenting AI development tools (speckit, Context7, gitingest, etc.), **update both audiences**:
-
-1. **CLAUDE.md** — Technical details, workflow integration, how agents should use it
-2. **docs/contributing.md** — Human-friendly overview in the "AI-Assisted Development" section
-
-This ensures both AI agents and human contributors can discover and use the same tooling.
-
 ### Validating AI Guidance
 
 **When possible, back AI guidance with automated validation.** Documentation drifts; code doesn't lie.
@@ -401,78 +389,6 @@ detail("Processing chunk 3/10...")         # Dimmed text
 | **Plugin interface early** | Handlers follow consistent interface for future plugins | [ADR-0003](context/shared/adr/0003-plugin-architecture.md) |
 | **CLI wraps API** | All logic in library; CLI is thin Click layer | [ADR-0007](context/shared/adr/0007-cli-wraps-api.md) |
 <!-- /freshness -->
-
-## Tool Usage
-
-| Tool | Purpose | Documentation |
-|------|---------|---------------|
-| context7 | Up-to-date library docs (official API) | — |
-| gitingest | Source code exploration (implementation details) | `https://github.com/cyclotruc/gitingest` |
-| grepai | Semantic code search (find code by meaning) | `https://yoanbernabeu.github.io/grepai/` |
-| distill | Token-efficient operations | `context/shared/documentation/distill-mcp.md` |
-| worktrunk | Worktree management | — |
-
-### Dependency Research Workflow
-
-**geoparquet-io** and **rio-cogeo** are core foundation libraries. When working with these, Claude should be proactive about checking actual implementation—not just API docs—when the tools are available.
-
-For core dependencies (**geoparquet-io**, **rio-cogeo**, **gpio-pmtiles**), use this workflow:
-
-1. **Official API** → Use Context7 first (up-to-date, authoritative)
-   ```
-   resolve-library-id("geoparquet-io") → query-docs(libraryId, "your question")
-   ```
-
-2. **Implementation details** → Use Gitingest to explore source (if available)
-   - For geoparquet-io and rio-cogeo: check source when investigating edge cases or debugging
-   - These are core libraries—understanding their actual behavior (not just API surface) helps catch subtle issues
-   ```
-   gitingest https://github.com/geoparquet/geoparquet-io
-   gitingest https://github.com/cogeotiff/rio-cogeo
-   # Copy output, paste into Claude for code-level analysis
-   ```
-
-3. **Large outputs** → Use Distill to compress (if available)
-   ```
-   mcp__distill__auto_optimize(gitingest_output, hint="code")
-   # Reduces tokens by 50-70%
-   ```
-
-**Example**: "How does geoparquet-io handle missing geometry?"
-- Step 1: Context7 → official API docs
-- Step 2: Gitingest → search source for geometry validation (recommended for edge cases)
-- Step 3: Distill → compress the source exploration for token efficiency
-
-**When tools aren't available**: If gitingest isn't installed or MCP tools aren't configured:
-- Use GitHub's web interface to browse source files directly
-- Use `gh api` to fetch specific files from repos
-- Clone the repo locally and use standard file reading
-- WebFetch can retrieve raw GitHub file contents
-
-**Claude's Responsibility**: When working with geoparquet-io or rio-cogeo:
-- Don't assume API behavior without checking source (when tools permit)
-- Search for edge cases, error handling, and validation logic
-- Ask implementation-level questions ("How does it actually...?" not just "What's the API?")
-
-## Speckit Workflow (Specification-Driven Development)
-
-Portolan uses [Speckit](https://github.com/speckit/speckit) for specification-driven development. The workflow is defined in `.specify/memory/constitution.md`.
-
-**Workflow order:**
-1. `/speckit.specify` — Create feature specification from description
-2. `/speckit.clarify` — Ask clarifying questions, encode answers in spec
-3. `/speckit.plan` — Generate implementation plan from spec
-4. `/speckit.tasks` — Generate dependency-ordered task list
-5. `/speckit.checklist` — Generate custom checklist for the feature
-6. `/speckit.implement` — Execute tasks from tasks.md
-7. `/speckit.analyze` — Cross-artifact consistency check
-
-**Key files:**
-- `.specify/memory/constitution.md` — Core principles (TDD, edge cases, etc.)
-- `.specify/templates/` — Templates for spec, plan, tasks
-- `.claude/commands/speckit.*.md` — Command definitions
-
-See the constitution for principles on geospatial edge cases and test fixtures.
 
 ## Known Issues
 

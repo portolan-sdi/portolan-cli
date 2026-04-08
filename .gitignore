@@ -191,10 +191,6 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
-# grepai (semantic code search)
-# The index is machine-local and regenerated via: grepai init && grepai watch
-.grepai/
-
 # menard (documentation sync)
 # Cache files are machine-local; links.toml should be committed
 .menard/cache/
