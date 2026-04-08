@@ -158,9 +158,15 @@ portolan extract arcgis URL --bbox "-75.17,39.95,-75.15,39.97"
 
 # Or explicit service CRS coordinates (Web Mercator in this example)
 portolan extract arcgis URL --bbox "-8367886,4858679,-8365659,4861583"
+
+# Override CRS auto-detection with --bbox-crs
+portolan extract arcgis URL --bbox "100,200,300,400" --bbox-crs "EPSG:2269"
 ```
 
 **Automatic CRS conversion**: Portolan detects if your bbox coordinates appear to be in WGS84 (values in -180/180, -90/90 range) and automatically reprojects them to the service's native CRS. This means you can use familiar lat/lon coordinates without manual conversion.
+
+!!! tip "Overriding CRS Detection"
+    If you're working with a local CRS (like State Plane) where coordinates happen to fall in the WGS84 range, use `--bbox-crs` to specify the exact CRS and skip auto-detection.
 
 ### ImageServer Options
 

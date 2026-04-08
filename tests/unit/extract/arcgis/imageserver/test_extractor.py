@@ -399,18 +399,18 @@ class TestBboxCrsDetection:
         """Bbox is correctly reprojected from WGS84 to Web Mercator."""
         from portolan_cli.extract.arcgis.imageserver.extractor import _reproject_bbox
 
-        # Simple point near origin
-        bbox = (0.0, 0.0, 1.0, 1.0)
+        # Philadelphia area: known coordinates for verification
+        # WGS84: (-75.17, 39.95, -75.15, 39.97)
+        # Expected Web Mercator (approximately):
+        # minx: -8367886, miny: 4858679, maxx: -8365659, maxy: 4861583
+        bbox = (-75.17, 39.95, -75.15, 39.97)
         result = _reproject_bbox(bbox, "EPSG:4326", "EPSG:3857")
 
-        # Web Mercator coords should be much larger than WGS84
-        assert abs(result[0]) < 200000  # minx
-        assert abs(result[1]) < 200000  # miny
-        assert abs(result[2]) < 200000  # maxx
-        assert abs(result[3]) < 200000  # maxy
-        # But non-zero
-        assert result[2] > result[0]  # maxx > minx
-        assert result[3] > result[1]  # maxy > miny
+        # Verify against known correct values (within 100m tolerance)
+        assert -8368000 < result[0] < -8367000  # minx ~ -8367886
+        assert 4858000 < result[1] < 4859000  # miny ~ 4858679
+        assert -8366000 < result[2] < -8365000  # maxx ~ -8365659
+        assert 4861000 < result[3] < 4862000  # maxy ~ 4861583
 
     def test_reproject_bbox_if_needed_passthrough_for_wgs84_service(self) -> None:
         """Bbox is not reprojected if service is already WGS84."""
@@ -426,13 +426,88 @@ class TestBboxCrsDetection:
         """WGS84 bbox is auto-reprojected to service CRS."""
         from portolan_cli.extract.arcgis.imageserver.extractor import reproject_bbox_if_needed
 
-        # WGS84 coords
+        # WGS84 coords (Philadelphia)
         bbox = (-75.17, 39.95, -75.15, 39.97)
         result = reproject_bbox_if_needed(bbox, "EPSG:3857")
 
-        # Should be reprojected to Web Mercator (much larger numbers)
-        assert abs(result[0]) > 1000  # Web Mercator x values are large
-        assert abs(result[2]) > 1000
+        # Verify against known correct Web Mercator values
+        assert -8368000 < result[0] < -8367000  # minx ~ -8367886
+        assert 4858000 < result[1] < 4859000  # miny ~ 4858679
+        assert -8366000 < result[2] < -8365000  # maxx ~ -8365659
+        assert 4861000 < result[3] < 4862000  # maxy ~ 4861583
+
+    def test_reproject_bbox_if_needed_explicit_bbox_crs(self) -> None:
+        """Explicit bbox_crs parameter overrides auto-detection."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import reproject_bbox_if_needed
+
+        # State Plane coords that happen to be in WGS84 range (would trigger false positive)
+        bbox = (100.0, 50.0, 150.0, 80.0)
+
+        # Without explicit bbox_crs, this would be detected as WGS84 and reprojected
+        # With explicit bbox_crs matching service CRS, no reprojection happens
+        result = reproject_bbox_if_needed(bbox, "EPSG:3857", bbox_crs="EPSG:3857")
+
+        # Should be unchanged (same CRS)
+        assert result == bbox
+
+    def test_reproject_bbox_if_needed_explicit_bbox_crs_different(self) -> None:
+        """Explicit bbox_crs triggers reprojection when different from service CRS."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import reproject_bbox_if_needed
+
+        # Explicit WGS84 bbox
+        bbox = (-75.17, 39.95, -75.15, 39.97)
+        result = reproject_bbox_if_needed(bbox, "EPSG:3857", bbox_crs="EPSG:4326")
+
+        # Should be reprojected to Web Mercator
+        assert -8368000 < result[0] < -8367000
+
+
+@pytest.mark.unit
+class TestCollectionNameValidation:
+    """Tests for collection name validation (path traversal prevention)."""
+
+    def test_validate_collection_name_simple(self) -> None:
+        """Simple collection names pass validation."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _validate_collection_name
+
+        assert _validate_collection_name("tiles") == "tiles"
+        assert _validate_collection_name("naip-2024") == "naip-2024"
+        assert _validate_collection_name("my_collection") == "my_collection"
+
+    def test_validate_collection_name_strips_path_components(self) -> None:
+        """Path traversal attempts are sanitized."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _validate_collection_name
+
+        # Path traversal attempts get stripped to just the base name
+        assert _validate_collection_name("../../../etc") == "etc"
+        assert _validate_collection_name("/etc/passwd") == "passwd"
+        assert _validate_collection_name("foo/bar/baz") == "baz"
+
+    def test_validate_collection_name_rejects_empty(self) -> None:
+        """Empty names are rejected."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _validate_collection_name
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            _validate_collection_name("")
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            _validate_collection_name(".")
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            _validate_collection_name("..")
+
+    def test_validate_collection_name_rejects_invalid_chars(self) -> None:
+        """Names with invalid characters are rejected."""
+        from portolan_cli.extract.arcgis.imageserver.extractor import _validate_collection_name
+
+        with pytest.raises(ValueError, match="cannot contain"):
+            _validate_collection_name("foo<bar")
+
+        with pytest.raises(ValueError, match="cannot contain"):
+            _validate_collection_name("foo|bar")
+
+        with pytest.raises(ValueError, match="cannot contain"):
+            _validate_collection_name("foo?bar")
 
 
 @pytest.mark.unit

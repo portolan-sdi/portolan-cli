@@ -33,7 +33,7 @@ import json
 import logging
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -447,29 +447,51 @@ def _reproject_bbox(
 def reproject_bbox_if_needed(
     bbox: tuple[float, float, float, float],
     service_crs: str,
+    bbox_crs: str | None = None,
 ) -> tuple[float, float, float, float]:
     """Auto-detect WGS84 bbox and reproject to service CRS if needed.
 
-    If the bbox appears to be in WGS84 (based on coordinate ranges) and the
+    If bbox_crs is explicitly provided, it is used directly. Otherwise,
+    if the bbox appears to be in WGS84 (based on coordinate ranges) and the
     service uses a different CRS, the bbox is automatically reprojected.
 
     Args:
         bbox: User-provided bounding box (minx, miny, maxx, maxy).
         service_crs: Service CRS string (e.g., "EPSG:3857").
+        bbox_crs: Optional explicit CRS of the bbox (e.g., "EPSG:4326").
+            If provided, auto-detection is skipped and this CRS is used.
 
     Returns:
         Bbox in service CRS (reprojected if needed, original otherwise).
     """
+    # If explicit bbox_crs provided, use it directly (no heuristics)
+    if bbox_crs is not None:
+        bbox_crs_upper = bbox_crs.upper()
+        service_crs_upper = service_crs.upper()
+        # Normalize CRS:84 to EPSG:4326 for comparison
+        if bbox_crs_upper == "CRS:84":
+            bbox_crs_upper = "EPSG:4326"
+        if service_crs_upper == "CRS:84":
+            service_crs_upper = "EPSG:4326"
+        if bbox_crs_upper == service_crs_upper:
+            return bbox
+        logger.info(
+            "Reprojecting bbox from %s to service CRS %s.",
+            bbox_crs,
+            service_crs,
+        )
+        return _reproject_bbox(bbox, bbox_crs, service_crs)
+
     # If service is already WGS84, no reprojection needed
     service_crs_upper = service_crs.upper()
     if service_crs_upper in ("EPSG:4326", "CRS:84"):
         return bbox
 
-    # Check if bbox appears to be WGS84
+    # Check if bbox appears to be WGS84 (heuristic auto-detection)
     if _is_likely_wgs84(bbox):
         logger.info(
             "Bbox appears to be WGS84 (coordinates in -180/180, -90/90 range). "
-            "Reprojecting to service CRS %s.",
+            "Reprojecting to service CRS %s. Use --bbox-crs to override.",
             service_crs,
         )
         return _reproject_bbox(bbox, "EPSG:4326", service_crs)
@@ -1033,6 +1055,40 @@ def _update_stats_and_state(
             )
 
 
+def _validate_collection_name(name: str) -> str:
+    """Validate and sanitize collection name to prevent path traversal.
+
+    Args:
+        name: User-provided collection name.
+
+    Returns:
+        Sanitized collection name (base name only, no path components).
+
+    Raises:
+        ValueError: If the sanitized name is empty or invalid.
+    """
+    # Extract just the base name (strips any path separators or .. components)
+    sanitized = Path(name).name
+
+    # Reject empty names or names that are just dots
+    if not sanitized or sanitized in (".", ".."):
+        raise ValueError(
+            f"Invalid collection name: '{name}'. "
+            "Collection name cannot be empty or contain path traversal sequences."
+        )
+
+    # Reject names with problematic characters for cross-platform compatibility
+    invalid_chars = '<>:"|?*'
+    for char in invalid_chars:
+        if char in sanitized:
+            raise ValueError(
+                f"Invalid collection name: '{name}'. "
+                f"Collection name cannot contain: {invalid_chars}"
+            )
+
+    return sanitized
+
+
 async def extract_imageserver(
     url: str,
     output_dir: Path,
@@ -1041,6 +1097,7 @@ async def extract_imageserver(
     bbox: tuple[float, float, float, float] | None = None,
     on_progress: Callable[[TileProgress], None] | None = None,
     collection_name: str | None = None,
+    bbox_crs: str | None = None,
 ) -> ExtractionResult:
     """Extract raster tiles from ImageServer to COG files.
 
@@ -1055,19 +1112,24 @@ async def extract_imageserver(
         bbox: Optional bbox to subset extraction (minx, miny, maxx, maxy).
         on_progress: Optional callback for progress updates (matches FeatureServer pattern).
         collection_name: Name for the collection directory (default: 'tiles').
+        bbox_crs: Optional explicit CRS of the bbox (e.g., "EPSG:4326", "EPSG:3857").
+            If provided, skips auto-detection and uses this CRS for reprojection.
 
     Returns:
         ExtractionResult with extraction statistics and full report.
 
     Raises:
         ImageServerDiscoveryError: If service discovery fails.
+        ValueError: If collection_name contains path traversal sequences.
     """
     if config is None:
         config = ExtractionConfig()
 
-    # Default collection name to 'tiles' if not provided
+    # Default collection name to 'tiles' if not provided, then validate
     if collection_name is None:
         collection_name = "tiles"
+    else:
+        collection_name = _validate_collection_name(collection_name)
 
     start_time = time.monotonic()
 
@@ -1087,16 +1149,8 @@ async def extract_imageserver(
             f"Requested tile size ({config.tile_size}px) exceeds service limit "
             f"({max_tile_size}px). Auto-adjusting to {max_tile_size}px."
         )
-        config = ExtractionConfig(
-            tile_size=max_tile_size,
-            cog_settings=config.cog_settings,
-            max_retries=config.max_retries,
-            dry_run=config.dry_run,
-            raw=config.raw,
-            timeout=config.timeout,
-            max_concurrent=config.max_concurrent,
-            rate_limit_delay=config.rate_limit_delay,
-        )
+        # Use dataclasses.replace to preserve all fields (including compression)
+        config = replace(config, tile_size=max_tile_size)
 
     # Get service CRS for bbox reprojection
     service_crs = metadata.get_crs_string()
@@ -1104,8 +1158,8 @@ async def extract_imageserver(
     # Compute tiles
     extent = metadata.full_extent
     if bbox:
-        # Auto-reproject bbox from WGS84 to service CRS if needed (per issue #335)
-        bbox = reproject_bbox_if_needed(bbox, service_crs)
+        # Reproject bbox to service CRS if needed (auto-detect or explicit via bbox_crs)
+        bbox = reproject_bbox_if_needed(bbox, service_crs, bbox_crs=bbox_crs)
         intersected = _intersect_bbox(bbox, extent)
         if intersected is None:
             info("User bbox does not intersect service extent - no tiles to extract")

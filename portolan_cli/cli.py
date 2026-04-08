@@ -5011,6 +5011,7 @@ def _handle_imageserver_extraction(
     output_dir: Path,
     tile_size: int,
     bbox: str | None,
+    bbox_crs: str | None,
     compression: str | None,
     max_concurrent: int,
     timeout: float,
@@ -5080,6 +5081,7 @@ def _handle_imageserver_extraction(
         resume=resume,
         raw=False,  # ImageServer always creates STAC structure
         bbox=bbox_tuple,
+        bbox_crs=bbox_crs,
         timeout=timeout,
         compression=cog_settings.compression,
         use_json=json_output,
@@ -5325,6 +5327,12 @@ def extract() -> None:
     help="[ImageServer] Bounding box filter: minx,miny,maxx,maxy. WGS84 coords auto-converted to service CRS.",
 )
 @click.option(
+    "--bbox-crs",
+    type=str,
+    default=None,
+    help="[ImageServer] Explicit CRS of --bbox (e.g., EPSG:4326, EPSG:3857). Skips auto-detection.",
+)
+@click.option(
     "--compression",
     type=click.Choice(["DEFLATE", "JPEG", "LZW", "ZSTD"], case_sensitive=False),
     default=None,
@@ -5363,6 +5371,7 @@ def extract_arcgis_cmd(
     raw: bool,
     tile_size: int,
     bbox: str | None,
+    bbox_crs: str | None,
     compression: str | None,
     max_concurrent: int,
     collection_name: str | None,
@@ -5460,6 +5469,7 @@ def extract_arcgis_cmd(
             output_dir=output_dir,
             tile_size=tile_size,
             bbox=bbox,
+            bbox_crs=bbox_crs,
             compression=compression,
             max_concurrent=max_concurrent,
             timeout=timeout,
