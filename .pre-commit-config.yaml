@@ -77,6 +77,13 @@ repos:
         files: ^portolan_cli/(output|errors|constants|json_output|cli)\.py$
         pass_filenames: true
 
+      - id: sync-sourcecoop-skill
+        name: sync Source Co-op skill CLI reference
+        entry: uv run python scripts/sync_sourcecoop_skill.py --update
+        language: system
+        files: ^(portolan_cli/cli\.py|portolan_cli/push\.py|portolan_cli/config\.py|portolan_cli/metadata_yaml\.py|portolan_cli/readme\.py|scripts/sync_sourcecoop_skill\.py|portolan_cli/skills/sourcecoop\.md)$
+        pass_filenames: false
+
       # === VALIDATION HOOKS ===
 
       - id: validate-claude-md
