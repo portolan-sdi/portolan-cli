@@ -1,0 +1,63 @@
+# E2E Tests - REST Iceberg catalog + MinIO via Docker
+# Per-PR: core e2e tests (fast)
+# Nightly: full suite including concurrency stress and large datasets
+name: E2E Tests (Iceberg)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'portolan_cli/backends/iceberg/**'
+      - 'tests/iceberg/**'
+      - 'pyproject.toml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'portolan_cli/backends/iceberg/**'
+      - 'tests/iceberg/**'
+      - 'pyproject.toml'
+  schedule:
+    - cron: '0 3 * * *'  # Nightly at 3 AM UTC
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: E2E Tests (Iceberg)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --extra iceberg --extra dev --extra e2e
+
+      - name: Start Docker services
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml up -d --wait
+
+      - name: Wait for REST catalog
+        run: timeout 60 bash -c 'until curl -sf http://localhost:8181/v1/config; do sleep 2; done'
+
+      - name: Wait for MinIO
+        run: timeout 60 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 2; done'
+
+      - name: Run core E2E tests (per-PR)
+        if: github.event_name != 'schedule'
+        run: uv run pytest tests/iceberg/e2e/ -v --tb=long -m "e2e and not e2e_slow" --timeout=120
+
+      - name: Run full E2E suite (nightly)
+        if: github.event_name == 'schedule'
+        run: uv run pytest tests/iceberg/e2e/ -v --tb=long -m e2e --timeout=120
+
+      - name: Docker logs (on failure)
+        if: failure()
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml logs
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml down -v

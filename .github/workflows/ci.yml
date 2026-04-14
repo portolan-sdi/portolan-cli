@@ -12,6 +12,23 @@ on:
   workflow_dispatch:  # Allow manual triggering
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      iceberg: ${{ steps.filter.outputs.iceberg }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            iceberg:
+              - 'portolan_cli/backends/iceberg/**'
+              - 'tests/iceberg/**'
+              - 'pyproject.toml'
+
   lint:
     name: Lint & Format
     runs-on: ubuntu-latest
@@ -103,8 +120,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Run tests (unit + integration, no network)
-        run: uv run pytest tests/ -v --tb=short -m "not network and not slow and not benchmark" --cov=portolan_cli --cov-report=term-missing --cov-report=xml
+      - name: Run tests (unit + integration, no network, no iceberg)
+        run: uv run pytest tests/ --ignore=tests/iceberg/ -v --tb=short -m "not network and not slow and not benchmark" --cov=portolan_cli --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
@@ -182,3 +199,37 @@ jobs:
       - name: Check package contents
         run: |
           uv run python -c "import tarfile; t = tarfile.open(list(__import__('pathlib').Path('dist').glob('*.tar.gz'))[0]); print('\n'.join(t.getnames()))"
+
+  iceberg-test:
+    name: Iceberg Tests (Python ${{ matrix.python-version }} / ${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.iceberg == 'true' || github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ['3.11', '3.12', '3.13']
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --extra iceberg --extra dev
+
+      - name: Run iceberg tests (unit + integration)
+        run: uv run pytest tests/iceberg/ -v --tb=short -m "not e2e and not e2e_slow and not network and not slow" --cov=portolan_cli/backends/iceberg --cov-report=term-missing

@@ -1,11 +1,18 @@
 """Versioning backends for portolan-cli.
 
-This module provides the plugin discovery mechanism for versioning backends.
-The MVP uses JsonFileBackend (versions.json), while external plugins like
-portolake can provide enterprise backends (Iceberg/Icechunk).
+This module provides the discovery mechanism for versioning backends.
+The MVP uses JsonFileBackend (versions.json), while the optional [iceberg]
+extra provides the enterprise IcebergBackend (ACID transactions, rollback).
+
+Built-in backends:
+    - "file" — JsonFileBackend (versions.json, always available)
+    - "iceberg" — IcebergBackend (requires: pip install portolan-cli[iceberg])
+
+Third-party plugins can still register additional backends via the
+"portolan.backends" entry point group.
 
 See ADR-0015 (Two-Tier Versioning Architecture) for architectural context.
-See ADR-0003 (Plugin Architecture) for plugin patterns.
+See ADR-0041 (Iceberg as Optional Extra) for the merge decision.
 
 Usage:
     from portolan_cli.backends import get_backend
@@ -13,12 +20,8 @@ Usage:
     # Get the default file-based backend
     backend = get_backend()
 
-    # Get a specific backend (if plugin is installed)
+    # Get the Iceberg backend (requires [iceberg] extra)
     backend = get_backend("iceberg")
-
-Plugin registration (in plugin's pyproject.toml):
-    [project.entry-points."portolan.backends"]
-    iceberg = "portolake:IcebergBackend"
 """
 
 from __future__ import annotations
@@ -37,28 +40,30 @@ logger = logging.getLogger(__name__)
 def get_backend(name: str = "file", catalog_root: Path | None = None) -> VersioningBackend:
     """Get a versioning backend by name.
 
-    Discovers backends through two mechanisms:
+    Discovers backends through three mechanisms:
     1. Built-in "file" backend (JsonFileBackend using versions.json)
-    2. External plugins registered via "portolan.backends" entry point
+    2. Built-in "iceberg" backend (requires [iceberg] extra)
+    3. External plugins registered via "portolan.backends" entry point
 
     Note: Creates a NEW instance on each call. This function does not implement
     singleton semantics; each call returns a fresh backend instance.
 
     Args:
-        name: Backend name. "file" for built-in, or plugin name (e.g., "iceberg").
+        name: Backend name. "file" for built-in, "iceberg" for Iceberg
+            (requires [iceberg] extra), or a plugin name.
 
     Returns:
         VersioningBackend instance.
 
     Raises:
-        ValueError: If backend not found, plugin fails to load, plugin fails
-            to instantiate, or plugin doesn't implement VersioningBackend.
+        ValueError: If backend not found, dependencies missing, plugin fails to
+            load/instantiate, or plugin doesn't implement VersioningBackend.
             Message includes available backends and error details.
 
     Example:
         >>> backend = get_backend()  # Default file backend
         >>> backend = get_backend("file")  # Explicit file backend
-        >>> backend = get_backend("iceberg")  # Plugin backend (requires portolake)
+        >>> backend = get_backend("iceberg")  # Iceberg backend (requires [iceberg] extra)
     """
     # Built-in file backend
     if name == "file":
@@ -66,6 +71,18 @@ def get_backend(name: str = "file", catalog_root: Path | None = None) -> Version
 
         logger.debug("Creating JsonFileBackend instance")
         return JsonFileBackend(catalog_root=catalog_root)
+
+    # Built-in iceberg backend (optional extra)
+    if name == "iceberg":
+        try:
+            from portolan_cli.backends.iceberg import IcebergBackend
+        except ImportError as e:
+            raise ValueError(
+                "The 'iceberg' backend requires the iceberg extra. "
+                "Install it with: pip install portolan-cli[iceberg]"
+            ) from e
+        logger.debug("Creating IcebergBackend instance")
+        return IcebergBackend(catalog_root=catalog_root)
 
     # Discover plugin backends via entry points
     eps = entry_points(group="portolan.backends")
@@ -76,7 +93,7 @@ def get_backend(name: str = "file", catalog_root: Path | None = None) -> Version
 
     # Build helpful error message
     plugin_names = [ep.name for ep in eps]
-    available = ["file"] + plugin_names
+    available = ["file", "iceberg"] + plugin_names
     raise ValueError(f"Unknown backend: {name}. Available: {', '.join(available)}")
 
 

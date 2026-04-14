@@ -71,7 +71,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0001](context/shared/adr/0001-agentic-first-development.md) | Agentic-first: automate all quality gates, TDD mandatory |
 | [0002](context/shared/adr/0002-click-for-cli.md) | Click for CLI framework |
 | [0003](context/shared/adr/0003-plugin-architecture.md) | Plugin architecture for formats (GeoParquet/COG core, others optional) |
-| [0004](context/shared/adr/0004-iceberg-as-plugin.md) | Iceberg as plugin, STAC remains catalog layer |
+| [0004](context/shared/adr/0004-iceberg-as-plugin.md) | ~~Iceberg as plugin~~ Superseded by ADR-0041 |
 | [0005](context/shared/adr/0005-versions-json-source-of-truth.md) | versions.json as single source of truth |
 | [0006](context/shared/adr/0006-remote-ownership-model.md) | Portolan owns bucket contents (no external edits) |
 | [0007](context/shared/adr/0007-cli-wraps-api.md) | CLI wraps Python API (all logic in library layer) |
@@ -82,7 +82,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0012](context/shared/adr/0012-flat-catalog-hierarchy.md) | Flat catalog hierarchy (no nested collections) |
 | [0013](context/shared/adr/0013-gitingest-auto-fetch.md) | Auto-fetch dependency docs via gitingest |
 | [0014](context/shared/adr/0014-accept-non-cloud-native-formats.md) | Accept non-cloud-native formats with warnings |
-| [0015](context/shared/adr/0015-two-tier-versioning-architecture.md) | Two-tier versioning: simple MVP + [portolake](https://github.com/portolan-sdi/portolake) plugin for enterprise |
+| [0015](context/shared/adr/0015-two-tier-versioning-architecture.md) | Two-tier versioning: simple MVP + `[iceberg]` extra for enterprise |
 | [0016](context/shared/adr/0016-scan-before-import.md) | Scan-before-import: separate validation from import (like ruff check/fix) |
 | [0017](context/shared/adr/0017-mtime-heuristics-change-detection.md) | MTIME + heuristics for change detection (fast gate, O(1) metadata check) |
 | [0018](context/shared/adr/0018-metadata-generation-tiers.md) | Metadata generation tiers: auto-extractable → derivable → defaults → human-enrichable |
@@ -108,6 +108,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0038](context/shared/adr/0038-metadata-yaml-enrichment.md) | metadata.yaml as human enrichment layer (supplements STAC, generates README) |
 | [0039](context/shared/adr/0039-hierarchical-portolan-folders.md) | Hierarchical .portolan/ at collection/subcatalog levels |
 | [0040](context/shared/adr/0040-unified-progress-output.md) | Progress + summary model: Rich progress bars, immediate errors, batched warnings |
+| [0041](context/shared/adr/0041-iceberg-as-optional-extra.md) | Iceberg as optional `[iceberg]` extra, not separate package (supersedes 0004) |
 
 ## Common Commands
 
@@ -128,6 +129,11 @@ uv run vulture portolan_cli tests       # Dead code
 uv run xenon --max-absolute=C portolan_cli  # Complexity
 uv run pylint --disable=all --enable=duplicate-code portolan_cli/  # Duplicate code
 
+# Iceberg backend development
+uv sync --extra iceberg --extra dev     # Install with iceberg deps
+uv run pytest tests/iceberg/ -m unit    # Run iceberg unit tests
+uv run pytest tests/iceberg/ -m "not e2e and not e2e_slow"  # All iceberg tests (no Docker)
+
 # Commits (use commitizen for conventional commits)
 uv run cz commit                        # Interactive commit
 uv run cz bump --dry-run                # Preview version bump
@@ -142,6 +148,10 @@ uv run mkdocs build                     # Build docs
 ```
 portolan-cli/
 ├── portolan_cli/          # Source code
+│   └── backends/
+│       ├── json_file.py   # MVP file-based backend (always available)
+│       ├── protocol.py    # VersioningBackend protocol definition
+│       └── iceberg/       # Iceberg backend (requires [iceberg] extra)
 ├── tests/                 # Test suite
 │   ├── fixtures/          # Test data files
 │   ├── specs/             # Human-written test specifications
@@ -149,7 +159,8 @@ portolan-cli/
 │   ├── integration/       # Multi-component tests
 │   ├── network/           # Tests requiring network (mocked locally)
 │   ├── benchmark/         # Performance measurements
-│   └── snapshot/          # Snapshot tests
+│   ├── snapshot/          # Snapshot tests
+│   └── iceberg/           # Iceberg backend tests (unit, integration, e2e)
 ├── docs/                  # PUBLIC documentation (mkdocs) - tutorials, user guides
 ├── context/               # AI/INTERNAL development context
 │   └── shared/            # Plans, research, reports
@@ -196,6 +207,8 @@ Always research before implementing:
 @pytest.mark.snapshot    # Compares output against golden files
 @pytest.mark.benchmark   # Performance measurement, tracked over time
 @pytest.mark.slow        # Takes > 5 seconds
+@pytest.mark.e2e         # End-to-end tests requiring Docker (REST catalog + MinIO)
+@pytest.mark.e2e_slow    # Extended E2E tests (concurrency stress, large datasets) - nightly only
 ```
 
 **Real-world fixtures:** See `context/shared/documentation/test-fixtures.md` for details.
@@ -399,6 +412,7 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 | [PyArrow v22+ ABI](context/shared/known-issues/pyarrow-abseil-abi.md) | Import failures on Ubuntu 22.04; pinned to `<22.0.0` |
 | [geoparquet-io Windows segfault](context/shared/known-issues/geoparquet-io-windows-segfault.md) | Crashes on malformed input; test skipped on Windows |
 | [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
+| [FileGDB MULTISURFACE](context/shared/known-issues/filegdb-multisurface-duckdb.md) | DuckDB spatial can't parse MULTISURFACE WKB from FileGDB |
 
 ## Active Technologies
 - Python 3.10+ (per pyproject.toml) + Click (CLI framework per ADR-0002) (004-json-output)
