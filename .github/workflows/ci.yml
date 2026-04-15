@@ -232,4 +232,12 @@ jobs:
         run: uv sync --extra iceberg --extra dev
 
       - name: Run iceberg tests (unit + integration)
-        run: uv run pytest tests/iceberg/ -v --tb=short -m "not e2e and not e2e_slow and not network and not slow" --cov=portolan_cli/backends/iceberg --cov-report=term-missing
+        run: uv run pytest tests/iceberg/ -v --tb=short -m "not e2e and not e2e_slow and not network and not slow" --cov=portolan_cli/backends/iceberg --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage reports to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: portolan-sdi/portolan-cli
+          flags: iceberg

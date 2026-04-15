@@ -47,8 +47,8 @@ class IcebergBackend:
         self._catalog: Catalog = catalog if catalog is not None else create_catalog(catalog_root)
         try:
             self._catalog.create_namespace(NAMESPACE)
-        except Exception:
-            pass  # Already exists
+        except Exception:  # nosec B110 - namespace may already exist, idempotent init
+            pass
 
     def _validate_collection(self, collection: str) -> str:
         """Validate and sanitize collection name."""
@@ -524,8 +524,8 @@ def _read_parquet_assets(assets: dict[str, str]) -> pa.Table | None:
         if path.exists() and path.suffix == ".parquet":
             try:
                 tables.append(pq.read_table(path))
-            except Exception:
-                pass  # Not a valid parquet file, skip data ingestion
+            except Exception:  # nosec B110 - skip invalid/unreadable parquet files
+                pass
 
     if not tables:
         return None
