@@ -83,6 +83,21 @@ Workflow: `.github/workflows/ci.yml`
 
 - `uv build` — Verify package builds correctly
 
+#### `iceberg-test` — Iceberg Unit & Integration Tests
+
+- Python versions: 3.11, 3.12, 3.13
+- Operating systems: Ubuntu, macOS
+- Runs only when iceberg-related paths change (or on push to `main`)
+- Excludes `e2e`, `e2e_slow`, `network`, `slow`
+- Coverage reporting to Codecov (`iceberg` flag)
+
+#### `iceberg-e2e` — Iceberg E2E Tests (fast tier)
+
+- Python versions: 3.11, 3.12, 3.13 (Ubuntu only — Docker on Linux)
+- Runs only when iceberg-related paths change (or on push to `main`)
+- Spins up `docker-compose` (REST Iceberg catalog + MinIO), runs `-m "e2e and not e2e_slow"` with a 120s per-test timeout
+- Dumps Docker logs on failure and always tears down
+
 ---
 
 ## Tier 3: Nightly
@@ -117,6 +132,12 @@ Why this matters: AI-generated tests can be tautological — they may pass but n
 
 - `pip-audit --strict` — Full security audit
 - Outdated dependency reporting (informational)
+
+#### `iceberg-e2e-full` — Iceberg E2E Tests (full suite)
+
+- Python 3.11 on Ubuntu
+- Spins up `docker-compose` (REST Iceberg catalog + MinIO), runs `-m e2e` (includes `e2e_slow`: concurrency stress and large datasets)
+- 120s per-test timeout; Docker logs on failure; always tears down
 
 ---
 
@@ -156,6 +177,8 @@ markers = [
     "snapshot: Compares output against golden files",
     "benchmark: Performance measurement, tracked over time",
     "slow: Takes > 5 seconds",
+    "e2e: End-to-end tests requiring Docker (REST catalog + MinIO)",
+    "e2e_slow: Extended E2E tests (concurrency stress, large datasets) — nightly only",
 ]
 ```
 
@@ -164,8 +187,8 @@ markers = [
 | Gate | Tests |
 |------|-------|
 | Pre-commit | unit only (fast, < 30s total) |
-| CI (PR) | unit, integration, snapshot, **realdata** |
-| Nightly | All markers including network and benchmark |
+| CI (PR) | unit, integration, snapshot, **realdata**; iceberg `e2e` (not `e2e_slow`) when iceberg paths change |
+| Nightly | All markers including network, benchmark, and the full iceberg `e2e` suite (with `e2e_slow`) |
 
 ### Real-World Fixtures
 

@@ -199,3 +199,43 @@ jobs:
           echo "=== Outdated dependencies ==="
           uv pip list --outdated
           # Note: This is informational, not a failure condition
+
+  iceberg-e2e-full:
+    name: Iceberg E2E Tests (Full Suite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --extra iceberg --extra dev --extra e2e
+
+      - name: Start Docker services
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml up -d --wait
+
+      - name: Wait for REST catalog
+        run: timeout 60 bash -c 'until curl -sf http://localhost:8181/v1/config; do sleep 2; done'
+
+      - name: Wait for MinIO
+        run: timeout 60 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 2; done'
+
+      - name: Run E2E tests (full suite, includes e2e_slow)
+        run: uv run pytest tests/iceberg/e2e/ -v --tb=long -m e2e --timeout=120
+
+      - name: Docker logs (on failure)
+        if: failure()
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml logs
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml down -v
