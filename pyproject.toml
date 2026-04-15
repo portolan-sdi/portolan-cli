@@ -54,6 +54,14 @@ portolan = "portolan_cli:cli"
 "Source" = "https://github.com/portolan-sdi/portolan-cli"
 
 [project.optional-dependencies]
+iceberg = [
+    "pyiceberg[sql-sqlite]>=0.8.0",
+    "shapely>=2.0.0",
+    "pygeohash>=1.2.0",
+]
+e2e = [
+    "boto3>=1.35.0",
+]
 dev = [
     "bandit>=1.9.3",
     "codespell>=2.4.1",
@@ -119,6 +127,8 @@ markers = [
     "snapshot: Compares output against golden files",
     "benchmark: Performance measurement, tracked over time",
     "slow: Takes > 5 seconds",
+    "e2e: End-to-end tests requiring Docker (REST catalog + MinIO)",
+    "e2e_slow: Extended E2E tests (concurrency stress, large datasets) - nightly only",
 ]
 
 [tool.coverage.run]
@@ -178,7 +188,7 @@ python_version = "3.10"
 strict = true  # Enables all strict flags at once
 
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "rasterio.*", "gitingest.*"]
+module = ["pyarrow.*", "rasterio.*", "gitingest.*", "pyiceberg.*", "shapely.*", "pygeohash.*"]
 ignore_missing_imports = true
 
 # ---------- security ----------
@@ -202,6 +212,7 @@ exclude = [
     "portolan_cli/validation/rules.py",  # Abstract methods have unused params
     "portolan_cli/backends/protocol.py",  # Protocol method params are intentionally unused
     "portolan_cli/backends/json_file.py",  # Stub methods raise NotImplementedError
+    "portolan_cli/backends/iceberg/backend.py",  # Protocol methods + lifecycle hooks
 ]
 sort_by_size = true
 verbose = false
@@ -238,6 +249,13 @@ ignore_imports = [
 ]
 
 [[tool.importlinter.contracts]]
+id = "iceberg-backend-isolation"
+name = "Iceberg backend must not import CLI layer directly"
+type = "forbidden"
+source_modules = ["portolan_cli.backends.iceberg"]
+forbidden_modules = ["portolan_cli.cli"]
+
+[[tool.importlinter.contracts]]
 id = "utilities-are-foundational"
 name = "Utilities must not import other portolan modules"
 type = "independence"
@@ -265,7 +283,7 @@ extend_exclude = [
 # Security constraints for transitive dependencies (not directly imported)
 # - requests: CVE-2026-25645
 # - pygments: CVE-2026-4539
-DEP002 = ["requests", "pygments"]
+DEP002 = ["requests", "pygments", "pyiceberg", "shapely", "pygeohash", "boto3"]
 
 [dependency-groups]
 dev = [

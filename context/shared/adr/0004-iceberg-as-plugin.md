@@ -1,7 +1,7 @@
 # ADR-0004: Iceberg as Plugin, Not Core
 
 ## Status
-Accepted
+Superseded by [ADR-0041](0041-iceberg-as-optional-extra.md)
 
 ## Context
 

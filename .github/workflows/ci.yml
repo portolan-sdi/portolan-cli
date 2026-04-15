@@ -12,6 +12,23 @@ on:
   workflow_dispatch:  # Allow manual triggering
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      iceberg: ${{ steps.filter.outputs.iceberg }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            iceberg:
+              - 'portolan_cli/backends/iceberg/**'
+              - 'tests/iceberg/**'
+              - 'pyproject.toml'
+
   lint:
     name: Lint & Format
     runs-on: ubuntu-latest
@@ -103,8 +120,8 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Run tests (unit + integration, no network)
-        run: uv run pytest tests/ -v --tb=short -m "not network and not slow and not benchmark" --cov=portolan_cli --cov-report=term-missing --cov-report=xml
+      - name: Run tests (unit + integration, no network, no iceberg)
+        run: uv run pytest tests/ --ignore=tests/iceberg/ -v --tb=short -m "not network and not slow and not benchmark" --cov=portolan_cli --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
@@ -112,6 +129,96 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: portolan-sdi/portolan-cli
+
+  iceberg-test:
+    name: Iceberg Unit & Integration Tests (Python ${{ matrix.python-version }} / ${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.iceberg == 'true' || github.event_name == 'push'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ['3.11', '3.12', '3.13']
+    env:
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --extra iceberg --extra dev
+
+      - name: Run unit and integration tests
+        run: uv run pytest tests/iceberg/ -v --tb=short -m "not e2e and not e2e_slow and not network and not slow" --cov=portolan_cli/backends/iceberg --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage reports to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v6
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: portolan-sdi/portolan-cli
+          flags: iceberg
+
+  iceberg-e2e:
+    name: Iceberg E2E Tests (Python ${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.iceberg == 'true' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --extra iceberg --extra dev --extra e2e
+
+      - name: Start Docker services
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml up -d --wait
+
+      - name: Wait for REST catalog
+        run: timeout 60 bash -c 'until curl -sf http://localhost:8181/v1/config; do sleep 2; done'
+
+      - name: Wait for MinIO
+        run: timeout 60 bash -c 'until curl -sf http://localhost:9000/minio/health/live; do sleep 2; done'
+
+      - name: Run E2E tests (fast tier, excludes e2e_slow)
+        run: uv run pytest tests/iceberg/e2e/ -v --tb=long -m "e2e and not e2e_slow" --timeout=120
+
+      - name: Docker logs (on failure)
+        if: failure()
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml logs
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f tests/iceberg/e2e/docker-compose.yml down -v
 
   dead-code:
     name: Dead Code, Complexity & Duplication

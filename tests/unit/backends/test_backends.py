@@ -165,13 +165,13 @@ class TestGetBackend:
         mock_backend = MagicMock(spec=VersioningBackend)
         mock_backend_class = MagicMock(return_value=mock_backend)
         mock_entry_point = MagicMock()
-        mock_entry_point.name = "iceberg"
+        mock_entry_point.name = "custom"
         mock_entry_point.load.return_value = mock_backend_class
 
         root = Path("/some/catalog")
         with patch("portolan_cli.backends.entry_points") as mock_eps:
             mock_eps.return_value = [mock_entry_point]
-            get_backend("iceberg", catalog_root=root)
+            get_backend("custom", catalog_root=root)
 
         mock_backend_class.assert_called_once_with(catalog_root=root)
 
@@ -182,13 +182,13 @@ class TestGetBackend:
         mock_backend = MagicMock(spec=VersioningBackend)
         mock_backend_class = MagicMock(return_value=mock_backend)
         mock_entry_point = MagicMock()
-        mock_entry_point.name = "iceberg"
+        mock_entry_point.name = "custom"
         mock_entry_point.load.return_value = mock_backend_class
 
         # Patch entry_points to return our mock
         with patch("portolan_cli.backends.entry_points") as mock_eps:
             mock_eps.return_value = [mock_entry_point]
-            backend = get_backend("iceberg")
+            backend = get_backend("custom")
 
         # Verify the entry point was loaded and returns protocol-compliant object
         mock_entry_point.load.assert_called_once()
@@ -204,8 +204,8 @@ class TestGetBackend:
 
         with patch("portolan_cli.backends.entry_points") as mock_eps:
             mock_eps.return_value = [mock_entry_point]
-            with pytest.raises(ValueError, match="Unknown backend: iceberg"):
-                get_backend("iceberg")
+            with pytest.raises(ValueError, match="Unknown backend: custom"):
+                get_backend("custom")
 
 
 class TestGetBackendErrorHandling:
