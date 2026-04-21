@@ -44,6 +44,9 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "statistics.raster_mode",
         "parquet.enabled",  # Generate items.parquet for large collections
         "parquet.threshold",  # Item count threshold to suggest parquet generation
+        "pmtiles.enabled",  # Generate PMTiles for GeoParquet collections
+        "pmtiles.min_zoom",  # Minimum zoom level (None = auto-detect)
+        "pmtiles.max_zoom",  # Maximum zoom level (None = auto-detect)
     }
 )
 
@@ -59,6 +62,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "statistics.raster_mode": "approx",
     "parquet.enabled": False,  # Disabled by default (100% optional per issue #319)
     "parquet.threshold": 100,  # Suggest parquet generation when items > threshold
+    "pmtiles.enabled": False,  # Disabled by default (requires tippecanoe)
+    "pmtiles.min_zoom": None,  # None = tippecanoe auto-detection
+    "pmtiles.max_zoom": None,  # None = tippecanoe auto-detection
 }
 
 # Default glob patterns for files to exclude from asset tracking (per ADR-0028).

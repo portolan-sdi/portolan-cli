@@ -525,79 +525,135 @@ class TestCatalogJsonValidRuleOSError:
 class TestPMTilesRecommendedRule:
     """Tests for PMTilesRecommendedRule.
 
-    This rule emits a WARNING (not ERROR) when GeoParquet datasets
-    don't have corresponding PMTiles derivatives.
+    This rule emits a WARNING (not ERROR) when GeoParquet collection assets
+    don't have corresponding PMTiles derivatives as siblings.
     """
 
     @pytest.fixture
-    def catalog_with_geoparquet(self, tmp_path: Path, fixtures_dir: Path) -> Path:
-        """Create a catalog with a GeoParquet dataset but no PMTiles."""
-        import shutil
+    def catalog_with_geoparquet(self, tmp_path: Path) -> Path:
+        """Create a catalog with a GeoParquet collection asset but no PMTiles."""
+        import json
 
-        # Create catalog structure
+        # Create catalog structure with collection-level asset (ADR-0031)
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        datasets_dir = portolan_dir / "datasets" / "test-dataset"
-        datasets_dir.mkdir(parents=True)
 
-        # Copy sample.parquet to datasets dir
-        src = fixtures_dir / "validation" / "pmtiles" / "sample.parquet"
-        shutil.copy(src, datasets_dir / "test-dataset.parquet")
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+
+        # Create collection.json with GeoParquet asset
+        collection_json = {
+            "type": "Collection",
+            "id": "test-collection",
+            "stac_version": "1.0.0",
+            "description": "Test collection",
+            "license": "MIT",
+            "extent": {
+                "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [],
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+
+        # Create the parquet file (empty placeholder)
+        (collection_dir / "data.parquet").write_bytes(b"PAR1placeholder")
 
         return tmp_path
 
     @pytest.fixture
-    def catalog_with_pmtiles(self, tmp_path: Path, fixtures_dir: Path) -> Path:
-        """Create a catalog with both GeoParquet and PMTiles."""
-        import shutil
+    def catalog_with_pmtiles(self, tmp_path: Path) -> Path:
+        """Create a catalog with both GeoParquet and PMTiles assets."""
+        import json
 
-        # Create catalog structure
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        datasets_dir = portolan_dir / "datasets" / "test-dataset"
-        datasets_dir.mkdir(parents=True)
 
-        # Copy both files
-        src_parquet = fixtures_dir / "validation" / "pmtiles" / "sample.parquet"
-        src_pmtiles = fixtures_dir / "validation" / "pmtiles" / "sample.pmtiles"
-        shutil.copy(src_parquet, datasets_dir / "test-dataset.parquet")
-        shutil.copy(src_pmtiles, datasets_dir / "test-dataset.pmtiles")
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+
+        # Create collection.json with both assets
+        collection_json = {
+            "type": "Collection",
+            "id": "test-collection",
+            "stac_version": "1.0.0",
+            "description": "Test collection",
+            "license": "MIT",
+            "extent": {
+                "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [],
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                },
+                "data-tiles": {
+                    "href": "./data.pmtiles",
+                    "type": "application/vnd.pmtiles",
+                    "roles": ["overview"],
+                },
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+
+        # Create both files
+        (collection_dir / "data.parquet").write_bytes(b"PAR1placeholder")
+        (collection_dir / "data.pmtiles").write_bytes(b"PMTilesplaceholder")
 
         return tmp_path
 
     @pytest.fixture
     def catalog_empty(self, tmp_path: Path) -> Path:
-        """Create an empty catalog with no datasets."""
+        """Create an empty catalog with no collections."""
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        datasets_dir = portolan_dir / "datasets"
-        datasets_dir.mkdir()
         return tmp_path
 
     @pytest.fixture
-    def catalog_raster_only(self, tmp_path: Path, fixtures_dir: Path) -> Path:
-        """Create a catalog with only raster (COG) datasets."""
-        import shutil
+    def catalog_with_stac_items_parquet(self, tmp_path: Path) -> Path:
+        """Create a catalog with stac-items parquet (should be ignored)."""
+        import json
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        datasets_dir = portolan_dir / "datasets" / "raster-dataset"
-        datasets_dir.mkdir(parents=True)
 
-        # Copy a COG file (no PMTiles expected for raster)
-        src = fixtures_dir / "raster" / "valid" / "rgb.tif"
-        if src.exists():
-            shutil.copy(src, datasets_dir / "raster-dataset.tif")
-        else:
-            # Create a placeholder if fixture doesn't exist
-            (datasets_dir / "raster-dataset.tif").write_bytes(b"placeholder")
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+
+        # Create collection.json with stac-items parquet (not geodata)
+        collection_json = {
+            "type": "Collection",
+            "id": "test-collection",
+            "stac_version": "1.0.0",
+            "description": "Test collection",
+            "license": "MIT",
+            "extent": {
+                "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [],
+            "assets": {
+                "geoparquet-items": {
+                    "href": "./items.parquet",
+                    "type": "application/x-parquet",
+                    "roles": ["stac-items"],
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "items.parquet").write_bytes(b"PAR1placeholder")
 
         return tmp_path
-
-    @pytest.fixture
-    def fixtures_dir(self) -> Path:
-        """Return the path to the test fixtures directory."""
-        return Path(__file__).parent.parent / "fixtures"
 
     @pytest.mark.unit
     def test_has_warning_severity(self) -> None:
@@ -647,7 +703,7 @@ class TestPMTilesRecommendedRule:
 
     @pytest.mark.unit
     def test_passes_for_empty_catalog(self, catalog_empty: Path) -> None:
-        """Rule passes when catalog has no datasets (nothing to recommend)."""
+        """Rule passes when catalog has no collections."""
         from portolan_cli.validation.rules import PMTilesRecommendedRule
 
         rule = PMTilesRecommendedRule()
@@ -656,50 +712,35 @@ class TestPMTilesRecommendedRule:
         assert result.passed is True
 
     @pytest.mark.unit
-    def test_passes_for_raster_only_catalog(self, catalog_raster_only: Path) -> None:
-        """Rule passes for raster-only catalogs (PMTiles is for vector data)."""
+    def test_ignores_stac_items_parquet(self, catalog_with_stac_items_parquet: Path) -> None:
+        """Rule ignores stac-items parquet (metadata, not geodata)."""
         from portolan_cli.validation.rules import PMTilesRecommendedRule
 
         rule = PMTilesRecommendedRule()
-        result = rule.check(catalog_raster_only)
+        result = rule.check(catalog_with_stac_items_parquet)
 
+        # Should pass - stac-items parquet is metadata, not geodata
         assert result.passed is True
 
     @pytest.mark.unit
-    def test_provides_fix_hint_with_plugin_info(self, catalog_with_geoparquet: Path) -> None:
-        """Failure includes hint about portolan-pmtiles plugin."""
+    def test_provides_fix_hint(self, catalog_with_geoparquet: Path) -> None:
+        """Failure includes hint about generating PMTiles."""
         from portolan_cli.validation.rules import PMTilesRecommendedRule
 
         rule = PMTilesRecommendedRule()
         result = rule.check(catalog_with_geoparquet)
 
         assert result.fix_hint is not None
-        assert "portolan-pmtiles" in result.fix_hint.lower()
+        assert "pmtiles" in result.fix_hint.lower()
 
     @pytest.mark.unit
-    def test_handles_missing_datasets_dir_gracefully(self, tmp_path: Path) -> None:
-        """Rule handles missing datasets directory without error."""
-        from portolan_cli.validation.rules import PMTilesRecommendedRule
-
-        # Create catalog without datasets dir
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-
-        rule = PMTilesRecommendedRule()
-        result = rule.check(tmp_path)
-
-        # Should pass (no datasets to check)
-        assert result.passed is True
-
-    @pytest.mark.unit
-    def test_handles_missing_portolan_dir_gracefully(self, tmp_path: Path) -> None:
-        """Rule handles missing .portolan directory without error."""
+    def test_handles_no_collections_gracefully(self, tmp_path: Path) -> None:
+        """Rule handles catalog with no collection.json files."""
         from portolan_cli.validation.rules import PMTilesRecommendedRule
 
         rule = PMTilesRecommendedRule()
         result = rule.check(tmp_path)
 
-        # Should pass (no catalog to check)
         assert result.passed is True
 
 

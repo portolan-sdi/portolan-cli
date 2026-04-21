@@ -2566,6 +2566,99 @@ def _handle_parquet_after_add(
             )
 
 
+def _get_pmtiles_settings(
+    catalog_root: Path, coll_id: str, coll_path: Path
+) -> tuple[bool, int | None, int | None]:
+    """Get PMTiles settings for a collection."""
+    from portolan_cli.config import get_setting
+
+    enabled_raw = get_setting(
+        "pmtiles.enabled", catalog_path=catalog_root, collection=coll_id, collection_path=coll_path
+    )
+    min_raw = get_setting(
+        "pmtiles.min_zoom", catalog_path=catalog_root, collection=coll_id, collection_path=coll_path
+    )
+    max_raw = get_setting(
+        "pmtiles.max_zoom", catalog_path=catalog_root, collection=coll_id, collection_path=coll_path
+    )
+
+    enabled = _coerce_bool(enabled_raw, default=False)
+    min_zoom = None if min_raw is None else _coerce_int(min_raw, default=0)
+    max_zoom = None if max_raw is None else _coerce_int(max_raw, default=14)
+
+    return enabled, min_zoom, max_zoom
+
+
+def _handle_pmtiles_after_add(
+    catalog_root: Path,
+    affected_collections: set[str],
+    generate_pmtiles: bool,
+    force: bool,
+    verbose: bool,
+) -> None:
+    """Handle PMTiles generation after add command."""
+    if not affected_collections:
+        return
+
+    from portolan_cli.pmtiles import (
+        PMTilesNotAvailableError,
+        TippecanoeNotFoundError,
+        generate_pmtiles_for_collection,
+    )
+
+    for coll_id in affected_collections:
+        coll_path = catalog_root / coll_id
+        if not (coll_path / "collection.json").exists():
+            continue
+
+        enabled, min_zoom, max_zoom = _get_pmtiles_settings(catalog_root, coll_id, coll_path)
+        if not (generate_pmtiles or enabled):
+            continue
+
+        try:
+            result = generate_pmtiles_for_collection(
+                coll_path, catalog_root, force=force, min_zoom=min_zoom, max_zoom=max_zoom
+            )
+            _report_pmtiles_result(result, verbose, generate_pmtiles)
+        except PMTilesNotAvailableError as e:
+            _handle_pmtiles_unavailable(e, generate_pmtiles, verbose, coll_id)
+        except TippecanoeNotFoundError as e:
+            _handle_tippecanoe_missing(e, generate_pmtiles, coll_id)
+
+
+def _report_pmtiles_result(result: Any, verbose: bool, explicit_flag: bool) -> None:
+    """Report PMTiles generation results."""
+    for p in result.generated:
+        success(f"Generated PMTiles: {p.name}")
+    if result.skipped and verbose:
+        for p in result.skipped:
+            info_output(f"Skipped PMTiles (up-to-date): {p.name}")
+    for path, error_msg in result.failed:
+        if explicit_flag:
+            error(f"PMTiles generation failed: {error_msg}")
+            raise SystemExit(1)
+        warn(f"Failed to generate PMTiles for '{path}': {error_msg}")
+
+
+def _handle_pmtiles_unavailable(
+    e: Exception, explicit_flag: bool, verbose: bool, coll_id: str
+) -> None:
+    """Handle PMTilesNotAvailableError."""
+    if explicit_flag:
+        error(str(e))
+        raise SystemExit(1) from e
+    if verbose:
+        info_output(f"Skipping PMTiles for '{coll_id}': gpio-pmtiles not installed")
+
+
+def _handle_tippecanoe_missing(e: Exception, explicit_flag: bool, coll_id: str) -> None:
+    """Handle TippecanoeNotFoundError."""
+    if explicit_flag:
+        error(str(e))
+        raise SystemExit(1) from e
+    warn(f"Skipping PMTiles for '{coll_id}': tippecanoe not installed")
+
+
 def _coerce_bool(value: Any, *, default: bool = False) -> bool:
     """Coerce a value to boolean.
 
@@ -2642,6 +2735,18 @@ def _coerce_int(value: Any, *, default: int) -> int:
     is_flag=True,
     help="Generate items.parquet for affected collections after add.",
 )
+@click.option(
+    "--pmtiles",
+    "generate_pmtiles",
+    is_flag=True,
+    help="Generate PMTiles from GeoParquet assets (requires tippecanoe).",
+)
+@click.option(
+    "--force-pmtiles",
+    "force_pmtiles",
+    is_flag=True,
+    help="Regenerate PMTiles even if they exist and are up-to-date.",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
@@ -2654,6 +2759,8 @@ def add_cmd(
     item_datetime: datetime | None,
     workers: int,
     generate_parquet: bool,
+    generate_pmtiles: bool,
+    force_pmtiles: bool,
 ) -> None:
     """Track files in the catalog.
 
@@ -2785,6 +2892,9 @@ def add_cmd(
     _handle_parquet_after_add(
         catalog_root, affected, generate_parquet, verbose, show_hints=not use_json
     )
+
+    # Handle PMTiles generation for affected collections
+    _handle_pmtiles_after_add(catalog_root, affected, generate_pmtiles, force_pmtiles, verbose)
 
     # Exit with non-zero code if any failures occurred
     if all_failures:
