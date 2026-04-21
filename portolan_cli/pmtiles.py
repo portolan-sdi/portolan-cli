@@ -130,7 +130,7 @@ def check_pmtiles_available() -> None:
     """
     # Check for gpio-pmtiles
     try:
-        import gpio_pmtiles  # type: ignore[import-not-found]  # noqa: F401
+        import gpio_pmtiles  # type: ignore[import-untyped]  # noqa: F401
     except ImportError as e:
         raise PMTilesNotAvailableError() from e
 
@@ -406,6 +406,11 @@ def generate_pmtiles_for_collection(
             continue
 
         try:
+            # Delete existing file if forcing regeneration
+            # (tippecanoe requires this since it doesn't have a --force option)
+            if force and pmtiles_path.exists():
+                pmtiles_path.unlink()
+
             generate_pmtiles(
                 parquet_path,
                 pmtiles_path,
