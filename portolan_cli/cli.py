@@ -2937,11 +2937,20 @@ def add_cmd(
 
     # Compute affected collections before any post-processing
     # Include both added AND skipped assets so --pmtiles works on already-tracked files
-    affected = {
-        a.collection_id
-        for a in (*all_added, *all_skipped)
-        if hasattr(a, "collection_id") and a.collection_id
-    }
+    # Note: all_added contains DatasetInfo objects, all_skipped contains Path objects
+    affected: set[str] = set()
+    for a in all_added:
+        if hasattr(a, "collection_id") and a.collection_id:
+            affected.add(a.collection_id)
+    for p in all_skipped:
+        # Extract collection_id from path relative to catalog_root
+        try:
+            rel = p.relative_to(catalog_root)
+            # Collection ID is the first path component
+            if rel.parts:
+                affected.add(rel.parts[0])
+        except ValueError:
+            pass  # Path not relative to catalog_root
 
     # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
     # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
