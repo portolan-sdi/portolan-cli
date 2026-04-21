@@ -364,7 +364,7 @@ def track_pmtiles_in_versions(
     pmtiles_asset = Asset(
         sha256=sha256,
         size_bytes=stat.st_size,
-        href=str(rel_path),
+        href=rel_path.as_posix(),
         mtime=stat.st_mtime,
     )
 
@@ -441,9 +441,10 @@ def generate_pmtiles_for_collection(
         pmtiles_path = parquet_path.with_suffix(".pmtiles")
 
         # Compute href relative to collection (preserves subdirectory structure)
+        # Use as_posix() for STAC-compliant forward slashes on all platforms
         try:
             pmtiles_rel = pmtiles_path.relative_to(collection_path)
-            pmtiles_href = f"./{pmtiles_rel}"
+            pmtiles_href = f"./{pmtiles_rel.as_posix()}"
         except ValueError:
             pmtiles_href = f"./{pmtiles_path.name}"
 

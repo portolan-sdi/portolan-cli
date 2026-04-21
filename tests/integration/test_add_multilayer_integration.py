@@ -36,6 +36,10 @@ def initialized_catalog(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="geoparquet-io aborts on multilayer conversion on macOS (upstream bug)",
+)
 class TestAddMultilayerIntegration:
     """Integration tests for adding multi-layer files."""
 
@@ -107,10 +111,6 @@ class TestAddMultilayerIntegration:
         )
 
     @pytest.mark.integration
-    @pytest.mark.skipif(
-        sys.platform == "darwin",
-        reason="geoparquet-io aborts on multilayer conversion on macOS (upstream bug)",
-    )
     def test_add_multilayer_creates_stac_structure(
         self, runner: CliRunner, initialized_catalog: Path
     ) -> None:

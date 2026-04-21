@@ -2614,6 +2614,8 @@ def _handle_pmtiles_after_add(
     generate_pmtiles: bool,
     force: bool,
     verbose: bool,
+    *,
+    use_json: bool = False,
 ) -> None:
     """Handle PMTiles generation after add command."""
     if not affected_collections:
@@ -2649,34 +2651,50 @@ def _handle_pmtiles_after_add(
                 attribution=settings.attribution,
                 src_crs=settings.src_crs,
             )
-            _report_pmtiles_result(result, verbose, generate_pmtiles)
+            _report_pmtiles_result(result, verbose, generate_pmtiles, use_json=use_json)
         except PMTilesNotAvailableError as e:
-            _handle_pmtiles_unavailable(e, generate_pmtiles, settings.enabled, verbose, coll_id)
+            _handle_pmtiles_unavailable(
+                e, generate_pmtiles, settings.enabled, verbose, coll_id, use_json=use_json
+            )
         except TippecanoeNotFoundError as e:
-            _handle_tippecanoe_missing(e, generate_pmtiles, coll_id)
+            _handle_tippecanoe_missing(e, generate_pmtiles, coll_id, use_json=use_json)
 
 
-def _report_pmtiles_result(result: Any, verbose: bool, explicit_flag: bool) -> None:
+def _report_pmtiles_result(
+    result: Any, verbose: bool, explicit_flag: bool, *, use_json: bool = False
+) -> None:
     """Report PMTiles generation results."""
-    for p in result.generated:
-        success(f"Generated PMTiles: {p.name}")
-    if result.skipped and verbose:
-        for p in result.skipped:
-            info_output(f"Skipped PMTiles (up-to-date): {p.name}")
+    if not use_json:
+        for p in result.generated:
+            success(f"Generated PMTiles: {p.name}")
+        if result.skipped and verbose:
+            for p in result.skipped:
+                info_output(f"Skipped PMTiles (up-to-date): {p.name}")
     for path, error_msg in result.failed:
         if explicit_flag:
-            error(f"PMTiles generation failed: {error_msg}")
+            if not use_json:
+                error(f"PMTiles generation failed: {error_msg}")
             raise SystemExit(1)
-        warn(f"Failed to generate PMTiles for '{path}': {error_msg}")
+        if not use_json:
+            warn(f"Failed to generate PMTiles for '{path}': {error_msg}")
 
 
 def _handle_pmtiles_unavailable(
-    e: Exception, explicit_flag: bool, config_enabled: bool, verbose: bool, coll_id: str
+    e: Exception,
+    explicit_flag: bool,
+    config_enabled: bool,
+    verbose: bool,
+    coll_id: str,
+    *,
+    use_json: bool = False,
 ) -> None:
     """Handle PMTilesNotAvailableError."""
     if explicit_flag:
-        error(str(e))
+        if not use_json:
+            error(str(e))
         raise SystemExit(1) from e
+    if use_json:
+        return
     # Warn if pmtiles.enabled in config (user expectation), or info if just verbose
     if config_enabled:
         warn(f"PMTiles enabled for '{coll_id}' but gpio-pmtiles not installed")
@@ -2684,12 +2702,16 @@ def _handle_pmtiles_unavailable(
         info_output(f"Skipping PMTiles for '{coll_id}': gpio-pmtiles not installed")
 
 
-def _handle_tippecanoe_missing(e: Exception, explicit_flag: bool, coll_id: str) -> None:
+def _handle_tippecanoe_missing(
+    e: Exception, explicit_flag: bool, coll_id: str, *, use_json: bool = False
+) -> None:
     """Handle TippecanoeNotFoundError."""
     if explicit_flag:
-        error(str(e))
+        if not use_json:
+            error(str(e))
         raise SystemExit(1) from e
-    warn(f"Skipping PMTiles for '{coll_id}': tippecanoe not installed")
+    if not use_json:
+        warn(f"Skipping PMTiles for '{coll_id}': tippecanoe not installed")
 
 
 def _coerce_bool(value: Any, *, default: bool = False) -> bool:
@@ -2914,8 +2936,11 @@ def add_cmd(
         raise SystemExit(1) from err
 
     # Compute affected collections before any post-processing
+    # Include both added AND skipped assets so --pmtiles works on already-tracked files
     affected = {
-        a.collection_id for a in all_added if hasattr(a, "collection_id") and a.collection_id
+        a.collection_id
+        for a in (*all_added, *all_skipped)
+        if hasattr(a, "collection_id") and a.collection_id
     }
 
     # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
@@ -2926,7 +2951,9 @@ def add_cmd(
     )
 
     # Handle PMTiles generation BEFORE output (so JSON reflects final state)
-    _handle_pmtiles_after_add(catalog_root, affected, generate_pmtiles, force_pmtiles, verbose)
+    _handle_pmtiles_after_add(
+        catalog_root, affected, generate_pmtiles, force_pmtiles, verbose, use_json=use_json
+    )
 
     # Output combined results (after all processing complete)
     _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
