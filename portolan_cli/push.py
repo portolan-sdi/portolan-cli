@@ -989,6 +989,7 @@ async def _upload_assets_async(
     json_mode: bool = False,
     suppress_progress: bool = False,
     verbose: bool = False,
+    adaptive: bool = True,
 ) -> tuple[int, list[str], list[str], UploadMetrics]:
     """Upload asset files to object storage with async concurrent uploads.
 
@@ -1069,9 +1070,20 @@ async def _upload_assets_async(
                         f"Uploaded ({completed}/{total_count}): {rel_path} ({format_file_size(size_bytes)}, {format_speed(speed)})"
                     )
 
+        # Create adaptive concurrency manager for slow-start (Issue #344)
+        adaptive_manager = None
+        if adaptive:
+            from portolan_cli.async_utils import AdaptiveConcurrencyManager
+
+            adaptive_manager = AdaptiveConcurrencyManager(
+                max_concurrency=concurrency,
+                initial_concurrency=min(2, concurrency),
+            )
+
         executor = AsyncIOExecutor[tuple[str, int, float]](
-            concurrency=concurrency,
+            concurrency=adaptive_manager.current_concurrency if adaptive_manager else concurrency,
             circuit_breaker_threshold=5,
+            adaptive_manager=adaptive_manager,
         )
 
         try:
@@ -1326,6 +1338,7 @@ async def _execute_push_uploads_async(
     force: bool,
     include_catalog: bool = True,
     remote_data: dict[str, Any] | None = None,
+    adaptive: bool = True,
 ) -> PushResult:
     """Execute the upload phase of push_async.
 
@@ -1361,6 +1374,7 @@ async def _execute_push_uploads_async(
         json_mode=json_mode,
         suppress_progress=suppress_progress,
         verbose=verbose,
+        adaptive=adaptive,
     )
 
     if upload_errors:
@@ -1471,6 +1485,7 @@ async def push_async(
     region: str | None = None,
     concurrency: int | None = None,
     chunk_concurrency: int | None = None,
+    adaptive: bool = True,
     json_mode: bool = False,
     suppress_progress: bool = False,
     verbose: bool = False,
@@ -1492,6 +1507,7 @@ async def push_async(
         concurrency: Maximum concurrent file uploads (default: 8).
         chunk_concurrency: Maximum concurrent chunks per file (default: 4).
             Total connections = concurrency × chunk_concurrency.
+        adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
         json_mode: If True, suppress progress bar.
         suppress_progress: If True, suppress progress bar.
         verbose: If True, print per-file upload details (ADR-0040).
@@ -1572,6 +1588,7 @@ async def push_async(
         force=force,
         include_catalog=include_catalog,
         remote_data=remote_data,
+        adaptive=adaptive,
     )
 
 
@@ -1756,6 +1773,7 @@ async def push_all_collections_async(
     concurrency: int | None = None,
     file_concurrency: int | None = None,
     chunk_concurrency: int | None = None,
+    adaptive: bool = True,
     verbose: bool = False,
     json_mode: bool = False,
 ) -> PushAllResult:
@@ -1776,6 +1794,7 @@ async def push_all_collections_async(
             None = use push_async default. (Maps to --concurrency CLI flag.)
         chunk_concurrency: Maximum concurrent chunks per file upload.
             None = use default (4). Total connections = file_concurrency × chunk_concurrency.
+        adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
 
@@ -1836,6 +1855,7 @@ async def push_all_collections_async(
                     region=region,
                     concurrency=file_concurrency,  # Pass file-level concurrency
                     chunk_concurrency=chunk_concurrency,  # Pass chunk-level concurrency
+                    adaptive=adaptive,  # Pass adaptive slow-start flag
                     json_mode=json_mode,
                     suppress_progress=True,
                     verbose=verbose,
@@ -1904,6 +1924,7 @@ def push_all_collections(
     workers: int | None = None,
     file_concurrency: int | None = None,
     chunk_concurrency: int | None = None,
+    adaptive: bool = True,
     verbose: bool = False,
     json_mode: bool = False,
     max_connections: int | None = None,
@@ -1926,6 +1947,7 @@ def push_all_collections(
             None = use push_async default. (Maps to --concurrency CLI flag.)
         chunk_concurrency: Maximum concurrent chunks per file upload.
             None = use default (4). Total connections = file_concurrency × chunk_concurrency.
+        adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
         max_connections: Maximum total concurrent connections. If set, adjusts
@@ -1963,6 +1985,7 @@ def push_all_collections(
             concurrency=workers,
             file_concurrency=effective_file_conc,
             chunk_concurrency=effective_chunk_conc,
+            adaptive=adaptive,
             verbose=verbose,
             json_mode=json_mode,
         )

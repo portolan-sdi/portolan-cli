@@ -3318,10 +3318,6 @@ def push(
     # Warn about high connection count (Issue #344)
     _warn_high_connection_count(concurrency, chunk_concurrency, use_json)
 
-    # Note: adaptive parameter is passed through but not yet implemented in push functions
-    # This reserves the CLI interface for future adaptive concurrency implementation
-    _ = adaptive  # Silence unused variable warning until fully wired
-
     # If no collection specified, push all collections
     if collection is None:
         try:
@@ -3336,6 +3332,7 @@ def push(
                 file_concurrency=concurrency,
                 chunk_concurrency=chunk_concurrency,
                 max_connections=max_connections,
+                adaptive=adaptive,
                 verbose=verbose,
                 json_mode=use_json,
             )
@@ -3384,6 +3381,7 @@ def push(
                 region=resolved_region,
                 concurrency=concurrency,
                 chunk_concurrency=chunk_concurrency,
+                adaptive=adaptive,
                 json_mode=use_json,
             )
         )
