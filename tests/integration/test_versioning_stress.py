@@ -258,28 +258,30 @@ class TestAddPopulatesVersions:
 
 
 # =============================================================================
-# TestCatalogVsCollectionVersions (reproduces #339 confusion)
+# TestCatalogLevelVersioning (fixes #339)
 # =============================================================================
 
 
-class TestCatalogVsCollectionVersions:
-    """Verify catalog-level versions.json is NOT updated by add (root cause of #339)."""
+class TestCatalogLevelVersioning:
+    """Verify catalog-level versions.json IS updated by add (per ADR-0005).
+
+    Issue #339 reported that catalog-level versions.json showed empty collections
+    after add. This was a real bug, not user confusion. These tests verify the fix.
+    """
 
     @pytest.mark.integration
-    def test_add_does_not_update_catalog_level_versions(
+    def test_add_updates_catalog_level_versions(
         self, initialized_catalog: Path, runner: CliRunner
     ) -> None:
-        """Catalog-level versions.json unchanged after add - the #339 confusion point."""
-        # Create a catalog-level versions.json (if init creates one)
+        """Catalog-level versions.json IS updated after add (fixes #339)."""
         catalog_versions_path = initialized_catalog / "versions.json"
 
         # Record state before add
-        catalog_versions_before = None
-        if catalog_versions_path.exists():
-            catalog_versions_before = catalog_versions_path.read_text()
+        catalog_before = json.loads(catalog_versions_path.read_text())
+        assert catalog_before.get("collections") == {}, "collections should start empty"
 
         # Create collection and add files
-        collection_dir = initialized_catalog / "confusion-test"
+        collection_dir = initialized_catalog / "test-collection"
         collection_dir.mkdir()
         (collection_dir / "test.geojson").write_text(create_geojson())
 
@@ -289,30 +291,61 @@ class TestCatalogVsCollectionVersions:
         )
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Verify collection-level versions.json WAS created
-        collection_versions_path = collection_dir / "versions.json"
-        assert collection_versions_path.exists(), "Collection versions.json not created"
-        collection_data = json.loads(collection_versions_path.read_text())
-        assert len(collection_data["versions"]) > 0, "Collection versions empty"
+        # Verify catalog-level versions.json WAS updated (the #339 fix!)
+        catalog_after = json.loads(catalog_versions_path.read_text())
+        collections = catalog_after.get("collections", {})
+        assert "test-collection" in collections, (
+            f"Catalog-level versions.json missing collection. Got: {collections}"
+        )
 
-        # Verify catalog-level versions.json was NOT modified
-        if catalog_versions_before is not None:
-            assert catalog_versions_path.read_text() == catalog_versions_before, (
-                "Catalog-level versions.json was modified by add (this is the #339 bug!)"
-            )
+        # Verify collection entry has required fields
+        coll_info = collections["test-collection"]
+        assert "current_version" in coll_info, "Missing current_version"
+        assert "updated" in coll_info, "Missing updated timestamp"
+        assert "asset_count" in coll_info, "Missing asset_count"
+        assert coll_info["asset_count"] > 0, "asset_count should be > 0"
+
+    @pytest.mark.integration
+    def test_add_multiple_collections_tracked(
+        self, initialized_catalog: Path, runner: CliRunner
+    ) -> None:
+        """Multiple collections are tracked in catalog-level versions.json."""
+        # Add first collection
+        coll1_dir = initialized_catalog / "collection-one"
+        coll1_dir.mkdir()
+        (coll1_dir / "file1.geojson").write_text(create_geojson(coords=(1.0, 1.0)))
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(coll1_dir)],
+        )
+        assert result.exit_code == 0
+
+        # Add second collection
+        coll2_dir = initialized_catalog / "collection-two"
+        coll2_dir.mkdir()
+        (coll2_dir / "file2.geojson").write_text(create_geojson(coords=(2.0, 2.0)))
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(coll2_dir)],
+        )
+        assert result.exit_code == 0
+
+        # Verify both collections are tracked
+        catalog_versions_path = initialized_catalog / "versions.json"
+        catalog_data = json.loads(catalog_versions_path.read_text())
+        collections = catalog_data.get("collections", {})
+
+        assert "collection-one" in collections, "Missing collection-one"
+        assert "collection-two" in collections, "Missing collection-two"
 
     @pytest.mark.integration
     def test_two_files_have_different_schemas(
         self, initialized_catalog: Path, runner: CliRunner
     ) -> None:
         """Catalog-level and collection-level versions.json have different schemas."""
-        # Create catalog-level versions.json manually (mimicking init behavior)
         catalog_versions_path = initialized_catalog / "versions.json"
-        catalog_versions_data = {
-            "catalog_id": "test-catalog",
-            "collections": {},  # This is the catalog schema
-        }
-        catalog_versions_path.write_text(json.dumps(catalog_versions_data))
 
         # Create collection and add files
         collection_dir = initialized_catalog / "schema-test"
@@ -333,13 +366,41 @@ class TestCatalogVsCollectionVersions:
         catalog_data = json.loads(catalog_versions_path.read_text())
         collection_data = json.loads(collection_versions_path.read_text())
 
-        # Catalog-level has "collections" key
+        # Catalog-level has "collections" key (aggregate view)
         assert "collections" in catalog_data, "Catalog should have 'collections' key"
         assert "versions" not in catalog_data, "Catalog should NOT have 'versions' array"
 
-        # Collection-level has "versions" key
+        # Collection-level has "versions" key (detailed history)
         assert "versions" in collection_data, "Collection should have 'versions' array"
         assert "collections" not in collection_data, "Collection should NOT have 'collections'"
+
+    @pytest.mark.integration
+    def test_catalog_versions_updated_timestamp(
+        self, initialized_catalog: Path, runner: CliRunner
+    ) -> None:
+        """Catalog-level versions.json has updated timestamp after add."""
+        catalog_versions_path = initialized_catalog / "versions.json"
+
+        # Get initial state
+        catalog_before = json.loads(catalog_versions_path.read_text())
+        updated_before = catalog_before.get("updated")
+
+        # Add a collection
+        collection_dir = initialized_catalog / "timestamp-test"
+        collection_dir.mkdir()
+        (collection_dir / "test.geojson").write_text(create_geojson())
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)],
+        )
+        assert result.exit_code == 0
+
+        # Verify updated timestamp changed
+        catalog_after = json.loads(catalog_versions_path.read_text())
+        updated_after = catalog_after.get("updated")
+        assert updated_after is not None, "Missing updated timestamp"
+        assert updated_after != updated_before, "updated timestamp should change"
 
 
 # =============================================================================

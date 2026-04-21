@@ -2,14 +2,16 @@
 
 **Issue:** [#339](https://github.com/portolan-sdi/portolan-cli/issues/339) - versions.json not populated after portolan add
 **Related:** ADR-0005 (versions.json as single source of truth)
+**Status:** ✅ FIXED
 
 ## Context
 
-Two separate `versions.json` files exist:
-- **Catalog-level:** `<catalog>/versions.json` — created once by init, tracks catalog metadata
-- **Collection-level:** `<catalog>/<collection>/versions.json` — updated by add, tracks asset versions
+Two separate `versions.json` files exist per ADR-0005:
+- **Catalog-level:** `<catalog>/versions.json` — aggregate view of all collections (updated by add)
+- **Collection-level:** `<catalog>/<collection>/versions.json` — detailed version history (updated by add)
 
-Issue #339 reports empty versions after `portolan add`. These tests verify the full pipeline.
+Issue #339 was a real bug: catalog-level versions.json was created empty and never updated.
+The fix adds `update_catalog_versions()` to populate collection state after each add.
 
 ---
 

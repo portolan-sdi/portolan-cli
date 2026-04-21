@@ -652,3 +652,74 @@ def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
     links.append({"rel": "child", "href": child_href, "type": "application/json"})
     content["links"] = links
     catalog_file.write_text(json.dumps(content, indent=2))
+
+
+def update_catalog_versions(
+    catalog_root: Path,
+    collection_id: str,
+    current_version: str,
+    asset_count: int,
+    total_size_bytes: int,
+) -> None:
+    """Update catalog-level versions.json with collection state (ADR-0005).
+
+    The catalog-level versions.json tracks aggregate state of all collections,
+    providing a quick overview without needing to read each collection's
+    versions.json individually.
+
+    This function is called after each successful collection update to keep
+    the catalog-level view in sync.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_id: The collection that was updated (e.g., "demographics").
+        current_version: The new current version of the collection.
+        asset_count: Number of assets in the current version.
+        total_size_bytes: Total size of all assets in bytes.
+
+    Raises:
+        FileNotFoundError: If catalog versions.json doesn't exist.
+        json.JSONDecodeError: If catalog versions.json is invalid JSON.
+    """
+    import tempfile
+
+    versions_path = catalog_root / "versions.json"
+
+    if not versions_path.exists():
+        # Not a file-backend catalog (e.g., Iceberg backend)
+        return
+
+    # Read existing catalog versions.json
+    content = json.loads(versions_path.read_text())
+
+    # Update the collections entry
+    now = datetime.now(timezone.utc).isoformat()
+    if "collections" not in content:
+        content["collections"] = {}
+
+    content["collections"][collection_id] = {
+        "current_version": current_version,
+        "updated": now,
+        "asset_count": asset_count,
+        "total_size_bytes": total_size_bytes,
+    }
+
+    # Update catalog-level updated timestamp
+    content["updated"] = now
+
+    # Atomic write (same pattern as versions.py)
+    parent = versions_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        dir=parent,
+        delete=False,
+        suffix=".tmp",
+    ) as tmp:
+        json.dump(content, tmp, indent=2)
+        tmp.write("\n")
+        tmp_path = tmp.name
+
+    # Atomic rename
+    Path(tmp_path).replace(versions_path)

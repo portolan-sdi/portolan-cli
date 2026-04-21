@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-21
 **Issue:** [#339](https://github.com/portolan-sdi/portolan-cli/issues/339) - versions.json not populated after portolan add
-**Status:** Ready for implementation
+**Status:** ✅ FIXED
 
 ## Problem Statement
 
@@ -14,42 +14,47 @@ Issue #339 reports that after `portolan add` completes successfully ("Added 1900
 
 | File | Schema | Purpose | Updated by `add`? |
 |------|--------|---------|-------------------|
-| `<catalog>/versions.json` | `{"catalog_id": "...", "collections": {}}` | Catalog-level metadata | **NO** (created once by init, never updated) |
+| `<catalog>/versions.json` | `{"catalog_id": "...", "collections": {...}}` | Catalog-level aggregate view | **YES** (after fix) |
 | `<catalog>/<collection>/versions.json` | `{"spec_version": "...", "versions": [...]}` | Collection versioning (ADR-0005) | **YES** |
 
-**Hypothesis:** Reporter checked wrong file. But we lack tests to verify the full `add` → `push` pipeline populates collection-level `versions.json` correctly.
+### The Bug (Now Fixed)
 
-### Code Path Verification
-
-The `add` command DOES write to collection-level versions.json:
+Per ADR-0005, catalog-level versions.json should track aggregate collection state:
 
 ```
-cli.py:2647 add_cmd
-  → dataset.py:2256 add_files()
-  → dataset.py:970 finalize_datasets()
-  → dataset.py:1159 _batch_update_versions()
-  → versions.py:325 add_version()
-  → versions.py:216 write_versions()
+catalog-root/
+├── versions.json                          # Catalog-level versioning ← WAS NOT UPDATED
+├── demographics/
+│   ├── versions.json                      # Collection-level versioning
 ```
 
-Target path: `portolan_cli/dataset.py:1174`
-```python
-versions_path = collection_dir / "versions.json"  # COLLECTION-level
+The bug was that `catalog.py:init_catalog()` created catalog-level versions.json with empty `"collections": {}`, but **nothing ever updated it**. Users checking `<catalog>/versions.json` (as documented in ADR-0005) saw empty collections.
+
+### The Fix
+
+Added `update_catalog_versions()` in `catalog.py` which is called from `finalize_datasets()` in `dataset.py` after each successful collection update. Now catalog-level versions.json shows:
+
+```json
+{
+  "schema_version": "1.0.0",
+  "catalog_id": "my-catalog",
+  "created": "2026-01-15T10:00:00Z",
+  "updated": "2026-04-21T10:30:00Z",
+  "collections": {
+    "demographics": {
+      "current_version": "1.2.0",
+      "updated": "2026-04-21T10:30:00Z",
+      "asset_count": 5,
+      "total_size_bytes": 1048576
+    }
+  }
+}
 ```
 
-The `push` command reads from the same location:
+### Code Changes
 
-```
-cli.py:3018 push()
-  → push.py:1508 _read_local_versions()
-```
-
-Target path: `portolan_cli/push.py:317`
-```python
-versions_path = catalog_root / collection / "versions.json"  # Same path
-```
-
-**Conclusion:** Code paths are correct. Need tests to catch regressions and edge cases.
+1. **catalog.py**: Added `update_catalog_versions()` function
+2. **dataset.py**: Modified `_batch_update_versions()` to return version info, call `update_catalog_versions()` from `finalize_datasets()`
 
 ---
 
