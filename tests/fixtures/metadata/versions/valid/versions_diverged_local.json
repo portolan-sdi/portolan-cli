@@ -8,12 +8,14 @@
       "breaking": false,
       "assets": {
         "base.parquet": {
-          "sha256": "base123def456789012345678901234567890123456789012345678901234base",
+          "sha256": "c4b839626cb3aa71bb5fa3268afbcd1e9a7a688903089d133fc9c925757992a7",
           "size_bytes": 1048576,
           "href": "base.parquet"
         }
       },
-      "changes": ["base.parquet"]
+      "changes": [
+        "base.parquet"
+      ]
     },
     {
       "version": "1.1.0",
@@ -21,17 +23,19 @@
       "breaking": false,
       "assets": {
         "base.parquet": {
-          "sha256": "base123def456789012345678901234567890123456789012345678901234base",
+          "sha256": "c4b839626cb3aa71bb5fa3268afbcd1e9a7a688903089d133fc9c925757992a7",
           "size_bytes": 1048576,
           "href": "base.parquet"
         },
         "local_only.parquet": {
-          "sha256": "local23def456789012345678901234567890123456789012345678901234loc",
+          "sha256": "1a6e456dec5dd0595a2eed5cdcffdec5f9e6a2e451c72509d7b5a435eb813b1e",
           "size_bytes": 524288,
           "href": "local_only.parquet"
         }
       },
-      "changes": ["local_only.parquet"]
+      "changes": [
+        "local_only.parquet"
+      ]
     }
   ]
 }

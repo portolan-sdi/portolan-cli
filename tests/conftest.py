@@ -341,7 +341,9 @@ def catalog_with_multiple_versions(tmp_path: Path) -> Path:
     - v1.2.0: base.parquet + second.parquet + third.parquet (add)
 
     Useful for testing snapshot model accumulation per ADR-0005.
+    Uses real SHA256 hashes computed from file content.
     """
+    import hashlib
     import json
 
     catalog_dir = tmp_path / "catalog_multi_version"
@@ -366,9 +368,19 @@ def catalog_with_multiple_versions(tmp_path: Path) -> Path:
     collection_dir = catalog_dir / "test-collection"
     collection_dir.mkdir()
 
-    base_hash = "base123def456789012345678901234567890123456789012345678901234base"
-    second_hash = "sec0nd3def456789012345678901234567890123456789012345678901234sec"
-    third_hash = "third3def456789012345678901234567890123456789012345678901234thi"
+    # Create actual asset files first, then compute real hashes
+    base_content = b"x" * 1000
+    second_content = b"y" * 2000
+    third_content = b"z" * 3000
+
+    (collection_dir / "base.parquet").write_bytes(base_content)
+    (collection_dir / "second.parquet").write_bytes(second_content)
+    (collection_dir / "third.parquet").write_bytes(third_content)
+
+    # Compute real SHA256 hashes from content
+    base_hash = hashlib.sha256(base_content).hexdigest()
+    second_hash = hashlib.sha256(second_content).hexdigest()
+    third_hash = hashlib.sha256(third_content).hexdigest()
 
     versions_data = {
         "spec_version": "1.0.0",
@@ -428,75 +440,6 @@ def catalog_with_multiple_versions(tmp_path: Path) -> Path:
                 },
                 "changes": ["third.parquet"],
             },
-        ],
-    }
-    (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
-
-    # Create actual asset files
-    (collection_dir / "base.parquet").write_bytes(b"x" * 1000)
-    (collection_dir / "second.parquet").write_bytes(b"y" * 2000)
-    (collection_dir / "third.parquet").write_bytes(b"z" * 3000)
-
-    return catalog_dir
-
-
-@pytest.fixture
-def catalog_with_100_assets(tmp_path: Path) -> Path:
-    """Catalog with 100 assets for scale testing.
-
-    Tests issue #339 scenario where many files are added.
-    """
-    import hashlib
-    import json
-
-    catalog_dir = tmp_path / "catalog_100_assets"
-    catalog_dir.mkdir()
-
-    # .portolan sentinel
-    portolan_dir = catalog_dir / ".portolan"
-    portolan_dir.mkdir()
-    (portolan_dir / "config.yaml").write_text("catalog_id: test-catalog\n")
-
-    # catalog.json
-    catalog_data = {
-        "type": "Catalog",
-        "id": "test-catalog",
-        "stac_version": "1.0.0",
-        "description": "Catalog with 100 assets",
-        "links": [],
-    }
-    (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
-
-    # Collection with 100 assets
-    collection_dir = catalog_dir / "test-collection"
-    collection_dir.mkdir()
-
-    assets = {}
-    changes = []
-    for i in range(100):
-        name = f"asset_{i:03d}.parquet"
-        sha = hashlib.sha256(name.encode()).hexdigest()
-        size = 1024 * (i + 1)
-        assets[name] = {
-            "sha256": sha,
-            "size_bytes": size,
-            "href": name,
-        }
-        changes.append(name)
-        # Create actual file
-        (collection_dir / name).write_bytes(b"x" * size)
-
-    versions_data = {
-        "spec_version": "1.0.0",
-        "current_version": "1.0.0",
-        "versions": [
-            {
-                "version": "1.0.0",
-                "created": "2026-01-15T10:00:00Z",
-                "breaking": False,
-                "assets": assets,
-                "changes": changes,
-            }
         ],
     }
     (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))

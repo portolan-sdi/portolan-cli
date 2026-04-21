@@ -67,7 +67,7 @@ dev = [
     "mypy>=1.19.1",
     "pip-audit>=2.10.0",
     "pre-commit>=4.5.1",
-    "pytest>=9.0.2",
+    "pytest>=9.0.3",
     "pytest-benchmark>=5.0.0",
     "pytest-cov>=4.0.0",
     "pytest-timeout>=2.3.1",
@@ -259,6 +259,7 @@ optional_dependencies_dev_groups = ["dev", "docs"]
 extend_exclude = [
     "scripts",  # Standalone scripts may use external tools
     "context",  # Documentation context, not runtime code
+    ".claude",  # Claude Code worktrees and temp files
 ]
 
 [tool.deptry.per_rule_ignores]

@@ -6,6 +6,7 @@ the single source of truth for dataset versioning (ADR-0005).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,11 @@ from portolan_cli.versions import (
 
 if TYPE_CHECKING:
     pass
+
+
+def _sha256(data: str) -> str:
+    """Generate valid SHA256 hash from string."""
+    return hashlib.sha256(data.encode()).hexdigest()
 
 
 class TestVersionsFileModel:
@@ -1477,12 +1483,12 @@ class TestSnapshotModel:
         """Scale: many assets per version (issue #339 scenario)."""
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
 
-        # Create 100 assets
+        # Create 100 assets with valid SHA256 hashes
         assets = {}
         for i in range(100):
             name = f"asset_{i:03d}.parquet"
             assets[name] = Asset(
-                sha256=f"hash_{i:03d}",
+                sha256=_sha256(f"content_{i:03d}"),
                 size_bytes=1024 * (i + 1),
                 href=f"coll/item/{name}",
             )
@@ -1501,7 +1507,7 @@ class TestSnapshotModel:
         for i in range(50):
             name = f"file_{i:03d}.parquet"
             asset = Asset(
-                sha256=f"hash_{i:03d}",
+                sha256=_sha256(f"file_content_{i:03d}"),
                 size_bytes=1024,
                 href=f"coll/item/{name}",
             )
@@ -1522,8 +1528,12 @@ class TestSnapshotModel:
         """Remove + re-add cycle preserves snapshot integrity."""
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])
 
-        asset_a = Asset(sha256="aaa", size_bytes=100, href="coll/item/a.parquet")
-        asset_b = Asset(sha256="bbb", size_bytes=200, href="coll/item/b.parquet")
+        hash_a = _sha256("content_a_original")
+        hash_b = _sha256("content_b")
+        hash_a_new = _sha256("content_a_modified")
+
+        asset_a = Asset(sha256=hash_a, size_bytes=100, href="coll/item/a.parquet")
+        asset_b = Asset(sha256=hash_b, size_bytes=200, href="coll/item/b.parquet")
 
         # v1: add A
         vf = add_version(vf, version="1.0.0", assets={"a.parquet": asset_a}, breaking=False)
@@ -1534,7 +1544,7 @@ class TestSnapshotModel:
         assert len(vf.versions[1].assets) == 2
 
         # v3: remove A, then re-add with different hash
-        asset_a_new = Asset(sha256="aaa_new", size_bytes=150, href="coll/item/a.parquet")
+        asset_a_new = Asset(sha256=hash_a_new, size_bytes=150, href="coll/item/a.parquet")
         vf = add_version(
             vf,
             version="1.2.0",
@@ -1545,7 +1555,7 @@ class TestSnapshotModel:
         # Latest version should have updated A + preserved B
         latest = vf.versions[-1]
         assert "a.parquet" in latest.assets
-        assert latest.assets["a.parquet"].sha256 == "aaa_new"
+        assert latest.assets["a.parquet"].sha256 == hash_a_new
 
     @pytest.mark.unit
     def test_snapshot_asset_count_equals_cumulative(self) -> None:
@@ -1557,7 +1567,7 @@ class TestSnapshotModel:
         for i in range(10):
             name = f"file_{i}.parquet"
             asset = Asset(
-                sha256=f"hash_{i}",
+                sha256=_sha256(f"unique_content_{i}"),
                 size_bytes=1024,
                 href=f"coll/item/{name}",
             )
