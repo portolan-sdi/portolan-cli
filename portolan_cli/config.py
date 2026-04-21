@@ -47,6 +47,13 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "pmtiles.enabled",  # Generate PMTiles for GeoParquet collections
         "pmtiles.min_zoom",  # Minimum zoom level (None = auto-detect)
         "pmtiles.max_zoom",  # Maximum zoom level (None = auto-detect)
+        "pmtiles.layer",  # Layer name in PMTiles (defaults to filename)
+        "pmtiles.bbox",  # Bounding box filter as "minx,miny,maxx,maxy"
+        "pmtiles.where",  # SQL WHERE clause for filtering features
+        "pmtiles.include_cols",  # Comma-separated columns to include in tiles
+        "pmtiles.precision",  # Coordinate decimal precision (default: 6)
+        "pmtiles.attribution",  # Attribution HTML for tiles
+        "pmtiles.src_crs",  # Override source CRS if metadata is incorrect
     }
 )
 
@@ -65,6 +72,13 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pmtiles.enabled": False,  # Disabled by default (requires tippecanoe)
     "pmtiles.min_zoom": None,  # None = tippecanoe auto-detection
     "pmtiles.max_zoom": None,  # None = tippecanoe auto-detection
+    "pmtiles.layer": None,  # None = use output filename
+    "pmtiles.bbox": None,  # None = no bounding box filter
+    "pmtiles.where": None,  # None = no SQL filter
+    "pmtiles.include_cols": None,  # None = include all columns
+    "pmtiles.precision": 6,  # Coordinate decimal precision
+    "pmtiles.attribution": None,  # None = gpio-pmtiles default
+    "pmtiles.src_crs": None,  # None = use metadata CRS
 }
 
 # Default glob patterns for files to exclude from asset tracking (per ADR-0028).

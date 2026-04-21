@@ -776,3 +776,77 @@ class TestGetSettingSource:
         result = get_setting_source("remote", catalog_path=tmp_path, collection="demo")
 
         assert result == "collection"
+
+
+class TestPMTilesConfigSettings:
+    """Tests for PMTiles configuration settings."""
+
+    @pytest.mark.unit
+    def test_pmtiles_settings_are_known(self) -> None:
+        """All PMTiles config keys are in KNOWN_SETTINGS."""
+        from portolan_cli.config import KNOWN_SETTINGS
+
+        pmtiles_keys = [
+            "pmtiles.enabled",
+            "pmtiles.min_zoom",
+            "pmtiles.max_zoom",
+            "pmtiles.layer",
+            "pmtiles.bbox",
+            "pmtiles.where",
+            "pmtiles.include_cols",
+            "pmtiles.precision",
+            "pmtiles.attribution",
+            "pmtiles.src_crs",
+        ]
+
+        for key in pmtiles_keys:
+            assert key in KNOWN_SETTINGS, f"Missing config key: {key}"
+
+    @pytest.mark.unit
+    def test_pmtiles_default_values(self) -> None:
+        """PMTiles settings have correct defaults."""
+        from portolan_cli.config import DEFAULT_SETTINGS
+
+        assert DEFAULT_SETTINGS["pmtiles.enabled"] is False
+        assert DEFAULT_SETTINGS["pmtiles.min_zoom"] is None
+        assert DEFAULT_SETTINGS["pmtiles.max_zoom"] is None
+        assert DEFAULT_SETTINGS["pmtiles.precision"] == 6
+        assert DEFAULT_SETTINGS["pmtiles.layer"] is None
+        assert DEFAULT_SETTINGS["pmtiles.bbox"] is None
+        assert DEFAULT_SETTINGS["pmtiles.where"] is None
+        assert DEFAULT_SETTINGS["pmtiles.include_cols"] is None
+        assert DEFAULT_SETTINGS["pmtiles.attribution"] is None
+        assert DEFAULT_SETTINGS["pmtiles.src_crs"] is None
+
+    @pytest.mark.unit
+    def test_pmtiles_config_loads_from_yaml(self, tmp_path: Path) -> None:
+        """PMTiles settings load correctly from config.yaml."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(
+            tmp_path,
+            {
+                "pmtiles.enabled": True,
+                "pmtiles.min_zoom": 2,
+                "pmtiles.max_zoom": 12,
+                "pmtiles.precision": 5,
+                "pmtiles.layer": "boundaries",
+                "pmtiles.bbox": "-122.5,37.5,-122.0,38.0",
+                "pmtiles.where": "population > 1000",
+                "pmtiles.include_cols": "name,geometry",
+                "pmtiles.attribution": "© Test",
+                "pmtiles.src_crs": "EPSG:3857",
+            },
+        )
+
+        assert get_setting("pmtiles.enabled", catalog_path=tmp_path) is True
+        assert get_setting("pmtiles.min_zoom", catalog_path=tmp_path) == 2
+        assert get_setting("pmtiles.max_zoom", catalog_path=tmp_path) == 12
+        assert get_setting("pmtiles.precision", catalog_path=tmp_path) == 5
+        assert get_setting("pmtiles.layer", catalog_path=tmp_path) == "boundaries"
+        assert get_setting("pmtiles.bbox", catalog_path=tmp_path) == "-122.5,37.5,-122.0,38.0"
+        assert get_setting("pmtiles.where", catalog_path=tmp_path) == "population > 1000"
+        assert get_setting("pmtiles.include_cols", catalog_path=tmp_path) == "name,geometry"
+        assert get_setting("pmtiles.attribution", catalog_path=tmp_path) == "© Test"
+        assert get_setting("pmtiles.src_crs", catalog_path=tmp_path) == "EPSG:3857"

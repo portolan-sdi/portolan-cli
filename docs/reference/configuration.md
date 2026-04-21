@@ -209,6 +209,86 @@ conversion:
 | `JPEG` | RGB imagery | Lossy, smallest files for photos |
 | `WEBP` | Web display | Lossy, modern browsers only |
 
+## PMTiles Generation
+
+Generate vector tile overviews from GeoParquet assets for efficient web map rendering.
+
+```yaml
+# .portolan/config.yaml
+pmtiles.enabled: true     # Auto-generate during add (default: false)
+pmtiles.min_zoom: 0       # Minimum zoom level (default: auto-detect)
+pmtiles.max_zoom: 14      # Maximum zoom level (default: auto-detect)
+pmtiles.precision: 6      # Coordinate decimal precision (default: 6)
+pmtiles.layer: boundaries # Layer name in output (default: filename)
+pmtiles.attribution: "© OpenStreetMap contributors"
+```
+
+!!! warning "External dependency"
+    PMTiles generation requires [tippecanoe](https://github.com/felt/tippecanoe) installed and in PATH:
+
+    - **macOS**: `brew install tippecanoe`
+    - **Ubuntu**: `apt install tippecanoe`
+
+    Also requires the optional `pmtiles` extra: `pip install portolan-cli[pmtiles]`
+
+### Commands
+
+```bash
+# Generate PMTiles during add
+portolan add boundaries/ --pmtiles
+
+# Force regeneration even if up-to-date
+portolan add boundaries/ --pmtiles --force-pmtiles
+
+# Check for missing PMTiles (produces warning, not error)
+portolan check
+```
+
+### How It Works
+
+- Uses [gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles) wrapper around tippecanoe
+- PMTiles stored alongside source GeoParquet (e.g., `data.parquet` → `data.pmtiles`)
+- Registered as collection-level asset with role `["overview"]`
+- Tracked in `versions.json` for push
+- Skips regeneration if PMTiles newer than source (mtime check)
+
+### Settings Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `pmtiles.enabled` | `false` | Auto-generate during `add` command |
+| `pmtiles.min_zoom` | auto | Minimum zoom level (tippecanoe default: 0) |
+| `pmtiles.max_zoom` | auto | Maximum zoom level (tippecanoe default: 14) |
+| `pmtiles.layer` | filename | Layer name in PMTiles output |
+| `pmtiles.precision` | `6` | Coordinate decimal precision |
+| `pmtiles.attribution` | gpio default | Attribution HTML for tiles |
+| `pmtiles.bbox` | none | Bounding box filter: `"minx,miny,maxx,maxy"` |
+| `pmtiles.where` | none | SQL WHERE clause for filtering features |
+| `pmtiles.include_cols` | all | Comma-separated columns to include in tiles |
+| `pmtiles.src_crs` | metadata | Override source CRS if metadata is incorrect |
+
+### Filtering Example
+
+```yaml
+# Only include specific columns in tiles (reduces file size)
+pmtiles.include_cols: "name,population,geometry"
+
+# Filter features with SQL WHERE clause
+pmtiles.where: "population > 10000"
+
+# Clip to bounding box (minx,miny,maxx,maxy)
+pmtiles.bbox: "-122.5,37.5,-122.0,38.0"
+```
+
+### When to Use
+
+- Web map applications requiring fast tile rendering
+- Collections with GeoParquet assets intended for visual display
+- When `portolan check` warns about missing PMTiles
+
+!!! note "PMTiles are optional"
+    PMTiles are derivatives for rendering, not the canonical data format. GeoParquet remains the source of truth. Missing PMTiles produce a validation **warning**, not an error.
+
 ## STAC GeoParquet Settings
 
 Generate `items.parquet` for collections with many items, enabling efficient spatial/temporal queries without N HTTP requests.

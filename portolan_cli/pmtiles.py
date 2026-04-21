@@ -210,6 +210,13 @@ def generate_pmtiles(
     *,
     min_zoom: int | None = None,
     max_zoom: int | None = None,
+    layer: str | None = None,
+    bbox: str | None = None,
+    where: str | None = None,
+    include_cols: str | None = None,
+    precision: int = 6,
+    attribution: str | None = None,
+    src_crs: str | None = None,
 ) -> None:
     """Generate a single PMTiles file from GeoParquet.
 
@@ -218,6 +225,13 @@ def generate_pmtiles(
         pmtiles_path: Path to output PMTiles file.
         min_zoom: Minimum zoom level (None = auto-detect).
         max_zoom: Maximum zoom level (None = auto-detect).
+        layer: Layer name in PMTiles (None = use filename).
+        bbox: Bounding box filter as "minx,miny,maxx,maxy".
+        where: SQL WHERE clause for filtering features.
+        include_cols: Comma-separated columns to include in tiles.
+        precision: Coordinate decimal precision (default: 6).
+        attribution: Attribution HTML for tiles.
+        src_crs: Override source CRS if metadata is incorrect.
 
     Raises:
         PMTilesNotAvailableError: If gpio-pmtiles not installed.
@@ -234,6 +248,13 @@ def generate_pmtiles(
             output_path=str(pmtiles_path),
             min_zoom=min_zoom,
             max_zoom=max_zoom,
+            layer=layer,
+            bbox=bbox,
+            where=where,
+            include_cols=include_cols,
+            precision=precision,
+            attribution=attribution,
+            src_crs=src_crs,
         )
     except Exception as e:
         raise PMTilesGenerationError(str(parquet_path), e) from e
@@ -373,6 +394,13 @@ def generate_pmtiles_for_collection(
     force: bool = False,
     min_zoom: int | None = None,
     max_zoom: int | None = None,
+    layer: str | None = None,
+    bbox: str | None = None,
+    where: str | None = None,
+    include_cols: str | None = None,
+    precision: int = 6,
+    attribution: str | None = None,
+    src_crs: str | None = None,
 ) -> PMTilesResult:
     """Generate PMTiles for all GeoParquet assets in a collection.
 
@@ -386,6 +414,13 @@ def generate_pmtiles_for_collection(
         force: If True, regenerate even if PMTiles exists and is up-to-date.
         min_zoom: Minimum zoom level (None = auto-detect via tippecanoe).
         max_zoom: Maximum zoom level (None = auto-detect via tippecanoe).
+        layer: Layer name in PMTiles (None = use filename).
+        bbox: Bounding box filter as "minx,miny,maxx,maxy".
+        where: SQL WHERE clause for filtering features.
+        include_cols: Comma-separated columns to include in tiles.
+        precision: Coordinate decimal precision (default: 6).
+        attribution: Attribution HTML for tiles.
+        src_crs: Override source CRS if metadata is incorrect.
 
     Returns:
         PMTilesResult with generated, skipped, and failed counts.
@@ -430,6 +465,13 @@ def generate_pmtiles_for_collection(
                 pmtiles_path,
                 min_zoom=min_zoom,
                 max_zoom=max_zoom,
+                layer=layer,
+                bbox=bbox,
+                where=where,
+                include_cols=include_cols,
+                precision=precision,
+                attribution=attribution,
+                src_crs=src_crs,
             )
 
             # Register asset in collection.json

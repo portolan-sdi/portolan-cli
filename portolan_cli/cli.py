@@ -2566,27 +2566,46 @@ def _handle_parquet_after_add(
             )
 
 
-def _get_pmtiles_settings(
-    catalog_root: Path, coll_id: str, coll_path: Path
-) -> tuple[bool, int | None, int | None]:
+@dataclass
+class PMTilesSettings:
+    """Settings for PMTiles generation."""
+
+    enabled: bool = False
+    min_zoom: int | None = None
+    max_zoom: int | None = None
+    layer: str | None = None
+    bbox: str | None = None
+    where: str | None = None
+    include_cols: str | None = None
+    precision: int = 6
+    attribution: str | None = None
+    src_crs: str | None = None
+
+
+def _get_pmtiles_settings(catalog_root: Path, coll_id: str, coll_path: Path) -> PMTilesSettings:
     """Get PMTiles settings for a collection."""
     from portolan_cli.config import get_setting
 
-    enabled_raw = get_setting(
-        "pmtiles.enabled", catalog_path=catalog_root, collection=coll_id, collection_path=coll_path
-    )
-    min_raw = get_setting(
-        "pmtiles.min_zoom", catalog_path=catalog_root, collection=coll_id, collection_path=coll_path
-    )
-    max_raw = get_setting(
-        "pmtiles.max_zoom", catalog_path=catalog_root, collection=coll_id, collection_path=coll_path
-    )
+    def get(key: str) -> Any:
+        return get_setting(
+            f"pmtiles.{key}",
+            catalog_path=catalog_root,
+            collection=coll_id,
+            collection_path=coll_path,
+        )
 
-    enabled = _coerce_bool(enabled_raw, default=False)
-    min_zoom = None if min_raw is None else _coerce_int(min_raw, default=0)
-    max_zoom = None if max_raw is None else _coerce_int(max_raw, default=14)
-
-    return enabled, min_zoom, max_zoom
+    return PMTilesSettings(
+        enabled=_coerce_bool(get("enabled"), default=False),
+        min_zoom=None if get("min_zoom") is None else _coerce_int(get("min_zoom"), default=0),
+        max_zoom=None if get("max_zoom") is None else _coerce_int(get("max_zoom"), default=14),
+        layer=get("layer"),
+        bbox=get("bbox"),
+        where=get("where"),
+        include_cols=get("include_cols"),
+        precision=_coerce_int(get("precision"), default=6),
+        attribution=get("attribution"),
+        src_crs=get("src_crs"),
+    )
 
 
 def _handle_pmtiles_after_add(
@@ -2611,17 +2630,28 @@ def _handle_pmtiles_after_add(
         if not (coll_path / "collection.json").exists():
             continue
 
-        enabled, min_zoom, max_zoom = _get_pmtiles_settings(catalog_root, coll_id, coll_path)
-        if not (generate_pmtiles or enabled):
+        settings = _get_pmtiles_settings(catalog_root, coll_id, coll_path)
+        if not (generate_pmtiles or settings.enabled):
             continue
 
         try:
             result = generate_pmtiles_for_collection(
-                coll_path, catalog_root, force=force, min_zoom=min_zoom, max_zoom=max_zoom
+                coll_path,
+                catalog_root,
+                force=force,
+                min_zoom=settings.min_zoom,
+                max_zoom=settings.max_zoom,
+                layer=settings.layer,
+                bbox=settings.bbox,
+                where=settings.where,
+                include_cols=settings.include_cols,
+                precision=settings.precision,
+                attribution=settings.attribution,
+                src_crs=settings.src_crs,
             )
             _report_pmtiles_result(result, verbose, generate_pmtiles)
         except PMTilesNotAvailableError as e:
-            _handle_pmtiles_unavailable(e, generate_pmtiles, enabled, verbose, coll_id)
+            _handle_pmtiles_unavailable(e, generate_pmtiles, settings.enabled, verbose, coll_id)
         except TippecanoeNotFoundError as e:
             _handle_tippecanoe_missing(e, generate_pmtiles, coll_id)
 

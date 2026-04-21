@@ -291,6 +291,73 @@ class TestAddPMTilesAssetToCollection:
         assert len(updated["assets"]) == 2
 
 
+class TestGeneratePMTiles:
+    """Tests for generate_pmtiles function parameter passthrough."""
+
+    @pytest.mark.unit
+    def test_passes_all_parameters_to_gpio_pmtiles(self, tmp_path: Path) -> None:
+        """All parameters are passed through to create_pmtiles_from_geoparquet."""
+        from portolan_cli.pmtiles import generate_pmtiles
+
+        parquet = tmp_path / "data.parquet"
+        pmtiles = tmp_path / "data.pmtiles"
+        parquet.write_bytes(b"PAR1")
+
+        mock_create = MagicMock()
+        mock_module = MagicMock()
+        mock_module.create_pmtiles_from_geoparquet = mock_create
+
+        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                generate_pmtiles(
+                    parquet,
+                    pmtiles,
+                    min_zoom=2,
+                    max_zoom=12,
+                    layer="test-layer",
+                    bbox="-122.5,37.5,-122.0,38.0",
+                    where="population > 1000",
+                    include_cols="name,geometry",
+                    precision=5,
+                    attribution="© Test",
+                    src_crs="EPSG:3857",
+                )
+
+        mock_create.assert_called_once_with(
+            input_path=str(parquet),
+            output_path=str(pmtiles),
+            min_zoom=2,
+            max_zoom=12,
+            layer="test-layer",
+            bbox="-122.5,37.5,-122.0,38.0",
+            where="population > 1000",
+            include_cols="name,geometry",
+            precision=5,
+            attribution="© Test",
+            src_crs="EPSG:3857",
+        )
+
+    @pytest.mark.unit
+    def test_default_precision_is_six(self, tmp_path: Path) -> None:
+        """Default precision value is 6."""
+        from portolan_cli.pmtiles import generate_pmtiles
+
+        parquet = tmp_path / "data.parquet"
+        pmtiles = tmp_path / "data.pmtiles"
+        parquet.write_bytes(b"PAR1")
+
+        mock_create = MagicMock()
+        mock_module = MagicMock()
+        mock_module.create_pmtiles_from_geoparquet = mock_create
+
+        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                generate_pmtiles(parquet, pmtiles)
+
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["precision"] == 6
+
+
 class TestGeneratePMTilesForCollection:
     """Tests for generate_pmtiles_for_collection function."""
 
@@ -313,6 +380,76 @@ class TestGeneratePMTilesForCollection:
 
         assert result.total == 0
         assert result.success is True
+
+    @pytest.mark.unit
+    def test_passes_all_parameters_to_generate_pmtiles(self, tmp_path: Path) -> None:
+        """All parameters are forwarded to generate_pmtiles."""
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+
+        # Create collection with parquet asset
+        collection_json = {
+            "type": "Collection",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "data.parquet").write_bytes(b"PAR1")
+
+        # Create versions.json
+        versions_json = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2026-01-01T00:00:00Z",
+                    "breaking": False,
+                    "assets": {},
+                    "changes": [],
+                }
+            ],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(versions_json))
+
+        mock_generate = MagicMock()
+        mock_module = MagicMock()
+
+        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate):
+                    generate_pmtiles_for_collection(
+                        collection_dir,
+                        tmp_path,
+                        min_zoom=2,
+                        max_zoom=12,
+                        layer="test",
+                        bbox="-122,37,-121,38",
+                        where="pop > 100",
+                        include_cols="name",
+                        precision=4,
+                        attribution="© Me",
+                        src_crs="EPSG:4326",
+                    )
+
+        # Verify generate_pmtiles was called with all parameters
+        mock_generate.assert_called_once()
+        call_kwargs = mock_generate.call_args[1]
+        assert call_kwargs["min_zoom"] == 2
+        assert call_kwargs["max_zoom"] == 12
+        assert call_kwargs["layer"] == "test"
+        assert call_kwargs["bbox"] == "-122,37,-121,38"
+        assert call_kwargs["where"] == "pop > 100"
+        assert call_kwargs["include_cols"] == "name"
+        assert call_kwargs["precision"] == 4
+        assert call_kwargs["attribution"] == "© Me"
+        assert call_kwargs["src_crs"] == "EPSG:4326"
 
 
 # Integration tests that require tippecanoe

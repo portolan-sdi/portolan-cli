@@ -335,3 +335,73 @@ class TestPMTilesMultipleAssets:
         updated = json.loads((collection_dir / "collection.json").read_text())
         assert "roads-tiles" in updated["assets"]
         assert "buildings-tiles" in updated["assets"]
+
+
+class TestPMTilesAdvancedParameters:
+    """Test PMTiles generation with advanced gpio-pmtiles parameters."""
+
+    def test_precision_parameter_accepted(self, collection_with_geoparquet: Path) -> None:
+        """Custom precision parameter is accepted by tippecanoe."""
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        catalog_root = collection_with_geoparquet.parent
+
+        result = generate_pmtiles_for_collection(
+            collection_path=collection_with_geoparquet,
+            catalog_root=catalog_root,
+            precision=4,
+        )
+
+        assert len(result.generated) == 1
+        assert result.success is True
+        assert (collection_with_geoparquet / "roads.pmtiles").exists()
+
+    def test_layer_parameter_accepted(self, collection_with_geoparquet: Path) -> None:
+        """Custom layer name is accepted."""
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        catalog_root = collection_with_geoparquet.parent
+
+        result = generate_pmtiles_for_collection(
+            collection_path=collection_with_geoparquet,
+            catalog_root=catalog_root,
+            layer="custom-layer-name",
+        )
+
+        assert len(result.generated) == 1
+        assert result.success is True
+
+    def test_attribution_parameter_accepted(self, collection_with_geoparquet: Path) -> None:
+        """Custom attribution HTML is accepted."""
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        catalog_root = collection_with_geoparquet.parent
+
+        result = generate_pmtiles_for_collection(
+            collection_path=collection_with_geoparquet,
+            catalog_root=catalog_root,
+            attribution="© Test Attribution",
+        )
+
+        assert len(result.generated) == 1
+        assert result.success is True
+
+    def test_all_parameters_together(self, collection_with_geoparquet: Path) -> None:
+        """All advanced parameters work together."""
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        catalog_root = collection_with_geoparquet.parent
+
+        result = generate_pmtiles_for_collection(
+            collection_path=collection_with_geoparquet,
+            catalog_root=catalog_root,
+            min_zoom=0,
+            max_zoom=10,
+            layer="roads",
+            precision=5,
+            attribution="© OpenStreetMap",
+        )
+
+        assert len(result.generated) == 1
+        assert result.success is True
+        assert (collection_with_geoparquet / "roads.pmtiles").exists()
