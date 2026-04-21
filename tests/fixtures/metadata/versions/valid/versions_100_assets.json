@@ -1,0 +1,615 @@
+{
+  "spec_version": "1.0.0",
+  "current_version": "1.0.0",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "created": "2026-01-15T10:30:00Z",
+      "breaking": false,
+      "assets": {
+        "asset_000.parquet": {
+          "sha256": "064e5b51f89beaa0da0de9a0478f36bad71728d50724df31666dfc87e9ca427a",
+          "size_bytes": 1024,
+          "href": "asset_000.parquet"
+        },
+        "asset_001.parquet": {
+          "sha256": "57767efbc3f77913b5c0aef570e579aae5936c5273020d17f1e3929faa09dcaf",
+          "size_bytes": 2048,
+          "href": "asset_001.parquet"
+        },
+        "asset_002.parquet": {
+          "sha256": "88b937bea43ccfb0968124a8e3c25067be6ee9c2b7d95b6449dbd07f6ed1db1e",
+          "size_bytes": 3072,
+          "href": "asset_002.parquet"
+        },
+        "asset_003.parquet": {
+          "sha256": "0aa4af33f41293679299b934ebb239da1b596dc8d1691825a96ace0322287a34",
+          "size_bytes": 4096,
+          "href": "asset_003.parquet"
+        },
+        "asset_004.parquet": {
+          "sha256": "fc10c30cc237e14e47a21629c6efad51874ee2cf482eb537a640b9fe13b41710",
+          "size_bytes": 5120,
+          "href": "asset_004.parquet"
+        },
+        "asset_005.parquet": {
+          "sha256": "539a23fa88ce636bc6b4e0c97ee79a517a888569e7d2730337c7780d265147cb",
+          "size_bytes": 6144,
+          "href": "asset_005.parquet"
+        },
+        "asset_006.parquet": {
+          "sha256": "cb53880065bc00b3be38519ad77b287e984383c174cc5d2c34fb63716d80c8da",
+          "size_bytes": 7168,
+          "href": "asset_006.parquet"
+        },
+        "asset_007.parquet": {
+          "sha256": "90a2de996b28968fd8a557620437e3256606d27657464ed35ba41ef29111b026",
+          "size_bytes": 8192,
+          "href": "asset_007.parquet"
+        },
+        "asset_008.parquet": {
+          "sha256": "536aeb0d89d10bbdade2dd1be5727b41f193d8a7df9f9bfb1055cb3971336ea0",
+          "size_bytes": 9216,
+          "href": "asset_008.parquet"
+        },
+        "asset_009.parquet": {
+          "sha256": "528cb6e1e9aecb6a70adc577e784804807238b15946788ad7f8a472c88667e45",
+          "size_bytes": 10240,
+          "href": "asset_009.parquet"
+        },
+        "asset_010.parquet": {
+          "sha256": "1c95544d8c56aba4a838b1814c934c3a83210c39c06d54ca4b3da6b91b8df0cd",
+          "size_bytes": 11264,
+          "href": "asset_010.parquet"
+        },
+        "asset_011.parquet": {
+          "sha256": "84c8517af007dcbf2de861694c54080110e964c0dd1d1f480f5f6d4fce3e672e",
+          "size_bytes": 12288,
+          "href": "asset_011.parquet"
+        },
+        "asset_012.parquet": {
+          "sha256": "84e0b361300aa513a801066eb74b18be52bc83d0b25a2d04f4fb490aa9d67422",
+          "size_bytes": 13312,
+          "href": "asset_012.parquet"
+        },
+        "asset_013.parquet": {
+          "sha256": "ee609186454f72b4577f4fdfc8d15d1eda117f28d04d0d83e37729cffe371961",
+          "size_bytes": 14336,
+          "href": "asset_013.parquet"
+        },
+        "asset_014.parquet": {
+          "sha256": "ae94bd2cbf54802c190cc9eb8d3a5aa1d554f91f0909170f164ad0c0ba5c2161",
+          "size_bytes": 15360,
+          "href": "asset_014.parquet"
+        },
+        "asset_015.parquet": {
+          "sha256": "130cfcf1fbfc7d14718b51898e79141445f97f31f8b6f431ce69a855872d4e3a",
+          "size_bytes": 16384,
+          "href": "asset_015.parquet"
+        },
+        "asset_016.parquet": {
+          "sha256": "f75e0b5c75125d94823b430b57ccf5b0fff292c68d3d629421d63f3d85e3cf90",
+          "size_bytes": 17408,
+          "href": "asset_016.parquet"
+        },
+        "asset_017.parquet": {
+          "sha256": "dd1d51413c97bf087ad58a487c4c90bdf9d8678000eca089cd80aaad4a459f5a",
+          "size_bytes": 18432,
+          "href": "asset_017.parquet"
+        },
+        "asset_018.parquet": {
+          "sha256": "44b3c3e4aa390a44840d5d6fddfef28cf0fada8dd5f8714b2fadbbd869acc5ae",
+          "size_bytes": 19456,
+          "href": "asset_018.parquet"
+        },
+        "asset_019.parquet": {
+          "sha256": "bcf09ae22b0dfc711b1f256f10967e3232049a990c7b4f036f4202d809dfdd38",
+          "size_bytes": 20480,
+          "href": "asset_019.parquet"
+        },
+        "asset_020.parquet": {
+          "sha256": "e7983b9b36063777b297ac513b7f07ee1859cfb51fc870ec493fe03239750ed1",
+          "size_bytes": 21504,
+          "href": "asset_020.parquet"
+        },
+        "asset_021.parquet": {
+          "sha256": "f0c5067a5e9407496e9f6b54dd479c450ca4b9b633519680dcff8d9b41ec0bcc",
+          "size_bytes": 22528,
+          "href": "asset_021.parquet"
+        },
+        "asset_022.parquet": {
+          "sha256": "f97b5b9cd842920bbd8b39d30d618300a0b5b4724e0bb004b11bf9d2eaf6771c",
+          "size_bytes": 23552,
+          "href": "asset_022.parquet"
+        },
+        "asset_023.parquet": {
+          "sha256": "0800e520f5363ad96598a315485fef72e427d60ec2de1cde5485e7d018b0eb0c",
+          "size_bytes": 24576,
+          "href": "asset_023.parquet"
+        },
+        "asset_024.parquet": {
+          "sha256": "ac2654004770210be8f5cfea010bba1fa90d8d10894ecf080e14289357ad005a",
+          "size_bytes": 25600,
+          "href": "asset_024.parquet"
+        },
+        "asset_025.parquet": {
+          "sha256": "c262700d3ae83325c895832ea5349c57b30c388cab8be82316974166fd48bb75",
+          "size_bytes": 26624,
+          "href": "asset_025.parquet"
+        },
+        "asset_026.parquet": {
+          "sha256": "9854ed74b1414d3fc3cb7a213a9b1727186456084c7bd087e768b336c7891ea6",
+          "size_bytes": 27648,
+          "href": "asset_026.parquet"
+        },
+        "asset_027.parquet": {
+          "sha256": "1b752be962f0a2b9152adc24e06a9830d004279fb2e7ab16a65305e16e56a281",
+          "size_bytes": 28672,
+          "href": "asset_027.parquet"
+        },
+        "asset_028.parquet": {
+          "sha256": "a7e5d0d9c50de7a0822478b32a4b36109927982f105854c22bc9d7da60b3d987",
+          "size_bytes": 29696,
+          "href": "asset_028.parquet"
+        },
+        "asset_029.parquet": {
+          "sha256": "f18afc7e93441c1ef6114f72ede1fb1016b6a2a636755f2e77ef50d0ebc74d92",
+          "size_bytes": 30720,
+          "href": "asset_029.parquet"
+        },
+        "asset_030.parquet": {
+          "sha256": "a0fe08eba103b2b63d13cb5e72d075f2c99916f9f2e87990eb4c530950a918da",
+          "size_bytes": 31744,
+          "href": "asset_030.parquet"
+        },
+        "asset_031.parquet": {
+          "sha256": "b8b15d5bccc5a05240b7cdb1bfac2c27e2be971ae3297e9c6844b662997e5f2e",
+          "size_bytes": 32768,
+          "href": "asset_031.parquet"
+        },
+        "asset_032.parquet": {
+          "sha256": "74af1a593c8a424a668b93c72db5add1a4e41b35ed693bc1521016aabd9c86e1",
+          "size_bytes": 33792,
+          "href": "asset_032.parquet"
+        },
+        "asset_033.parquet": {
+          "sha256": "a6ef43b00543f9b490bbc1c0666560383d3ede54729f9bbdbcfd05c1dd46812d",
+          "size_bytes": 34816,
+          "href": "asset_033.parquet"
+        },
+        "asset_034.parquet": {
+          "sha256": "ad3b48cb83f55e754df0c977eec772588d8c7923241986d4125d1668aeb5d12b",
+          "size_bytes": 35840,
+          "href": "asset_034.parquet"
+        },
+        "asset_035.parquet": {
+          "sha256": "47302b684033f174bc2250772fd17f2c9de373c9cebdd37c9710fc9fde9c7f1b",
+          "size_bytes": 36864,
+          "href": "asset_035.parquet"
+        },
+        "asset_036.parquet": {
+          "sha256": "9a1f11382305be510c8b2b663a512c87f2e07ad9cf1f4a7a0280322edb6a2f06",
+          "size_bytes": 37888,
+          "href": "asset_036.parquet"
+        },
+        "asset_037.parquet": {
+          "sha256": "fb65badc289e425382c54e9ace57a09e3fd5a0b2104f7867d3580c361ab1bacd",
+          "size_bytes": 38912,
+          "href": "asset_037.parquet"
+        },
+        "asset_038.parquet": {
+          "sha256": "5d66e6fac82660f48dc0a0dbc2721c9a534995aa907addcf167554fabbc7aaf4",
+          "size_bytes": 39936,
+          "href": "asset_038.parquet"
+        },
+        "asset_039.parquet": {
+          "sha256": "76610500d751f88f4859b5063ccdb157b861eb0d4d49fb6f13990cbc88fd5fcf",
+          "size_bytes": 40960,
+          "href": "asset_039.parquet"
+        },
+        "asset_040.parquet": {
+          "sha256": "f68a513d9bc6de7ef62e86c8ca345adafdff0c3da5248fdc0dc47250bf884b5b",
+          "size_bytes": 41984,
+          "href": "asset_040.parquet"
+        },
+        "asset_041.parquet": {
+          "sha256": "131342b2568ca59f75db1c50ecf1c9592de9eed6b21d9ed25ba6e1c2fa76568b",
+          "size_bytes": 43008,
+          "href": "asset_041.parquet"
+        },
+        "asset_042.parquet": {
+          "sha256": "462b7d4a3a4c58ed6069bdf8d0f1b53a4589b1c58434fa3f86a237568ee747ac",
+          "size_bytes": 44032,
+          "href": "asset_042.parquet"
+        },
+        "asset_043.parquet": {
+          "sha256": "a430b8e98fdae2bce6f754293c4472a832d2a9348ded2f43f776b4f56cb58984",
+          "size_bytes": 45056,
+          "href": "asset_043.parquet"
+        },
+        "asset_044.parquet": {
+          "sha256": "33e38515c82bd3e45f325cb2150316737af5ca3cab6ee172d32110c587b35c4a",
+          "size_bytes": 46080,
+          "href": "asset_044.parquet"
+        },
+        "asset_045.parquet": {
+          "sha256": "1ada11432d4ea511b16ffa144a86f3a098651b431a666895ac8491ba020d4100",
+          "size_bytes": 47104,
+          "href": "asset_045.parquet"
+        },
+        "asset_046.parquet": {
+          "sha256": "916b0a9b919f4027f568932f11e373ff3b1fbaffaabd7d23c6d3a484b00b8be1",
+          "size_bytes": 48128,
+          "href": "asset_046.parquet"
+        },
+        "asset_047.parquet": {
+          "sha256": "807bded0dcfd3c44d8e622654d6c47de9183dcf22902af33bf552496582d12ff",
+          "size_bytes": 49152,
+          "href": "asset_047.parquet"
+        },
+        "asset_048.parquet": {
+          "sha256": "33e6f2f258f75a79b3155135b7c18860778c9751f59ac9d3e88f028acabfdabf",
+          "size_bytes": 50176,
+          "href": "asset_048.parquet"
+        },
+        "asset_049.parquet": {
+          "sha256": "49c4fe68de3d1be60c6b0437a3ae091d5dc1667768cec0d5728724dc5832b697",
+          "size_bytes": 51200,
+          "href": "asset_049.parquet"
+        },
+        "asset_050.parquet": {
+          "sha256": "262f8ca659f6419d36e5eb3e9bee0f808061bc714a55d70d8b07c81cfdeebe26",
+          "size_bytes": 52224,
+          "href": "asset_050.parquet"
+        },
+        "asset_051.parquet": {
+          "sha256": "75be670d765580a7c207ded7122f018f4bb01487d33670d131c41fbedb50cb37",
+          "size_bytes": 53248,
+          "href": "asset_051.parquet"
+        },
+        "asset_052.parquet": {
+          "sha256": "47c8b02e38076325162aa8c786ae486bc0ec9edbdf198d3f4b7f62a349b791b3",
+          "size_bytes": 54272,
+          "href": "asset_052.parquet"
+        },
+        "asset_053.parquet": {
+          "sha256": "f4dffa1797ec2504bf4752c940993d084c0f1a476d8962d7470e18ab7bf15041",
+          "size_bytes": 55296,
+          "href": "asset_053.parquet"
+        },
+        "asset_054.parquet": {
+          "sha256": "e764cae8d6587c45a58e7a673d7581ec116b9fc2b54ac0d4c07545828908abb3",
+          "size_bytes": 56320,
+          "href": "asset_054.parquet"
+        },
+        "asset_055.parquet": {
+          "sha256": "a8e1478f985afbab55ba472269fbad99a653570634efa77d89208e9227d1fd9f",
+          "size_bytes": 57344,
+          "href": "asset_055.parquet"
+        },
+        "asset_056.parquet": {
+          "sha256": "4337062942a13de12b83f1766e258c1874ee9c202530c7f41dccfdc81a3b9fc2",
+          "size_bytes": 58368,
+          "href": "asset_056.parquet"
+        },
+        "asset_057.parquet": {
+          "sha256": "56cbc1909af2741e69134cd5eccde4a85983000469ad3ca4566d9f47d25fd4a3",
+          "size_bytes": 59392,
+          "href": "asset_057.parquet"
+        },
+        "asset_058.parquet": {
+          "sha256": "a207685cfe952ce5fb5e01ffb6134ae741fe062ef34087b3e0614095c7589cab",
+          "size_bytes": 60416,
+          "href": "asset_058.parquet"
+        },
+        "asset_059.parquet": {
+          "sha256": "b61719d4bd63f7b30b91a1b6fd2887f1b1d6022b204fcde10236bc4584e3934d",
+          "size_bytes": 61440,
+          "href": "asset_059.parquet"
+        },
+        "asset_060.parquet": {
+          "sha256": "4b74adf9cf07127bf521c3cf387c3ef22d275f7f7a6b62d2821cd10532ca1ba2",
+          "size_bytes": 62464,
+          "href": "asset_060.parquet"
+        },
+        "asset_061.parquet": {
+          "sha256": "f087fefd0cae3da131a859f5419a6f3d53e499d066c9ccd49d3b80a3f11b7e56",
+          "size_bytes": 63488,
+          "href": "asset_061.parquet"
+        },
+        "asset_062.parquet": {
+          "sha256": "a0b54fd114abcfbbd929a200e9d31d723508efdb412fabeaadbf623637ff0092",
+          "size_bytes": 64512,
+          "href": "asset_062.parquet"
+        },
+        "asset_063.parquet": {
+          "sha256": "b1884d1b797a8c13e6c89267482dcf21b1d5738f27aebd1132bca56ee9b1ffb0",
+          "size_bytes": 65536,
+          "href": "asset_063.parquet"
+        },
+        "asset_064.parquet": {
+          "sha256": "d00a930bfcdcff52486c55cc05c64561c69f3f78eda2d6f89ceb1a420419df71",
+          "size_bytes": 66560,
+          "href": "asset_064.parquet"
+        },
+        "asset_065.parquet": {
+          "sha256": "b088bb3d84574f6f3e4ffc5469bc191813e087be911e080b513334de32e5b089",
+          "size_bytes": 67584,
+          "href": "asset_065.parquet"
+        },
+        "asset_066.parquet": {
+          "sha256": "b597549bbdc2330fc834256007118427ecccd666b650dbe9ab087dc2636be92e",
+          "size_bytes": 68608,
+          "href": "asset_066.parquet"
+        },
+        "asset_067.parquet": {
+          "sha256": "346d2b0d36f3d9bb0bba235997afe95b8cef01cfe75003c3a41970b58fdede16",
+          "size_bytes": 69632,
+          "href": "asset_067.parquet"
+        },
+        "asset_068.parquet": {
+          "sha256": "f3ea956265b6fd3394aaf88b63c3bbae9f9b7ad712e5b54e1afeeb338e6a3d17",
+          "size_bytes": 70656,
+          "href": "asset_068.parquet"
+        },
+        "asset_069.parquet": {
+          "sha256": "2d954fa1edd7154690b7765a0cd70526f98d2fa9ea6f97b6ad61ffa9adb65034",
+          "size_bytes": 71680,
+          "href": "asset_069.parquet"
+        },
+        "asset_070.parquet": {
+          "sha256": "1c89535f186417b9464a2afe89faab810fd72b94c96f0d7a33ccd279871bc1b8",
+          "size_bytes": 72704,
+          "href": "asset_070.parquet"
+        },
+        "asset_071.parquet": {
+          "sha256": "ad059e29f322dd3cf6e36a4f0c98d48f2af99ac310f7882a1c749958d910cfa9",
+          "size_bytes": 73728,
+          "href": "asset_071.parquet"
+        },
+        "asset_072.parquet": {
+          "sha256": "94faeb3bdc9769aadda80335a87d43cd0b7ae897f2097e09b111658173b0947f",
+          "size_bytes": 74752,
+          "href": "asset_072.parquet"
+        },
+        "asset_073.parquet": {
+          "sha256": "21c8e2686e5a02382093ae3b242a2e99838886ec9bf440d84b0a5dd39534d8f8",
+          "size_bytes": 75776,
+          "href": "asset_073.parquet"
+        },
+        "asset_074.parquet": {
+          "sha256": "7957fa36796f2dff923a99ffe1a44475176c21b3bfd36ef56e8b4fa3b14757ac",
+          "size_bytes": 76800,
+          "href": "asset_074.parquet"
+        },
+        "asset_075.parquet": {
+          "sha256": "0166356def7aa892efddc35eb5e8b26689b867c9b64a7840910d73e0bdf6ac27",
+          "size_bytes": 77824,
+          "href": "asset_075.parquet"
+        },
+        "asset_076.parquet": {
+          "sha256": "4a160b4bd9acf6dcd42575227cfd5dc94fbb3c1af5205f890b78e72a05e6b091",
+          "size_bytes": 78848,
+          "href": "asset_076.parquet"
+        },
+        "asset_077.parquet": {
+          "sha256": "4d81d22789c82c4ed42d37d08c0556d34006a4fc901f2992d6011fe99ebcb288",
+          "size_bytes": 79872,
+          "href": "asset_077.parquet"
+        },
+        "asset_078.parquet": {
+          "sha256": "9c75644bb2bc4deea906af02c58f42970fa4a160581a76dc136620f46479dbbd",
+          "size_bytes": 80896,
+          "href": "asset_078.parquet"
+        },
+        "asset_079.parquet": {
+          "sha256": "b7acf9c1db9bb127e3375e2665a599948956d5237483e76640b894a7809335c0",
+          "size_bytes": 81920,
+          "href": "asset_079.parquet"
+        },
+        "asset_080.parquet": {
+          "sha256": "ae14f9035bcda448a6de7d091860e87e1593ae89c6698cd1423398257fd47263",
+          "size_bytes": 82944,
+          "href": "asset_080.parquet"
+        },
+        "asset_081.parquet": {
+          "sha256": "48d2ad661dd63ffb6638c8c5d15a46886a55fab49e2cdf7389a0121a7ed4440b",
+          "size_bytes": 83968,
+          "href": "asset_081.parquet"
+        },
+        "asset_082.parquet": {
+          "sha256": "5b8f5a3bf39650fdaa58c1958fc7d85f5efbe53a7e651f0614347f0f691bec60",
+          "size_bytes": 84992,
+          "href": "asset_082.parquet"
+        },
+        "asset_083.parquet": {
+          "sha256": "01db2b7e844c766f7def98037255f6b3ef1dce2e8582010d7c709684807d08f0",
+          "size_bytes": 86016,
+          "href": "asset_083.parquet"
+        },
+        "asset_084.parquet": {
+          "sha256": "889e5ef6ff8db06348a5fd13c1c624be8d15bd7b1675a98cc469396be60756d9",
+          "size_bytes": 87040,
+          "href": "asset_084.parquet"
+        },
+        "asset_085.parquet": {
+          "sha256": "3db8f4ad11012adf2b65f9dee243a2a71089758019d012b92c10a2ee344b9f94",
+          "size_bytes": 88064,
+          "href": "asset_085.parquet"
+        },
+        "asset_086.parquet": {
+          "sha256": "3c71bf36322edf0e23e673e007832168f70096223b6cd8a62d12989857282139",
+          "size_bytes": 89088,
+          "href": "asset_086.parquet"
+        },
+        "asset_087.parquet": {
+          "sha256": "9af6648aa1c6414d688ae15393a1bb9dbb0f76ffac7303f095686c81ab044d7b",
+          "size_bytes": 90112,
+          "href": "asset_087.parquet"
+        },
+        "asset_088.parquet": {
+          "sha256": "69136a64b0d6c3448fecd7711801af8487861c458dafaa7c57d775193774455b",
+          "size_bytes": 91136,
+          "href": "asset_088.parquet"
+        },
+        "asset_089.parquet": {
+          "sha256": "b875bf2d68c231f797337ee8e28852d8316b317f90f66d25457cbe0993bcd15d",
+          "size_bytes": 92160,
+          "href": "asset_089.parquet"
+        },
+        "asset_090.parquet": {
+          "sha256": "2a9510aadaf2af031a9b9f6881f1ef596e458bd5defcfa29e6d7497fa81fce8c",
+          "size_bytes": 93184,
+          "href": "asset_090.parquet"
+        },
+        "asset_091.parquet": {
+          "sha256": "231416fa57848e3447ffdca1a836642073a5aaf920227e01533b60a919ba4776",
+          "size_bytes": 94208,
+          "href": "asset_091.parquet"
+        },
+        "asset_092.parquet": {
+          "sha256": "2c888ea90666033dbd5cbd3767db0dd9b5d4d2c3b8a64efd97e4eca63501995f",
+          "size_bytes": 95232,
+          "href": "asset_092.parquet"
+        },
+        "asset_093.parquet": {
+          "sha256": "29ac7658d94ebd0d05dd1d01b028f52101f1679ba150d9a28a4ac72b4e86c933",
+          "size_bytes": 96256,
+          "href": "asset_093.parquet"
+        },
+        "asset_094.parquet": {
+          "sha256": "0af9c34ed07af45c826fa561dd833241e84542d2235f7447494f4ddaa5f336da",
+          "size_bytes": 97280,
+          "href": "asset_094.parquet"
+        },
+        "asset_095.parquet": {
+          "sha256": "cfd53b47188c710afc671433de27d9357f0304ada0e9ab31a495ec2b82ef8977",
+          "size_bytes": 98304,
+          "href": "asset_095.parquet"
+        },
+        "asset_096.parquet": {
+          "sha256": "2f3e239bea316728de10db7c2b95ea974f385965f0ccf8c2583b3cd170f29fa8",
+          "size_bytes": 99328,
+          "href": "asset_096.parquet"
+        },
+        "asset_097.parquet": {
+          "sha256": "3f945d1ff923f68f60852bca00292930a20edae78a6cbc5a96e430c4c099bf94",
+          "size_bytes": 100352,
+          "href": "asset_097.parquet"
+        },
+        "asset_098.parquet": {
+          "sha256": "6aec4cf5b1108ca48230d4bf5b3f050d34e7ab2ba86deddd9c77b973240c18f8",
+          "size_bytes": 101376,
+          "href": "asset_098.parquet"
+        },
+        "asset_099.parquet": {
+          "sha256": "c4dce79f9c94ce77d6d974abc0e610b538872b29c33f18f7098b0252211303bd",
+          "size_bytes": 102400,
+          "href": "asset_099.parquet"
+        }
+      },
+      "changes": [
+        "asset_000.parquet",
+        "asset_001.parquet",
+        "asset_002.parquet",
+        "asset_003.parquet",
+        "asset_004.parquet",
+        "asset_005.parquet",
+        "asset_006.parquet",
+        "asset_007.parquet",
+        "asset_008.parquet",
+        "asset_009.parquet",
+        "asset_010.parquet",
+        "asset_011.parquet",
+        "asset_012.parquet",
+        "asset_013.parquet",
+        "asset_014.parquet",
+        "asset_015.parquet",
+        "asset_016.parquet",
+        "asset_017.parquet",
+        "asset_018.parquet",
+        "asset_019.parquet",
+        "asset_020.parquet",
+        "asset_021.parquet",
+        "asset_022.parquet",
+        "asset_023.parquet",
+        "asset_024.parquet",
+        "asset_025.parquet",
+        "asset_026.parquet",
+        "asset_027.parquet",
+        "asset_028.parquet",
+        "asset_029.parquet",
+        "asset_030.parquet",
+        "asset_031.parquet",
+        "asset_032.parquet",
+        "asset_033.parquet",
+        "asset_034.parquet",
+        "asset_035.parquet",
+        "asset_036.parquet",
+        "asset_037.parquet",
+        "asset_038.parquet",
+        "asset_039.parquet",
+        "asset_040.parquet",
+        "asset_041.parquet",
+        "asset_042.parquet",
+        "asset_043.parquet",
+        "asset_044.parquet",
+        "asset_045.parquet",
+        "asset_046.parquet",
+        "asset_047.parquet",
+        "asset_048.parquet",
+        "asset_049.parquet",
+        "asset_050.parquet",
+        "asset_051.parquet",
+        "asset_052.parquet",
+        "asset_053.parquet",
+        "asset_054.parquet",
+        "asset_055.parquet",
+        "asset_056.parquet",
+        "asset_057.parquet",
+        "asset_058.parquet",
+        "asset_059.parquet",
+        "asset_060.parquet",
+        "asset_061.parquet",
+        "asset_062.parquet",
+        "asset_063.parquet",
+        "asset_064.parquet",
+        "asset_065.parquet",
+        "asset_066.parquet",
+        "asset_067.parquet",
+        "asset_068.parquet",
+        "asset_069.parquet",
+        "asset_070.parquet",
+        "asset_071.parquet",
+        "asset_072.parquet",
+        "asset_073.parquet",
+        "asset_074.parquet",
+        "asset_075.parquet",
+        "asset_076.parquet",
+        "asset_077.parquet",
+        "asset_078.parquet",
+        "asset_079.parquet",
+        "asset_080.parquet",
+        "asset_081.parquet",
+        "asset_082.parquet",
+        "asset_083.parquet",
+        "asset_084.parquet",
+        "asset_085.parquet",
+        "asset_086.parquet",
+        "asset_087.parquet",
+        "asset_088.parquet",
+        "asset_089.parquet",
+        "asset_090.parquet",
+        "asset_091.parquet",
+        "asset_092.parquet",
+        "asset_093.parquet",
+        "asset_094.parquet",
+        "asset_095.parquet",
+        "asset_096.parquet",
+        "asset_097.parquet",
+        "asset_098.parquet",
+        "asset_099.parquet"
+      ]
+    }
+  ]
+}

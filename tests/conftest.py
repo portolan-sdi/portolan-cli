@@ -329,3 +329,176 @@ def fresh_catalog_no_versions(tmp_path: Path) -> Path:
     collection_dir.mkdir()
 
     return catalog_dir
+
+
+@pytest.fixture
+def catalog_with_multiple_versions(tmp_path: Path) -> Path:
+    """Catalog with 3 versions for divergence and accumulation testing.
+
+    Version history:
+    - v1.0.0: base.parquet (initial)
+    - v1.1.0: base.parquet + second.parquet (add)
+    - v1.2.0: base.parquet + second.parquet + third.parquet (add)
+
+    Useful for testing snapshot model accumulation per ADR-0005.
+    """
+    import json
+
+    catalog_dir = tmp_path / "catalog_multi_version"
+    catalog_dir.mkdir()
+
+    # .portolan sentinel
+    portolan_dir = catalog_dir / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("catalog_id: test-catalog\n")
+
+    # catalog.json
+    catalog_data = {
+        "type": "Catalog",
+        "id": "test-catalog",
+        "stac_version": "1.0.0",
+        "description": "Catalog with multiple versions",
+        "links": [],
+    }
+    (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+    # Collection with 3 versions
+    collection_dir = catalog_dir / "test-collection"
+    collection_dir.mkdir()
+
+    base_hash = "base123def456789012345678901234567890123456789012345678901234base"
+    second_hash = "sec0nd3def456789012345678901234567890123456789012345678901234sec"
+    third_hash = "third3def456789012345678901234567890123456789012345678901234thi"
+
+    versions_data = {
+        "spec_version": "1.0.0",
+        "current_version": "1.2.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "base.parquet": {
+                        "sha256": base_hash,
+                        "size_bytes": 1000,
+                        "href": "base.parquet",
+                    }
+                },
+                "changes": ["base.parquet"],
+            },
+            {
+                "version": "1.1.0",
+                "created": "2026-01-16T10:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "base.parquet": {
+                        "sha256": base_hash,
+                        "size_bytes": 1000,
+                        "href": "base.parquet",
+                    },
+                    "second.parquet": {
+                        "sha256": second_hash,
+                        "size_bytes": 2000,
+                        "href": "second.parquet",
+                    },
+                },
+                "changes": ["second.parquet"],
+            },
+            {
+                "version": "1.2.0",
+                "created": "2026-01-17T10:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "base.parquet": {
+                        "sha256": base_hash,
+                        "size_bytes": 1000,
+                        "href": "base.parquet",
+                    },
+                    "second.parquet": {
+                        "sha256": second_hash,
+                        "size_bytes": 2000,
+                        "href": "second.parquet",
+                    },
+                    "third.parquet": {
+                        "sha256": third_hash,
+                        "size_bytes": 3000,
+                        "href": "third.parquet",
+                    },
+                },
+                "changes": ["third.parquet"],
+            },
+        ],
+    }
+    (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+
+    # Create actual asset files
+    (collection_dir / "base.parquet").write_bytes(b"x" * 1000)
+    (collection_dir / "second.parquet").write_bytes(b"y" * 2000)
+    (collection_dir / "third.parquet").write_bytes(b"z" * 3000)
+
+    return catalog_dir
+
+
+@pytest.fixture
+def catalog_with_100_assets(tmp_path: Path) -> Path:
+    """Catalog with 100 assets for scale testing.
+
+    Tests issue #339 scenario where many files are added.
+    """
+    import hashlib
+    import json
+
+    catalog_dir = tmp_path / "catalog_100_assets"
+    catalog_dir.mkdir()
+
+    # .portolan sentinel
+    portolan_dir = catalog_dir / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("catalog_id: test-catalog\n")
+
+    # catalog.json
+    catalog_data = {
+        "type": "Catalog",
+        "id": "test-catalog",
+        "stac_version": "1.0.0",
+        "description": "Catalog with 100 assets",
+        "links": [],
+    }
+    (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+    # Collection with 100 assets
+    collection_dir = catalog_dir / "test-collection"
+    collection_dir.mkdir()
+
+    assets = {}
+    changes = []
+    for i in range(100):
+        name = f"asset_{i:03d}.parquet"
+        sha = hashlib.sha256(name.encode()).hexdigest()
+        size = 1024 * (i + 1)
+        assets[name] = {
+            "sha256": sha,
+            "size_bytes": size,
+            "href": name,
+        }
+        changes.append(name)
+        # Create actual file
+        (collection_dir / name).write_bytes(b"x" * size)
+
+    versions_data = {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:00:00Z",
+                "breaking": False,
+                "assets": assets,
+                "changes": changes,
+            }
+        ],
+    }
+    (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+
+    return catalog_dir
