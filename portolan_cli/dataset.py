@@ -1070,16 +1070,28 @@ def finalize_datasets(
             )
 
             # Update catalog-level versions.json (ADR-0005)
-            # This keeps the catalog-level view in sync with collection state
+            # This keeps the catalog-level view in sync with collection state.
+            # Wrap in try/except to avoid failing the add if catalog update fails
+            # (collection-level versions.json was already written successfully).
             from portolan_cli.catalog import update_catalog_versions
 
-            update_catalog_versions(
-                catalog_root=catalog_root,
-                collection_id=collection_id,
-                current_version=current_version,
-                asset_count=asset_count,
-                total_size_bytes=total_size,
-            )
+            try:
+                update_catalog_versions(
+                    catalog_root=catalog_root,
+                    collection_id=collection_id,
+                    current_version=current_version,
+                    asset_count=asset_count,
+                    total_size_bytes=total_size,
+                )
+            except Exception:
+                # Collection-level versions.json was written successfully.
+                # Log warning but don't fail the add operation.
+                logger.warning(
+                    "Failed to update catalog-level versions.json for collection '%s'. "
+                    "Collection version was published but catalog-level view may be stale.",
+                    collection_id,
+                    exc_info=True,
+                )
 
         # Build results
         for p in items:
@@ -1199,13 +1211,11 @@ def _batch_update_versions(
             versions=[],
         )
 
-    # Compute new version string
+    # Compute new version string using the helper (handles prerelease versions)
     if versions_file.current_version is None:
         new_version = "1.0.0"
     else:
-        parts = versions_file.current_version.split(".")
-        parts[-1] = str(int(parts[-1]) + 1)
-        new_version = ".".join(parts)
+        new_version = _increment_version(versions_file.current_version)
 
     # Build assets dict from ALL items (batch)
     all_assets: dict[str, Asset] = {}

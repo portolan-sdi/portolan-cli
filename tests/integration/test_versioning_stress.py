@@ -100,11 +100,7 @@ def catalog_with_many_files(initialized_catalog: Path) -> tuple[Path, Path]:
 # Moto Server Fixtures (for S3 integration tests)
 # =============================================================================
 
-# Import moto - will skip tests if not installed
-moto = pytest.importorskip("moto")
-boto3 = pytest.importorskip("boto3")
-
-from moto.server import ThreadedMotoServer  # noqa: E402
+# NOTE: moto/boto3 imports moved into fixtures to avoid skipping non-network tests
 
 
 @pytest.fixture(scope="module")
@@ -113,7 +109,12 @@ def moto_server() -> Generator[str, None, None]:
 
     Necessary because obstore (Rust-based S3 client) makes direct
     HTTP calls and doesn't integrate with boto3's patching mechanism.
+
+    Note: Uses importorskip so only network tests are skipped if moto unavailable.
     """
+    pytest.importorskip("moto")
+    from moto.server import ThreadedMotoServer
+
     server = ThreadedMotoServer(ip_address="127.0.0.1", port=0, verbose=False)
     server.start()
     host, port = server.get_host_and_port()
@@ -125,6 +126,8 @@ def moto_server() -> Generator[str, None, None]:
 @pytest.fixture
 def s3_bucket(moto_server: str) -> Generator[tuple[str, str], None, None]:
     """Create a mock S3 bucket using the moto server."""
+    boto3 = pytest.importorskip("boto3")
+
     bucket_name = f"test-bucket-{uuid.uuid4().hex[:8]}"
     client = boto3.client(
         "s3",
@@ -436,6 +439,7 @@ class TestAddThenPushSeesFiles:
             cli,
             ["push", "--catalog", str(catalog_root), "--dry-run"],
         )
+        assert result.exit_code == 0, f"Push dry-run failed: {result.output}"
 
         # Dry-run output shows "Would upload up to N asset file(s)" - verify N > 0
         # The summary shows "0 file(s)" because nothing was actually pushed (dry-run)
@@ -467,6 +471,7 @@ class TestAddThenPushSeesFiles:
             cli,
             ["push", "--catalog", str(catalog_root), "--dry-run"],
         )
+        assert result.exit_code == 0, f"Push dry-run failed: {result.output}"
 
         # After add, GeoJSON gets converted to parquet - must see parquet in output
         assert ".parquet" in result.output, f"No parquet files in push output: {result.output}"
@@ -687,9 +692,12 @@ class TestPushPullDivergence:
 
         try:
             result = runner.invoke(cli, ["push", "--catalog", str(initialized_catalog)])
-            # Push should succeed (exit 0) or fail gracefully with clear message
-            # We're testing the pipeline, not production S3
-            assert result.exit_code in (0, 1), f"Unexpected error: {result.output}"
+            # Fresh push (no remote conflict) should succeed
+            assert result.exit_code == 0, f"Push failed unexpectedly: {result.output}"
+            # Verify success message in output
+            assert "push" in result.output.lower() or "upload" in result.output.lower(), (
+                f"Expected push success message, got: {result.output}"
+            )
         finally:
             os.environ.clear()
             os.environ.update(env_backup)
@@ -704,6 +712,8 @@ class TestPushPullDivergence:
     ) -> None:
         """Pull detects remote versions.json."""
         import os
+
+        import boto3
 
         bucket_name, endpoint_url = s3_bucket
 
@@ -777,6 +787,8 @@ class TestPushPullDivergence:
     ) -> None:
         """Diverged local/remote state is detected."""
         import os
+
+        import boto3
 
         bucket_name, endpoint_url = s3_bucket
 
@@ -1019,3 +1031,282 @@ class TestCorruptionRecovery:
             assert "error" in result.output.lower() or "invalid" in result.output.lower(), (
                 f"Expected clear error message, got: {result.output}"
             )
+
+
+# =============================================================================
+# TestCatalogVersionsEdgeCases (new tests from adversarial review)
+# =============================================================================
+
+
+class TestCatalogVersionsEdgeCases:
+    """Test edge cases in catalog-level versions.json handling."""
+
+    @pytest.mark.integration
+    def test_iceberg_backend_no_versions_json(self, tmp_path: Path) -> None:
+        """update_catalog_versions silently returns when no versions.json exists.
+
+        This handles Iceberg backend or other storage backends that don't use
+        file-based versioning.
+        """
+        from portolan_cli.catalog import update_catalog_versions
+
+        # Create catalog without versions.json (simulates Iceberg backend)
+        catalog_root = tmp_path / "iceberg-catalog"
+        catalog_root.mkdir()
+        portolan_dir = catalog_root / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("catalog_id: iceberg-test\n")
+
+        # Should not raise - just silently return
+        update_catalog_versions(
+            catalog_root=catalog_root,
+            collection_id="test-collection",
+            current_version="1.0.0",
+            asset_count=5,
+            total_size_bytes=1024,
+        )
+
+        # Verify no versions.json was created
+        assert not (catalog_root / "versions.json").exists()
+
+    @pytest.mark.integration
+    def test_corrupted_catalog_versions_raises_clear_error(self, tmp_path: Path) -> None:
+        """Corrupted catalog versions.json raises CatalogVersionsCorruptedError."""
+        from portolan_cli.catalog import (
+            CatalogVersionsCorruptedError,
+            update_catalog_versions,
+        )
+
+        # Create catalog with corrupted versions.json
+        catalog_root = tmp_path / "corrupt-catalog"
+        catalog_root.mkdir()
+        portolan_dir = catalog_root / ".portolan"
+        portolan_dir.mkdir()
+
+        # Write truncated/invalid JSON
+        (catalog_root / "versions.json").write_text('{"schema_version": "1.0.0", ')
+
+        with pytest.raises(CatalogVersionsCorruptedError) as exc_info:
+            update_catalog_versions(
+                catalog_root=catalog_root,
+                collection_id="test-collection",
+                current_version="1.0.0",
+                asset_count=5,
+                total_size_bytes=1024,
+            )
+
+        # Error message should be helpful
+        assert "corrupted" in str(exc_info.value).lower()
+        assert str(catalog_root / "versions.json") in str(exc_info.value)
+
+    @pytest.mark.integration
+    def test_concurrent_updates_preserve_all_collections(self, tmp_path: Path) -> None:
+        """File locking prevents lost updates from concurrent writes.
+
+        Simulates two processes updating different collections simultaneously.
+        Both collections should be preserved in final state.
+        """
+        import threading
+
+        from portolan_cli.catalog import update_catalog_versions
+
+        # Create catalog with empty versions.json
+        catalog_root = tmp_path / "concurrent-catalog"
+        catalog_root.mkdir()
+        portolan_dir = catalog_root / ".portolan"
+        portolan_dir.mkdir()
+        (catalog_root / "versions.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0.0",
+                    "catalog_id": "concurrent-test",
+                    "collections": {},
+                }
+            )
+        )
+
+        results: dict[str, Exception | None] = {}
+
+        def update_collection(coll_id: str) -> None:
+            try:
+                # Small delay to increase chance of race
+                import time
+
+                time.sleep(0.01)
+                update_catalog_versions(
+                    catalog_root=catalog_root,
+                    collection_id=coll_id,
+                    current_version="1.0.0",
+                    asset_count=10,
+                    total_size_bytes=1000,
+                )
+                results[coll_id] = None
+            except Exception as e:
+                results[coll_id] = e
+
+        # Launch concurrent updates
+        threads = [
+            threading.Thread(target=update_collection, args=(f"collection-{i}",)) for i in range(5)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # All should succeed
+        for coll_id, error in results.items():
+            assert error is None, f"{coll_id} failed: {error}"
+
+        # All collections should be present
+        final_data = json.loads((catalog_root / "versions.json").read_text())
+        collections = final_data.get("collections", {})
+        for i in range(5):
+            assert f"collection-{i}" in collections, (
+                f"collection-{i} missing! Got: {list(collections.keys())}"
+            )
+
+
+# =============================================================================
+# TestScaleAt1000Files (PR #339 original scale)
+# =============================================================================
+
+
+class TestScaleAt1000Files:
+    """Test at scale matching original issue #339 (1900 files).
+
+    Uses 1000 files as a compromise between coverage and test speed.
+    Marked slow - skipped in normal CI, run in nightly.
+    """
+
+    @pytest.fixture
+    def catalog_with_1000_files(self, tmp_path: Path) -> tuple[Path, Path]:
+        """Catalog with 1000 files matching #339 scale."""
+        catalog_root = tmp_path / "scale-1000"
+        result = CliRunner().invoke(cli, ["init", str(catalog_root), "--auto"])
+        assert result.exit_code == 0
+
+        collection_dir = catalog_root / "large-collection"
+        collection_dir.mkdir()
+
+        # Create 1000 minimal GeoJSON files
+        for i in range(1000):
+            (collection_dir / f"file_{i:04d}.geojson").write_text(
+                create_geojson(
+                    coords=(float(i % 360 - 180), float(i % 180 - 90)),
+                    props={"id": i, "batch": i // 100},
+                )
+            )
+
+        return catalog_root, collection_dir
+
+    @pytest.mark.integration
+    @pytest.mark.slow
+    def test_add_1000_files_populates_versions(
+        self, catalog_with_1000_files: tuple[Path, Path], runner: CliRunner
+    ) -> None:
+        """1000 files all appear in versions.json (Issue #339 scenario)."""
+        catalog_root, collection_dir = catalog_with_1000_files
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(catalog_root), str(collection_dir)],
+        )
+        assert result.exit_code == 0, f"Add failed: {result.output}"
+
+        # Verify collection-level versions.json
+        versions_path = collection_dir / "versions.json"
+        versions_data = json.loads(versions_path.read_text())
+
+        latest = versions_data["versions"][-1]
+        asset_count = len(latest["assets"])
+
+        # Should have >= 1000 assets (GeoJSON converted to parquet)
+        assert asset_count >= 1000, f"Only {asset_count} assets, expected >= 1000"
+
+    @pytest.mark.integration
+    @pytest.mark.slow
+    def test_add_1000_files_updates_catalog_versions(
+        self, catalog_with_1000_files: tuple[Path, Path], runner: CliRunner
+    ) -> None:
+        """Catalog-level versions.json shows correct asset_count for 1000 files."""
+        catalog_root, collection_dir = catalog_with_1000_files
+
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(catalog_root), str(collection_dir)],
+        )
+        assert result.exit_code == 0, f"Add failed: {result.output}"
+
+        # Verify catalog-level versions.json
+        catalog_versions_path = catalog_root / "versions.json"
+        catalog_data = json.loads(catalog_versions_path.read_text())
+
+        collections = catalog_data.get("collections", {})
+        assert "large-collection" in collections, f"Missing collection: {collections.keys()}"
+
+        coll_info = collections["large-collection"]
+        assert coll_info["asset_count"] >= 1000, (
+            f"Catalog shows {coll_info['asset_count']} assets, expected >= 1000"
+        )
+
+
+# =============================================================================
+# TestPushUsesCatalogVersions
+# =============================================================================
+
+
+class TestPushUsesCatalogVersions:
+    """Verify push command properly uses catalog-level versions.json for summary."""
+
+    @pytest.mark.integration
+    def test_push_summary_reflects_catalog_versions(
+        self, initialized_catalog: Path, runner: CliRunner
+    ) -> None:
+        """Push summary should reflect what's in catalog-level versions.json."""
+        # Create and add to collection
+        collection_dir = initialized_catalog / "push-test"
+        collection_dir.mkdir()
+
+        for i in range(10):
+            (collection_dir / f"file_{i}.geojson").write_text(
+                create_geojson(coords=(float(i), float(i)))
+            )
+
+        add_result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(collection_dir)],
+        )
+        assert add_result.exit_code == 0, f"Add failed: {add_result.output}"
+
+        # Verify catalog versions.json has the collection with asset count
+        catalog_versions_path = initialized_catalog / "versions.json"
+        catalog_data = json.loads(catalog_versions_path.read_text())
+
+        assert "push-test" in catalog_data.get("collections", {}), (
+            "Collection not in catalog versions.json"
+        )
+        expected_count = catalog_data["collections"]["push-test"]["asset_count"]
+        assert expected_count >= 10, f"Expected >= 10 assets, got {expected_count}"
+
+        # Configure remote for push
+        config_path = initialized_catalog / ".portolan" / "config.yaml"
+        config_path.write_text("catalog_id: push-summary-test\nremote: s3://fake-bucket/catalog\n")
+
+        # Dry-run push and verify count matches
+        push_result = runner.invoke(
+            cli,
+            ["push", "--catalog", str(initialized_catalog), "--dry-run"],
+        )
+
+        # Output should show files would be uploaded (dry-run preview)
+        # Note: dry-run summary shows "0 file(s)" because nothing was actually pushed,
+        # but the preview should show "would upload up to N asset file(s)" where N > 0
+        import re
+
+        match = re.search(r"would upload up to (\d+) asset", push_result.output.lower())
+        assert match is not None, f"No 'would upload' preview in output: {push_result.output}"
+
+        preview_count = int(match.group(1))
+        assert preview_count > 0, (
+            f"Push preview shows 0 assets despite {expected_count} in catalog: {push_result.output}"
+        )

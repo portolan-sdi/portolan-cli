@@ -14,7 +14,7 @@ import sys
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Literal, overload
+from typing import Any, Literal, overload
 
 from portolan_cli.errors import CatalogAlreadyExistsError
 from portolan_cli.models.catalog import CatalogModel
@@ -23,6 +23,33 @@ if sys.version_info >= (3, 11):
     from typing import Self
 else:
     from typing_extensions import Self
+
+
+# Cross-platform file locking (fcntl on Unix, msvcrt on Windows)
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_file(f: Any) -> None:
+        """Lock file on Windows using msvcrt."""
+        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+
+    def _unlock_file(f: Any) -> None:
+        """Unlock file on Windows using msvcrt."""
+        try:
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass  # May fail if not locked
+
+else:
+    import fcntl
+
+    def _lock_file(f: Any) -> None:
+        """Lock file on Unix using fcntl."""
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+
+    def _unlock_file(f: Any) -> None:
+        """Unlock file on Unix using fcntl."""
+        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 class CatalogState(Enum):
@@ -670,6 +697,9 @@ def update_catalog_versions(
     This function is called after each successful collection update to keep
     the catalog-level view in sync.
 
+    Uses file locking to prevent race conditions when multiple `add` commands
+    run concurrently (e.g., CI parallelism, adding to multiple collections).
+
     Args:
         catalog_root: Root directory of the catalog.
         collection_id: The collection that was updated (e.g., "demographics").
@@ -678,10 +708,12 @@ def update_catalog_versions(
         total_size_bytes: Total size of all assets in bytes.
 
     Raises:
-        FileNotFoundError: If catalog versions.json doesn't exist.
-        json.JSONDecodeError: If catalog versions.json is invalid JSON.
+        CatalogVersionsCorruptedError: If catalog versions.json is invalid JSON
+            or has invalid structure.
     """
     import tempfile
+
+    from portolan_cli.output import warn
 
     versions_path = catalog_root / "versions.json"
 
@@ -689,37 +721,82 @@ def update_catalog_versions(
         # Not a file-backend catalog (e.g., Iceberg backend)
         return
 
-    # Read existing catalog versions.json
-    content = json.loads(versions_path.read_text())
+    lock_path = catalog_root / ".portolan" / ".versions.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Update the collections entry
-    now = datetime.now(timezone.utc).isoformat()
-    if "collections" not in content:
-        content["collections"] = {}
+    # Use file locking to prevent concurrent read-modify-write races
+    with lock_path.open("w") as lock_file:
+        _lock_file(lock_file)
+        try:
+            # Read existing catalog versions.json with error handling
+            try:
+                content = json.loads(versions_path.read_text())
+            except json.JSONDecodeError as e:
+                # Clear error message for corrupted file
+                msg = (
+                    f"Catalog versions.json is corrupted: {e}. "
+                    f"File: {versions_path}. "
+                    "Fix manually or delete to reinitialize."
+                )
+                warn(msg)
+                raise CatalogVersionsCorruptedError(msg) from e
 
-    content["collections"][collection_id] = {
-        "current_version": current_version,
-        "updated": now,
-        "asset_count": asset_count,
-        "total_size_bytes": total_size_bytes,
-    }
+            # Validate structure before mutating
+            if not isinstance(content, dict):
+                msg = (
+                    f"Catalog versions.json has invalid structure: expected dict, "
+                    f"got {type(content).__name__}. File: {versions_path}. "
+                    "Fix manually or delete to reinitialize."
+                )
+                warn(msg)
+                raise CatalogVersionsCorruptedError(msg)
 
-    # Update catalog-level updated timestamp
-    content["updated"] = now
+            collections_value = content.get("collections")
+            if collections_value is not None and not isinstance(collections_value, dict):
+                msg = (
+                    f"Catalog versions.json 'collections' has invalid type: "
+                    f"expected dict or null, got {type(collections_value).__name__}. "
+                    f"File: {versions_path}. Fix manually or delete to reinitialize."
+                )
+                warn(msg)
+                raise CatalogVersionsCorruptedError(msg)
 
-    # Atomic write (same pattern as versions.py)
-    parent = versions_path.parent
-    parent.mkdir(parents=True, exist_ok=True)
+            # Update the collections entry
+            now = datetime.now(timezone.utc).isoformat()
+            if "collections" not in content:
+                content["collections"] = {}
 
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=parent,
-        delete=False,
-        suffix=".tmp",
-    ) as tmp:
-        json.dump(content, tmp, indent=2)
-        tmp.write("\n")
-        tmp_path = tmp.name
+            content["collections"][collection_id] = {
+                "current_version": current_version,
+                "updated": now,
+                "asset_count": asset_count,
+                "total_size_bytes": total_size_bytes,
+            }
 
-    # Atomic rename
-    Path(tmp_path).replace(versions_path)
+            # Update catalog-level updated timestamp
+            content["updated"] = now
+
+            # Atomic write (same pattern as versions.py)
+            parent = versions_path.parent
+            parent.mkdir(parents=True, exist_ok=True)
+
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=parent,
+                delete=False,
+                suffix=".tmp",
+            ) as tmp:
+                json.dump(content, tmp, indent=2)
+                tmp.write("\n")
+                tmp_path = tmp.name
+
+            # Atomic rename
+            Path(tmp_path).replace(versions_path)
+        finally:
+            _unlock_file(lock_file)
+
+
+class CatalogVersionsCorruptedError(Exception):
+    """Raised when catalog-level versions.json is corrupted."""
+
+    pass
