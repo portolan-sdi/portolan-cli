@@ -37,6 +37,8 @@ dependencies = [
     "stac-geoparquet>=0.6.0",  # Generate items.parquet for efficient STAC queries (optional)
     "pyyaml>=6.0",  # YAML config file support
     "rasterio>=1.3.0",  # Raster I/O (transitive via rio-cogeo, but we import directly)
+    "cryptography>=46.0.7",  # CVE-2026-39892 fix (transitive via httpx/certifi, pinned for security)
+    "pillow>=12.2.0",  # CVE-2026-40192 fix (transitive via rasterio, pinned for security)
     "pygments>=2.20.0",  # CVE-2026-4539 fix (transitive via rich, pinned for security)
     "requests>=2.33.0",  # CVE-2026-25645 fix (transitive, pinned for security)
     "rich>=13.0.0",  # Terminal progress bars (transitive via geoparquet-io, but we import directly)
@@ -264,9 +266,11 @@ extend_exclude = [
 
 [tool.deptry.per_rule_ignores]
 # Security constraints for transitive dependencies (not directly imported)
-# - requests: CVE-2026-25645
+# - cryptography: CVE-2026-39892
+# - pillow: CVE-2026-40192
 # - pygments: CVE-2026-4539
-DEP002 = ["requests", "pygments"]
+# - requests: CVE-2026-25645
+DEP002 = ["cryptography", "pillow", "pygments", "requests"]
 
 [dependency-groups]
 dev = [
