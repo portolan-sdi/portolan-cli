@@ -1,0 +1,41 @@
+{
+  "spec_version": "1.0.0",
+  "current_version": "1.0.1",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "created": "2026-01-15T10:30:00Z",
+      "breaking": false,
+      "assets": {
+        "base.parquet": {
+          "sha256": "c4b839626cb3aa71bb5fa3268afbcd1e9a7a688903089d133fc9c925757992a7",
+          "size_bytes": 1048576,
+          "href": "base.parquet"
+        }
+      },
+      "changes": [
+        "base.parquet"
+      ]
+    },
+    {
+      "version": "1.0.1",
+      "created": "2026-01-16T11:00:00Z",
+      "breaking": false,
+      "assets": {
+        "base.parquet": {
+          "sha256": "c4b839626cb3aa71bb5fa3268afbcd1e9a7a688903089d133fc9c925757992a7",
+          "size_bytes": 1048576,
+          "href": "base.parquet"
+        },
+        "remote_only.parquet": {
+          "sha256": "dcd3f11095e013b6d2c2202c1d9b140b4b071e8733fb82a003bfc6f88e2cbe42",
+          "size_bytes": 262144,
+          "href": "remote_only.parquet"
+        }
+      },
+      "changes": [
+        "remote_only.parquet"
+      ]
+    }
+  ]
+}

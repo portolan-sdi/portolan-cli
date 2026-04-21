@@ -1063,11 +1063,35 @@ def finalize_datasets(
             )
         else:
             # File backend: use optimized batch write (O(1) per collection)
-            _batch_update_versions(
+            current_version, asset_count, total_size = _batch_update_versions(
                 collection_dir=collection_dir,
                 collection_id=collection_id,
                 items=items,
             )
+
+            # Update catalog-level versions.json (ADR-0005)
+            # This keeps the catalog-level view in sync with collection state.
+            # Wrap in try/except to avoid failing the add if catalog update fails
+            # (collection-level versions.json was already written successfully).
+            from portolan_cli.catalog import update_catalog_versions
+
+            try:
+                update_catalog_versions(
+                    catalog_root=catalog_root,
+                    collection_id=collection_id,
+                    current_version=current_version,
+                    asset_count=asset_count,
+                    total_size_bytes=total_size,
+                )
+            except Exception:
+                # Collection-level versions.json was written successfully.
+                # Log warning but don't fail the add operation.
+                logger.warning(
+                    "Failed to update catalog-level versions.json for collection '%s'. "
+                    "Collection version was published but catalog-level view may be stale.",
+                    collection_id,
+                    exc_info=True,
+                )
 
         # Build results
         for p in items:
@@ -1160,7 +1184,7 @@ def _batch_update_versions(
     collection_dir: Path,
     collection_id: str,
     items: list[PreparedDataset],
-) -> None:
+) -> tuple[str, int, int]:
     """Batch update versions.json for multiple items in a single read-modify-write.
 
     This is the key optimization for Issue #281: instead of O(n) writes
@@ -1170,6 +1194,10 @@ def _batch_update_versions(
         collection_dir: Path to collection directory.
         collection_id: Collection identifier.
         items: List of PreparedDataset objects to add versions for.
+
+    Returns:
+        Tuple of (current_version, asset_count, total_size_bytes) for catalog-level
+        versioning updates (ADR-0005).
     """
     versions_path = collection_dir / "versions.json"
 
@@ -1183,13 +1211,11 @@ def _batch_update_versions(
             versions=[],
         )
 
-    # Compute new version string
+    # Compute new version string using the helper (handles prerelease versions)
     if versions_file.current_version is None:
         new_version = "1.0.0"
     else:
-        parts = versions_file.current_version.split(".")
-        parts[-1] = str(int(parts[-1]) + 1)
-        new_version = ".".join(parts)
+        new_version = _increment_version(versions_file.current_version)
 
     # Build assets dict from ALL items (batch)
     all_assets: dict[str, Asset] = {}
@@ -1222,6 +1248,15 @@ def _batch_update_versions(
 
     # Single write for all items
     write_versions(versions_path, updated)
+
+    # Return info for catalog-level versioning (ADR-0005)
+    # Get latest version's asset info
+    latest = updated.versions[-1] if updated.versions else None
+    if latest:
+        asset_count = len(latest.assets)
+        total_size = sum(a.size_bytes for a in latest.assets.values())
+        return (updated.current_version or new_version, asset_count, total_size)
+    return (new_version, 0, 0)
 
 
 def add_dataset(

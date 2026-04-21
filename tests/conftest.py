@@ -329,3 +329,119 @@ def fresh_catalog_no_versions(tmp_path: Path) -> Path:
     collection_dir.mkdir()
 
     return catalog_dir
+
+
+@pytest.fixture
+def catalog_with_multiple_versions(tmp_path: Path) -> Path:
+    """Catalog with 3 versions for divergence and accumulation testing.
+
+    Version history:
+    - v1.0.0: base.parquet (initial)
+    - v1.1.0: base.parquet + second.parquet (add)
+    - v1.2.0: base.parquet + second.parquet + third.parquet (add)
+
+    Useful for testing snapshot model accumulation per ADR-0005.
+    Uses real SHA256 hashes computed from file content.
+    """
+    import hashlib
+    import json
+
+    catalog_dir = tmp_path / "catalog_multi_version"
+    catalog_dir.mkdir()
+
+    # .portolan sentinel
+    portolan_dir = catalog_dir / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("catalog_id: test-catalog\n")
+
+    # catalog.json
+    catalog_data = {
+        "type": "Catalog",
+        "id": "test-catalog",
+        "stac_version": "1.0.0",
+        "description": "Catalog with multiple versions",
+        "links": [],
+    }
+    (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+    # Collection with 3 versions
+    collection_dir = catalog_dir / "test-collection"
+    collection_dir.mkdir()
+
+    # Create actual asset files first, then compute real hashes
+    base_content = b"x" * 1000
+    second_content = b"y" * 2000
+    third_content = b"z" * 3000
+
+    (collection_dir / "base.parquet").write_bytes(base_content)
+    (collection_dir / "second.parquet").write_bytes(second_content)
+    (collection_dir / "third.parquet").write_bytes(third_content)
+
+    # Compute real SHA256 hashes from content
+    base_hash = hashlib.sha256(base_content).hexdigest()
+    second_hash = hashlib.sha256(second_content).hexdigest()
+    third_hash = hashlib.sha256(third_content).hexdigest()
+
+    versions_data = {
+        "spec_version": "1.0.0",
+        "current_version": "1.2.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "base.parquet": {
+                        "sha256": base_hash,
+                        "size_bytes": 1000,
+                        "href": "base.parquet",
+                    }
+                },
+                "changes": ["base.parquet"],
+            },
+            {
+                "version": "1.1.0",
+                "created": "2026-01-16T10:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "base.parquet": {
+                        "sha256": base_hash,
+                        "size_bytes": 1000,
+                        "href": "base.parquet",
+                    },
+                    "second.parquet": {
+                        "sha256": second_hash,
+                        "size_bytes": 2000,
+                        "href": "second.parquet",
+                    },
+                },
+                "changes": ["second.parquet"],
+            },
+            {
+                "version": "1.2.0",
+                "created": "2026-01-17T10:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "base.parquet": {
+                        "sha256": base_hash,
+                        "size_bytes": 1000,
+                        "href": "base.parquet",
+                    },
+                    "second.parquet": {
+                        "sha256": second_hash,
+                        "size_bytes": 2000,
+                        "href": "second.parquet",
+                    },
+                    "third.parquet": {
+                        "sha256": third_hash,
+                        "size_bytes": 3000,
+                        "href": "third.parquet",
+                    },
+                },
+                "changes": ["third.parquet"],
+            },
+        ],
+    }
+    (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+
+    return catalog_dir
