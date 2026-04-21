@@ -34,20 +34,193 @@ T = TypeVar("T")
 
 
 # =============================================================================
-# Default Configuration
+# Default Configuration (Issue #344: Conservative defaults for home networks)
 # =============================================================================
+
+# Maximum concurrent HTTP connections considered safe for consumer networks.
+# Consumer routers typically cap NAT sessions around 1k-4k, but connection-
+# tracking pressure appears well before that. 100 is a safe upper bound.
+MAX_SAFE_CONNECTIONS = 100
 
 
 def get_default_concurrency() -> int:
-    """Get default concurrency limit for async operations.
+    """Get default concurrency limit for file-level async operations.
 
-    For I/O-bound cloud operations, we use higher concurrency than CPU count.
-    Cloud APIs typically handle 50-100 concurrent requests well.
+    Returns a conservative default that won't overwhelm home networks.
+    The total connection footprint is: file_concurrency × chunk_concurrency.
+
+    Issue #344: Lowered from 50 to 8 to prevent NAT table exhaustion.
+    With default chunk_concurrency=4, this yields 32 concurrent connections.
 
     Returns:
-        Default concurrency limit (50).
+        Default file concurrency limit (8).
     """
-    return 50
+    return 8
+
+
+def get_default_chunk_concurrency() -> int:
+    """Get default concurrency limit for per-file multipart chunks.
+
+    Each file upload can use multiple concurrent HTTP connections for
+    multipart upload chunks. This multiplies with file concurrency.
+
+    Issue #344: Lowered from 12 to 4 to prevent connection storms.
+    With default file_concurrency=8, this yields 32 concurrent connections.
+
+    Returns:
+        Default chunk concurrency limit (4).
+    """
+    return 4
+
+
+def calculate_connection_footprint(
+    file_concurrency: int,
+    chunk_concurrency: int,
+    workers: int = 1,
+) -> int:
+    """Calculate total concurrent HTTP connections for given settings.
+
+    The connection footprint is: workers × file_concurrency × chunk_concurrency.
+
+    Args:
+        file_concurrency: Concurrent file uploads per worker.
+        chunk_concurrency: Concurrent chunks per file.
+        workers: Number of parallel workers (for catalog-wide operations).
+
+    Returns:
+        Maximum concurrent HTTP connections.
+
+    Example:
+        >>> calculate_connection_footprint(8, 4)  # Default
+        32
+        >>> calculate_connection_footprint(50, 12, workers=4)  # Old defaults
+        2400
+    """
+    return workers * file_concurrency * chunk_concurrency
+
+
+def adjust_concurrency_for_max_connections(
+    file_concurrency: int,
+    chunk_concurrency: int,
+    max_connections: int,
+) -> tuple[int, int]:
+    """Adjust concurrency values to stay within max_connections limit.
+
+    Reduces file_concurrency first (larger impact), then chunk_concurrency
+    if needed. Never reduces either below 1.
+
+    Args:
+        file_concurrency: Desired file concurrency.
+        chunk_concurrency: Desired chunk concurrency.
+        max_connections: Maximum allowed concurrent connections.
+
+    Returns:
+        Tuple of (adjusted_file_concurrency, adjusted_chunk_concurrency).
+
+    Example:
+        >>> adjust_concurrency_for_max_connections(50, 4, 32)
+        (8, 4)
+    """
+    # If already under limit, no adjustment needed
+    if file_concurrency * chunk_concurrency <= max_connections:
+        return file_concurrency, chunk_concurrency
+
+    # Try reducing file concurrency first (it has larger impact)
+    adjusted_file = max(1, max_connections // chunk_concurrency)
+    if adjusted_file * chunk_concurrency <= max_connections:
+        return adjusted_file, chunk_concurrency
+
+    # Need to reduce chunk concurrency too
+    adjusted_chunk = max(1, max_connections // adjusted_file)
+
+    # Final adjustment to ensure we're under limit
+    while adjusted_file * adjusted_chunk > max_connections:
+        if adjusted_file > adjusted_chunk and adjusted_file > 1:
+            adjusted_file -= 1
+        elif adjusted_chunk > 1:
+            adjusted_chunk -= 1
+        else:
+            break
+
+    return max(1, adjusted_file), max(1, adjusted_chunk)
+
+
+# =============================================================================
+# Adaptive Concurrency Manager (Issue #344: Slow-start)
+# =============================================================================
+
+
+@dataclass
+class AdaptiveConcurrencyManager:
+    """Adaptive concurrency manager with slow-start and backoff.
+
+    Starts with low concurrency and ramps up on success, backs off on errors.
+    This prevents overwhelming home networks during initial connection burst.
+
+    Attributes:
+        max_concurrency: Maximum concurrency to ramp up to.
+        initial_concurrency: Starting concurrency (default: 2).
+        current_concurrency: Current active concurrency level.
+        ramp_up_factor: Multiplier for increasing concurrency (default: 1.5).
+        backoff_factor: Multiplier for decreasing concurrency (default: 0.5).
+        success_window: Successes needed before ramping up (default: 5).
+
+    Example:
+        >>> manager = AdaptiveConcurrencyManager(max_concurrency=50)
+        >>> manager.current_concurrency  # Starts low
+        2
+        >>> for _ in range(10):
+        ...     manager.record_success()
+        >>> manager.current_concurrency  # Ramped up
+        4
+    """
+
+    max_concurrency: int
+    initial_concurrency: int = 2
+    ramp_up_factor: float = 1.5
+    backoff_factor: float = 0.5
+    success_window: int = 5
+    current_concurrency: int = field(init=False)
+    _success_count: int = field(default=0, repr=False)
+    _consecutive_errors: int = field(default=0, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def __post_init__(self) -> None:
+        """Initialize current_concurrency from initial_concurrency."""
+        self.current_concurrency = min(self.initial_concurrency, self.max_concurrency)
+
+    def record_success(self) -> None:
+        """Record a successful operation, potentially ramping up concurrency."""
+        with self._lock:
+            self._consecutive_errors = 0
+            self._success_count += 1
+
+            # Ramp up after success_window consecutive successes
+            if self._success_count >= self.success_window:
+                new_concurrency = int(self.current_concurrency * self.ramp_up_factor)
+                self.current_concurrency = min(new_concurrency, self.max_concurrency)
+                # Ensure we always increase by at least 1 if below max
+                if self.current_concurrency < self.max_concurrency:
+                    self.current_concurrency = max(
+                        self.current_concurrency,
+                        min(self.current_concurrency + 1, self.max_concurrency),
+                    )
+                self._success_count = 0
+
+    def record_error(self) -> None:
+        """Record an error, backing off concurrency."""
+        with self._lock:
+            self._success_count = 0
+            self._consecutive_errors += 1
+
+            # More aggressive backoff on consecutive errors
+            backoff = self.backoff_factor ** min(self._consecutive_errors, 3)
+            new_concurrency = int(self.current_concurrency * backoff)
+            self.current_concurrency = max(1, new_concurrency)
+
+    def record_timeout(self) -> None:
+        """Record a timeout (treated same as error for backoff)."""
+        self.record_error()
 
 
 # =============================================================================
@@ -158,16 +331,21 @@ class AsyncIOExecutor(Generic[T]):
         concurrency: int = 50,
         *,
         circuit_breaker_threshold: int = 5,
+        adaptive_manager: AdaptiveConcurrencyManager | None = None,
     ) -> None:
         """Initialize the executor.
 
         Args:
             concurrency: Maximum concurrent operations.
             circuit_breaker_threshold: Failures before circuit trips.
+            adaptive_manager: Optional adaptive concurrency manager for slow-start.
+                When provided, concurrency will be adjusted dynamically based on
+                success/failure rates.
         """
         self.concurrency = concurrency
         self._semaphore: asyncio.Semaphore | None = None
         self._circuit_breaker = CircuitBreaker(failure_threshold=circuit_breaker_threshold)
+        self._adaptive_manager = adaptive_manager
 
     async def execute(
         self,
@@ -214,6 +392,8 @@ class AsyncIOExecutor(Generic[T]):
                     result = await operation(item)
                     duration = time.perf_counter() - start
                     self._circuit_breaker.record_success()
+                    if self._adaptive_manager:
+                        self._adaptive_manager.record_success()
                     return AsyncExecutionResult(
                         item=item,
                         result=result,
@@ -226,6 +406,8 @@ class AsyncIOExecutor(Generic[T]):
                 except Exception as e:
                     duration = time.perf_counter() - start
                     self._circuit_breaker.record_failure()
+                    if self._adaptive_manager:
+                        self._adaptive_manager.record_error()
                     return AsyncExecutionResult(
                         item=item,
                         result=None,

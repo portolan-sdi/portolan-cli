@@ -1319,6 +1319,7 @@ async def _execute_push_uploads_async(
     etag: str | None,
     *,
     concurrency: int,
+    chunk_concurrency: int,
     json_mode: bool,
     suppress_progress: bool,
     verbose: bool,
@@ -1332,6 +1333,8 @@ async def _execute_push_uploads_async(
     This is extracted from push_async to reduce cyclomatic complexity.
 
     Args:
+        concurrency: Maximum concurrent file uploads.
+        chunk_concurrency: Maximum concurrent chunks per file upload.
         include_catalog: If True, upload catalog.json and root README.md.
         verbose: If True, print per-file upload details (ADR-0040).
         remote_data: Remote versions.json for sha256 diffing (Issue #329).
@@ -1339,6 +1342,10 @@ async def _execute_push_uploads_async(
     Returns:
         PushResult with success or failure status and metrics.
     """
+    # Note: chunk_concurrency is accepted for API compatibility but not currently
+    # used by _upload_assets_async since it uses obs.put_async() which reads the
+    # entire file into memory. For large files, the upload module's obs.put()
+    # with max_concurrency is used instead.
     # Get assets to upload (only new/changed, per Issue #329)
     assets = _get_assets_to_upload(
         catalog_root, local_data, diff.local_only, remote_versions_data=remote_data
@@ -1463,6 +1470,7 @@ async def push_async(
     profile: str | None = None,
     region: str | None = None,
     concurrency: int | None = None,
+    chunk_concurrency: int | None = None,
     json_mode: bool = False,
     suppress_progress: bool = False,
     verbose: bool = False,
@@ -1481,7 +1489,9 @@ async def push_async(
         dry_run: If True, show what would be uploaded without uploading.
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only).
-        concurrency: Maximum concurrent uploads (default 50).
+        concurrency: Maximum concurrent file uploads (default: 8).
+        chunk_concurrency: Maximum concurrent chunks per file (default: 4).
+            Total connections = concurrency × chunk_concurrency.
         json_mode: If True, suppress progress bar.
         suppress_progress: If True, suppress progress bar.
         verbose: If True, print per-file upload details (ADR-0040).
@@ -1496,7 +1506,10 @@ async def push_async(
         ValueError: If destination URL is invalid.
         PushConflictError: If remote diverged and force=False.
     """
+    from portolan_cli.async_utils import get_default_chunk_concurrency
+
     concurrency = concurrency or get_default_concurrency()
+    chunk_concurrency = chunk_concurrency or get_default_chunk_concurrency()
 
     # Validate catalog exists
     if not catalog_root.exists():
@@ -1552,6 +1565,7 @@ async def push_async(
         diff,
         etag,
         concurrency=concurrency,
+        chunk_concurrency=chunk_concurrency,
         json_mode=json_mode,
         suppress_progress=suppress_progress,
         verbose=verbose,
@@ -1741,6 +1755,7 @@ async def push_all_collections_async(
     region: str | None = None,
     concurrency: int | None = None,
     file_concurrency: int | None = None,
+    chunk_concurrency: int | None = None,
     verbose: bool = False,
     json_mode: bool = False,
 ) -> PushAllResult:
@@ -1759,6 +1774,8 @@ async def push_all_collections_async(
         concurrency: Maximum concurrent collection pushes. None = auto-detect.
         file_concurrency: Maximum concurrent file uploads within each collection.
             None = use push_async default. (Maps to --concurrency CLI flag.)
+        chunk_concurrency: Maximum concurrent chunks per file upload.
+            None = use default (4). Total connections = file_concurrency × chunk_concurrency.
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
 
@@ -1818,6 +1835,7 @@ async def push_all_collections_async(
                     profile=profile,
                     region=region,
                     concurrency=file_concurrency,  # Pass file-level concurrency
+                    chunk_concurrency=chunk_concurrency,  # Pass chunk-level concurrency
                     json_mode=json_mode,
                     suppress_progress=True,
                     verbose=verbose,
@@ -1885,8 +1903,10 @@ def push_all_collections(
     region: str | None = None,
     workers: int | None = None,
     file_concurrency: int | None = None,
+    chunk_concurrency: int | None = None,
     verbose: bool = False,
     json_mode: bool = False,
+    max_connections: int | None = None,
 ) -> PushAllResult:
     """Push all collections in a catalog to cloud storage (sync wrapper).
 
@@ -1904,8 +1924,12 @@ def push_all_collections(
             (Maps to 'concurrency' in async implementation.)
         file_concurrency: Maximum concurrent file uploads within each collection.
             None = use push_async default. (Maps to --concurrency CLI flag.)
+        chunk_concurrency: Maximum concurrent chunks per file upload.
+            None = use default (4). Total connections = file_concurrency × chunk_concurrency.
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
+        max_connections: Maximum total concurrent connections. If set, adjusts
+            file_concurrency and chunk_concurrency to stay within limit.
 
     Returns:
         PushAllResult with aggregate statistics and per-collection errors.
@@ -1913,6 +1937,21 @@ def push_all_collections(
     Raises:
         ValueError: If catalog_root is not a valid catalog.
     """
+    from portolan_cli.async_utils import (
+        adjust_concurrency_for_max_connections,
+        get_default_chunk_concurrency,
+        get_default_concurrency,
+    )
+
+    # Apply max_connections limit if specified
+    effective_file_conc = file_concurrency or get_default_concurrency()
+    effective_chunk_conc = chunk_concurrency or get_default_chunk_concurrency()
+
+    if max_connections is not None:
+        effective_file_conc, effective_chunk_conc = adjust_concurrency_for_max_connections(
+            effective_file_conc, effective_chunk_conc, max_connections
+        )
+
     return asyncio.run(
         push_all_collections_async(
             catalog_root=catalog_root,
@@ -1922,7 +1961,8 @@ def push_all_collections(
             profile=profile,
             region=region,
             concurrency=workers,
-            file_concurrency=file_concurrency,
+            file_concurrency=effective_file_conc,
+            chunk_concurrency=effective_chunk_conc,
             verbose=verbose,
             json_mode=json_mode,
         )

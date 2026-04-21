@@ -707,8 +707,8 @@ async def _fetch_remote_versions_async(
     remote_versions_url = f"{remote_url.rstrip('/')}/{collection}/versions.json"
     bucket_url, prefix = parse_object_store_url(remote_versions_url)
 
-    # Setup store (chunk_concurrency=12 matches download.py default)
-    store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=12)
+    # Setup store (chunk_concurrency=4 matches download.py default)
+    store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
 
     try:
         # Fetch using async get
@@ -919,7 +919,7 @@ async def pull_async(
 
     # Create store if not provided (connection pooling support)
     if store is None:
-        store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=12)
+        store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
 
     # Path to local versions.json (per ADR-0023)
     versions_path = local_root / collection / "versions.json"
@@ -1161,7 +1161,7 @@ async def pull_all_collections_async(
     except ValueError as e:
         raise ValueError(f"Invalid remote URL: {e}") from e
 
-    shared_store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=12)
+    shared_store, _kwargs = _setup_store_and_kwargs(bucket_url, profile, chunk_concurrency=4)
 
     # discover_collections validates catalog and raises ValueError if invalid
     collections = discover_collections(local_root)

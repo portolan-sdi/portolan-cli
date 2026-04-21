@@ -542,7 +542,7 @@ def setup_store(
     store, _ = _setup_store_and_kwargs(
         bucket_url,
         profile=profile,
-        chunk_concurrency=12,  # Default, not used for non-upload operations
+        chunk_concurrency=4,  # Default, not used for non-upload operations
         s3_region=region,
     )
     return store, prefix
@@ -630,7 +630,7 @@ def _upload_one_file(
         if verbose:
             info(f"Uploading {file_path.name} ({size_mb:.2f} MB) -> {target_key}")
 
-        obs.put(store, target_key, file_path, max_concurrency=kwargs.get("max_concurrency", 12))
+        obs.put(store, target_key, file_path, max_concurrency=kwargs.get("max_concurrency", 4))
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
@@ -654,7 +654,7 @@ def upload_file(
     s3_endpoint: str | None = None,
     s3_region: str | None = None,
     s3_use_ssl: bool = True,
-    chunk_concurrency: int = 12,
+    chunk_concurrency: int = 4,
 ) -> UploadResult:
     """Upload a single file to S3/GCS/Azure.
 
@@ -666,7 +666,7 @@ def upload_file(
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")
         s3_region: S3 region (default: auto-detected)
         s3_use_ssl: Whether to use HTTPS for S3 endpoint (default: True)
-        chunk_concurrency: Max concurrent chunks per file (default: 12)
+        chunk_concurrency: Max concurrent chunks per file (default: 4)
 
     Returns:
         UploadResult with upload statistics
@@ -708,7 +708,7 @@ def upload_file(
         start_time = time.time()
         info(f"Uploading {source.name} ({size_mb:.2f} MB) -> {target_key}")
 
-        obs.put(store, target_key, source, max_concurrency=kwargs.get("max_concurrency", 12))
+        obs.put(store, target_key, source, max_concurrency=kwargs.get("max_concurrency", 4))
 
         elapsed = time.time() - start_time
         speed_mbps = size_mb / elapsed if elapsed > 0 else 0
@@ -855,7 +855,7 @@ def upload_directory(
     pattern: str | None = None,
     profile: str | None = None,
     max_files: int = 4,
-    chunk_concurrency: int = 12,
+    chunk_concurrency: int = 4,
     fail_fast: bool = False,
     dry_run: bool = False,
     s3_endpoint: str | None = None,
@@ -874,7 +874,7 @@ def upload_directory(
         pattern: Optional glob pattern for filtering files (e.g., "*.parquet")
         profile: AWS profile name (for S3 only)
         max_files: Max number of files to upload in parallel (default: 4)
-        chunk_concurrency: Max concurrent chunks per file (default: 12)
+        chunk_concurrency: Max concurrent chunks per file (default: 4)
         fail_fast: If True, stop on first error; otherwise continue and report at end
         dry_run: If True, show what would be uploaded without actually uploading
         s3_endpoint: Custom S3-compatible endpoint (e.g., "minio.example.com:9000")

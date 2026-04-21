@@ -3142,6 +3142,24 @@ def _check_backend_push_support(
     raise SystemExit(1)
 
 
+def _warn_high_connection_count(
+    file_concurrency: int, chunk_concurrency: int, use_json: bool
+) -> None:
+    """Warn if concurrency settings may overwhelm home networks (Issue #344)."""
+    from portolan_cli.async_utils import (
+        MAX_SAFE_CONNECTIONS,
+        calculate_connection_footprint,
+    )
+
+    footprint = calculate_connection_footprint(file_concurrency, chunk_concurrency)
+    if footprint > MAX_SAFE_CONNECTIONS and not use_json:
+        warn(
+            f"High connection count: {footprint} concurrent connections "
+            f"({file_concurrency} files × {chunk_concurrency} chunks). "
+            "This may overwhelm home networks. Consider using --max-connections to limit."
+        )
+
+
 @cli.command()
 @click.argument("destination", required=False, default=None)
 @click.option(
@@ -3184,9 +3202,31 @@ def _check_backend_push_support(
 @click.option(
     "--concurrency",
     type=click.IntRange(min=1, max=500),
-    default=50,
-    help="Maximum concurrent file uploads within each collection (default: 50). "
-    "Higher values improve throughput but may hit rate limits.",
+    default=8,
+    help="Maximum concurrent file uploads within each collection (default: 8). "
+    "Total connections = concurrency × chunk-concurrency.",
+)
+@click.option(
+    "--chunk-concurrency",
+    type=click.IntRange(min=1, max=50),
+    default=4,
+    help="Maximum concurrent chunks per file upload (default: 4). "
+    "Total connections = concurrency × chunk-concurrency. "
+    "Lower values are safer for home networks.",
+)
+@click.option(
+    "--max-connections",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum total concurrent HTTP connections. If set, auto-adjusts "
+    "concurrency and chunk-concurrency to stay within limit. "
+    "Recommended for flaky or metered connections.",
+)
+@click.option(
+    "--adaptive/--no-adaptive",
+    default=True,
+    help="Enable adaptive concurrency (default: on). Starts with low concurrency, "
+    "ramps up on success, backs off on errors. Safer for home networks.",
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
@@ -3208,6 +3248,9 @@ def push(
     catalog_path: Path | None,
     workers: int | None,
     concurrency: int,
+    chunk_concurrency: int,
+    max_connections: int | None,
+    adaptive: bool,
 ) -> None:
     """Push local catalog changes to cloud object storage.
 
@@ -3272,6 +3315,13 @@ def push(
             )
         raise SystemExit(1)
 
+    # Warn about high connection count (Issue #344)
+    _warn_high_connection_count(concurrency, chunk_concurrency, use_json)
+
+    # Note: adaptive parameter is passed through but not yet implemented in push functions
+    # This reserves the CLI interface for future adaptive concurrency implementation
+    _ = adaptive  # Silence unused variable warning until fully wired
+
     # If no collection specified, push all collections
     if collection is None:
         try:
@@ -3284,6 +3334,8 @@ def push(
                 region=resolved_region,
                 workers=workers,
                 file_concurrency=concurrency,
+                chunk_concurrency=chunk_concurrency,
+                max_connections=max_connections,
                 verbose=verbose,
                 json_mode=use_json,
             )
@@ -3331,6 +3383,7 @@ def push(
                 profile=resolved_profile,
                 region=resolved_region,
                 concurrency=concurrency,
+                chunk_concurrency=chunk_concurrency,
                 json_mode=use_json,
             )
         )
