@@ -11,6 +11,7 @@ Per GitHub issue #265.
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -106,6 +107,10 @@ class TestAddMultilayerIntegration:
         )
 
     @pytest.mark.integration
+    @pytest.mark.skipif(
+        sys.platform == "darwin",
+        reason="geoparquet-io aborts on multilayer conversion on macOS (upstream bug)",
+    )
     def test_add_multilayer_creates_stac_structure(
         self, runner: CliRunner, initialized_catalog: Path
     ) -> None:

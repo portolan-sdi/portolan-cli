@@ -325,9 +325,13 @@ def track_pmtiles_in_versions(
     else:
         versions_file = read_versions(versions_path)
 
-    # Compute checksum and stats
+    # Compute checksum and stats (stream in chunks to avoid OOM on large files)
     stat = pmtiles_path.stat()
-    sha256 = hashlib.sha256(pmtiles_path.read_bytes()).hexdigest()
+    hasher = hashlib.sha256()
+    with open(pmtiles_path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
+            hasher.update(chunk)
+    sha256 = hasher.hexdigest()
 
     # Href is relative to catalog root
     try:
@@ -401,7 +405,17 @@ def generate_pmtiles_for_collection(
     for asset_key, parquet_path in geoparquet_assets:
         pmtiles_path = parquet_path.with_suffix(".pmtiles")
 
+        # Compute href relative to collection (preserves subdirectory structure)
+        try:
+            pmtiles_rel = pmtiles_path.relative_to(collection_path)
+            pmtiles_href = f"./{pmtiles_rel}"
+        except ValueError:
+            pmtiles_href = f"./{pmtiles_path.name}"
+
         if not _should_generate(parquet_path, pmtiles_path, force):
+            # Ensure asset is registered in collection.json even when skipping
+            # (idempotent - won't duplicate if already registered)
+            add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
             result.skipped.append(pmtiles_path)
             continue
 
@@ -419,7 +433,6 @@ def generate_pmtiles_for_collection(
             )
 
             # Register asset in collection.json
-            pmtiles_href = f"./{pmtiles_path.name}"
             add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
 
             # Track in versions.json

@@ -2621,7 +2621,7 @@ def _handle_pmtiles_after_add(
             )
             _report_pmtiles_result(result, verbose, generate_pmtiles)
         except PMTilesNotAvailableError as e:
-            _handle_pmtiles_unavailable(e, generate_pmtiles, verbose, coll_id)
+            _handle_pmtiles_unavailable(e, generate_pmtiles, enabled, verbose, coll_id)
         except TippecanoeNotFoundError as e:
             _handle_tippecanoe_missing(e, generate_pmtiles, coll_id)
 
@@ -2641,13 +2641,16 @@ def _report_pmtiles_result(result: Any, verbose: bool, explicit_flag: bool) -> N
 
 
 def _handle_pmtiles_unavailable(
-    e: Exception, explicit_flag: bool, verbose: bool, coll_id: str
+    e: Exception, explicit_flag: bool, config_enabled: bool, verbose: bool, coll_id: str
 ) -> None:
     """Handle PMTilesNotAvailableError."""
     if explicit_flag:
         error(str(e))
         raise SystemExit(1) from e
-    if verbose:
+    # Warn if pmtiles.enabled in config (user expectation), or info if just verbose
+    if config_enabled:
+        warn(f"PMTiles enabled for '{coll_id}' but gpio-pmtiles not installed")
+    elif verbose:
         info_output(f"Skipping PMTiles for '{coll_id}': gpio-pmtiles not installed")
 
 
@@ -2880,21 +2883,23 @@ def add_cmd(
         _handle_cmd_error("add", err_type, f"{path_context}{err}", use_json)
         raise SystemExit(1) from err
 
-    # Output combined results
-    _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
-
-    # Handle stac-geoparquet generation/hints for affected collections
-    # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
-    # Only show hints in non-JSON mode
+    # Compute affected collections before any post-processing
     affected = {
         a.collection_id for a in all_added if hasattr(a, "collection_id") and a.collection_id
     }
+
+    # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
+    # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
+    # Only show hints in non-JSON mode
     _handle_parquet_after_add(
         catalog_root, affected, generate_parquet, verbose, show_hints=not use_json
     )
 
-    # Handle PMTiles generation for affected collections
+    # Handle PMTiles generation BEFORE output (so JSON reflects final state)
     _handle_pmtiles_after_add(catalog_root, affected, generate_pmtiles, force_pmtiles, verbose)
+
+    # Output combined results (after all processing complete)
+    _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
 
     # Exit with non-zero code if any failures occurred
     if all_failures:

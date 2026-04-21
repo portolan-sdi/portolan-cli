@@ -273,9 +273,16 @@ class PMTilesRecommendedRule(ValidationRule):
                 if not parquet_path.exists():
                     continue
 
-                # Check for sibling PMTiles
+                # Check for sibling PMTiles (both file existence AND asset registration)
                 pmtiles_path = parquet_path.with_suffix(".pmtiles")
-                if not pmtiles_path.exists():
+                pmtiles_filename = pmtiles_path.name
+
+                # Check if PMTiles is registered in collection assets
+                pmtiles_registered = any(
+                    asset.get("href", "").endswith(pmtiles_filename) for asset in assets.values()
+                )
+
+                if not pmtiles_path.exists() or not pmtiles_registered:
                     try:
                         rel_path = parquet_path.relative_to(catalog_path)
                     except ValueError:
