@@ -2566,6 +2566,154 @@ def _handle_parquet_after_add(
             )
 
 
+@dataclass
+class PMTilesSettings:
+    """Settings for PMTiles generation."""
+
+    enabled: bool = False
+    min_zoom: int | None = None
+    max_zoom: int | None = None
+    layer: str | None = None
+    bbox: str | None = None
+    where: str | None = None
+    include_cols: str | None = None
+    precision: int = 6
+    attribution: str | None = None
+    src_crs: str | None = None
+
+
+def _get_pmtiles_settings(catalog_root: Path, coll_id: str, coll_path: Path) -> PMTilesSettings:
+    """Get PMTiles settings for a collection."""
+    from portolan_cli.config import get_setting
+
+    def get(key: str) -> Any:
+        return get_setting(
+            f"pmtiles.{key}",
+            catalog_path=catalog_root,
+            collection=coll_id,
+            collection_path=coll_path,
+        )
+
+    return PMTilesSettings(
+        enabled=_coerce_bool(get("enabled"), default=False),
+        min_zoom=None if get("min_zoom") is None else _coerce_int(get("min_zoom"), default=0),
+        max_zoom=None if get("max_zoom") is None else _coerce_int(get("max_zoom"), default=14),
+        layer=get("layer"),
+        bbox=get("bbox"),
+        where=get("where"),
+        include_cols=get("include_cols"),
+        precision=_coerce_int(get("precision"), default=6),
+        attribution=get("attribution"),
+        src_crs=get("src_crs"),
+    )
+
+
+def _handle_pmtiles_after_add(
+    catalog_root: Path,
+    affected_collections: set[str],
+    generate_pmtiles: bool,
+    force: bool,
+    verbose: bool,
+    *,
+    use_json: bool = False,
+) -> None:
+    """Handle PMTiles generation after add command."""
+    if not affected_collections:
+        return
+
+    from portolan_cli.pmtiles import (
+        PMTilesNotAvailableError,
+        TippecanoeNotFoundError,
+        generate_pmtiles_for_collection,
+    )
+
+    for coll_id in affected_collections:
+        coll_path = catalog_root / coll_id
+        if not (coll_path / "collection.json").exists():
+            continue
+
+        settings = _get_pmtiles_settings(catalog_root, coll_id, coll_path)
+        if not (generate_pmtiles or settings.enabled):
+            continue
+
+        try:
+            result = generate_pmtiles_for_collection(
+                coll_path,
+                catalog_root,
+                force=force,
+                min_zoom=settings.min_zoom,
+                max_zoom=settings.max_zoom,
+                layer=settings.layer,
+                bbox=settings.bbox,
+                where=settings.where,
+                include_cols=settings.include_cols,
+                precision=settings.precision,
+                attribution=settings.attribution,
+                src_crs=settings.src_crs,
+            )
+            _report_pmtiles_result(result, verbose, generate_pmtiles, use_json=use_json)
+        except PMTilesNotAvailableError as e:
+            _handle_pmtiles_unavailable(
+                e, generate_pmtiles, settings.enabled, verbose, coll_id, use_json=use_json
+            )
+        except TippecanoeNotFoundError as e:
+            _handle_tippecanoe_missing(e, generate_pmtiles, coll_id, use_json=use_json)
+
+
+def _report_pmtiles_result(
+    result: Any, verbose: bool, explicit_flag: bool, *, use_json: bool = False
+) -> None:
+    """Report PMTiles generation results."""
+    if not use_json:
+        for p in result.generated:
+            success(f"Generated PMTiles: {p.name}")
+        if result.skipped and verbose:
+            for p in result.skipped:
+                info_output(f"Skipped PMTiles (up-to-date): {p.name}")
+    for path, error_msg in result.failed:
+        if explicit_flag:
+            if not use_json:
+                error(f"PMTiles generation failed: {error_msg}")
+            raise SystemExit(1)
+        if not use_json:
+            warn(f"Failed to generate PMTiles for '{path}': {error_msg}")
+
+
+def _handle_pmtiles_unavailable(
+    e: Exception,
+    explicit_flag: bool,
+    config_enabled: bool,
+    verbose: bool,
+    coll_id: str,
+    *,
+    use_json: bool = False,
+) -> None:
+    """Handle PMTilesNotAvailableError."""
+    if explicit_flag:
+        if not use_json:
+            error(str(e))
+        raise SystemExit(1) from e
+    if use_json:
+        return
+    # Warn if pmtiles.enabled in config (user expectation), or info if just verbose
+    if config_enabled:
+        warn(f"PMTiles enabled for '{coll_id}' but gpio-pmtiles not installed")
+    elif verbose:
+        info_output(f"Skipping PMTiles for '{coll_id}': gpio-pmtiles not installed")
+
+
+def _handle_tippecanoe_missing(
+    e: Exception, explicit_flag: bool, coll_id: str, *, use_json: bool = False
+) -> None:
+    """Handle TippecanoeNotFoundError."""
+    if explicit_flag:
+        if not use_json:
+            error(str(e))
+        raise SystemExit(1) from e
+    if not use_json:
+        warn(f"Skipping PMTiles for '{coll_id}': tippecanoe not installed")
+
+
 def _coerce_bool(value: Any, *, default: bool = False) -> bool:
     """Coerce a value to boolean.
 
@@ -2642,6 +2790,18 @@ def _coerce_int(value: Any, *, default: int) -> int:
     is_flag=True,
     help="Generate items.parquet for affected collections after add.",
 )
+@click.option(
+    "--pmtiles",
+    "generate_pmtiles",
+    is_flag=True,
+    help="Generate PMTiles from GeoParquet assets (requires tippecanoe).",
+)
+@click.option(
+    "--force-pmtiles",
+    "force_pmtiles",
+    is_flag=True,
+    help="Regenerate PMTiles even if they exist and are up-to-date.",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
@@ -2654,6 +2814,8 @@ def add_cmd(
     item_datetime: datetime | None,
     workers: int,
     generate_parquet: bool,
+    generate_pmtiles: bool,
+    force_pmtiles: bool,
 ) -> None:
     """Track files in the catalog.
 
@@ -2773,18 +2935,37 @@ def add_cmd(
         _handle_cmd_error("add", err_type, f"{path_context}{err}", use_json)
         raise SystemExit(1) from err
 
-    # Output combined results
-    _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
+    # Compute affected collections before any post-processing
+    # Include both added AND skipped assets so --pmtiles works on already-tracked files
+    # Note: all_added contains DatasetInfo objects, all_skipped contains Path objects
+    affected: set[str] = set()
+    for a in all_added:
+        if hasattr(a, "collection_id") and a.collection_id:
+            affected.add(a.collection_id)
+    for p in all_skipped:
+        # Extract collection_id from path relative to catalog_root
+        try:
+            rel = p.relative_to(catalog_root)
+            # Collection ID is the first path component
+            if rel.parts:
+                affected.add(rel.parts[0])
+        except ValueError:
+            pass  # Path not relative to catalog_root
 
-    # Handle stac-geoparquet generation/hints for affected collections
+    # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
     # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
     # Only show hints in non-JSON mode
-    affected = {
-        a.collection_id for a in all_added if hasattr(a, "collection_id") and a.collection_id
-    }
     _handle_parquet_after_add(
         catalog_root, affected, generate_parquet, verbose, show_hints=not use_json
     )
+
+    # Handle PMTiles generation BEFORE output (so JSON reflects final state)
+    _handle_pmtiles_after_add(
+        catalog_root, affected, generate_pmtiles, force_pmtiles, verbose, use_json=use_json
+    )
+
+    # Output combined results (after all processing complete)
+    _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
 
     # Exit with non-zero code if any failures occurred
     if all_failures:

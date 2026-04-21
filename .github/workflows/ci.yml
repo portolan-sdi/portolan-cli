@@ -100,6 +100,14 @@ jobs:
           retry_wait_seconds: 10
           command: uv python install ${{ matrix.python-version }}
 
+      - name: Install tippecanoe (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y tippecanoe
+
+      - name: Install tippecanoe (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install tippecanoe
+
       - name: Install dependencies
         run: uv sync --all-extras
 

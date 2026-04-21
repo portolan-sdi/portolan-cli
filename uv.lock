@@ -1594,6 +1594,20 @@ wheels = [
 ]
 
 [[package]]
+name = "gpio-pmtiles"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "geoparquet-io" },
+    { name = "pyarrow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/30/62d4b4206b501649c174eda65efb9049ffdcc33ec8b10bb7b204ffbd3248/gpio_pmtiles-0.1.0.tar.gz", hash = "sha256:de234e5b9f7ba1c2908bc9bc334f2224395ed61aa7f5fc212b490e24ac596b64", size = 182326, upload-time = "2026-02-04T11:27:12.077Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/bd/7285c68a74b59c45caf0f8bd014f3b3a26acf805373d7fb0689b2e067760/gpio_pmtiles-0.1.0-py3-none-any.whl", hash = "sha256:fdd5a9da1bc3a4d35215a427f23d4dbc7d5fcfa28f59e0e232ed04dcd4224e14", size = 11055, upload-time = "2026-02-04T11:27:10.659Z" },
+]
+
+[[package]]
 name = "graphql-core"
 version = "3.2.8"
 source = { registry = "https://pypi.org/simple" }
@@ -4084,6 +4098,9 @@ docs = [
     { name = "mkdocstrings", extra = ["python"] },
     { name = "pymdown-extensions" },
 ]
+pmtiles = [
+    { name = "gpio-pmtiles" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -4108,6 +4125,7 @@ requires-dist = [
     { name = "deptry", marker = "extra == 'dev'", specifier = ">=0.25.1" },
     { name = "geoparquet-io", git = "https://github.com/geoparquet/geoparquet-io.git?rev=main" },
     { name = "gitingest", marker = "extra == 'dev'", specifier = ">=0.1.0" },
+    { name = "gpio-pmtiles", marker = "extra == 'pmtiles'", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.151.5" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
@@ -4144,7 +4162,7 @@ requires-dist = [
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.14" },
     { name = "xenon", marker = "extra == 'dev'", specifier = ">=0.9.3" },
 ]
-provides-extras = ["dev", "docs"]
+provides-extras = ["dev", "pmtiles", "docs"]
 
 [package.metadata.requires-dev]
 dev = [
