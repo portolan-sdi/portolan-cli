@@ -102,7 +102,7 @@ class TestPushAllCollectionsFileConcurrency:
 
     @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
     def test_file_concurrency_none_uses_default(self, mock_push: AsyncMock, tmp_path: Path) -> None:
-        """file_concurrency=None allows push_async to use its default."""
+        """file_concurrency=None uses the default concurrency (8 per Issue #344)."""
         _setup_valid_catalog(tmp_path)
         _create_collection(tmp_path, "col1")
 
@@ -121,11 +121,10 @@ class TestPushAllCollectionsFileConcurrency:
         )
 
         assert result.success is True
-        # When file_concurrency is None, we should NOT pass concurrency
-        # (let push_async use its default)
+        # When file_concurrency is None, the default (8) is applied
+        # per Issue #344 (lowered from 50 for home network safety)
         call_kwargs = mock_push.call_args.kwargs
-        # concurrency should either not be present or be None
-        assert call_kwargs.get("concurrency") is None
+        assert call_kwargs.get("concurrency") == 8
 
 
 # =============================================================================
@@ -257,7 +256,7 @@ class TestCliConcurrencyFlagCatalogWide:
     def test_push_concurrency_default_passed_to_push_all_collections(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Default --concurrency (50) is passed to push_all_collections."""
+        """Default --concurrency (8 per Issue #344) is passed to push_all_collections."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
             _setup_valid_catalog(Path("."))
             _create_collection(Path("."), "col1")
@@ -271,13 +270,13 @@ class TestCliConcurrencyFlagCatalogWide:
                 total_versions_pushed=1,
             )
 
-            # Don't specify --concurrency, should use default of 50
+            # Don't specify --concurrency, should use default of 8 (Issue #344)
             result = runner.invoke(cli, ["push", "--catalog", "."])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_all.assert_called_once()
             call_kwargs = mock_push_all.call_args.kwargs
-            assert call_kwargs["file_concurrency"] == 50
+            assert call_kwargs["file_concurrency"] == 8
 
     @patch("portolan_cli.pull.pull_all_collections")
     def test_pull_concurrency_passed_to_pull_all_collections(

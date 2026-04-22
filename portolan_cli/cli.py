@@ -3142,6 +3142,47 @@ def _check_backend_push_support(
     raise SystemExit(1)
 
 
+def _prepare_push_concurrency(
+    concurrency: int,
+    chunk_concurrency: int,
+    max_connections: int | None,
+    workers: int | None,
+    collection: str | None,
+    use_json: bool,
+) -> tuple[int, int]:
+    """Compute effective concurrency and warn if too high (Issue #344).
+
+    Returns:
+        Tuple of (effective_file_concurrency, effective_chunk_concurrency).
+    """
+    from portolan_cli.async_utils import (
+        MAX_SAFE_CONNECTIONS,
+        adjust_concurrency_for_max_connections,
+        calculate_connection_footprint,
+    )
+
+    # Apply max_connections cap
+    effective_file = concurrency
+    effective_chunk = chunk_concurrency
+    if max_connections is not None:
+        effective_file, effective_chunk = adjust_concurrency_for_max_connections(
+            concurrency, chunk_concurrency, max_connections
+        )
+
+    # Warn if footprint exceeds safe threshold
+    eff_workers = workers if workers is not None else (4 if collection is None else 1)
+    footprint = calculate_connection_footprint(effective_file, effective_chunk, eff_workers)
+    if footprint > MAX_SAFE_CONNECTIONS and not use_json:
+        worker_part = f"{eff_workers} workers × " if eff_workers > 1 else ""
+        warn(
+            f"High connection count: {footprint} concurrent connections "
+            f"({worker_part}{effective_file} files × {effective_chunk} chunks). "
+            "This may overwhelm home networks. Consider using --max-connections to limit."
+        )
+
+    return effective_file, effective_chunk
+
+
 @cli.command()
 @click.argument("destination", required=False, default=None)
 @click.option(
@@ -3184,9 +3225,33 @@ def _check_backend_push_support(
 @click.option(
     "--concurrency",
     type=click.IntRange(min=1, max=500),
-    default=50,
-    help="Maximum concurrent file uploads within each collection (default: 50). "
-    "Higher values improve throughput but may hit rate limits.",
+    default=8,
+    help="Maximum concurrent file uploads within each collection (default: 8). "
+    "Per-worker connections = concurrency × chunk-concurrency; "
+    "catalog-wide total = workers × concurrency × chunk-concurrency.",
+)
+@click.option(
+    "--chunk-concurrency",
+    type=click.IntRange(min=1, max=50),
+    default=4,
+    help="Maximum concurrent chunks per file upload (default: 4). "
+    "Per-worker connections = concurrency × chunk-concurrency; "
+    "catalog-wide total = workers × concurrency × chunk-concurrency. "
+    "Lower values are safer for home networks.",
+)
+@click.option(
+    "--max-connections",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum total concurrent HTTP connections. If set, auto-adjusts "
+    "concurrency and chunk-concurrency to stay within limit. "
+    "Recommended for flaky or metered connections.",
+)
+@click.option(
+    "--adaptive/--no-adaptive",
+    default=True,
+    help="Enable adaptive concurrency (default: on). Starts with low concurrency, "
+    "ramps up on success, backs off on errors. Safer for home networks.",
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
@@ -3208,6 +3273,9 @@ def push(
     catalog_path: Path | None,
     workers: int | None,
     concurrency: int,
+    chunk_concurrency: int,
+    max_connections: int | None,
+    adaptive: bool,
 ) -> None:
     """Push local catalog changes to cloud object storage.
 
@@ -3272,6 +3340,11 @@ def push(
             )
         raise SystemExit(1)
 
+    # Apply max_connections cap and warn about high connection count (Issue #344)
+    effective_file_conc, effective_chunk_conc = _prepare_push_concurrency(
+        concurrency, chunk_concurrency, max_connections, workers, collection, use_json
+    )
+
     # If no collection specified, push all collections
     if collection is None:
         try:
@@ -3283,7 +3356,10 @@ def push(
                 profile=resolved_profile,
                 region=resolved_region,
                 workers=workers,
-                file_concurrency=concurrency,
+                file_concurrency=effective_file_conc,
+                chunk_concurrency=effective_chunk_conc,
+                max_connections=max_connections,
+                adaptive=adaptive,
                 verbose=verbose,
                 json_mode=use_json,
             )
@@ -3321,6 +3397,7 @@ def push(
 
     try:
         # Use async push for single-collection push (concurrent uploads)
+        # max_connections already applied above via effective_*_conc
         result = asyncio.run(
             push_async(
                 catalog_root=catalog_path,
@@ -3330,7 +3407,9 @@ def push(
                 dry_run=dry_run,
                 profile=resolved_profile,
                 region=resolved_region,
-                concurrency=concurrency,
+                concurrency=effective_file_conc,
+                chunk_concurrency=effective_chunk_conc,
+                adaptive=adaptive,
                 json_mode=use_json,
             )
         )
