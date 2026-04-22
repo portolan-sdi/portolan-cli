@@ -3142,22 +3142,45 @@ def _check_backend_push_support(
     raise SystemExit(1)
 
 
-def _warn_high_connection_count(
-    file_concurrency: int, chunk_concurrency: int, use_json: bool
-) -> None:
-    """Warn if concurrency settings may overwhelm home networks (Issue #344)."""
+def _prepare_push_concurrency(
+    concurrency: int,
+    chunk_concurrency: int,
+    max_connections: int | None,
+    workers: int | None,
+    collection: str | None,
+    use_json: bool,
+) -> tuple[int, int]:
+    """Compute effective concurrency and warn if too high (Issue #344).
+
+    Returns:
+        Tuple of (effective_file_concurrency, effective_chunk_concurrency).
+    """
     from portolan_cli.async_utils import (
         MAX_SAFE_CONNECTIONS,
+        adjust_concurrency_for_max_connections,
         calculate_connection_footprint,
     )
 
-    footprint = calculate_connection_footprint(file_concurrency, chunk_concurrency)
+    # Apply max_connections cap
+    effective_file = concurrency
+    effective_chunk = chunk_concurrency
+    if max_connections is not None:
+        effective_file, effective_chunk = adjust_concurrency_for_max_connections(
+            concurrency, chunk_concurrency, max_connections
+        )
+
+    # Warn if footprint exceeds safe threshold
+    eff_workers = workers if workers is not None else (4 if collection is None else 1)
+    footprint = calculate_connection_footprint(effective_file, effective_chunk, eff_workers)
     if footprint > MAX_SAFE_CONNECTIONS and not use_json:
+        worker_part = f"{eff_workers} workers × " if eff_workers > 1 else ""
         warn(
             f"High connection count: {footprint} concurrent connections "
-            f"({file_concurrency} files × {chunk_concurrency} chunks). "
+            f"({worker_part}{effective_file} files × {effective_chunk} chunks). "
             "This may overwhelm home networks. Consider using --max-connections to limit."
         )
+
+    return effective_file, effective_chunk
 
 
 @cli.command()
@@ -3315,8 +3338,10 @@ def push(
             )
         raise SystemExit(1)
 
-    # Warn about high connection count (Issue #344)
-    _warn_high_connection_count(concurrency, chunk_concurrency, use_json)
+    # Apply max_connections cap and warn about high connection count (Issue #344)
+    effective_file_conc, effective_chunk_conc = _prepare_push_concurrency(
+        concurrency, chunk_concurrency, max_connections, workers, collection, use_json
+    )
 
     # If no collection specified, push all collections
     if collection is None:
@@ -3329,8 +3354,8 @@ def push(
                 profile=resolved_profile,
                 region=resolved_region,
                 workers=workers,
-                file_concurrency=concurrency,
-                chunk_concurrency=chunk_concurrency,
+                file_concurrency=effective_file_conc,
+                chunk_concurrency=effective_chunk_conc,
                 max_connections=max_connections,
                 adaptive=adaptive,
                 verbose=verbose,
@@ -3370,6 +3395,7 @@ def push(
 
     try:
         # Use async push for single-collection push (concurrent uploads)
+        # max_connections already applied above via effective_*_conc
         result = asyncio.run(
             push_async(
                 catalog_root=catalog_path,
@@ -3379,8 +3405,8 @@ def push(
                 dry_run=dry_run,
                 profile=resolved_profile,
                 region=resolved_region,
-                concurrency=concurrency,
-                chunk_concurrency=chunk_concurrency,
+                concurrency=effective_file_conc,
+                chunk_concurrency=effective_chunk_conc,
                 adaptive=adaptive,
                 json_mode=use_json,
             )

@@ -226,3 +226,4 @@ specs/
 
 # Local Claude context (machine-specific, not for git)
 claude.local.md
+.grepai/

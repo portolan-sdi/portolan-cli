@@ -314,6 +314,7 @@ class AsyncIOExecutor(Generic[T]):
     - Circuit breaker for cascading failure protection
     - Progress callback for UI updates
     - Graceful error handling without stopping batch
+    - Dynamic concurrency adjustment via AdaptiveConcurrencyManager
 
     Example:
         >>> async def upload(path: str) -> int:
@@ -340,12 +341,42 @@ class AsyncIOExecutor(Generic[T]):
             circuit_breaker_threshold: Failures before circuit trips.
             adaptive_manager: Optional adaptive concurrency manager for slow-start.
                 When provided, concurrency will be adjusted dynamically based on
-                success/failure rates.
+                success/failure rates. The executor will gate admission based on
+                the manager's current_concurrency, not a fixed semaphore.
         """
         self.concurrency = concurrency
         self._semaphore: asyncio.Semaphore | None = None
         self._circuit_breaker = CircuitBreaker(failure_threshold=circuit_breaker_threshold)
         self._adaptive_manager = adaptive_manager
+        # For adaptive mode: track in-flight operations
+        self._in_flight = 0
+        self._in_flight_lock: asyncio.Lock | None = None
+
+    async def _acquire_adaptive_permit(self) -> None:
+        """Acquire permission to start work under adaptive concurrency.
+
+        When adaptive_manager is set, this gates admission based on the
+        manager's current_concurrency rather than a fixed semaphore.
+        Polls with backoff until a slot opens.
+        """
+        if self._adaptive_manager is None or self._in_flight_lock is None:
+            return
+
+        while True:
+            async with self._in_flight_lock:
+                if self._in_flight < self._adaptive_manager.current_concurrency:
+                    self._in_flight += 1
+                    return
+            # Wait a bit before checking again (adaptive backpressure)
+            await asyncio.sleep(0.01)
+
+    async def _release_adaptive_permit(self) -> None:
+        """Release an adaptive permit after work completes."""
+        if self._adaptive_manager is None or self._in_flight_lock is None:
+            return
+
+        async with self._in_flight_lock:
+            self._in_flight -= 1
 
     async def execute(
         self,
@@ -371,8 +402,13 @@ class AsyncIOExecutor(Generic[T]):
         if not items:
             return []
 
-        # Create semaphore for this execution batch
-        self._semaphore = asyncio.Semaphore(self.concurrency)
+        # For adaptive mode, use dynamic permit system
+        # For fixed mode, use traditional semaphore
+        if self._adaptive_manager is not None:
+            self._in_flight_lock = asyncio.Lock()
+            self._in_flight = 0
+        else:
+            self._semaphore = asyncio.Semaphore(self.concurrency)
 
         total = len(items)
         completed = 0
@@ -380,40 +416,52 @@ class AsyncIOExecutor(Generic[T]):
         results: list[AsyncExecutionResult[T]] = []
 
         async def execute_one(item: str) -> AsyncExecutionResult[T]:
-            """Execute operation on a single item with semaphore."""
+            """Execute operation on a single item with concurrency control."""
             nonlocal completed
 
             # Check circuit breaker before attempting
             self._circuit_breaker.check()
 
-            async with self._semaphore:  # type: ignore[union-attr]
-                start = time.perf_counter()
+            # Gate admission based on mode
+            if self._adaptive_manager is not None:
+                await self._acquire_adaptive_permit()
                 try:
-                    result = await operation(item)
-                    duration = time.perf_counter() - start
-                    self._circuit_breaker.record_success()
-                    if self._adaptive_manager:
-                        self._adaptive_manager.record_success()
-                    return AsyncExecutionResult(
-                        item=item,
-                        result=result,
-                        error=None,
-                        duration_seconds=duration,
-                    )
-                except CircuitBreakerError:
-                    # Re-raise circuit breaker errors
-                    raise
-                except Exception as e:
-                    duration = time.perf_counter() - start
-                    self._circuit_breaker.record_failure()
-                    if self._adaptive_manager:
-                        self._adaptive_manager.record_error()
-                    return AsyncExecutionResult(
-                        item=item,
-                        result=None,
-                        error=f"{type(e).__name__}: {e}",
-                        duration_seconds=duration,
-                    )
+                    return await _do_operation(item)
+                finally:
+                    await self._release_adaptive_permit()
+            else:
+                async with self._semaphore:  # type: ignore[union-attr]
+                    return await _do_operation(item)
+
+        async def _do_operation(item: str) -> AsyncExecutionResult[T]:
+            """Execute the actual operation (shared by both modes)."""
+            start = time.perf_counter()
+            try:
+                result = await operation(item)
+                duration = time.perf_counter() - start
+                self._circuit_breaker.record_success()
+                if self._adaptive_manager:
+                    self._adaptive_manager.record_success()
+                return AsyncExecutionResult(
+                    item=item,
+                    result=result,
+                    error=None,
+                    duration_seconds=duration,
+                )
+            except CircuitBreakerError:
+                # Re-raise circuit breaker errors
+                raise
+            except Exception as e:
+                duration = time.perf_counter() - start
+                self._circuit_breaker.record_failure()
+                if self._adaptive_manager:
+                    self._adaptive_manager.record_error()
+                return AsyncExecutionResult(
+                    item=item,
+                    result=None,
+                    error=f"{type(e).__name__}: {e}",
+                    duration_seconds=duration,
+                )
 
         async def execute_with_callback(item: str) -> AsyncExecutionResult[T]:
             """Execute and call completion callback."""
