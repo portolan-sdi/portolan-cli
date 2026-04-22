@@ -329,7 +329,7 @@ class AsyncIOExecutor(Generic[T]):
 
     def __init__(
         self,
-        concurrency: int = 50,
+        concurrency: int = 8,
         *,
         circuit_breaker_threshold: int = 5,
         adaptive_manager: AdaptiveConcurrencyManager | None = None,
@@ -337,7 +337,7 @@ class AsyncIOExecutor(Generic[T]):
         """Initialize the executor.
 
         Args:
-            concurrency: Maximum concurrent operations.
+            concurrency: Maximum concurrent operations (default: 8).
             circuit_breaker_threshold: Failures before circuit trips.
             adaptive_manager: Optional adaptive concurrency manager for slow-start.
                 When provided, concurrency will be adjusted dynamically based on

@@ -349,12 +349,15 @@ class TestCLIIntegration:
                 )
 
                 # Request high concurrency but limit with max_connections
+                # Use --workers 1 for deterministic assertion (no CPU variance)
                 result = runner.invoke(
                     cli,
                     [
                         "push",
                         "--catalog",
                         ".",
+                        "--workers",
+                        "1",
                         "--concurrency",
                         "50",
                         "--chunk-concurrency",

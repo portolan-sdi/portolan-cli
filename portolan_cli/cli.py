@@ -3227,14 +3227,16 @@ def _prepare_push_concurrency(
     type=click.IntRange(min=1, max=500),
     default=8,
     help="Maximum concurrent file uploads within each collection (default: 8). "
-    "Total connections = concurrency × chunk-concurrency.",
+    "Per-worker connections = concurrency × chunk-concurrency; "
+    "catalog-wide total = workers × concurrency × chunk-concurrency.",
 )
 @click.option(
     "--chunk-concurrency",
     type=click.IntRange(min=1, max=50),
     default=4,
     help="Maximum concurrent chunks per file upload (default: 4). "
-    "Total connections = concurrency × chunk-concurrency. "
+    "Per-worker connections = concurrency × chunk-concurrency; "
+    "catalog-wide total = workers × concurrency × chunk-concurrency. "
     "Lower values are safer for home networks.",
 )
 @click.option(
