@@ -205,6 +205,8 @@ class TestReadmeCommonCommands:
         """'portolan config set' and 'config list' work together.
 
         Note: config commands operate on the cwd, so we change to the catalog dir.
+        Note: Sensitive settings (remote, profile, region) must use env vars/.env,
+        so we test with 'backend' which can be stored in config.yaml.
         """
         # Save original cwd
         original_cwd = os.getcwd()
@@ -212,14 +214,14 @@ class TestReadmeCommonCommands:
             # Change to catalog directory for config commands
             os.chdir(catalog_with_minimal_data)
 
-            # Set a config value
-            result = runner.invoke(cli, ["config", "set", "remote", "s3://test-bucket/catalog"])
+            # Set a config value (use non-sensitive setting)
+            result = runner.invoke(cli, ["config", "set", "backend", "iceberg"])
             assert result.exit_code == 0, f"config set failed: {result.output}"
 
             # List config
             result = runner.invoke(cli, ["config", "list"])
             assert result.exit_code == 0, f"config list failed: {result.output}"
-            assert "s3://test-bucket/catalog" in result.output
+            assert "iceberg" in result.output
         finally:
             # Restore original cwd
             os.chdir(original_cwd)

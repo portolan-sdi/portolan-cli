@@ -777,8 +777,9 @@ class TestDotenvLoading:
         env_file = tmp_path / ".env"
         env_file.write_text("PORTOLAN_REMOTE=s3://from-dotenv/\n")
 
-        # Clear any existing env var
-        with mock.patch.dict(os.environ, {}, clear=True):
+        # Ensure PORTOLAN_REMOTE is not set before test
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PORTOLAN_REMOTE", None)
             result = load_dotenv_from_catalog(tmp_path)
 
             assert result is True
@@ -843,6 +844,47 @@ class TestEnvFileIgnored:
         assert ".env" in DEFAULT_IGNORED_FILES
         assert ".env.*" in DEFAULT_IGNORED_FILES
         assert ".env.local" in DEFAULT_IGNORED_FILES
+
+
+class TestSensitiveSettingsMigration:
+    """Tests for check_sensitive_settings_in_config (Issue #356 migration)."""
+
+    @pytest.mark.unit
+    def test_detects_sensitive_settings_in_config(self, tmp_path: Path) -> None:
+        """check_sensitive_settings_in_config should detect sensitive settings."""
+        from portolan_cli.config import check_sensitive_settings_in_config, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"remote": "s3://bucket/", "profile": "prod"})
+
+        result = check_sensitive_settings_in_config(tmp_path)
+
+        assert "remote" in result
+        assert "profile" in result
+
+    @pytest.mark.unit
+    def test_returns_empty_when_no_sensitive_settings(self, tmp_path: Path) -> None:
+        """check_sensitive_settings_in_config should return empty list when clean."""
+        from portolan_cli.config import check_sensitive_settings_in_config, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"backend": "stac", "statistics.enabled": True})
+
+        result = check_sensitive_settings_in_config(tmp_path)
+
+        assert result == []
+
+    @pytest.mark.unit
+    def test_returns_empty_for_empty_config(self, tmp_path: Path) -> None:
+        """check_sensitive_settings_in_config should handle empty config."""
+        from portolan_cli.config import check_sensitive_settings_in_config
+
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "config.yaml").write_text("")
+
+        result = check_sensitive_settings_in_config(tmp_path)
+
+        assert result == []
 
 
 class TestListSettings:

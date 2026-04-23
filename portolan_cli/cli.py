@@ -259,11 +259,20 @@ def cli(ctx: click.Context, output_format: str) -> None:
 
     # Load .env from catalog root if present (Issue #356)
     # This enables storing sensitive settings (remote, profile, region) in .env
-    from portolan_cli.config import load_dotenv_from_catalog
+    from portolan_cli.config import check_sensitive_settings_in_config, load_dotenv_from_catalog
 
     catalog_path = find_catalog_root()
     if catalog_path:
         load_dotenv_from_catalog(catalog_path)
+
+        # Warn if config.yaml contains sensitive settings (migration guidance)
+        sensitive_in_config = check_sensitive_settings_in_config(catalog_path)
+        if sensitive_in_config:
+            settings_str = ", ".join(sensitive_in_config)
+            warn(
+                f"config.yaml contains sensitive settings ({settings_str}) that will be "
+                f"pushed to remote. Move these to .env file or use PORTOLAN_* env vars."
+            )
 
 
 @cli.command()

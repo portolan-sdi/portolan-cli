@@ -764,3 +764,20 @@ def load_dotenv_from_catalog(catalog_path: Path | None = None) -> bool:
 
     load_dotenv(env_file, override=False)
     return True
+
+
+def check_sensitive_settings_in_config(catalog_path: Path) -> list[str]:
+    """Check if config.yaml contains sensitive settings that should be in .env.
+
+    Args:
+        catalog_path: Path to catalog root.
+
+    Returns:
+        List of sensitive setting names found in config.yaml.
+    """
+    config = load_config(catalog_path)
+    found = []
+    for key in SENSITIVE_SETTINGS:
+        if key in config:
+            found.append(key)
+    return found
