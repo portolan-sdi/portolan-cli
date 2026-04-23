@@ -66,6 +66,9 @@ class WFSDiscoveryResult:
         service_abstract: Service description from GetCapabilities.
         provider: Provider name from GetCapabilities.
         keywords: Keywords from GetCapabilities.
+        contact_name: Contact person/organization name.
+        access_constraints: Access constraints or license info.
+        fees: Fee information (typically "none" for public services).
     """
 
     service_url: str
@@ -74,6 +77,9 @@ class WFSDiscoveryResult:
     service_abstract: str | None = None
     provider: str | None = None
     keywords: list[str] | None = None
+    contact_name: str | None = None
+    access_constraints: str | None = None
+    fees: str | None = None
 
 
 def gpio_list_layers(service_url: str, version: str = "1.1.0") -> list[dict[str, Any]]:
@@ -142,7 +148,8 @@ def discover_layers(
     """Discover layers and service metadata from a WFS endpoint.
 
     Full discovery that retrieves service-level metadata in addition
-    to layer information.
+    to layer information. Uses geoparquet-io's get_wfs_capabilities
+    to parse GetCapabilities response.
 
     Args:
         service_url: WFS service endpoint URL.
@@ -154,15 +161,77 @@ def discover_layers(
     Raises:
         WFSDiscoveryError: If connection or parsing fails.
     """
-    layers = list_layers(service_url, version)
+    try:
+        from geoparquet_io.core.wfs import get_wfs_capabilities
 
-    # TODO: Extract service-level metadata from GetCapabilities
-    # For now, return basic result with just layers
-    return WFSDiscoveryResult(
-        service_url=service_url,
-        layers=layers,
-        service_title=None,
-        service_abstract=None,
-        provider=None,
-        keywords=None,
-    )
+        # Get capabilities object from OWSLib
+        wfs = get_wfs_capabilities(service_url, version)
+
+        # Extract service-level metadata
+        service_title = None
+        service_abstract = None
+        provider = None
+        keywords: list[str] | None = None
+        contact_name = None
+        access_constraints = None
+        fees = None
+
+        # Service identification
+        if hasattr(wfs, "identification") and wfs.identification:
+            ident = wfs.identification
+            service_title = getattr(ident, "title", None)
+            service_abstract = getattr(ident, "abstract", None)
+            if hasattr(ident, "keywords") and ident.keywords:
+                keywords = [str(kw) for kw in ident.keywords]
+            access_constraints = getattr(ident, "accessconstraints", None)
+            fees = getattr(ident, "fees", None)
+
+        # Provider information
+        if hasattr(wfs, "provider") and wfs.provider:
+            prov = wfs.provider
+            provider = getattr(prov, "name", None)
+            # Try to get contact info
+            if hasattr(prov, "contact") and prov.contact:
+                contact = prov.contact
+                contact_parts = []
+                if hasattr(contact, "name") and contact.name:
+                    contact_parts.append(contact.name)
+                if hasattr(contact, "organization") and contact.organization:
+                    contact_parts.append(contact.organization)
+                if contact_parts:
+                    contact_name = ", ".join(contact_parts)
+
+        # Build layer list
+        layers = []
+        for i, (typename, layer) in enumerate(wfs.contents.items()):
+            layers.append(
+                LayerInfo(
+                    name=typename,
+                    typename=typename,
+                    title=getattr(layer, "title", None),
+                    abstract=getattr(layer, "abstract", None),
+                    bbox=tuple(layer.boundingBoxWGS84)
+                    if hasattr(layer, "boundingBoxWGS84") and layer.boundingBoxWGS84
+                    else None,
+                    id=i,
+                )
+            )
+
+        return WFSDiscoveryResult(
+            service_url=service_url,
+            layers=layers,
+            service_title=service_title,
+            service_abstract=service_abstract,
+            provider=provider,
+            keywords=keywords,
+            contact_name=contact_name,
+            access_constraints=access_constraints,
+            fees=fees,
+        )
+
+    except ImportError as e:
+        raise WFSDiscoveryError(
+            "geoparquet-io is required for WFS extraction. Install with: pip install geoparquet-io"
+        ) from e
+    except Exception as e:
+        raise WFSDiscoveryError(f"Failed to discover WFS layers: {e}") from e

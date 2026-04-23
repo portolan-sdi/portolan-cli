@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,7 +38,7 @@ from portolan_cli.extract.common.report import (
 )
 from portolan_cli.extract.common.resume import ResumeState, get_resume_state, should_process_layer
 from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
-from portolan_cli.extract.wfs.discovery import LayerInfo, list_layers
+from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, discover_layers
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,21 +51,29 @@ class ExtractionOptions:
     """Options for WFS extraction.
 
     Attributes:
-        workers: Number of parallel workers for extraction.
+        workers: Number of parallel workers for layer extraction.
+            Each layer is extracted independently; this controls how many
+            layers are processed concurrently.
         retries: Number of retry attempts per failed layer.
-        timeout: Per-request timeout in seconds.
+        timeout: Per-layer timeout in seconds. Note: geoparquet-io uses a
+            10-minute internal HTTP timeout for large datasets; this timeout
+            wraps the entire layer extraction including retries.
         resume: Whether to resume from existing extraction report.
         raw: If True, skip auto-init (only create extraction files, no STAC catalog).
         dry_run: If True, list layers without extracting.
         wfs_version: WFS version ("1.0.0", "1.1.0", "2.0.0", or "auto").
+            When "auto", the version is negotiated with the server once and
+            used consistently for both discovery and extraction.
         output_crs: Target CRS for output (e.g., "EPSG:4326"). None keeps source CRS.
         bbox: Bounding box filter (xmin, ymin, xmax, ymax) in output CRS.
         limit: Maximum features per layer (None for unlimited).
+        page_size: Features per page when gpio uses parallel pagination for
+            very large layers (1M+ features). Default: 10000.
     """
 
     workers: int = 1
     retries: int = 3
-    timeout: float = 60.0
+    timeout: float = 300.0  # 5 minutes per layer (gpio has 10min internal timeout)
     resume: bool = False
     raw: bool = False
     dry_run: bool = False
@@ -72,6 +81,7 @@ class ExtractionOptions:
     output_crs: str | None = None
     bbox: tuple[float, float, float, float] | None = None
     limit: int | None = None
+    page_size: int = 10000
 
 
 @dataclass
@@ -148,14 +158,16 @@ def _extract_single_layer(
     layer: LayerInfo,
     output_path: Path,
     options: ExtractionOptions,
+    negotiated_version: str,
 ) -> tuple[int, int, float]:
-    """Extract a single WFS layer using gpio.
+    """Extract a single WFS layer using geoparquet-io.
 
     Args:
         service_url: WFS service URL.
         layer: Layer info (typename used for extraction).
         output_path: Path to write parquet file.
         options: Extraction options.
+        negotiated_version: WFS version to use (already negotiated if "auto").
 
     Returns:
         Tuple of (feature_count, file_size_bytes, duration_seconds).
@@ -163,34 +175,40 @@ def _extract_single_layer(
     Raises:
         Exception: If extraction fails.
     """
-    import geoparquet_io as gpio  # type: ignore[import-untyped]
+    from geoparquet_io.core.wfs import convert_wfs_to_geoparquet  # type: ignore[import-untyped]
 
     start_time = time.monotonic()
 
-    # Determine WFS version (auto = let gpio decide)
-    version = None if options.wfs_version == "auto" else options.wfs_version
-
-    # Build extraction kwargs
-    kwargs: dict[str, object] = {
-        "typename": layer.typename,
-    }
-    if version:
-        kwargs["version"] = version
-    if options.output_crs:
-        kwargs["output_crs"] = options.output_crs
-    if options.bbox:
-        kwargs["bbox"] = options.bbox
-    if options.limit:
-        kwargs["max_features"] = options.limit
-
-    table = gpio.extract_wfs(service_url, **kwargs)
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    table.write(str(output_path))
+
+    # Use gpio's convert_wfs_to_geoparquet which handles everything:
+    # - HTTP streaming via DuckDB
+    # - CRS negotiation
+    # - Hilbert sorting and bbox column
+    convert_wfs_to_geoparquet(
+        service_url=service_url,
+        typename=layer.typename,
+        output_file=str(output_path),
+        version=negotiated_version,
+        bbox=options.bbox,
+        output_crs=options.output_crs,
+        limit=options.limit,
+        page_size=options.page_size,
+        overwrite=True,  # We control overwrites via resume logic
+    )
 
     duration = time.monotonic() - start_time
-    feature_count = table.num_rows
-    file_size = output_path.stat().st_size if output_path.exists() else 0
+
+    # Read back file stats
+    if output_path.exists():
+        import pyarrow.parquet as pq
+
+        metadata = pq.read_metadata(output_path)
+        feature_count = metadata.num_rows
+        file_size = output_path.stat().st_size
+    else:
+        feature_count = 0
+        file_size = 0
 
     return feature_count, file_size, duration
 
@@ -198,6 +216,7 @@ def _extract_single_layer(
 def _build_dry_run_report(
     url: str,
     layers: list[LayerInfo],
+    discovery_result: WFSDiscoveryResult | None = None,
 ) -> ExtractionReport:
     """Build a report for dry-run mode."""
     dry_run_results = [
@@ -215,63 +234,164 @@ def _build_dry_run_report(
         )
         for layer in layers
     ]
-    return _build_report(url=url, layer_results=dry_run_results)
+    return _build_report(url=url, layer_results=dry_run_results, discovery_result=discovery_result)
 
 
-def _build_report(
-    url: str,
-    layer_results: list[LayerResult],
-) -> ExtractionReport:
-    """Build an ExtractionReport from extraction results."""
+def _get_package_version(package_name: str) -> str:
+    """Get installed version of a package."""
     try:
         from importlib.metadata import version
 
-        portolan_version = version("portolan-cli")
+        return version(package_name)
     except Exception:
-        portolan_version = "unknown"
+        return "unknown"
 
-    try:
-        from importlib.metadata import version
 
-        gpio_version = version("geoparquet-io")
-    except Exception:
-        gpio_version = "unknown"
+def _build_metadata(url: str, discovery_result: WFSDiscoveryResult | None) -> MetadataExtracted:
+    """Build MetadataExtracted from discovery result."""
+    if not discovery_result:
+        return MetadataExtracted(
+            source_url=url,
+            description=None,
+            attribution=None,
+            keywords=None,
+            contact_name=None,
+            processing_notes=None,
+            known_issues=None,
+            license_info_raw=None,
+        )
 
-    # WFS metadata extraction happens separately via GetCapabilities
-    metadata_extracted = MetadataExtracted(
+    processing_notes = None
+    if discovery_result.service_title:
+        processing_notes = f"WFS service: {discovery_result.service_title}"
+
+    return MetadataExtracted(
         source_url=url,
-        description=None,
-        attribution=None,
-        keywords=None,
-        contact_name=None,
-        processing_notes=None,
+        description=discovery_result.service_abstract,
+        attribution=discovery_result.provider,
+        keywords=discovery_result.keywords,
+        contact_name=discovery_result.contact_name,
+        processing_notes=processing_notes,
         known_issues=None,
-        license_info_raw=None,
+        license_info_raw=discovery_result.access_constraints,
     )
 
-    succeeded = sum(1 for r in layer_results if r.status == "success")
-    failed = sum(1 for r in layer_results if r.status == "failed")
-    skipped = sum(1 for r in layer_results if r.status == "skipped")
 
-    summary = ExtractionSummary(
+def _build_summary(layer_results: list[LayerResult]) -> ExtractionSummary:
+    """Compute extraction summary from layer results."""
+    return ExtractionSummary(
         total_layers=len(layer_results),
-        succeeded=succeeded,
-        failed=failed,
-        skipped=skipped,
+        succeeded=sum(1 for r in layer_results if r.status == "success"),
+        failed=sum(1 for r in layer_results if r.status == "failed"),
+        skipped=sum(1 for r in layer_results if r.status == "skipped"),
         total_features=sum(r.features or 0 for r in layer_results),
         total_size_bytes=sum(r.size_bytes or 0 for r in layer_results),
         total_duration_seconds=sum(r.duration_seconds or 0.0 for r in layer_results),
     )
 
+
+def _build_report(
+    url: str,
+    layer_results: list[LayerResult],
+    discovery_result: WFSDiscoveryResult | None = None,
+) -> ExtractionReport:
+    """Build an ExtractionReport from extraction results."""
     return ExtractionReport(
         extraction_date=datetime.now(timezone.utc).isoformat(),
         source_url=url,
-        portolan_version=portolan_version,
-        gpio_version=gpio_version,
-        metadata_extracted=metadata_extracted,
+        portolan_version=_get_package_version("portolan-cli"),
+        gpio_version=_get_package_version("geoparquet-io"),
+        metadata_extracted=_build_metadata(url, discovery_result),
         layers=layer_results,
-        summary=summary,
+        summary=_build_summary(layer_results),
     )
+
+
+def _negotiate_version(url: str, wfs_version: str) -> str:
+    """Negotiate WFS version with the server.
+
+    Args:
+        url: WFS service URL.
+        wfs_version: User-requested version ("auto" or specific version).
+
+    Returns:
+        Negotiated version string (e.g., "1.1.0", "2.0.0").
+    """
+    if wfs_version != "auto":
+        return wfs_version
+
+    try:
+        from geoparquet_io.core.wfs import negotiate_wfs_version
+
+        version, _ = negotiate_wfs_version(url, preferred_version="auto")
+        return str(version)
+    except ImportError:
+        # Fallback if gpio doesn't have negotiate_wfs_version
+        return "1.1.0"
+    except Exception as e:
+        logger.warning("Version negotiation failed, using 1.1.0: %s", e)
+        return "1.1.0"
+
+
+def _extract_layer_task(
+    url: str,
+    layer: LayerInfo,
+    output_dir: Path,
+    options: ExtractionOptions,
+    negotiated_version: str,
+    layer_index: int,
+    total_layers: int,
+) -> LayerResult:
+    """Extract a single layer (task for parallel execution).
+
+    Returns LayerResult with success or failure status.
+    """
+    layer_slug = _slugify(layer.name)
+    collection_dir = output_dir / layer_slug
+    output_path = collection_dir / f"{layer_slug}.parquet"
+
+    retry_config = RetryConfig(max_attempts=options.retries)
+
+    result = retry_with_backoff(
+        _extract_single_layer,
+        retry_config,
+        url,
+        layer,
+        output_path,
+        options,
+        negotiated_version,
+        on_retry=lambda attempt, err: logger.debug(
+            "Retry %d for layer %s: %s", attempt, layer.name, err
+        ),
+    )
+
+    if result.success:
+        features, size_bytes, duration = result.value  # type: ignore[misc]
+        return LayerResult(
+            id=layer.id,
+            name=layer.name,
+            status="success",
+            features=features,
+            size_bytes=size_bytes,
+            duration_seconds=duration,
+            output_path=str(output_path.relative_to(output_dir)),
+            warnings=[],
+            error=None,
+            attempts=result.attempts,
+        )
+    else:
+        return LayerResult(
+            id=layer.id,
+            name=layer.name,
+            status="failed",
+            features=0,
+            size_bytes=0,
+            duration_seconds=0.0,
+            output_path="",
+            warnings=[],
+            error=str(result.error) if result.error else "Unknown error",
+            attempts=result.attempts,
+        )
 
 
 def extract_wfs_catalog(
@@ -286,11 +406,12 @@ def extract_wfs_catalog(
     """Extract layers from a WFS service to a Portolan catalog.
 
     This is the main orchestration function that:
-    1. Discovers available layers via GetCapabilities
-    2. Applies filters
-    3. Handles resume logic
-    4. Extracts each layer with retry
-    5. Generates extraction report
+    1. Negotiates WFS version (if "auto")
+    2. Discovers available layers via GetCapabilities
+    3. Applies filters
+    4. Handles resume logic
+    5. Extracts layers in parallel with retry
+    6. Generates extraction report
 
     Args:
         url: WFS service endpoint URL.
@@ -309,18 +430,20 @@ def extract_wfs_catalog(
     if options is None:
         options = ExtractionOptions()
 
-    # Determine WFS version for discovery
-    version = "1.1.0" if options.wfs_version == "auto" else options.wfs_version
+    # Negotiate WFS version ONCE - use same version for discovery AND extraction
+    negotiated_version = _negotiate_version(url, options.wfs_version)
+    logger.debug("Using WFS version: %s", negotiated_version)
 
-    # Discover layers
-    layers = list_layers(url, version=version)
+    # Discover layers and service metadata
+    discovery_result = discover_layers(url, version=negotiated_version)
+    layers = discovery_result.layers
 
     # Apply layer filters
     layers = _filter_discovered_layers(layers, layer_filter, layer_exclude)
 
     # Dry run - just return what would be extracted
     if options.dry_run:
-        return _build_dry_run_report(url, layers)
+        return _build_dry_run_report(url, layers, discovery_result)
 
     # Create output directory structure
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -338,80 +461,109 @@ def extract_wfs_catalog(
         resume_state = get_resume_state(existing_report)
         existing_results = {r.id: r for r in existing_report.layers}
 
-    # Extract each layer
-    layer_results: list[LayerResult] = []
-    retry_config = RetryConfig(max_attempts=options.retries)
+    # Separate layers into skip (already done) and extract (need processing)
+    layers_to_extract: list[tuple[int, LayerInfo]] = []
+    skipped_results: list[LayerResult] = []
     total = len(layers)
 
     for i, layer in enumerate(layers):
-        layer_slug = _slugify(layer.name)
-        _emit_progress(on_progress, i, total, layer.name, "starting")
-
-        # Check resume state - skip if already succeeded
         if resume_state and not should_process_layer(layer.id, resume_state):
             if layer.id in existing_results:
                 _emit_progress(on_progress, i, total, layer.name, "skipped")
-                layer_results.append(existing_results[layer.id])
+                skipped_results.append(existing_results[layer.id])
                 continue
             logger.warning(
                 "Layer '%s' (id=%d) marked complete in resume state but result missing; re-extracting",
                 layer.name,
                 layer.id,
             )
+        layers_to_extract.append((i, layer))
 
-        # Build output path: layer_name/layer_name.parquet
-        collection_dir = output_dir / layer_slug
-        output_path = collection_dir / f"{layer_slug}.parquet"
+    # Extract layers - parallel if workers > 1, sequential otherwise
+    extracted_results: list[LayerResult] = []
 
-        # Extract with retry
-        _emit_progress(on_progress, i, total, layer.name, "extracting")
+    if options.workers > 1 and len(layers_to_extract) > 1:
+        # Parallel extraction
+        actual_workers = min(options.workers, len(layers_to_extract))
+        logger.info("Extracting %d layers with %d workers", len(layers_to_extract), actual_workers)
 
-        result = retry_with_backoff(
-            _extract_single_layer,
-            retry_config,
-            url,
-            layer,
-            output_path,
-            options,
-            on_retry=lambda attempt, err: None,
-        )
+        with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+            future_to_layer = {
+                executor.submit(
+                    _extract_layer_task,
+                    url,
+                    layer,
+                    output_dir,
+                    options,
+                    negotiated_version,
+                    i,
+                    total,
+                ): (i, layer)
+                for i, layer in layers_to_extract
+            }
 
-        if result.success:
-            features, size_bytes, duration = result.value  # type: ignore[misc]
-            _emit_progress(on_progress, i, total, layer.name, "success")
-            layer_results.append(
-                LayerResult(
-                    id=layer.id,
-                    name=layer.name,
-                    status="success",
-                    features=features,
-                    size_bytes=size_bytes,
-                    duration_seconds=duration,
-                    output_path=str(output_path.relative_to(output_dir)),
-                    warnings=[],
-                    error=None,
-                    attempts=result.attempts,
-                )
+            for future in as_completed(future_to_layer):
+                i, layer = future_to_layer[future]
+                try:
+                    result = future.result(timeout=options.timeout)
+                    extracted_results.append(result)
+                    status = "success" if result.status == "success" else "failed"
+                    _emit_progress(on_progress, i, total, layer.name, status)
+                except TimeoutError:
+                    logger.error("Layer %s timed out after %ds", layer.name, options.timeout)
+                    _emit_progress(on_progress, i, total, layer.name, "failed")
+                    extracted_results.append(
+                        LayerResult(
+                            id=layer.id,
+                            name=layer.name,
+                            status="failed",
+                            features=0,
+                            size_bytes=0,
+                            duration_seconds=options.timeout,
+                            output_path="",
+                            warnings=[],
+                            error=f"Timeout after {options.timeout}s",
+                            attempts=1,
+                        )
+                    )
+                except Exception as e:
+                    logger.error("Layer %s failed: %s", layer.name, e)
+                    _emit_progress(on_progress, i, total, layer.name, "failed")
+                    extracted_results.append(
+                        LayerResult(
+                            id=layer.id,
+                            name=layer.name,
+                            status="failed",
+                            features=0,
+                            size_bytes=0,
+                            duration_seconds=0.0,
+                            output_path="",
+                            warnings=[],
+                            error=str(e),
+                            attempts=1,
+                        )
+                    )
+    else:
+        # Sequential extraction
+        for i, layer in layers_to_extract:
+            _emit_progress(on_progress, i, total, layer.name, "starting")
+            _emit_progress(on_progress, i, total, layer.name, "extracting")
+
+            result = _extract_layer_task(
+                url, layer, output_dir, options, negotiated_version, i, total
             )
-        else:
-            _emit_progress(on_progress, i, total, layer.name, "failed")
-            layer_results.append(
-                LayerResult(
-                    id=layer.id,
-                    name=layer.name,
-                    status="failed",
-                    features=0,
-                    size_bytes=0,
-                    duration_seconds=0.0,
-                    output_path="",
-                    warnings=[],
-                    error=str(result.error) if result.error else "Unknown error",
-                    attempts=result.attempts,
-                )
-            )
+            extracted_results.append(result)
+
+            status = "success" if result.status == "success" else "failed"
+            _emit_progress(on_progress, i, total, layer.name, status)
+
+    # Combine results in original order
+    all_results = skipped_results + extracted_results
+    # Sort by layer id to maintain original discovery order
+    all_results.sort(key=lambda r: r.id)
 
     # Build and save report
-    report = _build_report(url=url, layer_results=layer_results)
+    report = _build_report(url=url, layer_results=all_results, discovery_result=discovery_result)
     save_report(report, report_path)
 
     # Auto-init catalog unless raw mode

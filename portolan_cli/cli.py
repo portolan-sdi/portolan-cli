@@ -5992,7 +5992,8 @@ def extract_arcgis_cmd(
     "--workers",
     type=click.IntRange(min=1),
     default=1,
-    help="Parallel workers for extraction (default: 1).",
+    help="Parallel workers for layer extraction (default: 1). "
+    "Each layer is extracted independently.",
 )
 @click.option(
     "--retries",
@@ -6003,8 +6004,15 @@ def extract_arcgis_cmd(
 @click.option(
     "--timeout",
     type=click.FloatRange(min=0.0, min_open=True),
-    default=60.0,
-    help="Per-request timeout in seconds (default: 60).",
+    default=300.0,
+    help="Per-layer timeout in seconds (default: 300). "
+    "Note: large layers use gpio's internal 10-minute HTTP timeout.",
+)
+@click.option(
+    "--page-size",
+    type=click.IntRange(min=100),
+    default=10000,
+    help="Features per page for large layer pagination (default: 10000).",
 )
 @click.option(
     "--resume",
@@ -6046,6 +6054,7 @@ def extract_wfs_cmd(
     workers: int,
     retries: int,
     timeout: float,
+    page_size: int,
     resume: bool,
     dry_run: bool,
     json_output: bool,
@@ -6083,6 +6092,9 @@ def extract_wfs_cmd(
 
         # Extract with specific WFS version
         portolan extract wfs URL --wfs-version 2.0.0
+
+        # Extract 4 layers in parallel with 5-minute timeout per layer
+        portolan extract wfs URL --workers 4 --timeout 300
     """
     from portolan_cli.extract.wfs.orchestrator import (
         ExtractionOptions,
@@ -6131,6 +6143,7 @@ def extract_wfs_cmd(
         output_crs=output_crs,
         bbox=bbox_tuple,
         limit=limit,
+        page_size=page_size,
     )
 
     # Progress callback for text output
