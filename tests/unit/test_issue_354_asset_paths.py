@@ -329,13 +329,14 @@ class TestAssetPathsInExtraction:
 
         # Check versions.json in extracted collection
         versions_path = output_dir / "testlayer" / "versions.json"
-        if versions_path.exists():
-            versions_data = json.loads(versions_path.read_text())
-            latest = versions_data["versions"][-1]
-            asset_keys = list(latest["assets"].keys())
+        assert versions_path.exists(), "versions.json should be created by extraction"
 
-            # No doubled paths
-            for key in asset_keys:
-                assert not key.startswith("testlayer/testlayer"), (
-                    f"Asset key should not double collection name: {key}"
-                )
+        versions_data = json.loads(versions_path.read_text())
+        latest = versions_data["versions"][-1]
+        asset_keys = list(latest["assets"].keys())
+
+        # No doubled paths
+        for key in asset_keys:
+            assert not key.startswith("testlayer/testlayer"), (
+                f"Asset key should not double collection name: {key}"
+            )

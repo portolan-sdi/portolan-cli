@@ -848,4 +848,4 @@ def add_via_link(
     }
     links.append(via_link)
 
-    collection_path.write_text(json.dumps(collection_data, indent=2))
+    collection_path.write_text(json.dumps(collection_data, indent=2) + "\n")
