@@ -682,21 +682,27 @@ def _collect_layers_from_services(
     services: list[ServiceInfo],
     base_url: str,
     timeout: float,
-) -> tuple[list[LayerInfo], dict[int, ServiceInfo], list[tuple[str, str]]]:
+) -> tuple[list[LayerInfo], dict[int, ServiceInfo], dict[str, int], list[tuple[str, str]]]:
     """Collect all layers from multiple services.
 
     Returns:
-        Tuple of (all_layers, service_for_layer, discovery_errors).
-        discovery_errors is a list of (service_name, error_message) tuples.
+        Tuple of (all_layers, service_for_layer, layer_count_per_service, discovery_errors).
+        - all_layers: Flat list of all discovered layers
+        - service_for_layer: Maps layer index to its source service
+        - layer_count_per_service: Maps service name to total layer count (for flatten logic)
+        - discovery_errors: List of (service_name, error_message) tuples
     """
     all_layers: list[LayerInfo] = []
     service_for_layer: dict[int, ServiceInfo] = {}
+    layer_count_per_service: dict[str, int] = {}
     discovery_errors: list[tuple[str, str]] = []
 
     for service in services:
         service_url = service.get_url(base_url)
         try:
             service_discovery = discover_layers(service_url, timeout=timeout)
+            # Track layer count for this service (for flatten logic)
+            layer_count_per_service[service.name] = len(service_discovery.layers)
             for layer in service_discovery.layers:
                 layer_idx = len(all_layers)
                 all_layers.append(layer)
@@ -711,7 +717,7 @@ def _collect_layers_from_services(
             )
             continue  # Skip services that fail to discover
 
-    return all_layers, service_for_layer, discovery_errors
+    return all_layers, service_for_layer, layer_count_per_service, discovery_errors
 
 
 def _filter_layers_by_index(
@@ -788,8 +794,8 @@ def _extract_services_root(
     services = _discover_and_filter_services(url, service_filter, service_exclude, options.timeout)
 
     # Collect layers from all services
-    all_layers, service_for_layer, _discovery_errors = _collect_layers_from_services(
-        services, parsed.base_url, options.timeout
+    all_layers, service_for_layer, layer_count_per_service, _discovery_errors = (
+        _collect_layers_from_services(services, parsed.base_url, options.timeout)
     )
 
     # Apply layer filters
@@ -841,11 +847,20 @@ def _extract_services_root(
         service_slug = _slugify(service.name)
         layer_slug = _slugify(layer.name)
 
-        # Build output path: service_name/layer_name/layer_name.parquet
-        # Service as subcatalog, layer as collection
+        # Determine output path based on layer count:
+        # - Single-layer service: service_name/service_name.parquet (flattened - no subcatalog)
+        # - Multi-layer service: service_name/layer_name/layer_name.parquet (nested)
+        is_single_layer = layer_count_per_service.get(service.name, 0) == 1
         service_dir = output_dir / service_slug
-        collection_dir = service_dir / layer_slug
-        output_path = collection_dir / f"{layer_slug}.parquet"
+
+        if is_single_layer:
+            # Flatten: service becomes collection directly
+            output_path = service_dir / f"{service_slug}.parquet"
+        else:
+            # Nested: service is subcatalog, layer is collection
+            collection_dir = service_dir / layer_slug
+            output_path = collection_dir / f"{layer_slug}.parquet"
+
         relative_output_path = str(output_path.relative_to(output_dir))
 
         _emit_progress(on_progress, progress_idx, total, layer.name, "starting")

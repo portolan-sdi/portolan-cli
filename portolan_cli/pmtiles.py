@@ -130,7 +130,7 @@ def check_pmtiles_available() -> None:
     """
     # Check for gpio-pmtiles
     try:
-        import gpio_pmtiles  # type: ignore[import-untyped]  # noqa: F401
+        import gpio_pmtiles  # type: ignore[import-not-found]  # noqa: F401
     except ImportError as e:
         raise PMTilesNotAvailableError() from e
 
