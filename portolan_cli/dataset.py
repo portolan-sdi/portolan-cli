@@ -1222,9 +1222,10 @@ def _batch_update_versions(
     for p in items:
         for filename, (file_path, file_checksum) in p.asset_files.items():
             # For collection-level assets (ADR-0031), omit item_id from path
+            # asset_key is collection-relative; href is catalog-relative
             if p.is_collection_level_asset:
                 href = f"{collection_id}/{filename}"
-                asset_key = f"{collection_id}/{filename}"
+                asset_key = filename  # Issue #354: collection-relative, not doubled
             else:
                 href = f"{collection_id}/{p.item_id}/{filename}"
                 asset_key = f"{p.item_id}/{filename}"

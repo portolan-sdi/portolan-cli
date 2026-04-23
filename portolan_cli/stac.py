@@ -800,3 +800,52 @@ def update_collection_summaries(collection: pystac.Collection) -> None:
 
     summarizer = Summarizer(field_strategies)
     collection.summaries = summarizer.summarize(items)
+
+
+def add_via_link(
+    collection_path: Path,
+    source_url: str,
+    *,
+    title: str | None = None,
+) -> None:
+    """Add a `via` provenance link to a collection.json file.
+
+    The `via` link relation points to the original data source from which
+    the collection was extracted. This is useful for provenance tracking
+    and data lineage.
+
+    Per STAC spec, `via` links indicate "the source from which the data
+    was originally obtained."
+
+    Args:
+        collection_path: Path to the collection.json file.
+        source_url: URL of the original data source (e.g., ArcGIS FeatureServer).
+        title: Optional title for the link. Defaults to "Source data service".
+
+    Note:
+        This function is idempotent - adding the same URL twice will not
+        create duplicate links.
+    """
+    import json
+
+    if not collection_path.exists():
+        return
+
+    collection_data = json.loads(collection_path.read_text())
+    links = collection_data.setdefault("links", [])
+
+    # Check if via link already exists with same href
+    for link in links:
+        if link.get("rel") == "via" and link.get("href") == source_url:
+            return  # Already exists, idempotent
+
+    # Add via link
+    via_link = {
+        "rel": "via",
+        "href": source_url,
+        "type": "text/html",
+        "title": title or "Source data service",
+    }
+    links.append(via_link)
+
+    collection_path.write_text(json.dumps(collection_data, indent=2) + "\n")

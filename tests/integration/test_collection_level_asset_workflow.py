@@ -69,13 +69,16 @@ class TestCollectionLevelAssetWorkflow:
         assert len(versions_data["versions"]) == 1, "Should have one version"
         version = versions_data["versions"][0]
 
-        # Check asset key and href (critical test for Bug #250)
+        # Check asset key and href (critical test for Bug #250, updated per Issue #354)
+        # Asset key is collection-relative (filename only for collection-level assets)
+        # href is catalog-relative (includes collection path)
+        expected_key = "census.parquet"
         expected_href = "demographics/census.parquet"
-        assert expected_href in version["assets"], (
-            f"Asset key should be '{expected_href}', got {list(version['assets'].keys())}"
+        assert expected_key in version["assets"], (
+            f"Asset key should be '{expected_key}' (collection-relative), got {list(version['assets'].keys())}"
         )
-        assert version["assets"][expected_href]["href"] == expected_href, (
-            f"Asset href should be '{expected_href}' (no double nesting)"
+        assert version["assets"][expected_key]["href"] == expected_href, (
+            f"Asset href should be '{expected_href}' (catalog-relative, no double nesting)"
         )
 
         # Verify: collection.json exists
@@ -134,13 +137,16 @@ class TestCollectionLevelAssetWorkflow:
         # Should have two versions (one per asset)
         assert len(versions_data["versions"]) == 2, "Should have two versions for two assets"
 
-        # Check both assets have correct hrefs
+        # Check both assets have correct keys and hrefs (per Issue #354)
+        # Keys are collection-relative (filename only), hrefs are catalog-relative
         all_assets = {}
         for version in versions_data["versions"]:
             all_assets.update(version["assets"])
 
-        assert "demographics/census.parquet" in all_assets, "Census asset should be tracked"
-        assert "demographics/parcels.parquet" in all_assets, "Parcels asset should be tracked"
+        assert "census.parquet" in all_assets, "Census asset should be tracked (key is filename)"
+        assert "parcels.parquet" in all_assets, "Parcels asset should be tracked (key is filename)"
+        assert all_assets["census.parquet"]["href"] == "demographics/census.parquet"
+        assert all_assets["parcels.parquet"]["href"] == "demographics/parcels.parquet"
 
         # Verify no double nesting for either asset
         assert not (collection_dir / "demographics").exists(), (
@@ -197,9 +203,12 @@ class TestCollectionLevelAssetWorkflow:
         for version in versions_data["versions"]:
             all_assets.update(version["assets"])
 
-        # Collection-level asset has full path from catalog root
-        assert "demographics/census.parquet" in all_assets, (
-            "Collection-level asset should be tracked with correct path"
+        # Collection-level asset key is filename only (per Issue #354)
+        assert "census.parquet" in all_assets, (
+            "Collection-level asset key should be filename (collection-relative)"
+        )
+        assert all_assets["census.parquet"]["href"] == "demographics/census.parquet", (
+            "Collection-level asset href should be catalog-relative"
         )
 
         # Item-level asset key is relative to item (not full path from catalog root)
