@@ -7,15 +7,19 @@ See:
 - tests/specs/versioning_stress.md for human test specification
 - ADR-0005 for versions.json as single source of truth
 - Issue #339 for the original bug report
+
+Note: remote is a sensitive setting and must be set via env var (Issue #356).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -24,6 +28,9 @@ from portolan_cli.cli import cli
 
 if TYPE_CHECKING:
     from collections.abc import Generator
+
+# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+TEST_REMOTE = "s3://fake-bucket/catalog"
 
 
 # =============================================================================
@@ -428,17 +435,16 @@ class TestAddThenPushSeesFiles:
         )
         assert add_result.exit_code == 0, f"Add failed: {add_result.output}"
 
-        # Configure remote (required for push)
+        # Configure non-sensitive settings in config.yaml
         config_path = catalog_root / ".portolan" / "config.yaml"
-        config_path.write_text(
-            "catalog_id: stress-test-catalog\nremote: s3://fake-bucket/catalog\n"
-        )
+        config_path.write_text("catalog_id: stress-test-catalog\n")
 
-        # Push dry-run to see what would be uploaded
-        result = runner.invoke(
-            cli,
-            ["push", "--catalog", str(catalog_root), "--dry-run"],
-        )
+        # Push dry-run to see what would be uploaded (remote via env var per Issue #356)
+        with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+            result = runner.invoke(
+                cli,
+                ["push", "--catalog", str(catalog_root), "--dry-run"],
+            )
         assert result.exit_code == 0, f"Push dry-run failed: {result.output}"
 
         # Dry-run output shows "Would upload up to N asset file(s)" - verify N > 0
@@ -463,14 +469,14 @@ class TestAddThenPushSeesFiles:
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
         config_path = catalog_root / ".portolan" / "config.yaml"
-        config_path.write_text(
-            "catalog_id: stress-test-catalog\nremote: s3://fake-bucket/catalog\n"
-        )
+        config_path.write_text("catalog_id: stress-test-catalog\n")
 
-        result = runner.invoke(
-            cli,
-            ["push", "--catalog", str(catalog_root), "--dry-run"],
-        )
+        # Push dry-run (remote via env var per Issue #356)
+        with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+            result = runner.invoke(
+                cli,
+                ["push", "--catalog", str(catalog_root), "--dry-run"],
+            )
         assert result.exit_code == 0, f"Push dry-run failed: {result.output}"
 
         # After add, GeoJSON gets converted to parquet - must see parquet in output
@@ -485,14 +491,16 @@ class TestAddThenPushSeesFiles:
         catalog_versions = catalog_with_multiple_versions / "versions.json"
         catalog_versions.write_text(json.dumps({"catalog_id": "test", "collections": {}}))
 
-        # Configure remote
+        # Configure non-sensitive settings
         config_path = catalog_with_multiple_versions / ".portolan" / "config.yaml"
-        config_path.write_text("catalog_id: test-catalog\nremote: s3://fake-bucket/catalog\n")
+        config_path.write_text("catalog_id: test-catalog\n")
 
-        result = runner.invoke(
-            cli,
-            ["push", "--catalog", str(catalog_with_multiple_versions), "--dry-run"],
-        )
+        # Push dry-run (remote via env var per Issue #356)
+        with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+            result = runner.invoke(
+                cli,
+                ["push", "--catalog", str(catalog_with_multiple_versions), "--dry-run"],
+            )
 
         # Should see assets from collection-level versions.json
         assert result.exit_code == 0, f"Push failed: {result.output}"
@@ -677,18 +685,18 @@ class TestPushPullDivergence:
         )
         assert result.exit_code == 0, f"Add failed: {result.output}"
 
-        # Configure remote with moto endpoint
+        # Configure catalog (remote set via env var per Issue #356)
         config_path = initialized_catalog / ".portolan" / "config.yaml"
-        config_path.write_text(
-            f"catalog_id: push-test-catalog\nremote: s3://{bucket_name}/catalog\n"
-        )
+        config_path.write_text("catalog_id: push-test-catalog\n")
 
-        # Set AWS env vars for obstore
+        # Set AWS env vars for obstore (remote via env var per Issue #356)
         env_backup = os.environ.copy()
+        os.environ["PORTOLAN_REMOTE"] = f"s3://{bucket_name}/catalog"
         os.environ["AWS_ACCESS_KEY_ID"] = "testing"
         os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
         os.environ["AWS_REGION"] = "us-east-1"
         os.environ["AWS_ENDPOINT_URL"] = endpoint_url
+        os.environ["AWS_ALLOW_HTTP"] = "true"  # Required for http:// moto endpoints
 
         try:
             result = runner.invoke(cli, ["push", "--catalog", str(initialized_catalog)])
@@ -755,15 +763,17 @@ class TestPushPullDivergence:
         collection_dir = initialized_catalog / "test-collection"
         collection_dir.mkdir()
 
-        # Configure remote
+        # Configure catalog (remote set via env var per Issue #356)
         config_path = initialized_catalog / ".portolan" / "config.yaml"
-        config_path.write_text(f"catalog_id: test-catalog\nremote: s3://{bucket_name}/catalog\n")
+        config_path.write_text("catalog_id: test-catalog\n")
 
         env_backup = os.environ.copy()
+        os.environ["PORTOLAN_REMOTE"] = f"s3://{bucket_name}/catalog"
         os.environ["AWS_ACCESS_KEY_ID"] = "testing"
         os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
         os.environ["AWS_REGION"] = "us-east-1"
         os.environ["AWS_ENDPOINT_URL"] = endpoint_url
+        os.environ["AWS_ALLOW_HTTP"] = "true"  # Required for http:// moto endpoints
 
         try:
             # Pull requires REMOTE_URL as positional argument
@@ -887,15 +897,17 @@ class TestPushPullDivergence:
         }
         (collection_dir / "versions.json").write_text(json.dumps(local_versions))
 
-        # Configure remote
+        # Configure catalog (remote set via env var per Issue #356)
         config_path = initialized_catalog / ".portolan" / "config.yaml"
-        config_path.write_text(f"catalog_id: test-catalog\nremote: s3://{bucket_name}/catalog\n")
+        config_path.write_text("catalog_id: test-catalog\n")
 
         env_backup = os.environ.copy()
+        os.environ["PORTOLAN_REMOTE"] = f"s3://{bucket_name}/catalog"
         os.environ["AWS_ACCESS_KEY_ID"] = "testing"
         os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
         os.environ["AWS_REGION"] = "us-east-1"
         os.environ["AWS_ENDPOINT_URL"] = endpoint_url
+        os.environ["AWS_ALLOW_HTTP"] = "true"  # Required for http:// moto endpoints
 
         try:
             # Pull requires REMOTE_URL as positional argument
@@ -1288,21 +1300,22 @@ class TestPushUsesCatalogVersions:
         expected_count = catalog_data["collections"]["push-test"]["asset_count"]
         assert expected_count >= 10, f"Expected >= 10 assets, got {expected_count}"
 
-        # Configure remote for push
+        # Configure non-sensitive settings
         config_path = initialized_catalog / ".portolan" / "config.yaml"
-        config_path.write_text("catalog_id: push-summary-test\nremote: s3://fake-bucket/catalog\n")
+        config_path.write_text("catalog_id: push-summary-test\n")
 
-        # Dry-run push and verify count matches
-        push_result = runner.invoke(
-            cli,
-            ["push", "--catalog", str(initialized_catalog), "--dry-run"],
-        )
+        # Dry-run push and verify count matches (remote via env var per Issue #356)
+        import re
+
+        with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+            push_result = runner.invoke(
+                cli,
+                ["push", "--catalog", str(initialized_catalog), "--dry-run"],
+            )
 
         # Output should show files would be uploaded (dry-run preview)
         # Note: dry-run summary shows "0 file(s)" because nothing was actually pushed,
         # but the preview should show "would upload up to N asset file(s)" where N > 0
-        import re
-
         match = re.search(r"would upload up to (\d+) asset", push_result.output.lower())
         assert match is not None, f"No 'would upload' preview in output: {push_result.output}"
 

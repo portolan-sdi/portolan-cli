@@ -6,12 +6,15 @@ These tests verify:
 - Result aggregation from concurrent operations
 - Error handling during parallel execution
 - CLI integration with --workers flag
+
+Note: remote is a sensitive setting and must be set via env var (Issue #356).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -27,17 +30,24 @@ from portolan_cli.push import (
     push_all_collections,
 )
 
+# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+TEST_REMOTE = "s3://test/catalog"
+
 
 @pytest.fixture
 def multi_collection_catalog(tmp_path: Path) -> Path:
-    """Create a catalog with multiple collections for parallel push testing."""
+    """Create a catalog with multiple collections for parallel push testing.
+
+    Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
+    """
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
     # Create .portolan/config.yaml (sentinel file per ADR-0029)
+    # Note: remote set via env var, not config.yaml (Issue #356)
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
-    (portolan_dir / "config.yaml").write_text("version: '1.0'\nremote: s3://test/catalog\n")
+    (portolan_dir / "config.yaml").write_text("version: '1.0'\n")
 
     # Create catalog.json
     catalog_data = {
@@ -223,10 +233,11 @@ class TestCLIParallelPushIntegration:
             total_versions_pushed=4,
         )
 
-        result = runner.invoke(
-            cli,
-            ["push", "--catalog", str(multi_collection_catalog), "--workers", "2"],
-        )
+        with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+            result = runner.invoke(
+                cli,
+                ["push", "--catalog", str(multi_collection_catalog), "--workers", "2"],
+            )
 
         assert result.exit_code == 0, f"Failed: {result.output}"
         mock_push_all.assert_called_once()
@@ -247,10 +258,11 @@ class TestCLIParallelPushIntegration:
             total_versions_pushed=4,
         )
 
-        result = runner.invoke(
-            cli,
-            ["push", "--catalog", str(multi_collection_catalog)],
-        )
+        with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+            result = runner.invoke(
+                cli,
+                ["push", "--catalog", str(multi_collection_catalog)],
+            )
 
         assert result.exit_code == 0, f"Failed: {result.output}"
         mock_push_all.assert_called_once()
