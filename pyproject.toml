@@ -31,7 +31,7 @@ dependencies = [
     "geoparquet-io @ git+https://github.com/geoparquet/geoparquet-io.git@main",  # git: layer param support
     "httpx>=0.27.0",  # HTTP client for ArcGIS REST API discovery
     "obstore>=0.8.2",  # Cloud object storage (S3, GCS, Azure) via Rust bindings
-    "pyarrow>=12.0.0,<22.0.0",  # v22+ has ABI incompatibility with abseil on some systems
+    "pyarrow>=12.0.0,<25.0.0",  # v22+ has ABI incompatibility with abseil on some systems
     "pyproj>=3.0.0",  # CRS transformations (transitive via rasterio, but we import directly)
     "pystac>=1.10.0",  # STAC catalog/collection/item creation
     "stac-geoparquet>=0.6.0",  # Generate items.parquet for efficient STAC queries (optional)
