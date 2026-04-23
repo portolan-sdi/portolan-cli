@@ -3170,6 +3170,44 @@ def _check_backend_push_support(
     raise SystemExit(1)
 
 
+def _resolve_push_settings(
+    destination: str | None,
+    profile: str | None,
+    catalog_path: Path,
+    collection: str | None,
+    use_json: bool,
+    command: str,
+) -> tuple[str | None, str, str | None]:
+    """Resolve remote/profile/region for push/sync commands.
+
+    Args:
+        destination: CLI destination argument
+        profile: CLI profile argument
+        catalog_path: Resolved catalog path
+        collection: Optional collection name
+        use_json: Whether to output JSON
+        command: Command name for error messages
+
+    Returns:
+        Tuple of (resolved_destination, resolved_profile, resolved_region)
+
+    Raises:
+        SystemExit: If config.yaml contains stale sensitive settings
+    """
+    try:
+        resolved_destination = resolve_remote(destination, catalog_path, collection)
+        resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+        resolved_region = resolve_aws_region(None, catalog_path, collection)
+        return resolved_destination, resolved_profile, resolved_region
+    except ValueError as e:
+        if use_json:
+            envelope = error_envelope(command, [ErrorDetail(type="ConfigError", message=str(e))])
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
+
+
 def _prepare_push_concurrency(
     concurrency: int,
     chunk_concurrency: int,
@@ -3341,15 +3379,16 @@ def push(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "push")
 
+    # Load .env for credentials (must happen before any config reads)
+    load_dotenv_and_warn_sensitive(catalog_path)
+
     # Check if active backend supports push
     _check_backend_push_support(catalog_path, collection, use_json)
 
-    # Load .env for credentials (must happen after catalog_path resolution)
-    load_dotenv_and_warn_sensitive(catalog_path)
-
-    resolved_destination = resolve_remote(destination, catalog_path, collection)
-    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
-    resolved_region = resolve_aws_region(None, catalog_path, collection)
+    # Resolve remote/profile/region (raises SystemExit on stale config)
+    resolved_destination, resolved_profile, resolved_region = _resolve_push_settings(
+        destination, profile, catalog_path, collection, use_json, "push"
+    )
 
     if resolved_destination is None:
         if use_json:
@@ -3700,7 +3739,16 @@ def pull_command(
     # Load .env for credentials (must happen after catalog_path resolution)
     load_dotenv_and_warn_sensitive(catalog_path)
 
-    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+    # Resolve profile - wrap in try/except for stale sensitive config
+    try:
+        resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+    except ValueError as e:
+        if use_json:
+            envelope = error_envelope("pull", [ErrorDetail(type="ConfigError", message=str(e))])
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
 
     # Route to backend-specific pull if using non-file backend
     if _try_backend_pull(catalog_path, remote_url, collection, dry_run, use_json):
@@ -3907,9 +3955,10 @@ def sync(
     # Load .env for credentials (must happen after catalog_path resolution)
     load_dotenv_and_warn_sensitive(catalog_path)
 
-    resolved_destination = resolve_remote(destination, catalog_path, collection)
-    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
-    resolved_region = resolve_aws_region(None, catalog_path, collection)
+    # Resolve remote/profile/region (raises SystemExit on stale config)
+    resolved_destination, resolved_profile, resolved_region = _resolve_push_settings(
+        destination, profile, catalog_path, collection, use_json, "sync"
+    )
 
     if resolved_destination is None:
         if use_json:
@@ -4272,8 +4321,21 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    value = get_setting(key, catalog_path=catalog_path, collection=collection)
-    source = get_setting_source(key, catalog_path, collection)
+    # Load .env for credential precedence
+    load_dotenv_and_warn_sensitive(catalog_path)
+
+    try:
+        value = get_setting(key, catalog_path=catalog_path, collection=collection)
+        source = get_setting_source(key, catalog_path, collection)
+    except ValueError as e:
+        if use_json:
+            envelope = error_envelope(
+                "config get", [ErrorDetail(type="ConfigError", message=str(e))]
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
 
     if use_json:
         data = {
@@ -4332,6 +4394,9 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
             error("Not in a Portolan catalog")
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
+
+    # Load .env for credential precedence
+    load_dotenv_and_warn_sensitive(catalog_path)
 
     settings = list_settings(catalog_path, collection=collection)
 

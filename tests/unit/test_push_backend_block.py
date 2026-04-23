@@ -24,24 +24,11 @@ def cli_runner() -> CliRunner:
 
 
 @pytest.fixture
-def catalog_with_backend_and_remote(tmp_path: Path) -> Path:
+def catalog_with_backend(tmp_path: Path) -> Path:
     """Create a catalog with a non-file backend.
 
     Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
     """
-    catalog_root = tmp_path / "catalog"
-    catalog_root.mkdir()
-    (catalog_root / "catalog.json").write_text('{"type": "Catalog"}')
-
-    portolan_dir = catalog_root / ".portolan"
-    portolan_dir.mkdir()
-    (portolan_dir / "config.yaml").write_text("backend: iceberg\n")
-    return catalog_root
-
-
-@pytest.fixture
-def catalog_with_backend_no_remote(tmp_path: Path) -> Path:
-    """Create a catalog with a non-file backend but no remote."""
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
     (catalog_root / "catalog.json").write_text('{"type": "Catalog"}')
@@ -70,7 +57,7 @@ def _mock_backend_no_push(remote: str | None = None) -> MagicMock:
 
 
 @pytest.mark.unit
-def test_push_backend_with_remote_explains_add_uploads(cli_runner, catalog_with_backend_and_remote):
+def test_push_backend_with_remote_explains_add_uploads(cli_runner, catalog_with_backend):
     """Push with backend that doesn't support push should explain add already uploads."""
     from portolan_cli.cli import cli
 
@@ -87,7 +74,7 @@ def test_push_backend_with_remote_explains_add_uploads(cli_runner, catalog_with_
                 "--collection",
                 "test",
                 "--catalog",
-                str(catalog_with_backend_and_remote),
+                str(catalog_with_backend),
             ],
         )
     assert result.exit_code == 1
@@ -96,7 +83,7 @@ def test_push_backend_with_remote_explains_add_uploads(cli_runner, catalog_with_
 
 
 @pytest.mark.unit
-def test_push_backend_without_remote_blocked(cli_runner, catalog_with_backend_no_remote):
+def test_push_backend_without_remote_blocked(cli_runner, catalog_with_backend):
     """Push with backend that doesn't support push (no remote) should still be blocked."""
     from portolan_cli.cli import cli
 
@@ -110,7 +97,7 @@ def test_push_backend_without_remote_blocked(cli_runner, catalog_with_backend_no
                 "--collection",
                 "test",
                 "--catalog",
-                str(catalog_with_backend_no_remote),
+                str(catalog_with_backend),
             ],
         )
     assert result.exit_code == 1
@@ -118,7 +105,7 @@ def test_push_backend_without_remote_blocked(cli_runner, catalog_with_backend_no
 
 
 @pytest.mark.unit
-def test_push_backend_json_output(cli_runner, catalog_with_backend_and_remote):
+def test_push_backend_json_output(cli_runner, catalog_with_backend):
     """Push in JSON mode with unsupported backend should return structured error."""
     from portolan_cli.cli import cli
 
@@ -137,7 +124,7 @@ def test_push_backend_json_output(cli_runner, catalog_with_backend_and_remote):
                 "--collection",
                 "test",
                 "--catalog",
-                str(catalog_with_backend_and_remote),
+                str(catalog_with_backend),
             ],
         )
     assert result.exit_code == 1

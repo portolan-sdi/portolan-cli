@@ -62,7 +62,16 @@ class TestProfileDefaultBehavior:
                 errors=[],
             )
 
-            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+            # Clear profile env vars to ensure default is used
+            with patch.dict(
+                os.environ,
+                {
+                    "PORTOLAN_REMOTE": TEST_REMOTE,
+                    "PORTOLAN_AWS_PROFILE": "",
+                    "PORTOLAN_PROFILE": "",
+                },
+                clear=False,
+            ):
                 runner.invoke(
                     cli,
                     ["push", "--collection", "test-collection", "--catalog", str(mock_catalog)],

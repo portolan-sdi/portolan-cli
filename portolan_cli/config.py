@@ -512,6 +512,12 @@ def get_setting_source(
     if env_value:  # Non-empty string
         return "env"
 
+    # Check alias env vars (e.g., aws_profile aliases to profile, so check PORTOLAN_PROFILE)
+    for alias in SETTING_ALIASES.get(key, []):
+        alias_env_var = _get_env_var_name(alias)
+        if os.environ.get(alias_env_var):
+            return "env"
+
     if catalog_path is None:
         return "default"
 
@@ -806,7 +812,18 @@ def check_sensitive_settings_in_config(catalog_path: Path) -> list[str]:
     """
     config = load_config(catalog_path)
     found = []
+
+    # Check top-level sensitive settings
     for key in SENSITIVE_SETTINGS:
         if key in config:
             found.append(key)
+
+    # Check collection-level sensitive settings
+    collections = config.get("collections", {})
+    for collection_name, collection_conf in collections.items():
+        if isinstance(collection_conf, dict):
+            for key in SENSITIVE_SETTINGS:
+                if key in collection_conf:
+                    found.append(f"collections.{collection_name}.{key}")
+
     return found

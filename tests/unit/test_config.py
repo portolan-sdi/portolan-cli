@@ -890,6 +890,29 @@ class TestSensitiveSettingsMigration:
 
         assert result == []
 
+    @pytest.mark.unit
+    def test_detects_nested_collection_sensitive_settings(self, tmp_path: Path) -> None:
+        """check_sensitive_settings_in_config should detect collection-level sensitive settings."""
+        from portolan_cli.config import check_sensitive_settings_in_config, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(
+            tmp_path,
+            {
+                "backend": "stac",
+                "collections": {
+                    "demo": {"remote": "s3://demo-bucket/", "aws_profile": "demo-profile"},
+                    "prod": {"profile": "prod-profile"},
+                },
+            },
+        )
+
+        result = check_sensitive_settings_in_config(tmp_path)
+
+        assert "collections.demo.remote" in result
+        assert "collections.demo.aws_profile" in result
+        assert "collections.prod.profile" in result
+
 
 class TestListSettings:
     """Tests for list_settings function."""

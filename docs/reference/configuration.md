@@ -20,7 +20,7 @@ portolan config list
 ```
 
 !!! warning "Security"
-    Credentials (`remote`, `profile`, `region`) cannot be stored in `config.yaml` because that file gets pushed to remote storage. Use environment variables or a `.env` file in your catalog root instead. The `.env` file is automatically ignored and never uploaded.
+    Credentials (`remote`, `profile`, `region`) cannot be stored in `config.yaml` because that file gets pushed to remote storage. This applies to both catalog-level and collection-level config (e.g., `collections.demo.remote` is also blocked). Use environment variables or a `.env` file in your catalog root instead. The `.env` file is automatically ignored and never uploaded.
 
 ## Backend (Enterprise)
 
