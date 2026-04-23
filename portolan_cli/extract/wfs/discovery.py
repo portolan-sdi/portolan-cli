@@ -11,7 +11,7 @@ Key functions:
 from __future__ import annotations
 
 import json
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosec B405 - only using ParseError, not parsing
 from dataclasses import dataclass, field
 from typing import Any
 
