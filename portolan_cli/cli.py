@@ -122,6 +122,29 @@ def output_json_envelope(envelope: Any) -> None:
     click.echo(envelope.to_json())
 
 
+def load_dotenv_and_warn_sensitive(catalog_path: Path) -> None:
+    """Load .env from catalog and warn if config.yaml has sensitive settings.
+
+    This should be called after the actual catalog path is resolved (not in
+    the global CLI callback) to ensure the correct .env is loaded when
+    --catalog/--portolan-dir overrides the default.
+
+    Args:
+        catalog_path: Resolved catalog root path.
+    """
+    from portolan_cli.config import check_sensitive_settings_in_config, load_dotenv_from_catalog
+
+    load_dotenv_from_catalog(catalog_path)
+
+    sensitive_in_config = check_sensitive_settings_in_config(catalog_path)
+    if sensitive_in_config:
+        settings_str = ", ".join(sensitive_in_config)
+        warn(
+            f"config.yaml contains sensitive settings ({settings_str}) that will be "
+            f"pushed to remote. Move these to .env file or use PORTOLAN_* env vars."
+        )
+
+
 def require_catalog_root(
     use_json: bool = False,
     command_name: str = "command",
@@ -256,6 +279,11 @@ def cli(ctx: click.Context, output_format: str) -> None:
     # Store format in context for subcommands
     ctx.ensure_object(dict)
     ctx.obj["format"] = output_format
+
+    # Note: .env loading moved to individual commands after catalog path resolution
+    # to ensure correct .env is loaded when --catalog/--portolan-dir is used.
+    # See load_dotenv_and_warn_sensitive() helper.
+    pass
 
 
 @cli.command()
@@ -3142,6 +3170,44 @@ def _check_backend_push_support(
     raise SystemExit(1)
 
 
+def _resolve_push_settings(
+    destination: str | None,
+    profile: str | None,
+    catalog_path: Path,
+    collection: str | None,
+    use_json: bool,
+    command: str,
+) -> tuple[str | None, str, str | None]:
+    """Resolve remote/profile/region for push/sync commands.
+
+    Args:
+        destination: CLI destination argument
+        profile: CLI profile argument
+        catalog_path: Resolved catalog path
+        collection: Optional collection name
+        use_json: Whether to output JSON
+        command: Command name for error messages
+
+    Returns:
+        Tuple of (resolved_destination, resolved_profile, resolved_region)
+
+    Raises:
+        SystemExit: If config.yaml contains stale sensitive settings
+    """
+    try:
+        resolved_destination = resolve_remote(destination, catalog_path, collection)
+        resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+        resolved_region = resolve_aws_region(None, catalog_path, collection)
+        return resolved_destination, resolved_profile, resolved_region
+    except ValueError as e:
+        if use_json:
+            envelope = error_envelope(command, [ErrorDetail(type="ConfigError", message=str(e))])
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
+
+
 def _prepare_push_concurrency(
     concurrency: int,
     chunk_concurrency: int,
@@ -3287,7 +3353,7 @@ def push(
     Uses optimistic locking to detect concurrent modifications.
 
     DESTINATION is the object store URL (e.g., s3://mybucket/my-catalog).
-    If not provided, uses the 'remote' configured via `portolan config set remote`.
+    If not provided, uses 'remote' from PORTOLAN_REMOTE env var or .env file.
 
     If --collection is specified, pushes that collection only.
     If --collection is omitted, pushes all collections in the catalog.
@@ -3313,12 +3379,16 @@ def push(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "push")
 
+    # Load .env for credentials (must happen before any config reads)
+    load_dotenv_and_warn_sensitive(catalog_path)
+
     # Check if active backend supports push
     _check_backend_push_support(catalog_path, collection, use_json)
 
-    resolved_destination = resolve_remote(destination, catalog_path, collection)
-    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
-    resolved_region = resolve_aws_region(None, catalog_path, collection)
+    # Resolve remote/profile/region (raises SystemExit on stale config)
+    resolved_destination, resolved_profile, resolved_region = _resolve_push_settings(
+        destination, profile, catalog_path, collection, use_json, "push"
+    )
 
     if resolved_destination is None:
         if use_json:
@@ -3328,7 +3398,7 @@ def push(
                     ErrorDetail(
                         type="UsageError",
                         message="No destination provided and no 'remote' configured. "
-                        "Provide a DESTINATION argument or run: portolan config set remote <url>",
+                        "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)",
                     )
                 ],
             )
@@ -3336,7 +3406,7 @@ def push(
         else:
             error(
                 "No destination provided and no 'remote' configured. "
-                "Provide a DESTINATION argument or run: portolan config set remote <url>"
+                "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)"
             )
         raise SystemExit(1)
 
@@ -3666,7 +3736,19 @@ def pull_command(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "pull")
 
-    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+    # Load .env for credentials (must happen after catalog_path resolution)
+    load_dotenv_and_warn_sensitive(catalog_path)
+
+    # Resolve profile - wrap in try/except for stale sensitive config
+    try:
+        resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+    except ValueError as e:
+        if use_json:
+            envelope = error_envelope("pull", [ErrorDetail(type="ConfigError", message=str(e))])
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
 
     # Route to backend-specific pull if using non-file backend
     if _try_backend_pull(catalog_path, remote_url, collection, dry_run, use_json):
@@ -3870,9 +3952,13 @@ def sync(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "sync")
 
-    resolved_destination = resolve_remote(destination, catalog_path, collection)
-    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
-    resolved_region = resolve_aws_region(None, catalog_path, collection)
+    # Load .env for credentials (must happen after catalog_path resolution)
+    load_dotenv_and_warn_sensitive(catalog_path)
+
+    # Resolve remote/profile/region (raises SystemExit on stale config)
+    resolved_destination, resolved_profile, resolved_region = _resolve_push_settings(
+        destination, profile, catalog_path, collection, use_json, "sync"
+    )
 
     if resolved_destination is None:
         if use_json:
@@ -3882,7 +3968,7 @@ def sync(
                     ErrorDetail(
                         type="UsageError",
                         message="No destination provided and no 'remote' configured. "
-                        "Provide a DESTINATION argument or run: portolan config set remote <url>",
+                        "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)",
                     )
                 ],
             )
@@ -3890,7 +3976,7 @@ def sync(
         else:
             error(
                 "No destination provided and no 'remote' configured. "
-                "Provide a DESTINATION argument or run: portolan config set remote <url>"
+                "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)"
             )
         raise SystemExit(1)
 
@@ -4105,17 +4191,18 @@ def config() -> None:
 
     \b
     1. CLI argument (highest)
-    2. Environment variable (PORTOLAN_<KEY>)
+    2. Environment variable (PORTOLAN_<KEY>) or .env file
     3. Collection-level config
     4. Catalog-level config
     5. Built-in default (lowest)
 
+    Note: Sensitive settings (remote, profile, region) must use env vars or .env.
+
     \b
     Examples:
-        portolan config set remote s3://my-bucket/catalog/
+        portolan config set backend iceberg
         portolan config get remote
         portolan config list
-        portolan config unset remote
     """
 
 
@@ -4136,14 +4223,17 @@ def config_set(
 ) -> None:
     """Set a configuration value.
 
-    KEY is the setting name (e.g., remote, aws_profile).
+    KEY is the setting name (e.g., backend, statistics.enabled).
     VALUE is the value to set.
+
+    Note: Sensitive settings (remote, profile, region) cannot be stored in
+    config.yaml. Use environment variables or .env files instead.
 
     \b
     Examples:
-        portolan config set remote s3://my-bucket/
-        portolan config set aws_profile production
-        portolan config set remote s3://public/ --collection demographics
+        portolan config set backend iceberg
+        portolan config set statistics.enabled true
+        portolan config set pmtiles.enabled false --collection demographics
     """
     from portolan_cli.config import set_setting
 
@@ -4231,8 +4321,21 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    value = get_setting(key, catalog_path=catalog_path, collection=collection)
-    source = get_setting_source(key, catalog_path, collection)
+    # Load .env for credential precedence
+    load_dotenv_and_warn_sensitive(catalog_path)
+
+    try:
+        value = get_setting(key, catalog_path=catalog_path, collection=collection)
+        source = get_setting_source(key, catalog_path, collection)
+    except ValueError as e:
+        if use_json:
+            envelope = error_envelope(
+                "config get", [ErrorDetail(type="ConfigError", message=str(e))]
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
 
     if use_json:
         data = {
@@ -4291,6 +4394,9 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
             error("Not in a Portolan catalog")
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
+
+    # Load .env for credential precedence
+    load_dotenv_and_warn_sensitive(catalog_path)
 
     settings = list_settings(catalog_path, collection=collection)
 

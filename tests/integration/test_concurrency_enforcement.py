@@ -13,10 +13,15 @@ verify the runtime behavior:
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
+
+# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+TEST_REMOTE = "s3://test/"
 
 # =============================================================================
 # Adaptive Concurrency Runtime Tests
@@ -237,7 +242,7 @@ class TestChunkConcurrencyEnforcement:
         This test creates a mock that tracks whether obs.put() is called
         with the correct max_concurrency parameter for large files.
         """
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         # Create a large file (>5MB threshold)
         large_file = tmp_path / "large.bin"
@@ -278,7 +283,7 @@ class TestChunkConcurrencyEnforcement:
     @pytest.mark.asyncio
     async def test_small_file_uses_async_path(self, tmp_path: Path) -> None:
         """Verify small files use efficient async path."""
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         # Create a small file (<5MB threshold)
         small_file = tmp_path / "small.txt"
@@ -321,7 +326,6 @@ class TestCLIIntegration:
     @pytest.mark.integration
     def test_max_connections_adjusts_effective_concurrency(self) -> None:
         """Verify CLI applies max_connections before calling push."""
-        from unittest.mock import patch
 
         from click.testing import CliRunner
 
@@ -330,9 +334,9 @@ class TestCLIIntegration:
         runner = CliRunner()
 
         with runner.isolated_filesystem():
-            # Setup minimal catalog
+            # Setup minimal catalog (remote via env var per Issue #356)
             Path(".portolan").mkdir()
-            Path(".portolan/config.yaml").write_text("version: '1.0'\nremote: s3://test/\n")
+            Path(".portolan/config.yaml").write_text("version: '1.0'\n")
             Path("col1").mkdir()
             Path("col1/versions.json").write_text('{"versions": []}')
 
@@ -350,22 +354,23 @@ class TestCLIIntegration:
 
                 # Request high concurrency but limit with max_connections
                 # Use --workers 1 for deterministic assertion (no CPU variance)
-                result = runner.invoke(
-                    cli,
-                    [
-                        "push",
-                        "--catalog",
-                        ".",
-                        "--workers",
-                        "1",
-                        "--concurrency",
-                        "50",
-                        "--chunk-concurrency",
-                        "12",
-                        "--max-connections",
-                        "32",
-                    ],
-                )
+                with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                    result = runner.invoke(
+                        cli,
+                        [
+                            "push",
+                            "--catalog",
+                            ".",
+                            "--workers",
+                            "1",
+                            "--concurrency",
+                            "50",
+                            "--chunk-concurrency",
+                            "12",
+                            "--max-connections",
+                            "32",
+                        ],
+                    )
 
                 assert result.exit_code == 0, f"Failed: {result.output}"
                 mock_push.assert_called_once()

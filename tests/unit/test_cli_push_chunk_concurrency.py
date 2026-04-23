@@ -9,6 +9,7 @@ TDD: These tests are written FIRST, before implementation.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -18,13 +19,19 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 from portolan_cli.push import PushAllResult, PushResult
 
+# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+TEST_REMOTE = "s3://test/catalog"
+
 
 def _setup_catalog_with_collections(path: Path, collections: list[str]) -> None:
-    """Helper to create a catalog with multiple collections."""
-    # Create .portolan/config.yaml
+    """Helper to create a catalog with multiple collections.
+
+    Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
+    """
+    # Create .portolan/config.yaml (no sensitive settings)
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir(parents=True, exist_ok=True)
-    (portolan_dir / "config.yaml").write_text("version: '1.0'\nremote: s3://test/catalog\n")
+    (portolan_dir / "config.yaml").write_text("version: '1.0'\n")
 
     # Create collections with versions.json
     for name in collections:
@@ -59,7 +66,8 @@ class TestPushChunkConcurrencyFlag:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", ".", "--chunk-concurrency", "4"])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", ".", "--chunk-concurrency", "4"])
 
             # Should not fail due to unknown option
             assert result.exit_code == 0, f"Failed: {result.output}"
@@ -82,7 +90,8 @@ class TestPushChunkConcurrencyFlag:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", ".", "--chunk-concurrency", "6"])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", ".", "--chunk-concurrency", "6"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_all.assert_called_once()
@@ -107,7 +116,8 @@ class TestPushChunkConcurrencyFlag:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", "."])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", "."])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_all.assert_called_once()
@@ -161,18 +171,19 @@ class TestPushChunkConcurrencyFlag:
                 )
             )
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--catalog",
-                    ".",
-                    "--collection",
-                    "col1",
-                    "--chunk-concurrency",
-                    "8",
-                ],
-            )
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "push",
+                        "--catalog",
+                        ".",
+                        "--collection",
+                        "col1",
+                        "--chunk-concurrency",
+                        "8",
+                    ],
+                )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_async.assert_called_once()
@@ -206,18 +217,19 @@ class TestConcurrencyInteraction:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--catalog",
-                    ".",
-                    "--concurrency",
-                    "10",
-                    "--chunk-concurrency",
-                    "6",
-                ],
-            )
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "push",
+                        "--catalog",
+                        ".",
+                        "--concurrency",
+                        "10",
+                        "--chunk-concurrency",
+                        "6",
+                    ],
+                )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_all.assert_called_once()
@@ -244,18 +256,19 @@ class TestConcurrencyInteraction:
             )
 
             # 50 files × 12 chunks = 600 connections (way over safe limit)
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--catalog",
-                    ".",
-                    "--concurrency",
-                    "50",
-                    "--chunk-concurrency",
-                    "12",
-                ],
-            )
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "push",
+                        "--catalog",
+                        ".",
+                        "--concurrency",
+                        "50",
+                        "--chunk-concurrency",
+                        "12",
+                    ],
+                )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             # Should warn about high connection count

@@ -15,6 +15,7 @@ Following TDD: tests written FIRST before implementation.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -37,8 +38,8 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture
-def catalog_with_remote_config(tmp_path: Path) -> Path:
-    """Create a catalog with remote configured in config.yaml."""
+def catalog_with_remote_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Create a catalog with remote configured via env var (Issue #356: sensitive settings)."""
     catalog_dir = tmp_path / "catalog"
     catalog_dir.mkdir()
 
@@ -47,12 +48,13 @@ def catalog_with_remote_config(tmp_path: Path) -> Path:
         json.dumps({"type": "Catalog", "id": "test-catalog", "description": "Test"})
     )
 
-    # Create .portolan directory with config
+    # Create .portolan directory (no sensitive settings in config.yaml)
     portolan_dir = catalog_dir / ".portolan"
     portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("# No sensitive settings here\n")
 
-    config = {"remote": "s3://configured-bucket/catalog"}
-    (portolan_dir / "config.yaml").write_text(f"remote: {config['remote']}\n")
+    # Set remote via env var (Issue #356: sensitive settings via env vars only)
+    monkeypatch.setenv("PORTOLAN_REMOTE", "s3://configured-bucket/catalog")
 
     # Create a test collection with versions.json
     collection_dir = catalog_dir / "test-collection"
@@ -402,10 +404,10 @@ class TestPushDefaultRemoteInvariants:
     )
     @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
     def test_configured_remote_used_when_no_arg(self, remote_url: str, tmp_path: Path) -> None:
-        """Any valid remote URL in config should be used when no arg provided."""
+        """Any valid remote URL via env var should be used when no arg provided."""
         from portolan_cli.push import PushResult
 
-        # Set up catalog with this remote
+        # Set up catalog (no sensitive settings in config.yaml per Issue #356)
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir(exist_ok=True)
 
@@ -415,7 +417,7 @@ class TestPushDefaultRemoteInvariants:
 
         portolan_dir = catalog_dir / ".portolan"
         portolan_dir.mkdir(exist_ok=True)
-        (portolan_dir / "config.yaml").write_text(f"remote: {remote_url}\n")
+        (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
 
         collection_dir = catalog_dir / "test"
         collection_dir.mkdir(exist_ok=True)
@@ -434,11 +436,13 @@ class TestPushDefaultRemoteInvariants:
                 errors=[],
             )
 
-            result = runner.invoke(
-                cli,
-                ["push", "--collection", "test", "--catalog", str(catalog_dir)],
-                catch_exceptions=False,
-            )
+            # Use env var for remote (Issue #356)
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": remote_url}):
+                result = runner.invoke(
+                    cli,
+                    ["push", "--collection", "test", "--catalog", str(catalog_dir)],
+                    catch_exceptions=False,
+                )
 
             assert result.exit_code == 0, f"Failed for {remote_url}: {result.output}"
             call_kwargs = mock_push.call_args[1]
@@ -449,18 +453,16 @@ class TestPushDefaultRemoteInvariants:
         explicit_url=st.from_regex(
             r"s3://[a-z][a-z0-9-]{2,20}/explicit-[a-z0-9]{2,10}", fullmatch=True
         ),
-        config_url=st.from_regex(
-            r"s3://[a-z][a-z0-9-]{2,20}/config-[a-z0-9]{2,10}", fullmatch=True
-        ),
+        env_url=st.from_regex(r"s3://[a-z][a-z0-9-]{2,20}/env-[a-z0-9]{2,10}", fullmatch=True),
     )
     @settings(max_examples=20, suppress_health_check=[HealthCheck.function_scoped_fixture])
-    def test_explicit_always_overrides_config(
-        self, explicit_url: str, config_url: str, tmp_path: Path
+    def test_explicit_always_overrides_env(
+        self, explicit_url: str, env_url: str, tmp_path: Path
     ) -> None:
-        """Explicit destination should always override config, regardless of values."""
+        """Explicit destination should always override env var, regardless of values."""
         from portolan_cli.push import PushResult
 
-        # Set up catalog with config remote
+        # Set up catalog (no sensitive settings in config.yaml per Issue #356)
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir(exist_ok=True)
 
@@ -470,7 +472,7 @@ class TestPushDefaultRemoteInvariants:
 
         portolan_dir = catalog_dir / ".portolan"
         portolan_dir.mkdir(exist_ok=True)
-        (portolan_dir / "config.yaml").write_text(f"remote: {config_url}\n")
+        (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
 
         collection_dir = catalog_dir / "test"
         collection_dir.mkdir(exist_ok=True)
@@ -489,23 +491,25 @@ class TestPushDefaultRemoteInvariants:
                 errors=[],
             )
 
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    explicit_url,  # Explicit should win
-                    "--collection",
-                    "test",
-                    "--catalog",
-                    str(catalog_dir),
-                ],
-                catch_exceptions=False,
-            )
+            # Use env var for remote (Issue #356)
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": env_url}):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "push",
+                        explicit_url,  # Explicit should win
+                        "--collection",
+                        "test",
+                        "--catalog",
+                        str(catalog_dir),
+                    ],
+                    catch_exceptions=False,
+                )
 
             assert result.exit_code == 0
             call_kwargs = mock_push.call_args[1]
             assert call_kwargs["destination"] == explicit_url
-            assert call_kwargs["destination"] != config_url or explicit_url == config_url
+            assert call_kwargs["destination"] != env_url or explicit_url == env_url
 
 
 # =============================================================================
@@ -517,18 +521,14 @@ class TestPushDefaultRemoteIntegration:
     """Integration tests for push with default remote."""
 
     @pytest.mark.integration
-    def test_push_workflow_with_config_set(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Full workflow: init -> config set remote -> push (no destination)."""
+    def test_push_workflow_with_env_var(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Full workflow: init -> set PORTOLAN_REMOTE env var -> push (no destination)."""
         from portolan_cli.push import PushResult
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize catalog
             result = runner.invoke(cli, ["init", "--auto"])
             assert result.exit_code == 0, f"Init failed: {result.output}"
-
-            # Set remote config
-            result = runner.invoke(cli, ["config", "set", "remote", "s3://workflow-bucket/catalog"])
-            assert result.exit_code == 0, f"Config set failed: {result.output}"
 
             # Create a minimal collection for push
             Path("test-collection").mkdir()
@@ -542,7 +542,7 @@ class TestPushDefaultRemoteIntegration:
                 )
             )
 
-            # Push without destination - should use config
+            # Push without destination - should use PORTOLAN_REMOTE env var
             with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
                 mock_push.return_value = PushResult(
                     success=True,
@@ -552,11 +552,13 @@ class TestPushDefaultRemoteIntegration:
                     errors=[],
                 )
 
-                result = runner.invoke(
-                    cli,
-                    ["push", "--collection", "test-collection"],
-                    catch_exceptions=False,
-                )
+                # Set remote via env var (Issue #356: sensitive settings via env vars only)
+                with patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://workflow-bucket/catalog"}):
+                    result = runner.invoke(
+                        cli,
+                        ["push", "--collection", "test-collection"],
+                        catch_exceptions=False,
+                    )
 
                 assert result.exit_code == 0, f"Push failed: {result.output}"
                 call_kwargs = mock_push.call_args[1]

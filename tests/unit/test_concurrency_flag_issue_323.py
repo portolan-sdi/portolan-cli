@@ -11,6 +11,7 @@ so that individual collection operations also respect file-level concurrency lim
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,12 +25,18 @@ from portolan_cli.push import PushAllResult, PushResult, push_all_collections
 # Mark all tests in this module as unit tests
 pytestmark = pytest.mark.unit
 
+# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+TEST_REMOTE = "s3://test/catalog"
+
 
 def _setup_valid_catalog(catalog_root: Path) -> None:
-    """Helper to create a valid catalog with .portolan/config.yaml."""
+    """Helper to create a valid catalog with .portolan/config.yaml.
+
+    Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
+    """
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir(parents=True, exist_ok=True)
-    (portolan_dir / "config.yaml").write_text("version: '1.0'\nremote: s3://test/catalog\n")
+    (portolan_dir / "config.yaml").write_text("version: '1.0'\n")
 
 
 def _create_collection(catalog_root: Path, name: str) -> None:
@@ -245,7 +252,8 @@ class TestCliConcurrencyFlagCatalogWide:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", ".", "--concurrency", "10"])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", ".", "--concurrency", "10"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_all.assert_called_once()
@@ -271,7 +279,8 @@ class TestCliConcurrencyFlagCatalogWide:
             )
 
             # Don't specify --concurrency, should use default of 8 (Issue #344)
-            result = runner.invoke(cli, ["push", "--catalog", "."])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", "."])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_all.assert_called_once()
@@ -423,10 +432,11 @@ class TestCombinedConcurrencyParameters:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(
-                cli,
-                ["push", "--catalog", ".", "--workers", "2", "--concurrency", "10"],
-            )
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(
+                    cli,
+                    ["push", "--catalog", ".", "--workers", "2", "--concurrency", "10"],
+                )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_all.assert_called_once()
