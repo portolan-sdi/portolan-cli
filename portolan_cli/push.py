@@ -1764,7 +1764,7 @@ def _push_all_process_result(
             stats["errors"][coll] = ["Unknown error"]
 
 
-def _push_all_upload_catalog(
+def _push_all_upload_root_files(
     catalog_root: Path,
     destination: str,
     profile: str | None,
@@ -1772,32 +1772,52 @@ def _push_all_upload_catalog(
     dry_run: bool,
     stats: dict[str, Any],
 ) -> bool:
-    """Upload catalog.json after all collections (helper for push_all_collections).
+    """Upload root-level files after all collections (Issue #357).
 
-    Returns True if upload succeeded or was skipped, False if failed.
+    Uploads catalog.json and README.md from catalog root.
+    These are uploaded AFTER all collections succeed to maintain manifest-last atomicity.
+
+    Returns True if uploads succeeded or were skipped, False if any failed.
     """
     catalog_json = catalog_root / "catalog.json"
+    root_readme = catalog_root / "README.md"
 
-    if stats["successful"] > 0 and stats["failed"] == 0 and catalog_json.exists():
-        if dry_run:
-            info("[DRY RUN] Would upload catalog.json")
-            return True
-        try:
-            store, prefix = setup_store(destination, profile=profile, region=region)
-            target_key = f"{prefix}/catalog.json".lstrip("/")
-            obs.put(store, target_key, catalog_json.read_bytes())
-            success("Uploaded catalog.json")
-            stats["total_files"] += 1
-            return True
-        except Exception as e:
-            error(f"Failed to upload catalog.json: {e}")
-            stats["errors"]["catalog.json"] = [str(e)]
-            return False
-    elif stats["failed"] > 0:
-        warn("Skipping catalog.json upload because some collections failed")
-    elif not catalog_json.exists():
+    # Skip root file uploads if any collection failed
+    if stats["failed"] > 0:
+        warn("Skipping root file upload because some collections failed")
+        return True
+
+    if not catalog_json.exists():
         warn(f"catalog.json not found at {catalog_json} - remote catalog may be incomplete")
-    return True
+        return True
+
+    if dry_run:
+        info("[DRY RUN] Would upload catalog.json")
+        if root_readme.exists():
+            info("[DRY RUN] Would upload README.md")
+        return True
+
+    try:
+        store, prefix = setup_store(destination, profile=profile, region=region)
+
+        # Upload catalog.json
+        target_key = f"{prefix}/catalog.json".lstrip("/")
+        obs.put(store, target_key, catalog_json.read_bytes())
+        success("Uploaded catalog.json")
+        stats["total_files"] += 1
+
+        # Upload root README.md if it exists (Issue #357)
+        if root_readme.exists():
+            readme_key = f"{prefix}/README.md".lstrip("/")
+            obs.put(store, readme_key, root_readme.read_bytes())
+            success("Uploaded README.md")
+            stats["total_files"] += 1
+
+        return True
+    except Exception as e:
+        error(f"Failed to upload root files: {e}")
+        stats["errors"]["root_files"] = [str(e)]
+        return False
 
 
 async def push_all_collections_async(
@@ -1897,7 +1917,7 @@ async def push_all_collections_async(
                     json_mode=json_mode,
                     suppress_progress=True,
                     verbose=verbose,
-                    include_catalog=False,  # Uploaded once at end by _push_all_upload_catalog
+                    include_catalog=False,  # Uploaded once at end by _push_all_upload_root_files
                 )
                 return (collection, result, None)
             except Exception as e:
@@ -1918,7 +1938,7 @@ async def push_all_collections_async(
             coll, push_result, err_msg = result
             _push_all_process_result(coll, push_result, err_msg, i + 1, total, stats)
 
-    catalog_ok = _push_all_upload_catalog(
+    catalog_ok = _push_all_upload_root_files(
         catalog_root, destination, profile, region, dry_run, stats
     )
 
