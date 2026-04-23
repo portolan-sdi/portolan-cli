@@ -7,11 +7,15 @@ backend's push_blocked_message() when push is not supported.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
+
+# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+TEST_REMOTE = "gs://test-bucket/catalog"
 
 
 @pytest.fixture
@@ -21,16 +25,17 @@ def cli_runner() -> CliRunner:
 
 @pytest.fixture
 def catalog_with_backend_and_remote(tmp_path: Path) -> Path:
-    """Create a catalog with a non-file backend and remote configured."""
+    """Create a catalog with a non-file backend.
+
+    Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
+    """
     catalog_root = tmp_path / "catalog"
     catalog_root.mkdir()
     (catalog_root / "catalog.json").write_text('{"type": "Catalog"}')
 
     portolan_dir = catalog_root / ".portolan"
     portolan_dir.mkdir()
-    (portolan_dir / "config.yaml").write_text(
-        "backend: iceberg\nremote: gs://test-bucket/catalog\n"
-    )
+    (portolan_dir / "config.yaml").write_text("backend: iceberg\n")
     return catalog_root
 
 
@@ -69,9 +74,12 @@ def test_push_backend_with_remote_explains_add_uploads(cli_runner, catalog_with_
     """Push with backend that doesn't support push should explain add already uploads."""
     from portolan_cli.cli import cli
 
-    mock_backend = _mock_backend_no_push(remote="gs://test-bucket/catalog")
+    mock_backend = _mock_backend_no_push(remote=TEST_REMOTE)
 
-    with patch("portolan_cli.backends.get_backend", return_value=mock_backend):
+    with (
+        patch("portolan_cli.backends.get_backend", return_value=mock_backend),
+        patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}),
+    ):
         result = cli_runner.invoke(
             cli,
             [
@@ -114,9 +122,12 @@ def test_push_backend_json_output(cli_runner, catalog_with_backend_and_remote):
     """Push in JSON mode with unsupported backend should return structured error."""
     from portolan_cli.cli import cli
 
-    mock_backend = _mock_backend_no_push(remote="gs://test-bucket/catalog")
+    mock_backend = _mock_backend_no_push(remote=TEST_REMOTE)
 
-    with patch("portolan_cli.backends.get_backend", return_value=mock_backend):
+    with (
+        patch("portolan_cli.backends.get_backend", return_value=mock_backend),
+        patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}),
+    ):
         result = cli_runner.invoke(
             cli,
             [

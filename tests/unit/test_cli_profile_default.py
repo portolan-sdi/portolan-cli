@@ -2,11 +2,14 @@
 
 Tests verify:
 1. Default fallback to 'default' profile when no config or CLI arg
-2. Config values (aws_profile in config.yaml) are respected
-3. CLI --profile overrides config values
-4. Environment variable PORTOLAN_AWS_PROFILE works
+2. Environment variable PORTOLAN_AWS_PROFILE is used
+3. CLI --profile overrides env var values
+
+Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue #356).
+Use PORTOLAN_PROFILE or PORTOLAN_AWS_PROFILE env vars instead.
 """
 
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,13 +18,19 @@ from click.testing import CliRunner
 
 from portolan_cli.cli import cli
 
+# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+TEST_REMOTE = "s3://test-bucket/test-catalog"
+
 
 class TestProfileDefaultBehavior:
     """Test that --profile defaults to 'default' for S3 commands."""
 
     @pytest.fixture
     def mock_catalog(self, tmp_path: Path) -> Path:
-        """Create a minimal catalog structure for testing."""
+        """Create a minimal catalog structure for testing.
+
+        Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
+        """
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
         (catalog_root / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
@@ -35,7 +44,7 @@ class TestProfileDefaultBehavior:
 
         portolan_dir = catalog_root / ".portolan"
         portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text("remote: s3://test-bucket/test-catalog\n")
+        (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
 
         return catalog_root
 
@@ -53,10 +62,11 @@ class TestProfileDefaultBehavior:
                 errors=[],
             )
 
-            runner.invoke(
-                cli,
-                ["push", "--collection", "test-collection", "--catalog", str(mock_catalog)],
-            )
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                runner.invoke(
+                    cli,
+                    ["push", "--collection", "test-collection", "--catalog", str(mock_catalog)],
+                )
 
             # Verify push was called with profile="default"
             assert mock_push.called
@@ -77,18 +87,19 @@ class TestProfileDefaultBehavior:
                 errors=[],
             )
 
-            runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--collection",
-                    "test-collection",
-                    "--profile",
-                    "custom-profile",
-                    "--catalog",
-                    str(mock_catalog),
-                ],
-            )
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                runner.invoke(
+                    cli,
+                    [
+                        "push",
+                        "--collection",
+                        "test-collection",
+                        "--profile",
+                        "custom-profile",
+                        "--catalog",
+                        str(mock_catalog),
+                    ],
+                )
 
             # Verify push was called with profile="custom-profile"
             assert mock_push.called
@@ -141,10 +152,11 @@ class TestProfileDefaultBehavior:
                 errors=[],
             )
 
-            runner.invoke(
-                cli,
-                ["sync", "--collection", "test-collection", "--catalog", str(mock_catalog)],
-            )
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                runner.invoke(
+                    cli,
+                    ["sync", "--collection", "test-collection", "--catalog", str(mock_catalog)],
+                )
 
             # Verify sync was called with profile="default"
             assert mock_sync.called
@@ -183,11 +195,18 @@ class TestProfileDefaultBehavior:
 
 
 class TestProfileConfigResolution:
-    """Test that aws_profile from config.yaml is used when --profile not specified."""
+    """Test that PORTOLAN_AWS_PROFILE env var is used when --profile not specified.
+
+    Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue #356).
+    These tests verify env var behavior instead.
+    """
 
     @pytest.fixture
-    def catalog_with_profile(self, tmp_path: Path) -> Path:
-        """Create a catalog with aws_profile configured."""
+    def basic_catalog(self, tmp_path: Path) -> Path:
+        """Create a basic catalog without profile configured.
+
+        Note: remote and profile must be set via env vars (Issue #356).
+        """
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
         (catalog_root / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
@@ -201,15 +220,13 @@ class TestProfileConfigResolution:
 
         portolan_dir = catalog_root / ".portolan"
         portolan_dir.mkdir()
-        (portolan_dir / "config.yaml").write_text(
-            "remote: s3://test-bucket/test-catalog\naws_profile: config-profile\n"
-        )
+        (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
 
         return catalog_root
 
     @pytest.mark.unit
-    def test_push_uses_aws_profile_from_config(self, catalog_with_profile: Path) -> None:
-        """portolan push should use aws_profile from config.yaml when --profile not specified."""
+    def test_push_uses_aws_profile_from_env(self, basic_catalog: Path) -> None:
+        """portolan push should use PORTOLAN_AWS_PROFILE env var when --profile not specified."""
         runner = CliRunner()
 
         with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
@@ -221,19 +238,23 @@ class TestProfileConfigResolution:
                 errors=[],
             )
 
-            runner.invoke(
-                cli,
-                ["push", "--collection", "test-collection", "--catalog", str(catalog_with_profile)],
-            )
+            with patch.dict(
+                os.environ,
+                {"PORTOLAN_REMOTE": TEST_REMOTE, "PORTOLAN_AWS_PROFILE": "env-profile"},
+            ):
+                runner.invoke(
+                    cli,
+                    ["push", "--collection", "test-collection", "--catalog", str(basic_catalog)],
+                )
 
-            # Verify push was called with profile from config
+            # Verify push was called with profile from env
             assert mock_push.called
             call_kwargs = mock_push.call_args.kwargs
-            assert call_kwargs["profile"] == "config-profile"
+            assert call_kwargs["profile"] == "env-profile"
 
     @pytest.mark.unit
-    def test_push_cli_profile_overrides_config(self, catalog_with_profile: Path) -> None:
-        """CLI --profile should override aws_profile from config.yaml."""
+    def test_push_cli_profile_overrides_env(self, basic_catalog: Path) -> None:
+        """CLI --profile should override PORTOLAN_AWS_PROFILE env var."""
         runner = CliRunner()
 
         with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
@@ -245,18 +266,22 @@ class TestProfileConfigResolution:
                 errors=[],
             )
 
-            runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--collection",
-                    "test-collection",
-                    "--profile",
-                    "cli-override",
-                    "--catalog",
-                    str(catalog_with_profile),
-                ],
-            )
+            with patch.dict(
+                os.environ,
+                {"PORTOLAN_REMOTE": TEST_REMOTE, "PORTOLAN_AWS_PROFILE": "env-profile"},
+            ):
+                runner.invoke(
+                    cli,
+                    [
+                        "push",
+                        "--collection",
+                        "test-collection",
+                        "--profile",
+                        "cli-override",
+                        "--catalog",
+                        str(basic_catalog),
+                    ],
+                )
 
             # CLI profile should win
             assert mock_push.called
@@ -264,8 +289,8 @@ class TestProfileConfigResolution:
             assert call_kwargs["profile"] == "cli-override"
 
     @pytest.mark.unit
-    def test_pull_uses_aws_profile_from_config(self, catalog_with_profile: Path) -> None:
-        """portolan pull should use aws_profile from config.yaml when --profile not specified."""
+    def test_pull_uses_aws_profile_from_env(self, basic_catalog: Path) -> None:
+        """portolan pull should use PORTOLAN_AWS_PROFILE env var when --profile not specified."""
         from portolan_cli.pull import PullResult
 
         runner = CliRunner()
@@ -279,26 +304,27 @@ class TestProfileConfigResolution:
                 remote_version="1.0.0",
             )
 
-            runner.invoke(
-                cli,
-                [
-                    "pull",
-                    "s3://test-bucket/catalog",
-                    "--collection",
-                    "test-collection",
-                    "--catalog",
-                    str(catalog_with_profile),
-                ],
-            )
+            with patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "env-profile"}):
+                runner.invoke(
+                    cli,
+                    [
+                        "pull",
+                        "s3://test-bucket/catalog",
+                        "--collection",
+                        "test-collection",
+                        "--catalog",
+                        str(basic_catalog),
+                    ],
+                )
 
-            # Verify pull was called with profile from config
+            # Verify pull was called with profile from env
             assert mock_pull.called
             call_kwargs = mock_pull.call_args.kwargs
-            assert call_kwargs["profile"] == "config-profile"
+            assert call_kwargs["profile"] == "env-profile"
 
     @pytest.mark.unit
-    def test_sync_uses_aws_profile_from_config(self, catalog_with_profile: Path) -> None:
-        """portolan sync should use aws_profile from config.yaml when --profile not specified."""
+    def test_sync_uses_aws_profile_from_env(self, basic_catalog: Path) -> None:
+        """portolan sync should use PORTOLAN_AWS_PROFILE env var when --profile not specified."""
         runner = CliRunner()
 
         with patch("portolan_cli.sync.sync") as mock_sync:
@@ -309,26 +335,25 @@ class TestProfileConfigResolution:
                 errors=[],
             )
 
-            runner.invoke(
-                cli,
-                ["sync", "--collection", "test-collection", "--catalog", str(catalog_with_profile)],
-            )
+            with patch.dict(
+                os.environ,
+                {"PORTOLAN_REMOTE": TEST_REMOTE, "PORTOLAN_AWS_PROFILE": "env-profile"},
+            ):
+                runner.invoke(
+                    cli,
+                    ["sync", "--collection", "test-collection", "--catalog", str(basic_catalog)],
+                )
 
-            # Verify sync was called with profile from config
+            # Verify sync was called with profile from env
             assert mock_sync.called
             call_kwargs = mock_sync.call_args.kwargs
-            assert call_kwargs["profile"] == "config-profile"
+            assert call_kwargs["profile"] == "env-profile"
 
     @pytest.mark.unit
-    def test_clone_uses_aws_profile_from_config(self, catalog_with_profile: Path) -> None:
-        """portolan clone should use aws_profile from config.yaml when --profile not specified."""
+    def test_clone_uses_aws_profile_from_env(self, tmp_path: Path) -> None:
+        """portolan clone should use PORTOLAN_AWS_PROFILE env var when --profile not specified."""
         runner = CliRunner()
-        clone_target = catalog_with_profile.parent / "cloned-catalog"
-
-        # For clone, we need to use the config from the source URL
-        # But since we're mocking, we need to set up env var instead
-        # because clone doesn't have a local catalog yet
-        import os
+        clone_target = tmp_path / "cloned-catalog"
 
         with patch("portolan_cli.sync.clone") as mock_clone:
             mock_clone.return_value = MagicMock(
@@ -342,7 +367,7 @@ class TestProfileConfigResolution:
 
             # Clone uses env var since there's no local catalog to read config from
             with patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "env-profile"}):
-                with runner.isolated_filesystem(temp_dir=catalog_with_profile.parent):
+                with runner.isolated_filesystem(temp_dir=tmp_path):
                     result = runner.invoke(
                         cli,
                         ["clone", "s3://test-bucket/test-catalog", str(clone_target)],
@@ -357,10 +382,8 @@ class TestProfileConfigResolution:
                 assert call_kwargs["profile"] == "env-profile"
 
     @pytest.mark.unit
-    def test_push_uses_env_var_when_no_cli_or_config(self, tmp_path: Path) -> None:
-        """PORTOLAN_AWS_PROFILE env var should be used when no CLI arg or config."""
-        import os
-
+    def test_push_uses_env_var_when_no_cli(self, tmp_path: Path) -> None:
+        """PORTOLAN_AWS_PROFILE env var should be used when no CLI arg."""
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
         (catalog_root / "catalog.json").write_text('{"type": "Catalog", "id": "test"}')
@@ -374,8 +397,7 @@ class TestProfileConfigResolution:
 
         portolan_dir = catalog_root / ".portolan"
         portolan_dir.mkdir()
-        # No aws_profile in config
-        (portolan_dir / "config.yaml").write_text("remote: s3://test-bucket/test-catalog\n")
+        (portolan_dir / "config.yaml").write_text("# No sensitive settings\n")
 
         runner = CliRunner()
 
@@ -388,7 +410,10 @@ class TestProfileConfigResolution:
                 errors=[],
             )
 
-            with patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "env-profile"}):
+            with patch.dict(
+                os.environ,
+                {"PORTOLAN_REMOTE": TEST_REMOTE, "PORTOLAN_AWS_PROFILE": "env-profile"},
+            ):
                 runner.invoke(
                     cli,
                     ["push", "--collection", "test-collection", "--catalog", str(catalog_root)],

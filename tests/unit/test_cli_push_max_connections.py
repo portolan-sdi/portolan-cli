@@ -9,6 +9,7 @@ TDD: These tests are written FIRST, before implementation.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -18,12 +19,18 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 from portolan_cli.push import PushAllResult
 
+# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+TEST_REMOTE = "s3://test/catalog"
+
 
 def _setup_catalog_with_collections(path: Path, collections: list[str]) -> None:
-    """Helper to create a catalog with multiple collections."""
+    """Helper to create a catalog with multiple collections.
+
+    Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
+    """
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir(parents=True, exist_ok=True)
-    (portolan_dir / "config.yaml").write_text("version: '1.0'\nremote: s3://test/catalog\n")
+    (portolan_dir / "config.yaml").write_text("version: '1.0'\n")
 
     for name in collections:
         coll_dir = path / name
@@ -57,7 +64,8 @@ class TestPushMaxConnectionsFlag:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", ".", "--max-connections", "50"])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", ".", "--max-connections", "50"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
 
@@ -79,7 +87,8 @@ class TestPushMaxConnectionsFlag:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", ".", "--max-connections", "64"])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", ".", "--max-connections", "64"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_all.assert_called_once()
@@ -195,18 +204,19 @@ class TestMaxConnectionsWithWorkers:
             )
 
             # With 4 workers and max_connections=64, each worker gets 16 connections
-            result = runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--catalog",
-                    ".",
-                    "--workers",
-                    "4",
-                    "--max-connections",
-                    "64",
-                ],
-            )
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "push",
+                        "--catalog",
+                        ".",
+                        "--workers",
+                        "4",
+                        "--max-connections",
+                        "64",
+                    ],
+                )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_all.assert_called_once()
