@@ -31,20 +31,28 @@ class TestResumeState:
         state = ResumeState(
             succeeded_layers={0, 1, 2},
             failed_layers={3, 4},
+            succeeded_names={"Layer_0", "Layer_1", "Layer_2"},
+            failed_names={"Layer_3", "Layer_4"},
         )
 
         assert state.succeeded_layers == {0, 1, 2}
         assert state.failed_layers == {3, 4}
+        assert state.succeeded_names == {"Layer_0", "Layer_1", "Layer_2"}
+        assert state.failed_names == {"Layer_3", "Layer_4"}
 
     def test_empty_state(self) -> None:
         """Create empty resume state."""
         state = ResumeState(
             succeeded_layers=set(),
             failed_layers=set(),
+            succeeded_names=set(),
+            failed_names=set(),
         )
 
         assert len(state.succeeded_layers) == 0
         assert len(state.failed_layers) == 0
+        assert len(state.succeeded_names) == 0
+        assert len(state.failed_names) == 0
 
 
 class TestGetResumeState:
@@ -136,6 +144,8 @@ class TestShouldProcessLayer:
         state = ResumeState(
             succeeded_layers={0, 1, 2},
             failed_layers={3},
+            succeeded_names={"Layer_0", "Layer_1", "Layer_2"},
+            failed_names={"Layer_3"},
         )
 
         assert should_process_layer(0, state) is False
@@ -147,6 +157,8 @@ class TestShouldProcessLayer:
         state = ResumeState(
             succeeded_layers={0, 1},
             failed_layers={2, 3},
+            succeeded_names={"Layer_0", "Layer_1"},
+            failed_names={"Layer_2", "Layer_3"},
         )
 
         assert should_process_layer(2, state) is True
@@ -157,6 +169,8 @@ class TestShouldProcessLayer:
         state = ResumeState(
             succeeded_layers={0, 1},
             failed_layers={2},
+            succeeded_names={"Layer_0", "Layer_1"},
+            failed_names={"Layer_2"},
         )
 
         # Layer 5 wasn't in the previous extraction
@@ -168,6 +182,8 @@ class TestShouldProcessLayer:
         state = ResumeState(
             succeeded_layers={0, 2, 4, 6},
             failed_layers={1, 3},
+            succeeded_names={"Layer_0", "Layer_2", "Layer_4", "Layer_6"},
+            failed_names={"Layer_1", "Layer_3"},
         )
 
         # Succeeded - skip
