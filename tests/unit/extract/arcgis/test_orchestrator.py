@@ -598,11 +598,12 @@ class TestServicesRootExtraction:
             assert (tmp_path / ".portolan" / "extraction-report.json").exists()
 
             # Verify _extract_single_layer was called with correct path structure
-            # (service as subcatalog: census_2020/block_groups/block_groups.parquet)
+            # Single-layer service is FLATTENED: census_2020/census_2020.parquet
+            # (not nested: census_2020/block_groups/block_groups.parquet)
             call_args = mock_extract.call_args
             output_path = call_args[0][2]  # Third positional arg is output_path
-            assert "census_2020" in str(output_path)
-            assert "block_groups" in str(output_path)
+            relative_path = output_path.relative_to(tmp_path)
+            assert relative_path.as_posix() == "census_2020/census_2020.parquet"
 
     def test_services_root_applies_service_filter(self, tmp_path: Path) -> None:
         """Services root should apply service filter."""
@@ -643,3 +644,181 @@ class TestServicesRootExtraction:
 
             # Should only extract Census layers
             assert result.summary.total_layers == 1
+
+    def test_single_layer_service_flattened(self, tmp_path: Path) -> None:
+        """Single-layer service should create collection directly (no subcatalog).
+
+        Expected output structure:
+            bag_woonfunctie/
+            ├── collection.json  (created by auto-init)
+            └── bag_woonfunctie.parquet
+
+        NOT:
+            bag_woonfunctie/
+            ├── catalog.json  (subcatalog)
+            └── bag_woonfunctie/
+                └── bag_woonfunctie.parquet
+        """
+        mock_services = [
+            ServiceInfo(name="BAG_Woonfunctie", service_type="FeatureServer"),
+        ]
+        mock_single_layer = ServiceDiscoveryResult(
+            layers=[
+                LayerInfo(id=0, name="BAG_Woonfunctie", layer_type="Feature Layer"),
+            ],
+        )
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_services"
+            ) as mock_discover_services,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
+            ) as mock_discover_layers,
+            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
+        ):
+            mock_discover_services.return_value = (mock_services, [])
+            mock_discover_layers.return_value = mock_single_layer
+            mock_extract.return_value = (100, 2048, 2.5)
+
+            options = ExtractionOptions(raw=True)
+            result = extract_arcgis_catalog(
+                url=TEST_SERVICES_ROOT_URL,
+                output_dir=tmp_path,
+                options=options,
+            )
+
+            # Should extract the layer
+            assert mock_extract.call_count == 1
+            assert result.summary.succeeded == 1
+
+            # Output path should be FLATTENED: service_name/service_name.parquet
+            # NOT nested: service_name/layer_name/layer_name.parquet
+            call_args = mock_extract.call_args
+            output_path = call_args[0][2]  # Third positional arg is output_path
+            relative_path = output_path.relative_to(tmp_path)
+
+            # Should be: bag_woonfunctie/bag_woonfunctie.parquet (flattened)
+            # NOT: bag_woonfunctie/bag_woonfunctie/bag_woonfunctie.parquet (nested)
+            assert relative_path.as_posix() == "bag_woonfunctie/bag_woonfunctie.parquet"
+
+            # Verify the result output_path in report
+            layer_result = result.layers[0]
+            assert layer_result.output_path == "bag_woonfunctie/bag_woonfunctie.parquet"
+
+    def test_multi_layer_service_keeps_nesting(self, tmp_path: Path) -> None:
+        """Multi-layer service should keep subcatalog structure.
+
+        Expected output structure:
+            woontypering/
+            ├── catalog.json  (subcatalog)
+            ├── layer_a/
+            │   └── layer_a.parquet
+            └── layer_b/
+                └── layer_b.parquet
+        """
+        mock_services = [
+            ServiceInfo(name="Woontypering", service_type="FeatureServer"),
+        ]
+        mock_multi_layers = ServiceDiscoveryResult(
+            layers=[
+                LayerInfo(id=0, name="Woontypering_2020", layer_type="Feature Layer"),
+                LayerInfo(id=1, name="Woontypering_2021", layer_type="Feature Layer"),
+                LayerInfo(id=2, name="Woontypering_2022", layer_type="Feature Layer"),
+            ],
+        )
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_services"
+            ) as mock_discover_services,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
+            ) as mock_discover_layers,
+            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
+        ):
+            mock_discover_services.return_value = (mock_services, [])
+            mock_discover_layers.return_value = mock_multi_layers
+            mock_extract.return_value = (100, 2048, 2.5)
+
+            options = ExtractionOptions(raw=True)
+            result = extract_arcgis_catalog(
+                url=TEST_SERVICES_ROOT_URL,
+                output_dir=tmp_path,
+                options=options,
+            )
+
+            # Should extract all 3 layers
+            assert mock_extract.call_count == 3
+            assert result.summary.succeeded == 3
+
+            # Output paths should be NESTED: service_name/layer_name/layer_name.parquet
+            # First layer: woontypering/woontypering_2020/woontypering_2020.parquet
+            first_call_output = mock_extract.call_args_list[0][0][2]
+            relative_first = first_call_output.relative_to(tmp_path)
+            assert (
+                relative_first.as_posix()
+                == "woontypering/woontypering_2020/woontypering_2020.parquet"
+            )
+
+            # Verify all layers have nested structure
+            for layer_result in result.layers:
+                parts = layer_result.output_path.split("/")
+                # Should have 3 parts: service/layer/file.parquet
+                assert len(parts) == 3, f"Expected nested path, got: {layer_result.output_path}"
+
+    def test_mixed_services_flatten_and_nest_appropriately(self, tmp_path: Path) -> None:
+        """Mix of single and multi-layer services should handle each correctly.
+
+        Single-layer service → flatten
+        Multi-layer service → keep nesting
+        """
+        mock_services = [
+            ServiceInfo(name="SingleLayer", service_type="FeatureServer"),
+            ServiceInfo(name="MultiLayer", service_type="FeatureServer"),
+        ]
+        mock_single = ServiceDiscoveryResult(
+            layers=[LayerInfo(id=0, name="OnlyLayer", layer_type="Feature Layer")],
+        )
+        mock_multi = ServiceDiscoveryResult(
+            layers=[
+                LayerInfo(id=0, name="LayerA", layer_type="Feature Layer"),
+                LayerInfo(id=1, name="LayerB", layer_type="Feature Layer"),
+            ],
+        )
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_services"
+            ) as mock_discover_services,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
+            ) as mock_discover_layers,
+            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
+        ):
+            mock_discover_services.return_value = (mock_services, [])
+            mock_discover_layers.side_effect = [mock_single, mock_multi]
+            mock_extract.return_value = (100, 2048, 2.5)
+
+            options = ExtractionOptions(raw=True)
+            result = extract_arcgis_catalog(
+                url=TEST_SERVICES_ROOT_URL,
+                output_dir=tmp_path,
+                options=options,
+            )
+
+            assert result.summary.succeeded == 3
+
+            # Find results by output path
+            output_paths = [r.output_path for r in result.layers]
+
+            # Single-layer service should be flattened
+            # Expected: singlelayer/singlelayer.parquet (2 parts)
+            single_path = [p for p in output_paths if "singlelayer" in p][0]
+            assert single_path.count("/") == 1, f"Single-layer should be flat: {single_path}"
+
+            # Multi-layer service should keep nesting
+            # Expected: multilayer/layer_a/layer_a.parquet (3 parts)
+            multi_paths = [p for p in output_paths if "multilayer" in p]
+            for path in multi_paths:
+                assert path.count("/") == 2, f"Multi-layer should be nested: {path}"
