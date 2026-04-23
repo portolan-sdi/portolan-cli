@@ -800,3 +800,7 @@ class CatalogVersionsCorruptedError(Exception):
     """Raised when catalog-level versions.json is corrupted."""
 
     pass
+
+
+# Re-export add_files for STAC-aligned imports (ADR terminology)
+from portolan_cli.dataset import add_files as add_files  # noqa: E402, F401, PLC0414

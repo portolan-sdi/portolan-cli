@@ -1,0 +1,1 @@
+"""WFS extraction integration tests."""

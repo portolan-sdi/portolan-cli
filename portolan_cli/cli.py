@@ -5530,13 +5530,19 @@ def _handle_imageserver_extraction(
     raise SystemExit(exit_code)
 
 
-def _output_extract_error(use_json: bool, error_type: str, message: str, url: str) -> None:
+def _output_extract_error(
+    use_json: bool,
+    error_type: str,
+    message: str,
+    url: str,
+    command: str = "extract-arcgis",
+) -> None:
     """Output extraction error in JSON or text format."""
     from portolan_cli.output import error
 
     if use_json:
         err = ErrorDetail(type=error_type, message=message)
-        envelope = error_envelope("extract-arcgis", [err], data={"url": url})
+        envelope = error_envelope(command, [err], data={"url": url})
         output_json_envelope(envelope)
     else:
         error(message)
@@ -5547,6 +5553,7 @@ def _output_extract_result(
     output_dir: Path,
     use_json: bool,
     dry_run: bool,
+    command: str = "extract-arcgis",
 ) -> None:
     """Output extraction results in JSON or text format."""
     from portolan_cli.output import error, success, warn
@@ -5590,11 +5597,11 @@ def _output_extract_result(
                 )
                 for fl in failed_layers
             ]
-            envelope = error_envelope("extract-arcgis", errors, data=data)
+            envelope = error_envelope(command, errors, data=data)
             output_json_envelope(envelope)
             raise SystemExit(1)
 
-        envelope = success_envelope("extract-arcgis", data)
+        envelope = success_envelope(command, data)
         output_json_envelope(envelope)
         return
 
@@ -5947,6 +5954,244 @@ def extract_arcgis_cmd(
         raise SystemExit(1) from None
 
     _output_extract_result(report, output_dir, use_json, dry_run)
+
+
+@extract.command("wfs")
+@click.argument("url")
+@click.argument("output_dir", type=click.Path(path_type=Path), required=False)
+@click.option(
+    "--layers",
+    type=str,
+    default=None,
+    help="Include layers matching glob patterns (comma-separated). Example: 'buildings*,roads*'",
+)
+@click.option(
+    "--exclude-layers",
+    type=str,
+    default=None,
+    help="Exclude layers matching glob patterns (comma-separated). Example: 'test_*'",
+)
+@click.option(
+    "--wfs-version",
+    type=click.Choice(["1.0.0", "1.1.0", "2.0.0", "auto"]),
+    default="auto",
+    help="WFS version (default: auto-detect).",
+)
+@click.option(
+    "--output-crs",
+    type=str,
+    default=None,
+    help="Target CRS for output (e.g., 'EPSG:4326'). Default keeps source CRS.",
+)
+@click.option(
+    "--bbox",
+    type=str,
+    default=None,
+    help="Bounding box filter: minx,miny,maxx,maxy in output CRS.",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum features per layer.",
+)
+@click.option(
+    "--workers",
+    type=click.IntRange(min=1),
+    default=1,
+    help="Parallel workers for layer extraction (default: 1). "
+    "Each layer is extracted independently.",
+)
+@click.option(
+    "--retries",
+    type=click.IntRange(min=1),
+    default=3,
+    help="Retry attempts per failed layer (default: 3).",
+)
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0.0, min_open=True),
+    default=300.0,
+    help="Per-layer timeout in seconds (default: 300). "
+    "Note: large layers use gpio's internal 10-minute HTTP timeout.",
+)
+@click.option(
+    "--page-size",
+    type=click.IntRange(min=100),
+    default=10000,
+    help="Features per page for large layer pagination (default: 10000).",
+)
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="Resume from existing extraction-report.json (skip succeeded layers).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="List layers without extracting.",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output extraction report as JSON.",
+)
+@click.option(
+    "--auto",
+    is_flag=True,
+    help="Skip confirmation prompts.",
+)
+@click.option(
+    "--raw",
+    is_flag=True,
+    help="Skip auto-init: create only extraction files, no STAC catalog.",
+)
+@click.pass_context
+def extract_wfs_cmd(
+    ctx: click.Context,
+    url: str,
+    output_dir: Path | None,
+    layers: str | None,
+    exclude_layers: str | None,
+    wfs_version: str,
+    output_crs: str | None,
+    bbox: str | None,
+    limit: int | None,
+    workers: int,
+    retries: int,
+    timeout: float,
+    page_size: int,
+    resume: bool,
+    dry_run: bool,
+    json_output: bool,
+    auto: bool,
+    raw: bool,
+) -> None:
+    """Extract data from WFS (Web Feature Service) endpoints.
+
+    Downloads layers from a WFS service and creates a Portolan catalog
+    with GeoParquet files and STAC metadata.
+
+    URL is the WFS service endpoint URL.
+    OUTPUT_DIR is the directory to write extracted data (default: 'wfs_extract').
+
+    \b
+    WFS Versions:
+        1.0.0: Basic WFS (GML 2.x output)
+        1.1.0: Common version (GML 3.x, coordinate axis handling)
+        2.0.0: Modern WFS (paging, stored queries)
+        auto: Let the client auto-detect (default)
+
+    \b
+    Examples:
+        # Extract all layers from a WFS service
+        portolan extract wfs https://example.com/wfs ./output
+
+        # Extract specific layers by typename
+        portolan extract wfs URL --layers "buildings*,roads*"
+
+        # Extract with bounding box filter
+        portolan extract wfs URL --bbox "-122.5,37.5,-122.0,38.0"
+
+        # Dry run to see available layers
+        portolan extract wfs URL --dry-run
+
+        # Extract with specific WFS version
+        portolan extract wfs URL --wfs-version 2.0.0
+
+        # Extract 4 layers in parallel with 5-minute timeout per layer
+        portolan extract wfs URL --workers 4 --timeout 300
+    """
+    from portolan_cli.extract.wfs.orchestrator import (
+        ExtractionOptions,
+        ExtractionProgress,
+        extract_wfs_catalog,
+    )
+    from portolan_cli.output import detail, info, warn
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Default output directory
+    if output_dir is None:
+        output_dir = Path("wfs_extract")
+
+    # Parse bbox if provided
+    bbox_tuple: tuple[float, float, float, float] | None = None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) != 4:
+                _output_extract_error(
+                    use_json,
+                    "InvalidBBoxError",
+                    "bbox must have 4 values: minx,miny,maxx,maxy",
+                    url,
+                    command="extract-wfs",
+                )
+                raise SystemExit(1)
+            bbox_tuple = (parts[0], parts[1], parts[2], parts[3])
+        except ValueError as e:
+            _output_extract_error(use_json, "InvalidBBoxError", str(e), url, command="extract-wfs")
+            raise SystemExit(1) from None
+
+    # Build filter lists
+    layer_include = _parse_filter_patterns(layers)
+    layer_exclude = _parse_filter_patterns(exclude_layers)
+
+    # Build options
+    options = ExtractionOptions(
+        workers=workers,
+        retries=retries,
+        timeout=timeout,
+        resume=resume,
+        dry_run=dry_run,
+        raw=raw,
+        wfs_version=wfs_version,
+        output_crs=output_crs,
+        bbox=bbox_tuple,
+        limit=limit,
+        page_size=page_size,
+    )
+
+    # Progress callback for text output
+    def on_progress(progress: ExtractionProgress) -> None:
+        if progress.status == "starting":
+            info(f"[{progress.layer_index + 1}/{progress.total_layers}] {progress.layer_name}")
+        elif progress.status == "success":
+            detail("  ✓ Success")
+        elif progress.status == "failed":
+            warn("  ✗ Failed")
+        elif progress.status == "skipped":
+            detail("  ↪ Skipped (already extracted)")
+
+    # Confirmation prompt
+    if not auto and not dry_run and not use_json:
+        info(f"Extract from: {url}")
+        info(f"Output to: {output_dir}")
+        if layer_include:
+            detail(f"Layer filter: {', '.join(layer_include)}")
+        if layer_exclude:
+            detail(f"Exclude: {', '.join(layer_exclude)}")
+        if not click.confirm("Continue?", default=True):
+            raise SystemExit(0)
+
+    try:
+        report = extract_wfs_catalog(
+            url=url,
+            output_dir=output_dir,
+            layer_filter=layer_include,
+            layer_exclude=layer_exclude,
+            options=options,
+            on_progress=None if use_json else on_progress,
+        )
+    except Exception as e:
+        _output_extract_error(
+            use_json, type(e).__name__, f"Extraction failed: {e}", url, command="extract-wfs"
+        )
+        raise SystemExit(1) from None
+
+    _output_extract_result(report, output_dir, use_json, dry_run, command="extract-wfs")
 
 
 # =============================================================================

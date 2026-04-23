@@ -1,0 +1,667 @@
+"""WFS extraction orchestrator.
+
+This module ties together WFS extraction components:
+- Discovery → Filtering → Extraction → Report generation
+
+The orchestrator is the main entry point for `portolan extract wfs`.
+Unlike ArcGIS, WFS is always a single service endpoint (no services root).
+
+Typical usage:
+    from portolan_cli.extract.wfs.orchestrator import extract_wfs_catalog
+
+    result = extract_wfs_catalog(
+        url="https://example.com/wfs",
+        output_dir=Path("./output"),
+        layer_filter=["buildings*"],
+    )
+    print(f"Extracted {result.summary.succeeded}/{result.summary.total_layers} layers")
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+from portolan_cli.extract.common.filters import filter_layers
+from portolan_cli.extract.common.report import (
+    ExtractionReport,
+    ExtractionSummary,
+    LayerResult,
+    MetadataExtracted,
+    save_report,
+)
+from portolan_cli.extract.common.resume import ResumeState, get_resume_state, should_process_layer
+from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
+from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, discover_layers
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ExtractionOptions:
+    """Options for WFS extraction.
+
+    Attributes:
+        workers: Number of parallel workers for layer extraction.
+            Each layer is extracted independently; this controls how many
+            layers are processed concurrently.
+        retries: Number of retry attempts per failed layer.
+        timeout: Per-layer timeout in seconds. Note: geoparquet-io uses a
+            10-minute internal HTTP timeout for large datasets; this timeout
+            wraps the entire layer extraction including retries.
+        resume: Whether to resume from existing extraction report.
+        raw: If True, skip auto-init (only create extraction files, no STAC catalog).
+        dry_run: If True, list layers without extracting.
+        wfs_version: WFS version ("1.0.0", "1.1.0", "2.0.0", or "auto").
+            When "auto", the version is negotiated with the server once and
+            used consistently for both discovery and extraction.
+        output_crs: Target CRS for output (e.g., "EPSG:4326"). None keeps source CRS.
+        bbox: Bounding box filter (xmin, ymin, xmax, ymax) in output CRS.
+        limit: Maximum features per layer (None for unlimited).
+        page_size: Features per page when gpio uses parallel pagination for
+            very large layers (1M+ features). Default: 10000.
+    """
+
+    workers: int = 1
+    retries: int = 3
+    timeout: float = 300.0  # 5 minutes per layer (gpio has 10min internal timeout)
+    resume: bool = False
+    raw: bool = False
+    dry_run: bool = False
+    wfs_version: str = "auto"
+    output_crs: str | None = None
+    bbox: tuple[float, float, float, float] | None = None
+    limit: int | None = None
+    page_size: int = 10000
+
+
+@dataclass
+class ExtractionProgress:
+    """Progress callback data for extraction.
+
+    Attributes:
+        layer_index: Current layer index (0-based).
+        total_layers: Total number of layers to extract.
+        layer_name: Name of current layer.
+        status: Current status ("starting", "extracting", "success", "failed", "skipped").
+    """
+
+    layer_index: int
+    total_layers: int
+    layer_name: str
+    status: str
+
+
+def _slugify(name: str, disambiguate: bool = False) -> str:
+    """Convert a name to a filesystem-safe slug.
+
+    Args:
+        name: Original name (e.g., "ns:FeatureType")
+        disambiguate: If True, append a short hash to prevent collisions.
+
+    Returns:
+        Slugified name (e.g., "ns_featuretype" or "ns_featuretype_a1b2c3")
+    """
+    import hashlib
+
+    slug = name.lower()
+    slug = re.sub(r"[^a-z0-9]+", "_", slug)
+    slug = re.sub(r"_+", "_", slug)
+    slug = slug.strip("_")
+    slug = slug or "unnamed"
+
+    if disambiguate:
+        name_hash = hashlib.sha256(name.encode()).hexdigest()[:6]
+        slug = f"{slug}_{name_hash}"
+
+    return slug
+
+
+def _build_wfs_url(base_url: str, params: dict[str, str]) -> str:
+    """Build a WFS URL by merging params into base_url.
+
+    Properly handles existing query params and URL-encodes values.
+
+    Args:
+        base_url: Base WFS service URL (may already have query params).
+        params: Parameters to add/override (e.g., service, request, typename).
+
+    Returns:
+        Complete URL with merged and encoded parameters.
+    """
+    parsed = urlparse(base_url)
+    existing_params = dict(parse_qsl(parsed.query))
+    existing_params.update(params)
+    new_query = urlencode(existing_params)
+    return urlunparse(parsed._replace(query=new_query))
+
+
+def _emit_progress(
+    on_progress: Callable[[ExtractionProgress], None] | None,
+    layer_index: int,
+    total_layers: int,
+    layer_name: str,
+    status: str,
+) -> None:
+    """Emit a progress event if callback is provided."""
+    if on_progress:
+        on_progress(
+            ExtractionProgress(
+                layer_index=layer_index,
+                total_layers=total_layers,
+                layer_name=layer_name,
+                status=status,
+            )
+        )
+
+
+def _filter_discovered_layers(
+    layers: list[LayerInfo],
+    layer_filter: list[str] | None,
+    layer_exclude: list[str] | None,
+) -> list[LayerInfo]:
+    """Apply include/exclude filters to discovered layers."""
+    if not layer_filter and not layer_exclude:
+        return layers
+
+    layers_dicts: list[dict[str, int | str]] = [
+        {"id": layer.id, "name": layer.name} for layer in layers
+    ]
+    filtered_dicts = filter_layers(layers_dicts, include=layer_filter, exclude=layer_exclude)
+    filtered_ids = {d["id"] for d in filtered_dicts}
+    return [layer for layer in layers if layer.id in filtered_ids]
+
+
+def _extract_single_layer(
+    service_url: str,
+    layer: LayerInfo,
+    output_path: Path,
+    options: ExtractionOptions,
+    negotiated_version: str,
+) -> tuple[int, int, float]:
+    """Extract a single WFS layer using geoparquet-io.
+
+    Args:
+        service_url: WFS service URL.
+        layer: Layer info (typename used for extraction).
+        output_path: Path to write parquet file.
+        options: Extraction options.
+        negotiated_version: WFS version to use (already negotiated if "auto").
+
+    Returns:
+        Tuple of (feature_count, file_size_bytes, duration_seconds).
+
+    Raises:
+        Exception: If extraction fails.
+    """
+    from geoparquet_io.core.wfs import convert_wfs_to_geoparquet  # type: ignore[import-untyped]
+
+    start_time = time.monotonic()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Use gpio's convert_wfs_to_geoparquet which handles everything:
+    # - HTTP streaming via DuckDB
+    # - CRS negotiation
+    # - Hilbert sorting and bbox column
+    convert_wfs_to_geoparquet(
+        service_url=service_url,
+        typename=layer.typename,
+        output_file=str(output_path),
+        version=negotiated_version,
+        bbox=options.bbox,
+        output_crs=options.output_crs,
+        limit=options.limit,
+        page_size=options.page_size,
+        overwrite=True,  # We control overwrites via resume logic
+    )
+
+    duration = time.monotonic() - start_time
+
+    # Read back file stats
+    if output_path.exists():
+        import pyarrow.parquet as pq
+
+        metadata = pq.read_metadata(output_path)
+        feature_count = metadata.num_rows
+        file_size = output_path.stat().st_size
+    else:
+        feature_count = 0
+        file_size = 0
+
+    return feature_count, file_size, duration
+
+
+def _build_dry_run_report(
+    url: str,
+    layers: list[LayerInfo],
+    discovery_result: WFSDiscoveryResult | None = None,
+) -> ExtractionReport:
+    """Build a report for dry-run mode."""
+    dry_run_results = [
+        LayerResult(
+            id=layer.id,
+            name=layer.name,
+            status="pending",
+            features=0,
+            size_bytes=0,
+            duration_seconds=0.0,
+            output_path="",
+            warnings=[],
+            error=None,
+            attempts=0,
+        )
+        for layer in layers
+    ]
+    return _build_report(url=url, layer_results=dry_run_results, discovery_result=discovery_result)
+
+
+def _get_package_version(package_name: str) -> str:
+    """Get installed version of a package."""
+    try:
+        from importlib.metadata import version
+
+        return version(package_name)
+    except Exception:
+        return "unknown"
+
+
+def _build_metadata(url: str, discovery_result: WFSDiscoveryResult | None) -> MetadataExtracted:
+    """Build MetadataExtracted from discovery result."""
+    if not discovery_result:
+        return MetadataExtracted(
+            source_url=url,
+            description=None,
+            attribution=None,
+            keywords=None,
+            contact_name=None,
+            processing_notes=None,
+            known_issues=None,
+            license_info_raw=None,
+        )
+
+    processing_notes = None
+    if discovery_result.service_title:
+        processing_notes = f"WFS service: {discovery_result.service_title}"
+
+    return MetadataExtracted(
+        source_url=url,
+        description=discovery_result.service_abstract,
+        attribution=discovery_result.provider,
+        keywords=discovery_result.keywords,
+        contact_name=discovery_result.contact_name,
+        processing_notes=processing_notes,
+        known_issues=None,
+        license_info_raw=discovery_result.access_constraints,
+    )
+
+
+def _build_summary(layer_results: list[LayerResult]) -> ExtractionSummary:
+    """Compute extraction summary from layer results."""
+    return ExtractionSummary(
+        total_layers=len(layer_results),
+        succeeded=sum(1 for r in layer_results if r.status == "success"),
+        failed=sum(1 for r in layer_results if r.status == "failed"),
+        skipped=sum(1 for r in layer_results if r.status == "skipped"),
+        total_features=sum(r.features or 0 for r in layer_results),
+        total_size_bytes=sum(r.size_bytes or 0 for r in layer_results),
+        total_duration_seconds=sum(r.duration_seconds or 0.0 for r in layer_results),
+    )
+
+
+def _build_report(
+    url: str,
+    layer_results: list[LayerResult],
+    discovery_result: WFSDiscoveryResult | None = None,
+) -> ExtractionReport:
+    """Build an ExtractionReport from extraction results."""
+    return ExtractionReport(
+        extraction_date=datetime.now(timezone.utc).isoformat(),
+        source_url=url,
+        portolan_version=_get_package_version("portolan-cli"),
+        gpio_version=_get_package_version("geoparquet-io"),
+        metadata_extracted=_build_metadata(url, discovery_result),
+        layers=layer_results,
+        summary=_build_summary(layer_results),
+    )
+
+
+def _negotiate_version(url: str, wfs_version: str) -> str:
+    """Negotiate WFS version with the server.
+
+    Args:
+        url: WFS service URL.
+        wfs_version: User-requested version ("auto" or specific version).
+
+    Returns:
+        Negotiated version string (e.g., "1.1.0", "2.0.0").
+    """
+    if wfs_version != "auto":
+        return wfs_version
+
+    try:
+        from geoparquet_io.core.wfs import negotiate_wfs_version
+
+        version, _ = negotiate_wfs_version(url, preferred_version="auto")
+        return str(version)
+    except ImportError:
+        # Fallback if gpio doesn't have negotiate_wfs_version
+        return "1.1.0"
+    except Exception as e:
+        logger.warning("Version negotiation failed, using 1.1.0: %s", e)
+        return "1.1.0"
+
+
+def _extract_layer_task(
+    url: str,
+    layer: LayerInfo,
+    output_dir: Path,
+    options: ExtractionOptions,
+    negotiated_version: str,
+    layer_index: int,
+    total_layers: int,
+) -> LayerResult:
+    """Extract a single layer (task for parallel execution).
+
+    Returns LayerResult with success or failure status.
+    """
+    layer_slug = _slugify(layer.name, disambiguate=True)
+    collection_dir = output_dir / layer_slug
+    output_path = collection_dir / f"{layer_slug}.parquet"
+
+    retry_config = RetryConfig(max_attempts=options.retries)
+
+    result = retry_with_backoff(
+        _extract_single_layer,
+        retry_config,
+        url,
+        layer,
+        output_path,
+        options,
+        negotiated_version,
+        on_retry=lambda attempt, err: logger.debug(
+            "Retry %d for layer %s: %s", attempt, layer.name, err
+        ),
+    )
+
+    if result.success:
+        features, size_bytes, duration = result.value  # type: ignore[misc]
+        return LayerResult(
+            id=layer.id,
+            name=layer.name,
+            status="success",
+            features=features,
+            size_bytes=size_bytes,
+            duration_seconds=duration,
+            output_path=str(output_path.relative_to(output_dir)),
+            warnings=[],
+            error=None,
+            attempts=result.attempts,
+        )
+    else:
+        return LayerResult(
+            id=layer.id,
+            name=layer.name,
+            status="failed",
+            features=0,
+            size_bytes=0,
+            duration_seconds=0.0,
+            output_path="",
+            warnings=[],
+            error=str(result.error) if result.error else "Unknown error",
+            attempts=result.attempts,
+        )
+
+
+def extract_wfs_catalog(
+    url: str,
+    output_dir: Path,
+    *,
+    layer_filter: list[str] | None = None,
+    layer_exclude: list[str] | None = None,
+    options: ExtractionOptions | None = None,
+    on_progress: Callable[[ExtractionProgress], None] | None = None,
+) -> ExtractionReport:
+    """Extract layers from a WFS service to a Portolan catalog.
+
+    This is the main orchestration function that:
+    1. Negotiates WFS version (if "auto")
+    2. Discovers available layers via GetCapabilities
+    3. Applies filters
+    4. Handles resume logic
+    5. Extracts layers in parallel with retry
+    6. Generates extraction report
+
+    Args:
+        url: WFS service endpoint URL.
+        output_dir: Directory to write extracted data.
+        layer_filter: Glob patterns to include layers (if None, include all).
+        layer_exclude: Glob patterns to exclude layers.
+        options: Extraction options (defaults to ExtractionOptions()).
+        on_progress: Callback for progress updates.
+
+    Returns:
+        ExtractionReport with results for all layers.
+
+    Raises:
+        WFSDiscoveryError: If service discovery fails.
+    """
+    if options is None:
+        options = ExtractionOptions()
+
+    # Negotiate WFS version ONCE - use same version for discovery AND extraction
+    negotiated_version = _negotiate_version(url, options.wfs_version)
+    logger.debug("Using WFS version: %s", negotiated_version)
+
+    # Discover layers and service metadata
+    discovery_result = discover_layers(url, version=negotiated_version)
+    layers = discovery_result.layers
+
+    # Apply layer filters
+    layers = _filter_discovered_layers(layers, layer_filter, layer_exclude)
+
+    # Dry run - just return what would be extracted
+    if options.dry_run:
+        return _build_dry_run_report(url, layers, discovery_result)
+
+    # Create output directory structure
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / ".portolan").mkdir(exist_ok=True)
+
+    # Handle resume state
+    report_path = output_dir / ".portolan" / "extraction-report.json"
+    resume_state: ResumeState | None = None
+    existing_results: dict[str, LayerResult] = {}
+
+    if options.resume and report_path.exists():
+        from portolan_cli.extract.common.report import load_report
+
+        existing_report = load_report(report_path)
+        resume_state = get_resume_state(existing_report)
+        existing_results = {r.name: r for r in existing_report.layers}
+
+    # Separate layers into skip (already done) and extract (need processing)
+    layers_to_extract: list[tuple[int, LayerInfo]] = []
+    skipped_results: list[LayerResult] = []
+    total = len(layers)
+
+    for i, layer in enumerate(layers):
+        if resume_state and not should_process_layer(layer.id, resume_state, layer_name=layer.name):
+            if layer.name in existing_results:
+                _emit_progress(on_progress, i, total, layer.name, "skipped")
+                skipped_results.append(existing_results[layer.name])
+                continue
+            logger.warning(
+                "Layer '%s' marked complete in resume state but result missing; re-extracting",
+                layer.name,
+            )
+        layers_to_extract.append((i, layer))
+
+    # Extract layers - parallel if workers > 1, sequential otherwise
+    extracted_results: list[LayerResult] = []
+
+    if options.workers > 1 and len(layers_to_extract) > 1:
+        # Parallel extraction
+        actual_workers = min(options.workers, len(layers_to_extract))
+        logger.info("Extracting %d layers with %d workers", len(layers_to_extract), actual_workers)
+
+        with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+            future_to_layer = {
+                executor.submit(
+                    _extract_layer_task,
+                    url,
+                    layer,
+                    output_dir,
+                    options,
+                    negotiated_version,
+                    i,
+                    total,
+                ): (i, layer)
+                for i, layer in layers_to_extract
+            }
+
+            for future in as_completed(future_to_layer):
+                i, layer = future_to_layer[future]
+                try:
+                    result = future.result(timeout=options.timeout)
+                    extracted_results.append(result)
+                    status = "success" if result.status == "success" else "failed"
+                    _emit_progress(on_progress, i, total, layer.name, status)
+                except TimeoutError:
+                    logger.error("Layer %s timed out after %ds", layer.name, options.timeout)
+                    _emit_progress(on_progress, i, total, layer.name, "failed")
+                    extracted_results.append(
+                        LayerResult(
+                            id=layer.id,
+                            name=layer.name,
+                            status="failed",
+                            features=0,
+                            size_bytes=0,
+                            duration_seconds=options.timeout,
+                            output_path="",
+                            warnings=[],
+                            error=f"Timeout after {options.timeout}s",
+                            attempts=1,
+                        )
+                    )
+                except Exception as e:
+                    logger.error("Layer %s failed: %s", layer.name, e)
+                    _emit_progress(on_progress, i, total, layer.name, "failed")
+                    extracted_results.append(
+                        LayerResult(
+                            id=layer.id,
+                            name=layer.name,
+                            status="failed",
+                            features=0,
+                            size_bytes=0,
+                            duration_seconds=0.0,
+                            output_path="",
+                            warnings=[],
+                            error=str(e),
+                            attempts=1,
+                        )
+                    )
+    else:
+        # Sequential extraction
+        for i, layer in layers_to_extract:
+            _emit_progress(on_progress, i, total, layer.name, "starting")
+            _emit_progress(on_progress, i, total, layer.name, "extracting")
+
+            result = _extract_layer_task(
+                url, layer, output_dir, options, negotiated_version, i, total
+            )
+            extracted_results.append(result)
+
+            status = "success" if result.status == "success" else "failed"
+            _emit_progress(on_progress, i, total, layer.name, status)
+
+    # Combine results in original order
+    all_results = skipped_results + extracted_results
+    # Sort by layer id to maintain original discovery order
+    all_results.sort(key=lambda r: r.id)
+
+    # Build and save report
+    report = _build_report(url=url, layer_results=all_results, discovery_result=discovery_result)
+    save_report(report, report_path)
+
+    # Auto-init catalog unless raw mode
+    if not options.raw:
+        _auto_init_catalog(output_dir, report)
+
+    return report
+
+
+def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
+    """Initialize a Portolan catalog and add extracted files.
+
+    Called automatically after extraction unless raw=True.
+    Creates catalog.json, config.yaml, and collection.json for each layer.
+    Also adds provenance via links (GetFeature-style URLs).
+    """
+    from portolan_cli.catalog import add_files, init_catalog
+
+    parquet_files = [
+        output_dir / result.output_path
+        for result in report.layers
+        if result.status == "success" and result.output_path
+    ]
+
+    if not parquet_files:
+        return
+
+    init_catalog(output_dir, title=None)
+
+    add_files(
+        paths=parquet_files,
+        catalog_root=output_dir,
+    )
+
+    # Add via links for provenance tracking
+    _add_via_links_to_collections(output_dir, report)
+
+
+def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) -> None:
+    """Add via provenance links to each extracted collection.
+
+    Each collection gets a `via` link pointing to a GetFeature-style URL
+    for the original WFS layer.
+    """
+    from portolan_cli.stac import add_via_link
+
+    source_url = report.source_url
+
+    for layer in report.layers:
+        if layer.status != "success" or not layer.output_path:
+            continue
+
+        output_parts = Path(layer.output_path).parts
+        if not output_parts:
+            continue
+
+        collection_dir = output_dir / output_parts[0]
+        collection_path = collection_dir / "collection.json"
+
+        if not collection_path.exists():
+            continue
+
+        # Build GetFeature-style URL for provenance
+        # WFS GetFeature URL pattern: service_url?service=WFS&request=GetFeature&typename=X
+        layer_url = _build_wfs_url(
+            source_url, {"service": "WFS", "request": "GetFeature", "typename": layer.name}
+        )
+
+        add_via_link(
+            collection_path,
+            layer_url,
+            title=f"Source WFS layer: {layer.name}",
+        )
