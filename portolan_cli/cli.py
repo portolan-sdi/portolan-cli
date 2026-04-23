@@ -257,6 +257,14 @@ def cli(ctx: click.Context, output_format: str) -> None:
     ctx.ensure_object(dict)
     ctx.obj["format"] = output_format
 
+    # Load .env from catalog root if present (Issue #356)
+    # This enables storing sensitive settings (remote, profile, region) in .env
+    from portolan_cli.config import load_dotenv_from_catalog
+
+    catalog_path = find_catalog_root()
+    if catalog_path:
+        load_dotenv_from_catalog(catalog_path)
+
 
 @cli.command()
 @click.argument("path", type=click.Path(path_type=Path), default=".")

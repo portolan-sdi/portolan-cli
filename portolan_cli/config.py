@@ -31,13 +31,21 @@ from typing import Any
 
 import yaml
 
-# Known settings for documentation/validation (but unknown keys are still allowed)
-KNOWN_SETTINGS: frozenset[str] = frozenset(
+# Sensitive settings that must NOT be stored in config.yaml (Issue #356)
+# These get pushed to remote storage and would expose credentials/infra details.
+# Use environment variables (PORTOLAN_<KEY>) or .env files instead.
+SENSITIVE_SETTINGS: frozenset[str] = frozenset(
     {
         "remote",
         "aws_profile",
-        "profile",  # Alias for aws_profile (more intuitive)
-        "region",  # AWS region for S3
+        "profile",
+        "region",
+    }
+)
+
+# Known settings for documentation/validation (but unknown keys are still allowed)
+KNOWN_SETTINGS: frozenset[str] = frozenset(
+    {
         "ignored_files",
         "backend",
         "statistics.enabled",
@@ -94,6 +102,9 @@ DEFAULT_IGNORED_FILES: list[str] = [
     ".git*",  # Git internals (.gitignore, .gitattributes, etc.)
     "*.pyc",  # Python bytecode
     "__pycache__",  # Python cache directory marker
+    ".env",  # Environment files with credentials (Issue #356)
+    ".env.*",  # .env.local, .env.production, etc.
+    ".env.local",  # Explicit for common pattern
 ]
 
 # Config file name (inside .portolan/)
@@ -337,10 +348,21 @@ def set_setting(
 
     Args:
         catalog_path: Root path of the catalog.
-        key: Setting key (e.g., "remote", "aws_profile")
+        key: Setting key (e.g., "ignored_files", "statistics.enabled")
         value: Value to set
         collection: Optional collection name for collection-level config
+
+    Raises:
+        ValueError: If key is a sensitive setting (remote, profile, region).
+            These must be set via environment variables or .env files.
     """
+    if key in SENSITIVE_SETTINGS:
+        env_var = _get_env_var_name(key)
+        raise ValueError(
+            f"'{key}' cannot be stored in config.yaml (would be pushed to remote). "
+            f"Use environment variable {env_var} or add to .env file in catalog root."
+        )
+
     config = load_config(catalog_path)
 
     if collection is not None:
@@ -423,8 +445,9 @@ def list_settings(
     # Add known settings
     all_keys.update(KNOWN_SETTINGS)
 
-    # Check environment variables for all known settings
-    for key in KNOWN_SETTINGS:
+    # Check environment variables for all known + sensitive settings
+    # Sensitive settings can still be read from env vars, just not saved to config
+    for key in KNOWN_SETTINGS | SENSITIVE_SETTINGS:
         env_var = _get_env_var_name(key)
         if env_var in os.environ:
             all_keys.add(key)
@@ -708,3 +731,36 @@ def load_merged_metadata(
         Merged metadata dictionary.
     """
     return load_merged_yaml(path, "metadata.yaml", catalog_root)
+
+
+# =============================================================================
+# .env file support (Issue #356)
+# =============================================================================
+
+
+def load_dotenv_from_catalog(catalog_path: Path | None = None) -> bool:
+    """Load environment variables from .env file in catalog root.
+
+    Searches for .env file in catalog root directory and loads it using
+    python-dotenv. Does NOT override existing environment variables.
+
+    This enables storing sensitive settings (remote, profile, region) in
+    a .env file that won't be pushed to remote storage.
+
+    Args:
+        catalog_path: Path to catalog root. If None, attempts to find it.
+
+    Returns:
+        True if a .env file was found and loaded, False otherwise.
+    """
+    from dotenv import load_dotenv
+
+    if catalog_path is None:
+        return False
+
+    env_file = catalog_path / ".env"
+    if not env_file.is_file():
+        return False
+
+    load_dotenv(env_file, override=False)
+    return True

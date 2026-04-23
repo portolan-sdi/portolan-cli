@@ -121,6 +121,7 @@ _ALWAYS_IGNORED: frozenset[str] = frozenset(
         ".DS_Store",
         "Thumbs.db",
         ".gitkeep",
+        ".env",  # Credentials - must never be tracked/pushed (Issue #356)
     }
 )
 

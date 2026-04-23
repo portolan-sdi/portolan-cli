@@ -1,15 +1,26 @@
 # Configuration
 
-Portolan stores configuration in `.portolan/config.yaml` within your catalog directory.
+Portolan uses two configuration mechanisms:
+
+- **`.portolan/config.yaml`** — Non-sensitive settings (conversion, PMTiles, backend)
+- **`.env` file or environment variables** — Credentials (remote, profile, region)
 
 ## Quick Start
 
-```yaml
-# .portolan/config.yaml
-remote: s3://my-bucket/catalog
-profile: production    # AWS profile (alias: aws_profile)
-region: us-west-2      # AWS region for S3
+```bash
+# Create .env file in catalog root (never pushed to remote)
+cat > .env << 'EOF'
+PORTOLAN_REMOTE=s3://my-bucket/catalog
+PORTOLAN_PROFILE=production
+PORTOLAN_REGION=us-west-2
+EOF
+
+# Verify configuration
+portolan config list
 ```
+
+!!! warning "Security"
+    Credentials (`remote`, `profile`, `region`) cannot be stored in `config.yaml` because that file gets pushed to remote storage. Use environment variables or a `.env` file in your catalog root instead. The `.env` file is automatically ignored and never uploaded.
 
 ## Backend (Enterprise)
 
@@ -58,16 +69,37 @@ See the [portolake documentation](https://github.com/portolan-sdi/portolake) for
 
 ## Setting Configuration
 
+### Credentials (via .env or environment)
+
+Credentials are **sensitive settings** that cannot be stored in `config.yaml`:
+
 ```bash
-# Set remote storage URL
-portolan config set remote s3://my-bucket/catalog
+# Option 1: .env file (recommended for local development)
+cat > .env << 'EOF'
+PORTOLAN_REMOTE=s3://my-bucket/catalog
+PORTOLAN_PROFILE=production
+PORTOLAN_REGION=us-west-2
+EOF
 
-# Set AWS profile (either name works)
-portolan config set profile production
-# portolan config set aws_profile production  # Also valid
+# Option 2: Environment variables (for CI/CD)
+export PORTOLAN_REMOTE=s3://my-bucket/catalog
+export PORTOLAN_PROFILE=production
+export PORTOLAN_REGION=us-west-2
 
-# Set AWS region
-portolan config set region us-west-2
+# View current settings (reads from env/.env)
+portolan config list
+```
+
+### Other Settings (via config.yaml)
+
+Non-sensitive settings are stored in `.portolan/config.yaml`:
+
+```bash
+# Set backend type
+portolan config set backend iceberg
+
+# Set conversion options
+portolan config set conversion.extensions.preserve "['shp', 'gpkg']"
 
 # View current settings
 portolan config list
@@ -99,7 +131,7 @@ Control how Portolan handles different file formats during `check` and `convert`
 
 ```yaml
 # .portolan/config.yaml
-remote: s3://my-bucket/catalog
+# Note: remote/profile/region go in .env, not here
 
 conversion:
   extensions:
@@ -341,12 +373,10 @@ Override settings for specific collections using the `collections:` section:
 
 ```yaml
 # .portolan/config.yaml
-remote: s3://default-bucket/catalog
+# Note: collection-level credential overrides go in .env
+# PORTOLAN_REMOTE and PORTOLAN_PROFILE are catalog-wide
 
 collections:
-  public-data:
-    remote: s3://public-bucket/data
-
   analytics:
     conversion:
       extensions:
@@ -391,13 +421,16 @@ Settings are inherited from parent levels. Child values override parent values:
 
 ```yaml
 # catalog/.portolan/config.yaml
-aws_profile: default
-remote: s3://catalog/
+backend: file
+pmtiles.enabled: true
 
 # catalog/demographics/.portolan/config.yaml
-remote: s3://demographics/  # Overrides parent
-# aws_profile inherited from catalog
+pmtiles.enabled: false  # Overrides parent (no PMTiles for this collection)
+# backend inherited from catalog
 ```
+
+!!! note "Credentials are catalog-wide"
+    Credential settings (`remote`, `profile`, `region`) are set via `.env` at catalog root and apply to all collections. Per-collection credential overrides are not supported.
 
 ### Precedence
 
@@ -419,16 +452,27 @@ Most users should start with `collections:` and only add per-collection `.portol
 
 ## Environment Variables
 
-All settings can be set via environment variables with the `PORTOLAN_` prefix:
+### Credential Settings (required via env/.env)
+
+These sensitive settings **must** use environment variables or `.env` files—they cannot be stored in `config.yaml`:
 
 | Setting | Environment Variable | Notes |
 |---------|---------------------|-------|
-| `remote` | `PORTOLAN_REMOTE` | |
-| `aws_profile` | `PORTOLAN_AWS_PROFILE` | |
+| `remote` | `PORTOLAN_REMOTE` | S3/GCS/Azure URL |
+| `aws_profile` | `PORTOLAN_AWS_PROFILE` | AWS credential profile |
 | `profile` | `PORTOLAN_PROFILE` | Alias for `aws_profile` |
 | `region` | `PORTOLAN_REGION` | AWS region for S3 |
 
-Environment variables override config file settings but are overridden by CLI arguments.
+### Other Settings (optional via env)
+
+Non-sensitive settings can also be set via environment variables, which override `config.yaml`:
+
+| Setting | Environment Variable |
+|---------|---------------------|
+| `backend` | `PORTOLAN_BACKEND` |
+| `pmtiles.enabled` | `PORTOLAN_PMTILES_ENABLED` |
+
+**Precedence:** CLI arguments > Environment variables > config.yaml > Defaults
 
 ### Setting Aliases
 
@@ -440,7 +484,7 @@ Some settings have aliases for convenience:
 
 Both names work interchangeably in config files and environment variables.
 
-<!-- freshness: last-verified: 2026-04-07 -->
+<!-- freshness: last-verified: 2026-04-23 -->
 ## Metadata Enrichment
 
 In addition to `config.yaml`, Portolan supports `.portolan/metadata.yaml` for human-enrichable metadata that supplements STAC.

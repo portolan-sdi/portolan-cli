@@ -31,7 +31,7 @@ class TestConfigSet:
             # Initialize catalog first
             runner.invoke(cli, ["init", "--auto"])
 
-            result = runner.invoke(cli, ["config", "set", "remote", "s3://my-bucket/"])
+            result = runner.invoke(cli, ["config", "set", "backend", "stac"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             assert Path(".portolan/config.yaml").exists()
@@ -42,11 +42,11 @@ class TestConfigSet:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
 
-            result = runner.invoke(cli, ["config", "set", "remote", "s3://bucket/path/"])
+            result = runner.invoke(cli, ["config", "set", "backend", "iceberg"])
 
             assert result.exit_code == 0
             content = Path(".portolan/config.yaml").read_text()
-            assert "s3://bucket/path/" in content
+            assert "iceberg" in content
 
     @pytest.mark.unit
     def test_set_outputs_success_message(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -54,11 +54,11 @@ class TestConfigSet:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
 
-            result = runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
+            result = runner.invoke(cli, ["config", "set", "backend", "stac"])
 
             assert result.exit_code == 0
             # Should have success indicator
-            assert "remote" in result.output.lower() or "\u2713" in result.output
+            assert "backend" in result.output.lower() or "\u2713" in result.output
 
     @pytest.mark.unit
     def test_set_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -66,16 +66,14 @@ class TestConfigSet:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
 
-            result = runner.invoke(
-                cli, ["--format", "json", "config", "set", "remote", "s3://bucket/"]
-            )
+            result = runner.invoke(cli, ["--format", "json", "config", "set", "backend", "stac"])
 
             assert result.exit_code == 0
             output = json.loads(result.output)
             assert output["success"] is True
             assert output["command"] == "config set"
-            assert output["data"]["key"] == "remote"
-            assert output["data"]["value"] == "s3://bucket/"
+            assert output["data"]["key"] == "backend"
+            assert output["data"]["value"] == "stac"
 
     @pytest.mark.unit
     def test_set_collection_level(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -85,7 +83,7 @@ class TestConfigSet:
 
             result = runner.invoke(
                 cli,
-                ["config", "set", "remote", "s3://collection/", "--collection", "demographics"],
+                ["config", "set", "backend", "iceberg", "--collection", "demographics"],
             )
 
             assert result.exit_code == 0
@@ -99,7 +97,7 @@ class TestConfigSet:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Don't init a catalog
 
-            result = runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
+            result = runner.invoke(cli, ["config", "set", "backend", "stac"])
 
             assert result.exit_code == 1
             assert "catalog" in result.output.lower() or "not found" in result.output.lower()
@@ -112,11 +110,28 @@ class TestConfigSet:
 
             result = runner.invoke(
                 cli,
-                ["config", "set", "remote", "s3://col/", "--collection", "demo"],
+                ["config", "set", "backend", "stac", "--collection", "demo"],
             )
 
             assert result.exit_code == 0
             assert "demo" in result.output
+
+    @pytest.mark.unit
+    def test_set_rejects_sensitive_settings(self, runner: CliRunner, tmp_path: Path) -> None:
+        """config set should reject sensitive settings (remote, profile, region)."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            # Test remote
+            result = runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
+            assert result.exit_code == 1
+            assert "PORTOLAN_REMOTE" in result.output
+            assert ".env" in result.output
+
+            # Test profile
+            result = runner.invoke(cli, ["config", "set", "profile", "myprofile"])
+            assert result.exit_code == 1
+            assert "PORTOLAN_PROFILE" in result.output
 
 
 class TestConfigGet:
@@ -130,9 +145,12 @@ class TestConfigGet:
     @pytest.mark.unit
     def test_get_reads_from_config_file(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should read value from config file."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(cli, ["config", "set", "remote", "s3://test-bucket/"])
+            # Write directly to config (remote is sensitive, can't use config set)
+            save_config(Path("."), {"remote": "s3://test-bucket/"})
 
             result = runner.invoke(cli, ["config", "get", "remote"])
 
@@ -142,9 +160,11 @@ class TestConfigGet:
     @pytest.mark.unit
     def test_get_shows_source(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should show the source of the value."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
+            save_config(Path("."), {"remote": "s3://bucket/"})
 
             result = runner.invoke(cli, ["config", "get", "remote"])
 
@@ -155,9 +175,11 @@ class TestConfigGet:
     @pytest.mark.unit
     def test_get_env_var_override(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should show env var when it overrides config."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(cli, ["config", "set", "remote", "s3://from-config/"])
+            save_config(Path("."), {"remote": "s3://from-config/"})
 
             with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://from-env/"}):
                 result = runner.invoke(cli, ["config", "get", "remote"])
@@ -192,9 +214,11 @@ class TestConfigGet:
     @pytest.mark.unit
     def test_get_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get should output JSON envelope with --format json."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
+            save_config(Path("."), {"remote": "s3://bucket/"})
 
             result = runner.invoke(cli, ["--format", "json", "config", "get", "remote"])
 
@@ -218,10 +242,11 @@ class TestConfigList:
     @pytest.mark.unit
     def test_list_shows_all_settings(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list should show all configured settings."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
-            runner.invoke(cli, ["config", "set", "aws_profile", "prod"])
+            save_config(Path("."), {"remote": "s3://bucket/", "aws_profile": "prod"})
 
             result = runner.invoke(cli, ["config", "list"])
 
@@ -234,9 +259,11 @@ class TestConfigList:
     @pytest.mark.unit
     def test_list_shows_sources(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list should show source for each setting."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
+            save_config(Path("."), {"remote": "s3://bucket/"})
 
             with mock.patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "from-env"}):
                 result = runner.invoke(cli, ["config", "list"])
@@ -249,9 +276,11 @@ class TestConfigList:
     @pytest.mark.unit
     def test_list_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list should output JSON envelope with --format json."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
+            save_config(Path("."), {"remote": "s3://bucket/"})
 
             result = runner.invoke(cli, ["--format", "json", "config", "list"])
 
@@ -286,11 +315,13 @@ class TestConfigList:
     @pytest.mark.unit
     def test_list_shows_collection_in_text(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list --collection should mention collection in text output."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(
-                cli,
-                ["config", "set", "remote", "s3://col/", "--collection", "demo"],
+            save_config(
+                Path("."),
+                {"collections": {"demo": {"remote": "s3://col/"}}},
             )
 
             result = runner.invoke(cli, ["config", "list", "--collection", "demo"])
@@ -310,9 +341,11 @@ class TestConfigUnset:
     @pytest.mark.unit
     def test_unset_removes_setting(self, runner: CliRunner, tmp_path: Path) -> None:
         """config unset should remove setting from config file."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
+            save_config(Path("."), {"remote": "s3://bucket/"})
 
             result = runner.invoke(cli, ["config", "unset", "remote"])
 
@@ -346,9 +379,11 @@ class TestConfigUnset:
     @pytest.mark.unit
     def test_unset_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config unset should output JSON envelope with --format json."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(cli, ["config", "set", "remote", "s3://bucket/"])
+            save_config(Path("."), {"remote": "s3://bucket/"})
 
             result = runner.invoke(cli, ["--format", "json", "config", "unset", "remote"])
 
@@ -362,11 +397,13 @@ class TestConfigUnset:
     @pytest.mark.unit
     def test_unset_collection_level(self, runner: CliRunner, tmp_path: Path) -> None:
         """config unset --collection should remove collection-level setting."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(
-                cli,
-                ["config", "set", "remote", "s3://collection/", "--collection", "demographics"],
+            save_config(
+                Path("."),
+                {"collections": {"demographics": {"remote": "s3://collection/"}}},
             )
 
             result = runner.invoke(
@@ -420,11 +457,13 @@ class TestConfigErrorMessages:
     @pytest.mark.unit
     def test_get_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config get --collection should include collection in JSON output."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(
-                cli,
-                ["config", "set", "remote", "s3://col/", "--collection", "demo"],
+            save_config(
+                Path("."),
+                {"collections": {"demo": {"remote": "s3://col/"}}},
             )
 
             result = runner.invoke(
@@ -443,6 +482,7 @@ class TestConfigErrorMessages:
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
 
+            # Use non-sensitive key for testing JSON output format
             result = runner.invoke(
                 cli,
                 [
@@ -450,8 +490,8 @@ class TestConfigErrorMessages:
                     "json",
                     "config",
                     "set",
-                    "remote",
-                    "s3://col/",
+                    "backend",
+                    "stac",
                     "--collection",
                     "demo",
                 ],
@@ -523,11 +563,13 @@ class TestConfigErrorMessages:
     @pytest.mark.unit
     def test_unset_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config unset --collection should include collection in JSON output."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(
-                cli,
-                ["config", "set", "remote", "s3://col/", "--collection", "demo"],
+            save_config(
+                Path("."),
+                {"collections": {"demo": {"remote": "s3://col/"}}},
             )
 
             result = runner.invoke(

@@ -376,10 +376,10 @@ class TestSetSetting:
 
         (tmp_path / ".portolan").mkdir()
 
-        set_setting(tmp_path, "remote", "s3://new-bucket/")
+        set_setting(tmp_path, "backend", "iceberg")
 
         config = load_config(tmp_path)
-        assert config["remote"] == "s3://new-bucket/"
+        assert config["backend"] == "iceberg"
 
     @pytest.mark.unit
     def test_set_collection_level_setting(self, tmp_path: Path) -> None:
@@ -388,10 +388,10 @@ class TestSetSetting:
 
         (tmp_path / ".portolan").mkdir()
 
-        set_setting(tmp_path, "remote", "s3://collection-bucket/", collection="demographics")
+        set_setting(tmp_path, "backend", "stac", collection="demographics")
 
         config = load_config(tmp_path)
-        assert config["collections"]["demographics"]["remote"] == "s3://collection-bucket/"
+        assert config["collections"]["demographics"]["backend"] == "stac"
 
     @pytest.mark.unit
     def test_set_preserves_existing_config(self, tmp_path: Path) -> None:
@@ -399,13 +399,13 @@ class TestSetSetting:
         from portolan_cli.config import load_config, save_config, set_setting
 
         (tmp_path / ".portolan").mkdir()
-        save_config(tmp_path, {"remote": "s3://existing/", "aws_profile": "prod"})
+        save_config(tmp_path, {"backend": "stac", "custom_key": "old"})
 
-        set_setting(tmp_path, "aws_profile", "dev")
+        set_setting(tmp_path, "custom_key", "new")
 
         config = load_config(tmp_path)
-        assert config["remote"] == "s3://existing/"
-        assert config["aws_profile"] == "dev"
+        assert config["backend"] == "stac"
+        assert config["custom_key"] == "new"
 
     @pytest.mark.unit
     def test_set_creates_collections_section_if_missing(self, tmp_path: Path) -> None:
@@ -414,7 +414,7 @@ class TestSetSetting:
 
         (tmp_path / ".portolan").mkdir()
 
-        set_setting(tmp_path, "remote", "s3://new/", collection="newcollection")
+        set_setting(tmp_path, "backend", "stac", collection="newcollection")
 
         config = load_config(tmp_path)
         assert "collections" in config
@@ -502,18 +502,26 @@ class TestConfigConstants:
     """Tests for config-related constants and defaults."""
 
     @pytest.mark.unit
-    def test_known_settings_includes_remote(self) -> None:
-        """KNOWN_SETTINGS should include 'remote'."""
-        from portolan_cli.config import KNOWN_SETTINGS
+    def test_sensitive_settings_includes_remote(self) -> None:
+        """SENSITIVE_SETTINGS should include 'remote' (Issue #356)."""
+        from portolan_cli.config import SENSITIVE_SETTINGS
 
-        assert "remote" in KNOWN_SETTINGS
+        assert "remote" in SENSITIVE_SETTINGS
 
     @pytest.mark.unit
-    def test_known_settings_includes_aws_profile(self) -> None:
-        """KNOWN_SETTINGS should include 'aws_profile'."""
-        from portolan_cli.config import KNOWN_SETTINGS
+    def test_sensitive_settings_includes_profile(self) -> None:
+        """SENSITIVE_SETTINGS should include 'profile' and 'aws_profile' (Issue #356)."""
+        from portolan_cli.config import SENSITIVE_SETTINGS
 
-        assert "aws_profile" in KNOWN_SETTINGS
+        assert "profile" in SENSITIVE_SETTINGS
+        assert "aws_profile" in SENSITIVE_SETTINGS
+
+    @pytest.mark.unit
+    def test_sensitive_settings_includes_region(self) -> None:
+        """SENSITIVE_SETTINGS should include 'region' (Issue #356)."""
+        from portolan_cli.config import SENSITIVE_SETTINGS
+
+        assert "region" in SENSITIVE_SETTINGS
 
     @pytest.mark.unit
     def test_known_settings_includes_ignored_files(self) -> None:
@@ -521,6 +529,14 @@ class TestConfigConstants:
         from portolan_cli.config import KNOWN_SETTINGS
 
         assert "ignored_files" in KNOWN_SETTINGS
+
+    @pytest.mark.unit
+    def test_sensitive_settings_not_in_known_settings(self) -> None:
+        """Sensitive settings should not be in KNOWN_SETTINGS (Issue #356)."""
+        from portolan_cli.config import KNOWN_SETTINGS, SENSITIVE_SETTINGS
+
+        for setting in SENSITIVE_SETTINGS:
+            assert setting not in KNOWN_SETTINGS, f"{setting} should not be in KNOWN_SETTINGS"
 
 
 class TestGetIgnoredFiles:
@@ -680,6 +696,153 @@ class TestConfigFilePath:
         path = get_config_path(tmp_path)
 
         assert path == tmp_path / ".portolan" / "config.yaml"
+
+
+class TestSensitiveSettings:
+    """Tests for sensitive settings protection (Issue #356)."""
+
+    @pytest.mark.unit
+    def test_set_setting_rejects_remote(self, tmp_path: Path) -> None:
+        """set_setting should reject 'remote' as a sensitive setting."""
+        from portolan_cli.config import set_setting
+
+        (tmp_path / ".portolan").mkdir()
+
+        with pytest.raises(ValueError) as exc_info:
+            set_setting(tmp_path, "remote", "s3://bucket/")
+
+        assert "remote" in str(exc_info.value)
+        assert "PORTOLAN_REMOTE" in str(exc_info.value)
+        assert ".env" in str(exc_info.value)
+
+    @pytest.mark.unit
+    def test_set_setting_rejects_profile(self, tmp_path: Path) -> None:
+        """set_setting should reject 'profile' as a sensitive setting."""
+        from portolan_cli.config import set_setting
+
+        (tmp_path / ".portolan").mkdir()
+
+        with pytest.raises(ValueError) as exc_info:
+            set_setting(tmp_path, "profile", "myprofile")
+
+        assert "profile" in str(exc_info.value)
+        assert "PORTOLAN_PROFILE" in str(exc_info.value)
+
+    @pytest.mark.unit
+    def test_set_setting_rejects_aws_profile(self, tmp_path: Path) -> None:
+        """set_setting should reject 'aws_profile' as a sensitive setting."""
+        from portolan_cli.config import set_setting
+
+        (tmp_path / ".portolan").mkdir()
+
+        with pytest.raises(ValueError) as exc_info:
+            set_setting(tmp_path, "aws_profile", "myprofile")
+
+        assert "aws_profile" in str(exc_info.value)
+
+    @pytest.mark.unit
+    def test_set_setting_rejects_region(self, tmp_path: Path) -> None:
+        """set_setting should reject 'region' as a sensitive setting."""
+        from portolan_cli.config import set_setting
+
+        (tmp_path / ".portolan").mkdir()
+
+        with pytest.raises(ValueError) as exc_info:
+            set_setting(tmp_path, "region", "us-west-2")
+
+        assert "region" in str(exc_info.value)
+
+    @pytest.mark.unit
+    def test_set_setting_allows_non_sensitive_keys(self, tmp_path: Path) -> None:
+        """set_setting should allow non-sensitive keys like 'ignored_files'."""
+        from portolan_cli.config import load_config, set_setting
+
+        (tmp_path / ".portolan").mkdir()
+
+        set_setting(tmp_path, "ignored_files", ["*.bak"])
+
+        config = load_config(tmp_path)
+        assert config["ignored_files"] == ["*.bak"]
+
+
+class TestDotenvLoading:
+    """Tests for .env file loading (Issue #356)."""
+
+    @pytest.mark.unit
+    def test_load_dotenv_from_catalog_loads_env_file(self, tmp_path: Path) -> None:
+        """load_dotenv_from_catalog should load .env file from catalog root."""
+        from portolan_cli.config import load_dotenv_from_catalog
+
+        # Create .env file
+        env_file = tmp_path / ".env"
+        env_file.write_text("PORTOLAN_REMOTE=s3://from-dotenv/\n")
+
+        # Clear any existing env var
+        with mock.patch.dict(os.environ, {}, clear=True):
+            result = load_dotenv_from_catalog(tmp_path)
+
+            assert result is True
+            assert os.environ.get("PORTOLAN_REMOTE") == "s3://from-dotenv/"
+
+    @pytest.mark.unit
+    def test_load_dotenv_returns_false_when_no_env_file(self, tmp_path: Path) -> None:
+        """load_dotenv_from_catalog should return False when .env doesn't exist."""
+        from portolan_cli.config import load_dotenv_from_catalog
+
+        result = load_dotenv_from_catalog(tmp_path)
+
+        assert result is False
+
+    @pytest.mark.unit
+    def test_load_dotenv_returns_false_for_none_path(self) -> None:
+        """load_dotenv_from_catalog should return False when path is None."""
+        from portolan_cli.config import load_dotenv_from_catalog
+
+        result = load_dotenv_from_catalog(None)
+
+        assert result is False
+
+    @pytest.mark.unit
+    def test_load_dotenv_does_not_override_existing_env_vars(self, tmp_path: Path) -> None:
+        """load_dotenv_from_catalog should not override existing env vars."""
+        from portolan_cli.config import load_dotenv_from_catalog
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("PORTOLAN_REMOTE=s3://from-dotenv/\n")
+
+        with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://existing/"}):
+            load_dotenv_from_catalog(tmp_path)
+
+            # Should keep existing value, not override
+            assert os.environ.get("PORTOLAN_REMOTE") == "s3://existing/"
+
+    @pytest.mark.unit
+    def test_get_setting_reads_from_dotenv_via_env_var(self, tmp_path: Path) -> None:
+        """get_setting should read values loaded from .env via env vars."""
+        from portolan_cli.config import get_setting, load_dotenv_from_catalog
+
+        (tmp_path / ".portolan").mkdir()
+        env_file = tmp_path / ".env"
+        env_file.write_text("PORTOLAN_REMOTE=s3://from-dotenv/\n")
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            load_dotenv_from_catalog(tmp_path)
+            result = get_setting("remote", catalog_path=tmp_path)
+
+            assert result == "s3://from-dotenv/"
+
+
+class TestEnvFileIgnored:
+    """Tests that .env files are excluded from tracking (Issue #356)."""
+
+    @pytest.mark.unit
+    def test_default_ignored_files_includes_env(self) -> None:
+        """DEFAULT_IGNORED_FILES should include .env patterns."""
+        from portolan_cli.config import DEFAULT_IGNORED_FILES
+
+        assert ".env" in DEFAULT_IGNORED_FILES
+        assert ".env.*" in DEFAULT_IGNORED_FILES
+        assert ".env.local" in DEFAULT_IGNORED_FILES
 
 
 class TestListSettings:

@@ -73,10 +73,17 @@ If credentials aren't configured, guide the user:
 # aws_access_key_id = <from Source Co-op dashboard>
 # aws_secret_access_key = <from Source Co-op dashboard>
 
-# 2. Configure Portolan to use this profile
-portolan config set profile source-coop
-portolan config set remote "s3://us-west-2.opendata.source.coop/{org}/{product}/"
+# 2. Create .env file in catalog root (never pushed to remote)
+cat > .env << 'EOF'
+PORTOLAN_REMOTE=s3://us-west-2.opendata.source.coop/{org}/{product}/
+PORTOLAN_PROFILE=source-coop
+EOF
+
+# Verify configuration
+portolan config list
 ```
+
+**Security note:** Credentials (remote, profile, region) are stored in `.env` files or environment variables — never in `.portolan/config.yaml`. This prevents accidentally pushing credentials to public buckets.
 
 **Important:** Source Co-op uses temporary credentials. If uploads fail with auth errors, the user may need to refresh their credentials from the Source Co-op dashboard.
 
@@ -96,12 +103,16 @@ portolan info
 
 ## Step 4: Configure Remote
 
-```bash
-# Set the Source Co-op destination
-portolan config set remote "s3://us-west-2.opendata.source.coop/{org}/{product}/"
-portolan config set profile source-coop
+Credentials are stored in `.env` file (created in Step 2), not in config.yaml:
 
-# Verify configuration
+```bash
+# Verify .env file exists with correct values
+cat .env
+# Should show:
+# PORTOLAN_REMOTE=s3://us-west-2.opendata.source.coop/{org}/{product}/
+# PORTOLAN_PROFILE=source-coop
+
+# Verify Portolan reads the config
 portolan config list
 ```
 
@@ -342,9 +353,11 @@ cd ~/data/phl-aerial-imagery
 # 2. Initialize catalog
 portolan init --title "Philadelphia Aerial Imagery" --auto
 
-# 3. Configure Source Co-op
-portolan config set remote "s3://us-west-2.opendata.source.coop/nlebovits/phl-aerial-imagery/"
-portolan config set profile source-coop
+# 3. Configure Source Co-op credentials via .env file
+cat > .env << 'EOF'
+PORTOLAN_REMOTE=s3://us-west-2.opendata.source.coop/nlebovits/phl-aerial-imagery/
+PORTOLAN_PROFILE=source-coop
+EOF
 
 # 4. Add files
 portolan add .

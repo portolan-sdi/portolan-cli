@@ -15,6 +15,7 @@ Following TDD: tests written FIRST before implementation.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -517,18 +518,14 @@ class TestPushDefaultRemoteIntegration:
     """Integration tests for push with default remote."""
 
     @pytest.mark.integration
-    def test_push_workflow_with_config_set(self, runner: CliRunner, tmp_path: Path) -> None:
-        """Full workflow: init -> config set remote -> push (no destination)."""
+    def test_push_workflow_with_env_var(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Full workflow: init -> set PORTOLAN_REMOTE env var -> push (no destination)."""
         from portolan_cli.push import PushResult
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             # Initialize catalog
             result = runner.invoke(cli, ["init", "--auto"])
             assert result.exit_code == 0, f"Init failed: {result.output}"
-
-            # Set remote config
-            result = runner.invoke(cli, ["config", "set", "remote", "s3://workflow-bucket/catalog"])
-            assert result.exit_code == 0, f"Config set failed: {result.output}"
 
             # Create a minimal collection for push
             Path("test-collection").mkdir()
@@ -542,7 +539,7 @@ class TestPushDefaultRemoteIntegration:
                 )
             )
 
-            # Push without destination - should use config
+            # Push without destination - should use PORTOLAN_REMOTE env var
             with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
                 mock_push.return_value = PushResult(
                     success=True,
@@ -552,11 +549,13 @@ class TestPushDefaultRemoteIntegration:
                     errors=[],
                 )
 
-                result = runner.invoke(
-                    cli,
-                    ["push", "--collection", "test-collection"],
-                    catch_exceptions=False,
-                )
+                # Set remote via env var (Issue #356: sensitive settings via env vars only)
+                with patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://workflow-bucket/catalog"}):
+                    result = runner.invoke(
+                        cli,
+                        ["push", "--collection", "test-collection"],
+                        catch_exceptions=False,
+                    )
 
                 assert result.exit_code == 0, f"Push failed: {result.output}"
                 call_kwargs = mock_push.call_args[1]
