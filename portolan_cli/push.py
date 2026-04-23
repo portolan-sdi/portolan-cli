@@ -1774,43 +1774,62 @@ def _push_all_upload_root_files(
 ) -> bool:
     """Upload root-level files after all collections (Issue #357).
 
-    Uploads catalog.json and README.md from catalog root.
-    These are uploaded AFTER all collections succeed to maintain manifest-last atomicity.
+    Uploads from catalog root (in order):
+    1. README.md (documentation, optional)
+    2. catalog.json (STAC catalog metadata, required)
+    3. versions.json (manifest, required - uploaded LAST per manifest-last atomicity)
+
+    These are uploaded AFTER all collections succeed.
 
     Returns True if uploads succeeded or were skipped, False if any failed.
     """
     catalog_json = catalog_root / "catalog.json"
     root_readme = catalog_root / "README.md"
+    root_versions = catalog_root / "versions.json"
 
     # Skip root file uploads if any collection failed
     if stats["failed"] > 0:
         warn("Skipping root file upload because some collections failed")
         return True
 
+    # Also skip if no collections succeeded (nothing to manifest)
+    if stats["successful"] == 0:
+        warn("Skipping root file upload because no collections were pushed")
+        return True
+
     if not catalog_json.exists():
-        warn(f"catalog.json not found at {catalog_json} - remote catalog may be incomplete")
+        warn(f"catalog.json not found at {catalog_root} - remote catalog may be incomplete")
         return True
 
     if dry_run:
-        info("[DRY RUN] Would upload catalog.json")
         if root_readme.exists():
             info("[DRY RUN] Would upload README.md")
+        info("[DRY RUN] Would upload catalog.json")
+        if root_versions.exists():
+            info("[DRY RUN] Would upload versions.json")
         return True
 
     try:
         store, prefix = setup_store(destination, profile=profile, region=region)
 
-        # Upload catalog.json
-        target_key = f"{prefix}/catalog.json".lstrip("/")
-        obs.put(store, target_key, catalog_json.read_bytes())
-        success("Uploaded catalog.json")
-        stats["total_files"] += 1
-
-        # Upload root README.md if it exists (Issue #357)
+        # Upload README.md first (documentation, not critical)
         if root_readme.exists():
             readme_key = f"{prefix}/README.md".lstrip("/")
             obs.put(store, readme_key, root_readme.read_bytes())
             success("Uploaded README.md")
+            stats["total_files"] += 1
+
+        # Upload catalog.json (STAC metadata)
+        catalog_key = f"{prefix}/catalog.json".lstrip("/")
+        obs.put(store, catalog_key, catalog_json.read_bytes())
+        success("Uploaded catalog.json")
+        stats["total_files"] += 1
+
+        # Upload versions.json LAST (manifest-last atomicity per ADR-0005)
+        if root_versions.exists():
+            versions_key = f"{prefix}/versions.json".lstrip("/")
+            obs.put(store, versions_key, root_versions.read_bytes())
+            success("Uploaded versions.json")
             stats["total_files"] += 1
 
         return True
