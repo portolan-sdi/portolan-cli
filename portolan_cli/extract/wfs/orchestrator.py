@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from portolan_cli.extract.common.filters import filter_layers
 from portolan_cli.extract.common.report import (
@@ -101,20 +102,48 @@ class ExtractionProgress:
     status: str
 
 
-def _slugify(name: str) -> str:
+def _slugify(name: str, disambiguate: bool = False) -> str:
     """Convert a name to a filesystem-safe slug.
 
     Args:
         name: Original name (e.g., "ns:FeatureType")
+        disambiguate: If True, append a short hash to prevent collisions.
 
     Returns:
-        Slugified name (e.g., "ns_featuretype")
+        Slugified name (e.g., "ns_featuretype" or "ns_featuretype_a1b2c3")
     """
+    import hashlib
+
     slug = name.lower()
     slug = re.sub(r"[^a-z0-9]+", "_", slug)
     slug = re.sub(r"_+", "_", slug)
     slug = slug.strip("_")
-    return slug or "unnamed"
+    slug = slug or "unnamed"
+
+    if disambiguate:
+        name_hash = hashlib.sha256(name.encode()).hexdigest()[:6]
+        slug = f"{slug}_{name_hash}"
+
+    return slug
+
+
+def _build_wfs_url(base_url: str, params: dict[str, str]) -> str:
+    """Build a WFS URL by merging params into base_url.
+
+    Properly handles existing query params and URL-encodes values.
+
+    Args:
+        base_url: Base WFS service URL (may already have query params).
+        params: Parameters to add/override (e.g., service, request, typename).
+
+    Returns:
+        Complete URL with merged and encoded parameters.
+    """
+    parsed = urlparse(base_url)
+    existing_params = dict(parse_qsl(parsed.query))
+    existing_params.update(params)
+    new_query = urlencode(existing_params)
+    return urlunparse(parsed._replace(query=new_query))
 
 
 def _emit_progress(
@@ -346,7 +375,7 @@ def _extract_layer_task(
 
     Returns LayerResult with success or failure status.
     """
-    layer_slug = _slugify(layer.name)
+    layer_slug = _slugify(layer.name, disambiguate=True)
     collection_dir = output_dir / layer_slug
     output_path = collection_dir / f"{layer_slug}.parquet"
 
@@ -452,14 +481,14 @@ def extract_wfs_catalog(
     # Handle resume state
     report_path = output_dir / ".portolan" / "extraction-report.json"
     resume_state: ResumeState | None = None
-    existing_results: dict[int, LayerResult] = {}
+    existing_results: dict[str, LayerResult] = {}
 
     if options.resume and report_path.exists():
         from portolan_cli.extract.common.report import load_report
 
         existing_report = load_report(report_path)
         resume_state = get_resume_state(existing_report)
-        existing_results = {r.id: r for r in existing_report.layers}
+        existing_results = {r.name: r for r in existing_report.layers}
 
     # Separate layers into skip (already done) and extract (need processing)
     layers_to_extract: list[tuple[int, LayerInfo]] = []
@@ -467,15 +496,14 @@ def extract_wfs_catalog(
     total = len(layers)
 
     for i, layer in enumerate(layers):
-        if resume_state and not should_process_layer(layer.id, resume_state):
-            if layer.id in existing_results:
+        if resume_state and not should_process_layer(layer.id, resume_state, layer_name=layer.name):
+            if layer.name in existing_results:
                 _emit_progress(on_progress, i, total, layer.name, "skipped")
-                skipped_results.append(existing_results[layer.id])
+                skipped_results.append(existing_results[layer.name])
                 continue
             logger.warning(
-                "Layer '%s' (id=%d) marked complete in resume state but result missing; re-extracting",
+                "Layer '%s' marked complete in resume state but result missing; re-extracting",
                 layer.name,
-                layer.id,
             )
         layers_to_extract.append((i, layer))
 
@@ -580,8 +608,7 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
     Creates catalog.json, config.yaml, and collection.json for each layer.
     Also adds provenance via links (GetFeature-style URLs).
     """
-    from portolan_cli.catalog import init_catalog
-    from portolan_cli.dataset import add_files
+    from portolan_cli.catalog import add_files, init_catalog
 
     parquet_files = [
         output_dir / result.output_path
@@ -629,7 +656,9 @@ def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) ->
 
         # Build GetFeature-style URL for provenance
         # WFS GetFeature URL pattern: service_url?service=WFS&request=GetFeature&typename=X
-        layer_url = f"{source_url}?service=WFS&request=GetFeature&typename={layer.name}"
+        layer_url = _build_wfs_url(
+            source_url, {"service": "WFS", "request": "GetFeature", "typename": layer.name}
+        )
 
         add_via_link(
             collection_path,

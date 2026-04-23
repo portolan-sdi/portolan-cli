@@ -80,6 +80,8 @@ class TestGetResumeState:
 
         assert state.succeeded_layers == {0, 1}
         assert state.failed_layers == set()
+        assert state.succeeded_names == {"layer_a", "layer_b"}
+        assert state.failed_names == set()
 
     def test_failed_layers_tracked(self) -> None:
         """Failed layers are tracked in failed_layers set."""
@@ -93,6 +95,8 @@ class TestGetResumeState:
 
         assert state.succeeded_layers == {0}
         assert state.failed_layers == {1}
+        assert state.succeeded_names == {"layer_a"}
+        assert state.failed_names == {"layer_b"}
 
     def test_skipped_treated_as_success(self) -> None:
         """Skipped layers are treated as succeeded."""
@@ -105,6 +109,8 @@ class TestGetResumeState:
 
         assert state.succeeded_layers == {0}
         assert state.failed_layers == set()
+        assert state.succeeded_names == {"layer_a"}
+        assert state.failed_names == set()
 
 
 class TestShouldProcessLayer:
@@ -117,19 +123,48 @@ class TestShouldProcessLayer:
 
     def test_succeeded_layer_skipped(self) -> None:
         """Succeeded layers should be skipped."""
-        state = ResumeState(succeeded_layers={0, 1}, failed_layers=set())
+        state = ResumeState(
+            succeeded_layers={0, 1},
+            failed_layers=set(),
+            succeeded_names={"layer_a", "layer_b"},
+            failed_names=set(),
+        )
 
         assert not should_process_layer(0, state)
         assert not should_process_layer(1, state)
 
     def test_failed_layer_retried(self) -> None:
         """Failed layers should be retried."""
-        state = ResumeState(succeeded_layers=set(), failed_layers={0})
+        state = ResumeState(
+            succeeded_layers=set(),
+            failed_layers={0},
+            succeeded_names=set(),
+            failed_names={"layer_a"},
+        )
 
         assert should_process_layer(0, state)
 
     def test_new_layer_processed(self) -> None:
         """New layers (not in report) should be processed."""
-        state = ResumeState(succeeded_layers={0}, failed_layers={1})
+        state = ResumeState(
+            succeeded_layers={0},
+            failed_layers={1},
+            succeeded_names={"layer_a"},
+            failed_names={"layer_b"},
+        )
 
         assert should_process_layer(2, state)  # Not in either set
+
+    def test_name_based_lookup_preferred(self) -> None:
+        """Name-based lookup is preferred when layer_name is provided."""
+        state = ResumeState(
+            succeeded_layers={0},
+            failed_layers=set(),
+            succeeded_names={"layer_a"},
+            failed_names=set(),
+        )
+
+        # By name - should skip
+        assert not should_process_layer(99, state, layer_name="layer_a")
+        # By name - should process (new name)
+        assert should_process_layer(0, state, layer_name="layer_b")

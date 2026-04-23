@@ -5530,13 +5530,19 @@ def _handle_imageserver_extraction(
     raise SystemExit(exit_code)
 
 
-def _output_extract_error(use_json: bool, error_type: str, message: str, url: str) -> None:
+def _output_extract_error(
+    use_json: bool,
+    error_type: str,
+    message: str,
+    url: str,
+    command: str = "extract-arcgis",
+) -> None:
     """Output extraction error in JSON or text format."""
     from portolan_cli.output import error
 
     if use_json:
         err = ErrorDetail(type=error_type, message=message)
-        envelope = error_envelope("extract-arcgis", [err], data={"url": url})
+        envelope = error_envelope(command, [err], data={"url": url})
         output_json_envelope(envelope)
     else:
         error(message)
@@ -5547,6 +5553,7 @@ def _output_extract_result(
     output_dir: Path,
     use_json: bool,
     dry_run: bool,
+    command: str = "extract-arcgis",
 ) -> None:
     """Output extraction results in JSON or text format."""
     from portolan_cli.output import error, success, warn
@@ -5590,11 +5597,11 @@ def _output_extract_result(
                 )
                 for fl in failed_layers
             ]
-            envelope = error_envelope("extract-arcgis", errors, data=data)
+            envelope = error_envelope(command, errors, data=data)
             output_json_envelope(envelope)
             raise SystemExit(1)
 
-        envelope = success_envelope("extract-arcgis", data)
+        envelope = success_envelope(command, data)
         output_json_envelope(envelope)
         return
 
@@ -6120,11 +6127,12 @@ def extract_wfs_cmd(
                     "InvalidBBoxError",
                     "bbox must have 4 values: minx,miny,maxx,maxy",
                     url,
+                    command="extract-wfs",
                 )
                 raise SystemExit(1)
             bbox_tuple = (parts[0], parts[1], parts[2], parts[3])
         except ValueError as e:
-            _output_extract_error(use_json, "InvalidBBoxError", str(e), url)
+            _output_extract_error(use_json, "InvalidBBoxError", str(e), url, command="extract-wfs")
             raise SystemExit(1) from None
 
     # Build filter lists
@@ -6159,12 +6167,12 @@ def extract_wfs_cmd(
 
     # Confirmation prompt
     if not auto and not dry_run and not use_json:
-        click.echo(f"Extract from: {url}")
-        click.echo(f"Output to: {output_dir}")
+        info(f"Extract from: {url}")
+        info(f"Output to: {output_dir}")
         if layer_include:
-            click.echo(f"Layer filter: {', '.join(layer_include)}")
+            detail(f"Layer filter: {', '.join(layer_include)}")
         if layer_exclude:
-            click.echo(f"Exclude: {', '.join(layer_exclude)}")
+            detail(f"Exclude: {', '.join(layer_exclude)}")
         if not click.confirm("Continue?", default=True):
             raise SystemExit(0)
 
@@ -6178,10 +6186,12 @@ def extract_wfs_cmd(
             on_progress=None if use_json else on_progress,
         )
     except Exception as e:
-        _output_extract_error(use_json, type(e).__name__, f"Extraction failed: {e}", url)
+        _output_extract_error(
+            use_json, type(e).__name__, f"Extraction failed: {e}", url, command="extract-wfs"
+        )
         raise SystemExit(1) from None
 
-    _output_extract_result(report, output_dir, use_json, dry_run)
+    _output_extract_result(report, output_dir, use_json, dry_run, command="extract-wfs")
 
 
 # =============================================================================

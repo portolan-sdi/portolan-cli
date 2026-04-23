@@ -10,11 +10,12 @@ Key functions:
 
 from __future__ import annotations
 
+import json
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    pass
+import requests  # type: ignore[import-untyped]
 
 
 class WFSDiscoveryError(Exception):
@@ -82,6 +83,16 @@ class WFSDiscoveryResult:
     fees: str | None = None
 
 
+_NETWORK_ERRORS = (
+    requests.exceptions.RequestException,  # Includes underlying urllib3 errors
+    json.JSONDecodeError,
+    ET.ParseError,
+    OSError,
+    TimeoutError,
+    ConnectionError,
+)
+
+
 def gpio_list_layers(service_url: str, version: str = "1.1.0") -> list[dict[str, Any]]:
     """Wrapper for geoparquet-io's list_available_layers.
 
@@ -96,7 +107,7 @@ def gpio_list_layers(service_url: str, version: str = "1.1.0") -> list[dict[str,
         raise WFSDiscoveryError(
             "geoparquet-io is required for WFS extraction. Install with: pip install geoparquet-io"
         ) from e
-    except Exception as e:
+    except _NETWORK_ERRORS as e:
         raise WFSDiscoveryError(f"Failed to list WFS layers: {e}") from e
 
 
@@ -233,5 +244,5 @@ def discover_layers(
         raise WFSDiscoveryError(
             "geoparquet-io is required for WFS extraction. Install with: pip install geoparquet-io"
         ) from e
-    except Exception as e:
+    except _NETWORK_ERRORS as e:
         raise WFSDiscoveryError(f"Failed to discover WFS layers: {e}") from e

@@ -64,14 +64,6 @@ class WFSMetadata:
         """
         from portolan_cli.metadata_extraction import ExtractedMetadata
 
-        # Combine fees and access_constraints into license_raw
-        license_parts = []
-        if self.fees and self.fees.lower() not in ("none", "no fee", ""):
-            license_parts.append(f"Fees: {self.fees}")
-        if self.access_constraints:
-            license_parts.append(self.access_constraints)
-        license_info = "; ".join(license_parts) if license_parts else None
-
         return ExtractedMetadata(
             source_type="wfs",
             source_url=self.source_url,
@@ -81,7 +73,7 @@ class WFSMetadata:
             contact_name=None,  # WFS doesn't typically expose contact
             processing_notes=None,
             known_issues=None,
-            license_raw=license_info,
+            license_raw=self.license_info_raw,
         )
 
 

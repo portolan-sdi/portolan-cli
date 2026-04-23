@@ -273,7 +273,8 @@ class TestWFSViaLinks:
         via_link = via_links[0]
         assert "service=WFS" in via_link["href"]
         assert "request=GetFeature" in via_link["href"]
-        assert "typename=ns:parcels" in via_link["href"]
+        # URL-encoded colon: ns:parcels → ns%3Aparcels
+        assert "typename=ns%3Aparcels" in via_link["href"]
 
 
 class TestWFSExtractOrchestrator:

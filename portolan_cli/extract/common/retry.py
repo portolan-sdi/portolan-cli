@@ -133,13 +133,8 @@ def retry_with_backoff(
                 if on_retry:
                     on_retry(attempt, e)
                 time.sleep(delay)
-        except Exception as e:
-            return RetryResult(
-                success=False,
-                value=None,
-                attempts=attempt,
-                error=e,
-            )
+        except Exception:
+            raise
 
     return RetryResult(
         success=False,
