@@ -553,7 +553,8 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
 
     Called automatically after extraction unless raw=True.
     Creates catalog.json, config.yaml, and collection.json for each layer.
-    Also seeds metadata.yaml from extracted service metadata.
+    Also seeds metadata.yaml from extracted service metadata and adds
+    provenance links (Issue #353).
     """
     from portolan_cli.catalog import init_catalog
     from portolan_cli.dataset import add_files
@@ -591,6 +592,9 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
 
     # Seed metadata.yaml from extracted service metadata
     _seed_metadata_from_extraction(output_dir, report)
+
+    # Add via links for provenance tracking (Issue #353)
+    _add_via_links_to_collections(output_dir, report)
 
 
 def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -> None:
@@ -647,6 +651,48 @@ def _report_metadata_to_arcgis_metadata(
         known_issues=report_metadata.known_issues,
         license_info_raw=report_metadata.license_info_raw,
     )
+
+
+def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) -> None:
+    """Add via provenance links to each extracted collection.
+
+    Per Issue #353: Each collection should have a `via` link pointing to
+    the original data source (ArcGIS layer URL).
+
+    Args:
+        output_dir: The catalog output directory.
+        report: The extraction report with layer info and source URL.
+    """
+    from portolan_cli.stac import add_via_link
+
+    source_url = report.source_url
+
+    for layer in report.layers:
+        if layer.status != "success" or not layer.output_path:
+            continue
+
+        # Derive collection directory from output_path
+        # output_path is like "layer_name/layer_name.parquet"
+        # Collection dir is first component
+        output_parts = Path(layer.output_path).parts
+        if not output_parts:
+            continue
+
+        collection_dir = output_dir / output_parts[0]
+        collection_path = collection_dir / "collection.json"
+
+        if not collection_path.exists():
+            continue
+
+        # Build layer-specific URL: service_url + "/" + layer_id
+        # This gives more specific provenance than just the service URL
+        layer_url = f"{source_url.rstrip('/')}/{layer.id}"
+
+        add_via_link(
+            collection_path,
+            layer_url,
+            title=f"Source ArcGIS layer: {layer.name}",
+        )
 
 
 def _discover_and_filter_services(

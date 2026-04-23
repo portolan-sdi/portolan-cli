@@ -77,16 +77,17 @@ class TestCollectionLevelAssets:
         assert len(versions_data["versions"]) > 0, "Should have at least one version"
         version = versions_data["versions"][0]
 
-        # Check the asset href
-        assert "demographics/census.parquet" in version["assets"], (
-            f"Asset key should be 'demographics/census.parquet', got: {list(version['assets'].keys())}"
+        # Check the asset key - should be collection-relative (Issue #354)
+        # For collection-level assets, key is filename only; href includes collection path
+        assert "census.parquet" in version["assets"], (
+            f"Asset key should be 'census.parquet' (collection-relative), got: {list(version['assets'].keys())}"
         )
 
-        asset = version["assets"]["demographics/census.parquet"]
+        asset = version["assets"]["census.parquet"]
 
-        # The critical assertion - href should NOT have double nesting
+        # The critical assertion - href should include collection path (catalog-relative)
         assert asset["href"] == "demographics/census.parquet", (
-            f"Expected 'demographics/census.parquet', got '{asset['href']}' (double nesting bug)"
+            f"Expected href 'demographics/census.parquet', got '{asset['href']}'"
         )
 
     def test_collection_level_asset_no_duplicate_directory(self, initialized_catalog, fixtures_dir):

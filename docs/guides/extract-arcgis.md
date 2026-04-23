@@ -55,8 +55,9 @@ This will:
 2. Extract each layer to GeoParquet format
 3. Apply Hilbert spatial sorting for efficient queries
 4. Initialize a Portolan catalog with STAC metadata
-5. Seed `.portolan/metadata.yaml` with values from the service
-6. Generate an extraction report in `.portolan/extraction-report.json`
+5. Add `via` provenance links to each collection (pointing to source layer URL)
+6. Seed `.portolan/metadata.yaml` with values from the service
+7. Generate an extraction report in `.portolan/extraction-report.json`
 
 ### Filtering Layers
 
@@ -96,6 +97,25 @@ output/
     ├── collection.json
     └── census_tracts.parquet
 ```
+
+### Provenance Tracking
+
+Each extracted collection includes a `via` link in its `collection.json` pointing to the original ArcGIS layer URL. This provides data lineage for auditing and reproducibility:
+
+```json
+{
+  "links": [
+    {
+      "rel": "via",
+      "href": "https://services.arcgis.com/.../FeatureServer/0",
+      "type": "text/html",
+      "title": "Source ArcGIS layer: Census Block Groups"
+    }
+  ]
+}
+```
+
+The `via` link uses the layer-specific URL (service URL + layer index), not just the service root.
 
 ### Auto-Seeded Metadata
 
