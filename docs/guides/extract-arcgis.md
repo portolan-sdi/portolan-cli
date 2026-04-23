@@ -323,6 +323,55 @@ Example (FeatureServer):
 
 ---
 
+## Extracting from Services Root
+
+You can point Portolan at an entire ArcGIS services directory to extract all services at once:
+
+```bash
+portolan extract arcgis \
+  https://services.arcgis.com/{org_id}/ArcGIS/rest/services \
+  ./output --services "Census*,Demographics*"
+```
+
+### Filtering Services
+
+```bash
+# Include only services matching patterns
+portolan extract arcgis URL --services "Census*,Transport*"
+
+# Exclude services matching patterns
+portolan extract arcgis URL --exclude-services "*_Archive,*_Test"
+```
+
+### Output Structure
+
+Services root extraction creates a nested catalog structure. **Single-layer services are flattened** to avoid redundant nesting:
+
+**Single-layer service (flattened):**
+
+```
+bag_woonfunctie/              # Collection directly
+├── collection.json
+└── bag_woonfunctie.parquet
+```
+
+**Multi-layer service (nested):**
+
+```
+woontypering/                 # Subcatalog
+├── catalog.json
+├── woontypering_2020/
+│   ├── collection.json
+│   └── woontypering_2020.parquet
+└── woontypering_2021/
+    ├── collection.json
+    └── woontypering_2021.parquet
+```
+
+This keeps directory structures clean while preserving hierarchy where it matters.
+
+---
+
 ## Tips
 
 ### Finding ArcGIS Services

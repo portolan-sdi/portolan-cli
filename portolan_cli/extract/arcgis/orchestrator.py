@@ -861,7 +861,7 @@ def _extract_services_root(
             collection_dir = service_dir / layer_slug
             output_path = collection_dir / f"{layer_slug}.parquet"
 
-        relative_output_path = str(output_path.relative_to(output_dir))
+        relative_output_path = output_path.relative_to(output_dir).as_posix()
 
         _emit_progress(on_progress, progress_idx, total, layer.name, "starting")
 

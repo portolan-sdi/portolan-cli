@@ -603,7 +603,7 @@ class TestServicesRootExtraction:
             call_args = mock_extract.call_args
             output_path = call_args[0][2]  # Third positional arg is output_path
             relative_path = output_path.relative_to(tmp_path)
-            assert str(relative_path) == "census_2020/census_2020.parquet"
+            assert relative_path.as_posix() == "census_2020/census_2020.parquet"
 
     def test_services_root_applies_service_filter(self, tmp_path: Path) -> None:
         """Services root should apply service filter."""
@@ -700,7 +700,7 @@ class TestServicesRootExtraction:
 
             # Should be: bag_woonfunctie/bag_woonfunctie.parquet (flattened)
             # NOT: bag_woonfunctie/bag_woonfunctie/bag_woonfunctie.parquet (nested)
-            assert str(relative_path) == "bag_woonfunctie/bag_woonfunctie.parquet"
+            assert relative_path.as_posix() == "bag_woonfunctie/bag_woonfunctie.parquet"
 
             # Verify the result output_path in report
             layer_result = result.layers[0]
@@ -756,7 +756,10 @@ class TestServicesRootExtraction:
             # First layer: woontypering/woontypering_2020/woontypering_2020.parquet
             first_call_output = mock_extract.call_args_list[0][0][2]
             relative_first = first_call_output.relative_to(tmp_path)
-            assert str(relative_first) == "woontypering/woontypering_2020/woontypering_2020.parquet"
+            assert (
+                relative_first.as_posix()
+                == "woontypering/woontypering_2020/woontypering_2020.parquet"
+            )
 
             # Verify all layers have nested structure
             for layer_result in result.layers:
