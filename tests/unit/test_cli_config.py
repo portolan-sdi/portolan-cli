@@ -149,13 +149,13 @@ class TestConfigGet:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            # Write directly to config (remote is sensitive, can't use config set)
-            save_config(Path("."), {"remote": "s3://test-bucket/"})
+            # Use non-sensitive key for testing config read
+            save_config(Path("."), {"backend": "iceberg"})
 
-            result = runner.invoke(cli, ["config", "get", "remote"])
+            result = runner.invoke(cli, ["config", "get", "backend"])
 
             assert result.exit_code == 0
-            assert "s3://test-bucket/" in result.output
+            assert "iceberg" in result.output
 
     @pytest.mark.unit
     def test_get_shows_source(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -164,9 +164,9 @@ class TestConfigGet:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            save_config(Path("."), {"remote": "s3://bucket/"})
+            save_config(Path("."), {"backend": "iceberg"})
 
-            result = runner.invoke(cli, ["config", "get", "remote"])
+            result = runner.invoke(cli, ["config", "get", "backend"])
 
             assert result.exit_code == 0
             # Should indicate it's from config file
@@ -218,16 +218,16 @@ class TestConfigGet:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            save_config(Path("."), {"remote": "s3://bucket/"})
+            save_config(Path("."), {"backend": "iceberg"})
 
-            result = runner.invoke(cli, ["--format", "json", "config", "get", "remote"])
+            result = runner.invoke(cli, ["--format", "json", "config", "get", "backend"])
 
             assert result.exit_code == 0
             output = json.loads(result.output)
             assert output["success"] is True
             assert output["command"] == "config get"
-            assert output["data"]["key"] == "remote"
-            assert output["data"]["value"] == "s3://bucket/"
+            assert output["data"]["key"] == "backend"
+            assert output["data"]["value"] == "iceberg"
             assert output["data"]["source"] == "catalog"
 
 
@@ -246,15 +246,13 @@ class TestConfigList:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            save_config(Path("."), {"remote": "s3://bucket/", "aws_profile": "prod"})
+            save_config(Path("."), {"backend": "iceberg", "statistics.enabled": True})
 
             result = runner.invoke(cli, ["config", "list"])
 
             assert result.exit_code == 0
-            assert "remote" in result.output
-            assert "s3://bucket/" in result.output
-            assert "aws_profile" in result.output
-            assert "prod" in result.output
+            assert "backend" in result.output
+            assert "iceberg" in result.output
 
     @pytest.mark.unit
     def test_list_shows_sources(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -263,9 +261,9 @@ class TestConfigList:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            save_config(Path("."), {"remote": "s3://bucket/"})
+            save_config(Path("."), {"backend": "iceberg"})
 
-            with mock.patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "from-env"}):
+            with mock.patch.dict(os.environ, {"PORTOLAN_STATISTICS_ENABLED": "true"}):
                 result = runner.invoke(cli, ["config", "list"])
 
             assert result.exit_code == 0
@@ -280,7 +278,7 @@ class TestConfigList:
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            save_config(Path("."), {"remote": "s3://bucket/"})
+            save_config(Path("."), {"backend": "iceberg"})
 
             result = runner.invoke(cli, ["--format", "json", "config", "list"])
 
@@ -321,7 +319,7 @@ class TestConfigList:
             runner.invoke(cli, ["init", "--auto"])
             save_config(
                 Path("."),
-                {"collections": {"demo": {"remote": "s3://col/"}}},
+                {"collections": {"demo": {"backend": "iceberg"}}},
             )
 
             result = runner.invoke(cli, ["config", "list", "--collection", "demo"])
@@ -463,17 +461,17 @@ class TestConfigErrorMessages:
             runner.invoke(cli, ["init", "--auto"])
             save_config(
                 Path("."),
-                {"collections": {"demo": {"remote": "s3://col/"}}},
+                {"collections": {"demo": {"backend": "iceberg"}}},
             )
 
             result = runner.invoke(
-                cli, ["--format", "json", "config", "get", "remote", "--collection", "demo"]
+                cli, ["--format", "json", "config", "get", "backend", "--collection", "demo"]
             )
 
             assert result.exit_code == 0
             output = json.loads(result.output)
             assert output["success"] is True
-            assert output["data"]["value"] == "s3://col/"
+            assert output["data"]["value"] == "iceberg"
             assert output["data"]["collection"] == "demo"
 
     @pytest.mark.unit
@@ -505,11 +503,14 @@ class TestConfigErrorMessages:
     @pytest.mark.unit
     def test_list_collection_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
         """config list --collection should include collection in JSON output."""
+        from portolan_cli.config import save_config
+
         with runner.isolated_filesystem(temp_dir=tmp_path):
             runner.invoke(cli, ["init", "--auto"])
-            runner.invoke(
-                cli,
-                ["config", "set", "remote", "s3://col/", "--collection", "demo"],
+            # Use non-sensitive key (backend) to create collection config
+            save_config(
+                Path("."),
+                {"collections": {"demo": {"backend": "iceberg"}}},
             )
 
             result = runner.invoke(

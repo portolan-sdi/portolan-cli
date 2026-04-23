@@ -482,7 +482,10 @@ Some settings have aliases for convenience:
 |----------------|-------|
 | `aws_profile` | `profile` |
 
-Both names work interchangeably in config files and environment variables.
+Both `PORTOLAN_AWS_PROFILE` and `PORTOLAN_PROFILE` environment variables work interchangeably.
+
+!!! note
+    Aliases apply to environment variables only. Credential settings (`aws_profile`, `profile`, `remote`, `region`) cannot be stored in config files per the sensitive-settings rule.
 
 <!-- freshness: last-verified: 2026-04-23 -->
 ## Metadata Enrichment

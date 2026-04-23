@@ -224,19 +224,20 @@ class TestGetSetting:
         from portolan_cli.config import get_setting, save_config
 
         (tmp_path / ".portolan").mkdir()
+        # Use non-sensitive key to test precedence without triggering security check
         save_config(
             tmp_path,
             {
-                "remote": "s3://catalog-bucket/",
+                "backend": "stac",
                 "collections": {
-                    "demographics": {"remote": "s3://demographics-bucket/"},
+                    "demographics": {"backend": "iceberg"},
                 },
             },
         )
 
-        result = get_setting("remote", catalog_path=tmp_path, collection="demographics")
+        result = get_setting("backend", catalog_path=tmp_path, collection="demographics")
 
-        assert result == "s3://demographics-bucket/"
+        assert result == "iceberg"
 
     @pytest.mark.unit
     def test_env_var_overrides_collection_config(self, tmp_path: Path) -> None:
@@ -265,11 +266,12 @@ class TestGetSetting:
         from portolan_cli.config import get_setting, save_config
 
         (tmp_path / ".portolan").mkdir()
-        save_config(tmp_path, {"remote": "s3://config-value/"})
+        # Use non-sensitive key to test precedence without triggering security check
+        save_config(tmp_path, {"backend": "iceberg"})
 
-        result = get_setting("remote", catalog_path=tmp_path)
+        result = get_setting("backend", catalog_path=tmp_path)
 
-        assert result == "s3://config-value/"
+        assert result == "iceberg"
 
     @pytest.mark.unit
     def test_returns_none_when_setting_not_found(self, tmp_path: Path) -> None:
@@ -310,13 +312,14 @@ class TestGetSetting:
         from portolan_cli.config import get_setting, save_config
 
         (tmp_path / ".portolan").mkdir()
-        save_config(tmp_path, {"remote": "s3://from-config/"})
+        # Use non-sensitive key to test empty env var behavior
+        save_config(tmp_path, {"backend": "iceberg"})
 
         # Empty env var should be ignored
-        with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": ""}):
-            result = get_setting("remote", catalog_path=tmp_path)
+        with mock.patch.dict(os.environ, {"PORTOLAN_BACKEND": ""}):
+            result = get_setting("backend", catalog_path=tmp_path)
 
-        assert result == "s3://from-config/"
+        assert result == "iceberg"
 
     @pytest.mark.unit
     def test_works_without_catalog_path(self) -> None:
@@ -348,22 +351,23 @@ class TestGetSetting:
         from portolan_cli.config import get_setting, save_config
 
         (tmp_path / ".portolan").mkdir()
+        # Use non-sensitive keys to test fallback behavior
         save_config(
             tmp_path,
             {
-                "remote": "s3://catalog/",
-                "aws_profile": "catalog-profile",
+                "backend": "stac",
+                "statistics.enabled": True,
                 "collections": {
-                    "demographics": {"remote": "s3://override/"},
-                    # aws_profile not set for collection
+                    "demographics": {"backend": "iceberg"},
+                    # statistics.enabled not set for collection
                 },
             },
         )
 
-        result = get_setting("aws_profile", catalog_path=tmp_path, collection="demographics")
+        result = get_setting("statistics.enabled", catalog_path=tmp_path, collection="demographics")
 
-        # Should fall back to catalog-level aws_profile
-        assert result == "catalog-profile"
+        # Should fall back to catalog-level statistics.enabled
+        assert result is True
 
 
 class TestSetSetting:
@@ -896,13 +900,14 @@ class TestListSettings:
         from portolan_cli.config import list_settings, save_config
 
         (tmp_path / ".portolan").mkdir()
-        save_config(tmp_path, {"remote": "s3://bucket/", "aws_profile": "prod"})
+        # Use non-sensitive keys to test list functionality
+        save_config(tmp_path, {"backend": "iceberg", "statistics.enabled": True})
 
         result = list_settings(catalog_path=tmp_path)
 
-        assert "remote" in result
-        assert result["remote"]["value"] == "s3://bucket/"
-        assert result["remote"]["source"] == "catalog"
+        assert "backend" in result
+        assert result["backend"]["value"] == "iceberg"
+        assert result["backend"]["source"] == "catalog"
 
     @pytest.mark.unit
     def test_list_settings_with_collection(self, tmp_path: Path) -> None:
@@ -910,24 +915,25 @@ class TestListSettings:
         from portolan_cli.config import list_settings, save_config
 
         (tmp_path / ".portolan").mkdir()
+        # Use non-sensitive keys to test collection config
         save_config(
             tmp_path,
             {
-                "remote": "s3://catalog/",
+                "backend": "stac",
                 "collections": {
-                    "demographics": {"remote": "s3://collection/", "aws_profile": "col"},
+                    "demographics": {"backend": "iceberg", "statistics.enabled": False},
                 },
             },
         )
 
         result = list_settings(catalog_path=tmp_path, collection="demographics")
 
-        assert "remote" in result
-        assert result["remote"]["value"] == "s3://collection/"
-        assert result["remote"]["source"] == "collection"
-        assert "aws_profile" in result
-        assert result["aws_profile"]["value"] == "col"
-        assert result["aws_profile"]["source"] == "collection"
+        assert "backend" in result
+        assert result["backend"]["value"] == "iceberg"
+        assert result["backend"]["source"] == "collection"
+        assert "statistics.enabled" in result
+        assert result["statistics.enabled"]["value"] is False
+        assert result["statistics.enabled"]["source"] == "collection"
 
     @pytest.mark.unit
     def test_list_settings_without_catalog_path(self) -> None:

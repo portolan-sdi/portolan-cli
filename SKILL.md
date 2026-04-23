@@ -61,10 +61,9 @@ portolan clone s3://mybucket/catalog ./local-copy
 Manage catalog configuration.
 
 ```bash
-portolan config set remote s3://my-bucket/catalog/
+portolan config set backend iceberg
 portolan config get remote
 portolan config list
-portolan config unset remote
 ```
 
 ### `portolan extract`

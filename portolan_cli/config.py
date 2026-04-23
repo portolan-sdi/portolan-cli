@@ -287,10 +287,17 @@ def get_setting(
         return cli_value
 
     # 2. Environment variable (skip empty strings)
+    # Check primary env var and alias-derived env vars
     env_var = _get_env_var_name(key)
     env_value = os.environ.get(env_var)
     if env_value:  # Non-empty string
         return env_value
+    # Check aliases (e.g., aws_profile aliases to profile, so check PORTOLAN_PROFILE)
+    for alias in SETTING_ALIASES.get(key, []):
+        alias_env_var = _get_env_var_name(alias)
+        alias_env_value = os.environ.get(alias_env_var)
+        if alias_env_value:
+            return alias_env_value
 
     # If no catalog path, can't check file-based config
     if catalog_path is None:
@@ -306,9 +313,20 @@ def get_setting(
                 return cfg[alias]
         return None
 
+    # Helper to check if sensitive key exists in config and raise error
+    def _check_sensitive_in_config(cfg: dict[str, Any], k: str) -> None:
+        if k in SENSITIVE_SETTINGS:
+            if k in cfg or any(a in cfg for a in SETTING_ALIASES.get(k, [])):
+                env_var_name = _get_env_var_name(k)
+                raise ValueError(
+                    f"'{k}' found in config.yaml but sensitive settings cannot be read from "
+                    f"config files. Use environment variable {env_var_name} or .env file."
+                )
+
     # 3. Hierarchical .portolan/ config (ADR-0039)
     if collection_path is not None:
         merged_config = load_merged_config(collection_path, catalog_path)
+        _check_sensitive_in_config(merged_config, key)
         value = _get_with_aliases(merged_config, key)
         if value is not None:
             return value
@@ -323,11 +341,13 @@ def get_setting(
         if collection is not None:
             collections = config.get("collections", {})
             collection_config = collections.get(collection, {})
+            _check_sensitive_in_config(collection_config, key)
             value = _get_with_aliases(collection_config, key)
             if value is not None:
                 return value
 
         # 5. Catalog-level config
+        _check_sensitive_in_config(config, key)
         value = _get_with_aliases(config, key)
         if value is not None:
             return value
@@ -454,10 +474,19 @@ def list_settings(
 
     # Resolve each setting
     for key in sorted(all_keys):
-        value = get_setting(key, catalog_path=catalog_path, collection=collection)
-        source = get_setting_source(key, catalog_path, collection)
-        if value is not None or source != "default":
-            result[key] = {"value": value, "source": source}
+        try:
+            value = get_setting(key, catalog_path=catalog_path, collection=collection)
+            source = get_setting_source(key, catalog_path, collection)
+            if value is not None or source != "default":
+                result[key] = {"value": value, "source": source}
+        except ValueError:
+            # Sensitive key in config without env var - show with warning source
+            # Get the value directly from config for display purposes
+            cfg = load_config(catalog_path) if catalog_path else {}
+            if collection:
+                cfg = cfg.get("collections", {}).get(collection, cfg)
+            if key in cfg:
+                result[key] = {"value": cfg[key], "source": "config (INSECURE)"}
 
     return result
 
