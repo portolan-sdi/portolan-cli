@@ -62,6 +62,48 @@ class TestFlatGeobufMetadata:
         assert props["flatgeobuf:geometry_type"] == "Point"
         assert props["flatgeobuf:feature_count"] == 3
 
+    def test_to_stac_properties_wkt_crs(self) -> None:
+        """to_stac_properties() handles WKT CRS strings."""
+        wkt = 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433]]'
+        meta = FlatGeobufMetadata(
+            bbox=(-122.4, 37.8, -73.9, 41.9),
+            crs=wkt,
+            geometry_type="Point",
+            feature_count=3,
+            schema={},
+        )
+        props = meta.to_stac_properties()
+
+        # pyproj parses WKT and extracts EPSG:4326
+        assert props["proj:epsg"] == 4326
+
+    def test_to_stac_properties_ogc_urn(self) -> None:
+        """to_stac_properties() handles OGC URN CRS strings."""
+        meta = FlatGeobufMetadata(
+            bbox=(-122.4, 37.8, -73.9, 41.9),
+            crs="urn:ogc:def:crs:EPSG::4326",
+            geometry_type="Point",
+            feature_count=3,
+            schema={},
+        )
+        props = meta.to_stac_properties()
+
+        assert props["proj:epsg"] == 4326
+
+    def test_to_stac_properties_unknown_crs(self) -> None:
+        """to_stac_properties() omits proj:epsg for unknown CRS."""
+        meta = FlatGeobufMetadata(
+            bbox=(-122.4, 37.8, -73.9, 41.9),
+            crs="urn:ogc:def:crs:OGC:1.3:CRS84",  # CRS84 has no EPSG code
+            geometry_type="Point",
+            feature_count=3,
+            schema={},
+        )
+        props = meta.to_stac_properties()
+
+        # Should not have proj:epsg (CRS84 is not an EPSG code)
+        assert "proj:epsg" not in props
+
 
 class TestExtractFlatGeobufMetadata:
     """Tests for extract_flatgeobuf_metadata() function."""

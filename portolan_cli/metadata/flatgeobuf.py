@@ -8,12 +8,13 @@ Per ADR-0031, FlatGeobuf files are collection-level assets when added to a catal
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pyogrio  # type: ignore[import-untyped]
+from pyproj import CRS
+from pyproj.exceptions import CRSError
 
 
 @dataclass
@@ -48,11 +49,15 @@ class FlatGeobufMetadata:
         """Convert to STAC Item/Collection properties format."""
         props: dict[str, Any] = {}
 
-        # Extract EPSG code from CRS string if present
+        # Parse CRS using pyproj (handles EPSG:, WKT, OGC URN, etc.)
         if self.crs:
-            epsg_match = re.match(r"EPSG:(\d+)", self.crs)
-            if epsg_match:
-                props["proj:epsg"] = int(epsg_match.group(1))
+            try:
+                crs = CRS.from_user_input(self.crs)
+                epsg = crs.to_epsg()
+                if epsg is not None:
+                    props["proj:epsg"] = epsg
+            except CRSError:
+                pass  # Unknown CRS format, skip proj:epsg
 
         if self.geometry_type:
             props["flatgeobuf:geometry_type"] = self.geometry_type

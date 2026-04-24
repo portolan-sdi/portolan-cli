@@ -131,6 +131,32 @@ class TestAddPMTiles:
         assert "extent" in data
         assert "spatial" in data["extent"]
 
+    @pytest.mark.integration
+    def test_add_pmtiles_idempotent(
+        self, runner: CliRunner, initialized_catalog: Path, sample_pmtiles: Path
+    ) -> None:
+        """Adding same PMTiles file twice is idempotent (no error, no duplicate)."""
+        collection_dir = initialized_catalog / "tiles"
+        collection_dir.mkdir()
+        test_file = collection_dir / "map.pmtiles"
+        shutil.copy(sample_pmtiles, test_file)
+
+        # First add
+        result = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+
+        # Second add of same file should succeed (idempotent)
+        result2 = runner.invoke(
+            cli,
+            ["add", "--portolan-dir", str(initialized_catalog), str(test_file)],
+            catch_exceptions=False,
+        )
+        assert result2.exit_code == 0
+
 
 class TestAddFlatGeobuf:
     """Tests for adding FlatGeobuf files."""
@@ -288,4 +314,4 @@ class TestCollectionLevelAssetBehavior:
         # Asset should be in collection.json
         data = json.loads((collection_dir / "collection.json").read_text())
         assert "borders" in data.get("assets", {})
-        assert data["assets"]["borders"]["type"] == "application/flatgeobuf"
+        assert data["assets"]["borders"]["type"] == "application/vnd.flatgeobuf"

@@ -151,7 +151,8 @@ _MEDIA_TYPE_MAP: dict[str, str] = {
     ".xml": "application/xml",
     ".csv": "text/csv",
     ".gpkg": "application/geopackage+sqlite3",
-    ".fgb": "application/flatgeobuf",
+    ".fgb": "application/vnd.flatgeobuf",
+    ".flatgeobuf": "application/vnd.flatgeobuf",
     ".pmtiles": "application/vnd.pmtiles",
     ".shp": "application/x-shapefile",
     ".pdf": "application/pdf",
@@ -169,6 +170,7 @@ _ROLE_MAP: dict[str, str] = {
     ".geojson": "data",
     ".gpkg": "data",
     ".fgb": "data",
+    ".flatgeobuf": "data",
     ".csv": "data",
     ".shp": "data",
     ".pmtiles": "data",
@@ -697,11 +699,21 @@ def _convert_and_extract_metadata(
         # Check for cloud-native vector formats (skip conversion per issue #368)
         if suffix == ".pmtiles":
             output_path = item_dir / path.name
+            if output_path.exists() and path.resolve() != output_path.resolve():
+                raise FileExistsError(
+                    f"File already exists: {output_path}. "
+                    "Rename the source file or remove the existing file."
+                )
             if path.resolve() != output_path.resolve():
                 shutil.copy2(path, output_path)
             metadata = extract_pmtiles_metadata(output_path)
-        elif suffix == ".fgb":
+        elif suffix in (".fgb", ".flatgeobuf"):
             output_path = item_dir / path.name
+            if output_path.exists() and path.resolve() != output_path.resolve():
+                raise FileExistsError(
+                    f"File already exists: {output_path}. "
+                    "Rename the source file or remove the existing file."
+                )
             if path.resolve() != output_path.resolve():
                 shutil.copy2(path, output_path)
             metadata = extract_flatgeobuf_metadata(output_path)
