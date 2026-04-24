@@ -79,6 +79,7 @@ nav:
   - Guides:
     - AI Skills: guides/skills.md
     - Extracting from ArcGIS: guides/extract-arcgis.md
+    - Extracting from WFS: guides/extract-wfs.md
     - Metadata Defaults: guides/metadata-defaults.md
     - Nested Catalogs: guides/nested-catalogs.md
   - Reference:
