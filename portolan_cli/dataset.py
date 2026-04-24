@@ -62,6 +62,7 @@ from portolan_cli.metadata_yaml import (
 )
 from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
+    add_asset_to_collection,
     add_collection_extensions_from_summaries,
     add_item_to_collection,
     add_projection_extension,
@@ -358,14 +359,15 @@ class PreparedDataset:
     by batching all version writes at the end. See Issue #281.
 
     Attributes:
-        item_id: STAC item identifier.
+        item_id: STAC item identifier (for item-level) or asset key (for collection-level).
         collection_id: Collection identifier (may include '/' for nested).
         format_type: Vector or raster format.
         bbox: Bounding box [min_x, min_y, max_x, max_y] in WGS84.
         asset_files: Dict mapping filename to (path, checksum) tuples.
-        item_json_path: Path to the item.json file that was created.
+        item_json_path: Path to item.json (None for collection-level vector assets per ADR-0031).
         is_collection_level_asset: If True, asset is at collection level (ADR-0031).
-        stac_item: The PySTAC Item object (for collection link updates).
+        stac_item: The PySTAC Item object (None for collection-level vector assets).
+        stac_assets: Assets to add to collection.json (for collection-level assets).
         metadata: Extracted metadata (GeoParquet or COG) for table extension (Issue #304).
     """
 
@@ -374,9 +376,10 @@ class PreparedDataset:
     format_type: FormatType
     bbox: list[float]
     asset_files: dict[str, tuple[Path, str]]
-    item_json_path: Path
+    item_json_path: Path | None  # None for collection-level vector assets
     is_collection_level_asset: bool = False
     stac_item: pystac.Item | None = None
+    stac_assets: dict[str, pystac.Asset] | None = None  # For collection-level addition
     metadata: GeoParquetMetadata | COGMetadata | None = None
 
 
@@ -736,6 +739,100 @@ def _add_statistics_to_properties(
             stac_properties["table:column_statistics"] = col_stats
 
 
+def _fix_collection_level_asset_hrefs(
+    stac_assets: dict[str, pystac.Asset],
+) -> dict[str, pystac.Asset]:
+    """Fix asset hrefs and keys for collection-level assets (ADR-0031).
+
+    _scan_item_assets() computes hrefs relative to item.json, but for
+    collection-level assets they should be relative to collection.json.
+    Since both collection.json and assets are in the same directory,
+    href should be ./filename (not ../filename).
+
+    Also fixes asset keys: _scan_item_assets assigns "data" to primary files,
+    but for collection-level assets we need unique keys to avoid collisions
+    when multiple vectors exist in the same collection. Use file stem instead.
+
+    Args:
+        stac_assets: Assets with hrefs relative to item.json location.
+
+    Returns:
+        Assets with hrefs relative to collection.json location, with unique keys.
+    """
+    fixed_assets: dict[str, pystac.Asset] = {}
+    for key, asset in stac_assets.items():
+        href = asset.href
+
+        # Normalize href: strip any ../ or ./ prefix, then add ./
+        if href.startswith("../"):
+            href = href[3:]
+        elif href.startswith("./"):
+            href = href[2:]
+        fixed_href = f"./{href}"
+
+        # Fix asset key: "data" → file stem for uniqueness across collection
+        # e.g., "data" with href "./census.parquet" → key "census"
+        if key == "data":
+            fixed_key = Path(href).stem
+        else:
+            fixed_key = key
+
+        fixed_assets[fixed_key] = pystac.Asset(
+            href=fixed_href,
+            media_type=asset.media_type,
+            roles=asset.roles,
+        )
+    return fixed_assets
+
+
+def _create_and_save_item(
+    *,
+    item_id: str,
+    bbox: list[float],
+    item_datetime: datetime | None,
+    stac_properties: dict[str, Any],
+    stac_assets: dict[str, pystac.Asset],
+    format_type: FormatType,
+    metadata: GeoParquetMetadata | COGMetadata,
+    item_dir: Path,
+) -> tuple[pystac.Item, Path]:
+    """Create a STAC item with extensions and save it to disk.
+
+    Helper to reduce complexity in prepare_dataset().
+
+    Args:
+        item_id: STAC item identifier.
+        bbox: Bounding box [min_x, min_y, max_x, max_y].
+        item_datetime: Acquisition/creation datetime.
+        stac_properties: Properties to include in the item.
+        stac_assets: Assets to attach to the item.
+        format_type: Vector or raster format.
+        metadata: Extracted metadata for extension fields.
+        item_dir: Directory where item.json will be saved.
+
+    Returns:
+        Tuple of (item, item_json_path).
+    """
+    item = create_item(
+        item_id=item_id,
+        bbox=bbox,
+        datetime=item_datetime,
+        properties=stac_properties,
+        assets=stac_assets,
+    )
+    add_projection_extension(item, metadata)
+    if format_type == FormatType.VECTOR:
+        add_vector_extension(item, metadata)
+    elif format_type == FormatType.RASTER:
+        add_raster_extension(item, metadata)
+
+    item_json_path = item_dir / f"{item_id}.json"
+    item.set_self_href(str(item_json_path))
+    item.save_object()
+
+    return item, item_json_path
+
+
 def _apply_nodata_defaults_to_bands(
     stac_properties: dict[str, Any],
     metadata: COGMetadata,
@@ -935,24 +1032,35 @@ def prepare_dataset(
     if format_type == FormatType.RASTER and defaults and isinstance(metadata, COGMetadata):
         _apply_nodata_defaults_to_bands(stac_properties, metadata, defaults, path)
 
-    # Step 7: Create STAC item and save item.json (per-item file, no conflict)
-    item = create_item(
+    # Step 7: Create STAC item or collection-level assets (per ADR-0031)
+    # Collection-level vector assets: no item.json, assets go directly in collection.json
+    # Item-level assets (rasters, partitioned vectors): create item.json as usual
+    if is_collection_level_asset and format_type == FormatType.VECTOR:
+        # Collection-level vector asset: no item.json per ADR-0031
+        return PreparedDataset(
+            item_id=item_id_resolved,
+            collection_id=collection_id,
+            format_type=format_type,
+            bbox=bbox,
+            asset_files=asset_files,
+            item_json_path=None,  # No item.json for collection-level vector
+            is_collection_level_asset=True,
+            stac_item=None,
+            stac_assets=_fix_collection_level_asset_hrefs(stac_assets),
+            metadata=metadata,
+        )
+
+    # Item-level: create STAC item and save item.json
+    item, item_json_path = _create_and_save_item(
         item_id=item_id_resolved,
         bbox=bbox,
-        datetime=effective_datetime,
-        properties=stac_properties,
-        assets=stac_assets,
+        item_datetime=effective_datetime,
+        stac_properties=stac_properties,
+        stac_assets=stac_assets,
+        format_type=format_type,
+        metadata=metadata,
+        item_dir=item_dir,
     )
-    add_projection_extension(item, metadata)
-    if format_type == FormatType.VECTOR:
-        add_vector_extension(item, metadata)
-    elif format_type == FormatType.RASTER:
-        add_raster_extension(item, metadata)
-
-    item_json_path = item_dir / f"{item_id_resolved}.json"
-    item.set_self_href(str(item_json_path))
-    # Save item.json now (each item writes to its own file, no conflict)
-    item.save_object()
 
     return PreparedDataset(
         item_id=item_id_resolved,
@@ -1006,9 +1114,17 @@ def finalize_datasets(
             initial_bbox=first_item.bbox,
         )
 
-        # Add all items to collection (in memory)
+        # Add items or collection-level assets to collection (in memory)
+        # Per ADR-0031: Collection-level vector assets go directly in collection.assets
         for p in items:
-            if p.stac_item is not None:
+            if p.is_collection_level_asset and p.stac_assets is not None:
+                # Collection-level asset: add directly to collection.assets
+                for asset_key, asset in p.stac_assets.items():
+                    add_asset_to_collection(
+                        collection, asset_key, asset, update_extent_from_bbox=p.bbox
+                    )
+            elif p.stac_item is not None:
+                # Item-level: add item link to collection
                 add_item_to_collection(collection, p.stac_item, update_extent=True)
                 # Note: item_datetime would need to be passed through PreparedDataset
                 # if we want to update temporal extent per-item
@@ -1148,18 +1264,20 @@ def _finalize_with_backend(
 
     remote = get_setting("remote", catalog_path=catalog_root, collection=collection_id)
     first = items[0]
+    # For collection-level assets, item_json_path is None; use collection_dir
+    first_item_dir = first.item_json_path.parent if first.item_json_path else collection_dir
     context = {
         "catalog_root": catalog_root,
         "collection_id": collection_id,
         "collection_dir": collection_dir,
         "collection": collection,
         "item_id": first.item_id,
-        "item_dir": first.item_json_path.parent,
+        "item_dir": first_item_dir,
         "asset_files": first.asset_files,
         "items": [
             {
                 "item_id": p.item_id,
-                "item_dir": p.item_json_path.parent,
+                "item_dir": (p.item_json_path.parent if p.item_json_path else collection_dir),
                 "asset_files": p.asset_files,
             }
             for p in items
