@@ -109,9 +109,9 @@ def extract_pmtiles_metadata(path: Path) -> PMTilesMetadata:
         header["max_lat_e7"] / 1e7,
     )
 
-    # Extract center if present
+    # Extract center if present (explicit None check to preserve valid zero coords)
     center = None
-    if header.get("center_lon_e7") and header.get("center_lat_e7"):
+    if header.get("center_lon_e7") is not None and header.get("center_lat_e7") is not None:
         center = (
             header["center_lon_e7"] / 1e7,
             header["center_lat_e7"] / 1e7,

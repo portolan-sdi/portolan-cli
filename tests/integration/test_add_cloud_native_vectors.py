@@ -286,7 +286,7 @@ class TestCollectionLevelAssetBehavior:
         assert data.get("pmtiles:tile_type") == "mvt"
 
         # Projection extension should be declared
-        assert "https://stac-extensions.github.io/projection/v1.1.0/schema.json" in data.get(
+        assert "https://stac-extensions.github.io/projection/v2.0.0/schema.json" in data.get(
             "stac_extensions", []
         )
 

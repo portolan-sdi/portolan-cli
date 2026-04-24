@@ -26,6 +26,7 @@ def sample_fgb(tmp_path: Path) -> Path:
     return fixture_path
 
 
+@pytest.mark.unit
 class TestFlatGeobufMetadata:
     """Tests for FlatGeobufMetadata dataclass."""
 

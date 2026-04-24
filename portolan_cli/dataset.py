@@ -668,8 +668,10 @@ def _extract_bbox_wgs84(metadata: AllMetadata) -> list[float]:
         return list(metadata.bbox)  # type: ignore[arg-type]
 
     # Other formats may need CRS transformation
-    crs_str = getattr(metadata, "crs", None)
-    crs_str = crs_str if isinstance(crs_str, str) else None
+    crs_raw = getattr(metadata, "crs", None)
+    if isinstance(crs_raw, dict):
+        raise ValueError("PROJJSON CRS not supported. Convert to EPSG code or WKT string.")
+    crs_str = crs_raw if isinstance(crs_raw, str) else None
     return list(transform_bbox_to_wgs84(metadata.bbox, crs_str))  # type: ignore[arg-type]
 
 
@@ -1207,21 +1209,22 @@ def finalize_datasets(
         # Add items or collection-level assets to collection (in memory)
         _add_prepared_items_to_collection(collection, items)
 
-        # Add table extension if any items are vector format (Issue #304)
-        # Aggregate metadata from all vector items and apply to collection
+        # Add table extension if any items are GeoParquet format (Issue #304)
+        # Aggregate metadata from all GeoParquet items and apply to collection
         # Include existing table metadata to handle incremental adds correctly
         #
-        # Important: Only run aggregation if there's at least one NEW vector item
-        # in this batch. For raster-only batches, don't touch existing table extension.
-        new_vector_metadata: list[object] = [
+        # Important: Only run aggregation if there's at least one NEW GeoParquet item
+        # in this batch. PMTiles/FlatGeobuf are collection-level assets without
+        # table schema, so exclude them from table extension aggregation.
+        new_geoparquet_metadata: list[GeoParquetMetadata] = [
             p.metadata
             for p in items
-            if p.format_type == FormatType.VECTOR and p.metadata is not None
+            if p.format_type == FormatType.VECTOR and isinstance(p.metadata, GeoParquetMetadata)
         ]
-        if new_vector_metadata:
-            # We have new vector items - include existing metadata for aggregation
+        if new_geoparquet_metadata:
+            # We have new GeoParquet items - include existing metadata for aggregation
             existing_meta = get_existing_table_metadata(collection)
-            vector_metadata: list[object] = new_vector_metadata
+            vector_metadata: list[object] = list(new_geoparquet_metadata)
             if existing_meta is not None:
                 vector_metadata.insert(0, existing_meta)
             aggregated = aggregate_table_metadata(vector_metadata)

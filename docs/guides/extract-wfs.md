@@ -123,7 +123,7 @@ Then add the PMTiles to your catalog:
 
 ```bash
 cd buildings
-portolan add inspire_bu_.../*.pmtiles --stac-geoparquet
+portolan add inspire_bu_.../*.pmtiles
 ```
 
 ## Step 5: Generate READMEs

@@ -290,7 +290,9 @@ def add_collection_properties_from_metadata(
 
     # Add projection extension declaration if proj:epsg is present
     if "proj:epsg" in props:
-        proj_ext_url = "https://stac-extensions.github.io/projection/v1.1.0/schema.json"
+        proj_ext_url = EXTENSION_URLS["projection"]
+        if collection.stac_extensions is None:
+            collection.stac_extensions = []
         if proj_ext_url not in collection.stac_extensions:
             collection.stac_extensions.append(proj_ext_url)
 
