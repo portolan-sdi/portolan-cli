@@ -234,6 +234,52 @@ def add_item_to_collection(
         _update_collection_extent(collection, item)
 
 
+def add_asset_to_collection(
+    collection: pystac.Collection,
+    asset_key: str,
+    asset: pystac.Asset,
+    *,
+    update_extent_from_bbox: list[float] | None = None,
+) -> None:
+    """Add an asset directly to a collection (collection-level asset).
+
+    Per ADR-0031: Single vector files (GeoParquet, Shapefile, GeoPackage) are
+    collection-level assets—no item.json, asset directly in collection.json.
+
+    Args:
+        collection: The collection to add the asset to.
+        asset_key: Key for the asset (e.g., "data", "boundaries").
+        asset: The pystac.Asset to add.
+        update_extent_from_bbox: If provided, update collection's spatial extent
+            to encompass this bbox [min_x, min_y, max_x, max_y].
+    """
+    collection.add_asset(asset_key, asset)
+
+    if update_extent_from_bbox:
+        _update_collection_extent_from_bbox(collection, update_extent_from_bbox)
+
+
+def _update_collection_extent_from_bbox(
+    collection: pystac.Collection,
+    bbox: list[float],
+) -> None:
+    """Update a collection's spatial extent to include a bounding box.
+
+    Args:
+        collection: The collection to update.
+        bbox: Bounding box [min_x, min_y, max_x, max_y] to include.
+    """
+    current_bbox = collection.extent.spatial.bboxes[0]
+    new_bbox = [
+        min(current_bbox[0], bbox[0]),  # min_x
+        min(current_bbox[1], bbox[1]),  # min_y
+        max(current_bbox[2], bbox[2]),  # max_x
+        max(current_bbox[3], bbox[3]),  # max_y
+    ]
+
+    collection.extent.spatial = pystac.SpatialExtent(bboxes=[new_bbox])
+
+
 def _update_collection_extent(
     collection: pystac.Collection,
     item: pystac.Item,
