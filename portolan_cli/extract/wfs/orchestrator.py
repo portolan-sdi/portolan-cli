@@ -615,8 +615,12 @@ def _auto_init_catalog(
     Creates catalog.json, config.yaml, and collection.json for each layer.
     Also adds provenance via links, seeds metadata.yaml from service metadata,
     and seeds collection-level metadata.yaml with layer info.
+
+    Per Issue #369: Propagates rich metadata from WFS service to STAC files,
+    avoiding generic placeholders.
     """
     from portolan_cli.catalog import add_files, init_catalog
+    from portolan_cli.stac import update_stac_metadata
 
     parquet_files = [
         output_dir / result.output_path
@@ -627,7 +631,16 @@ def _auto_init_catalog(
     if not parquet_files:
         return
 
-    init_catalog(output_dir, title=None)
+    # Extract service title and description from discovery result (Issue #369)
+    service_title = discovery_result.service_title if discovery_result else None
+    service_description = discovery_result.service_abstract if discovery_result else None
+
+    init_catalog(output_dir, title=service_title, description=service_description)
+
+    # If init_catalog didn't use the metadata (e.g., technical names filtered),
+    # update catalog.json directly to ensure rich metadata is propagated
+    catalog_path = output_dir / "catalog.json"
+    update_stac_metadata(catalog_path, title=service_title, description=service_description)
 
     add_files(
         paths=parquet_files,
@@ -641,6 +654,7 @@ def _auto_init_catalog(
     _seed_metadata_from_extraction(output_dir, report)
 
     # Seed collection-level metadata.yaml with layer-specific info
+    # and update collection.json with rich metadata (Issue #369)
     if discovery_result:
         _seed_collection_metadata_wfs(output_dir, report, discovery_result)
 
@@ -846,6 +860,9 @@ def _seed_collection_from_iso(
 ) -> bool:
     """Seed collection metadata.yaml from ISO 19139 metadata.
 
+    Also updates collection.json with title/description from ISO metadata
+    per Issue #369 (propagate rich metadata to STAC, not just metadata.yaml).
+
     Args:
         collection_dir: Path to the collection directory.
         iso_metadata: Parsed ISO metadata.
@@ -858,6 +875,7 @@ def _seed_collection_from_iso(
     from dataclasses import replace
 
     from portolan_cli.metadata_seeding import seed_metadata_yaml
+    from portolan_cli.stac import update_stac_metadata
 
     extracted = iso_metadata.to_extracted_metadata(source_url)
 
@@ -869,4 +887,15 @@ def _seed_collection_from_iso(
     )
 
     metadata_path = collection_dir / ".portolan" / "metadata.yaml"
-    return seed_metadata_yaml(extracted, metadata_path)
+    seeded = seed_metadata_yaml(extracted, metadata_path)
+
+    # Per Issue #369: Also update collection.json with title/description
+    # ISO metadata has rich title and abstract that should appear in STAC
+    collection_path = collection_dir / "collection.json"
+    update_stac_metadata(
+        collection_path,
+        title=iso_metadata.title,
+        description=iso_metadata.abstract,
+    )
+
+    return seeded

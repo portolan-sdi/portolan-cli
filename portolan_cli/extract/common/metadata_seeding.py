@@ -97,6 +97,9 @@ def seed_collection_metadata(
     Creates .portolan/metadata.yaml within the collection directory with
     layer-specific metadata (title, description) plus inherited source info.
 
+    Also updates collection.json with title/description per Issue #369
+    (propagate rich metadata to STAC, not just metadata.yaml).
+
     Automatically selects the best description from available fields:
     - Prefers abstract if it's a real description (not just a technical name)
     - Falls back to title if abstract looks like an identifier
@@ -116,6 +119,7 @@ def seed_collection_metadata(
     """
     from portolan_cli.metadata_extraction import ExtractedMetadata
     from portolan_cli.metadata_seeding import seed_metadata_yaml
+    from portolan_cli.stac import update_stac_metadata
 
     # Select best description from available fields
     best_description = _select_best_description(description, title, layer_name)
@@ -133,4 +137,15 @@ def seed_collection_metadata(
     )
 
     metadata_path = collection_dir / ".portolan" / "metadata.yaml"
-    return seed_metadata_yaml(extracted, metadata_path)
+    seeded = seed_metadata_yaml(extracted, metadata_path)
+
+    # Per Issue #369: Also update collection.json with title/description
+    # This ensures STAC has meaningful metadata, not generic placeholders
+    collection_path = collection_dir / "collection.json"
+    update_stac_metadata(
+        collection_path,
+        title=title,
+        description=best_description,
+    )
+
+    return seeded

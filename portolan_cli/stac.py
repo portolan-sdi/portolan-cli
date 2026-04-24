@@ -933,3 +933,101 @@ def add_via_link(
     links.append(via_link)
 
     collection_path.write_text(json.dumps(collection_data, indent=2) + "\n")
+
+
+def _is_technical_name(text: str | None) -> bool:
+    """Check if text looks like a technical/internal name rather than description.
+
+    Technical names are typically short identifiers that aren't useful as metadata:
+    - Single words with underscores/dashes (e.g., "bu_building_emprise")
+    - Very short (under 20 chars) without spaces
+    - Prefixed with common tech patterns (e.g., "ns:LayerName")
+
+    Args:
+        text: Text to check.
+
+    Returns:
+        True if text looks like a technical name.
+    """
+    import re
+
+    if not text:
+        return True
+
+    text = text.strip()
+
+    # Very short without spaces = likely technical
+    if len(text) < 20 and " " not in text:
+        return True
+
+    # Contains namespace prefix (ns:name pattern)
+    if re.match(r"^[a-z_]+:[A-Za-z]", text):
+        return True
+
+    # All lowercase with underscores, no spaces
+    if re.match(r"^[a-z0-9_]+$", text):
+        return True
+
+    return False
+
+
+def update_stac_metadata(
+    path: Path,
+    title: str | None = None,
+    description: str | None = None,
+) -> bool:
+    """Update title and/or description in a STAC catalog.json or collection.json.
+
+    This function patches existing STAC files with metadata extracted from
+    external sources (WFS GetCapabilities, ArcGIS REST API, ISO 19139).
+    Used by extraction --auto mode to propagate rich metadata to STAC.
+
+    Per Issue #369: Extraction should populate STAC with meaningful metadata,
+    not leave generic placeholders like "Collection: layer_name_abc123".
+
+    Skips technical-looking names (underscore identifiers, namespace prefixes)
+    to avoid replacing human-readable content with machine identifiers.
+
+    Args:
+        path: Path to catalog.json or collection.json file.
+        title: New title (None to skip updating title).
+        description: New description (None to skip updating description).
+
+    Returns:
+        True if file was updated, False if no changes made or file missing.
+
+    Note:
+        This function is idempotent. Calling multiple times with the same
+        values produces the same result.
+    """
+    import json
+
+    if not path.exists():
+        return False
+
+    # Filter out technical names
+    effective_title = title if title and not _is_technical_name(title) else None
+    effective_description = (
+        description if description and not _is_technical_name(description) else None
+    )
+
+    # Nothing to update
+    if effective_title is None and effective_description is None:
+        return False
+
+    stac_data = json.loads(path.read_text())
+
+    updated = False
+
+    if effective_title is not None:
+        stac_data["title"] = effective_title
+        updated = True
+
+    if effective_description is not None:
+        stac_data["description"] = effective_description
+        updated = True
+
+    if updated:
+        path.write_text(json.dumps(stac_data, indent=2, ensure_ascii=False) + "\n")
+
+    return updated
