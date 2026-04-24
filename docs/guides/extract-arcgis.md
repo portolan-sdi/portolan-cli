@@ -119,7 +119,9 @@ The `via` link uses the layer-specific URL (service URL + layer index), not just
 
 ### Auto-Seeded Metadata
 
-The extraction process automatically seeds `.portolan/metadata.yaml` with values from the ArcGIS service metadata:
+The extraction process automatically seeds metadata at two levels:
+
+**Catalog-level** (`.portolan/metadata.yaml`): Seeded from ArcGIS service metadata:
 
 | ArcGIS Field | metadata.yaml Field |
 |-------------|---------------------|
@@ -129,6 +131,8 @@ The extraction process automatically seeds `.portolan/metadata.yaml` with values
 | `serviceDescription` | `processing_notes` |
 | `accessInformation` | `known_issues` |
 | Service URL | `source_url` |
+
+**Collection-level** (`<collection>/.portolan/metadata.yaml`): Each extracted layer gets its own metadata file with layer-specific description from the ArcGIS layer details API. For nested extractions (services-root mode), metadata is written to the correct collection directory regardless of nesting depth.
 
 Fields that require human input (like `contact.email` and `license`) are marked with `TODO` placeholders:
 

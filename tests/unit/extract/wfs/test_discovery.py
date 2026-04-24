@@ -99,6 +99,7 @@ class TestDiscoverLayers:
         mock_layer = MagicMock()
         mock_layer.title = "Buildings"
         mock_layer.abstract = "Building footprints"
+        mock_layer.keywords = ["Buildings", "Bâtiments"]
         mock_layer.boundingBoxWGS84 = (-122.5, 37.5, -122.0, 38.0)
 
         mock_wfs.contents = {"ns:buildings": mock_layer}
@@ -109,6 +110,7 @@ class TestDiscoverLayers:
 
         assert len(result.layers) == 1
         assert result.layers[0].name == "ns:buildings"
+        assert result.layers[0].keywords == ["Buildings", "Bâtiments"]
         assert result.service_url == "https://example.com/wfs"
         assert result.service_title == "Test WFS Service"
         assert result.service_abstract == "A test WFS service"
@@ -127,6 +129,7 @@ class TestDiscoverLayers:
         mock_layer = MagicMock()
         mock_layer.title = "Roads"
         mock_layer.abstract = None
+        mock_layer.keywords = None
         mock_layer.boundingBoxWGS84 = None
 
         mock_wfs.contents = {"roads": mock_layer}
@@ -136,8 +139,44 @@ class TestDiscoverLayers:
             result = discover_layers("https://example.com/wfs")
 
         assert len(result.layers) == 1
+        assert result.layers[0].keywords is None
         assert result.service_title is None
         assert result.provider is None
+
+    def test_discover_layers_extracts_layer_keywords(self) -> None:
+        """discover_layers extracts layer-specific keywords."""
+        from unittest.mock import MagicMock
+
+        mock_wfs = MagicMock()
+        mock_wfs.identification = None
+        mock_wfs.provider = None
+
+        # Layer with keywords
+        mock_layer1 = MagicMock()
+        mock_layer1.title = "Buildings"
+        mock_layer1.abstract = "Building footprints"
+        mock_layer1.keywords = ["Buildings", "Structures", "Bâtiments"]
+        mock_layer1.boundingBoxWGS84 = None
+
+        # Layer without keywords
+        mock_layer2 = MagicMock()
+        mock_layer2.title = "Roads"
+        mock_layer2.abstract = None
+        mock_layer2.keywords = []
+        mock_layer2.boundingBoxWGS84 = None
+
+        mock_wfs.contents = {"buildings": mock_layer1, "roads": mock_layer2}
+
+        with patch("geoparquet_io.core.wfs.get_wfs_capabilities") as mock_get:
+            mock_get.return_value = mock_wfs
+            result = discover_layers("https://example.com/wfs")
+
+        assert len(result.layers) == 2
+        buildings_layer = next(lyr for lyr in result.layers if lyr.name == "buildings")
+        roads_layer = next(lyr for lyr in result.layers if lyr.name == "roads")
+
+        assert buildings_layer.keywords == ["Buildings", "Structures", "Bâtiments"]
+        assert roads_layer.keywords is None  # Empty list -> None
 
 
 class TestLayerInfo:
@@ -171,6 +210,30 @@ class TestLayerInfo:
 
         d = layer.to_filter_dict()
         assert d["id"] == 5
+
+    def test_layer_info_with_keywords(self) -> None:
+        """LayerInfo stores layer-specific keywords."""
+        layer = LayerInfo(
+            name="buildings",
+            typename="inspire_bu:BU.Building",
+            title="Buildings",
+            abstract="Building footprints",
+            keywords=["Buildings", "Bâtiments"],
+            bbox=(-122.5, 37.5, -122.0, 38.0),
+            id=0,
+        )
+
+        assert layer.keywords == ["Buildings", "Bâtiments"]
+
+    def test_layer_info_keywords_default_none(self) -> None:
+        """LayerInfo keywords default to None."""
+        layer = LayerInfo(
+            name="roads",
+            typename="roads",
+            title="Roads",
+        )
+
+        assert layer.keywords is None
 
 
 class TestWFSDiscoveryError:

@@ -226,3 +226,382 @@ class TestExtractWfsCatalogListMode:
             )
 
         assert len(report.layers) == 1
+
+
+class TestWFSMetadataSeeding:
+    """Tests for WFS metadata seeding functions."""
+
+    def test_report_metadata_to_wfs_metadata_conversion(self) -> None:
+        """Converts MetadataExtracted to WFSMetadata correctly."""
+        from portolan_cli.extract.common.report import MetadataExtracted
+        from portolan_cli.extract.wfs.orchestrator import _report_metadata_to_wfs_metadata
+
+        report_metadata = MetadataExtracted(
+            source_url="https://example.com/wfs",
+            description="A test WFS service",
+            attribution="Test Provider",
+            keywords=["test", "wfs"],
+            contact_name="Test Contact",
+            processing_notes="WFS service: Test Service",
+            known_issues=None,
+            license_info_raw="CC-BY-4.0",
+        )
+
+        wfs_metadata = _report_metadata_to_wfs_metadata(report_metadata)
+
+        assert wfs_metadata.source_url == "https://example.com/wfs"
+        assert wfs_metadata.service_abstract == "A test WFS service"
+        assert wfs_metadata.provider_name == "Test Provider"
+        assert wfs_metadata.keywords == ["test", "wfs"]
+        assert wfs_metadata.access_constraints == "CC-BY-4.0"
+
+    def test_seed_metadata_from_extraction_creates_file(self, tmp_path: Path) -> None:
+        """Service-level metadata seeding creates catalog metadata.yaml."""
+        from portolan_cli.extract.common.report import (
+            ExtractionReport,
+            ExtractionSummary,
+            MetadataExtracted,
+        )
+        from portolan_cli.extract.wfs.orchestrator import _seed_metadata_from_extraction
+
+        # Create .portolan directory (normally created by extract_wfs_catalog)
+        (tmp_path / ".portolan").mkdir()
+
+        report = ExtractionReport(
+            extraction_date="2024-01-01T00:00:00Z",
+            source_url="https://example.com/wfs",
+            portolan_version="0.1.0",
+            gpio_version="1.0.0",
+            metadata_extracted=MetadataExtracted(
+                source_url="https://example.com/wfs",
+                description="Test WFS Service",
+                attribution="Test Provider",
+                keywords=["test"],
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            ),
+            layers=[],
+            summary=ExtractionSummary(
+                total_layers=0,
+                succeeded=0,
+                failed=0,
+                skipped=0,
+                total_features=0,
+                total_size_bytes=0,
+                total_duration_seconds=0.0,
+            ),
+        )
+
+        _seed_metadata_from_extraction(tmp_path, report)
+
+        metadata_path = tmp_path / ".portolan" / "metadata.yaml"
+        assert metadata_path.exists()
+        content = metadata_path.read_text()
+        assert "Test Provider" in content
+
+    def test_seed_collection_metadata_wfs_creates_files(self, tmp_path: Path) -> None:
+        """Collection-level metadata seeding creates per-collection metadata.yaml."""
+        from portolan_cli.extract.common.report import (
+            ExtractionReport,
+            ExtractionSummary,
+            LayerResult,
+            MetadataExtracted,
+        )
+        from portolan_cli.extract.wfs.orchestrator import _seed_collection_metadata_wfs
+
+        # Create collection directory structure
+        collection_dir = tmp_path / "buildings_abc123"
+        collection_dir.mkdir()
+        (collection_dir / ".portolan").mkdir()
+
+        discovery = make_discovery_result(
+            [
+                LayerInfo(
+                    name="ns:buildings",
+                    typename="ns:buildings",
+                    title="Buildings Layer",
+                    abstract="All buildings in the city",
+                    bbox=None,
+                    id=0,
+                ),
+            ]
+        )
+
+        report = ExtractionReport(
+            extraction_date="2024-01-01T00:00:00Z",
+            source_url="https://example.com/wfs",
+            portolan_version="0.1.0",
+            gpio_version="1.0.0",
+            metadata_extracted=MetadataExtracted(
+                source_url="https://example.com/wfs",
+                description=None,
+                attribution=None,
+                keywords=None,
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            ),
+            layers=[
+                LayerResult(
+                    id=0,
+                    name="ns:buildings",
+                    status="success",
+                    features=100,
+                    size_bytes=1000,
+                    duration_seconds=1.0,
+                    output_path="buildings_abc123/buildings_abc123.parquet",
+                    warnings=[],
+                    error=None,
+                    attempts=1,
+                ),
+            ],
+            summary=ExtractionSummary(
+                total_layers=1,
+                succeeded=1,
+                failed=0,
+                skipped=0,
+                total_features=100,
+                total_size_bytes=1000,
+                total_duration_seconds=1.0,
+            ),
+        )
+
+        _seed_collection_metadata_wfs(tmp_path, report, discovery)
+
+        metadata_path = collection_dir / ".portolan" / "metadata.yaml"
+        assert metadata_path.exists()
+        content = metadata_path.read_text()
+        assert "All buildings in the city" in content
+        assert "Buildings Layer" in content
+
+    def test_seed_collection_metadata_wfs_skips_failed_layers(self, tmp_path: Path) -> None:
+        """Collection seeding skips failed layer results."""
+        from portolan_cli.extract.common.report import (
+            ExtractionReport,
+            ExtractionSummary,
+            LayerResult,
+            MetadataExtracted,
+        )
+        from portolan_cli.extract.wfs.orchestrator import _seed_collection_metadata_wfs
+
+        discovery = make_discovery_result([make_layer_info("failed_layer", 0)])
+
+        report = ExtractionReport(
+            extraction_date="2024-01-01T00:00:00Z",
+            source_url="https://example.com/wfs",
+            portolan_version="0.1.0",
+            gpio_version="1.0.0",
+            metadata_extracted=MetadataExtracted(
+                source_url="https://example.com/wfs",
+                description=None,
+                attribution=None,
+                keywords=None,
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            ),
+            layers=[
+                LayerResult(
+                    id=0,
+                    name="failed_layer",
+                    status="failed",
+                    features=0,
+                    size_bytes=0,
+                    duration_seconds=0.0,
+                    output_path="",
+                    warnings=[],
+                    error="Connection timeout",
+                    attempts=3,
+                ),
+            ],
+            summary=ExtractionSummary(
+                total_layers=1,
+                succeeded=0,
+                failed=1,
+                skipped=0,
+                total_features=0,
+                total_size_bytes=0,
+                total_duration_seconds=0.0,
+            ),
+        )
+
+        # Should not raise, should just skip
+        _seed_collection_metadata_wfs(tmp_path, report, discovery)
+
+        # No collection directory created since layer failed
+        assert not (tmp_path / "failed_layer" / ".portolan" / "metadata.yaml").exists()
+
+    def test_seed_collection_metadata_wfs_uses_iso_metadata(self, tmp_path: Path) -> None:
+        """ISO metadata from CSW takes precedence over WFS GetCapabilities metadata."""
+
+        from portolan_cli.extract.common.report import (
+            ExtractionReport,
+            ExtractionSummary,
+            LayerResult,
+            MetadataExtracted,
+        )
+        from portolan_cli.extract.csw.models import ISOMetadata
+        from portolan_cli.extract.wfs.orchestrator import _seed_collection_metadata_wfs
+
+        # Create collection directory structure
+        collection_dir = tmp_path / "buildings_abc123"
+        collection_dir.mkdir()
+        (collection_dir / ".portolan").mkdir()
+
+        # Layer with metadata_urls (triggers CSW fetch)
+        discovery = make_discovery_result(
+            [
+                LayerInfo(
+                    name="ns:buildings",
+                    typename="ns:buildings",
+                    title="WFS Title",
+                    abstract="WFS Abstract (should be overridden)",
+                    bbox=None,
+                    id=0,
+                    metadata_urls=[{"url": "https://csw.example.com/record"}],
+                ),
+            ]
+        )
+
+        report = ExtractionReport(
+            extraction_date="2024-01-01T00:00:00Z",
+            source_url="https://example.com/wfs",
+            portolan_version="0.1.0",
+            gpio_version="1.0.0",
+            metadata_extracted=MetadataExtracted(
+                source_url="https://example.com/wfs",
+                description=None,
+                attribution=None,
+                keywords=None,
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            ),
+            layers=[
+                LayerResult(
+                    id=0,
+                    name="ns:buildings",
+                    status="success",
+                    features=100,
+                    size_bytes=1000,
+                    duration_seconds=1.0,
+                    output_path="buildings_abc123/buildings_abc123.parquet",
+                    warnings=[],
+                    error=None,
+                    attempts=1,
+                ),
+            ],
+            summary=ExtractionSummary(
+                total_layers=1,
+                succeeded=1,
+                failed=0,
+                skipped=0,
+                total_features=100,
+                total_size_bytes=1000,
+                total_duration_seconds=1.0,
+            ),
+        )
+
+        # Mock the CSW fetch to return rich ISO metadata
+        mock_iso = ISOMetadata(
+            file_identifier="test-iso-id",
+            title="ISO Title",
+            abstract="Rich ISO description from CSW",
+            contact_organization="ISO Contact Org",
+            contact_email="iso@example.com",
+        )
+
+        with patch(
+            "portolan_cli.extract.wfs.orchestrator._try_fetch_iso_metadata",
+            return_value=mock_iso,
+        ):
+            _seed_collection_metadata_wfs(tmp_path, report, discovery)
+
+        metadata_path = collection_dir / ".portolan" / "metadata.yaml"
+        assert metadata_path.exists()
+        content = metadata_path.read_text()
+        # ISO metadata should be used, not WFS metadata
+        assert "Rich ISO description from CSW" in content
+        assert "WFS Abstract" not in content
+
+    def test_seed_collection_metadata_wfs_nested_output_path(self, tmp_path: Path) -> None:
+        """Collection seeding handles nested output paths correctly."""
+        from portolan_cli.extract.common.report import (
+            ExtractionReport,
+            ExtractionSummary,
+            LayerResult,
+            MetadataExtracted,
+        )
+        from portolan_cli.extract.wfs.orchestrator import _seed_collection_metadata_wfs
+
+        # Create nested collection directory structure (like multi-layer extract)
+        nested_dir = tmp_path / "service" / "layer_abc123"
+        nested_dir.mkdir(parents=True)
+        (nested_dir / ".portolan").mkdir()
+
+        discovery = make_discovery_result(
+            [
+                LayerInfo(
+                    name="ns:layer",
+                    typename="ns:layer",
+                    title="Nested Layer",
+                    abstract="Layer in nested structure",
+                    bbox=None,
+                    id=0,
+                ),
+            ]
+        )
+
+        report = ExtractionReport(
+            extraction_date="2024-01-01T00:00:00Z",
+            source_url="https://example.com/wfs",
+            portolan_version="0.1.0",
+            gpio_version="1.0.0",
+            metadata_extracted=MetadataExtracted(
+                source_url="https://example.com/wfs",
+                description=None,
+                attribution=None,
+                keywords=None,
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            ),
+            layers=[
+                LayerResult(
+                    id=0,
+                    name="ns:layer",
+                    status="success",
+                    features=50,
+                    size_bytes=500,
+                    duration_seconds=0.5,
+                    # Nested output path
+                    output_path="service/layer_abc123/layer_abc123.parquet",
+                    warnings=[],
+                    error=None,
+                    attempts=1,
+                ),
+            ],
+            summary=ExtractionSummary(
+                total_layers=1,
+                succeeded=1,
+                failed=0,
+                skipped=0,
+                total_features=50,
+                total_size_bytes=500,
+                total_duration_seconds=0.5,
+            ),
+        )
+
+        _seed_collection_metadata_wfs(tmp_path, report, discovery)
+
+        # Metadata should be in the nested collection directory
+        metadata_path = nested_dir / ".portolan" / "metadata.yaml"
+        assert metadata_path.exists()
+        content = metadata_path.read_text()
+        assert "Layer in nested structure" in content

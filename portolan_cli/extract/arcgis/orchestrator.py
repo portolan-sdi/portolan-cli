@@ -596,6 +596,9 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
     # Add via links for provenance tracking (Issue #353)
     _add_via_links_to_collections(output_dir, report)
 
+    # Seed collection-level metadata.yaml with layer details
+    _seed_collection_metadata_arcgis(output_dir, report)
+
 
 def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -> None:
     """Seed metadata.yaml from extracted service metadata.
@@ -671,14 +674,9 @@ def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) ->
         if layer.status != "success" or not layer.output_path:
             continue
 
-        # Derive collection directory from output_path
-        # output_path is like "layer_name/layer_name.parquet"
-        # Collection dir is first component
-        output_parts = Path(layer.output_path).parts
-        if not output_parts:
-            continue
-
-        collection_dir = output_dir / output_parts[0]
+        # Derive collection directory from output_path's parent
+        # Handles nested paths like "service/layer/layer.parquet"
+        collection_dir = output_dir / Path(layer.output_path).parent
         collection_path = collection_dir / "collection.json"
 
         if not collection_path.exists():
@@ -692,6 +690,62 @@ def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) ->
             collection_path,
             layer_url,
             title=f"Source ArcGIS layer: {layer.name}",
+        )
+
+
+def _seed_collection_metadata_arcgis(
+    output_dir: Path,
+    report: ExtractionReport,
+    timeout: float = 60.0,
+) -> None:
+    """Seed metadata.yaml for each collection with ArcGIS layer-specific info.
+
+    Fetches layer details from ArcGIS API to get description for each layer.
+    Falls back gracefully if layer details fetch fails.
+
+    Args:
+        output_dir: The catalog output directory.
+        report: The extraction report with layer results.
+        timeout: Request timeout for layer detail fetches.
+    """
+    from portolan_cli.extract.arcgis.discovery import fetch_layer_details
+    from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata
+
+    source_url = report.source_url
+
+    for layer_result in report.layers:
+        if layer_result.status != "success" or not layer_result.output_path:
+            continue
+
+        # Derive collection directory from output_path's parent
+        # Handles nested paths like "service/layer/layer.parquet"
+        collection_dir = output_dir / Path(layer_result.output_path).parent
+
+        # Fetch layer details to get description
+        layer_description = None
+        layer_name = layer_result.name
+        try:
+            layer_details = fetch_layer_details(source_url, layer_result.id, timeout=timeout)
+            layer_description = layer_details.get("description")
+            layer_name = layer_details.get("name", layer_result.name)
+        except Exception as e:
+            logger.debug(
+                "Failed to fetch layer details for %s (id=%s) from %s: %s",
+                layer_result.name,
+                layer_result.id,
+                source_url,
+                e,
+            )
+
+        layer_url = f"{source_url.rstrip('/')}/{layer_result.id}"
+
+        seed_collection_metadata(
+            collection_dir,
+            source_type="arcgis_featureserver",
+            source_url=layer_url,
+            layer_name=layer_name,
+            title=layer_name,
+            description=layer_description,
         )
 
 
