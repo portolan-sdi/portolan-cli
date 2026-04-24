@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import defusedxml.ElementTree as ET
 
 if TYPE_CHECKING:
-    from xml.etree.ElementTree import Element
+    from xml.etree.ElementTree import Element  # nosec B405 - type hints only
 
 from portolan_cli.extract.csw.models import ISOMetadata
 

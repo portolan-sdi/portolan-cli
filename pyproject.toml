@@ -200,7 +200,9 @@ skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
 
 [tool.codespell]
 # "Nd" is a Unicode category code for "Number, decimal digit" used in Hypothesis tests
-ignore-words-list = "nd"
+# French words from Belgian ISO 19139 test fixture (tests/fixtures/csw/belgium_buildings_iso19139.xml)
+# "BU" is the INSPIRE theme code for Buildings (used in test fixtures)
+ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,connexion,objets,visibles,issus,fonction,mesures,informations"
 
 # ---------- dead code ----------
 
