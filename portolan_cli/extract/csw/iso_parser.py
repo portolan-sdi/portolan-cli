@@ -9,9 +9,12 @@ MD_Metadata root elements.
 
 from __future__ import annotations
 
-from xml.etree.ElementTree import Element
+from typing import TYPE_CHECKING
 
 import defusedxml.ElementTree as ET
+
+if TYPE_CHECKING:
+    from xml.etree.ElementTree import Element
 
 from portolan_cli.extract.csw.models import ISOMetadata
 

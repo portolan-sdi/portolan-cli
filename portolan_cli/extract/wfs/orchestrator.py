@@ -784,8 +784,9 @@ def _seed_collection_metadata_wfs(
     # Seed metadata for each layer
     for layer_result, layer_info in layers_to_process:
         # Derive collection directory from output_path's parent
-        # output_path is guaranteed non-None by the filter above
-        assert layer_result.output_path is not None
+        # output_path is guaranteed non-None by the filter above, but check defensively
+        if not layer_result.output_path:
+            continue
         collection_dir = output_dir / Path(layer_result.output_path).parent
 
         # Build layer-specific URL for provenance
