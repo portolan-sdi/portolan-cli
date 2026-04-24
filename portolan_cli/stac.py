@@ -259,6 +259,44 @@ def add_asset_to_collection(
         _update_collection_extent_from_bbox(collection, update_extent_from_bbox)
 
 
+def add_collection_properties_from_metadata(
+    collection: pystac.Collection,
+    metadata: object,
+) -> None:
+    """Add STAC properties from metadata to a collection.
+
+    Used for collection-level assets (ADR-0031) where metadata properties
+    should be applied directly to the collection instead of an item.
+
+    Handles:
+    - PMTilesMetadata: proj:epsg=3857, pmtiles:* properties
+    - FlatGeobufMetadata: proj:epsg from CRS, flatgeobuf:* properties
+    - GeoParquetMetadata: proj:epsg from CRS (table extension handled separately)
+
+    Args:
+        collection: The collection to add properties to.
+        metadata: Metadata object with to_stac_properties() method.
+    """
+    if not hasattr(metadata, "to_stac_properties"):
+        return
+
+    props = metadata.to_stac_properties()
+    if not props:
+        return
+
+    # Add properties to collection.extra_fields (STAC collection properties)
+    for key, value in props.items():
+        collection.extra_fields[key] = value
+
+    # Add projection extension declaration if proj:epsg is present
+    if "proj:epsg" in props:
+        proj_ext_url = EXTENSION_URLS["projection"]
+        if collection.stac_extensions is None:
+            collection.stac_extensions = []
+        if proj_ext_url not in collection.stac_extensions:
+            collection.stac_extensions.append(proj_ext_url)
+
+
 def _update_collection_extent_from_bbox(
     collection: pystac.Collection,
     bbox: list[float],
