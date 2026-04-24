@@ -659,11 +659,9 @@ def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) ->
         if layer.status != "success" or not layer.output_path:
             continue
 
-        output_parts = Path(layer.output_path).parts
-        if not output_parts:
-            continue
-
-        collection_dir = output_dir / output_parts[0]
+        # Derive collection directory from output_path's parent
+        # Handles nested paths like "service/layer/layer.parquet"
+        collection_dir = output_dir / Path(layer.output_path).parent
         collection_path = collection_dir / "collection.json"
 
         if not collection_path.exists():
@@ -737,35 +735,58 @@ def _seed_collection_metadata_wfs(
     output_dir: Path,
     report: ExtractionReport,
     discovery_result: WFSDiscoveryResult,
+    max_workers: int = 4,
 ) -> None:
     """Seed metadata.yaml for each collection with WFS layer-specific info.
 
     For layers with MetadataURL (e.g., INSPIRE services), fetches rich ISO 19139
-    metadata from CSW. Falls back to GetCapabilities metadata if CSW fetch fails.
+    metadata from CSW in parallel. Falls back to GetCapabilities metadata if CSW
+    fetch fails.
 
     Args:
         output_dir: The catalog output directory.
         report: The extraction report with layer results.
         discovery_result: WFS discovery result with layer metadata.
+        max_workers: Maximum parallel CSW fetches (default: 4).
     """
     from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata
     from portolan_cli.output import detail
 
     layer_info_by_name = {layer.name: layer for layer in discovery_result.layers}
 
+    # Collect layers to process
+    layers_to_process: list[tuple[LayerResult, LayerInfo]] = []
     for layer_result in report.layers:
         if layer_result.status != "success" or not layer_result.output_path:
             continue
-
         layer_info = layer_info_by_name.get(layer_result.name)
-        if not layer_info:
-            continue
+        if layer_info:
+            layers_to_process.append((layer_result, layer_info))
 
-        output_parts = Path(layer_result.output_path).parts
-        if not output_parts:
-            continue
+    if not layers_to_process:
+        return
 
-        collection_dir = output_dir / output_parts[0]
+    # Fetch ISO metadata in parallel
+    iso_metadata_map: dict[str, ISOMetadata | None] = {}
+
+    def fetch_iso(layer_info: LayerInfo) -> tuple[str, ISOMetadata | None]:
+        return (layer_info.name, _try_fetch_iso_metadata(layer_info.metadata_urls))
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(fetch_iso, layer_info): layer_info.name
+            for _, layer_info in layers_to_process
+        }
+        for future in as_completed(futures):
+            layer_name, iso_metadata = future.result()
+            iso_metadata_map[layer_name] = iso_metadata
+
+    # Seed metadata for each layer
+    for layer_result, layer_info in layers_to_process:
+        # Derive collection directory from output_path's parent
+        # output_path is guaranteed non-None by the filter above
+        assert layer_result.output_path is not None
+        collection_dir = output_dir / Path(layer_result.output_path).parent
 
         # Build layer-specific URL for provenance
         layer_url = _build_wfs_url(
@@ -773,8 +794,7 @@ def _seed_collection_metadata_wfs(
             {"service": "WFS", "request": "GetFeature", "typename": layer_info.name},
         )
 
-        # Try to fetch rich ISO metadata from MetadataURL (e.g., INSPIRE CSW)
-        iso_metadata = _try_fetch_iso_metadata(layer_info.metadata_urls)
+        iso_metadata = iso_metadata_map.get(layer_info.name)
 
         if iso_metadata and iso_metadata.has_useful_metadata():
             # Use rich ISO metadata

@@ -382,3 +382,43 @@ class TestExtractKeywordsFromThesauri:
         assert metadata.keywords is not None
         assert metadata.keywords.count("Buildings") == 1
         assert "Structures" in metadata.keywords
+
+    def test_invalid_fixture_raises_error(self) -> None:
+        """Invalid fixture file (missing required fields) raises ISOParseError."""
+        from portolan_cli.extract.csw.iso_parser import ISOParseError, parse_iso19139
+
+        fixture_path = FIXTURES_DIR / "invalid_iso19139.xml"
+        xml_content = fixture_path.read_text(encoding="utf-8")
+
+        with pytest.raises(ISOParseError, match="Missing required field"):
+            parse_iso19139(xml_content)
+
+    def test_minimal_fixture_parses(self) -> None:
+        """Minimal fixture parses successfully with only required fields."""
+        from portolan_cli.extract.csw.iso_parser import parse_iso19139
+
+        fixture_path = FIXTURES_DIR / "minimal_iso19139.xml"
+        xml_content = fixture_path.read_text(encoding="utf-8")
+
+        metadata = parse_iso19139(xml_content)
+
+        assert metadata.file_identifier == "minimal-test-id"
+        assert metadata.title == "Minimal Test Dataset"
+        assert metadata.abstract == "A minimal test abstract for unit testing."
+
+    def test_csw_wrapped_fixture_parses(self) -> None:
+        """CSW-wrapped fixture parses correctly, extracting MD_Metadata from wrapper."""
+        from portolan_cli.extract.csw.iso_parser import parse_iso19139
+
+        fixture_path = FIXTURES_DIR / "csw_wrapped_iso19139.xml"
+        xml_content = fixture_path.read_text(encoding="utf-8")
+
+        metadata = parse_iso19139(xml_content)
+
+        assert metadata.file_identifier == "csw-wrapped-test-id"
+        assert metadata.title == "CSW Wrapped Dataset"
+        assert metadata.contact_organization == "Test Organization"
+        assert metadata.contact_email == "test@example.com"
+        assert metadata.keywords is not None
+        assert "test" in metadata.keywords
+        assert metadata.license_url == "https://creativecommons.org/licenses/by/4.0/"

@@ -1016,3 +1016,72 @@ class TestArcGISCollectionMetadataSeeding:
             # Should not be called for failed layers
             _seed_collection_metadata_arcgis(tmp_path, report)
             mock_fetch.assert_not_called()
+
+    def test_seed_collection_metadata_arcgis_nested_output_path(self, tmp_path: Path) -> None:
+        """Collection seeding handles nested output paths correctly."""
+        from portolan_cli.extract.arcgis.orchestrator import _seed_collection_metadata_arcgis
+        from portolan_cli.extract.common.report import (
+            ExtractionReport,
+            ExtractionSummary,
+            LayerResult,
+            MetadataExtracted,
+        )
+
+        # Create nested collection directory structure (like services-root extract)
+        nested_dir = tmp_path / "MyService" / "layer_abc123"
+        nested_dir.mkdir(parents=True)
+        (nested_dir / ".portolan").mkdir()
+
+        report = ExtractionReport(
+            extraction_date="2024-01-01T00:00:00Z",
+            source_url="https://example.com/arcgis/rest/services",
+            portolan_version="0.1.0",
+            gpio_version="1.0.0",
+            metadata_extracted=MetadataExtracted(
+                source_url="https://example.com/arcgis/rest/services",
+                description=None,
+                attribution=None,
+                keywords=None,
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            ),
+            layers=[
+                LayerResult(
+                    id=5,
+                    name="Nested Layer",
+                    status="success",
+                    features=200,
+                    size_bytes=2000,
+                    duration_seconds=2.0,
+                    # Nested output path from services-root extract
+                    output_path="MyService/layer_abc123/layer_abc123.parquet",
+                    warnings=[],
+                    error=None,
+                    attempts=1,
+                ),
+            ],
+            summary=ExtractionSummary(
+                total_layers=1,
+                succeeded=1,
+                failed=0,
+                skipped=0,
+                total_features=200,
+                total_size_bytes=2000,
+                total_duration_seconds=2.0,
+            ),
+        )
+
+        with patch("portolan_cli.extract.arcgis.discovery.fetch_layer_details") as mock_fetch:
+            mock_fetch.return_value = {
+                "name": "Nested Layer",
+                "description": "Description from ArcGIS API",
+            }
+            _seed_collection_metadata_arcgis(tmp_path, report)
+
+        # Metadata should be in the nested collection directory (parent of parquet)
+        metadata_path = nested_dir / ".portolan" / "metadata.yaml"
+        assert metadata_path.exists()
+        content = metadata_path.read_text()
+        assert "Description from ArcGIS API" in content

@@ -14,21 +14,35 @@ if TYPE_CHECKING:
     from portolan_cli.metadata_extraction import ExtractedMetadata
 
 
-# Patterns that indicate software-generated boilerplate, not real descriptions
-_BOILERPLATE_PATTERNS = [
-    "reference implementation",
-    "supports all wfs operations",
-    "geoserver",  # Any mention of GeoServer is boilerplate
-    "mapserver",  # Any mention of MapServer is boilerplate
-    "deegree",
-    "qgis server",
-    "arcgis server",
-    "web feature service",  # Generic "Web Feature Service" title
+# Phrases that indicate software-generated boilerplate, not real descriptions.
+# These are specific default phrases, not just software names.
+_BOILERPLATE_PHRASES = [
+    "this is the reference implementation of wfs",
+    "this is the default geoserver",
+    "this is a geoserver instance",
+    "geoserver web feature service",
+    "mapserver web feature service",
+    "supports all wfs operations including",
+    "reference implementation of wfs",
+    "deegree web feature service",
+    "qgis server wfs",
+    "a compliant implementation of ogc",
+]
+
+# Short generic titles that are boilerplate
+_BOILERPLATE_TITLES = [
+    "geoserver",
+    "mapserver",
+    "web feature service",
+    "wfs",
 ]
 
 
 def is_boilerplate_description(text: str | None) -> bool:
     """Check if description is software boilerplate rather than real content.
+
+    Matches known default phrases from common WFS servers. Does NOT match
+    legitimate descriptions that merely mention the software name.
 
     Args:
         text: Description text to check.
@@ -39,8 +53,14 @@ def is_boilerplate_description(text: str | None) -> bool:
     if not text:
         return False
 
-    lower = text.lower()
-    return any(pattern in lower for pattern in _BOILERPLATE_PATTERNS)
+    lower = text.lower().strip()
+
+    # Check for exact match to short boilerplate titles
+    if lower in _BOILERPLATE_TITLES:
+        return True
+
+    # Check for boilerplate phrases anywhere in text
+    return any(phrase in lower for phrase in _BOILERPLATE_PHRASES)
 
 
 @dataclass

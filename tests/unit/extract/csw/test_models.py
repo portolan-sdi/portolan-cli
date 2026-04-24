@@ -137,11 +137,19 @@ class TestISOMetadata:
         )
         assert with_abstract.has_useful_metadata() is True
 
-        # Has keywords - useful
-        with_keywords = ISOMetadata(
+        # Sparse keywords (< 3) alone are NOT useful (too weak)
+        with_sparse_keywords = ISOMetadata(
             file_identifier="abc",
             title="Test",
             keywords=["buildings", "structures"],
+        )
+        assert with_sparse_keywords.has_useful_metadata() is False
+
+        # 3+ keywords are useful
+        with_keywords = ISOMetadata(
+            file_identifier="abc",
+            title="Test",
+            keywords=["buildings", "structures", "urban"],
         )
         assert with_keywords.has_useful_metadata() is True
 

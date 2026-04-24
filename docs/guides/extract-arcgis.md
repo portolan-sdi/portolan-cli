@@ -132,7 +132,7 @@ The extraction process automatically seeds metadata at two levels:
 | `accessInformation` | `known_issues` |
 | Service URL | `source_url` |
 
-**Collection-level** (`<collection>/.portolan/metadata.yaml`): Each extracted layer gets its own metadata file with layer-specific description from the ArcGIS layer details API.
+**Collection-level** (`<collection>/.portolan/metadata.yaml`): Each extracted layer gets its own metadata file with layer-specific description from the ArcGIS layer details API. For nested extractions (services-root mode), metadata is written to the correct collection directory regardless of nesting depth.
 
 Fields that require human input (like `contact.email` and `license`) are marked with `TODO` placeholders:
 

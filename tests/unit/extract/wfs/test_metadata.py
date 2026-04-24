@@ -111,11 +111,11 @@ class TestWFSMetadata:
         assert extracted.description == "INSPIRE Buildings Wallonia"
 
     def test_to_extracted_detects_mapserver_boilerplate(self) -> None:
-        """MapServer default description is detected as boilerplate."""
+        """MapServer default WFS title is detected as boilerplate."""
         wfs_metadata = WFSMetadata(
             source_url="https://example.com/wfs",
             service_title="City GIS Data",
-            service_abstract="WFS server maintained by MapServer",
+            service_abstract="MapServer Web Feature Service",  # Actual boilerplate phrase
             provider_name="City GIS",
         )
 
@@ -203,17 +203,20 @@ class TestIsBoilerplateDescription:
         text = "This is the reference implementation of WFS 1.0.0 and WFS 1.1.0, supports all WFS operations including Transaction."
         assert is_boilerplate_description(text) is True
 
-    def test_mapserver_mention(self) -> None:
-        """Detect MapServer boilerplate."""
+    def test_mapserver_wfs_boilerplate(self) -> None:
+        """Detect MapServer WFS boilerplate phrase."""
         from portolan_cli.extract.wfs.metadata import is_boilerplate_description
 
-        assert is_boilerplate_description("WFS server maintained by MapServer") is True
+        assert is_boilerplate_description("MapServer Web Feature Service") is True
 
-    def test_geoserver_mention(self) -> None:
-        """Detect GeoServer mention."""
+    def test_geoserver_mention_not_boilerplate(self) -> None:
+        """Mere mention of GeoServer is NOT boilerplate (could be legitimate)."""
         from portolan_cli.extract.wfs.metadata import is_boilerplate_description
 
-        assert is_boilerplate_description("Powered by GeoServer") is True
+        # "Powered by GeoServer" is a legitimate description, not default text
+        assert is_boilerplate_description("Powered by GeoServer") is False
+        # But actual processing info is fine
+        assert is_boilerplate_description("Data processed using GeoServer tools") is False
 
     def test_real_description_not_boilerplate(self) -> None:
         """Real descriptions are not flagged."""

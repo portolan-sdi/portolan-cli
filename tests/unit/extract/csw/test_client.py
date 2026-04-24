@@ -40,10 +40,12 @@ class TestFetchMetadataRecord:
 
     def test_returns_none_on_http_error(self) -> None:
         """Returns None when HTTP request fails."""
+        import requests
+
         from portolan_cli.extract.csw.client import fetch_metadata_record
 
         mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = Exception("404 Not Found")
+        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError("404 Not Found")
 
         with patch("requests.get", return_value=mock_response):
             metadata = fetch_metadata_record("https://example.com/csw?id=missing")
@@ -242,6 +244,8 @@ class TestFetchMetadataForLayer:
 
     def test_tries_next_url_on_failure(self, belgium_buildings_xml: str) -> None:
         """Tries next URL when first one fails."""
+        import requests
+
         from portolan_cli.extract.csw.client import fetch_metadata_for_layer
 
         call_count = 0
@@ -250,7 +254,7 @@ class TestFetchMetadataForLayer:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise Exception("First URL failed")
+                raise requests.exceptions.ConnectionError("First URL failed")
             mock_response = MagicMock()
             mock_response.text = belgium_buildings_xml
             mock_response.status_code = 200

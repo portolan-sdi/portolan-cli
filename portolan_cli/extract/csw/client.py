@@ -10,12 +10,15 @@ the metadataUrls list from OWSLib layer objects.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 import requests  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
     from portolan_cli.extract.csw.models import ISOMetadata
+
+logger = logging.getLogger(__name__)
 
 # Default timeout for metadata fetches (seconds)
 DEFAULT_TIMEOUT = 30.0
@@ -43,11 +46,11 @@ def fetch_metadata_record(
 
         return parse_iso19139(xml_content)
 
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
+        logger.debug("CSW fetch failed for %s: %s", url, e)
         return None
-    except ISOParseError:
-        return None
-    except Exception:
+    except ISOParseError as e:
+        logger.debug("ISO 19139 parse failed for %s: %s", url, e)
         return None
 
 

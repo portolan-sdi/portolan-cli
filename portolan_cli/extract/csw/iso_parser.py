@@ -9,11 +9,9 @@ MD_Metadata root elements.
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
-from typing import TYPE_CHECKING
+from xml.etree.ElementTree import Element
 
-if TYPE_CHECKING:
-    pass
+import defusedxml.ElementTree as ET
 
 from portolan_cli.extract.csw.models import ISOMetadata
 
@@ -48,7 +46,7 @@ def parse_iso19139(xml_content: str) -> ISOMetadata:
         ISOParseError: If XML parsing fails or required fields are missing.
     """
     try:
-        root = ET.fromstring(xml_content)  # noqa: S314
+        root = ET.fromstring(xml_content)
     except ET.ParseError as e:
         raise ISOParseError(f"Failed to parse XML: {e}") from e
 
@@ -88,7 +86,7 @@ def parse_iso19139(xml_content: str) -> ISOMetadata:
     )
 
 
-def _find_md_metadata(root: ET.Element) -> ET.Element | None:
+def _find_md_metadata(root: Element) -> Element | None:
     """Find MD_Metadata element in XML tree.
 
     Handles both CSW-wrapped responses and direct MD_Metadata roots.
@@ -110,7 +108,7 @@ def _find_md_metadata(root: ET.Element) -> ET.Element | None:
     return None
 
 
-def _get_text(element: ET.Element, xpath: str) -> str | None:
+def _get_text(element: Element, xpath: str) -> str | None:
     """Get text content from XPath, or None if not found."""
     found = element.find(xpath, NAMESPACES)
     if found is not None and found.text:
@@ -118,7 +116,7 @@ def _get_text(element: ET.Element, xpath: str) -> str | None:
     return None
 
 
-def _get_title(md: ET.Element) -> str | None:
+def _get_title(md: Element) -> str | None:
     """Extract dataset title."""
     return _get_text(
         md,
@@ -127,7 +125,7 @@ def _get_title(md: ET.Element) -> str | None:
     )
 
 
-def _get_abstract(md: ET.Element) -> str | None:
+def _get_abstract(md: Element) -> str | None:
     """Extract dataset abstract."""
     return _get_text(
         md,
@@ -135,7 +133,7 @@ def _get_abstract(md: ET.Element) -> str | None:
     )
 
 
-def _get_keywords(md: ET.Element) -> list[str] | None:
+def _get_keywords(md: Element) -> list[str] | None:
     """Extract keywords from all thesauri, deduplicated."""
     keywords: set[str] = set()
 
@@ -158,7 +156,7 @@ def _get_keywords(md: ET.Element) -> list[str] | None:
     return sorted(keywords) if keywords else None
 
 
-def _get_contact_organization(md: ET.Element) -> str | None:
+def _get_contact_organization(md: Element) -> str | None:
     """Extract primary contact organization."""
     # Try pointOfContact first
     org = _get_text(
@@ -175,7 +173,7 @@ def _get_contact_organization(md: ET.Element) -> str | None:
     )
 
 
-def _get_contact_email(md: ET.Element) -> str | None:
+def _get_contact_email(md: Element) -> str | None:
     """Extract primary contact email."""
     # Try pointOfContact first
     email = _get_text(
@@ -195,7 +193,7 @@ def _get_contact_email(md: ET.Element) -> str | None:
     )
 
 
-def _get_license_url(md: ET.Element) -> str | None:
+def _get_license_url(md: Element) -> str | None:
     """Extract license URL from use constraints."""
     # Look for Anchor elements with license URLs
     for constraint in md.findall(
@@ -212,7 +210,7 @@ def _get_license_url(md: ET.Element) -> str | None:
     return None
 
 
-def _get_license_text(md: ET.Element) -> str | None:
+def _get_license_text(md: Element) -> str | None:
     """Extract license text description."""
     # Look for Anchor elements with license text
     for constraint in md.findall(
@@ -229,7 +227,7 @@ def _get_license_text(md: ET.Element) -> str | None:
     return None
 
 
-def _get_access_constraints(md: ET.Element) -> str | None:
+def _get_access_constraints(md: Element) -> str | None:
     """Extract access constraints text."""
     # Look for accessConstraints other constraints
     for constraint in md.findall(
@@ -251,7 +249,7 @@ def _get_access_constraints(md: ET.Element) -> str | None:
     return None
 
 
-def _get_lineage(md: ET.Element) -> str | None:
+def _get_lineage(md: Element) -> str | None:
     """Extract data lineage statement."""
     return _get_text(
         md,
@@ -260,7 +258,7 @@ def _get_lineage(md: ET.Element) -> str | None:
     )
 
 
-def _get_thumbnail_url(md: ET.Element) -> str | None:
+def _get_thumbnail_url(md: Element) -> str | None:
     """Extract thumbnail/graphic overview URL."""
     return _get_text(
         md,
@@ -269,7 +267,7 @@ def _get_thumbnail_url(md: ET.Element) -> str | None:
     )
 
 
-def _get_scale_denominator(md: ET.Element) -> int | None:
+def _get_scale_denominator(md: Element) -> int | None:
     """Extract representative scale denominator."""
     text = _get_text(
         md,
@@ -285,7 +283,7 @@ def _get_scale_denominator(md: ET.Element) -> int | None:
     return None
 
 
-def _get_topic_category(md: ET.Element) -> str | None:
+def _get_topic_category(md: Element) -> str | None:
     """Extract topic category code."""
     return _get_text(
         md,
@@ -294,7 +292,7 @@ def _get_topic_category(md: ET.Element) -> str | None:
     )
 
 
-def _get_maintenance_frequency(md: ET.Element) -> str | None:
+def _get_maintenance_frequency(md: Element) -> str | None:
     """Extract maintenance frequency code."""
     freq_elem = md.find(
         ".//gmd:identificationInfo/gmd:MD_DataIdentification/gmd:resourceMaintenance"
@@ -307,7 +305,7 @@ def _get_maintenance_frequency(md: ET.Element) -> str | None:
     return None
 
 
-def _get_date_by_type(md: ET.Element, date_type: str) -> str | None:
+def _get_date_by_type(md: Element, date_type: str) -> str | None:
     """Extract date by type (creation, revision, publication)."""
     for ci_date in md.findall(
         ".//gmd:identificationInfo/gmd:MD_DataIdentification/gmd:citation"

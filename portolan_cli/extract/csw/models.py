@@ -6,6 +6,7 @@ ISO 19139 XML records, typically fetched via CSW (Catalog Service for Web).
 
 from __future__ import annotations
 
+import textwrap
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
     from portolan_cli.metadata_extraction import ExtractedMetadata
 
 
-# Known license URL patterns mapped to SPDX identifiers
+# Known license URL patterns mapped to SPDX identifiers (all lowercase for matching)
 LICENSE_URL_TO_SPDX: dict[str, str] = {
     "creativecommons.org/licenses/by/4.0": "CC-BY-4.0",
     "creativecommons.org/licenses/by/3.0": "CC-BY-3.0",
@@ -27,8 +28,8 @@ LICENSE_URL_TO_SPDX: dict[str, str] = {
     "creativecommons.org/licenses/by-nc-nd/4.0": "CC-BY-NC-ND-4.0",
     "creativecommons.org/publicdomain/zero/1.0": "CC0-1.0",
     "creativecommons.org/publicdomain/mark/1.0": "CC-PDDC",
-    "opensource.org/licenses/MIT": "MIT",
-    "opensource.org/licenses/Apache-2.0": "Apache-2.0",
+    "opensource.org/licenses/mit": "MIT",
+    "opensource.org/licenses/apache-2.0": "Apache-2.0",
     "opendatacommons.org/licenses/odbl": "ODbL-1.0",
     "opendatacommons.org/licenses/by": "ODC-By-1.0",
     "opendatacommons.org/licenses/pddl": "PDDL-1.0",
@@ -99,21 +100,26 @@ class ISOMetadata:
         return None
 
     def has_useful_metadata(self) -> bool:
-        """Check if this metadata has more than just identifier/title.
+        """Check if this metadata has substantial content beyond identifier/title.
+
+        Requires at least one "strong" field (abstract, license, contact, lineage)
+        OR sufficient keywords (3+) to be considered useful.
 
         Returns:
             True if metadata contains useful fields beyond the basics.
         """
-        return any(
-            [
-                self.abstract,
-                self.keywords,
-                self.license_url,
-                self.contact_organization,
-                self.contact_email,
-                self.lineage,
-            ]
-        )
+        strong_fields = [
+            self.abstract,
+            self.license_url,
+            self.contact_organization,
+            self.contact_email,
+            self.lineage,
+        ]
+
+        has_strong = any(strong_fields)
+        has_sufficient_keywords = bool(self.keywords and len(self.keywords) >= 3)
+
+        return has_strong or has_sufficient_keywords
 
     def to_extracted_metadata(self, source_url: str) -> ExtractedMetadata:
         """Convert to ExtractedMetadata for use with metadata seeding.
@@ -140,14 +146,10 @@ class ISOMetadata:
 
         license_raw = "; ".join(license_parts) if license_parts else None
 
-        # Build processing notes from lineage
+        # Build processing notes from lineage (truncate on word boundary)
         processing_notes = None
         if self.lineage:
-            # Truncate very long lineage statements
-            if len(self.lineage) > 500:
-                processing_notes = self.lineage[:497] + "..."
-            else:
-                processing_notes = self.lineage
+            processing_notes = textwrap.shorten(self.lineage, width=500, placeholder="...")
 
         return ExtractedMetadata(
             source_type="csw_iso19139",
@@ -155,7 +157,8 @@ class ISOMetadata:
             description=self.abstract or self.title,
             attribution=self.contact_organization,
             keywords=self.keywords,
-            contact_name=self.contact_email,
+            contact_name=self.contact_organization,
+            contact_email=self.contact_email,
             processing_notes=processing_notes,
             known_issues=None,
             license_raw=license_raw,
