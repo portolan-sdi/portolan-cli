@@ -49,11 +49,15 @@ from portolan_cli.formats import (
 from portolan_cli.metadata import (
     extract_band_statistics,
     extract_cog_metadata,
+    extract_flatgeobuf_metadata,
     extract_geoparquet_metadata,
     extract_parquet_statistics,
+    extract_pmtiles_metadata,
 )
 from portolan_cli.metadata.cog import COGMetadata
+from portolan_cli.metadata.flatgeobuf import FlatGeobufMetadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
+from portolan_cli.metadata.pmtiles import PMTilesMetadata
 from portolan_cli.metadata_yaml import (
     NodataMismatchError,
     apply_raster_nodata_defaults,
@@ -64,6 +68,7 @@ from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
     add_asset_to_collection,
     add_collection_extensions_from_summaries,
+    add_collection_properties_from_metadata,
     add_item_to_collection,
     add_projection_extension,
     add_raster_extension,
@@ -380,7 +385,7 @@ class PreparedDataset:
     is_collection_level_asset: bool = False
     stac_item: pystac.Item | None = None
     stac_assets: dict[str, pystac.Asset] | None = None  # For collection-level addition
-    metadata: GeoParquetMetadata | COGMetadata | None = None
+    metadata: AllMetadata | None = None
 
 
 def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
@@ -639,12 +644,43 @@ def _validate_collection_id(collection_id: str) -> None:
         raise ValueError(f"Invalid collection ID '{collection_id}': {error_msg}.{suggestion}")
 
 
+# Type alias for all supported metadata types
+VectorMetadata = GeoParquetMetadata | PMTilesMetadata | FlatGeobufMetadata
+AllMetadata = VectorMetadata | COGMetadata
+
+
+def _extract_bbox_wgs84(metadata: AllMetadata) -> list[float]:
+    """Extract bbox from metadata, transforming to WGS84 if needed.
+
+    PMTiles bbox is already in WGS84 (4326). Other formats may need
+    CRS transformation.
+
+    Args:
+        metadata: Metadata object with bbox attribute.
+
+    Returns:
+        Bounding box as [min_x, min_y, max_x, max_y] in WGS84.
+    """
+    if isinstance(metadata, PMTilesMetadata):
+        # PMTiles store bounds in WGS84 (4326), no transformation needed
+        return list(metadata.bbox)  # type: ignore[arg-type]
+
+    # Other formats may need CRS transformation
+    crs_str = getattr(metadata, "crs", None)
+    crs_str = crs_str if isinstance(crs_str, str) else None
+    return list(transform_bbox_to_wgs84(metadata.bbox, crs_str))  # type: ignore[arg-type]
+
+
 def _convert_and_extract_metadata(
     path: Path,
     item_dir: Path,
     format_type: FormatType,
-) -> tuple[Path, GeoParquetMetadata | COGMetadata]:
+) -> tuple[Path, AllMetadata]:
     """Convert to cloud-native format and extract metadata.
+
+    For cloud-native vector formats (PMTiles, FlatGeobuf), copies the file
+    as-is and extracts format-specific metadata. For other vectors, converts
+    to GeoParquet.
 
     Args:
         path: Source file path.
@@ -654,10 +690,25 @@ def _convert_and_extract_metadata(
     Returns:
         Tuple of (output_path, metadata).
     """
-    metadata: GeoParquetMetadata | COGMetadata
+    metadata: AllMetadata
+    suffix = path.suffix.lower()
+
     if format_type == FormatType.VECTOR:
-        output_path = convert_vector(path, item_dir)
-        metadata = extract_geoparquet_metadata(output_path)
+        # Check for cloud-native vector formats (skip conversion per issue #368)
+        if suffix == ".pmtiles":
+            output_path = item_dir / path.name
+            if path.resolve() != output_path.resolve():
+                shutil.copy2(path, output_path)
+            metadata = extract_pmtiles_metadata(output_path)
+        elif suffix == ".fgb":
+            output_path = item_dir / path.name
+            if path.resolve() != output_path.resolve():
+                shutil.copy2(path, output_path)
+            metadata = extract_flatgeobuf_metadata(output_path)
+        else:
+            # Convert to GeoParquet
+            output_path = convert_vector(path, item_dir)
+            metadata = extract_geoparquet_metadata(output_path)
     else:  # RASTER
         output_path = convert_raster(path, item_dir)
         metadata = extract_cog_metadata(output_path)
@@ -793,7 +844,7 @@ def _create_and_save_item(
     stac_properties: dict[str, Any],
     stac_assets: dict[str, pystac.Asset],
     format_type: FormatType,
-    metadata: GeoParquetMetadata | COGMetadata,
+    metadata: AllMetadata,
     item_dir: Path,
 ) -> tuple[pystac.Item, Path]:
     """Create a STAC item with extensions and save it to disk.
@@ -991,8 +1042,7 @@ def prepare_dataset(
             path=metadata.id if hasattr(metadata, "id") else path.stem,
             reason="The source file may have no valid geometry.",
         )
-    crs_str = metadata.crs if isinstance(metadata.crs, str) else None
-    bbox = list(transform_bbox_to_wgs84(metadata.bbox, crs_str))
+    bbox = _extract_bbox_wgs84(metadata)
 
     # Step 5: Scan assets and compute statistics
     stac_assets, asset_files, _asset_paths = _scan_item_assets(
@@ -1075,6 +1125,34 @@ def prepare_dataset(
     )
 
 
+def _add_prepared_items_to_collection(
+    collection: pystac.Collection,
+    items: list[PreparedDataset],
+) -> None:
+    """Add prepared items or collection-level assets to a collection.
+
+    Per ADR-0031: Collection-level vector assets go directly in collection.assets.
+    Item-level assets get linked via add_item_to_collection.
+
+    Args:
+        collection: The pystac Collection to add to.
+        items: List of PreparedDataset objects.
+    """
+    for p in items:
+        if p.is_collection_level_asset and p.stac_assets is not None:
+            # Collection-level asset: add directly to collection.assets
+            for asset_key, asset in p.stac_assets.items():
+                add_asset_to_collection(
+                    collection, asset_key, asset, update_extent_from_bbox=p.bbox
+                )
+            # Add format-specific properties (proj:epsg, pmtiles:*, flatgeobuf:*)
+            if p.metadata is not None:
+                add_collection_properties_from_metadata(collection, p.metadata)
+        elif p.stac_item is not None:
+            # Item-level: add item link to collection
+            add_item_to_collection(collection, p.stac_item, update_extent=True)
+
+
 def finalize_datasets(
     catalog_root: Path,
     prepared: list[PreparedDataset],
@@ -1115,19 +1193,7 @@ def finalize_datasets(
         )
 
         # Add items or collection-level assets to collection (in memory)
-        # Per ADR-0031: Collection-level vector assets go directly in collection.assets
-        for p in items:
-            if p.is_collection_level_asset and p.stac_assets is not None:
-                # Collection-level asset: add directly to collection.assets
-                for asset_key, asset in p.stac_assets.items():
-                    add_asset_to_collection(
-                        collection, asset_key, asset, update_extent_from_bbox=p.bbox
-                    )
-            elif p.stac_item is not None:
-                # Item-level: add item link to collection
-                add_item_to_collection(collection, p.stac_item, update_extent=True)
-                # Note: item_datetime would need to be passed through PreparedDataset
-                # if we want to update temporal extent per-item
+        _add_prepared_items_to_collection(collection, items)
 
         # Add table extension if any items are vector format (Issue #304)
         # Aggregate metadata from all vector items and apply to collection
