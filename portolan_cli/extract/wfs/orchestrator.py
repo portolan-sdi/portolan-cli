@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from portolan_cli.extract.common.filters import filter_layers
@@ -43,6 +43,9 @@ from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, di
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from portolan_cli.extract.csw.models import ISOMetadata
+    from portolan_cli.extract.wfs.metadata import WFSMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -596,17 +599,22 @@ def extract_wfs_catalog(
 
     # Auto-init catalog unless raw mode
     if not options.raw:
-        _auto_init_catalog(output_dir, report)
+        _auto_init_catalog(output_dir, report, discovery_result)
 
     return report
 
 
-def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
+def _auto_init_catalog(
+    output_dir: Path,
+    report: ExtractionReport,
+    discovery_result: WFSDiscoveryResult | None = None,
+) -> None:
     """Initialize a Portolan catalog and add extracted files.
 
     Called automatically after extraction unless raw=True.
     Creates catalog.json, config.yaml, and collection.json for each layer.
-    Also adds provenance via links (GetFeature-style URLs).
+    Also adds provenance via links, seeds metadata.yaml from service metadata,
+    and seeds collection-level metadata.yaml with layer info.
     """
     from portolan_cli.catalog import add_files, init_catalog
 
@@ -628,6 +636,13 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
 
     # Add via links for provenance tracking
     _add_via_links_to_collections(output_dir, report)
+
+    # Seed catalog-level metadata.yaml from extracted service metadata
+    _seed_metadata_from_extraction(output_dir, report)
+
+    # Seed collection-level metadata.yaml with layer-specific info
+    if discovery_result:
+        _seed_collection_metadata_wfs(output_dir, report, discovery_result)
 
 
 def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) -> None:
@@ -665,3 +680,172 @@ def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) ->
             layer_url,
             title=f"Source WFS layer: {layer.name}",
         )
+
+
+def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -> None:
+    """Seed catalog-level metadata.yaml from extracted WFS service metadata.
+
+    Called after catalog initialization to pre-populate metadata.yaml with
+    values extracted from the WFS service. Fields that couldn't be
+    extracted are marked with TODO placeholders.
+
+    Args:
+        output_dir: The catalog output directory.
+        report: The extraction report containing metadata.
+    """
+    from portolan_cli.metadata_seeding import seed_metadata_yaml
+    from portolan_cli.output import info
+
+    if not report.metadata_extracted:
+        return
+
+    wfs_metadata = _report_metadata_to_wfs_metadata(report.metadata_extracted)
+    extracted = wfs_metadata.to_extracted()
+
+    metadata_path = output_dir / ".portolan" / "metadata.yaml"
+    if seed_metadata_yaml(extracted, metadata_path):
+        info(f"Seeded metadata.yaml from {extracted.source_type}")
+
+
+def _report_metadata_to_wfs_metadata(
+    report_metadata: MetadataExtracted,
+) -> WFSMetadata:
+    """Convert report MetadataExtracted back to WFSMetadata.
+
+    The extraction report stores a flattened version of the metadata.
+    This function reconstructs the WFSMetadata object for conversion
+    to ExtractedMetadata.
+
+    Args:
+        report_metadata: MetadataExtracted from the extraction report.
+
+    Returns:
+        WFSMetadata instance with the same data.
+    """
+    from portolan_cli.extract.wfs.metadata import WFSMetadata
+
+    return WFSMetadata(
+        source_url=report_metadata.source_url,
+        service_abstract=report_metadata.description,
+        provider_name=report_metadata.attribution,
+        keywords=report_metadata.keywords,
+        access_constraints=report_metadata.license_info_raw,
+    )
+
+
+def _seed_collection_metadata_wfs(
+    output_dir: Path,
+    report: ExtractionReport,
+    discovery_result: WFSDiscoveryResult,
+) -> None:
+    """Seed metadata.yaml for each collection with WFS layer-specific info.
+
+    For layers with MetadataURL (e.g., INSPIRE services), fetches rich ISO 19139
+    metadata from CSW. Falls back to GetCapabilities metadata if CSW fetch fails.
+
+    Args:
+        output_dir: The catalog output directory.
+        report: The extraction report with layer results.
+        discovery_result: WFS discovery result with layer metadata.
+    """
+    from portolan_cli.extract.common.metadata_seeding import seed_collection_metadata
+    from portolan_cli.output import detail
+
+    layer_info_by_name = {layer.name: layer for layer in discovery_result.layers}
+
+    for layer_result in report.layers:
+        if layer_result.status != "success" or not layer_result.output_path:
+            continue
+
+        layer_info = layer_info_by_name.get(layer_result.name)
+        if not layer_info:
+            continue
+
+        output_parts = Path(layer_result.output_path).parts
+        if not output_parts:
+            continue
+
+        collection_dir = output_dir / output_parts[0]
+
+        # Build layer-specific URL for provenance
+        layer_url = _build_wfs_url(
+            report.source_url,
+            {"service": "WFS", "request": "GetFeature", "typename": layer_info.name},
+        )
+
+        # Try to fetch rich ISO metadata from MetadataURL (e.g., INSPIRE CSW)
+        iso_metadata = _try_fetch_iso_metadata(layer_info.metadata_urls)
+
+        if iso_metadata and iso_metadata.has_useful_metadata():
+            # Use rich ISO metadata
+            detail(f"Using ISO metadata for {layer_info.name}")
+            _seed_collection_from_iso(
+                collection_dir,
+                iso_metadata,
+                layer_url,
+                layer_info.name,
+            )
+        else:
+            # Fall back to sparse WFS GetCapabilities metadata
+            seed_collection_metadata(
+                collection_dir,
+                source_type="wfs",
+                source_url=layer_url,
+                layer_name=layer_info.name,
+                title=layer_info.title,
+                description=layer_info.abstract,
+                keywords=layer_info.keywords,
+            )
+
+
+def _try_fetch_iso_metadata(
+    metadata_urls: list[dict[str, Any]] | None,
+) -> ISOMetadata | None:
+    """Try to fetch ISO 19139 metadata from MetadataURLs.
+
+    Args:
+        metadata_urls: List of metadata URL dicts from layer.
+
+    Returns:
+        Parsed ISOMetadata if successful, None otherwise.
+    """
+    if not metadata_urls:
+        return None
+
+    from portolan_cli.extract.csw import fetch_metadata_for_layer
+
+    return fetch_metadata_for_layer(metadata_urls, timeout=30.0)
+
+
+def _seed_collection_from_iso(
+    collection_dir: Path,
+    iso_metadata: ISOMetadata,
+    source_url: str,
+    layer_name: str,
+) -> bool:
+    """Seed collection metadata.yaml from ISO 19139 metadata.
+
+    Args:
+        collection_dir: Path to the collection directory.
+        iso_metadata: Parsed ISO metadata.
+        source_url: WFS layer URL for provenance.
+        layer_name: Layer name for processing notes.
+
+    Returns:
+        True if metadata.yaml was created, False if skipped.
+    """
+    from dataclasses import replace
+
+    from portolan_cli.metadata_seeding import seed_metadata_yaml
+
+    extracted = iso_metadata.to_extracted_metadata(source_url)
+
+    # Override processing notes with layer-specific info
+    extracted = replace(
+        extracted,
+        processing_notes=f"Extracted from WFS layer: {layer_name}. "
+        f"Metadata from ISO 19139 record: {iso_metadata.file_identifier}",
+    )
+
+    metadata_path = collection_dir / ".portolan" / "metadata.yaml"
+    return seed_metadata_yaml(extracted, metadata_path)

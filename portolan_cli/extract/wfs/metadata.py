@@ -14,6 +14,35 @@ if TYPE_CHECKING:
     from portolan_cli.metadata_extraction import ExtractedMetadata
 
 
+# Patterns that indicate software-generated boilerplate, not real descriptions
+_BOILERPLATE_PATTERNS = [
+    "reference implementation",
+    "supports all wfs operations",
+    "geoserver",  # Any mention of GeoServer is boilerplate
+    "mapserver",  # Any mention of MapServer is boilerplate
+    "deegree",
+    "qgis server",
+    "arcgis server",
+    "web feature service",  # Generic "Web Feature Service" title
+]
+
+
+def is_boilerplate_description(text: str | None) -> bool:
+    """Check if description is software boilerplate rather than real content.
+
+    Args:
+        text: Description text to check.
+
+    Returns:
+        True if text matches known boilerplate patterns.
+    """
+    if not text:
+        return False
+
+    lower = text.lower()
+    return any(pattern in lower for pattern in _BOILERPLATE_PATTERNS)
+
+
 @dataclass
 class WFSMetadata:
     """Metadata extracted from a WFS service.
@@ -59,15 +88,28 @@ class WFSMetadata:
     def to_extracted(self) -> ExtractedMetadata:
         """Convert to common ExtractedMetadata format.
 
+        Uses service_title as fallback when service_abstract is
+        boilerplate (e.g., GeoServer default text) or missing.
+        If both are boilerplate, description is None.
+
         Returns:
             ExtractedMetadata for use with metadata seeding.
         """
         from portolan_cli.metadata_extraction import ExtractedMetadata
 
+        # Use abstract unless it's boilerplate, then fall back to title
+        description = self.service_abstract
+        if is_boilerplate_description(description) or not description:
+            # Only use title if it's not also boilerplate
+            if self.service_title and not is_boilerplate_description(self.service_title):
+                description = self.service_title
+            else:
+                description = None
+
         return ExtractedMetadata(
             source_type="wfs",
             source_url=self.source_url,
-            description=self.service_abstract,
+            description=description,
             attribution=self.provider_name,
             keywords=self.keywords,
             contact_name=None,  # WFS doesn't typically expose contact

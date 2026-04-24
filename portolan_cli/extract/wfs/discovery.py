@@ -36,6 +36,8 @@ class LayerInfo:
         typename: Original WFS typename (may include namespace prefix).
         title: Human-readable title from GetCapabilities.
         abstract: Layer description from GetCapabilities.
+        keywords: Layer-specific keywords from GetCapabilities.
+        metadata_urls: List of metadata URL dicts (e.g., CSW GetRecordById).
         bbox: Bounding box in WGS84 (xmin, ymin, xmax, ymax).
         id: Numeric ID for filtering compatibility (auto-assigned).
     """
@@ -44,6 +46,8 @@ class LayerInfo:
     typename: str
     title: str | None = None
     abstract: str | None = None
+    keywords: list[str] | None = None
+    metadata_urls: list[dict[str, Any]] | None = None
     bbox: tuple[float, float, float, float] | None = None
     id: int = 0
 
@@ -152,6 +156,69 @@ def list_layers(
     return layers
 
 
+def _extract_service_metadata(wfs: Any) -> dict[str, Any]:
+    """Extract service-level metadata from WFS capabilities object."""
+    result: dict[str, Any] = {
+        "service_title": None,
+        "service_abstract": None,
+        "provider": None,
+        "keywords": None,
+        "contact_name": None,
+        "access_constraints": None,
+        "fees": None,
+    }
+
+    if hasattr(wfs, "identification") and wfs.identification:
+        ident = wfs.identification
+        result["service_title"] = getattr(ident, "title", None)
+        result["service_abstract"] = getattr(ident, "abstract", None)
+        if hasattr(ident, "keywords") and ident.keywords:
+            result["keywords"] = [str(kw) for kw in ident.keywords]
+        result["access_constraints"] = getattr(ident, "accessconstraints", None)
+        result["fees"] = getattr(ident, "fees", None)
+
+    if hasattr(wfs, "provider") and wfs.provider:
+        prov = wfs.provider
+        result["provider"] = getattr(prov, "name", None)
+        if hasattr(prov, "contact") and prov.contact:
+            contact = prov.contact
+            parts = []
+            if hasattr(contact, "name") and contact.name:
+                parts.append(contact.name)
+            if hasattr(contact, "organization") and contact.organization:
+                parts.append(contact.organization)
+            if parts:
+                result["contact_name"] = ", ".join(parts)
+
+    return result
+
+
+def _build_layer_info(typename: str, layer: Any, layer_id: int) -> LayerInfo:
+    """Build LayerInfo from OWSLib layer object."""
+    keywords: list[str] | None = None
+    if hasattr(layer, "keywords") and layer.keywords:
+        keywords = [str(kw) for kw in layer.keywords]
+
+    metadata_urls: list[dict[str, Any]] | None = None
+    if hasattr(layer, "metadataUrls") and layer.metadataUrls:
+        metadata_urls = list(layer.metadataUrls)
+
+    bbox = None
+    if hasattr(layer, "boundingBoxWGS84") and layer.boundingBoxWGS84:
+        bbox = tuple(layer.boundingBoxWGS84)
+
+    return LayerInfo(
+        name=typename,
+        typename=typename,
+        title=getattr(layer, "title", None),
+        abstract=getattr(layer, "abstract", None),
+        keywords=keywords,
+        metadata_urls=metadata_urls,
+        bbox=bbox,
+        id=layer_id,
+    )
+
+
 def discover_layers(
     service_url: str,
     version: str = "1.1.0",
@@ -175,69 +242,24 @@ def discover_layers(
     try:
         from geoparquet_io.core.wfs import get_wfs_capabilities
 
-        # Get capabilities object from OWSLib
         wfs = get_wfs_capabilities(service_url, version)
+        svc = _extract_service_metadata(wfs)
 
-        # Extract service-level metadata
-        service_title = None
-        service_abstract = None
-        provider = None
-        keywords: list[str] | None = None
-        contact_name = None
-        access_constraints = None
-        fees = None
-
-        # Service identification
-        if hasattr(wfs, "identification") and wfs.identification:
-            ident = wfs.identification
-            service_title = getattr(ident, "title", None)
-            service_abstract = getattr(ident, "abstract", None)
-            if hasattr(ident, "keywords") and ident.keywords:
-                keywords = [str(kw) for kw in ident.keywords]
-            access_constraints = getattr(ident, "accessconstraints", None)
-            fees = getattr(ident, "fees", None)
-
-        # Provider information
-        if hasattr(wfs, "provider") and wfs.provider:
-            prov = wfs.provider
-            provider = getattr(prov, "name", None)
-            # Try to get contact info
-            if hasattr(prov, "contact") and prov.contact:
-                contact = prov.contact
-                contact_parts = []
-                if hasattr(contact, "name") and contact.name:
-                    contact_parts.append(contact.name)
-                if hasattr(contact, "organization") and contact.organization:
-                    contact_parts.append(contact.organization)
-                if contact_parts:
-                    contact_name = ", ".join(contact_parts)
-
-        # Build layer list
-        layers = []
-        for i, (typename, layer) in enumerate(wfs.contents.items()):
-            layers.append(
-                LayerInfo(
-                    name=typename,
-                    typename=typename,
-                    title=getattr(layer, "title", None),
-                    abstract=getattr(layer, "abstract", None),
-                    bbox=tuple(layer.boundingBoxWGS84)
-                    if hasattr(layer, "boundingBoxWGS84") and layer.boundingBoxWGS84
-                    else None,
-                    id=i,
-                )
-            )
+        layers = [
+            _build_layer_info(typename, layer, i)
+            for i, (typename, layer) in enumerate(wfs.contents.items())
+        ]
 
         return WFSDiscoveryResult(
             service_url=service_url,
             layers=layers,
-            service_title=service_title,
-            service_abstract=service_abstract,
-            provider=provider,
-            keywords=keywords,
-            contact_name=contact_name,
-            access_constraints=access_constraints,
-            fees=fees,
+            service_title=svc["service_title"],
+            service_abstract=svc["service_abstract"],
+            provider=svc["provider"],
+            keywords=svc["keywords"],
+            contact_name=svc["contact_name"],
+            access_constraints=svc["access_constraints"],
+            fees=svc["fees"],
         )
 
     except ImportError as e:
