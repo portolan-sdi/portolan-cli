@@ -206,13 +206,13 @@ class TestCollectionLevelAssets:
         with open(collection_json) as f:
             collection_data = json.load(f)
 
-        # Check assets field has our data
+        # Check assets field has our data (key is file stem, not "data")
         assets = collection_data.get("assets", {})
-        assert "data" in assets, (
-            f"collection.json should have 'data' asset, got: {list(assets.keys())}"
+        assert "census" in assets, (
+            f"collection.json should have 'census' asset (file stem), got: {list(assets.keys())}"
         )
-        assert assets["data"]["href"] == "./census.parquet", (
-            f"Asset href should be './census.parquet', got: {assets['data']['href']}"
+        assert assets["census"]["href"] == "./census.parquet", (
+            f"Asset href should be './census.parquet', got: {assets['census']['href']}"
         )
 
         # Verify NO item links exist for this asset

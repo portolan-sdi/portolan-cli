@@ -105,13 +105,13 @@ class TestCollectionLevelAssetWorkflow:
         with open(collection_json) as f:
             collection_data = json.load(f)
 
-        # Asset should be in collection.assets, not as item link
+        # Asset should be in collection.assets with file stem as key
         assets = collection_data.get("assets", {})
-        assert "data" in assets, (
-            f"collection.json should have 'data' asset (Issue #364), got: {list(assets.keys())}"
+        assert "census" in assets, (
+            f"collection.json should have 'census' asset (file stem), got: {list(assets.keys())}"
         )
-        assert assets["data"]["href"] == "./census.parquet", (
-            f"Asset href should be './census.parquet', got: {assets['data']['href']}"
+        assert assets["census"]["href"] == "./census.parquet", (
+            f"Asset href should be './census.parquet', got: {assets['census']['href']}"
         )
 
         # Verify NO item links
@@ -206,13 +206,23 @@ class TestCollectionLevelAssetWorkflow:
         with open(collection_json) as f:
             collection_data = json.load(f)
 
-        # Both should be in assets (note: each may have same key "data" which
-        # means the second overwrites the first - this is expected behavior
-        # per the current asset key strategy)
+        # Both assets should be present with distinct keys (file stems)
         assets = collection_data.get("assets", {})
-        # The second asset overwrites the first because both get "data" key
-        # This may need a follow-up fix for distinct asset keys
-        assert len(assets) >= 1, "collection.json should have assets"
+        assert len(assets) == 2, (
+            f"collection.json should have 2 assets (census + parcels), got: {list(assets.keys())}"
+        )
+
+        # Verify distinct keys derived from file stems
+        assert "census" in assets, f"Missing 'census' asset, got: {list(assets.keys())}"
+        assert "parcels" in assets, f"Missing 'parcels' asset, got: {list(assets.keys())}"
+
+        # Verify hrefs point to correct files
+        assert assets["census"]["href"] == "./census.parquet", (
+            f"census href should be './census.parquet', got: {assets['census']['href']}"
+        )
+        assert assets["parcels"]["href"] == "./parcels.parquet", (
+            f"parcels href should be './parcels.parquet', got: {assets['parcels']['href']}"
+        )
 
         # Verify NO item links
         links = collection_data.get("links", [])

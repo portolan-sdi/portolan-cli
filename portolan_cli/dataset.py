@@ -742,26 +742,42 @@ def _add_statistics_to_properties(
 def _fix_collection_level_asset_hrefs(
     stac_assets: dict[str, pystac.Asset],
 ) -> dict[str, pystac.Asset]:
-    """Fix asset hrefs for collection-level assets (ADR-0031).
+    """Fix asset hrefs and keys for collection-level assets (ADR-0031).
 
     _scan_item_assets() computes hrefs relative to item.json, but for
     collection-level assets they should be relative to collection.json.
     Since both collection.json and assets are in the same directory,
     href should be ./filename (not ../filename).
 
+    Also fixes asset keys: _scan_item_assets assigns "data" to primary files,
+    but for collection-level assets we need unique keys to avoid collisions
+    when multiple vectors exist in the same collection. Use file stem instead.
+
     Args:
         stac_assets: Assets with hrefs relative to item.json location.
 
     Returns:
-        Assets with hrefs relative to collection.json location.
+        Assets with hrefs relative to collection.json location, with unique keys.
     """
     fixed_assets: dict[str, pystac.Asset] = {}
     for key, asset in stac_assets.items():
         href = asset.href
+
+        # Normalize href: strip any ../ or ./ prefix, then add ./
         if href.startswith("../"):
-            href = href[3:]  # Remove ../ prefix
+            href = href[3:]
+        elif href.startswith("./"):
+            href = href[2:]
         fixed_href = f"./{href}"
-        fixed_assets[key] = pystac.Asset(
+
+        # Fix asset key: "data" → file stem for uniqueness across collection
+        # e.g., "data" with href "./census.parquet" → key "census"
+        if key == "data":
+            fixed_key = Path(href).stem
+        else:
+            fixed_key = key
+
+        fixed_assets[fixed_key] = pystac.Asset(
             href=fixed_href,
             media_type=asset.media_type,
             roles=asset.roles,
