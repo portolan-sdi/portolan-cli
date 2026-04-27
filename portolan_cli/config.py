@@ -303,10 +303,26 @@ def get_setting(
     if catalog_path is None:
         return None
 
+    # Helper to traverse nested dicts for dotted keys like "pmtiles.src_crs"
+    def _get_nested(cfg: dict[str, Any], k: str) -> Any | None:
+        parts = k.split(".")
+        current: Any = cfg
+        for part in parts:
+            if not isinstance(current, dict) or part not in current:
+                return None
+            current = current[part]
+        return current
+
     # Helper to check key and its aliases in a config dict
     def _get_with_aliases(cfg: dict[str, Any], k: str) -> Any | None:
+        # Try direct key lookup first (flat key)
         if k in cfg:
             return cfg[k]
+        # Try nested traversal for dotted keys
+        if "." in k:
+            nested_val = _get_nested(cfg, k)
+            if nested_val is not None:
+                return nested_val
         # Check aliases (e.g., aws_profile -> profile)
         for alias in SETTING_ALIASES.get(k, []):
             if alias in cfg:

@@ -369,6 +369,126 @@ class TestGetSetting:
         # Should fall back to catalog-level statistics.enabled
         assert result is True
 
+    @pytest.mark.unit
+    def test_dotted_key_resolves_nested_yaml(self, tmp_path: Path) -> None:
+        """Dotted keys like 'pmtiles.src_crs' should traverse nested YAML."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"pmtiles": {"src_crs": "EPSG:3035"}})
+
+        coll_path = tmp_path / "my_collection"
+        coll_path.mkdir()
+
+        result = get_setting(
+            "pmtiles.src_crs",
+            catalog_path=tmp_path,
+            collection="my_collection",
+            collection_path=coll_path,
+        )
+
+        assert result == "EPSG:3035"
+
+    @pytest.mark.unit
+    def test_dotted_key_resolves_deeply_nested_yaml(self, tmp_path: Path) -> None:
+        """Dotted keys should work at arbitrary depth."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"a": {"b": {"c": "deep_value"}}})
+
+        coll_path = tmp_path / "coll"
+        coll_path.mkdir()
+
+        result = get_setting(
+            "a.b.c",
+            catalog_path=tmp_path,
+            collection="coll",
+            collection_path=coll_path,
+        )
+
+        assert result == "deep_value"
+
+    @pytest.mark.unit
+    def test_dotted_key_returns_none_for_missing_path(self, tmp_path: Path) -> None:
+        """Dotted key should return None if any part of path is missing."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"pmtiles": {"min_zoom": 4}})
+
+        coll_path = tmp_path / "coll"
+        coll_path.mkdir()
+
+        result = get_setting(
+            "pmtiles.src_crs",
+            catalog_path=tmp_path,
+            collection="coll",
+            collection_path=coll_path,
+        )
+
+        assert result is None
+
+    @pytest.mark.unit
+    def test_dotted_key_returns_none_for_nonexistent_parent(self, tmp_path: Path) -> None:
+        """Dotted key should return None if parent key doesn't exist."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"remote": "s3://bucket/"})
+
+        coll_path = tmp_path / "coll"
+        coll_path.mkdir()
+
+        result = get_setting(
+            "pmtiles.src_crs",
+            catalog_path=tmp_path,
+            collection="coll",
+            collection_path=coll_path,
+        )
+
+        assert result is None
+
+    @pytest.mark.unit
+    def test_dotted_key_returns_false_boolean(self, tmp_path: Path) -> None:
+        """Dotted key should correctly return False (not None) for disabled settings."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"pmtiles": {"enabled": False}})
+
+        coll_path = tmp_path / "coll"
+        coll_path.mkdir()
+
+        result = get_setting(
+            "pmtiles.enabled",
+            catalog_path=tmp_path,
+            collection="coll",
+            collection_path=coll_path,
+        )
+
+        assert result is False
+
+    @pytest.mark.unit
+    def test_dotted_key_returns_zero_integer(self, tmp_path: Path) -> None:
+        """Dotted key should correctly return 0 (not None) for zero values."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"pmtiles": {"min_zoom": 0}})
+
+        coll_path = tmp_path / "coll"
+        coll_path.mkdir()
+
+        result = get_setting(
+            "pmtiles.min_zoom",
+            catalog_path=tmp_path,
+            collection="coll",
+            collection_path=coll_path,
+        )
+
+        assert result == 0
+
 
 class TestSetSetting:
     """Tests for set_setting function."""
@@ -1084,3 +1204,27 @@ class TestPMTilesConfigSettings:
         assert get_setting("pmtiles.include_cols", catalog_path=tmp_path) == "name,geometry"
         assert get_setting("pmtiles.attribution", catalog_path=tmp_path) == "© Test"
         assert get_setting("pmtiles.src_crs", catalog_path=tmp_path) == "EPSG:3857"
+
+    @pytest.mark.unit
+    def test_pmtiles_nested_yaml_structure(self, tmp_path: Path) -> None:
+        """PMTiles settings work with nested YAML (how users actually write config)."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        # This is how users write config.yaml (nested, not flat keys)
+        save_config(
+            tmp_path,
+            {
+                "pmtiles": {
+                    "enabled": True,
+                    "src_crs": "EPSG:3035",
+                    "min_zoom": 4,
+                    "max_zoom": 14,
+                }
+            },
+        )
+
+        assert get_setting("pmtiles.enabled", catalog_path=tmp_path) is True
+        assert get_setting("pmtiles.src_crs", catalog_path=tmp_path) == "EPSG:3035"
+        assert get_setting("pmtiles.min_zoom", catalog_path=tmp_path) == 4
+        assert get_setting("pmtiles.max_zoom", catalog_path=tmp_path) == 14
