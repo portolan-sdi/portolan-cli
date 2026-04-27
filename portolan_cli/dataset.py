@@ -161,6 +161,29 @@ _MEDIA_TYPE_MAP: dict[str, str] = {
     ".html": "text/html",
 }
 
+# Default titles for well-known STAC asset roles. Matches the convention
+# used by Element 84 Earth Search (e.g. Sentinel-2 items always carry a
+# "title" on every asset). Used by _scan_item_assets when no explicit title
+# is set.
+_ROLE_TITLES: dict[str, str] = {
+    "data": "Data",
+    "thumbnail": "Thumbnail",
+    "metadata": "Metadata",
+    "documentation": "Documentation",
+}
+
+# Asset keys reserved for well-known roles. _scan_item_assets prefers these
+# keys over filename-derived stems so STAC consumers can find assets by role
+# without inspecting file paths. Order matters for collision priority: an
+# asset with role "thumbnail" prefers key "thumbnail"; if it's already taken
+# (e.g. by a user-named thumbnail.png), the second asset falls back to its
+# stem.
+_ROLE_KEYS: dict[str, str] = {
+    "thumbnail": "thumbnail",
+    "metadata": "metadata",
+    "documentation": "documentation",
+}
+
 # Extension-to-role mapping for asset files.
 # Data formats get "data", images get "thumbnail", metadata gets "metadata".
 _ROLE_MAP: dict[str, str] = {
@@ -269,16 +292,21 @@ def _scan_item_assets(
             # Skip special files (sockets, devices, etc.)
             continue
 
-        # Primary geo file gets "data" key, others use stem with disambiguation
+        # Primary geo file gets "data" key. Other files prefer the well-known
+        # role-keyed name ("thumbnail", "metadata", "documentation") so STAC
+        # consumers can find them by role; on collision, fall back to stem,
+        # then to filename.
         if file_path == primary_file:
             asset_key = "data"
         else:
-            # Use stem, but disambiguate on collision (e.g., metadata.json vs metadata.xml)
-            base_key = file_path.stem
-            asset_key = base_key
-            if asset_key in stac_assets or asset_key == "data":
-                # Collision: use full filename instead
-                asset_key = file_path.name
+            role_key = _ROLE_KEYS.get(file_role)
+            if role_key and role_key not in stac_assets and role_key != "data":
+                asset_key = role_key
+            else:
+                # Use stem, but disambiguate on collision (e.g. metadata.json vs metadata.xml)
+                asset_key = file_path.stem
+                if asset_key in stac_assets or asset_key == "data":
+                    asset_key = file_path.name
         # Asset href must be relative to item JSON location.
         # PySTAC places item JSON at: {collection_dir}/{item_id}/{item_id}.json
         #
@@ -307,6 +335,7 @@ def _scan_item_assets(
             href=asset_href,
             media_type=file_media_type,
             roles=[file_role],
+            title=_ROLE_TITLES.get(file_role),
         )
         asset_files[file_path.name] = (file_path, file_checksum)
         asset_paths.append(str(file_path))
