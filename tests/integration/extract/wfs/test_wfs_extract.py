@@ -582,3 +582,193 @@ class TestWFSResume:
         assert extract_calls[0].name == "roads"
         assert report.summary.succeeded == 2
         assert report.summary.failed == 0
+
+
+class TestWFSMetadataPropagation:
+    """Tests for Issue #369: Propagate rich WFS metadata to STAC files.
+
+    Verifies that WFS extraction --auto mode populates catalog.json and
+    collection.json with meaningful metadata from GetCapabilities and ISO 19139,
+    not generic placeholders like 'Collection: layer_name_abc123'.
+    """
+
+    def test_service_title_propagates_to_catalog(self, tmp_path: Path) -> None:
+        """WFS service title from GetCapabilities populates catalog.json title."""
+        output_dir = tmp_path / "test_catalog"
+        output_dir.mkdir()
+
+        layer_dir = output_dir / "buildings"
+        layer_dir.mkdir()
+        fixture_path = FIXTURES_DIR / "simple.parquet"
+        output_parquet = layer_dir / "buildings.parquet"
+        shutil.copy(fixture_path, output_parquet)
+
+        report = make_report(
+            layers=[
+                make_layer_result(
+                    name="buildings",
+                    output_path="buildings/buildings.parquet",
+                    size_bytes=output_parquet.stat().st_size,
+                )
+            ],
+        )
+
+        # Discovery result with rich service metadata
+        discovery = WFSDiscoveryResult(
+            service_url="https://example.com/wfs",
+            layers=[make_layer_info("buildings", 0)],
+            service_title="INSPIRE Buildings Service",
+            service_abstract="This service provides building footprints compliant with INSPIRE directive",
+            provider="National Mapping Agency",
+            keywords=["inspire", "buildings", "cadastre"],
+            contact_name="GIS Support Team",
+            access_constraints=None,
+            fees=None,
+        )
+
+        _auto_init_catalog(output_dir, report, discovery)
+
+        catalog_json = json.loads((output_dir / "catalog.json").read_text())
+        assert catalog_json.get("title") == "INSPIRE Buildings Service", (
+            "Catalog title should be set from WFS service title"
+        )
+        assert "building footprints" in catalog_json.get("description", "").lower(), (
+            "Catalog description should contain service abstract"
+        )
+
+    def test_service_abstract_propagates_to_catalog_description(self, tmp_path: Path) -> None:
+        """WFS service abstract from GetCapabilities populates catalog.json description."""
+        output_dir = tmp_path / "test_catalog"
+        output_dir.mkdir()
+
+        layer_dir = output_dir / "roads"
+        layer_dir.mkdir()
+        fixture_path = FIXTURES_DIR / "simple.parquet"
+        output_parquet = layer_dir / "roads.parquet"
+        shutil.copy(fixture_path, output_parquet)
+
+        report = make_report(
+            layers=[
+                make_layer_result(
+                    name="roads",
+                    output_path="roads/roads.parquet",
+                    size_bytes=output_parquet.stat().st_size,
+                )
+            ],
+        )
+
+        discovery = WFSDiscoveryResult(
+            service_url="https://example.com/wfs",
+            layers=[make_layer_info("roads", 0)],
+            service_title="Transport Network Service",
+            service_abstract="Comprehensive road network data including highways, local roads, and paths",
+            provider=None,
+            keywords=None,
+            contact_name=None,
+            access_constraints=None,
+            fees=None,
+        )
+
+        _auto_init_catalog(output_dir, report, discovery)
+
+        catalog_json = json.loads((output_dir / "catalog.json").read_text())
+        assert "road network" in catalog_json.get("description", "").lower()
+
+    def test_layer_metadata_propagates_to_collection(self, tmp_path: Path) -> None:
+        """WFS layer title/abstract from GetCapabilities populates collection.json."""
+        output_dir = tmp_path / "test_catalog"
+        output_dir.mkdir()
+
+        layer_dir = output_dir / "parcels"
+        layer_dir.mkdir()
+        fixture_path = FIXTURES_DIR / "simple.parquet"
+        output_parquet = layer_dir / "parcels.parquet"
+        shutil.copy(fixture_path, output_parquet)
+
+        report = make_report(
+            layers=[
+                make_layer_result(
+                    name="parcels",
+                    output_path="parcels/parcels.parquet",
+                    size_bytes=output_parquet.stat().st_size,
+                )
+            ],
+        )
+
+        # Create layer with rich metadata
+        layer_info = LayerInfo(
+            name="parcels",
+            typename="ns:Parcels",
+            title="Land Parcels",
+            abstract="Cadastral parcel boundaries with ownership and land use information",
+            keywords=["cadastre", "parcels", "land use"],
+            bbox=None,
+            id=0,
+        )
+
+        discovery = WFSDiscoveryResult(
+            service_url="https://example.com/wfs",
+            layers=[layer_info],
+            service_title="Cadastre Service",
+            service_abstract="Cadastral data",
+            provider=None,
+            keywords=None,
+            contact_name=None,
+            access_constraints=None,
+            fees=None,
+        )
+
+        _auto_init_catalog(output_dir, report, discovery)
+
+        collection_json = json.loads((layer_dir / "collection.json").read_text())
+        assert collection_json.get("title") == "Land Parcels", (
+            "Collection title should be set from layer title"
+        )
+        assert "parcel boundaries" in collection_json.get("description", "").lower(), (
+            "Collection description should contain layer abstract"
+        )
+
+    def test_technical_service_title_filtered(self, tmp_path: Path) -> None:
+        """Technical service titles like 'wfs_service_v2' are filtered out."""
+        output_dir = tmp_path / "test_catalog"
+        output_dir.mkdir()
+
+        layer_dir = output_dir / "test"
+        layer_dir.mkdir()
+        fixture_path = FIXTURES_DIR / "simple.parquet"
+        output_parquet = layer_dir / "test.parquet"
+        shutil.copy(fixture_path, output_parquet)
+
+        report = make_report(
+            layers=[
+                make_layer_result(
+                    name="test",
+                    output_path="test/test.parquet",
+                    size_bytes=output_parquet.stat().st_size,
+                )
+            ],
+        )
+
+        # Technical/identifier-like service title should be filtered
+        discovery = WFSDiscoveryResult(
+            service_url="https://example.com/wfs",
+            layers=[make_layer_info("test", 0)],
+            service_title="wfs_service_internal_v2",  # Technical name
+            service_abstract="A meaningful service description with proper explanation",
+            provider=None,
+            keywords=None,
+            contact_name=None,
+            access_constraints=None,
+            fees=None,
+        )
+
+        _auto_init_catalog(output_dir, report, discovery)
+
+        catalog_json = json.loads((output_dir / "catalog.json").read_text())
+        # Technical title should be filtered (Issue #369)
+        title = catalog_json.get("title")
+        assert title is None or "wfs_service_internal_v2" not in title, (
+            f"Technical service title leaked into catalog: {title}"
+        )
+        # Description should be set from the meaningful abstract
+        assert "meaningful service description" in catalog_json.get("description", "").lower()

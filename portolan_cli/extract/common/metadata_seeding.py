@@ -9,42 +9,9 @@ Used by both WFS and ArcGIS extraction backends to populate collection-level
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
-
-def _is_technical_name(text: str | None) -> bool:
-    """Check if text looks like a technical/internal name rather than description.
-
-    Technical names are typically short identifiers that aren't useful as descriptions:
-    - Single words with underscores/dashes (e.g., "bu_building_emprise")
-    - Very short (under 20 chars) without spaces
-    - Prefixed with common tech patterns (e.g., "ns:LayerName")
-
-    Args:
-        text: Text to check.
-
-    Returns:
-        True if text looks like a technical name.
-    """
-    if not text:
-        return True
-
-    text = text.strip()
-
-    # Very short without spaces = likely technical
-    if len(text) < 20 and " " not in text:
-        return True
-
-    # Contains namespace prefix (ns:name pattern)
-    if re.match(r"^[a-z_]+:[A-Za-z]", text):
-        return True
-
-    # All lowercase with underscores, no spaces
-    if re.match(r"^[a-z0-9_]+$", text):
-        return True
-
-    return False
+from portolan_cli.stac import is_technical_name as _is_technical_name
 
 
 def _select_best_description(
@@ -97,6 +64,9 @@ def seed_collection_metadata(
     Creates .portolan/metadata.yaml within the collection directory with
     layer-specific metadata (title, description) plus inherited source info.
 
+    Also updates collection.json with title/description per Issue #369
+    (propagate rich metadata to STAC, not just metadata.yaml).
+
     Automatically selects the best description from available fields:
     - Prefers abstract if it's a real description (not just a technical name)
     - Falls back to title if abstract looks like an identifier
@@ -116,6 +86,7 @@ def seed_collection_metadata(
     """
     from portolan_cli.metadata_extraction import ExtractedMetadata
     from portolan_cli.metadata_seeding import seed_metadata_yaml
+    from portolan_cli.stac import update_stac_metadata
 
     # Select best description from available fields
     best_description = _select_best_description(description, title, layer_name)
@@ -133,4 +104,15 @@ def seed_collection_metadata(
     )
 
     metadata_path = collection_dir / ".portolan" / "metadata.yaml"
-    return seed_metadata_yaml(extracted, metadata_path)
+    seeded = seed_metadata_yaml(extracted, metadata_path)
+
+    # Per Issue #369: Also update collection.json with title/description
+    # This ensures STAC has meaningful metadata, not generic placeholders
+    collection_path = collection_dir / "collection.json"
+    update_stac_metadata(
+        collection_path,
+        title=title,
+        description=best_description,
+    )
+
+    return seeded

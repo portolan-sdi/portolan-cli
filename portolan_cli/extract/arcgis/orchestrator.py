@@ -555,9 +555,13 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
     Creates catalog.json, config.yaml, and collection.json for each layer.
     Also seeds metadata.yaml from extracted service metadata and adds
     provenance links (Issue #353).
+
+    Per Issue #369: Propagates rich metadata from ArcGIS service to STAC files,
+    avoiding generic placeholders.
     """
     from portolan_cli.catalog import init_catalog
     from portolan_cli.dataset import add_files
+    from portolan_cli.stac import update_stac_metadata
 
     # Get list of successfully extracted parquet files
     parquet_files = [
@@ -570,19 +574,36 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
         return  # Nothing to add
 
     # Initialize the catalog
-    # Extract title from service metadata if available
+    # Extract title from service metadata if available (Issue #369)
     title = None
-    if report.metadata_extracted and report.metadata_extracted.source_url:
+    description = None
+    if report.metadata_extracted:
+        # Use description from service metadata
+        description = report.metadata_extracted.description
+
         # Use service name from URL as title
-        from portolan_cli.extract.arcgis.url_parser import parse_arcgis_url
+        if report.metadata_extracted.source_url:
+            from portolan_cli.extract.arcgis.url_parser import parse_arcgis_url
 
-        try:
-            parsed = parse_arcgis_url(report.metadata_extracted.source_url)
-            title = parsed.service_name
-        except ValueError:
-            pass
+            try:
+                parsed = parse_arcgis_url(report.metadata_extracted.source_url)
+                title = parsed.service_name
+            except ValueError:
+                pass
 
-    init_catalog(output_dir, title=title)
+    # Filter technical names BEFORE init_catalog to avoid writing them
+    # (update_stac_metadata can't overwrite if init_catalog already wrote them)
+    from portolan_cli.stac import is_technical_name
+
+    filtered_title = None if is_technical_name(title) else title
+    filtered_description = None if is_technical_name(description) else description
+
+    init_catalog(output_dir, title=filtered_title, description=filtered_description)
+
+    # Per Issue #369: Update catalog.json with rich metadata
+    # This handles cases where init_catalog used defaults
+    catalog_path = output_dir / "catalog.json"
+    update_stac_metadata(catalog_path, title=title, description=description)
 
     # Add all extracted parquet files
     add_files(
@@ -597,6 +618,7 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
     _add_via_links_to_collections(output_dir, report)
 
     # Seed collection-level metadata.yaml with layer details
+    # and update collection.json with rich metadata (Issue #369)
     _seed_collection_metadata_arcgis(output_dir, report)
 
 

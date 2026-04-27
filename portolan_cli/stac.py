@@ -933,3 +933,122 @@ def add_via_link(
     links.append(via_link)
 
     collection_path.write_text(json.dumps(collection_data, indent=2) + "\n")
+
+
+def is_technical_name(text: str | None) -> bool:
+    """Check if text looks like a technical/internal name rather than description.
+
+    Technical names are typically identifiers that aren't useful as metadata:
+    - Pure snake_case names without spaces (e.g., "bu_building_emprise_v2")
+    - Namespace-prefixed (e.g., "ns:LayerName")
+    - Short all-lowercase without spaces (e.g., "layer1")
+
+    Valid titles include:
+    - CamelCase names (e.g., "DenHaagHousing")
+    - Titles with spaces, even if they contain underscores (e.g., "Building - building_emprise")
+
+    Args:
+        text: Text to check.
+
+    Returns:
+        True if text looks like a technical name.
+    """
+    import re
+
+    if not text:
+        return True
+
+    text = text.strip()
+
+    # Has spaces → probably human-readable, even if it contains underscores
+    if " " in text:
+        return False
+
+    # Contains namespace prefix (ns:name pattern) → technical
+    if re.match(r"^[a-z_]+:[A-Za-z]", text):
+        return True
+
+    # No spaces + underscores → snake_case identifier
+    if "_" in text:
+        return True
+
+    # Short all-lowercase without CamelCase → technical (e.g., "layer1", "parcels2024")
+    # CamelCase (has uppercase after first char) is allowed
+    if not re.search(r"[A-Z]", text[1:]) and len(text) < 20:
+        return True
+
+    return False
+
+
+# Alias for internal use (maintains backward compatibility)
+_is_technical_name = is_technical_name
+
+
+def update_stac_metadata(
+    path: Path,
+    title: str | None = None,
+    description: str | None = None,
+) -> bool:
+    """Update title and/or description in a STAC catalog.json or collection.json.
+
+    This function patches existing STAC files with metadata extracted from
+    external sources (WFS GetCapabilities, ArcGIS REST API, ISO 19139).
+    Used by extraction --auto mode to propagate rich metadata to STAC.
+
+    Per Issue #369: Extraction should populate STAC with meaningful metadata,
+    not leave generic placeholders like "Collection: layer_name_abc123".
+
+    Skips technical-looking names (underscore identifiers, namespace prefixes)
+    to avoid replacing human-readable content with machine identifiers.
+
+    Args:
+        path: Path to catalog.json or collection.json file.
+        title: New title (None to skip updating title).
+        description: New description (None to skip updating description).
+
+    Returns:
+        True if file was updated, False if no changes made or file missing.
+
+    Note:
+        This function is idempotent. Calling multiple times with the same
+        values produces the same result.
+    """
+    import json
+
+    if not path.exists():
+        return False
+
+    # Filter out technical names
+    effective_title = title if title and not _is_technical_name(title) else None
+    effective_description = (
+        description if description and not _is_technical_name(description) else None
+    )
+
+    # Nothing to update
+    if effective_title is None and effective_description is None:
+        return False
+
+    try:
+        stac_data = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Failed to parse %s: %s — skipping metadata update", path, e
+        )
+        return False
+
+    updated = False
+
+    if effective_title is not None:
+        stac_data["title"] = effective_title
+        updated = True
+
+    if effective_description is not None:
+        stac_data["description"] = effective_description
+        updated = True
+
+    if updated:
+        path.write_text(json.dumps(stac_data, indent=2, ensure_ascii=False) + "\n")
+
+    return updated
