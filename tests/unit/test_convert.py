@@ -1354,3 +1354,125 @@ class TestConvertFileSourceMtime:
 # Those functions were part of the DuckDB workaround for multi-layer support.
 # Now using geoparquet-io's native layer parameter instead.
 # See: https://github.com/geoparquet/geoparquet-io/issues/315
+
+
+# =============================================================================
+# COG Thumbnail Generation Tests (Issue #372)
+# =============================================================================
+
+
+class TestGenerateCogThumbnail:
+    """Tests for generate_cog_thumbnail() function."""
+
+    @pytest.mark.unit
+    def test_generates_jpeg_next_to_cog(self, valid_rgb_cog: Path, tmp_path: Path) -> None:
+        """A thumbnail JPEG is created next to the COG file."""
+        import shutil
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "data.tif"
+        shutil.copy(valid_rgb_cog, cog)
+
+        thumb = generate_cog_thumbnail(cog)
+
+        assert thumb is not None
+        assert thumb.exists()
+        assert thumb.suffix == ".jpg"
+        assert thumb.parent == cog.parent
+        assert thumb.stat().st_size > 0
+
+    @pytest.mark.unit
+    def test_thumbnail_is_smaller_than_max_size(self, valid_rgb_cog: Path, tmp_path: Path) -> None:
+        """Generated thumbnail respects max pixel size."""
+        import shutil
+
+        import rasterio
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "data.tif"
+        shutil.copy(valid_rgb_cog, cog)
+
+        thumb = generate_cog_thumbnail(cog, max_size=128)
+        assert thumb is not None
+
+        with rasterio.open(thumb) as src:
+            assert max(src.width, src.height) <= 128
+
+    @pytest.mark.unit
+    def test_returns_none_on_invalid_raster(self, tmp_path: Path) -> None:
+        """Returns None if the source is not a readable raster."""
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        bad = tmp_path / "not_a_raster.tif"
+        bad.write_bytes(b"not a tiff")
+
+        result = generate_cog_thumbnail(bad)
+        assert result is None
+
+    @pytest.mark.unit
+    def test_convert_to_cog_emits_thumbnail_when_enabled(
+        self, non_cog_tif: Path, tmp_path: Path
+    ) -> None:
+        """convert_file generates a thumbnail when generate_thumbnail is True."""
+        from portolan_cli.conversion_config import CogSettings
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        settings = CogSettings(generate_thumbnail=True)
+        result = convert_file(non_cog_tif, output_dir=tmp_path, cog_settings=settings)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+        thumb = result.output.with_suffix(".jpg")
+        assert thumb.exists()
+
+    @pytest.mark.unit
+    def test_convert_to_cog_skips_thumbnail_when_disabled(
+        self, non_cog_tif: Path, tmp_path: Path
+    ) -> None:
+        """convert_file does not emit a thumbnail when generate_thumbnail is False."""
+        from portolan_cli.conversion_config import CogSettings
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        settings = CogSettings(generate_thumbnail=False)
+        result = convert_file(non_cog_tif, output_dir=tmp_path, cog_settings=settings)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+        thumb = result.output.with_suffix(".jpg")
+        assert not thumb.exists()
+
+    @pytest.mark.unit
+    def test_thumbnail_for_float32_singleband(
+        self, valid_float32_cog: Path, tmp_path: Path
+    ) -> None:
+        """Float32 (elevation-like) singleband rasters get a stretched thumbnail."""
+        import shutil
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "elevation.tif"
+        shutil.copy(valid_float32_cog, cog)
+
+        thumb = generate_cog_thumbnail(cog)
+        assert thumb is not None
+        assert thumb.exists()
+        assert thumb.stat().st_size > 0
+
+    @pytest.mark.unit
+    def test_thumbnail_excludes_nodata_from_stretch(
+        self, valid_nodata_cog: Path, tmp_path: Path
+    ) -> None:
+        """Nodata sentinels are masked out so they don't dominate the stretch."""
+        import shutil
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "with_nodata.tif"
+        shutil.copy(valid_nodata_cog, cog)
+
+        thumb = generate_cog_thumbnail(cog)
+        assert thumb is not None
+        assert thumb.exists()
+        assert thumb.stat().st_size > 0

@@ -173,10 +173,109 @@ class ConversionReport:
         }
 
 
+def generate_cog_thumbnail(cog_path: Path, max_size: int = 512, quality: int = 75) -> Path | None:
+    """Generate a JPEG thumbnail from a COG file (Issue #372).
+
+    Reads the lowest-resolution overview when available, downsamples to fit
+    within ``max_size`` pixels on the longest edge, and writes a JPEG next to
+    the COG. Per STAC best practices, this is the asset that should carry the
+    ``thumbnail`` role.
+
+    Args:
+        cog_path: Path to the source COG file.
+        max_size: Maximum pixel dimension for the longest edge (default 512).
+        quality: JPEG quality 1-100 (default 75).
+
+    Returns:
+        Path to the written JPEG thumbnail, or None if the source could not be
+        read as a raster (e.g., corrupt file).
+    """
+    try:
+        import numpy as np
+        import rasterio
+        from rasterio.enums import Resampling
+    except ImportError:
+        logger.debug("rasterio/numpy not available, skipping thumbnail generation")
+        return None
+
+    thumb_path = cog_path.with_suffix(".jpg")
+
+    try:
+        with rasterio.open(cog_path) as src:
+            # Compute target shape preserving aspect ratio
+            longest = max(src.width, src.height)
+            scale = min(1.0, max_size / float(longest))
+            out_w = max(1, int(round(src.width * scale)))
+            out_h = max(1, int(round(src.height * scale)))
+
+            # Pick up to 3 bands for RGB; fall back to first band for grayscale
+            indexes: list[int] = [1, 2, 3] if src.count >= 3 else [1]
+
+            # masked=True applies the dataset mask (nodata sentinels, alpha,
+            # internal mask band) so percentile stretch on float/int rasters
+            # ignores fill values like -9999.
+            masked = src.read(
+                indexes=indexes,
+                out_shape=(len(indexes), out_h, out_w),
+                resampling=Resampling.average,
+                masked=True,
+            )
+
+            # Normalize to uint8 for JPEG
+            if masked.dtype == np.uint8:
+                data = masked.filled(0)
+            else:
+                valid = masked.compressed()
+                # Drop non-finite samples (NaN/inf in float rasters)
+                if valid.size:
+                    valid = valid[np.isfinite(valid)]
+                if valid.size == 0:
+                    return None
+                lo = float(np.percentile(valid, 2))
+                hi = float(np.percentile(valid, 98))
+                if hi <= lo:
+                    hi = lo + 1.0
+                stretched = (masked.astype("float32") - lo) / (hi - lo) * 255.0
+                # Fill masked samples with 0 (black) after stretch
+                data = np.clip(stretched.filled(0), 0, 255).astype("uint8")
+
+            # JPEG needs 1 or 3 bands
+            if data.shape[0] == 1:
+                jpeg_data = data
+                photometric = "minisblack"
+            else:
+                jpeg_data = data[:3]
+                photometric = "rgb"
+
+            profile = {
+                "driver": "JPEG",
+                "width": out_w,
+                "height": out_h,
+                "count": jpeg_data.shape[0],
+                "dtype": "uint8",
+                "quality": int(max(1, min(100, quality))),
+                "photometric": photometric,
+            }
+
+            with rasterio.open(thumb_path, "w", **profile) as dst:
+                dst.write(jpeg_data)
+    except Exception as e:
+        logger.debug("Could not generate thumbnail for %s: %s", cog_path, e)
+        if thumb_path.exists():
+            try:
+                thumb_path.unlink()
+            except OSError:
+                pass
+        return None
+
+    return thumb_path
+
+
 def convert_file(
     source: Path,
     output_dir: Path | None = None,
     catalog_path: Path | None = None,
+    cog_settings: CogSettings | None = None,
 ) -> ConversionResult:
     """Convert a single file to cloud-native format.
 
@@ -239,8 +338,9 @@ def convert_file(
     out_dir = output_dir if output_dir else source.parent
     format_type = detect_format(source)
 
-    # Load COG settings from config if catalog_path provided
-    cog_settings = get_cog_settings(catalog_path) if catalog_path else CogSettings()
+    # Load COG settings: explicit arg > catalog config > defaults
+    if cog_settings is None:
+        cog_settings = get_cog_settings(catalog_path) if catalog_path else CogSettings()
 
     # Convert based on format type
     try:
@@ -254,6 +354,10 @@ def convert_file(
             target_format = "COG"
             # Validate output is valid COG
             validation_error = _validate_cog(output_path)
+            # Generate thumbnail next to the COG (Issue #372).
+            # Only on a successful, valid conversion to avoid orphan thumbnails.
+            if validation_error is None and cog_settings.generate_thumbnail:
+                generate_cog_thumbnail(output_path, max_size=cog_settings.thumbnail_max_size)
         else:
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             return ConversionResult(
