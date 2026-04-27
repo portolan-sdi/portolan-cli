@@ -9,42 +9,9 @@ Used by both WFS and ArcGIS extraction backends to populate collection-level
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
-
-def _is_technical_name(text: str | None) -> bool:
-    """Check if text looks like a technical/internal name rather than description.
-
-    Technical names are typically short identifiers that aren't useful as descriptions:
-    - Single words with underscores/dashes (e.g., "bu_building_emprise")
-    - Very short (under 20 chars) without spaces
-    - Prefixed with common tech patterns (e.g., "ns:LayerName")
-
-    Args:
-        text: Text to check.
-
-    Returns:
-        True if text looks like a technical name.
-    """
-    if not text:
-        return True
-
-    text = text.strip()
-
-    # Very short without spaces = likely technical
-    if len(text) < 20 and " " not in text:
-        return True
-
-    # Contains namespace prefix (ns:name pattern)
-    if re.match(r"^[a-z_]+:[A-Za-z]", text):
-        return True
-
-    # All lowercase with underscores, no spaces
-    if re.match(r"^[a-z0-9_]+$", text):
-        return True
-
-    return False
+from portolan_cli.stac import is_technical_name as _is_technical_name
 
 
 def _select_best_description(

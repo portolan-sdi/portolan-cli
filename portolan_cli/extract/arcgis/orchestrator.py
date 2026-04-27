@@ -591,10 +591,17 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
             except ValueError:
                 pass
 
-    init_catalog(output_dir, title=title, description=description)
+    # Filter technical names BEFORE init_catalog to avoid writing them
+    # (update_stac_metadata can't overwrite if init_catalog already wrote them)
+    from portolan_cli.stac import is_technical_name
+
+    filtered_title = None if is_technical_name(title) else title
+    filtered_description = None if is_technical_name(description) else description
+
+    init_catalog(output_dir, title=filtered_title, description=filtered_description)
 
     # Per Issue #369: Update catalog.json with rich metadata
-    # (in case init_catalog used defaults due to technical name filtering)
+    # This handles cases where init_catalog used defaults
     catalog_path = output_dir / "catalog.json"
     update_stac_metadata(catalog_path, title=title, description=description)
 

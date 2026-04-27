@@ -446,11 +446,19 @@ class TestMetadataPropagation:
 
         _auto_init_catalog(output_dir, report)
 
-        # Title might be set to technical name by URL parsing, but description
-        # should use default, not the technical name
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
-        # The key thing is we don't error out and catalog is created
+        # Catalog should be created
         assert catalog_json.get("id") is not None
+        # Technical name should NOT appear in title (Issue #369)
+        title = catalog_json.get("title")
+        assert title is None or "bu_building_emprise_v2" not in title, (
+            f"Technical name leaked into catalog title: {title}"
+        )
+        # Description should use default, not the technical name
+        description = catalog_json.get("description", "")
+        assert "bu_building_emprise_v2" not in description, (
+            f"Technical name leaked into description: {description}"
+        )
 
     def test_collection_gets_title_from_layer_metadata(self, tmp_path: Path) -> None:
         """Collection.json title populated from layer metadata."""

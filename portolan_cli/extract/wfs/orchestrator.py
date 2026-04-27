@@ -635,10 +635,17 @@ def _auto_init_catalog(
     service_title = discovery_result.service_title if discovery_result else None
     service_description = discovery_result.service_abstract if discovery_result else None
 
-    init_catalog(output_dir, title=service_title, description=service_description)
+    # Filter technical names BEFORE init_catalog to avoid writing them
+    # (update_stac_metadata can't overwrite if init_catalog already wrote them)
+    from portolan_cli.stac import is_technical_name
 
-    # If init_catalog didn't use the metadata (e.g., technical names filtered),
-    # update catalog.json directly to ensure rich metadata is propagated
+    filtered_title = None if is_technical_name(service_title) else service_title
+    filtered_description = None if is_technical_name(service_description) else service_description
+
+    init_catalog(output_dir, title=filtered_title, description=filtered_description)
+
+    # Per Issue #369: Update catalog.json with rich metadata
+    # This handles cases where init_catalog used defaults
     catalog_path = output_dir / "catalog.json"
     update_stac_metadata(catalog_path, title=service_title, description=service_description)
 

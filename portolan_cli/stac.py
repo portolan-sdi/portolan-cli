@@ -935,13 +935,17 @@ def add_via_link(
     collection_path.write_text(json.dumps(collection_data, indent=2) + "\n")
 
 
-def _is_technical_name(text: str | None) -> bool:
+def is_technical_name(text: str | None) -> bool:
     """Check if text looks like a technical/internal name rather than description.
 
-    Technical names are typically short identifiers that aren't useful as metadata:
-    - Single words with underscores/dashes (e.g., "bu_building_emprise")
-    - Very short (under 20 chars) without spaces
-    - Prefixed with common tech patterns (e.g., "ns:LayerName")
+    Technical names are typically identifiers that aren't useful as metadata:
+    - Pure snake_case names without spaces (e.g., "bu_building_emprise_v2")
+    - Namespace-prefixed (e.g., "ns:LayerName")
+    - Short all-lowercase without spaces (e.g., "layer1")
+
+    Valid titles include:
+    - CamelCase names (e.g., "DenHaagHousing")
+    - Titles with spaces, even if they contain underscores (e.g., "Building - building_emprise")
 
     Args:
         text: Text to check.
@@ -956,19 +960,28 @@ def _is_technical_name(text: str | None) -> bool:
 
     text = text.strip()
 
-    # Very short without spaces = likely technical
-    if len(text) < 20 and " " not in text:
-        return True
+    # Has spaces → probably human-readable, even if it contains underscores
+    if " " in text:
+        return False
 
-    # Contains namespace prefix (ns:name pattern)
+    # Contains namespace prefix (ns:name pattern) → technical
     if re.match(r"^[a-z_]+:[A-Za-z]", text):
         return True
 
-    # All lowercase with underscores, no spaces
-    if re.match(r"^[a-z0-9_]+$", text):
+    # No spaces + underscores → snake_case identifier
+    if "_" in text:
+        return True
+
+    # Short all-lowercase without CamelCase → technical (e.g., "layer1", "parcels2024")
+    # CamelCase (has uppercase after first char) is allowed
+    if not re.search(r"[A-Z]", text[1:]) and len(text) < 20:
         return True
 
     return False
+
+
+# Alias for internal use (maintains backward compatibility)
+_is_technical_name = is_technical_name
 
 
 def update_stac_metadata(
@@ -1015,7 +1028,15 @@ def update_stac_metadata(
     if effective_title is None and effective_description is None:
         return False
 
-    stac_data = json.loads(path.read_text())
+    try:
+        stac_data = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Failed to parse %s: %s — skipping metadata update", path, e
+        )
+        return False
 
     updated = False
 

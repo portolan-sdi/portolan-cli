@@ -765,5 +765,10 @@ class TestWFSMetadataPropagation:
         _auto_init_catalog(output_dir, report, discovery)
 
         catalog_json = json.loads((output_dir / "catalog.json").read_text())
-        # Technical title should be filtered, but description should be set
+        # Technical title should be filtered (Issue #369)
+        title = catalog_json.get("title")
+        assert title is None or "wfs_service_internal_v2" not in title, (
+            f"Technical service title leaked into catalog: {title}"
+        )
+        # Description should be set from the meaningful abstract
         assert "meaningful service description" in catalog_json.get("description", "").lower()
