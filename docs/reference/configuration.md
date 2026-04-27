@@ -218,10 +218,16 @@ conversion:
     tile_size: 512         # Internal tile size in pixels
     predictor: 2           # 1=none, 2=horizontal (default), 3=floating point
     resampling: nearest    # Overview resampling: nearest, bilinear, cubic, etc.
+    generate_thumbnail: true   # Auto-generate JPEG thumbnail (default: true)
+    thumbnail_max_size: 512    # Max dimension in pixels (default: 512)
+    thumbnail_quality: 75      # JPEG quality 1-100 (default: 75)
 ```
 
 !!! note "Validation"
     Invalid settings produce warnings but don't block conversion. Quality is clamped to 1-100, and unknown compression/resampling values are passed through to let rio-cogeo handle errors.
+
+!!! tip "Thumbnails"
+    When `generate_thumbnail` is enabled, a JPEG thumbnail is created next to each converted COG (e.g., `data.tif` → `data.thumb.jpg`). The thumbnail is automatically picked up by `portolan scan` with `roles: ["thumbnail"]`, following STAC best practices.
 
 #### Use Cases
 
@@ -230,6 +236,8 @@ conversion:
 | RGB imagery (smaller files) | `compression: JPEG`, `quality: 95` |
 | Elevation data (lossless) | `compression: DEFLATE`, `predictor: 3` |
 | Analytics (fast reads) | `compression: LZW`, `tile_size: 256` |
+| Disable thumbnails | `generate_thumbnail: false` |
+| Large thumbnails for preview | `thumbnail_max_size: 1024`, `thumbnail_quality: 90` |
 
 #### Available Compression Methods
 

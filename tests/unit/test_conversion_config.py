@@ -642,6 +642,57 @@ conversion:
 
         assert settings.compression == "JPEG"
 
+    @pytest.mark.unit
+    def test_thumbnail_quality_parsed_from_config(self, tmp_path: Path) -> None:
+        """get_cog_settings() parses thumbnail_quality from config."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    thumbnail_quality: 50
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.thumbnail_quality == 50
+
+    @pytest.mark.unit
+    def test_invalid_thumbnail_quality_uses_default(self, tmp_path: Path) -> None:
+        """get_cog_settings() uses default for invalid thumbnail_quality."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    thumbnail_quality: "high"
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.thumbnail_quality == 75  # Default
+
+    @pytest.mark.unit
+    def test_thumbnail_quality_out_of_range_uses_default(self, tmp_path: Path) -> None:
+        """get_cog_settings() uses default for out-of-range thumbnail_quality."""
+        from portolan_cli.conversion_config import get_cog_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  cog:
+    thumbnail_quality: 150
+""")
+        settings = get_cog_settings(tmp_path)
+
+        assert settings.thumbnail_quality == 75  # Default (150 > 100)
+
 
 # =============================================================================
 # COG Settings Validation Tests
@@ -763,6 +814,26 @@ class TestValidateCogSettings:
 
         # Should have no warnings (predictor=1 is OK for lossy, quality is valid for WEBP)
         assert warnings == []
+
+    @pytest.mark.unit
+    def test_thumbnail_quality_out_of_range_warns(self) -> None:
+        """validate_cog_settings() warns about thumbnail_quality out of range."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(thumbnail_quality=150)
+        warnings = validate_cog_settings(settings)
+
+        assert any("thumbnail_quality 150 is out of range" in w for w in warnings)
+
+    @pytest.mark.unit
+    def test_thumbnail_quality_zero_warns(self) -> None:
+        """validate_cog_settings() warns about thumbnail_quality of 0."""
+        from portolan_cli.conversion_config import CogSettings, validate_cog_settings
+
+        settings = CogSettings(thumbnail_quality=0)
+        warnings = validate_cog_settings(settings)
+
+        assert any("thumbnail_quality 0 is out of range" in w for w in warnings)
 
 
 class TestGetCogSettingsValidation:

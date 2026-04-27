@@ -33,6 +33,7 @@ dependencies = [
     "httpx>=0.27.0",  # HTTP client for ArcGIS REST API discovery
     "obstore>=0.8.2",  # Cloud object storage (S3, GCS, Azure) via Rust bindings
     "python-dotenv>=1.0.0",  # Load .env files for credentials (ADR-0024, Issue #356)
+    "numpy>=1.24.0",  # Array ops (transitive via rasterio, but we import directly for thumbnails)
     "pyarrow>=12.0.0,<25.0.0",  # v22+ has ABI incompatibility with abseil on some systems
     "pyproj>=3.0.0",  # CRS transformations (transitive via rasterio, but we import directly)
     "pystac>=1.10.0",  # STAC catalog/collection/item creation

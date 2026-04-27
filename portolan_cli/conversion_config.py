@@ -224,6 +224,9 @@ class CogSettings:
     tile_size: int = 512
     predictor: int = 2
     resampling: str = "nearest"
+    generate_thumbnail: bool = True
+    thumbnail_max_size: int = 512
+    thumbnail_quality: int = 75
 
 
 def validate_cog_settings(settings: CogSettings) -> list[str]:
@@ -305,6 +308,25 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
             f"'{settings.compression}'. Consider setting predictor=1 to avoid confusion."
         )
 
+    # Validate thumbnail_max_size (Issue #372)
+    if settings.thumbnail_max_size <= 0:
+        warnings.append(
+            f"thumbnail_max_size {settings.thumbnail_max_size} is invalid. "
+            "Must be > 0. Using default 512."
+        )
+    elif settings.thumbnail_max_size > 4096:
+        warnings.append(
+            f"thumbnail_max_size {settings.thumbnail_max_size} is very large. "
+            "Recommended: <= 4096. Defeats the purpose of a thumbnail."
+        )
+
+    # Validate thumbnail_quality (Issue #372)
+    if not 1 <= settings.thumbnail_quality <= 100:
+        warnings.append(
+            f"thumbnail_quality {settings.thumbnail_quality} is out of range. "
+            "Valid range: 1-100. Using clamped value."
+        )
+
     return warnings
 
 
@@ -363,12 +385,27 @@ def get_cog_settings(catalog_path: Path) -> CogSettings:
         # Normalize resampling to lowercase
         resampling = resampling.lower()
 
+    generate_thumbnail = cog.get("generate_thumbnail")
+    if not isinstance(generate_thumbnail, bool):
+        generate_thumbnail = True
+
+    thumbnail_max_size = cog.get("thumbnail_max_size")
+    if not isinstance(thumbnail_max_size, int) or thumbnail_max_size <= 0:
+        thumbnail_max_size = 512
+
+    thumbnail_quality = cog.get("thumbnail_quality")
+    if not isinstance(thumbnail_quality, int) or not 1 <= thumbnail_quality <= 100:
+        thumbnail_quality = 75
+
     settings = CogSettings(
         compression=compression,
         quality=quality,
         tile_size=tile_size,
         predictor=predictor,
         resampling=resampling,
+        generate_thumbnail=generate_thumbnail,
+        thumbnail_max_size=thumbnail_max_size,
+        thumbnail_quality=thumbnail_quality,
     )
 
     # Validate and log warnings
