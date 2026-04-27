@@ -105,12 +105,14 @@ class ExtractionProgress:
     status: str
 
 
-def _slugify(name: str, disambiguate: bool = False) -> str:
+def _slugify(name: str, disambiguate: bool = False, unique_id: int | None = None) -> str:
     """Convert a name to a filesystem-safe slug.
 
     Args:
         name: Original name (e.g., "ns:FeatureType")
         disambiguate: If True, append a short hash to prevent collisions.
+        unique_id: Unique identifier to include in hash (required when disambiguating
+            identical names that would otherwise produce identical hashes).
 
     Returns:
         Slugified name (e.g., "ns_featuretype" or "ns_featuretype_a1b2c3")
@@ -124,7 +126,8 @@ def _slugify(name: str, disambiguate: bool = False) -> str:
     slug = slug or "unnamed"
 
     if disambiguate:
-        name_hash = hashlib.sha256(name.encode()).hexdigest()[:6]
+        hash_input = f"{name}:{unique_id}" if unique_id is not None else name
+        name_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:6]
         slug = f"{slug}_{name_hash}"
 
     return slug
@@ -148,7 +151,7 @@ def _assign_slugs(layers: list[LayerInfo]) -> dict[int, str]:
     for layer in layers:
         base_slug = base_slugs[layer.id]
         if slug_counts[base_slug] > 1:
-            result[layer.id] = _slugify(layer.name, disambiguate=True)
+            result[layer.id] = _slugify(layer.name, disambiguate=True, unique_id=layer.id)
         else:
             result[layer.id] = base_slug
 

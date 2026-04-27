@@ -635,6 +635,12 @@ class TestSlugify:
         result = _slugify("MyLayer", disambiguate=False)
         assert result == "mylayer"
 
+    def test_slug_unique_id_differentiates(self) -> None:
+        """Same name with different unique_ids produces different slugs."""
+        slug1 = _slugify("same_name", disambiguate=True, unique_id=0)
+        slug2 = _slugify("same_name", disambiguate=True, unique_id=1)
+        assert slug1 != slug2
+
 
 class TestAssignSlugs:
     """Tests for _assign_slugs function (Issue #379)."""
@@ -686,4 +692,20 @@ class TestAssignSlugs:
         # layer:a and layer_a: collision, both get hash
         assert len(slugs[0].split("_")[-1]) == 6
         assert len(slugs[1].split("_")[-1]) == 6
+        assert slugs[0] != slugs[1]
+
+    def test_identical_names_different_ids(self) -> None:
+        """Identical names with different IDs produce different slugs."""
+        # Edge case: exact same name but different layer IDs
+        # (could happen with bad WFS data or duplicate entries)
+        layers = [
+            make_layer_info("buildings", 0),
+            make_layer_info("buildings", 1),
+        ]
+        slugs = _assign_slugs(layers)
+
+        # Both should have hash suffixes
+        assert len(slugs[0].split("_")[-1]) == 6
+        assert len(slugs[1].split("_")[-1]) == 6
+        # Critical: they must be DIFFERENT despite identical names
         assert slugs[0] != slugs[1]
