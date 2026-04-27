@@ -226,6 +226,7 @@ class CogSettings:
     resampling: str = "nearest"
     generate_thumbnail: bool = True
     thumbnail_max_size: int = 512
+    thumbnail_quality: int = 75
 
 
 def validate_cog_settings(settings: CogSettings) -> list[str]:
@@ -319,6 +320,13 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
             "Recommended: <= 4096. Defeats the purpose of a thumbnail."
         )
 
+    # Validate thumbnail_quality (Issue #372)
+    if not 1 <= settings.thumbnail_quality <= 100:
+        warnings.append(
+            f"thumbnail_quality {settings.thumbnail_quality} is out of range. "
+            "Valid range: 1-100. Using clamped value."
+        )
+
     return warnings
 
 
@@ -385,6 +393,10 @@ def get_cog_settings(catalog_path: Path) -> CogSettings:
     if not isinstance(thumbnail_max_size, int) or thumbnail_max_size <= 0:
         thumbnail_max_size = 512
 
+    thumbnail_quality = cog.get("thumbnail_quality")
+    if not isinstance(thumbnail_quality, int) or not 1 <= thumbnail_quality <= 100:
+        thumbnail_quality = 75
+
     settings = CogSettings(
         compression=compression,
         quality=quality,
@@ -393,6 +405,7 @@ def get_cog_settings(catalog_path: Path) -> CogSettings:
         resampling=resampling,
         generate_thumbnail=generate_thumbnail,
         thumbnail_max_size=thumbnail_max_size,
+        thumbnail_quality=thumbnail_quality,
     )
 
     # Validate and log warnings

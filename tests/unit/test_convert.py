@@ -1496,3 +1496,109 @@ class TestGenerateCogThumbnail:
         assert thumb is not None
         assert thumb.exists()
         assert thumb.stat().st_size > 0
+
+    @pytest.mark.unit
+    def test_thumbnail_returns_none_for_all_nodata_raster(self, tmp_path: Path) -> None:
+        """Returns None if raster contains only nodata (no valid pixels)."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        # Create a raster where ALL pixels are nodata
+        cog = tmp_path / "all_nodata.tif"
+        data = np.full((1, 64, 64), -9999, dtype=np.float32)
+        transform = from_bounds(0, 0, 1, 1, 64, 64)
+
+        profile = {
+            "driver": "GTiff",
+            "dtype": "float32",
+            "width": 64,
+            "height": 64,
+            "count": 1,
+            "crs": "EPSG:4326",
+            "transform": transform,
+            "nodata": -9999,
+        }
+        with rasterio.open(cog, "w", **profile) as dst:
+            dst.write(data)
+
+        result = generate_cog_thumbnail(cog)
+        assert result is None
+
+    @pytest.mark.unit
+    def test_thumbnail_handles_rgba_4band_raster(self, tmp_path: Path) -> None:
+        """4-band RGBA rasters produce valid 3-band RGB thumbnails."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        # Create a 4-band RGBA raster
+        cog = tmp_path / "rgba.tif"
+        data = np.random.randint(0, 255, (4, 128, 128), dtype=np.uint8)
+        transform = from_bounds(0, 0, 1, 1, 128, 128)
+
+        profile = {
+            "driver": "GTiff",
+            "dtype": "uint8",
+            "width": 128,
+            "height": 128,
+            "count": 4,
+            "crs": "EPSG:4326",
+            "transform": transform,
+            "photometric": "RGBA",
+        }
+        with rasterio.open(cog, "w", **profile) as dst:
+            dst.write(data)
+
+        thumb = generate_cog_thumbnail(cog)
+        assert thumb is not None
+        assert thumb.exists()
+
+        # Verify thumbnail is 3-band (RGB, not RGBA)
+        with rasterio.open(thumb) as src:
+            assert src.count == 3
+
+    @pytest.mark.unit
+    def test_thumbnail_respects_quality_setting(self, valid_rgb_cog: Path, tmp_path: Path) -> None:
+        """Lower quality produces smaller file size."""
+        import shutil
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "data.tif"
+        shutil.copy(valid_rgb_cog, cog)
+
+        # Generate with high quality
+        thumb_high = generate_cog_thumbnail(cog, quality=95)
+        assert thumb_high is not None
+        size_high = thumb_high.stat().st_size
+
+        # Remove and regenerate with low quality
+        thumb_high.unlink()
+        thumb_low = generate_cog_thumbnail(cog, quality=10)
+        assert thumb_low is not None
+        size_low = thumb_low.stat().st_size
+
+        # Low quality should be smaller (unless image is trivially small)
+        # Allow some tolerance for very small test images
+        assert size_low <= size_high
+
+    @pytest.mark.unit
+    def test_convert_file_uses_thumbnail_quality_from_settings(
+        self, non_cog_tif: Path, tmp_path: Path
+    ) -> None:
+        """convert_file passes thumbnail_quality from CogSettings."""
+        from portolan_cli.conversion_config import CogSettings
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        settings = CogSettings(generate_thumbnail=True, thumbnail_quality=50)
+        result = convert_file(non_cog_tif, output_dir=tmp_path, cog_settings=settings)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+        thumb = result.output.with_name(f"{result.output.stem}.thumb.jpg")
+        assert thumb.exists()

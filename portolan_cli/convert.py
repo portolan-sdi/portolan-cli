@@ -271,6 +271,7 @@ def generate_cog_thumbnail(cog_path: Path, max_size: int = 512, quality: int = 7
                 pass
         return None
 
+    logger.debug("Generated thumbnail %s (%dx%d)", thumb_path.name, out_w, out_h)
     return thumb_path
 
 
@@ -363,7 +364,11 @@ def convert_file(
             # Generate thumbnail next to the COG (Issue #372).
             # Only on a successful, valid conversion to avoid orphan thumbnails.
             if validation_error is None and cog_settings.generate_thumbnail:
-                generate_cog_thumbnail(output_path, max_size=cog_settings.thumbnail_max_size)
+                generate_cog_thumbnail(
+                    output_path,
+                    max_size=cog_settings.thumbnail_max_size,
+                    quality=cog_settings.thumbnail_quality,
+                )
         else:
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             return ConversionResult(
