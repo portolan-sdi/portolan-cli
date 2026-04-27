@@ -449,6 +449,46 @@ class TestGetSetting:
 
         assert result is None
 
+    @pytest.mark.unit
+    def test_dotted_key_returns_false_boolean(self, tmp_path: Path) -> None:
+        """Dotted key should correctly return False (not None) for disabled settings."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"pmtiles": {"enabled": False}})
+
+        coll_path = tmp_path / "coll"
+        coll_path.mkdir()
+
+        result = get_setting(
+            "pmtiles.enabled",
+            catalog_path=tmp_path,
+            collection="coll",
+            collection_path=coll_path,
+        )
+
+        assert result is False
+
+    @pytest.mark.unit
+    def test_dotted_key_returns_zero_integer(self, tmp_path: Path) -> None:
+        """Dotted key should correctly return 0 (not None) for zero values."""
+        from portolan_cli.config import get_setting, save_config
+
+        (tmp_path / ".portolan").mkdir()
+        save_config(tmp_path, {"pmtiles": {"min_zoom": 0}})
+
+        coll_path = tmp_path / "coll"
+        coll_path.mkdir()
+
+        result = get_setting(
+            "pmtiles.min_zoom",
+            catalog_path=tmp_path,
+            collection="coll",
+            collection_path=coll_path,
+        )
+
+        assert result == 0
+
 
 class TestSetSetting:
     """Tests for set_setting function."""
