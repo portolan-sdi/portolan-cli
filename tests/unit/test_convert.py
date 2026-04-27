@@ -1424,7 +1424,7 @@ class TestGenerateCogThumbnail:
 
         assert result.status == ConversionStatus.SUCCESS
         assert result.output is not None
-        thumb = result.output.with_suffix(".jpg")
+        thumb = result.output.with_name(f"{result.output.stem}.thumb.jpg")
         assert thumb.exists()
 
     @pytest.mark.unit
@@ -1440,7 +1440,7 @@ class TestGenerateCogThumbnail:
 
         assert result.status == ConversionStatus.SUCCESS
         assert result.output is not None
-        thumb = result.output.with_suffix(".jpg")
+        thumb = result.output.with_name(f"{result.output.stem}.thumb.jpg")
         assert not thumb.exists()
 
     @pytest.mark.unit
@@ -1459,6 +1459,26 @@ class TestGenerateCogThumbnail:
         assert thumb is not None
         assert thumb.exists()
         assert thumb.stat().st_size > 0
+
+    @pytest.mark.unit
+    def test_thumbnail_does_not_clobber_user_jpg(self, valid_rgb_cog: Path, tmp_path: Path) -> None:
+        """A user-supplied data.jpg next to data.tif must not be overwritten."""
+        import shutil
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "data.tif"
+        shutil.copy(valid_rgb_cog, cog)
+
+        # Pre-existing user thumbnail
+        user_jpg = tmp_path / "data.jpg"
+        user_payload = b"USER_THUMBNAIL_DO_NOT_OVERWRITE"
+        user_jpg.write_bytes(user_payload)
+
+        thumb = generate_cog_thumbnail(cog)
+        assert thumb is not None
+        assert thumb.name == "data.thumb.jpg"
+        assert user_jpg.read_bytes() == user_payload
 
     @pytest.mark.unit
     def test_thumbnail_excludes_nodata_from_stretch(

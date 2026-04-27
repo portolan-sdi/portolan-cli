@@ -198,7 +198,10 @@ def generate_cog_thumbnail(cog_path: Path, max_size: int = 512, quality: int = 7
         logger.debug("rasterio/numpy not available, skipping thumbnail generation")
         return None
 
-    thumb_path = cog_path.with_suffix(".jpg")
+    # Use ".thumb.jpg" rather than ".jpg" so we don't clobber a user-supplied
+    # sibling thumbnail (e.g. hand-curated data.jpg next to data.tif). The
+    # extension is still .jpg, so _scan_item_assets assigns role "thumbnail".
+    thumb_path = cog_path.with_name(f"{cog_path.stem}.thumb.jpg")
 
     try:
         with rasterio.open(cog_path) as src:
@@ -288,6 +291,9 @@ def convert_file(
             directory as the source file.
         catalog_path: Path to the catalog root for loading conversion config.
             If None, uses ADR-0019 defaults.
+        cog_settings: Explicit COG settings override. Takes precedence over
+            ``catalog_path``-loaded settings. If None, loads from
+            ``catalog_path`` or falls back to ADR-0019 defaults.
 
     Returns:
         ConversionResult with conversion outcome, timing, and paths.
