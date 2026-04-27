@@ -105,12 +105,14 @@ class ExtractionProgress:
     status: str
 
 
-def _slugify(name: str, disambiguate: bool = False) -> str:
+def _slugify(name: str, disambiguate: bool = False, unique_id: int | None = None) -> str:
     """Convert a name to a filesystem-safe slug.
 
     Args:
         name: Original name (e.g., "ns:FeatureType")
         disambiguate: If True, append a short hash to prevent collisions.
+        unique_id: Unique identifier to include in hash (required when disambiguating
+            identical names that would otherwise produce identical hashes).
 
     Returns:
         Slugified name (e.g., "ns_featuretype" or "ns_featuretype_a1b2c3")
@@ -124,10 +126,36 @@ def _slugify(name: str, disambiguate: bool = False) -> str:
     slug = slug or "unnamed"
 
     if disambiguate:
-        name_hash = hashlib.sha256(name.encode()).hexdigest()[:6]
+        hash_input = f"{name}:{unique_id}" if unique_id is not None else name
+        name_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:6]
         slug = f"{slug}_{name_hash}"
 
     return slug
+
+
+def _assign_slugs(layers: list[LayerInfo]) -> dict[int, str]:
+    """Pre-compute slugs for all layers, disambiguating only on collision.
+
+    Args:
+        layers: List of layers to assign slugs to.
+
+    Returns:
+        Dict mapping layer id to assigned slug.
+    """
+    from collections import Counter
+
+    base_slugs = {layer.id: _slugify(layer.name, disambiguate=False) for layer in layers}
+    slug_counts = Counter(base_slugs.values())
+
+    result: dict[int, str] = {}
+    for layer in layers:
+        base_slug = base_slugs[layer.id]
+        if slug_counts[base_slug] > 1:
+            result[layer.id] = _slugify(layer.name, disambiguate=True, unique_id=layer.id)
+        else:
+            result[layer.id] = base_slug
+
+    return result
 
 
 def _build_wfs_url(base_url: str, params: dict[str, str]) -> str:
@@ -365,6 +393,81 @@ def _negotiate_version(url: str, wfs_version: str) -> str:
         return "1.1.0"
 
 
+def _extract_layers_parallel(
+    url: str,
+    layers_to_extract: list[tuple[int, LayerInfo]],
+    output_dir: Path,
+    options: ExtractionOptions,
+    negotiated_version: str,
+    total: int,
+    layer_slugs: dict[int, str],
+    on_progress: Callable[[ExtractionProgress], None] | None,
+) -> list[LayerResult]:
+    """Extract multiple layers in parallel using ThreadPoolExecutor."""
+    actual_workers = min(options.workers, len(layers_to_extract))
+    logger.info("Extracting %d layers with %d workers", len(layers_to_extract), actual_workers)
+    results: list[LayerResult] = []
+
+    with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+        future_to_layer = {
+            executor.submit(
+                _extract_layer_task,
+                url,
+                layer,
+                output_dir,
+                options,
+                negotiated_version,
+                i,
+                total,
+                layer_slugs[layer.id],
+            ): (i, layer)
+            for i, layer in layers_to_extract
+        }
+
+        for future in as_completed(future_to_layer):
+            i, layer = future_to_layer[future]
+            try:
+                result = future.result(timeout=options.timeout)
+                results.append(result)
+                status = "success" if result.status == "success" else "failed"
+                _emit_progress(on_progress, i, total, layer.name, status)
+            except TimeoutError:
+                logger.error("Layer %s timed out after %ds", layer.name, options.timeout)
+                _emit_progress(on_progress, i, total, layer.name, "failed")
+                results.append(
+                    LayerResult(
+                        id=layer.id,
+                        name=layer.name,
+                        status="failed",
+                        features=0,
+                        size_bytes=0,
+                        duration_seconds=options.timeout,
+                        output_path="",
+                        warnings=[],
+                        error=f"Timeout after {options.timeout}s",
+                        attempts=1,
+                    )
+                )
+            except Exception as e:
+                logger.error("Layer %s failed: %s", layer.name, e)
+                _emit_progress(on_progress, i, total, layer.name, "failed")
+                results.append(
+                    LayerResult(
+                        id=layer.id,
+                        name=layer.name,
+                        status="failed",
+                        features=0,
+                        size_bytes=0,
+                        duration_seconds=0.0,
+                        output_path="",
+                        warnings=[],
+                        error=str(e),
+                        attempts=1,
+                    )
+                )
+    return results
+
+
 def _extract_layer_task(
     url: str,
     layer: LayerInfo,
@@ -373,12 +476,12 @@ def _extract_layer_task(
     negotiated_version: str,
     layer_index: int,
     total_layers: int,
+    layer_slug: str,
 ) -> LayerResult:
     """Extract a single layer (task for parallel execution).
 
     Returns LayerResult with success or failure status.
     """
-    layer_slug = _slugify(layer.name, disambiguate=True)
     collection_dir = output_dir / layer_slug
     output_path = collection_dir / f"{layer_slug}.parquet"
 
@@ -510,70 +613,22 @@ def extract_wfs_catalog(
             )
         layers_to_extract.append((i, layer))
 
+    # Pre-compute slugs: only disambiguate on collision (Issue #379)
+    layer_slugs = _assign_slugs([layer for _, layer in layers_to_extract])
+
     # Extract layers - parallel if workers > 1, sequential otherwise
     extracted_results: list[LayerResult] = []
-
     if options.workers > 1 and len(layers_to_extract) > 1:
-        # Parallel extraction
-        actual_workers = min(options.workers, len(layers_to_extract))
-        logger.info("Extracting %d layers with %d workers", len(layers_to_extract), actual_workers)
-
-        with ThreadPoolExecutor(max_workers=actual_workers) as executor:
-            future_to_layer = {
-                executor.submit(
-                    _extract_layer_task,
-                    url,
-                    layer,
-                    output_dir,
-                    options,
-                    negotiated_version,
-                    i,
-                    total,
-                ): (i, layer)
-                for i, layer in layers_to_extract
-            }
-
-            for future in as_completed(future_to_layer):
-                i, layer = future_to_layer[future]
-                try:
-                    result = future.result(timeout=options.timeout)
-                    extracted_results.append(result)
-                    status = "success" if result.status == "success" else "failed"
-                    _emit_progress(on_progress, i, total, layer.name, status)
-                except TimeoutError:
-                    logger.error("Layer %s timed out after %ds", layer.name, options.timeout)
-                    _emit_progress(on_progress, i, total, layer.name, "failed")
-                    extracted_results.append(
-                        LayerResult(
-                            id=layer.id,
-                            name=layer.name,
-                            status="failed",
-                            features=0,
-                            size_bytes=0,
-                            duration_seconds=options.timeout,
-                            output_path="",
-                            warnings=[],
-                            error=f"Timeout after {options.timeout}s",
-                            attempts=1,
-                        )
-                    )
-                except Exception as e:
-                    logger.error("Layer %s failed: %s", layer.name, e)
-                    _emit_progress(on_progress, i, total, layer.name, "failed")
-                    extracted_results.append(
-                        LayerResult(
-                            id=layer.id,
-                            name=layer.name,
-                            status="failed",
-                            features=0,
-                            size_bytes=0,
-                            duration_seconds=0.0,
-                            output_path="",
-                            warnings=[],
-                            error=str(e),
-                            attempts=1,
-                        )
-                    )
+        extracted_results = _extract_layers_parallel(
+            url,
+            layers_to_extract,
+            output_dir,
+            options,
+            negotiated_version,
+            total,
+            layer_slugs,
+            on_progress,
+        )
     else:
         # Sequential extraction
         for i, layer in layers_to_extract:
@@ -581,7 +636,14 @@ def extract_wfs_catalog(
             _emit_progress(on_progress, i, total, layer.name, "extracting")
 
             result = _extract_layer_task(
-                url, layer, output_dir, options, negotiated_version, i, total
+                url,
+                layer,
+                output_dir,
+                options,
+                negotiated_version,
+                i,
+                total,
+                layer_slugs[layer.id],
             )
             extracted_results.append(result)
 
@@ -635,19 +697,22 @@ def _auto_init_catalog(
     service_title = discovery_result.service_title if discovery_result else None
     service_description = discovery_result.service_abstract if discovery_result else None
 
-    # Filter technical names BEFORE init_catalog to avoid writing them
-    # (update_stac_metadata can't overwrite if init_catalog already wrote them)
+    # Filter technical names AND boilerplate (Issue #376)
+    from portolan_cli.extract.wfs.metadata import is_boilerplate_description
     from portolan_cli.stac import is_technical_name
 
-    filtered_title = None if is_technical_name(service_title) else service_title
-    filtered_description = None if is_technical_name(service_description) else service_description
+    def _should_filter(text: str | None) -> bool:
+        return is_technical_name(text) or is_boilerplate_description(text)
+
+    filtered_title = None if _should_filter(service_title) else service_title
+    filtered_description = None if _should_filter(service_description) else service_description
 
     init_catalog(output_dir, title=filtered_title, description=filtered_description)
 
     # Per Issue #369: Update catalog.json with rich metadata
-    # This handles cases where init_catalog used defaults
+    # Per Issue #376: Use filtered values to avoid overwriting with boilerplate
     catalog_path = output_dir / "catalog.json"
-    update_stac_metadata(catalog_path, title=service_title, description=service_description)
+    update_stac_metadata(catalog_path, title=filtered_title, description=filtered_description)
 
     add_files(
         paths=parquet_files,

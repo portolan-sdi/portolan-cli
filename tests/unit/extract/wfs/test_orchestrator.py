@@ -14,6 +14,8 @@ import pytest
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult
 from portolan_cli.extract.wfs.orchestrator import (
     ExtractionOptions,
+    _assign_slugs,
+    _slugify,
     extract_wfs_catalog,
 )
 
@@ -605,3 +607,105 @@ class TestWFSMetadataSeeding:
         assert metadata_path.exists()
         content = metadata_path.read_text()
         assert "Layer in nested structure" in content
+
+
+class TestSlugify:
+    """Tests for _slugify function (Issue #379)."""
+
+    def test_basic_slug(self) -> None:
+        """Basic name is slugified without hash."""
+        result = _slugify("my_layer", disambiguate=False)
+        assert result == "my_layer"
+        assert len(result.split("_")) == 2  # No hash appended
+
+    def test_slug_with_disambiguation(self) -> None:
+        """Hash appended when disambiguate=True."""
+        result = _slugify("my_layer", disambiguate=True)
+        parts = result.split("_")
+        assert len(parts) == 3  # my, layer, hash
+        assert len(parts[-1]) == 6  # 6-char hash
+
+    def test_slug_normalizes_special_chars(self) -> None:
+        """Special characters converted to underscores."""
+        result = _slugify("ns:Feature-Type.Name", disambiguate=False)
+        assert result == "ns_feature_type_name"
+
+    def test_slug_lowercase(self) -> None:
+        """Names are lowercased."""
+        result = _slugify("MyLayer", disambiguate=False)
+        assert result == "mylayer"
+
+    def test_slug_unique_id_differentiates(self) -> None:
+        """Same name with different unique_ids produces different slugs."""
+        slug1 = _slugify("same_name", disambiguate=True, unique_id=0)
+        slug2 = _slugify("same_name", disambiguate=True, unique_id=1)
+        assert slug1 != slug2
+
+
+class TestAssignSlugs:
+    """Tests for _assign_slugs function (Issue #379)."""
+
+    def test_unique_names_no_hash(self) -> None:
+        """Unique layer names get slugs without hash suffixes."""
+        layers = [
+            make_layer_info("layer_a", 0),
+            make_layer_info("layer_b", 1),
+            make_layer_info("layer_c", 2),
+        ]
+        slugs = _assign_slugs(layers)
+
+        assert slugs[0] == "layer_a"
+        assert slugs[1] == "layer_b"
+        assert slugs[2] == "layer_c"
+
+    def test_collision_gets_hash(self) -> None:
+        """Colliding slugs get hash suffix."""
+        # "ns:layer" and "ns_layer" both slugify to "ns_layer"
+        layers = [
+            make_layer_info("ns:layer", 0),
+            make_layer_info("ns_layer", 1),
+        ]
+        slugs = _assign_slugs(layers)
+
+        # Both should have hash suffixes due to collision
+        assert "_" in slugs[0] and len(slugs[0].split("_")[-1]) == 6
+        assert "_" in slugs[1] and len(slugs[1].split("_")[-1]) == 6
+        # But they should be different
+        assert slugs[0] != slugs[1]
+
+    def test_partial_collision(self) -> None:
+        """Only colliding names get hash, others stay clean."""
+        # layer:a and layer_a both slugify to "layer_a" (collision)
+        # layer_b and layer_c are unique
+        layers = [
+            make_layer_info("layer:a", 0),  # Slugifies to layer_a
+            make_layer_info("layer_a", 1),  # Slugifies to layer_a (collision!)
+            make_layer_info("layer_b", 2),  # Unique
+            make_layer_info("layer_c", 3),  # Unique
+        ]
+        slugs = _assign_slugs(layers)
+
+        # layer_b and layer_c: no collision, no hash
+        assert slugs[2] == "layer_b"
+        assert slugs[3] == "layer_c"
+
+        # layer:a and layer_a: collision, both get hash
+        assert len(slugs[0].split("_")[-1]) == 6
+        assert len(slugs[1].split("_")[-1]) == 6
+        assert slugs[0] != slugs[1]
+
+    def test_identical_names_different_ids(self) -> None:
+        """Identical names with different IDs produce different slugs."""
+        # Edge case: exact same name but different layer IDs
+        # (could happen with bad WFS data or duplicate entries)
+        layers = [
+            make_layer_info("buildings", 0),
+            make_layer_info("buildings", 1),
+        ]
+        slugs = _assign_slugs(layers)
+
+        # Both should have hash suffixes
+        assert len(slugs[0].split("_")[-1]) == 6
+        assert len(slugs[1].split("_")[-1]) == 6
+        # Critical: they must be DIFFERENT despite identical names
+        assert slugs[0] != slugs[1]
