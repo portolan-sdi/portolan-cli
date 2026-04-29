@@ -772,3 +772,85 @@ class TestWFSMetadataPropagation:
         )
         # Description should be set from the meaningful abstract
         assert "meaningful service description" in catalog_json.get("description", "").lower()
+
+
+class TestProjectedCRSBBoxRegression:
+    """Regression tests for Issue #377: bbox coordinate mixing.
+
+    When extracting WFS data in a projected CRS (e.g., EPSG:3035),
+    the collection.json extent.bbox must contain only WGS84 coordinates,
+    not a mix of WGS84 and projected values.
+
+    The actual fix is in geoparquet-io v1.1.1's WFS extraction code.
+    These tests verify portolan's CRS transformation handles projected data correctly.
+    """
+
+    def test_portolan_transforms_projected_bbox_to_wgs84(self, tmp_path: Path) -> None:
+        """Portolan's CRS module transforms projected bbox to WGS84.
+
+        Regression test for https://github.com/portolan-sdi/portolan-cli/issues/377
+
+        The bug was: minx/miny were WGS84 but maxx/maxy stayed in projected coords.
+        Example bad bbox: [2.84, 49.50, 4065342.57, 3100515.54]
+
+        This test verifies portolan's transform_bbox_to_wgs84 correctly handles
+        projected CRS coordinates.
+        """
+        from portolan_cli.crs import transform_bbox_to_wgs84
+
+        # Bbox in EPSG:3035 (European projected CRS) - roughly Belgium
+        projected_bbox = (3800000.0, 3000000.0, 4100000.0, 3200000.0)
+
+        # Transform to WGS84
+        wgs84_bbox = transform_bbox_to_wgs84(projected_bbox, "EPSG:3035")
+
+        minx, miny, maxx, maxy = wgs84_bbox
+
+        # All values must be in WGS84 range
+        assert -180 <= minx <= 180, f"minx {minx} not in WGS84 longitude range"
+        assert -90 <= miny <= 90, f"miny {miny} not in WGS84 latitude range"
+        assert -180 <= maxx <= 180, f"maxx {maxx} not in WGS84 longitude range"
+        assert -90 <= maxy <= 90, f"maxy {maxy} not in WGS84 latitude range"
+
+        # Sanity check: bbox should be roughly Belgium/Netherlands region
+        # EPSG:3035 coords (3.8M-4.1M, 3.0M-3.2M) map to roughly lon 2-10, lat 48-54
+        assert 0 < minx < 15, f"minx {minx} not in expected region"
+        assert 45 < miny < 60, f"miny {miny} not in expected region"
+        assert 0 < maxx < 15, f"maxx {maxx} not in expected region"
+        assert 45 < maxy < 60, f"maxy {maxy} not in expected region"
+
+    def test_wgs84_passthrough_unchanged(self, tmp_path: Path) -> None:
+        """Data already in WGS84 passes through unchanged."""
+        from portolan_cli.crs import transform_bbox_to_wgs84
+
+        # Bbox already in WGS84 (Belgium approx)
+        wgs84_bbox = (2.5, 49.5, 6.5, 51.5)
+
+        # Transform should return unchanged
+        result = transform_bbox_to_wgs84(wgs84_bbox, "EPSG:4326")
+
+        assert abs(result[0] - 2.5) < 0.01, f"minx {result[0]} drifted from 2.5"
+        assert abs(result[1] - 49.5) < 0.01, f"miny {result[1]} drifted from 49.5"
+        assert abs(result[2] - 6.5) < 0.01, f"maxx {result[2]} drifted from 6.5"
+        assert abs(result[3] - 51.5) < 0.01, f"maxy {result[3]} drifted from 51.5"
+
+    def test_mixed_coordinates_obviously_invalid(self) -> None:
+        """Mixed WGS84/projected coordinates are detected as invalid.
+
+        This is the exact bug pattern from issue #377:
+        [2.84, 49.50, 4065342.57, 3100515.54]
+
+        minx/miny are WGS84 but maxx/maxy are still in EPSG:3035.
+        The fix in geoparquet-io v1.1.1 ensures this never happens,
+        and our validation logic detects such invalid bboxes.
+        """
+        from portolan_cli.crs import is_likely_wgs84_bbox
+
+        # The bug produced this mixed bbox
+        mixed_bbox = (2.84, 49.50, 4065342.57, 3100515.54)
+
+        # Validation should detect this is NOT a valid WGS84 bbox
+        # because maxx (4065342.57) > 180 and maxy (3100515.54) > 90
+        assert is_likely_wgs84_bbox(mixed_bbox) is False, (
+            "Mixed CRS bbox should be detected as invalid WGS84"
+        )
