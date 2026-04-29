@@ -540,6 +540,49 @@ class TestGeneratePMTilesForCollection:
         assert len(result.failed) == 1
         assert not pmtiles_path.exists(), "Partial file should be cleaned up on any error"
 
+    @pytest.mark.unit
+    def test_cleans_up_partial_file_on_keyboard_interrupt(self, tmp_path: Path) -> None:
+        """Partial PMTiles file is deleted even on KeyboardInterrupt (Issue #385).
+
+        KeyboardInterrupt inherits from BaseException, not Exception.
+        The finally block ensures cleanup even when user hits Ctrl+C.
+        """
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+
+        collection_json = {
+            "type": "Collection",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "data.parquet").write_bytes(b"PAR1")
+
+        pmtiles_path = collection_dir / "data.pmtiles"
+
+        def mock_generate_interrupted(*args: object, **kwargs: object) -> None:
+            pmtiles_path.write_bytes(b"partial")
+            raise KeyboardInterrupt()
+
+        mock_module = MagicMock()
+        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate_interrupted):
+                    with pytest.raises(KeyboardInterrupt):
+                        generate_pmtiles_for_collection(collection_dir, tmp_path)
+
+        # KEY ASSERTION: Partial file cleaned up even on KeyboardInterrupt
+        assert not pmtiles_path.exists(), (
+            "Partial file must be cleaned up on KeyboardInterrupt. "
+            "finally block handles BaseException subclasses."
+        )
+
 
 # Integration tests that require tippecanoe
 @pytest.mark.skipif(

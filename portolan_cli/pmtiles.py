@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from portolan_cli.errors import PortolanError
+from portolan_cli.output import warn
 
 # MIME type for PMTiles (matches dataset.py)
 PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
@@ -455,6 +456,9 @@ def generate_pmtiles_for_collection(
             result.skipped.append(pmtiles_path)
             continue
 
+        # Track success to clean up partial files on any failure (Issue #385)
+        # Using finally ensures cleanup even on KeyboardInterrupt/SystemExit
+        generation_succeeded = False
         try:
             # Delete existing file if forcing regeneration
             # (tippecanoe requires this since it doesn't have a --force option)
@@ -482,16 +486,17 @@ def generate_pmtiles_for_collection(
             track_pmtiles_in_versions(collection_path, pmtiles_path, catalog_root)
 
             result.generated.append(pmtiles_path)
+            generation_succeeded = True
 
         except PMTilesGenerationError as e:
-            # Clean up partial output file to prevent phantom assets (Issue #385)
-            if pmtiles_path.exists():
-                pmtiles_path.unlink()
             result.failed.append((parquet_path, str(e)))
         except Exception as e:
-            # Clean up partial output file to prevent phantom assets (Issue #385)
-            if pmtiles_path.exists():
-                pmtiles_path.unlink()
             result.failed.append((parquet_path, f"Unexpected error: {e}"))
+        finally:
+            # Clean up partial output to prevent phantom assets (Issue #385)
+            # missing_ok=True avoids TOCTOU race condition
+            if not generation_succeeded and pmtiles_path.exists():
+                pmtiles_path.unlink(missing_ok=True)
+                warn(f"Cleaned up partial file after failure: {pmtiles_path.name}")
 
     return result
