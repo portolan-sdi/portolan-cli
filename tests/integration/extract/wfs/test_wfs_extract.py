@@ -835,23 +835,22 @@ class TestProjectedCRSBBoxRegression:
         assert abs(result[3] - 51.5) < 0.01, f"maxy {result[3]} drifted from 51.5"
 
     def test_mixed_coordinates_obviously_invalid(self) -> None:
-        """Mixed WGS84/projected coordinates are obviously invalid.
+        """Mixed WGS84/projected coordinates are detected as invalid.
 
         This is the exact bug pattern from issue #377:
         [2.84, 49.50, 4065342.57, 3100515.54]
 
         minx/miny are WGS84 but maxx/maxy are still in EPSG:3035.
-        The fix in geoparquet-io v1.1.1 ensures this never happens.
+        The fix in geoparquet-io v1.1.1 ensures this never happens,
+        and our validation logic detects such invalid bboxes.
         """
+        from portolan_cli.crs import is_likely_wgs84_bbox
+
         # The bug produced this mixed bbox
         mixed_bbox = (2.84, 49.50, 4065342.57, 3100515.54)
 
-        # These coordinates are obviously invalid for WGS84
-        # WGS84 longitude range: -180 to 180
-        # WGS84 latitude range: -90 to 90
-        assert mixed_bbox[2] > 180, "maxx exceeds valid WGS84 longitude range"
-        assert mixed_bbox[3] > 90, "maxy exceeds valid WGS84 latitude range"
-
-        # The first two coordinates look like valid WGS84
-        assert -180 <= mixed_bbox[0] <= 180, "minx in WGS84 range"
-        assert -90 <= mixed_bbox[1] <= 90, "miny in WGS84 range"
+        # Validation should detect this is NOT a valid WGS84 bbox
+        # because maxx (4065342.57) > 180 and maxy (3100515.54) > 90
+        assert is_likely_wgs84_bbox(mixed_bbox) is False, (
+            "Mixed CRS bbox should be detected as invalid WGS84"
+        )
