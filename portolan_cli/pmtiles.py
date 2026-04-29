@@ -484,8 +484,14 @@ def generate_pmtiles_for_collection(
             result.generated.append(pmtiles_path)
 
         except PMTilesGenerationError as e:
+            # Clean up partial output file to prevent phantom assets (Issue #385)
+            if pmtiles_path.exists():
+                pmtiles_path.unlink()
             result.failed.append((parquet_path, str(e)))
         except Exception as e:
+            # Clean up partial output file to prevent phantom assets (Issue #385)
+            if pmtiles_path.exists():
+                pmtiles_path.unlink()
             result.failed.append((parquet_path, f"Unexpected error: {e}"))
 
     return result
