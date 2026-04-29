@@ -1535,7 +1535,7 @@ wheels = [
 
 [[package]]
 name = "geoparquet-io"
-version = "1.0.1"
+version = "1.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1546,6 +1546,7 @@ dependencies = [
     { name = "geoarrow-pyarrow" },
     { name = "httpx" },
     { name = "jsonschema" },
+    { name = "lxml" },
     { name = "mercantile" },
     { name = "obstore" },
     { name = "owslib" },
@@ -1560,9 +1561,9 @@ dependencies = [
     { name = "rich" },
     { name = "s3fs" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c8/5d/10033dae183d2c115e25e3de7ff875f6dc5939d57055b945153a0a31fcf8/geoparquet_io-1.0.1.tar.gz", hash = "sha256:7a30148ce7ce1b1cb64aa13340d44f4d21ddb33dc5e6c1bc1f687bbafb940f2c", size = 1458021, upload-time = "2026-04-20T15:58:37.84Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/38/35/c5a82618706e52296cf54d9131c9842f9760f47f1741c33a2e72fa993172/geoparquet_io-1.1.1.tar.gz", hash = "sha256:e6117f8b1e85a31a8517dc00d8cbae19a8d1f245f5c3e324d37bb8130df27a9e", size = 1483309, upload-time = "2026-04-29T13:23:15.329Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b9/a8/7be0149a4b8f1211b0ee9586c4dbad59eee3bb28f35155ed5ae5d9f5a56d/geoparquet_io-1.0.1-py3-none-any.whl", hash = "sha256:446d86c81757effc08224599d50695b588cbe3854249da4f190d91e2bba5b2db", size = 442057, upload-time = "2026-04-20T15:58:35.584Z" },
+    { url = "https://files.pythonhosted.org/packages/11/c9/a254e6b41284a837327164661562be72a296263bb42c6fa207a4e238f985/geoparquet_io-1.1.1-py3-none-any.whl", hash = "sha256:4bb79b045fcc224b8a08ffc49fc0bb33683e53b50d16ff23e99e05be61734590", size = 453174, upload-time = "2026-04-29T13:23:13.486Z" },
 ]
 
 [[package]]
@@ -4139,7 +4140,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "deptry", marker = "extra == 'dev'", specifier = ">=0.25.1" },
-    { name = "geoparquet-io", specifier = ">=1.0.1" },
+    { name = "geoparquet-io", specifier = ">=1.1.1" },
     { name = "gitingest", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "gpio-pmtiles", marker = "extra == 'pmtiles'", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.27.0" },
