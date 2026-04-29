@@ -1535,8 +1535,8 @@ wheels = [
 
 [[package]]
 name = "geoparquet-io"
-version = "1.0.0b2"
-source = { git = "https://github.com/geoparquet/geoparquet-io.git?rev=main#b812401704725197774f73ef393ee3e10e4f10c7" }
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "click" },
@@ -1559,6 +1559,10 @@ dependencies = [
     { name = "requests" },
     { name = "rich" },
     { name = "s3fs" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c8/5d/10033dae183d2c115e25e3de7ff875f6dc5939d57055b945153a0a31fcf8/geoparquet_io-1.0.1.tar.gz", hash = "sha256:7a30148ce7ce1b1cb64aa13340d44f4d21ddb33dc5e6c1bc1f687bbafb940f2c", size = 1458021, upload-time = "2026-04-20T15:58:37.84Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/a8/7be0149a4b8f1211b0ee9586c4dbad59eee3bb28f35155ed5ae5d9f5a56d/geoparquet_io-1.0.1-py3-none-any.whl", hash = "sha256:446d86c81757effc08224599d50695b588cbe3854249da4f190d91e2bba5b2db", size = 442057, upload-time = "2026-04-20T15:58:35.584Z" },
 ]
 
 [[package]]
@@ -4135,7 +4139,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "deptry", marker = "extra == 'dev'", specifier = ">=0.25.1" },
-    { name = "geoparquet-io", git = "https://github.com/geoparquet/geoparquet-io.git?rev=main" },
+    { name = "geoparquet-io", specifier = ">=1.0.1" },
     { name = "gitingest", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "gpio-pmtiles", marker = "extra == 'pmtiles'", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.27.0" },
