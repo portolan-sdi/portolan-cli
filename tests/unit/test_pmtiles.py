@@ -451,6 +451,138 @@ class TestGeneratePMTilesForCollection:
         assert call_kwargs["attribution"] == "© Me"
         assert call_kwargs["src_crs"] == "EPSG:4326"
 
+    @pytest.mark.unit
+    def test_cleans_up_partial_file_on_failure(self, tmp_path: Path) -> None:
+        """Partial PMTiles file is deleted when generation fails (Issue #385).
+
+        When gpio-pmtiles/tippecanoe fails mid-generation, it may leave a
+        partial output file. This test verifies that such files are cleaned
+        up to prevent phantom assets in versions.json on subsequent add runs.
+        """
+        from portolan_cli.pmtiles import (
+            PMTilesGenerationError,
+            generate_pmtiles_for_collection,
+        )
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+
+        # Create collection with parquet asset
+        collection_json = {
+            "type": "Collection",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "data.parquet").write_bytes(b"PAR1")
+
+        pmtiles_path = collection_dir / "data.pmtiles"
+
+        # Mock generate_pmtiles to create partial file then raise
+        def mock_generate_raises(*args: object, **kwargs: object) -> None:
+            # Simulate: gpio-pmtiles creates file, then fails mid-processing
+            pmtiles_path.write_bytes(b"partial content")
+            raise PMTilesGenerationError("data.parquet", ValueError("Non-geospatial"))
+
+        mock_module = MagicMock()
+        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate_raises):
+                    result = generate_pmtiles_for_collection(collection_dir, tmp_path)
+
+        # Verify failure was recorded
+        assert len(result.failed) == 1
+        assert "data.parquet" in str(result.failed[0][0])
+
+        # KEY ASSERTION: Partial file should be cleaned up (Issue #385)
+        assert not pmtiles_path.exists(), (
+            "Partial PMTiles file should be deleted on generation failure. "
+            "Leaving it causes phantom assets in versions.json on next add."
+        )
+
+    @pytest.mark.unit
+    def test_cleans_up_partial_file_on_unexpected_error(self, tmp_path: Path) -> None:
+        """Partial PMTiles file is deleted on unexpected errors too (Issue #385)."""
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+
+        collection_json = {
+            "type": "Collection",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "data.parquet").write_bytes(b"PAR1")
+
+        pmtiles_path = collection_dir / "data.pmtiles"
+
+        # Mock to create partial file then raise unexpected exception
+        def mock_generate_unexpected(*args: object, **kwargs: object) -> None:
+            pmtiles_path.write_bytes(b"partial")
+            raise RuntimeError("Unexpected tippecanoe crash")
+
+        mock_module = MagicMock()
+        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate_unexpected):
+                    result = generate_pmtiles_for_collection(collection_dir, tmp_path)
+
+        assert len(result.failed) == 1
+        assert not pmtiles_path.exists(), "Partial file should be cleaned up on any error"
+
+    @pytest.mark.unit
+    def test_cleans_up_partial_file_on_keyboard_interrupt(self, tmp_path: Path) -> None:
+        """Partial PMTiles file is deleted even on KeyboardInterrupt (Issue #385).
+
+        KeyboardInterrupt inherits from BaseException, not Exception.
+        The finally block ensures cleanup even when user hits Ctrl+C.
+        """
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+
+        collection_json = {
+            "type": "Collection",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "data.parquet").write_bytes(b"PAR1")
+
+        pmtiles_path = collection_dir / "data.pmtiles"
+
+        def mock_generate_interrupted(*args: object, **kwargs: object) -> None:
+            pmtiles_path.write_bytes(b"partial")
+            raise KeyboardInterrupt()
+
+        mock_module = MagicMock()
+        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate_interrupted):
+                    with pytest.raises(KeyboardInterrupt):
+                        generate_pmtiles_for_collection(collection_dir, tmp_path)
+
+        # KEY ASSERTION: Partial file cleaned up even on KeyboardInterrupt
+        assert not pmtiles_path.exists(), (
+            "Partial file must be cleaned up on KeyboardInterrupt. "
+            "finally block handles BaseException subclasses."
+        )
+
 
 # Integration tests that require tippecanoe
 @pytest.mark.skipif(
