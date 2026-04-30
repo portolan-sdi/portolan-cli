@@ -470,6 +470,49 @@ class TestMetadataReport:
         assert not with_stale.passed
 
     @pytest.mark.unit
+    def test_heuristics_unchanged_when_both_bboxes_are_none(self) -> None:
+        """Collection-level assets path the scanner with both stored and
+        current bbox = None (no item.json bbox source). The previous logic
+        flagged that as `heuristics_changed=True`, producing false STALE on
+        a touched-but-unchanged collection asset. When BOTH sides are None,
+        the check should fall through to feature_count + schema comparisons.
+        """
+        from portolan_cli.metadata.models import FileMetadataState
+
+        state = FileMetadataState(
+            file_path=Path("/tmp/x.parquet"),
+            current_mtime=200.0,
+            stored_mtime=100.0,
+            current_bbox=None,
+            stored_bbox=None,
+            current_feature_count=10,
+            stored_feature_count=10,
+            current_schema_fingerprint="sha-abc",
+            stored_schema_fingerprint="sha-abc",
+        )
+        assert not state.heuristics_changed
+
+    @pytest.mark.unit
+    def test_heuristics_changed_when_only_stored_bbox_is_none(self) -> None:
+        """New-file detection must still work: stored_bbox=None but
+        current_bbox=[0,0,1,1] means we have new data and no baseline,
+        which IS a change. Don't regress this case."""
+        from portolan_cli.metadata.models import FileMetadataState
+
+        state = FileMetadataState(
+            file_path=Path("/tmp/x.parquet"),
+            current_mtime=200.0,
+            stored_mtime=None,
+            current_bbox=[0.0, 0.0, 1.0, 1.0],
+            stored_bbox=None,
+            current_feature_count=10,
+            stored_feature_count=None,
+            current_schema_fingerprint="sha-abc",
+            stored_schema_fingerprint=None,
+        )
+        assert state.heuristics_changed
+
+    @pytest.mark.unit
     def test_orphaned_does_not_pass(self) -> None:
         """ORPHANED is a warning, not a pass. Per ADR-0041 the rule emits
         passed=False for orphan-only reports; the report property must agree

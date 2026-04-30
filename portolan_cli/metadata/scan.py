@@ -35,7 +35,22 @@ from portolan_cli.metadata.models import (
     MetadataStatus,
 )
 
-_DATA_EXTENSIONS = frozenset({".parquet", ".tif", ".tiff", ".pmtiles"})
+_DATA_EXTENSIONS = frozenset(
+    {
+        # Cloud-native + tile formats portolan tracks directly.
+        ".parquet",
+        ".tif",
+        ".tiff",
+        ".pmtiles",
+        # Vector source formats accepted per ADR-0014. Orphan-checked but
+        # not freshness-checked (see _is_freshness_checkable) — there is
+        # no extractor for these in detection.py, mirroring .pmtiles.
+        ".gpkg",
+        ".shp",
+        ".geojson",
+        ".fgb",
+    }
+)
 
 _SYSTEM_FILES = frozenset(
     {"catalog.json", "collection.json", "versions.json", "config.yaml", "metadata.yaml"}
@@ -53,11 +68,17 @@ def scan_catalog_metadata(catalog_path: Path) -> MetadataReport:
         catalog_path: Catalog root (must contain `catalog.json`).
 
     Returns:
-        Aggregate `MetadataReport`. Empty if no `catalog.json` is found.
+        Aggregate `MetadataReport`.
+
+    Raises:
+        FileNotFoundError: If `catalog_path` has no `catalog.json`. The
+            scanner refuses to silently return an empty report for a
+            non-catalog path — callers (CLI, validation rule) pre-check
+            so this exception only fires for direct misuse.
     """
-    report = MetadataReport()
     if not (catalog_path / "catalog.json").exists():
-        return report
+        raise FileNotFoundError(f"Not a portolan catalog: {catalog_path} has no catalog.json")
+    report = MetadataReport()
     _scan_node(catalog_path, report)
     return report
 

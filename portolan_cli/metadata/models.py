@@ -136,20 +136,27 @@ class FileMetadataState:
         Returns:
             True if bbox or feature count differs, or if no stored values exist.
         """
-        # If no stored values, consider it changed (new file)
-        if self.stored_bbox is None or self.stored_feature_count is None:
-            return True
+        # Collection-level assets pass None for both stored_bbox and
+        # current_bbox (no item.json bbox source); treat that as
+        # "no bbox signal" and fall through to feature-count + schema
+        # checks rather than flagging it as a change.
+        bbox_unavailable = self.stored_bbox is None and self.current_bbox is None
+        if not bbox_unavailable:
+            if self.stored_bbox is None:
+                # New file: stored values absent but a current bbox exists.
+                return True
+            if self.current_bbox is not None and not _bboxes_equal(
+                self.current_bbox, self.stored_bbox
+            ):
+                return True
 
-        # If current extraction failed (None), don't flag as changed to avoid spurious detections
-        if self.current_bbox is None or self.current_feature_count is None:
-            return False
-
-        # Compare bbox with tolerance for floating-point precision
-        if not _bboxes_equal(self.current_bbox, self.stored_bbox):
-            return True
-
-        # Compare feature count
-        if self.current_feature_count != self.stored_feature_count:
+        # Feature count is the next signal. Same new-file logic applies.
+        if self.stored_feature_count is None:
+            return self.current_feature_count is not None
+        if (
+            self.current_feature_count is not None
+            and self.current_feature_count != self.stored_feature_count
+        ):
             return True
 
         return False

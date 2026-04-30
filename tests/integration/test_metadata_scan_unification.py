@@ -507,11 +507,18 @@ class TestCollectionLevelFreshness:
         tmp_path: Path,
         valid_points_parquet: Path,
     ) -> None:
-        """Mutating data.parquet after versions.json snapshot → STALE.
+        """Replacing data.parquet with a row-different file after the
+        versions.json snapshot must surface as STALE.
 
-        This is the regression test for the F1 blind spot: prior code never
-        called `check_file_metadata` on collection-level registered assets.
+        Regression test for the F1 blind spot (prior code never called any
+        freshness check on collection-level assets) AND for the bbox-None
+        heuristic guard: a touch-only mtime bump should NOT be STALE; only
+        a real content/schema change should. We exercise the latter here
+        by writing a parquet file with a different feature count.
         """
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
         _write_catalog_json(catalog_dir)
@@ -536,16 +543,66 @@ class TestCollectionLevelFreshness:
             file_path=data_path,
         )
 
-        # Bump mtime to force the staleness check past the equality fast-path.
+        # Replace the file with a different-shaped parquet to force a real
+        # content delta (different feature count) past the mtime fast-path.
+        new_table = pa.table({"id": list(range(50)), "value": list(range(50))})
+        pq.write_table(new_table, data_path)
         _bump_mtime(data_path)
 
         report = scan_catalog_metadata(catalog_dir)
 
         stale = report.filter_by_status(MetadataStatus.STALE)
-        assert len(stale) == 1, (
-            f"collection-level asset mutation must surface as STALE, got: {report.to_dict()}"
+        breaking = report.filter_by_status(MetadataStatus.BREAKING)
+        non_fresh = stale + breaking
+        assert any(r.file_path.name == "data.parquet" for r in non_fresh), (
+            f"collection-level asset mutation must surface as STALE or "
+            f"BREAKING, got: {report.to_dict()}"
         )
-        assert stale[0].file_path.name == "data.parquet"
+
+    def test_collection_level_asset_touch_is_not_stale(
+        self,
+        tmp_path: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """Bumping mtime alone (no content change) must NOT mark the
+        collection asset stale. Tests the heuristics_changed guard for
+        the both-bboxes-None case."""
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "boundaries"
+        collection_dir.mkdir()
+        data_path = collection_dir / "data.parquet"
+        shutil.copy(valid_points_parquet, data_path)
+        _write_collection_json(
+            collection_dir,
+            collection_id="boundaries",
+            extra_assets={
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                }
+            },
+        )
+        _write_versions_json_for(
+            collection_dir,
+            asset_filename="data.parquet",
+            file_path=data_path,
+        )
+
+        _bump_mtime(data_path)  # touch only — feature count + schema unchanged
+
+        report = scan_catalog_metadata(catalog_dir)
+
+        non_fresh_for_asset = [
+            r
+            for r in report.results
+            if r.file_path.name == "data.parquet" and r.status != MetadataStatus.FRESH
+        ]
+        assert not non_fresh_for_asset, (
+            f"touch-only mtime bump must not produce STALE/BREAKING. report={report.to_dict()}"
+        )
 
 
 # =============================================================================
@@ -928,4 +985,57 @@ class TestCheckResolvesCatalogRoot:
         )
         assert result.exit_code != 0, (
             f"--fix outside a catalog must fail; got exit=0 output={result.output}"
+        )
+
+
+# =============================================================================
+# scan_catalog_metadata library contract: missing catalog.json is an error,
+# not a vacuous success. Vacuous-pass would let library callers treat any
+# random directory as a fresh catalog.
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestScannerRejectsMissingCatalog:
+    def test_scan_catalog_metadata_raises_when_catalog_json_missing(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        non_catalog = tmp_path / "no-catalog"
+        non_catalog.mkdir()
+
+        with pytest.raises(FileNotFoundError):
+            scan_catalog_metadata(non_catalog)
+
+
+# =============================================================================
+# Vector-format orphan detection (ADR-0014 accepts non-cloud-native formats).
+# Stray .gpkg/.shp/.geojson at collection root must surface as ORPHANED so
+# users see them, mirroring the .pmtiles contract (orphan-checked but not
+# freshness-checked since no extractor exists for those formats).
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestVectorFormatOrphans:
+    @pytest.mark.parametrize("ext", [".gpkg", ".shp", ".geojson", ".fgb"])
+    def test_unregistered_vector_format_at_collection_root_is_orphan(
+        self,
+        tmp_path: Path,
+        ext: str,
+    ) -> None:
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "vectors"
+        collection_dir.mkdir()
+        _write_collection_json(collection_dir, collection_id="vectors")
+
+        stray = collection_dir / f"leftover{ext}"
+        stray.write_bytes(b"\0\0\0\0")
+
+        report = scan_catalog_metadata(catalog_dir)
+        orphan_names = {o.file_path.name for o in report.filter_by_status(MetadataStatus.ORPHANED)}
+        assert stray.name in orphan_names, (
+            f"{ext} stray must be ORPHANED, got: {orphan_names}. full={report.to_dict()}"
         )

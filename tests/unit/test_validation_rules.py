@@ -1042,8 +1042,13 @@ class TestMetadataFreshRule:
         }
         (item_dir / "test.json").write_text(json.dumps(stac_item))
 
-        # Create versions.json with STALE state (old mtime only, same schema)
-        # STALE = mtime changed but schema hasn't changed (BREAKING = schema changed)
+        # versions.json captures a stored feature_count one off from
+        # current — heuristics will flag STALE (content delta), not
+        # BREAKING (schema unchanged). Old version of this test relied on
+        # mtime-drift-alone to imply STALE; with the bbox-None heuristic
+        # guard a touch-only mtime change is correctly FRESH, so the
+        # test now drives a real content delta to keep its intent.
+        stored_feature_count = (metadata.feature_count or 0) + 5
         versions = {
             "schema_version": "1.0",
             "current_version": "v1",
@@ -1056,7 +1061,7 @@ class TestMetadataFreshRule:
                             "source_mtime": parquet_path.stat().st_mtime - 1000,  # Old mtime
                             "sha256": "abc123",
                             "bbox": metadata.bbox,
-                            "feature_count": metadata.feature_count,  # Same count
+                            "feature_count": stored_feature_count,
                             "schema_fingerprint": schema_fp,  # Same schema = not BREAKING
                         }
                     },
