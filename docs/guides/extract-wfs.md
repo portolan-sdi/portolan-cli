@@ -6,8 +6,8 @@ This guide walks through extracting building footprints from a WFS (Web Feature 
     The result of this tutorial is published at:
 
     - **Source Cooperative:** [source.coop/nlebovits/belgium-buildings](https://source.coop/nlebovits/belgium-buildings/)
-    - **STAC Browser:** [Browse the catalog](https://radiantearth.github.io/stac-browser/#/external/us-west-2.opendata.source.coop/nlebovits/belgium-buildings/catalog.json)
-    - **PMTiles Viewer:** [View on map](https://protomaps.github.io/PMTiles/?url=https://us-west-2.opendata.source.coop/nlebovits/belgium-buildings/inspire_bu_bu_building_building_emprise_865a73/inspire_bu_bu_building_building_emprise_865a73.pmtiles)
+    - **STAC Browser:** [Browse the catalog](https://radiantearth.github.io/stac-browser/#/external/data.source.coop/nlebovits/belgium-buildings/catalog.json)
+    - **PMTiles Viewer:** [View on map](https://protomaps.github.io/PMTiles/?url=https://data.source.coop/nlebovits/belgium-buildings/inspire_bu_bu_building_building_emprise_865a73/inspire_bu_bu_building_building_emprise_865a73.pmtiles)
 
 ## Prerequisites
 
@@ -95,7 +95,14 @@ attribution: "Service Public de Wallonie (SPW)"
 
 ## Step 4: Generate PMTiles
 
-PMTiles enables efficient web-based map rendering. Generate from GeoParquet:
+PMTiles enables efficient web-based map rendering.
+
+!!! note "Projected CRS Requires Manual Pipeline"
+    When data is in a projected CRS (like EPSG:3035), use the `ogr2ogr | tippecanoe`
+    pipeline below. For data already in WGS84, you can use `portolan add --pmtiles`
+    instead.
+
+Generate from GeoParquet with reprojection:
 
 ```bash
 cd buildings/inspire_bu_bu_building_building_emprise_865a73
@@ -104,9 +111,9 @@ ogr2ogr -f GeoJSONSeq \
   -s_srs EPSG:3035 \
   -t_srs EPSG:4326 \
   /vsistdout/ \
-  inspire_bu_bu_building_building_emprise_865a73.parquet | \
+  *.parquet | \
 tippecanoe \
-  -o inspire_bu_bu_building_building_emprise_865a73.pmtiles \
+  -o buildings.pmtiles \
   -z14 -Z4 \
   --layer=buildings \
   --force \
@@ -114,16 +121,13 @@ tippecanoe \
   --drop-densest-as-needed
 ```
 
-!!! note "CRS Reprojection"
-    Some WFS services return coordinates in projected CRS (like EPSG:3035) even when
-    the GeoParquet metadata says WGS84. The `-s_srs` flag overrides the source CRS
-    for correct reprojection.
+The `-s_srs` flag specifies the source CRS and `-t_srs` reprojects to WGS84 (required for web maps).
 
 Then add the PMTiles to your catalog:
 
 ```bash
-cd buildings
-portolan add inspire_bu_.../*.pmtiles
+cd ..
+portolan add inspire_bu_*/*.pmtiles
 ```
 
 ## Step 5: Generate READMEs
@@ -158,8 +162,8 @@ portolan push --verbose
 | Explore | `portolan extract wfs URL --dry-run` |
 | Extract | `portolan extract wfs URL OUTPUT --layers PATTERN --limit N` |
 | Metadata | Edit `.portolan/metadata.yaml` files |
-| PMTiles | `ogr2ogr \| tippecanoe` pipeline |
-| Add tiles | `portolan add *.pmtiles --stac-geoparquet` |
+| PMTiles | `ogr2ogr -t_srs EPSG:4326 \| tippecanoe` (for projected CRS) |
+| Add tiles | `portolan add *.pmtiles` |
 | READMEs | `portolan readme --recursive` |
 | Push | `portolan push --verbose` |
 
