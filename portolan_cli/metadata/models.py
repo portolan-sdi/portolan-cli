@@ -302,12 +302,14 @@ class MetadataReport:
     def passed(self) -> bool:
         """Check if all files have fresh metadata.
 
+        ORPHANED is *not* a pass — the rule emits passed=False with a
+        WARNING when only orphans are present, so this property must agree
+        for any other consumer (e.g. JSON callers) to read the same truth.
+
         Returns:
             True if all results are FRESH (or no results exist).
         """
-        return all(
-            r.status in (MetadataStatus.FRESH, MetadataStatus.ORPHANED) for r in self.results
-        )
+        return all(r.status == MetadataStatus.FRESH for r in self.results)
 
     @property
     def issues(self) -> list[MetadataCheckResult]:

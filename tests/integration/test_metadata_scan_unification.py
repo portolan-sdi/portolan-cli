@@ -395,3 +395,462 @@ class TestVectorCollectionLevelAsset:
             f"collection-level vector asset wrongly flagged MISSING: {report.to_dict()}"
         )
         assert report.passed, f"scan should pass cleanly, got: {report.to_dict()}"
+
+
+# Helpers shared by F1/F3/F4 tests below.
+
+
+def _write_versions_json_for(
+    collection_dir: Path,
+    *,
+    asset_filename: str,
+    file_path: Path,
+) -> None:
+    """Write a versions.json recording `file_path` as a tracked asset.
+
+    Captures source_mtime, sha256, feature_count, and schema_fingerprint
+    from the file's *current* state so a subsequent scanner call returns
+    FRESH. Tests then mutate the file (and bump mtime) to force STALE,
+    avoiding the BREAKING-on-None-fingerprint trap that bit me earlier.
+    """
+    import hashlib
+
+    from portolan_cli.metadata.detection import (
+        compute_schema_fingerprint,
+        get_current_metadata,
+    )
+
+    sha = hashlib.sha256(file_path.read_bytes()).hexdigest()
+    current = get_current_metadata(file_path)
+    versions = {
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "assets": {
+                    asset_filename: {
+                        "source_mtime": file_path.stat().st_mtime,
+                        "sha256": sha,
+                        "feature_count": current.current_feature_count,
+                        "schema_fingerprint": compute_schema_fingerprint(file_path),
+                    }
+                },
+            }
+        ],
+    }
+    (collection_dir / "versions.json").write_text(json.dumps(versions, indent=2))
+
+
+def _bump_mtime(path: Path, delta: float = 60.0) -> None:
+    """Force mtime forward to defeat any equality fast-path."""
+    import os
+
+    new_mtime = path.stat().st_mtime + delta
+    os.utime(path, (new_mtime, new_mtime))
+
+
+# =============================================================================
+# F1: collection-level registered assets get FRESH/STALE/BREAKING checks
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestCollectionLevelFreshness:
+    """ADR-0041 / #350: collection-level data assets must be freshness-checked.
+
+    Before this fix, the scanner registered collection-level assets but never
+    called `check_file_metadata` on them, so STALE/BREAKING were silently
+    undetectable for the exact layout #350 mandates.
+    """
+
+    def test_collection_level_vector_asset_reports_fresh(
+        self,
+        tmp_path: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """data.parquet registered + tracked in versions.json → FRESH."""
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "boundaries"
+        collection_dir.mkdir()
+        data_path = collection_dir / "data.parquet"
+        shutil.copy(valid_points_parquet, data_path)
+        _write_collection_json(
+            collection_dir,
+            collection_id="boundaries",
+            extra_assets={
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                }
+            },
+        )
+        _write_versions_json_for(
+            collection_dir,
+            asset_filename="data.parquet",
+            file_path=data_path,
+        )
+
+        report = scan_catalog_metadata(catalog_dir)
+
+        fresh = report.filter_by_status(MetadataStatus.FRESH)
+        assert len(fresh) == 1, (
+            f"collection-level data.parquet should produce one FRESH result, "
+            f"got: {report.to_dict()}"
+        )
+        assert fresh[0].file_path.name == "data.parquet"
+
+    def test_collection_level_vector_asset_reports_stale_on_change(
+        self,
+        tmp_path: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """Mutating data.parquet after versions.json snapshot → STALE.
+
+        This is the regression test for the F1 blind spot: prior code never
+        called `check_file_metadata` on collection-level registered assets.
+        """
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "boundaries"
+        collection_dir.mkdir()
+        data_path = collection_dir / "data.parquet"
+        shutil.copy(valid_points_parquet, data_path)
+        _write_collection_json(
+            collection_dir,
+            collection_id="boundaries",
+            extra_assets={
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                }
+            },
+        )
+        _write_versions_json_for(
+            collection_dir,
+            asset_filename="data.parquet",
+            file_path=data_path,
+        )
+
+        # Bump mtime to force the staleness check past the equality fast-path.
+        _bump_mtime(data_path)
+
+        report = scan_catalog_metadata(catalog_dir)
+
+        stale = report.filter_by_status(MetadataStatus.STALE)
+        assert len(stale) == 1, (
+            f"collection-level asset mutation must surface as STALE, got: {report.to_dict()}"
+        )
+        assert stale[0].file_path.name == "data.parquet"
+
+
+# =============================================================================
+# F3: legacy flat layout is ORPHANED, not silently freshness-checked
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestLegacyFlatLayoutIsOrphaned:
+    """ADR-0041: a single layout (hierarchical). Flat sibling JSON is no
+    longer treated as a valid item by the scanner — the data file is
+    reported as ORPHANED so users migrate via `portolan add`.
+    """
+
+    def test_flat_sibling_json_data_file_reported_orphaned(
+        self,
+        tmp_path: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "vectors"
+        collection_dir.mkdir()
+        _write_collection_json(collection_dir, collection_id="vectors")
+
+        # Legacy flat: data + sibling item.json at collection root, with NO
+        # entry in collection.json.assets.
+        data_path = collection_dir / "things.parquet"
+        shutil.copy(valid_points_parquet, data_path)
+        (collection_dir / "things.json").write_text(
+            json.dumps(
+                {
+                    "type": "Feature",
+                    "stac_version": "1.1.0",
+                    "id": "things",
+                    "geometry": None,
+                    "bbox": [0.0, 0.0, 1.0, 1.0],
+                    "properties": {"datetime": "2024-01-01T00:00:00Z"},
+                    "links": [],
+                    "assets": {
+                        "data": {
+                            "href": "./things.parquet",
+                            "type": "application/vnd.apache.parquet",
+                            "roles": ["data"],
+                        }
+                    },
+                }
+            )
+        )
+
+        report = scan_catalog_metadata(catalog_dir)
+
+        orphans = report.filter_by_status(MetadataStatus.ORPHANED)
+        assert any(o.file_path.name == "things.parquet" for o in orphans), (
+            f"flat-layout data file must be ORPHANED, not silently passed via "
+            f"sibling JSON fallback. report={report.to_dict()}"
+        )
+        # And no FRESH/STALE for the flat data file.
+        for r in report.results:
+            if r.file_path.name == "things.parquet":
+                assert r.status == MetadataStatus.ORPHANED
+
+
+# =============================================================================
+# F4: nested catalogs (ADR-0032 Pattern 1 + Pattern 2)
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestNestedCatalogPatterns:
+    """ADR-0032 nested catalog shapes must be walked correctly.
+
+    Pattern 1: catalog → sub-catalog → collection → item.
+    Pattern 2: collection → year-subcatalog → item (collection still owns
+               versions.json + data context).
+    """
+
+    def test_pattern1_subcatalog_with_collection(
+        self,
+        tmp_path: Path,
+        valid_singleband_cog: Path,
+    ) -> None:
+        """Sub-catalog containing a collection: items inside are scanned."""
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+
+        sub_cat = catalog_dir / "geo"
+        sub_cat.mkdir()
+        (sub_cat / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": "geo",
+                    "stac_version": "1.1.0",
+                    "description": "geo sub-catalog",
+                    "links": [{"rel": "self", "href": "./catalog.json"}],
+                }
+            )
+        )
+        collection_dir = sub_cat / "rasters"
+        collection_dir.mkdir()
+        _write_collection_json(collection_dir, collection_id="rasters")
+
+        item_dir = collection_dir / "scene-001"
+        item_dir.mkdir()
+        shutil.copy(valid_singleband_cog, item_dir / "scene-001.tif")
+        _write_item_json(
+            item_dir,
+            item_id="scene-001",
+            asset_href="scene-001.tif",
+            media_type="image/tiff; application=geotiff",
+        )
+
+        report = scan_catalog_metadata(catalog_dir)
+        # The item is NOT tracked in versions.json so it's MISSING-stored ⇒
+        # scanner reports STALE (no stored mtime). The point is: it WAS
+        # found at all, proving pattern-1 traversal works.
+        scanned = [r.file_path.name for r in report.results]
+        assert "scene-001.tif" in scanned, (
+            f"pattern-1 sub-catalog item not reached by scanner. results={scanned}"
+        )
+
+    def test_pattern2_subcatalog_inside_collection_resolves_versions_at_collection(
+        self,
+        tmp_path: Path,
+        valid_singleband_cog: Path,
+    ) -> None:
+        """Pattern 2: items live under a sub-catalog *within* a collection.
+        versions.json sits at the collection root; the scanner must resolve
+        item assets against the collection, not the sub-catalog.
+        """
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "rasters"
+        collection_dir.mkdir()
+        _write_collection_json(collection_dir, collection_id="rasters")
+
+        # Year sub-catalog inside the collection.
+        year_sub = collection_dir / "2024"
+        year_sub.mkdir()
+        (year_sub / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": "2024",
+                    "stac_version": "1.1.0",
+                    "description": "year subcatalog",
+                    "links": [{"rel": "self", "href": "./catalog.json"}],
+                }
+            )
+        )
+        item_dir = year_sub / "scene-001"
+        item_dir.mkdir()
+        item_data = item_dir / "scene-001.tif"
+        shutil.copy(valid_singleband_cog, item_data)
+        _write_item_json(
+            item_dir,
+            item_id="scene-001",
+            asset_href="scene-001.tif",
+            media_type="image/tiff; application=geotiff",
+        )
+
+        # versions.json at the COLLECTION root, keyed by basename.
+        _write_versions_json_for(
+            collection_dir,
+            asset_filename="scene-001.tif",
+            file_path=item_data,
+        )
+
+        report = scan_catalog_metadata(catalog_dir)
+
+        # Asset found and resolved against collection_dir → FRESH.
+        fresh = report.filter_by_status(MetadataStatus.FRESH)
+        assert any(r.file_path.name == "scene-001.tif" for r in fresh), (
+            f"Pattern 2 item not resolved against collection-level "
+            f"versions.json. report={report.to_dict()}"
+        )
+
+    def test_pattern2_stale_is_fixable(
+        self,
+        tmp_path: Path,
+        valid_singleband_cog: Path,
+    ) -> None:
+        """STALE on a Pattern-2 nested item must be fixable: --fix walks
+        ancestors to find the collection and updates the right versions.json.
+        """
+        from portolan_cli.metadata.fix import FixAction, fix_metadata
+
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "rasters"
+        collection_dir.mkdir()
+        _write_collection_json(collection_dir, collection_id="rasters")
+
+        year_sub = collection_dir / "2024"
+        year_sub.mkdir()
+        (year_sub / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": "2024",
+                    "stac_version": "1.1.0",
+                    "description": "year subcatalog",
+                    "links": [{"rel": "self", "href": "./catalog.json"}],
+                }
+            )
+        )
+        item_dir = year_sub / "scene-001"
+        item_dir.mkdir()
+        item_data = item_dir / "scene-001.tif"
+        shutil.copy(valid_singleband_cog, item_data)
+        _write_item_json(
+            item_dir,
+            item_id="scene-001",
+            asset_href="scene-001.tif",
+            media_type="image/tiff; application=geotiff",
+        )
+        _write_versions_json_for(
+            collection_dir,
+            asset_filename="scene-001.tif",
+            file_path=item_data,
+        )
+        # Force STALE.
+        _bump_mtime(item_data)
+
+        report = scan_catalog_metadata(catalog_dir)
+        stale = report.filter_by_status(MetadataStatus.STALE)
+        assert any(r.file_path.name == "scene-001.tif" for r in stale)
+
+        # Fix called with catalog root as `directory` — must walk ancestors
+        # to find collection_dir.
+        fix_report = fix_metadata(catalog_dir, report, dry_run=False)
+        updated = [r for r in fix_report.results if r.action == FixAction.UPDATED]
+        assert any(r.file_path.name == "scene-001.tif" for r in updated), (
+            f"Pattern-2 STALE not updated by --fix. fix_report={fix_report.to_dict()}"
+        )
+
+
+# =============================================================================
+# F5: stray subdir without {dir_name}.{ext} → ORPHANED, not MISSING
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestStraySubdirIsOrphaned:
+    """A non-item subdir (no `{name}.{ext}` data file) must not be coerced
+    into being treated as an item-needing-JSON. Its files are ORPHANED.
+    """
+
+    def test_random_subdir_files_are_orphaned_not_missing(
+        self,
+        tmp_path: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "vectors"
+        collection_dir.mkdir()
+        _write_collection_json(collection_dir, collection_id="vectors")
+
+        # User stashed exports under scratch/ — there is NO scratch.parquet.
+        scratch = collection_dir / "scratch"
+        scratch.mkdir()
+        shutil.copy(valid_points_parquet, scratch / "export-a.parquet")
+        shutil.copy(valid_points_parquet, scratch / "export-b.parquet")
+
+        report = scan_catalog_metadata(catalog_dir)
+
+        # Must NOT report MISSING (would imply --fix should create scratch.json).
+        assert report.missing_count == 0, (
+            f"stray subdir wrongly emitted MISSING — would create "
+            f"scratch.json incorrectly. report={report.to_dict()}"
+        )
+        orphan_names = {o.file_path.name for o in report.filter_by_status(MetadataStatus.ORPHANED)}
+        assert {"export-a.parquet", "export-b.parquet"} <= orphan_names, (
+            f"stray files must be ORPHANED, got: {orphan_names}. full report={report.to_dict()}"
+        )
+
+    def test_real_item_subdir_with_matching_data_still_missing(
+        self,
+        tmp_path: Path,
+        valid_singleband_cog: Path,
+    ) -> None:
+        """Sanity check: legitimate item dir (`scene-001/scene-001.tif`)
+        without item.json still emits MISSING. The F5 heuristic must not
+        regress the genuine MISSING shape #384 covers.
+        """
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "rasters"
+        collection_dir.mkdir()
+        _write_collection_json(collection_dir, collection_id="rasters")
+
+        item_dir = collection_dir / "scene-001"
+        item_dir.mkdir()
+        shutil.copy(valid_singleband_cog, item_dir / "scene-001.tif")
+
+        report = scan_catalog_metadata(catalog_dir)
+        assert report.missing_count == 1, (
+            f"genuine item-shaped dir without item.json must emit MISSING. "
+            f"report={report.to_dict()}"
+        )

@@ -470,6 +470,32 @@ class TestMetadataReport:
         assert not with_stale.passed
 
     @pytest.mark.unit
+    def test_orphaned_does_not_pass(self) -> None:
+        """ORPHANED is a warning, not a pass. Per ADR-0041 the rule emits
+        passed=False for orphan-only reports; the report property must agree
+        so JSON callers and the rule do not diverge."""
+        from portolan_cli.metadata.models import (
+            MetadataCheckResult,
+            MetadataReport,
+            MetadataStatus,
+        )
+
+        only_orphan = MetadataReport(
+            results=[
+                MetadataCheckResult(Path("/f1.parquet"), MetadataStatus.ORPHANED, "Orphan"),
+            ]
+        )
+        assert not only_orphan.passed
+
+        mixed = MetadataReport(
+            results=[
+                MetadataCheckResult(Path("/f1.parquet"), MetadataStatus.FRESH, "OK"),
+                MetadataCheckResult(Path("/f2.parquet"), MetadataStatus.ORPHANED, "Orphan"),
+            ]
+        )
+        assert not mixed.passed
+
+    @pytest.mark.unit
     def test_issues_property(self) -> None:
         """MetadataReport.issues should return non-FRESH results."""
         from portolan_cli.metadata.models import (

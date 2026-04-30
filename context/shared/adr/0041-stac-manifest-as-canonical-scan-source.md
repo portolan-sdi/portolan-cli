@@ -50,8 +50,9 @@ For every registered asset (collection-level *or* item-level), one of:
 - `FRESH` — versions.json/heuristics agree with current file state.
 - `STALE` — file mtime/heuristics differ from stored values.
 - `BREAKING` — schema fingerprint changed (column removed, type altered).
-- `MISSING` — item directory contains data file(s) but no `<item_id>.json`,
-  *or* an asset registered in item.json no longer exists on disk.
+- `MISSING` — item directory contains data file(s) matching `{item_id}.{ext}`
+  but no `<item_id>.json`, *or* an asset registered in `item.json` /
+  `collection.json` no longer exists on disk.
 
 For files on disk that are **not** referenced by any manifest, the scanner
 emits a fifth status:
@@ -60,6 +61,36 @@ emits a fifth status:
   registered in `collection.json.assets` or any `item.json.assets`. Not
   auto-fixable. Reported as a `WARNING` with a fix hint instructing the
   user to either register it via `portolan add` or delete it.
+
+### Collection-level freshness checking
+
+Collection-level registered assets (ADR-0031 single-file vector data,
+`items.parquet` rollups) are freshness-checked directly against
+`versions.json` — they have no companion `item.json` by design. When a
+matching `versions.json` entry exists, the scanner compares mtime,
+feature_count, and schema fingerprint and emits `FRESH` / `STALE` /
+`BREAKING` accordingly. When no entry exists (e.g., a freshly registered
+rollup index), the scanner intentionally stays silent rather than
+emitting STALE noise — registration alone is not a freshness claim.
+
+`fix_metadata` cannot auto-fix a STALE collection-level asset (there is
+no item.json to update). It returns `SKIPPED` with a hint to re-run
+`portolan add`, mirroring the ORPHANED contract.
+
+### `passed` semantics
+
+`MetadataReport.passed` is `True` only when every result is `FRESH`.
+`ORPHANED` is **not** a pass — the rule emits `passed=False` with a
+`WARNING` so JSON consumers and the validator agree by construction.
+
+### Stray subdirs vs item dirs
+
+A subdir is treated as an item-needing-JSON only when it contains a data
+file whose stem matches the dir name (the convention `add` writes,
+`{collection}/{item_id}/{item_id}.{ext}`). Subdirs that hold loose data
+files without that anchor — e.g., a `scratch/` folder of exports — are
+reported as ORPHANED rather than coerced into MISSING. Coercion would
+otherwise invite `--fix` to fabricate a wrong `{dir_name}.json`.
 
 ### Layout assumptions (matches `add` output)
 
@@ -95,13 +126,30 @@ JSON shape). It is no longer used as input to the fix flow.
 **Harder:**
 
 - Catalogs that violate the layout (e.g., flat item.json next to data
-  file in collection root) are detected as ORPHANED rather than treated
-  as legacy items. `get_stored_metadata` falls back to the flat layout
-  for backward compatibility, but the orphan sweep still flags the data
-  file unless the user converts to the hierarchical layout.
+  file in collection root, with no `collection.json.assets` entry) are
+  detected as ORPHANED. The scanner deliberately does **not** support
+  the legacy flat sibling-JSON layout — only the hierarchical
+  `{collection}/{item_id}/{item_id}.json` shape and registered
+  collection-level assets per ADR-0031. Migration path: re-register via
+  `portolan add`.
 - The scanner relies on filename convention `{item_id}.json` matching
   the parent dir name. This matches what `add` produces today; future
   changes to `add`'s naming would need scanner updates.
+
+### Pattern coverage (ADR-0032)
+
+The scanner walks both nested-catalog patterns:
+
+- **Pattern 1** — catalog → sub-catalog → collection → item. Each
+  significant subdirectory is dispatched via `_scan_node`, which
+  recurses into sub-catalogs and delegates to `_scan_collection` when
+  it finds a `collection.json`.
+- **Pattern 2** — collection → sub-catalog (e.g., `2024/`) → item dir.
+  Items still belong to the enclosing collection, so `versions.json`
+  and item assets are resolved against `collection_dir` even when the
+  item lives several levels deeper. `fix_metadata` walks ancestors via
+  `_resolve_collection_dir` so STALE items in Pattern-2 trees are
+  fixable when the CLI passes the catalog root as `directory`.
 
 ## Alternatives considered
 
