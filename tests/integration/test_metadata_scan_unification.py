@@ -854,3 +854,78 @@ class TestStraySubdirIsOrphaned:
             f"genuine item-shaped dir without item.json must emit MISSING. "
             f"report={report.to_dict()}"
         )
+
+
+# =============================================================================
+# CLI: catalog-root resolution for `check --metadata --fix`
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestCheckResolvesCatalogRoot:
+    """Reviewer concern: `check --metadata --fix` passed `path` straight to
+    the scanner, so running from a subdir without catalog.json silently
+    produced an empty report. The fix workflow must resolve the catalog
+    root via the existing find_catalog_root sentinel walk and fail
+    explicitly when no catalog can be found.
+    """
+
+    def _make_catalog(self, root: Path, valid_singleband_cog: Path) -> Path:
+        root.mkdir()
+        (root / ".portolan").mkdir()
+        (root / ".portolan" / "config.yaml").write_text("version: 1\n")
+        _write_catalog_json(root)
+        collection_dir = root / "rasters"
+        collection_dir.mkdir()
+        _write_collection_json(collection_dir, collection_id="rasters")
+        item_dir = collection_dir / "scene-001"
+        item_dir.mkdir()
+        shutil.copy(valid_singleband_cog, item_dir / "scene-001.tif")
+        return collection_dir
+
+    def test_fix_resolves_root_from_collection_subdir(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        valid_singleband_cog: Path,
+    ) -> None:
+        """Running `check --metadata --fix` from a collection subdir must
+        find the catalog root and act on it (creating the missing item.json),
+        not silently skip with an empty report.
+        """
+        catalog_dir = tmp_path / "catalog"
+        collection_dir = self._make_catalog(catalog_dir, valid_singleband_cog)
+
+        result = runner.invoke(
+            cli,
+            ["check", str(collection_dir), "--metadata", "--fix", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        metadata_fix = payload.get("data", {}).get("metadata_fix")
+        assert metadata_fix is not None and metadata_fix["total_count"] >= 1, (
+            f"running --fix from a subdir must reach the catalog root and "
+            f"act on its items. got: {payload}"
+        )
+        # The fix should land at the hierarchical item.json location.
+        assert (collection_dir / "scene-001" / "scene-001.json").exists()
+
+    def test_fix_fails_explicitly_outside_any_catalog(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """If no catalog root is found, `--fix` must fail loudly rather
+        than reporting an empty success — matches `find_catalog_root`'s
+        git-style contract used elsewhere in the CLI.
+        """
+        non_catalog = tmp_path / "scratch"
+        non_catalog.mkdir()
+
+        result = runner.invoke(
+            cli,
+            ["check", str(non_catalog), "--metadata", "--fix"],
+        )
+        assert result.exit_code != 0, (
+            f"--fix outside a catalog must fail; got exit=0 output={result.output}"
+        )
