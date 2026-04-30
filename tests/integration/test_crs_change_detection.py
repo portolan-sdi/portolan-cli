@@ -9,6 +9,7 @@ See: https://github.com/portolan-sdi/portolan-cli/issues/388
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import geopandas as gpd
@@ -94,6 +95,9 @@ class TestCRSChangeDetection:
         gdf = gpd.read_parquet(parquet_path)
         assert gdf.crs.to_epsg() == 3857, f"Expected EPSG:3857, got {gdf.crs}"
 
+        # Capture original mtime before reprojection
+        orig_mtime = os.path.getmtime(parquet_path)
+
         # Reproject to EPSG:4326
         gdf_4326 = gdf.to_crs("EPSG:4326")
         assert gdf_4326.crs.to_epsg() == 4326
@@ -101,11 +105,16 @@ class TestCRSChangeDetection:
         # Overwrite the original file (simulating gpio convert + mv)
         gdf_4326.to_parquet(parquet_path)
 
+        # Force mtime back to original to exercise mtime-tolerance branch
+        # Without this, test might pass via sha256 path on slow systems
+        os.utime(parquet_path, (orig_mtime, orig_mtime))
+
         # Verify CRS actually changed in file
         gdf_check = gpd.read_parquet(parquet_path)
         assert gdf_check.crs.to_epsg() == 4326, "File should now be EPSG:4326"
 
         # THE KEY TEST: is_current() should return False (file changed)
+        # With same mtime, only the size check (the fix) catches this
         assert not is_current(parquet_path, versions_path), (
             "is_current() should detect reprojected file as changed"
         )
@@ -134,9 +143,11 @@ class TestCRSChangeDetection:
         assert len(added) == 1
 
         # Reproject the file
+        orig_mtime = os.path.getmtime(parquet_path)
         gdf = gpd.read_parquet(parquet_path)
         gdf_4326 = gdf.to_crs("EPSG:4326")
         gdf_4326.to_parquet(parquet_path)
+        os.utime(parquet_path, (orig_mtime, orig_mtime))  # Force mtime within tolerance
 
         # Re-add
         added2, skipped2, failures2 = add_files(
@@ -175,9 +186,11 @@ class TestCRSChangeDetection:
         assert initial_sha256 is not None, "Asset should have sha256"
 
         # Reproject the file
+        orig_mtime = os.path.getmtime(parquet_path)
         gdf = gpd.read_parquet(parquet_path)
         gdf_4326 = gdf.to_crs("EPSG:4326")
         gdf_4326.to_parquet(parquet_path)
+        os.utime(parquet_path, (orig_mtime, orig_mtime))  # Force mtime within tolerance
 
         # Re-add
         add_files(paths=[parquet_path], catalog_root=catalog_root)
