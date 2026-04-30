@@ -637,7 +637,7 @@ class TestCheckMetadataFixFlag:
                 return_value=mock_passing_validation_report,
             ),
             patch(
-                "portolan_cli.cli.check_directory_metadata",
+                "portolan_cli.metadata.scan.scan_catalog_metadata",
                 return_value=metadata_report,
             ),
             patch("portolan_cli.cli.fix_metadata") as mock_fix,
@@ -683,7 +683,7 @@ class TestCheckMetadataFixFlag:
                 return_value=mock_passing_validation_report,
             ),
             patch(
-                "portolan_cli.cli.check_directory_metadata",
+                "portolan_cli.metadata.scan.scan_catalog_metadata",
                 return_value=metadata_report,
             ),
             patch("portolan_cli.cli.fix_metadata") as mock_fix,
@@ -733,7 +733,7 @@ class TestCheckMetadataFixFlag:
                 return_value=mock_passing_validation_report,
             ),
             patch(
-                "portolan_cli.cli.check_directory_metadata",
+                "portolan_cli.metadata.scan.scan_catalog_metadata",
                 return_value=metadata_report,
             ),
             patch("portolan_cli.cli.fix_metadata") as mock_fix,
@@ -770,7 +770,7 @@ class TestCheckMetadataFixFlag:
         with (
             patch("portolan_cli.cli.validate_catalog") as mock_validate,
             patch("portolan_cli.cli.check_directory") as mock_check,
-            patch("portolan_cli.cli.check_directory_metadata") as mock_md_check,
+            patch("portolan_cli.metadata.scan.scan_catalog_metadata") as mock_md_check,
             patch("portolan_cli.cli.fix_metadata") as mock_fix,
         ):
             from portolan_cli.validation.results import ValidationReport

@@ -172,11 +172,14 @@ class TestFixStaleAndBreaking:
 
         from portolan_cli.metadata.fix import FixAction, fix_metadata
 
-        # Set up collection with existing item
+        # Set up collection with existing item in hierarchical layout per
+        # ADR-0041 ({collection}/{item_id}/{item_id}.{ext}).
         collection_dir = tmp_path / "test-collection"
         collection_dir.mkdir()
         _create_collection_json(collection_dir)
-        parquet_path = collection_dir / "data.parquet"
+        item_dir = collection_dir / "data"
+        item_dir.mkdir()
+        parquet_path = item_dir / "data.parquet"
         shutil.copy(valid_points_parquet, parquet_path)
 
         # Create existing STAC item that we'll update
@@ -191,7 +194,7 @@ class TestFixStaleAndBreaking:
             "links": [],
             "collection": "test-collection",
         }
-        (collection_dir / "data.json").write_text(json.dumps(existing_item))
+        (item_dir / "data.json").write_text(json.dumps(existing_item))
 
         # Create report with STALE status
         report = MetadataReport(
@@ -216,7 +219,7 @@ class TestFixStaleAndBreaking:
         assert "Updated STAC item" in fix_report.results[0].message
 
         # Verify item was actually updated (bbox should have changed)
-        updated_item = json.loads((collection_dir / "data.json").read_text())
+        updated_item = json.loads((item_dir / "data.json").read_text())
         assert updated_item["bbox"] != [0, 0, 0, 0]
 
     @pytest.mark.unit
@@ -230,11 +233,14 @@ class TestFixStaleAndBreaking:
 
         from portolan_cli.metadata.fix import FixAction, fix_metadata
 
-        # Set up collection with existing item
+        # Set up collection with existing item in hierarchical layout per
+        # ADR-0041.
         collection_dir = tmp_path / "test-collection"
         collection_dir.mkdir()
         _create_collection_json(collection_dir)
-        parquet_path = collection_dir / "data.parquet"
+        item_dir = collection_dir / "data"
+        item_dir.mkdir()
+        parquet_path = item_dir / "data.parquet"
         shutil.copy(valid_points_parquet, parquet_path)
 
         # Create existing STAC item
@@ -249,7 +255,7 @@ class TestFixStaleAndBreaking:
             "links": [],
             "collection": "test-collection",
         }
-        (collection_dir / "data.json").write_text(json.dumps(existing_item))
+        (item_dir / "data.json").write_text(json.dumps(existing_item))
 
         # Create report with BREAKING status
         report = MetadataReport(
@@ -327,10 +333,16 @@ class TestFixStaleAndBreaking:
         collection_dir.mkdir()
         _create_collection_json(collection_dir)
 
-        # Create two parquet files
-        parquet1 = collection_dir / "fresh.parquet"
-        parquet2 = collection_dir / "missing.parquet"
-        parquet3 = collection_dir / "stale.parquet"
+        # Hierarchical layout per ADR-0041: each item lives in its own
+        # subdir keyed by item_id.
+        fresh_dir = collection_dir / "fresh"
+        missing_dir = collection_dir / "missing"
+        stale_dir = collection_dir / "stale"
+        for d in (fresh_dir, missing_dir, stale_dir):
+            d.mkdir()
+        parquet1 = fresh_dir / "fresh.parquet"
+        parquet2 = missing_dir / "missing.parquet"
+        parquet3 = stale_dir / "stale.parquet"
         shutil.copy(valid_points_parquet, parquet1)
         shutil.copy(valid_points_parquet, parquet2)
         shutil.copy(valid_points_parquet, parquet3)
@@ -347,7 +359,7 @@ class TestFixStaleAndBreaking:
             "links": [],
             "collection": "test-collection",
         }
-        (collection_dir / "stale.json").write_text(json.dumps(existing_item))
+        (stale_dir / "stale.json").write_text(json.dumps(existing_item))
 
         # Create report with mixed statuses
         report = MetadataReport(
