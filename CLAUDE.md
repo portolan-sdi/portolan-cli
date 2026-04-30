@@ -108,6 +108,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0038](context/shared/adr/0038-metadata-yaml-enrichment.md) | metadata.yaml as human enrichment layer (supplements STAC, generates README) |
 | [0039](context/shared/adr/0039-hierarchical-portolan-folders.md) | Hierarchical .portolan/ at collection/subcatalog levels |
 | [0040](context/shared/adr/0040-unified-progress-output.md) | Progress + summary model: Rich progress bars, immediate errors, batched warnings |
+| [0041](context/shared/adr/0041-stac-manifest-as-canonical-scan-source.md) | STAC manifest as canonical scan source for metadata_fresh; unifies check/--fix; adds ORPHANED status |
 
 ## Common Commands
 

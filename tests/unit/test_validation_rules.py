@@ -876,17 +876,19 @@ class TestMetadataFreshRule:
         }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
-        # Copy a parquet file but don't create STAC item
+        # Item directory with data file but no item.json (per ADR-0041
+        # manifest-driven scan, this is the genuine MISSING shape).
+        item_dir = collection / "points"
+        item_dir.mkdir()
         src = fixtures_dir / "vector" / "valid" / "points.parquet"
         if src.exists():
-            shutil.copy(src, collection / "points.parquet")
+            shutil.copy(src, item_dir / "points.parquet")
         else:
-            # Create minimal parquet if fixture doesn't exist
             import pyarrow as pa
             import pyarrow.parquet as pq
 
             table = pa.table({"id": [1, 2], "geometry": ["POINT(0 0)", "POINT(1 1)"]})
-            pq.write_table(table, collection / "points.parquet")
+            pq.write_table(table, item_dir / "points.parquet")
 
         rule = MetadataFreshRule()
         result = rule.check(tmp_path)
@@ -924,12 +926,14 @@ class TestMetadataFreshRule:
         }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
-        # Create a parquet file
-        parquet_path = collection / "test.parquet"
+        # Hierarchical item layout per `add` convention (ADR-0041 scanner
+        # walks `<collection>/<item_id>/<item_id>.json`).
+        item_dir = collection / "test"
+        item_dir.mkdir()
+        parquet_path = item_dir / "test.parquet"
         table = pa.table({"id": [1, 2], "geometry": ["POINT(0 0)", "POINT(1 1)"]})
         pq.write_table(table, parquet_path)
 
-        # Extract metadata and create STAC item
         metadata = extract_geoparquet_metadata(parquet_path)
         stac_item = {
             "type": "Feature",
@@ -950,9 +954,10 @@ class TestMetadataFreshRule:
             },
             "links": [],
         }
-        (collection / "test.json").write_text(json.dumps(stac_item))
+        (item_dir / "test.json").write_text(json.dumps(stac_item))
 
-        # Create versions.json with current state
+        # versions.json lives at the collection level; tracked asset key
+        # uses the basename relative to versions.json (current convention).
         versions = {
             "schema_version": "1.0",
             "current_version": "v1",
@@ -1007,12 +1012,13 @@ class TestMetadataFreshRule:
         }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
-        # Create a parquet file
-        parquet_path = collection / "test.parquet"
+        # Hierarchical item layout per ADR-0041 manifest scan.
+        item_dir = collection / "test"
+        item_dir.mkdir()
+        parquet_path = item_dir / "test.parquet"
         table = pa.table({"id": [1, 2], "geometry": ["POINT(0 0)", "POINT(1 1)"]})
         pq.write_table(table, parquet_path)
 
-        # Extract metadata and create STAC item
         metadata = extract_geoparquet_metadata(parquet_path)
         schema_fp = compute_schema_fingerprint(parquet_path)
         stac_item = {
@@ -1034,10 +1040,15 @@ class TestMetadataFreshRule:
             },
             "links": [],
         }
-        (collection / "test.json").write_text(json.dumps(stac_item))
+        (item_dir / "test.json").write_text(json.dumps(stac_item))
 
-        # Create versions.json with STALE state (old mtime only, same schema)
-        # STALE = mtime changed but schema hasn't changed (BREAKING = schema changed)
+        # versions.json captures a stored feature_count one off from
+        # current — heuristics will flag STALE (content delta), not
+        # BREAKING (schema unchanged). Old version of this test relied on
+        # mtime-drift-alone to imply STALE; with the bbox-None heuristic
+        # guard a touch-only mtime change is correctly FRESH, so the
+        # test now drives a real content delta to keep its intent.
+        stored_feature_count = (metadata.feature_count or 0) + 5
         versions = {
             "schema_version": "1.0",
             "current_version": "v1",
@@ -1050,7 +1061,7 @@ class TestMetadataFreshRule:
                             "source_mtime": parquet_path.stat().st_mtime - 1000,  # Old mtime
                             "sha256": "abc123",
                             "bbox": metadata.bbox,
-                            "feature_count": metadata.feature_count,  # Same count
+                            "feature_count": stored_feature_count,
                             "schema_fingerprint": schema_fp,  # Same schema = not BREAKING
                         }
                     },
@@ -1093,7 +1104,10 @@ class TestMetadataFreshRule:
         }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
-        parquet_path = collection / "test.parquet"
+        # Item dir without item.json → MISSING (drives the --fix hint).
+        item_dir = collection / "test"
+        item_dir.mkdir()
+        parquet_path = item_dir / "test.parquet"
         table = pa.table({"id": [1], "geometry": ["POINT(0 0)"]})
         pq.write_table(table, parquet_path)
 
@@ -1159,7 +1173,8 @@ class TestMetadataFreshRule:
 
     @pytest.mark.integration
     def test_scans_nested_collection_files(self, tmp_path: Path) -> None:
-        """Rule scans files in subdirectories within collections."""
+        """Rule recurses through nested catalogs (ADR-0032 Pattern 2:
+        catalog.json under a collection organizes item subdirs)."""
         import json
 
         import pyarrow as pa
@@ -1167,12 +1182,10 @@ class TestMetadataFreshRule:
 
         from portolan_cli.validation.rules import MetadataFreshRule
 
-        # Create catalog.json at root (per ADR-0023)
         catalog_data = {"type": "Catalog", "stac_version": "1.0.0", "id": "test", "links": []}
         (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
-        # Create .portolan for internal state
         (tmp_path / ".portolan").mkdir()
-        # Create collection at root with collection.json
+
         collection = tmp_path / "test-collection"
         collection.mkdir()
         collection_data = {
@@ -1182,17 +1195,23 @@ class TestMetadataFreshRule:
             "links": [],
         }
         (collection / "collection.json").write_text(json.dumps(collection_data))
-        subdir = collection / "data" / "2024"
-        subdir.mkdir(parents=True)
 
-        # Create a parquet file in nested directory
-        parquet_path = subdir / "test.parquet"
+        # Sub-catalog organizing items by year (Pattern 2).
+        year_dir = collection / "2024"
+        year_dir.mkdir()
+        (year_dir / "catalog.json").write_text(
+            json.dumps({"type": "Catalog", "stac_version": "1.0.0", "id": "2024", "links": []})
+        )
+
+        # Item dir under sub-catalog with data but no item.json → MISSING.
+        item_dir = year_dir / "test"
+        item_dir.mkdir()
+        parquet_path = item_dir / "test.parquet"
         table = pa.table({"id": [1], "geometry": ["POINT(0 0)"]})
         pq.write_table(table, parquet_path)
 
         rule = MetadataFreshRule()
         result = rule.check(tmp_path)
 
-        # Should detect the nested file (and fail due to missing STAC metadata)
         assert result.passed is False
         assert "missing" in result.message.lower()

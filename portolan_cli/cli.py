@@ -39,7 +39,7 @@ from portolan_cli.dataset import (
     resolve_collection_id,
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
-from portolan_cli.metadata import check_directory_metadata, fix_metadata
+from portolan_cli.metadata import fix_metadata
 from portolan_cli.metadata.fix import FixReport
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
@@ -1285,6 +1285,26 @@ def _execute_check_workflow(
         _output_combined(path, metadata_report, mode, use_json, verbose)
 
 
+def _resolve_catalog_root_for_check(path: Path) -> Path | None:
+    """Walk up from `path` to find the directory containing catalog.json.
+
+    The metadata scanner only needs `catalog.json` to function, so this
+    deliberately does not require the `.portolan/config.yaml` sentinel
+    that `find_catalog_root` insists on. Returns None if no catalog.json
+    is found within the search depth.
+    """
+    from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+
+    candidate = path.resolve() if path.exists() else path
+    for _ in range(MAX_CATALOG_SEARCH_DEPTH):
+        if (candidate / "catalog.json").exists():
+            return candidate
+        if candidate.parent == candidate:
+            break
+        candidate = candidate.parent
+    return None
+
+
 def _run_fix_workflow(
     *,
     path: Path,
@@ -1314,10 +1334,40 @@ def _run_fix_workflow(
 
     # Fix metadata if in scope
     if run_metadata:
-        metadata_check_report = check_directory_metadata(path)
-        metadata_fix_report = fix_metadata(path, metadata_check_report, dry_run=dry_run)
-        if metadata_fix_report.failure_count > 0:
-            has_failures = True
+        from portolan_cli.metadata.scan import scan_catalog_metadata
+
+        # Resolve to the catalog root before scanning. Without this the
+        # scanner returns an empty report whenever `path` points at a
+        # subdirectory below the root, causing --fix to silently no-op.
+        # The scanner's only structural requirement is catalog.json, so
+        # walk parents looking for it (tests and existing catalogs may
+        # not have a .portolan sentinel, so find_catalog_root is too
+        # strict here).
+        catalog_root = _resolve_catalog_root_for_check(path)
+        if catalog_root is None:
+            # Metadata-only mode: user explicitly asked, fail loudly so the
+            # silent-no-op trap is closed. Mixed mode (--fix without flags):
+            # stay backwards-compatible — skip metadata so the geo-assets
+            # pass can still operate on the directory.
+            if not run_geo_assets:
+                msg = (
+                    f"fatal: not a portolan catalog (or any parent of {path}): "
+                    "no catalog.json found, cannot run metadata fix"
+                )
+                if use_json:
+                    envelope = error_envelope(
+                        "check",
+                        [ErrorDetail(type="NotACatalogError", message=msg)],
+                    )
+                    output_json_envelope(envelope)
+                else:
+                    error(msg)
+                raise SystemExit(1)
+        else:
+            metadata_check_report = scan_catalog_metadata(catalog_root)
+            metadata_fix_report = fix_metadata(catalog_root, metadata_check_report, dry_run=dry_run)
+            if metadata_fix_report.failure_count > 0:
+                has_failures = True
 
     # Fix geo-assets if in scope
     if run_geo_assets:

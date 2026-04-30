@@ -307,24 +307,28 @@ class PMTilesRecommendedRule(ValidationRule):
 
 
 class MetadataFreshRule(ValidationRule):
-    """Check that all geo-asset files have fresh STAC metadata.
+    """Check that all registered geo-assets have fresh STAC metadata.
 
-    This rule scans for GeoParquet and COG files in collections
-    and verifies their STAC item metadata is up-to-date using
-    MTIME + heuristic change detection.
+    Delegates to `scan_catalog_metadata` (ADR-0041) so that `check` and
+    `check --fix` consume the same MetadataReport. The scanner walks the
+    STAC manifest tree (catalog.json -> collection.json -> item.json),
+    avoiding the false-MISSING reports that filesystem-walk approaches
+    produced for collection-level rollup assets like items.parquet.
 
     Reports:
-    - MISSING: Files without any STAC metadata (ERROR)
-    - STALE: Files where content has changed since last metadata generation (WARNING)
-    - BREAKING: Files with breaking schema changes (ERROR)
+    - MISSING: Item directory has data but no item.json (ERROR, auto-fixable).
+    - STALE: File changed since last metadata generation (WARNING).
+    - BREAKING: Schema-breaking change (ERROR).
+    - ORPHANED: File on disk but not registered in any STAC manifest
+      (WARNING, not auto-fixable — user must register or delete).
     """
 
     name = "metadata_fresh"
-    severity = Severity.WARNING  # Default to WARNING, but MISSING/BREAKING are ERROR
+    severity = Severity.WARNING
     description = "Verify all geo-assets have fresh STAC metadata"
 
     def check(self, catalog_path: Path) -> ValidationResult:
-        """Check metadata freshness for all geo-assets in catalog.
+        """Check metadata freshness for all registered geo-assets.
 
         Args:
             catalog_path: Path to the directory containing .portolan.
@@ -332,57 +336,19 @@ class MetadataFreshRule(ValidationRule):
         Returns:
             ValidationResult indicating overall metadata health.
         """
-        from portolan_cli.metadata.detection import check_file_metadata
-        from portolan_cli.metadata.models import MetadataCheckResult, MetadataReport
+        from portolan_cli.metadata.scan import scan_catalog_metadata
 
-        # Find all collections in the catalog (at root level per ADR-0023)
-        catalog_json = catalog_path / "catalog.json"
-        if not catalog_json.exists():
+        if not (catalog_path / "catalog.json").exists():
             return self._pass("No catalog.json found")
 
-        # Scan for geo-asset files in collections
-        check_results: list[MetadataCheckResult] = []
-        extensions = {".parquet", ".tif", ".tiff"}
+        report = scan_catalog_metadata(catalog_path)
 
-        # Collections are at root level, identified by collection.json
-        for collection_dir in catalog_path.iterdir():
-            if not collection_dir.is_dir():
-                continue
-            # Skip .portolan and hidden directories
-            if collection_dir.name.startswith("."):
-                continue
-            # Only process directories with collection.json
-            if not (collection_dir / "collection.json").exists():
-                continue
-            # Find geo-asset files in this collection
-            for file_path in collection_dir.rglob("*"):
-                if file_path.suffix.lower() in extensions:
-                    try:
-                        result = check_file_metadata(file_path, collection_dir)
-                        check_results.append(result)
-                    except (FileNotFoundError, ValueError, OSError):
-                        # Skip files we can't check:
-                        # - FileNotFoundError: broken symlinks
-                        # - ValueError: unsupported format
-                        # - OSError: corrupt COGs (rasterio errors inherit from OSError)
-                        continue
-                    except Exception as e:
-                        # Also catch pyarrow errors (ArrowInvalid, ArrowIOError, etc.)
-                        # which don't have a consistent base class
-                        if "arrow" in type(e).__module__.lower():
-                            continue
-                        raise  # Re-raise unexpected errors
-
-        if not check_results:
+        if not report.results:
             return self._pass("No geo-asset files found in collections")
-
-        # Build summary report
-        report = MetadataReport(results=check_results)
 
         if report.passed:
             return self._pass(f"All {report.total_count} geo-assets have fresh metadata")
 
-        # Build detailed message about issues
         issues = []
         if report.missing_count > 0:
             issues.append(f"{report.missing_count} missing")
@@ -390,19 +356,23 @@ class MetadataFreshRule(ValidationRule):
             issues.append(f"{report.stale_count} stale")
         if report.breaking_count > 0:
             issues.append(f"{report.breaking_count} breaking")
+        if report.orphaned_count > 0:
+            issues.append(f"{report.orphaned_count} orphaned")
 
         message = f"Metadata issues found: {', '.join(issues)}"
-
-        # Determine severity based on issue types
-        # MISSING and BREAKING are errors, STALE is warning
         has_errors = report.missing_count > 0 or report.breaking_count > 0
+        fix_hint = (
+            "Run 'portolan check --metadata --fix' to update STAC metadata"
+            if has_errors or report.stale_count > 0
+            else "Register orphan files in collection.json/item.json or delete them"
+        )
 
         return ValidationResult(
             rule_name=self.name,
             passed=False,
             severity=Severity.ERROR if has_errors else Severity.WARNING,
             message=message,
-            fix_hint="Run 'portolan check --metadata --fix' to update STAC metadata",
+            fix_hint=fix_hint,
         )
 
 

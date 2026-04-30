@@ -734,16 +734,23 @@ class TestCheckMetadataFixFlag:
         # Run check --metadata --fix (should not error even with empty catalog)
         result = runner.invoke(
             cli,
-            ["check", str(catalog_dir), "--metadata", "--fix"],
+            ["check", str(catalog_dir), "--metadata", "--fix", "--json"],
         )
 
-        # Should succeed (no items to fix)
+        # Should succeed and structurally report zero scanner results — per
+        # ADR-0041 the manifest-driven scanner emits an empty MetadataReport
+        # for a catalog with no collections, so the FixReport derived from
+        # it carries zero results and zero skipped items.
         assert result.exit_code == 0
-        assert (
-            "created" in result.output.lower()
-            or "skipped" in result.output.lower()
-            or "updated" in result.output.lower()
+        payload = json.loads(result.output)
+        metadata_fix = payload.get("data", {}).get("metadata_fix")
+        assert metadata_fix is not None, (
+            f"--fix --json must surface metadata_fix payload, got: {payload}"
         )
+        assert metadata_fix["total_count"] == 0, (
+            f"empty catalog produced non-empty fix report: {metadata_fix}"
+        )
+        assert metadata_fix["failure_count"] == 0
 
     def test_metadata_fix_dry_run_flag(
         self,

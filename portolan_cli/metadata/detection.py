@@ -68,10 +68,14 @@ def get_stored_metadata(
     Returns:
         StoredMetadata if found, None if no metadata exists.
     """
-    # Look for item JSON matching the file stem
+    # Item.json sits next to the data file in the hierarchical layout
+    # produced by `add` ({item_dir}/{item_id}.json). Per ADR-0041 the
+    # scanner is the single source of truth for layout discovery; the
+    # legacy flat sibling-JSON layout is intentionally not supported here
+    # — the scanner reports such files as ORPHANED and directs the user
+    # to migrate via `portolan add`.
     item_name = file_path.stem + ".json"
-    item_path = collection_dir / item_name
-
+    item_path = file_path.parent / item_name
     if not item_path.exists():
         return None
 
