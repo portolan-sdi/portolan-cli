@@ -2368,17 +2368,21 @@ def is_current(
         current_checksum = compute_dir_checksum(path)
         return current_checksum == asset.sha256
 
-    # Fast path: check mtime (2s tolerance for NFS/CIFS compatibility)
-    if asset.mtime is not None:
-        if abs(file_stat.st_mtime - asset.mtime) < MTIME_TOLERANCE_SECONDS:
-            return True
+    # Fast path: mtime unchanged AND size unchanged → file is current
+    # Both conditions must hold; size check catches fast overwrites within mtime tolerance
+    mtime_unchanged = (
+        asset.mtime is not None and abs(file_stat.st_mtime - asset.mtime) < MTIME_TOLERANCE_SECONDS
+    )
+    size_unchanged = asset.size_bytes is not None and file_stat.st_size == asset.size_bytes
 
-    # Medium path: size check before expensive SHA256
-    # If size differs, file definitely changed - skip checksum
+    if mtime_unchanged and size_unchanged:
+        return True
+
+    # Medium path: size differs → definitely changed
     if asset.size_bytes is not None and file_stat.st_size != asset.size_bytes:
         return False
 
-    # Slow path: compare sha256 (only if mtime changed but size matches)
+    # Slow path: mtime changed but size matches → check sha256
     current_checksum = compute_checksum(path)
     return current_checksum == asset.sha256
 
