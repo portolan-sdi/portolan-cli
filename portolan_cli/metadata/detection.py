@@ -68,10 +68,13 @@ def get_stored_metadata(
     Returns:
         StoredMetadata if found, None if no metadata exists.
     """
-    # Look for item JSON matching the file stem
+    # Item.json sits next to the data file in the hierarchical layout
+    # produced by `add` ({item_dir}/{item_id}.json). Fall back to the
+    # legacy flat layout ({collection_dir}/{stem}.json) for older catalogs.
     item_name = file_path.stem + ".json"
-    item_path = collection_dir / item_name
-
+    item_path = file_path.parent / item_name
+    if not item_path.exists():
+        item_path = collection_dir / item_name
     if not item_path.exists():
         return None
 

@@ -737,13 +737,10 @@ class TestCheckMetadataFixFlag:
             ["check", str(catalog_dir), "--metadata", "--fix"],
         )
 
-        # Should succeed (no items to fix)
+        # Should succeed (no items to fix in empty catalog).
+        # Per ADR-0041 the manifest-driven scanner emits no results for a
+        # catalog with no collections, so no fix output is expected.
         assert result.exit_code == 0
-        assert (
-            "created" in result.output.lower()
-            or "skipped" in result.output.lower()
-            or "updated" in result.output.lower()
-        )
 
     def test_metadata_fix_dry_run_flag(
         self,

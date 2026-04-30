@@ -113,8 +113,9 @@ def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
 def create_missing_item(file_path: Path, collection_path: Path) -> Path:
     """Create new STAC item for a file without metadata.
 
-    Uses existing create_item() from item.py, ensures proper linking
-    to parent collection, and writes item.json alongside the data file.
+    Writes item.json into the data file's parent directory at
+    `{item_dir}/{item_id}.json`, matching the hierarchical convention
+    that `add` produces (per ADR-0031 and dataset.py:_create_and_save_item).
 
     Args:
         file_path: Path to the data file (GeoParquet or COG).
@@ -126,32 +127,24 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
     Raises:
         FileNotFoundError: If file_path doesn't exist or collection.json not found.
     """
-    # Validate file exists
     if not file_path.exists():
         raise FileNotFoundError(f"Data file not found: {file_path}")
 
-    # Validate collection.json exists
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found: {collection_json_path}")
 
-    # Read collection to get its ID
     collection = read_collection_json(collection_json_path)
-
-    # Use filename stem as item ID
     item_id = file_path.stem
+    item_dir = file_path.parent
 
-    # Create item using existing function
     item = create_item(
         item_id=item_id,
         data_path=file_path,
         collection_id=collection.id,
     )
 
-    # Write item to collection directory
-    item_path = write_item_json(item, collection_path)
-
-    return item_path
+    return write_item_json(item, item_dir)
 
 
 def update_collection_extent(collection_path: Path) -> CollectionModel:

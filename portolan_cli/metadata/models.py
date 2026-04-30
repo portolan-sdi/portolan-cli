@@ -48,19 +48,23 @@ class MetadataStatus(Enum):
     """Status of file metadata relative to stored state.
 
     Attributes:
-        MISSING: No STAC metadata exists for this file.
+        MISSING: Item directory has data but no item.json (auto-fixable).
         FRESH: Metadata is up to date with file contents.
         STALE: File has changed; metadata needs regeneration.
         BREAKING: Schema has breaking changes (column removed, type changed, etc.).
+        ORPHANED: File on disk under a collection but not registered in any
+            STAC manifest (collection.json.assets or item.json.assets). Not
+            auto-fixable — user must register or delete.
 
     The severity property allows sorting issues by importance:
-        BREAKING > MISSING > STALE > FRESH
+        BREAKING > MISSING > STALE > ORPHANED > FRESH
     """
 
     MISSING = "missing"
     FRESH = "fresh"
     STALE = "stale"
     BREAKING = "breaking"
+    ORPHANED = "orphaned"
 
     @property
     def severity(self) -> int:
@@ -69,13 +73,14 @@ class MetadataStatus(Enum):
         Higher values are more severe.
 
         Returns:
-            int: Severity level (0-3).
+            int: Severity level (0-4).
         """
         severity_map = {
             MetadataStatus.FRESH: 0,
-            MetadataStatus.STALE: 1,
-            MetadataStatus.MISSING: 2,
-            MetadataStatus.BREAKING: 3,
+            MetadataStatus.ORPHANED: 1,
+            MetadataStatus.STALE: 2,
+            MetadataStatus.MISSING: 3,
+            MetadataStatus.BREAKING: 4,
         }
         return severity_map[self]
 
@@ -285,13 +290,24 @@ class MetadataReport:
         return sum(1 for r in self.results if r.status == MetadataStatus.BREAKING)
 
     @property
+    def orphaned_count(self) -> int:
+        """Count of files with ORPHANED status.
+
+        Returns:
+            Number of files unregistered in any STAC manifest.
+        """
+        return sum(1 for r in self.results if r.status == MetadataStatus.ORPHANED)
+
+    @property
     def passed(self) -> bool:
         """Check if all files have fresh metadata.
 
         Returns:
             True if all results are FRESH (or no results exist).
         """
-        return all(r.status == MetadataStatus.FRESH for r in self.results)
+        return all(
+            r.status in (MetadataStatus.FRESH, MetadataStatus.ORPHANED) for r in self.results
+        )
 
     @property
     def issues(self) -> list[MetadataCheckResult]:
@@ -326,5 +342,6 @@ class MetadataReport:
             "stale_count": self.stale_count,
             "missing_count": self.missing_count,
             "breaking_count": self.breaking_count,
+            "orphaned_count": self.orphaned_count,
             "results": [r.to_dict() for r in self.results],
         }

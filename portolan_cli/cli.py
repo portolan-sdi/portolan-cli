@@ -39,7 +39,7 @@ from portolan_cli.dataset import (
     resolve_collection_id,
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
-from portolan_cli.metadata import check_directory_metadata, fix_metadata
+from portolan_cli.metadata import fix_metadata
 from portolan_cli.metadata.fix import FixReport
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
@@ -1314,7 +1314,9 @@ def _run_fix_workflow(
 
     # Fix metadata if in scope
     if run_metadata:
-        metadata_check_report = check_directory_metadata(path)
+        from portolan_cli.metadata.scan import scan_catalog_metadata
+
+        metadata_check_report = scan_catalog_metadata(path)
         metadata_fix_report = fix_metadata(path, metadata_check_report, dry_run=dry_run)
         if metadata_fix_report.failure_count > 0:
             has_failures = True

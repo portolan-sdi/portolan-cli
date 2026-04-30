@@ -44,11 +44,12 @@ class TestMetadataStatus:
         assert issubclass(MetadataStatus, Enum)
 
     @pytest.mark.unit
-    def test_status_has_exactly_four_values(self) -> None:
-        """MetadataStatus should have exactly 4 values (no more, no less)."""
+    def test_status_has_exactly_five_values(self) -> None:
+        """MetadataStatus should have exactly 5 values (FRESH, STALE,
+        MISSING, BREAKING, ORPHANED — last added per ADR-0041)."""
         from portolan_cli.metadata.models import MetadataStatus
 
-        assert len(MetadataStatus) == 4
+        assert len(MetadataStatus) == 5
 
 
 class TestFileMetadataState:
