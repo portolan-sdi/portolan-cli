@@ -202,19 +202,19 @@ class TestGlobPatterns:
         """build_glob_pattern returns relative glob with strategy-specific partition column."""
         from portolan_cli.partitioning import build_glob_pattern
 
-        result = build_glob_pattern("buildings", strategy="kdtree")
+        result = build_glob_pattern(strategy="kdtree")
 
-        assert result == "./kdtree_cell=*/data.parquet"
+        assert result == "./kdtree_cell=*/*.parquet"
 
     @pytest.mark.unit
     def test_build_glob_pattern_uses_correct_partition_column(self) -> None:
         """build_glob_pattern uses correct partition column for each strategy."""
         from portolan_cli.partitioning import build_glob_pattern
 
-        assert build_glob_pattern("x", "kdtree") == "./kdtree_cell=*/data.parquet"
-        assert build_glob_pattern("x", "h3") == "./h3_cell=*/data.parquet"
-        assert build_glob_pattern("x", "s2") == "./s2_cell=*/data.parquet"
-        assert build_glob_pattern("x", "quadkey") == "./quadkey=*/data.parquet"
+        assert build_glob_pattern("kdtree") == "./kdtree_cell=*/*.parquet"
+        assert build_glob_pattern("h3") == "./h3_cell=*/*.parquet"
+        assert build_glob_pattern("s2") == "./s2_cell=*/*.parquet"
+        assert build_glob_pattern("quadkey") == "./quadkey=*/*.parquet"
 
     @pytest.mark.unit
     def test_build_remote_glob_creates_absolute_url(self) -> None:
@@ -223,7 +223,7 @@ class TestGlobPatterns:
 
         result = build_remote_glob("s3://bucket/catalog", "buildings", "kdtree")
 
-        assert result == "s3://bucket/catalog/buildings/kdtree_cell=*/data.parquet"
+        assert result == "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
 
     @pytest.mark.unit
     def test_build_remote_glob_handles_trailing_slash(self) -> None:
@@ -232,7 +232,7 @@ class TestGlobPatterns:
 
         result = build_remote_glob("s3://bucket/catalog/", "buildings", "kdtree")
 
-        assert result == "s3://bucket/catalog/buildings/kdtree_cell=*/data.parquet"
+        assert result == "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
 
 
 class TestGlobTransformation:
@@ -250,7 +250,7 @@ class TestGlobTransformation:
             "id": "buildings",
             "assets": {
                 "partitioned_data": {
-                    "href": "./kdtree_cell=*/data.parquet",
+                    "href": "./kdtree_cell=*/*.parquet",
                     "type": "application/vnd.apache.parquet",
                     "roles": ["data"],
                 },
@@ -270,8 +270,7 @@ class TestGlobTransformation:
         partitioned = result_json["assets"]["partitioned_data"]
         assert "portolan:glob" in partitioned
         assert (
-            partitioned["portolan:glob"]
-            == "s3://bucket/catalog/buildings/kdtree_cell=*/data.parquet"
+            partitioned["portolan:glob"] == "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
         )
 
         # Non-glob asset should be unchanged
@@ -290,9 +289,9 @@ class TestGlobTransformation:
             "id": "buildings",
             "assets": {
                 "partitioned_data": {
-                    "href": "./kdtree_cell=*/data.parquet",
+                    "href": "./kdtree_cell=*/*.parquet",
                     "type": "application/vnd.apache.parquet",
-                    "portolan:glob": "s3://existing/path/*/data.parquet",
+                    "portolan:glob": "s3://existing/path/*/*.parquet",
                 },
             },
         }
@@ -304,7 +303,7 @@ class TestGlobTransformation:
         # Should preserve existing value
         assert (
             result_json["assets"]["partitioned_data"]["portolan:glob"]
-            == "s3://existing/path/*/data.parquet"
+            == "s3://existing/path/*/*.parquet"
         )
 
     @pytest.mark.unit
