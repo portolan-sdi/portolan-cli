@@ -6373,6 +6373,23 @@ def partition(
             error("OUTPUT_DIR required (use --preview for analysis only)")
         raise SystemExit(1)
 
+    # Validate strategy is implemented (only kdtree for now)
+    if strategy != "kdtree":
+        if json_output:
+            envelope = error_envelope(
+                "partition",
+                [
+                    ErrorDetail(
+                        type="NotImplementedError",
+                        message=f"Strategy '{strategy}' not yet implemented. Only 'kdtree' is available.",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Strategy '{strategy}' not yet implemented. Only 'kdtree' is available.")
+        raise SystemExit(1)
+
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 

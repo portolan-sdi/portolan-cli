@@ -298,13 +298,9 @@ def _transform_collection_glob_assets(
             # href is relative to collection.json (e.g., "./*/data.parquet")
             # We need to convert to absolute remote URL
             glob_pattern = href.lstrip("./")
-            remote_glob = f"{prefix}/{collection_path}/{glob_pattern}".replace("//", "/")
-            # Ensure proper URL format (no double slashes except after protocol)
-            if "://" in prefix:
-                protocol, rest = prefix.split("://", 1)
-                remote_glob = f"{protocol}://{collection_path}/{glob_pattern}"
-                if rest:
-                    remote_glob = f"{protocol}://{rest}/{collection_path}/{glob_pattern}"
+            # Build URL preserving protocol separator
+            base = prefix.rstrip("/")
+            remote_glob = f"{base}/{collection_path}/{glob_pattern}"
             asset_data["portolan:glob"] = remote_glob
             modified = True
 

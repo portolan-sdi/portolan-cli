@@ -86,6 +86,8 @@ def partition_geoparquet(
     Raises:
         ValueError: If strategy is not supported.
     """
+    import shutil
+
     from geoparquet_io.core.partition.by_kdtree import (  # type: ignore[import-untyped]
         partition_by_kdtree,
     )
@@ -95,18 +97,27 @@ def partition_geoparquet(
             f"Strategy '{strategy}' not yet supported. Currently only 'kdtree' is implemented."
         )
 
-    # Call geoparquet-io partition function
-    # Hive=True per ADR-0031 (each partition becomes a STAC Item with item.json)
-    partition_by_kdtree(
-        input_parquet=str(input_path),
-        output_folder=str(output_dir),
-        hive=True,
-        auto_target_rows=("rows", target_rows),
-        keep_kdtree_column=True,  # Enable partition pruning
-        verbose=verbose,
-        compression="ZSTD",
-        compression_level=15,
-    )
+    partition_col = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
+
+    try:
+        # Call geoparquet-io partition function
+        # Hive=True per ADR-0031 (each partition becomes a STAC Item with item.json)
+        partition_by_kdtree(
+            input_parquet=str(input_path),
+            output_folder=str(output_dir),
+            hive=True,
+            auto_target_rows=("rows", target_rows),
+            keep_kdtree_column=True,  # Enable partition pruning
+            verbose=verbose,
+            compression="ZSTD",
+            compression_level=15,
+        )
+    except Exception:
+        # Rollback: remove any partial partition directories created
+        for partition_dir in output_dir.glob(f"{partition_col}=*"):
+            if partition_dir.is_dir():
+                shutil.rmtree(partition_dir)
+        raise
 
     # Collect created partition files
     return _collect_partition_files(output_dir, strategy)
@@ -173,22 +184,27 @@ def build_glob_pattern(collection_id: str, strategy: str = DEFAULT_STRATEGY) -> 
         strategy: Partitioning strategy used.
 
     Returns:
-        Relative glob pattern like "./*/data.parquet" for Hive-style partitions.
+        Relative glob pattern like "./kdtree_cell=*/data.parquet" for Hive-style partitions.
     """
-    # Hive-style: each partition is in its own directory
-    return "./*/data.parquet"
+    # Hive-style: each partition is in its own directory named by partition column
+    partition_col = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
+    return f"./{partition_col}=*/data.parquet"
 
 
-def build_remote_glob(remote_base: str, collection_id: str) -> str:
+def build_remote_glob(
+    remote_base: str, collection_id: str, strategy: str = DEFAULT_STRATEGY
+) -> str:
     """Build absolute remote glob URL for portolan:glob field.
 
     Args:
         remote_base: Remote storage base URL (e.g., "s3://bucket/").
         collection_id: The collection identifier.
+        strategy: Partitioning strategy used.
 
     Returns:
-        Absolute glob URL like "s3://bucket/collection/*/data.parquet".
+        Absolute glob URL like "s3://bucket/collection/kdtree_cell=*/data.parquet".
     """
-    # Normalize: ensure single trailing slash on base
+    # Normalize: ensure no trailing slash on base
     base = remote_base.rstrip("/")
-    return f"{base}/{collection_id}/*/data.parquet"
+    partition_col = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
+    return f"{base}/{collection_id}/{partition_col}=*/data.parquet"

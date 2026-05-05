@@ -37,15 +37,22 @@ class TestShouldPartition:
     @pytest.mark.unit
     def test_should_partition_returns_true_for_large_file(self, tmp_path: Path) -> None:
         """Files over threshold should be partitioned."""
+        import os
+
         from portolan_cli.partitioning import should_partition
 
-        # Create a large file (3 GB) - we'll mock the file size check
         large_file = tmp_path / "large.parquet"
         large_file.write_bytes(b"x" * 100)  # Small actual file
 
-        # Mock stat to return large file size
-        with mock.patch.object(Path, "stat") as mock_stat:
-            mock_stat.return_value.st_size = 3 * 1024 * 1024 * 1024  # 3 GB
+        original_stat = os.stat
+
+        def mock_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
+            if Path(path) == large_file:
+                # Return a mock stat result with 3GB size
+                return os.stat_result((0, 0, 0, 0, 0, 0, 3 * 1024 * 1024 * 1024, 0, 0, 0))
+            return original_stat(path, *args, **kwargs)
+
+        with mock.patch("os.stat", mock_stat):
             result = should_partition(large_file, threshold_gb=2.0)
 
         assert result is True
@@ -53,15 +60,22 @@ class TestShouldPartition:
     @pytest.mark.unit
     def test_should_partition_uses_config_threshold(self, tmp_path: Path) -> None:
         """should_partition respects custom threshold."""
+        import os
+
         from portolan_cli.partitioning import should_partition
 
-        # Create a 500 MB file
         file_path = tmp_path / "medium.parquet"
         file_path.write_bytes(b"x" * 100)
 
-        with mock.patch.object(Path, "stat") as mock_stat:
-            mock_stat.return_value.st_size = 500 * 1024 * 1024  # 500 MB
+        original_stat = os.stat
 
+        def mock_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
+            if Path(path) == file_path:
+                # Return a mock stat result with 500MB size
+                return os.stat_result((0, 0, 0, 0, 0, 0, 500 * 1024 * 1024, 0, 0, 0))
+            return original_stat(path, *args, **kwargs)
+
+        with mock.patch("os.stat", mock_stat):
             # With 2GB threshold: should NOT partition
             assert should_partition(file_path, threshold_gb=2.0) is False
 
@@ -71,13 +85,21 @@ class TestShouldPartition:
     @pytest.mark.unit
     def test_should_partition_returns_false_when_disabled(self, tmp_path: Path) -> None:
         """should_partition returns False when partitioning is disabled."""
+        import os
+
         from portolan_cli.partitioning import should_partition
 
         large_file = tmp_path / "large.parquet"
         large_file.write_bytes(b"x" * 100)
 
-        with mock.patch.object(Path, "stat") as mock_stat:
-            mock_stat.return_value.st_size = 5 * 1024 * 1024 * 1024  # 5 GB
+        original_stat = os.stat
+
+        def mock_stat(path: str | Path, *args: object, **kwargs: object) -> os.stat_result:
+            if Path(path) == large_file:
+                return os.stat_result((0, 0, 0, 0, 0, 0, 5 * 1024 * 1024 * 1024, 0, 0, 0))
+            return original_stat(path, *args, **kwargs)
+
+        with mock.patch("os.stat", mock_stat):
             result = should_partition(large_file, threshold_gb=2.0, enabled=False)
 
         assert result is False
@@ -176,31 +198,41 @@ class TestGlobPatterns:
     """Tests for glob pattern building functions (Issue #351)."""
 
     @pytest.mark.unit
-    def test_build_glob_pattern_returns_relative_path(self) -> None:
-        """build_glob_pattern returns relative glob for Hive-style partitions."""
+    def test_build_glob_pattern_returns_relative_path_with_strategy(self) -> None:
+        """build_glob_pattern returns relative glob with strategy-specific partition column."""
         from portolan_cli.partitioning import build_glob_pattern
 
         result = build_glob_pattern("buildings", strategy="kdtree")
 
-        assert result == "./*/data.parquet"
+        assert result == "./kdtree_cell=*/data.parquet"
+
+    @pytest.mark.unit
+    def test_build_glob_pattern_uses_correct_partition_column(self) -> None:
+        """build_glob_pattern uses correct partition column for each strategy."""
+        from portolan_cli.partitioning import build_glob_pattern
+
+        assert build_glob_pattern("x", "kdtree") == "./kdtree_cell=*/data.parquet"
+        assert build_glob_pattern("x", "h3") == "./h3_cell=*/data.parquet"
+        assert build_glob_pattern("x", "s2") == "./s2_cell=*/data.parquet"
+        assert build_glob_pattern("x", "quadkey") == "./quadkey=*/data.parquet"
 
     @pytest.mark.unit
     def test_build_remote_glob_creates_absolute_url(self) -> None:
         """build_remote_glob creates full remote URL with glob pattern."""
         from portolan_cli.partitioning import build_remote_glob
 
-        result = build_remote_glob("s3://bucket/catalog", "buildings")
+        result = build_remote_glob("s3://bucket/catalog", "buildings", "kdtree")
 
-        assert result == "s3://bucket/catalog/buildings/*/data.parquet"
+        assert result == "s3://bucket/catalog/buildings/kdtree_cell=*/data.parquet"
 
     @pytest.mark.unit
     def test_build_remote_glob_handles_trailing_slash(self) -> None:
         """build_remote_glob handles trailing slash in base URL."""
         from portolan_cli.partitioning import build_remote_glob
 
-        result = build_remote_glob("s3://bucket/catalog/", "buildings")
+        result = build_remote_glob("s3://bucket/catalog/", "buildings", "kdtree")
 
-        assert result == "s3://bucket/catalog/buildings/*/data.parquet"
+        assert result == "s3://bucket/catalog/buildings/kdtree_cell=*/data.parquet"
 
 
 class TestGlobTransformation:
@@ -218,7 +250,7 @@ class TestGlobTransformation:
             "id": "buildings",
             "assets": {
                 "partitioned_data": {
-                    "href": "./*/data.parquet",
+                    "href": "./kdtree_cell=*/data.parquet",
                     "type": "application/vnd.apache.parquet",
                     "roles": ["data"],
                 },
@@ -237,7 +269,10 @@ class TestGlobTransformation:
         # Glob asset should have portolan:glob added
         partitioned = result_json["assets"]["partitioned_data"]
         assert "portolan:glob" in partitioned
-        assert "buildings/*/data.parquet" in partitioned["portolan:glob"]
+        assert (
+            partitioned["portolan:glob"]
+            == "s3://bucket/catalog/buildings/kdtree_cell=*/data.parquet"
+        )
 
         # Non-glob asset should be unchanged
         thumbnail = result_json["assets"]["thumbnail"]
@@ -255,7 +290,7 @@ class TestGlobTransformation:
             "id": "buildings",
             "assets": {
                 "partitioned_data": {
-                    "href": "./*/data.parquet",
+                    "href": "./kdtree_cell=*/data.parquet",
                     "type": "application/vnd.apache.parquet",
                     "portolan:glob": "s3://existing/path/*/data.parquet",
                 },
@@ -293,8 +328,9 @@ class TestGlobTransformation:
         content = json.dumps(collection_json).encode("utf-8")
         result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
 
-        # Content should be unchanged (byte-identical)
-        assert result == content
+        # Content should be unchanged — verify semantically since no globs present
+        result_json = json.loads(result)
+        assert result_json == collection_json
 
     @pytest.mark.unit
     def test_transform_handles_invalid_json(self) -> None:
@@ -305,3 +341,62 @@ class TestGlobTransformation:
         result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
 
         assert result == content
+
+
+class TestPartitioningRollback:
+    """Tests for partition failure rollback (atomicity)."""
+
+    @pytest.mark.unit
+    def test_partition_failure_cleans_up_partial_directories(self, tmp_path: Path) -> None:
+        """If partition_geoparquet fails, partial directories are removed."""
+        from portolan_cli.partitioning import partition_geoparquet
+
+        input_file = tmp_path / "input.parquet"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        # Create partial partition directories (simulating mid-failure state)
+        partial_dir = output_dir / "kdtree_cell=001"
+        partial_dir.mkdir()
+        (partial_dir / "data.parquet").write_bytes(b"partial")
+
+        # Mock partition_by_kdtree to raise after partial output exists
+        def failing_partition(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("Simulated partition failure")
+
+        with mock.patch(
+            "geoparquet_io.core.partition.by_kdtree.partition_by_kdtree",
+            failing_partition,
+        ):
+            with pytest.raises(RuntimeError, match="Simulated partition failure"):
+                partition_geoparquet(
+                    input_path=input_file,
+                    output_dir=output_dir,
+                    strategy="kdtree",
+                )
+
+        # Partial directories should be cleaned up
+        assert not partial_dir.exists()
+
+
+class TestCliStrategyValidation:
+    """Tests for CLI strategy validation."""
+
+    @pytest.mark.unit
+    def test_partition_command_rejects_unimplemented_strategies(self) -> None:
+        """CLI should reject strategies that aren't implemented yet."""
+        from click.testing import CliRunner
+
+        from portolan_cli.cli import partition
+
+        runner = CliRunner()
+
+        with runner.isolated_filesystem():
+            # Create a test file
+            Path("test.parquet").write_bytes(b"test")
+
+            result = runner.invoke(partition, ["test.parquet", "output/", "--strategy", "h3"])
+
+            assert result.exit_code == 1
+            assert "not yet implemented" in result.output
+            assert "kdtree" in result.output

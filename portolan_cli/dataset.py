@@ -511,18 +511,20 @@ def _maybe_partition_large_file(
     # Partitioned: collection/kdtree_cell=001/data.parquet, etc.
     partition_output_dir = primary_parquet.parent
 
-    # Clean up the original single-file artifacts before partitioning
-    # Delete the item.json that was created for the single file
-    if prepared.item_json_path and prepared.item_json_path.exists():
-        prepared.item_json_path.unlink()
-
-    # Partition the file
+    # Partition the file FIRST, before any cleanup
+    # This ensures atomicity: if partitioning fails, original files remain intact
+    # Rollback on failure is handled by partition_geoparquet itself
     partition_files = partition_geoparquet(
         input_path=primary_parquet,
         output_dir=partition_output_dir,
         strategy=str(strategy),
         target_rows=int(target_rows),
     )
+
+    # Partitioning succeeded - now safe to clean up original artifacts
+    # Delete the item.json that was created for the single file
+    if prepared.item_json_path and prepared.item_json_path.exists():
+        prepared.item_json_path.unlink()
 
     # Delete original large file (now replaced by partitions)
     if primary_parquet.exists():
@@ -558,17 +560,18 @@ def _maybe_partition_large_file(
     )
 
     # Create a PreparedDataset for the glob asset (collection-level)
-    # Use original bbox since it covers all partitions
+    # Use original item_id as base to avoid collisions across collections
+    glob_item_id = f"{prepared.item_id}_partitioned"
     glob_prepared = PreparedDataset(
-        item_id="partitioned_data",
+        item_id=glob_item_id,
         collection_id=prepared.collection_id,
         format_type=FormatType.VECTOR,
         bbox=prepared.bbox,
-        asset_files={},  # No physical files - it's a pattern reference
+        asset_files={},  # No physical files - glob is a pattern reference
         item_json_path=None,
         is_collection_level_asset=True,
         stac_item=None,
-        stac_assets={"partitioned_data": glob_asset},
+        stac_assets={glob_item_id: glob_asset},
         metadata=None,
     )
     partitioned_datasets.append(glob_prepared)
