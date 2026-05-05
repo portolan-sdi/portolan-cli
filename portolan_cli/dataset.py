@@ -441,7 +441,6 @@ def _maybe_partition_large_file(
     from portolan_cli.config import get_setting
     from portolan_cli.partitioning import (
         build_glob_pattern,
-        get_partition_info,
         partition_geoparquet,
         should_partition,
     )
@@ -534,15 +533,12 @@ def _maybe_partition_large_file(
     partitioned_datasets: list[PreparedDataset] = []
 
     for partition_path in partition_files:
-        partition_info = get_partition_info(partition_path)
-        partition_id = f"{prepared.item_id}_{partition_info['cell_id']}"
-
         # Create STAC item for this partition
+        # item_id auto-derived from partition_path.parent.name (e.g., "kdtree_cell=0000000000")
         partition_prepared = prepare_dataset(
             path=partition_path,
             catalog_root=catalog_root,
             collection_id=prepared.collection_id,
-            item_id=partition_id,
             item_datetime=item_datetime,
         )
         partitioned_datasets.append(partition_prepared)
