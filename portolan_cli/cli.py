@@ -2880,6 +2880,16 @@ def _coerce_int(value: Any, *, default: int) -> int:
     is_flag=True,
     help="Regenerate PMTiles even if they exist and are up-to-date.",
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Re-process all files, ignoring change detection.",
+)
+@click.option(
+    "--reconvert",
+    is_flag=True,
+    help="Re-convert from source files (requires --force).",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
@@ -2894,6 +2904,8 @@ def add_cmd(
     generate_parquet: bool,
     generate_pmtiles: bool,
     force_pmtiles: bool,
+    force: bool,
+    reconvert: bool,
 ) -> None:
     """Track files in the catalog.
 
@@ -2938,6 +2950,16 @@ def add_cmd(
     - All files in the item directory are tracked, not just geo files (ADR-0028)
     """
     use_json = should_output_json(ctx, json_output)
+
+    # Validate --reconvert requires --force
+    if reconvert and not force:
+        _handle_cmd_error(
+            "add",
+            "UsageError",
+            "--reconvert requires --force",
+            use_json,
+        )
+        raise SystemExit(1)
 
     # Resolve and validate catalog root (git-style auto-detection)
     catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
@@ -3005,6 +3027,8 @@ def add_cmd(
                 on_progress=on_file_progress,
                 workers=workers,
                 json_mode=use_json,
+                force=force,
+                reconvert=reconvert,
             )
     except (ValueError, FileNotFoundError) as err:
         err_type = type(err).__name__

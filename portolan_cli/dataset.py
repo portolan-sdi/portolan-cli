@@ -708,6 +708,9 @@ def _convert_and_extract_metadata(
     path: Path,
     item_dir: Path,
     format_type: FormatType,
+    *,
+    force: bool = False,
+    reconvert: bool = False,
 ) -> tuple[Path, AllMetadata]:
     """Convert to cloud-native format and extract metadata.
 
@@ -715,14 +718,21 @@ def _convert_and_extract_metadata(
     as-is and extracts format-specific metadata. For other vectors, converts
     to GeoParquet.
 
+    Per Issue #386: When force=True and reconvert=False, skips conversion if
+    output already exists (extracts metadata from existing output).
+
     Args:
         path: Source file path.
         item_dir: Item directory for output.
         format_type: Detected format type.
+        force: If True, bypass change detection (Issue #386).
+        reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
         Tuple of (output_path, metadata).
     """
+    from portolan_cli.output import warn as warn_output
+
     metadata: AllMetadata
     suffix = path.suffix.lower()
 
@@ -750,11 +760,38 @@ def _convert_and_extract_metadata(
             metadata = extract_flatgeobuf_metadata(output_path)
         else:
             # Convert to GeoParquet
-            output_path = convert_vector(path, item_dir)
-            metadata = extract_geoparquet_metadata(output_path)
+            output_path = item_dir / f"{path.stem}.parquet"
+
+            # Issue #386: Skip conversion if force=True, reconvert=False, output exists
+            if force and not reconvert and output_path.exists():
+                # Warn if source is newer than output
+                if path.stat().st_mtime > output_path.stat().st_mtime:
+                    warn_output(
+                        f"Source file '{path.name}' is newer than converted output. "
+                        "Use --reconvert to re-convert from source."
+                    )
+                # Extract metadata from existing output (skip conversion)
+                metadata = extract_geoparquet_metadata(output_path)
+            else:
+                output_path = convert_vector(path, item_dir)
+                metadata = extract_geoparquet_metadata(output_path)
     else:  # RASTER
-        output_path = convert_raster(path, item_dir)
-        metadata = extract_cog_metadata(output_path)
+        # For rasters, determine expected output path
+        output_path = item_dir / f"{path.stem}.tif"
+
+        # Issue #386: Skip conversion if force=True, reconvert=False, output exists
+        if force and not reconvert and output_path.exists():
+            # Warn if source is newer than output
+            if path.stat().st_mtime > output_path.stat().st_mtime:
+                warn_output(
+                    f"Source file '{path.name}' is newer than converted output. "
+                    "Use --reconvert to re-convert from source."
+                )
+            # Extract metadata from existing output (skip conversion)
+            metadata = extract_cog_metadata(output_path)
+        else:
+            output_path = convert_raster(path, item_dir)
+            metadata = extract_cog_metadata(output_path)
     return output_path, metadata
 
 
@@ -1007,6 +1044,8 @@ def prepare_dataset(
     description: str | None = None,
     item_id: str | None = None,
     item_datetime: datetime | None = None,
+    force: bool = False,
+    reconvert: bool = False,
 ) -> PreparedDataset:
     """Prepare a dataset for addition (convert, extract metadata, create STAC item).
 
@@ -1015,6 +1054,7 @@ def prepare_dataset(
     O(n) versioning instead of O(n²) by batching writes in finalize_datasets().
 
     Per Issue #281: This is the parallelizable phase of the add workflow.
+    Per Issue #386: force/reconvert control conversion skip behavior.
 
     Args:
         path: Path to the source file.
@@ -1024,6 +1064,8 @@ def prepare_dataset(
         description: Optional description.
         item_id: Optional item ID (defaults to parent directory name).
         item_datetime: Optional acquisition/creation datetime (per ADR-0035).
+        force: If True, bypass change detection (Issue #386).
+        reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
         PreparedDataset with all metadata needed for finalization.
@@ -1061,7 +1103,9 @@ def prepare_dataset(
         ) from err
 
     # Step 3: Convert and extract metadata
-    output_path, metadata = _convert_and_extract_metadata(path, item_dir, format_type)
+    output_path, metadata = _convert_and_extract_metadata(
+        path, item_dir, format_type, force=force, reconvert=reconvert
+    )
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
     metadata_yaml = load_merged_metadata(collection_dir, catalog_root)
@@ -2454,6 +2498,8 @@ def _collect_files_for_add(
     collection_id: str | None,
     skipped: list[Path],
     setup_collections: set[str],
+    *,
+    force: bool = False,
 ) -> list[tuple[Path, str]]:
     """Collect and filter files for add operation (Phase 1).
 
@@ -2466,6 +2512,7 @@ def _collect_files_for_add(
         collection_id: Optional explicit collection ID.
         skipped: List to append skipped paths to (mutated).
         setup_collections: Set to track which collections have been set up (mutated).
+        force: If True, bypass change detection (Issue #386).
 
     Returns:
         List of (file_path, collection_id) tuples to process.
@@ -2507,11 +2554,12 @@ def _collect_files_for_add(
                     skipped.append(file_path)
                     continue
 
-            # Check if unchanged
-            versions_path = catalog_root / Path(*coll_id.split("/")) / "versions.json"
-            if is_current(file_path, versions_path):
-                skipped.append(file_path)
-                continue
+            # Check if unchanged (skip this check when force=True per Issue #386)
+            if not force:
+                versions_path = catalog_root / Path(*coll_id.split("/")) / "versions.json"
+                if is_current(file_path, versions_path):
+                    skipped.append(file_path)
+                    continue
 
             # Set up nested catalog structure if needed (ADR-0032)
             _ensure_nested_catalogs(coll_id, catalog_root, setup_collections)
@@ -2532,6 +2580,8 @@ def add_files(
     on_progress: Callable[[Path], None] | None = None,
     workers: int = 1,
     json_mode: bool = False,
+    force: bool = False,
+    reconvert: bool = False,
 ) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
     """Add files to a Portolan catalog.
 
@@ -2547,6 +2597,10 @@ def add_files(
     - Continues processing all files even when some fail
     - Collects all errors and reports them at the end
     - Enables batch processing without stopping on first error
+
+    Per Issue #386 ("--force flag for re-tracking files"):
+    - force=True bypasses mtime-based change detection
+    - reconvert=True also re-converts from source (requires force=True)
 
     Args:
         paths: List of paths to add (files or directories).
@@ -2568,6 +2622,8 @@ def add_files(
         workers: Number of parallel workers for metadata extraction.
             Default is 1 (sequential). Higher values parallelize GDAL reads.
         json_mode: If True, suppress progress bar output.
+        force: If True, bypass change detection and re-process all files.
+        reconvert: If True, re-convert from source files (requires force=True).
 
     Returns:
         Tuple of (added_datasets, skipped_paths, failures).
@@ -2593,7 +2649,7 @@ def add_files(
 
     # Phase 1: Collect files (extracted to reduce complexity)
     files_to_process = _collect_files_for_add(
-        paths, catalog_root, collection_id, skipped, setup_collections
+        paths, catalog_root, collection_id, skipped, setup_collections, force=force
     )
 
     # Phase 2: Process files
@@ -2643,6 +2699,8 @@ def add_files(
                                 collection_id=coll_id,
                                 item_id=None,  # Derive from output filename
                                 item_datetime=item_datetime,
+                                force=force,
+                                reconvert=reconvert,
                             )
                             prepared_list.append(prepared)
                         except Exception as err:
@@ -2673,6 +2731,8 @@ def add_files(
                 collection_id=coll_id,
                 item_id=item_id,
                 item_datetime=item_datetime,
+                force=force,
+                reconvert=reconvert,
             )
             return ([prepared], [], None)
 
