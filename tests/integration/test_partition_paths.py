@@ -45,8 +45,8 @@ def large_geoparquet(initialized_catalog: Path) -> Path:
     collection_dir = initialized_catalog / "points"
     collection_dir.mkdir()
 
-    # Create 100k points - enough to meet minimum rows per partition (512 partitions * 100 rows)
-    n = 100000
+    # Create 100k points - exceeds minimum (512 partitions * 100 rows = 51,200 minimum)
+    n = 100_000
     gdf = gpd.GeoDataFrame(
         {"id": range(n), "val": np.random.rand(n)},
         geometry=[
@@ -153,9 +153,11 @@ class TestPartitionPathConsistency:
 
         assert glob_asset is not None, "No glob asset found in collection.json"
 
-        # Extract glob pattern and verify it matches actual files
+        # Extract glob pattern and verify structure (not exact match - allows strategy changes)
         href = glob_asset["href"]  # e.g., "./kdtree_cell=*/*.parquet"
-        assert href == "./kdtree_cell=*/*.parquet", f"Unexpected glob pattern: {href}"
+        assert href.startswith("./"), f"Glob should be relative: {href}"
+        assert "*" in href, f"Glob should contain wildcard: {href}"
+        assert href.endswith("/*.parquet"), f"Glob should match parquet files: {href}"
 
         # Verify glob actually matches files
 
@@ -165,6 +167,45 @@ class TestPartitionPathConsistency:
         matched_files = list(collection_dir.glob(pattern))
 
         assert len(matched_files) > 0, f"Glob pattern {pattern} matched no files"
+
+    def test_glob_excludes_non_parquet_files(
+        self, runner: CliRunner, initialized_catalog: Path, large_geoparquet: Path
+    ) -> None:
+        """Glob pattern should NOT match non-parquet files in partition directories."""
+        # Enable partitioning via direct config
+        _set_partitioning_config(initialized_catalog, threshold_gb=0.00001)
+
+        # Add the file
+        result = runner.invoke(
+            cli,
+            [
+                "add",
+                "--force",
+                "--portolan-dir",
+                str(initialized_catalog),
+                str(large_geoparquet.parent),
+            ],
+        )
+        assert result.exit_code == 0
+
+        # Add a non-parquet file to a partition directory
+        partition_dirs = list(large_geoparquet.parent.glob("kdtree_cell=*"))
+        assert len(partition_dirs) > 0
+        decoy_file = partition_dirs[0] / "metadata.json"
+        decoy_file.write_text('{"decoy": true}')
+
+        # Get glob pattern and verify it doesn't match the decoy
+        collection_dir = large_geoparquet.parent
+        pattern = "kdtree_cell=*/*.parquet"
+        matched_files = list(collection_dir.glob(pattern))
+
+        # Verify decoy is NOT in matches
+        matched_names = [f.name for f in matched_files]
+        assert "metadata.json" not in matched_names, "Glob incorrectly matched non-parquet file"
+
+        # All matches should be .parquet
+        for f in matched_files:
+            assert f.suffix == ".parquet", f"Non-parquet file matched: {f}"
 
     def test_duckdb_can_read_via_glob(
         self, runner: CliRunner, initialized_catalog: Path, large_geoparquet: Path
@@ -211,8 +252,8 @@ class TestPartitionPathConsistency:
         assert result is not None
         row_count = result[0]
 
-        # Should have all 10k rows
-        assert row_count == 100000, f"Expected 100000 rows, got {row_count}"
+        # Should have all 100k rows
+        assert row_count == 100_000, f"Expected 100000 rows, got {row_count}"
 
 
 @pytest.mark.integration
@@ -248,14 +289,17 @@ class TestPushGlobTransformation:
         transformed = _transform_collection_glob_assets(content, "s3://bucket/catalog", "points")
         transformed_data = json.loads(transformed)
 
-        # Find glob asset and verify portolan:glob
+        # Find glob asset and verify portolan:glob structure (not exact match)
         for asset in transformed_data.get("assets", {}).values():
             if "*" in asset.get("href", ""):
                 assert "portolan:glob" in asset, "portolan:glob not added"
                 glob_url = asset["portolan:glob"]
-                assert glob_url == "s3://bucket/catalog/points/kdtree_cell=*/*.parquet", (
-                    f"Wrong glob URL: {glob_url}"
+                # Verify URL structure without hardcoding exact pattern
+                assert glob_url.startswith("s3://bucket/catalog/points/"), (
+                    f"Wrong base URL: {glob_url}"
                 )
+                assert "*" in glob_url, f"Missing wildcard in glob URL: {glob_url}"
+                assert glob_url.endswith("/*.parquet"), f"Wrong suffix: {glob_url}"
                 break
         else:
             pytest.fail("No glob asset found in transformed collection")

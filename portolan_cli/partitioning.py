@@ -174,20 +174,22 @@ def get_partition_info(partition_path: Path) -> dict[str, str]:
     }
 
 
-def build_glob_pattern(collection_id: str, strategy: str = DEFAULT_STRATEGY) -> str:
+def build_glob_pattern(strategy: str = DEFAULT_STRATEGY) -> str:
     """Build glob pattern for collection-level asset href.
 
     Per Issue #351, partitioned datasets expose a glob URL for bulk access.
 
     Args:
-        collection_id: The collection identifier.
         strategy: Partitioning strategy used.
 
     Returns:
         Relative glob pattern like "./kdtree_cell=*/*.parquet" for Hive-style partitions.
+
+    Note:
+        The pattern matches ALL .parquet files in partition directories.
+        geoparquet-io creates files named by cell ID (e.g., "0000000000.parquet").
+        Do not place additional parquet files in partition directories.
     """
-    # Hive-style: each partition is in its own directory named by partition column
-    # Files are named by cell ID (e.g., "0000000000.parquet"), not "data.parquet"
     partition_col = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
     return f"./{partition_col}=*/*.parquet"
 

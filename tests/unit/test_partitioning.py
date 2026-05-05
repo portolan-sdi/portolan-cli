@@ -202,7 +202,7 @@ class TestGlobPatterns:
         """build_glob_pattern returns relative glob with strategy-specific partition column."""
         from portolan_cli.partitioning import build_glob_pattern
 
-        result = build_glob_pattern("buildings", strategy="kdtree")
+        result = build_glob_pattern(strategy="kdtree")
 
         assert result == "./kdtree_cell=*/*.parquet"
 
@@ -211,10 +211,10 @@ class TestGlobPatterns:
         """build_glob_pattern uses correct partition column for each strategy."""
         from portolan_cli.partitioning import build_glob_pattern
 
-        assert build_glob_pattern("x", "kdtree") == "./kdtree_cell=*/*.parquet"
-        assert build_glob_pattern("x", "h3") == "./h3_cell=*/*.parquet"
-        assert build_glob_pattern("x", "s2") == "./s2_cell=*/*.parquet"
-        assert build_glob_pattern("x", "quadkey") == "./quadkey=*/*.parquet"
+        assert build_glob_pattern("kdtree") == "./kdtree_cell=*/*.parquet"
+        assert build_glob_pattern("h3") == "./h3_cell=*/*.parquet"
+        assert build_glob_pattern("s2") == "./s2_cell=*/*.parquet"
+        assert build_glob_pattern("quadkey") == "./quadkey=*/*.parquet"
 
     @pytest.mark.unit
     def test_build_remote_glob_creates_absolute_url(self) -> None:

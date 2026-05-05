@@ -545,7 +545,7 @@ def _maybe_partition_large_file(
 
     # Add collection-level glob asset for bulk access (Issue #351)
     # This provides a single glob URL for DuckDB/PyArrow/GDAL to read all partitions
-    glob_pattern = build_glob_pattern(prepared.collection_id, str(strategy))
+    glob_pattern = build_glob_pattern(str(strategy))
     glob_asset = pystac.Asset(
         href=glob_pattern,
         media_type="application/vnd.apache.parquet",
