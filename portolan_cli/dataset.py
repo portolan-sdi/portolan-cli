@@ -419,6 +419,163 @@ class PreparedDataset:
     metadata: AllMetadata | None = None
 
 
+def _maybe_partition_large_file(
+    prepared: PreparedDataset,
+    catalog_root: Path,
+    item_datetime: datetime | None,
+) -> list[PreparedDataset]:
+    """Partition a large GeoParquet file if it exceeds the size threshold.
+
+    Per ADR-0031 and Issue #352: Files > 2GB should be spatially partitioned.
+    Each partition becomes a STAC Item with its own bbox.
+
+    Args:
+        prepared: The prepared dataset to potentially partition.
+        catalog_root: Root directory of the catalog.
+        item_datetime: Optional datetime for created items.
+
+    Returns:
+        List of PreparedDatasets. If partitioning occurred, contains multiple
+        items (one per partition). Otherwise, returns [prepared] unchanged.
+    """
+    from portolan_cli.config import get_setting
+    from portolan_cli.partitioning import (
+        build_glob_pattern,
+        get_partition_info,
+        partition_geoparquet,
+        should_partition,
+    )
+
+    # Only partition vector formats (GeoParquet)
+    if prepared.format_type != FormatType.VECTOR:
+        return [prepared]
+
+    # Only partition item-level assets (collection-level means single file < 2GB)
+    # But wait - if file is > 2GB, it should NOT be collection-level, it should be partitioned
+    # So we check the actual file, not the is_collection_level_asset flag
+
+    # Find the primary parquet file in asset_files
+    parquet_files = [
+        path
+        for filename, (path, _checksum) in prepared.asset_files.items()
+        if filename.endswith(".parquet")
+    ]
+    if not parquet_files:
+        return [prepared]
+
+    primary_parquet = parquet_files[0]
+
+    # Check if partitioning is enabled and file exceeds threshold
+    collection_dir = catalog_root / Path(*prepared.collection_id.split("/"))
+    partitioning_enabled = get_setting(
+        "partitioning.enabled",
+        catalog_path=catalog_root,
+        collection_path=collection_dir,
+    )
+    if partitioning_enabled is False:
+        return [prepared]
+
+    threshold_gb = (
+        get_setting(
+            "partitioning.threshold_gb",
+            catalog_path=catalog_root,
+            collection_path=collection_dir,
+        )
+        or 2.0
+    )
+
+    if not should_partition(primary_parquet, threshold_gb=float(threshold_gb)):
+        return [prepared]
+
+    # File needs partitioning
+    strategy = (
+        get_setting(
+            "partitioning.strategy",
+            catalog_path=catalog_root,
+            collection_path=collection_dir,
+        )
+        or "kdtree"
+    )
+
+    target_rows = (
+        get_setting(
+            "partitioning.target_rows",
+            catalog_path=catalog_root,
+            collection_path=collection_dir,
+        )
+        or 120_000
+    )
+
+    # Create partition output directory (same level as original file)
+    # Original: collection/data.parquet
+    # Partitioned: collection/kdtree_cell=001/data.parquet, etc.
+    partition_output_dir = primary_parquet.parent
+
+    # Clean up the original single-file artifacts before partitioning
+    # Delete the item.json that was created for the single file
+    if prepared.item_json_path and prepared.item_json_path.exists():
+        prepared.item_json_path.unlink()
+
+    # Partition the file
+    partition_files = partition_geoparquet(
+        input_path=primary_parquet,
+        output_dir=partition_output_dir,
+        strategy=str(strategy),
+        target_rows=int(target_rows),
+    )
+
+    # Delete original large file (now replaced by partitions)
+    if primary_parquet.exists():
+        primary_parquet.unlink()
+
+    # Create PreparedDataset for each partition
+    partitioned_datasets: list[PreparedDataset] = []
+
+    for partition_path in partition_files:
+        partition_info = get_partition_info(partition_path)
+        partition_id = f"{prepared.item_id}_{partition_info['cell_id']}"
+
+        # Create STAC item for this partition
+        partition_prepared = prepare_dataset(
+            path=partition_path,
+            catalog_root=catalog_root,
+            collection_id=prepared.collection_id,
+            item_id=partition_id,
+            item_datetime=item_datetime,
+        )
+        partitioned_datasets.append(partition_prepared)
+
+    # Add collection-level glob asset for bulk access (Issue #351)
+    # This provides a single glob URL for DuckDB/PyArrow/GDAL to read all partitions
+    glob_pattern = build_glob_pattern(prepared.collection_id, str(strategy))
+    glob_asset = pystac.Asset(
+        href=glob_pattern,
+        media_type="application/vnd.apache.parquet",
+        roles=["data"],
+        title="Partitioned GeoParquet",
+        description=f"Glob pattern for {len(partition_files)} spatial partitions",
+        # portolan:glob will be populated on push with remote URL
+    )
+
+    # Create a PreparedDataset for the glob asset (collection-level)
+    # Use original bbox since it covers all partitions
+    glob_prepared = PreparedDataset(
+        item_id="partitioned_data",
+        collection_id=prepared.collection_id,
+        format_type=FormatType.VECTOR,
+        bbox=prepared.bbox,
+        asset_files={},  # No physical files - it's a pattern reference
+        item_json_path=None,
+        is_collection_level_asset=True,
+        stac_item=None,
+        stac_assets={"partitioned_data": glob_asset},
+        metadata=None,
+    )
+    partitioned_datasets.append(glob_prepared)
+
+    return partitioned_datasets
+
+
 def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
     """Pre-validate that a file has valid geometry BEFORE any filesystem operations.
 
@@ -2674,7 +2831,14 @@ def add_files(
                 item_id=item_id,
                 item_datetime=item_datetime,
             )
-            return ([prepared], [], None)
+            # Check if file should be partitioned (Issue #352)
+            # Returns multiple PreparedDatasets if partitioned, else [prepared]
+            partitioned = _maybe_partition_large_file(
+                prepared=prepared,
+                catalog_root=catalog_root,
+                item_datetime=item_datetime,
+            )
+            return (partitioned, [], None)
 
         except click.ClickException as err:
             is_tabular = file_path.suffix.lower() in TABULAR_EXTENSIONS

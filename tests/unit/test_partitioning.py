@@ -170,3 +170,138 @@ class TestGetPartitionInfo:
 
         assert result["cell_id"] == "8928308280fffff"
         assert result["partition_column"] == "h3_cell"
+
+
+class TestGlobPatterns:
+    """Tests for glob pattern building functions (Issue #351)."""
+
+    @pytest.mark.unit
+    def test_build_glob_pattern_returns_relative_path(self) -> None:
+        """build_glob_pattern returns relative glob for Hive-style partitions."""
+        from portolan_cli.partitioning import build_glob_pattern
+
+        result = build_glob_pattern("buildings", strategy="kdtree")
+
+        assert result == "./*/data.parquet"
+
+    @pytest.mark.unit
+    def test_build_remote_glob_creates_absolute_url(self) -> None:
+        """build_remote_glob creates full remote URL with glob pattern."""
+        from portolan_cli.partitioning import build_remote_glob
+
+        result = build_remote_glob("s3://bucket/catalog", "buildings")
+
+        assert result == "s3://bucket/catalog/buildings/*/data.parquet"
+
+    @pytest.mark.unit
+    def test_build_remote_glob_handles_trailing_slash(self) -> None:
+        """build_remote_glob handles trailing slash in base URL."""
+        from portolan_cli.partitioning import build_remote_glob
+
+        result = build_remote_glob("s3://bucket/catalog/", "buildings")
+
+        assert result == "s3://bucket/catalog/buildings/*/data.parquet"
+
+
+class TestGlobTransformation:
+    """Tests for portolan:glob field transformation on push (Issue #351)."""
+
+    @pytest.mark.unit
+    def test_transform_adds_glob_field_to_pattern_assets(self) -> None:
+        """_transform_collection_glob_assets adds portolan:glob to glob-pattern assets."""
+        import json
+
+        from portolan_cli.push import _transform_collection_glob_assets
+
+        collection_json = {
+            "type": "Collection",
+            "id": "buildings",
+            "assets": {
+                "partitioned_data": {
+                    "href": "./*/data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                },
+                "thumbnail": {
+                    "href": "./thumbnail.png",
+                    "type": "image/png",
+                    "roles": ["thumbnail"],
+                },
+            },
+        }
+
+        content = json.dumps(collection_json).encode("utf-8")
+        result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
+        result_json = json.loads(result)
+
+        # Glob asset should have portolan:glob added
+        partitioned = result_json["assets"]["partitioned_data"]
+        assert "portolan:glob" in partitioned
+        assert "buildings/*/data.parquet" in partitioned["portolan:glob"]
+
+        # Non-glob asset should be unchanged
+        thumbnail = result_json["assets"]["thumbnail"]
+        assert "portolan:glob" not in thumbnail
+
+    @pytest.mark.unit
+    def test_transform_skips_assets_with_existing_glob(self) -> None:
+        """_transform_collection_glob_assets doesn't overwrite existing portolan:glob."""
+        import json
+
+        from portolan_cli.push import _transform_collection_glob_assets
+
+        collection_json = {
+            "type": "Collection",
+            "id": "buildings",
+            "assets": {
+                "partitioned_data": {
+                    "href": "./*/data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "portolan:glob": "s3://existing/path/*/data.parquet",
+                },
+            },
+        }
+
+        content = json.dumps(collection_json).encode("utf-8")
+        result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
+        result_json = json.loads(result)
+
+        # Should preserve existing value
+        assert (
+            result_json["assets"]["partitioned_data"]["portolan:glob"]
+            == "s3://existing/path/*/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_transform_returns_unchanged_for_no_globs(self) -> None:
+        """_transform_collection_glob_assets returns unchanged content when no globs."""
+        import json
+
+        from portolan_cli.push import _transform_collection_glob_assets
+
+        collection_json = {
+            "type": "Collection",
+            "id": "buildings",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                },
+            },
+        }
+
+        content = json.dumps(collection_json).encode("utf-8")
+        result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
+
+        # Content should be unchanged (byte-identical)
+        assert result == content
+
+    @pytest.mark.unit
+    def test_transform_handles_invalid_json(self) -> None:
+        """_transform_collection_glob_assets returns unchanged for invalid JSON."""
+        from portolan_cli.push import _transform_collection_glob_assets
+
+        content = b"not valid json {"
+        result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
+
+        assert result == content

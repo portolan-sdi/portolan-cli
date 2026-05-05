@@ -259,6 +259,61 @@ def format_speed(bytes_per_second: float) -> str:
 
 
 # =============================================================================
+# Glob Asset Transformation (Issue #351)
+# =============================================================================
+
+
+def _transform_collection_glob_assets(
+    content: bytes,
+    prefix: str,
+    collection_path: str,
+) -> bytes:
+    """Transform collection.json to populate portolan:glob fields.
+
+    Per Issue #351: Partitioned GeoParquet datasets expose a glob pattern in
+    collection-level assets. On push, we populate the portolan:glob field with
+    the full remote URL.
+
+    Args:
+        content: Original collection.json bytes.
+        prefix: Remote storage prefix (e.g., "s3://bucket/catalog").
+        collection_path: Relative path to collection (e.g., "buildings").
+
+    Returns:
+        Transformed collection.json bytes with portolan:glob populated.
+    """
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        return content  # Return unchanged if not valid JSON
+
+    assets = data.get("assets", {})
+    modified = False
+
+    for _asset_key, asset_data in assets.items():
+        href = asset_data.get("href", "")
+        # Check if this is a glob pattern (contains *)
+        if "*" in href and "portolan:glob" not in asset_data:
+            # Build full remote glob URL
+            # href is relative to collection.json (e.g., "./*/data.parquet")
+            # We need to convert to absolute remote URL
+            glob_pattern = href.lstrip("./")
+            remote_glob = f"{prefix}/{collection_path}/{glob_pattern}".replace("//", "/")
+            # Ensure proper URL format (no double slashes except after protocol)
+            if "://" in prefix:
+                protocol, rest = prefix.split("://", 1)
+                remote_glob = f"{protocol}://{collection_path}/{glob_pattern}"
+                if rest:
+                    remote_glob = f"{protocol}://{rest}/{collection_path}/{glob_pattern}"
+            asset_data["portolan:glob"] = remote_glob
+            modified = True
+
+    if modified:
+        return json.dumps(data, indent=2).encode("utf-8")
+    return content
+
+
+# =============================================================================
 # Version Diffing
 # =============================================================================
 
@@ -706,6 +761,14 @@ def _upload_stac_files(
                     if verbose:
                         detail(f"Uploading STAC: {rel_path}")
                     content = file_path.read_bytes()
+
+                    # Transform collection.json to populate portolan:glob (Issue #351)
+                    if file_path.name == "collection.json":
+                        collection_path = rel_path.parent.as_posix()
+                        content = _transform_collection_glob_assets(
+                            content, prefix, collection_path
+                        )
+
                     obs.put(store, target_key, content)
                     files_uploaded += 1
                     uploaded_keys.append(target_key)
@@ -1204,6 +1267,13 @@ async def _upload_stac_files_async(
                 file_size = file_sizes[file_path]
 
                 content = file_path.read_bytes()
+
+                # Transform collection.json to populate portolan:glob (Issue #351)
+                if file_path.name == "collection.json":
+                    # Extract collection path (e.g., "buildings" from "buildings/collection.json")
+                    collection_path = rel_path.parent.as_posix()
+                    content = _transform_collection_glob_assets(content, prefix, collection_path)
+
                 await obs.put_async(store, target_key, content)
                 return target_key, file_size
             except Exception as e:
