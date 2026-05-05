@@ -2842,7 +2842,7 @@ def _process_deferred_non_geo_files(
                 resolved_collection_dir, resolved_coll_id = source_to_collection_dir[source_dir]
 
                 # For collection-level, file is already in place (same as geo file)
-                # Just register it as an asset in collection.json
+                # Register it as an asset in collection.json AND versions.json
                 ext = file_path.suffix.upper().lstrip(".")
                 logger.info(
                     "Tracking %s as non-geospatial %s collection-level asset: %s",
@@ -2855,6 +2855,18 @@ def _process_deferred_non_geo_files(
                 _update_collection_with_asset(
                     collection_dir=resolved_collection_dir,
                     asset_path=file_path,
+                )
+
+                # Update versions.json so is_current() finds the asset
+                file_checksum = compute_checksum(file_path)
+                asset_files = {file_path.name: (file_path, file_checksum)}
+                _update_versions(
+                    collection_dir=resolved_collection_dir,
+                    item_id=file_path.stem,  # Use file stem as item_id for collection-level
+                    collection_id=resolved_coll_id,
+                    asset_files=asset_files,
+                    is_collection_level_asset=True,
+                    catalog_root=catalog_root,
                 )
 
                 # Add to skipped (tracked but not converted)

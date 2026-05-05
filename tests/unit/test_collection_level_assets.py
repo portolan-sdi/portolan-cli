@@ -345,7 +345,15 @@ class TestCollectionLevelNonGeoCompanions:
         )
 
         versions_json = collection_dir / "versions.json"
-        versions_json.write_text(json.dumps({"assets": {}, "versions": []}))
+        versions_json.write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": None,
+                    "versions": [],
+                }
+            )
+        )
 
         # Non-geo file in collection directory (same location as geo file)
         non_geo_file = collection_dir / "stats.parquet"
@@ -377,6 +385,14 @@ class TestCollectionLevelNonGeoCompanions:
             f"Non-geo asset 'stats' should be in collection.json, got: {list(updated['assets'].keys())}"
         )
         assert updated["assets"]["stats"]["href"] == "./stats.parquet"
+
+        # Verify: asset added to versions.json (Issue #383 fix includes versioning)
+        versions_data = json.loads(versions_json.read_text())
+        assert len(versions_data["versions"]) == 1, "Should have one version entry"
+        version_assets = versions_data["versions"][0]["assets"]
+        assert "stats.parquet" in version_assets, (
+            f"Non-geo asset should be in versions.json, got: {list(version_assets.keys())}"
+        )
 
     def test_non_geo_without_any_companion_warns(self, initialized_catalog):
         """Non-geo file without geo companion logs warning (existing behavior)."""
