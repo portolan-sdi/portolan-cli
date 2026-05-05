@@ -4922,6 +4922,21 @@ def _verbose_readme(msg: str, verbose: bool, use_json: bool) -> None:
         info_output(msg)
 
 
+def _verbose_readme_files(
+    dirpath: Path,
+    rel_dir: str,
+    stac_file: str,
+    verbose: bool,
+    use_json: bool,
+) -> None:
+    """Output verbose file-read messages for a STAC directory."""
+    dir_suffix = "/" if rel_dir != "catalog root" else ""
+    _verbose_readme(f"Reading {stac_file} from {rel_dir}{dir_suffix}", verbose, use_json)
+    if (dirpath / ".portolan" / "metadata.yaml").exists():
+        metadata_loc = ".portolan/" if rel_dir == "catalog root" else f"{rel_dir}/.portolan/"
+        _verbose_readme(f"Reading metadata.yaml from {metadata_loc}", verbose, use_json)
+
+
 def _generate_readme_content(
     target_dir: Path,
     catalog_path: Path,
@@ -5217,12 +5232,14 @@ def _readme_recursive(
 
         if (dirpath / "collection.json").exists():
             _verbose_readme(f"Processing collection: {rel_dir}/", verbose, use_json)
+            _verbose_readme_files(dirpath, str(rel_dir), "collection.json", verbose, use_json)
             content = generate_readme_for_collection(dirpath, catalog_path)
             _process_readme_entry(
                 readme_path, content, rel_path, check, generated_paths, stale_paths
             )
         elif (dirpath / "catalog.json").exists():
             _verbose_readme(f"Processing subcatalog: {rel_dir}/", verbose, use_json)
+            _verbose_readme_files(dirpath, str(rel_dir), "catalog.json", verbose, use_json)
             content = generate_catalog_readme(dirpath)
             _process_readme_entry(
                 readme_path, content, rel_path, check, generated_paths, stale_paths
@@ -5230,6 +5247,7 @@ def _readme_recursive(
 
     # Generate root catalog README
     _verbose_readme("Processing catalog root", verbose, use_json)
+    _verbose_readme_files(catalog_path, "catalog root", "catalog.json", verbose, use_json)
     root_content = generate_catalog_readme(catalog_path)
     _process_readme_entry(
         catalog_path / "README.md", root_content, "README.md", check, generated_paths, stale_paths
