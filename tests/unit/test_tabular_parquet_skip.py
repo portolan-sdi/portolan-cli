@@ -182,11 +182,13 @@ class TestTabularParquetWithGeoAsset:
                     path=path.stem,
                     reason="The source file may have no valid geometry.",
                 )
-            # Succeed for the GeoJSON
+            # Succeed for the GeoJSON - explicitly set is_collection_level_asset=False
+            # so the deferred non-geo files go through item-level path (Issue #383)
             return MagicMock(
                 item_id="item",
                 collection_id=collection_id,
                 asset_paths=["boundaries.parquet"],
+                is_collection_level_asset=False,
             )
 
         # Mock add_dataset to simulate the real flow:

@@ -267,3 +267,125 @@ class TestCollectionLevelAssetWorkflow:
         assert not (collection_dir / "demographics").exists(), (
             "Should NOT have double-nested demographics/demographics/ directory"
         )
+
+
+# =============================================================================
+# Issue #383: Non-geo parquet companions with collection-level geo files
+# =============================================================================
+
+
+@pytest.mark.integration
+class TestCollectionLevelNonGeoCompanionWorkflow:
+    """Integration tests for issue #383: non-geo parquet companion tracking.
+
+    Bug: Non-geo parquet files fail to track when their companion geo file is
+    collection-level because `source_to_item_dir` doesn't include collection-level
+    sources.
+
+    Repro: User has data.parquet (geo) + stats.parquet (non-geo) in same dir.
+    When added as collection-level, stats.parquet should register as asset.
+    """
+
+    def test_geo_plus_tabular_parquets_both_tracked(self, fresh_catalog_no_versions, fixtures_dir):
+        """Both geo and non-geo parquets in same dir are tracked as collection-level.
+
+        This is the primary repro case for issue #383.
+        """
+        from portolan_cli.dataset import add_files
+
+        # Set up collection directory
+        collection_dir = fresh_catalog_no_versions / "tunnels"
+        collection_dir.mkdir()
+
+        # Use simple.parquet as geo fixture (it's a clean GeoParquet)
+        geo_fixture = fixtures_dir / "simple.parquet"
+        # For non-geo, we use the lookup.parquet fixture but need to handle
+        # the case where it might be detected as geo. Instead, create a
+        # minimal parquet without geometry.
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        geo_file = collection_dir / "tunnels.parquet"
+        geo_file.write_bytes(geo_fixture.read_bytes())
+
+        # Create a minimal non-geo parquet file
+        nongeo_file = collection_dir / "lookup.parquet"
+        table = pa.table({"id": [1, 2, 3], "name": ["a", "b", "c"]})
+        pq.write_table(table, nongeo_file)
+
+        # Add the directory (both files)
+        added, skipped, failures = add_files(
+            paths=[collection_dir],
+            catalog_root=fresh_catalog_no_versions,
+            collection_id="tunnels",
+        )
+
+        # Verify: geo file was added successfully
+        assert len(added) >= 1, f"Geo file should be added, got failures={failures}"
+        assert len(failures) == 0, f"No failures expected, got: {failures}"
+
+        # Verify: non-geo file was tracked (in skipped, not failures)
+        assert nongeo_file in skipped, (
+            f"Non-geo file should be in skipped (tracked), got skipped={skipped}"
+        )
+
+        # Verify: collection.json has both assets
+        collection_json = collection_dir / "collection.json"
+        assert collection_json.exists(), "collection.json should exist"
+
+        with open(collection_json) as f:
+            collection_data = json.load(f)
+
+        assets = collection_data.get("assets", {})
+        assert "tunnels" in assets, (
+            f"Geo asset 'tunnels' should be in assets, got: {list(assets.keys())}"
+        )
+        assert "lookup" in assets, (
+            f"Non-geo asset 'lookup' should be in assets, got: {list(assets.keys())}"
+        )
+
+        # Verify: both have correct hrefs
+        assert assets["tunnels"]["href"] == "./tunnels.parquet"
+        assert assets["lookup"]["href"] == "./lookup.parquet"
+
+        # Verify: NO item.json exists (both are collection-level)
+        _assert_no_item_json(collection_dir)
+
+    def test_nongeo_parquet_error_message_before_fix(self, fresh_catalog_no_versions, fixtures_dir):
+        """Verify the error message that issue #383 reported (sanity check).
+
+        Before fix: User would see "no geospatial file in same directory"
+        even when a geo file EXISTS in the same directory.
+
+        After fix: Both files track correctly, no error.
+        """
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.dataset import add_files
+
+        collection_dir = fresh_catalog_no_versions / "data"
+        collection_dir.mkdir()
+
+        # Use simple.parquet as geo fixture
+        geo_fixture = fixtures_dir / "simple.parquet"
+        (collection_dir / "data.parquet").write_bytes(geo_fixture.read_bytes())
+
+        # Create minimal non-geo parquet
+        nongeo_file = collection_dir / "stats.parquet"
+        table = pa.table({"count": [100, 200], "avg": [1.5, 2.5]})
+        pq.write_table(table, nongeo_file)
+
+        # Add directory
+        added, skipped, failures = add_files(
+            paths=[collection_dir],
+            catalog_root=fresh_catalog_no_versions,
+            collection_id="data",
+        )
+
+        # After fix: no error about "no geospatial file"
+        # Both files should be tracked (added or skipped)
+        assert len(failures) == 0, f"Should have no failures after fix, got: {failures}"
+
+        # Non-geo file should be in skipped (tracked as companion)
+        assert nongeo_file in skipped, "Non-geo should be tracked as skipped"
