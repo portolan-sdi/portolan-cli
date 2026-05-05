@@ -696,10 +696,10 @@ def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None
 
 
 def _validate_geoparquet(path: Path) -> str | None:
-    """Validate that the output file is valid GeoParquet.
+    """Validate that the output is valid GeoParquet (file or partitioned directory).
 
     Args:
-        path: Path to the parquet file to validate.
+        path: Path to the parquet file or hive-partitioned directory.
 
     Returns:
         Error message if validation failed, None if valid.
@@ -707,11 +707,39 @@ def _validate_geoparquet(path: Path) -> str | None:
     try:
         from portolan_cli.formats import is_geoparquet
 
+        if path.is_dir():
+            return _validate_partitioned_geoparquet(path)
+
         if not is_geoparquet(path):
             return "Output file is not valid GeoParquet (missing geo metadata)"
         return None
     except Exception as e:
         return f"Failed to validate GeoParquet: {e}"
+
+
+def _validate_partitioned_geoparquet(partition_dir: Path) -> str | None:
+    """Validate a hive-partitioned GeoParquet directory.
+
+    Checks that at least one parquet file exists and is valid GeoParquet.
+
+    Args:
+        partition_dir: Path to the partitioned output directory.
+
+    Returns:
+        Error message if validation failed, None if valid.
+    """
+    from portolan_cli.formats import is_geoparquet
+
+    parquet_files = list(partition_dir.rglob("*.parquet"))
+    if not parquet_files:
+        return f"Partitioned directory contains no parquet files: {partition_dir}"
+
+    # Validate first parquet file as representative sample
+    sample_file = parquet_files[0]
+    if not is_geoparquet(sample_file):
+        return f"Partitioned output is not valid GeoParquet: {sample_file}"
+
+    return None
 
 
 def _validate_cog(path: Path) -> str | None:

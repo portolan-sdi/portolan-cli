@@ -1763,3 +1763,42 @@ class TestVectorSettingsIntegration:
 
         table = pq.read_table(result.output)
         assert "s2_cell" in table.schema.names
+
+    @pytest.mark.unit
+    def test_validate_geoparquet_handles_directory(self, tmp_path: Path) -> None:
+        """_validate_geoparquet handles partitioned directories correctly."""
+        from portolan_cli.convert import _validate_geoparquet
+
+        # Empty directory should fail
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+        error = _validate_geoparquet(empty_dir)
+        assert error is not None
+        assert "no parquet files" in error
+
+    @pytest.mark.unit
+    def test_validate_partitioned_geoparquet_with_valid_files(
+        self, sample_geojson: Path, tmp_path: Path
+    ) -> None:
+        """_validate_geoparquet succeeds for valid partitioned directory."""
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector, _validate_geoparquet
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        # First convert to single file to get valid geoparquet
+        settings = VectorSettings(spatial_index="h3", resolution=6)
+        single_file = _convert_vector(sample_geojson, output_dir, settings)
+
+        # Create mock partitioned directory structure with valid parquet file
+        partition_dir = tmp_path / "partitioned"
+        partition_dir.mkdir()
+        (partition_dir / "h3_cell=123").mkdir()
+        import shutil
+
+        shutil.copy(single_file, partition_dir / "h3_cell=123" / "data.parquet")
+
+        # Validation should succeed on directory with valid parquet files
+        error = _validate_geoparquet(partition_dir)
+        assert error is None

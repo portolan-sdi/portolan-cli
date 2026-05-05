@@ -1199,3 +1199,72 @@ conversion:
         settings = get_vector_settings(tmp_path)
 
         assert settings.add_bbox is False
+
+    @pytest.mark.unit
+    def test_invalid_spatial_index_normalized_to_none(self, tmp_path: Path) -> None:
+        """Invalid spatial_index is normalized to 'none'."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    spatial_index: invalid_index
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.spatial_index == "none"
+
+    @pytest.mark.unit
+    def test_invalid_sort_normalized_to_none(self, tmp_path: Path) -> None:
+        """Invalid sort method is normalized to 'none'."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    sort: supersort
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.sort == "none"
+
+    @pytest.mark.unit
+    def test_negative_resolution_normalized_to_auto(self, tmp_path: Path) -> None:
+        """Negative resolution is normalized to 'auto'."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    resolution: -5
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.resolution == "auto"
+
+    @pytest.mark.unit
+    def test_partition_without_index_normalized_to_false(self, tmp_path: Path) -> None:
+        """partition=True without spatial_index is normalized to False."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    partition: true
+    spatial_index: none
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.partition is False

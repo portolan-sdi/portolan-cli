@@ -571,17 +571,27 @@ def get_vector_settings(catalog_path: Path) -> VectorSettings:
     if not isinstance(partition, bool):
         partition = False
 
-    settings = VectorSettings(
+    # Normalize invalid values before creating settings
+    if spatial_index not in VALID_SPATIAL_INDEXES:
+        logger.warning("Vector config: Unknown spatial_index '%s', using 'none'", spatial_index)
+        spatial_index = "none"
+
+    if sort not in VALID_SORT_METHODS:
+        logger.warning("Vector config: Unknown sort '%s', using 'none'", sort)
+        sort = "none"
+
+    if resolution != "auto" and (not isinstance(resolution, int) or resolution < 0):
+        logger.warning("Vector config: Invalid resolution '%s', using 'auto'", resolution)
+        resolution = "auto"
+
+    if partition and spatial_index == "none":
+        logger.warning("Vector config: partition=True requires spatial_index, disabling partition")
+        partition = False
+
+    return VectorSettings(
         spatial_index=spatial_index,
         resolution=resolution,
         sort=sort,
         add_bbox=add_bbox,
         partition=partition,
     )
-
-    # Validate and log warnings
-    warnings = validate_vector_settings(settings)
-    for warning in warnings:
-        logger.warning("Vector config: %s", warning)
-
-    return settings
