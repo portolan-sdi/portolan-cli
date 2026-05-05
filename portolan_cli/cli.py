@@ -4916,10 +4916,17 @@ def metadata_validate(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _verbose_readme(msg: str, verbose: bool, use_json: bool) -> None:
+    """Output verbose message for readme command (if enabled and not JSON mode)."""
+    if verbose and not use_json:
+        info_output(msg)
+
+
 def _generate_readme_content(
     target_dir: Path,
     catalog_path: Path,
     use_json: bool,
+    verbose: bool = False,
 ) -> tuple[str, bool]:
     """Generate README content for a target directory.
 
@@ -4927,6 +4934,7 @@ def _generate_readme_content(
         target_dir: Directory to generate README for.
         catalog_path: Root catalog path.
         use_json: Whether to output errors as JSON.
+        verbose: Whether to show detailed output.
 
     Returns:
         Tuple of (readme_content, is_catalog_root).
@@ -4938,12 +4946,26 @@ def _generate_readme_content(
     from portolan_cli.errors import ConfigInvalidStructureError
     from portolan_cli.readme import generate_catalog_readme, generate_readme
 
+    # Compute relative path for display
+    try:
+        rel_dir = target_dir.relative_to(catalog_path)
+        display_dir = str(rel_dir) if str(rel_dir) != "." else ""
+    except ValueError:
+        display_dir = str(target_dir)
+    dir_prefix = f"{display_dir}/" if display_dir else ""
+
     # Check if at catalog root (has catalog.json, not collection.json)
     is_catalog_root = (target_dir / "catalog.json").exists() and not (
         target_dir / "collection.json"
     ).exists()
 
     if is_catalog_root:
+        _verbose_readme(
+            f"Reading catalog.json from {dir_prefix or 'catalog root'}", verbose, use_json
+        )
+        if (target_dir / ".portolan" / "metadata.yaml").exists():
+            _verbose_readme(f"Reading metadata.yaml from {dir_prefix}.portolan/", verbose, use_json)
+        _verbose_readme("Generating README.md", verbose, use_json)
         return generate_catalog_readme(target_dir), True
 
     # Load STAC (collection.json or catalog.json)
@@ -4951,11 +4973,16 @@ def _generate_readme_content(
     for stac_file in ["collection.json", "catalog.json"]:
         stac_path = target_dir / stac_file
         if stac_path.exists():
+            _verbose_readme(
+                f"Reading {stac_file} from {dir_prefix or 'catalog root'}", verbose, use_json
+            )
             stac = json.loads(stac_path.read_text())
             break
 
     # Load merged metadata
     try:
+        if (target_dir / ".portolan" / "metadata.yaml").exists():
+            _verbose_readme(f"Reading metadata.yaml from {dir_prefix}.portolan/", verbose, use_json)
         metadata_dict = load_merged_metadata(target_dir, catalog_path)
     except ConfigInvalidStructureError as err:
         if use_json:
@@ -4967,6 +4994,8 @@ def _generate_readme_content(
         else:
             error(f"Invalid YAML in metadata.yaml: {err}")
         raise SystemExit(1) from err
+
+    _verbose_readme("Generating README.md", verbose, use_json)
 
     return generate_readme(stac=stac, metadata=metadata_dict), False
 
@@ -5148,6 +5177,7 @@ def _readme_recursive(
     use_json: bool,
     check: bool,
     stdout: bool,
+    verbose: bool = False,
 ) -> None:
     """Generate READMEs for catalog and all collections recursively.
 
@@ -5160,6 +5190,7 @@ def _readme_recursive(
         use_json: Output JSON format.
         check: CI mode - check freshness only.
         stdout: Print to stdout (not supported in recursive mode).
+        verbose: Whether to show detailed output.
     """
     from portolan_cli.readme import (
         generate_catalog_readme,
@@ -5185,17 +5216,20 @@ def _readme_recursive(
         rel_path = str(rel_dir / "README.md")
 
         if (dirpath / "collection.json").exists():
+            _verbose_readme(f"Processing collection: {rel_dir}/", verbose, use_json)
             content = generate_readme_for_collection(dirpath, catalog_path)
             _process_readme_entry(
                 readme_path, content, rel_path, check, generated_paths, stale_paths
             )
         elif (dirpath / "catalog.json").exists():
+            _verbose_readme(f"Processing subcatalog: {rel_dir}/", verbose, use_json)
             content = generate_catalog_readme(dirpath)
             _process_readme_entry(
                 readme_path, content, rel_path, check, generated_paths, stale_paths
             )
 
     # Generate root catalog README
+    _verbose_readme("Processing catalog root", verbose, use_json)
     root_content = generate_catalog_readme(catalog_path)
     _process_readme_entry(
         catalog_path / "README.md", root_content, "README.md", check, generated_paths, stale_paths
@@ -5264,6 +5298,7 @@ def _readme_recursive(
     default=False,
     help="Generate READMEs for catalog and all collections.",
 )
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed output.")
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def readme(
@@ -5273,6 +5308,7 @@ def readme(
     stdout: bool,
     check: bool,
     recursive: bool,
+    verbose: bool,
 ) -> None:
     """Generate README.md from STAC metadata and metadata.yaml.
 
@@ -5314,7 +5350,7 @@ def readme(
 
     # Handle recursive mode
     if recursive:
-        _readme_recursive(catalog_path, use_json, check, stdout)
+        _readme_recursive(catalog_path, use_json, check, stdout, verbose)
         return
 
     # Determine target directory
@@ -5324,7 +5360,9 @@ def readme(
         target_dir = catalog_path
 
     # Generate README content
-    readme_content, is_catalog_root = _generate_readme_content(target_dir, catalog_path, use_json)
+    readme_content, is_catalog_root = _generate_readme_content(
+        target_dir, catalog_path, use_json, verbose
+    )
 
     # Determine output path
     readme_path = target_dir / "README.md"
