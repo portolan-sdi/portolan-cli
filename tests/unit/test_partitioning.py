@@ -383,8 +383,8 @@ class TestCliStrategyValidation:
     """Tests for CLI strategy validation."""
 
     @pytest.mark.unit
-    def test_partition_command_rejects_unimplemented_strategies(self) -> None:
-        """CLI should reject strategies that aren't implemented yet."""
+    def test_partition_command_only_accepts_kdtree(self) -> None:
+        """CLI should only accept kdtree strategy (others not implemented)."""
         from click.testing import CliRunner
 
         from portolan_cli.cli import partition
@@ -392,11 +392,30 @@ class TestCliStrategyValidation:
         runner = CliRunner()
 
         with runner.isolated_filesystem():
-            # Create a test file
             Path("test.parquet").write_bytes(b"test")
 
+            # Invalid strategy rejected by Click.Choice
             result = runner.invoke(partition, ["test.parquet", "output/", "--strategy", "h3"])
 
-            assert result.exit_code == 1
-            assert "not yet implemented" in result.output
-            assert "kdtree" in result.output
+            assert result.exit_code != 0
+            assert "Invalid value" in result.output or "invalid choice" in result.output.lower()
+
+
+class TestPartitionGeoparquetUnsupportedStrategy:
+    """Tests for partition_geoparquet ValueError on unsupported strategies."""
+
+    @pytest.mark.unit
+    def test_partition_geoparquet_raises_for_unsupported_strategy(self, tmp_path: Path) -> None:
+        """partition_geoparquet raises ValueError for non-kdtree strategies."""
+        from portolan_cli.partitioning import partition_geoparquet
+
+        input_file = tmp_path / "input.parquet"
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        with pytest.raises(ValueError, match="not yet supported"):
+            partition_geoparquet(
+                input_path=input_file,
+                output_dir=output_dir,
+                strategy="h3",
+            )

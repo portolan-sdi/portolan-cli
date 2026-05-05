@@ -6261,7 +6261,7 @@ def extract_wfs_cmd(
 )
 @click.option(
     "--strategy",
-    type=click.Choice(["kdtree", "h3", "s2", "quadkey"]),
+    type=click.Choice(["kdtree"]),
     default="kdtree",
     help="Spatial partitioning strategy. Default: kdtree (data-driven, auto-balancing).",
 )
@@ -6282,15 +6282,15 @@ def extract_wfs_cmd(
     is_flag=True,
     help="Show detailed output.",
 )
-@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
 def partition(
+    ctx: click.Context,
     input_file: Path,
     output_dir: Path | None,
     strategy: str,
     target_rows: int,
     preview: bool,
     verbose: bool,
-    json_output: bool,
 ) -> None:
     """Partition a large GeoParquet file for better query performance.
 
@@ -6317,11 +6317,14 @@ def partition(
         # Custom target rows
         portolan partition buildings.parquet output/ --target-rows 50000
     """
+    from portolan_cli.config import get_setting
     from portolan_cli.partitioning import partition_geoparquet, should_partition
+
+    use_json = should_output_json(ctx)
 
     # Check if file is GeoParquet
     if input_file.suffix.lower() != ".parquet":
-        if json_output:
+        if use_json:
             envelope = error_envelope(
                 "partition",
                 [ErrorDetail(type="FormatError", message="Input must be a .parquet file")],
@@ -6334,9 +6337,13 @@ def partition(
     # Preview mode: show analysis without creating files
     if preview:
         file_size_gb = input_file.stat().st_size / (1024 * 1024 * 1024)
-        should_part = should_partition(input_file, threshold_gb=2.0)
+        threshold_gb = get_setting("partitioning.threshold_gb") or 2.0
+        part_enabled = get_setting("partitioning.enabled")
+        should_part = should_partition(
+            input_file, threshold_gb=float(threshold_gb), enabled=part_enabled is not False
+        )
 
-        if json_output:
+        if use_json:
             result = {
                 "file": str(input_file),
                 "size_gb": round(file_size_gb, 2),
@@ -6358,7 +6365,7 @@ def partition(
 
     # Require output_dir for actual partitioning
     if output_dir is None:
-        if json_output:
+        if use_json:
             envelope = error_envelope(
                 "partition",
                 [
@@ -6373,28 +6380,11 @@ def partition(
             error("OUTPUT_DIR required (use --preview for analysis only)")
         raise SystemExit(1)
 
-    # Validate strategy is implemented (only kdtree for now)
-    if strategy != "kdtree":
-        if json_output:
-            envelope = error_envelope(
-                "partition",
-                [
-                    ErrorDetail(
-                        type="NotImplementedError",
-                        message=f"Strategy '{strategy}' not yet implemented. Only 'kdtree' is available.",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Strategy '{strategy}' not yet implemented. Only 'kdtree' is available.")
-        raise SystemExit(1)
-
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        if not json_output:
+        if not use_json:
             info_output(f"Partitioning {input_file.name} with {strategy} strategy...")
 
         partition_files = partition_geoparquet(
@@ -6405,7 +6395,7 @@ def partition(
             verbose=verbose,
         )
 
-        if json_output:
+        if use_json:
             result = {
                 "input": str(input_file),
                 "output_dir": str(output_dir),
@@ -6420,7 +6410,7 @@ def partition(
                     detail(f"  {pf.parent.name}/{pf.name}")
 
     except Exception as e:
-        if json_output:
+        if use_json:
             envelope = error_envelope(
                 "partition",
                 [ErrorDetail(type="PartitionError", message=str(e))],

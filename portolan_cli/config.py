@@ -81,7 +81,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "statistics.raster_mode": "approx",
     "parquet.enabled": False,  # Disabled by default (100% optional per issue #319)
     "parquet.threshold": 100,  # Suggest parquet generation when items > threshold
-    "partitioning.enabled": True,  # Auto-partition files > threshold (Issue #352)
+    "partitioning.enabled": False,  # Partitioning features disabled by default
     "partitioning.threshold_gb": 2.0,  # 2GB per OGC best practices
     "partitioning.strategy": "kdtree",  # KD-tree: data-driven, auto-balancing
     "partitioning.target_rows": 120_000,  # geoparquet-io default

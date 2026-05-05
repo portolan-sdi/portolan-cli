@@ -335,11 +335,14 @@ Split large GeoParquet files into spatially-organized partitions for better quer
 
 ```yaml
 # .portolan/config.yaml
-partitioning.enabled: true       # Auto-partition during add (default: true)
-partitioning.threshold_gb: 2     # Size threshold in GB (default: 2.0)
+partitioning.enabled: true       # Enable partitioning features (default: false)
+partitioning.threshold_gb: 2     # Size threshold in GB for --preview (default: 2.0)
 partitioning.strategy: kdtree    # Partitioning strategy (default: kdtree)
 partitioning.target_rows: 120000 # Target rows per partition (default: 120,000)
 ```
+
+!!! note "Standalone command"
+    Partitioning is performed via `portolan partition`, not automatically during `add`. Use the command below to partition large files before or after tracking.
 
 ### Commands
 
@@ -350,8 +353,8 @@ portolan partition buildings.parquet --preview
 # Partition with default settings (kdtree, 120k rows/partition)
 portolan partition buildings.parquet output/
 
-# Custom strategy and target rows
-portolan partition data.parquet output/ --strategy h3 --target-rows 50000
+# Custom target rows
+portolan partition data.parquet output/ --target-rows 50000
 ```
 
 ### How It Works
