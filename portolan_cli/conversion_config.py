@@ -414,3 +414,174 @@ def get_cog_settings(catalog_path: Path) -> CogSettings:
         logger.warning("COG config: %s", warning)
 
     return settings
+
+
+# =============================================================================
+# Vector Settings (Issue #340)
+# =============================================================================
+
+# Valid spatial index types supported by geoparquet-io
+VALID_SPATIAL_INDEXES: frozenset[str] = frozenset({"h3", "quadkey", "s2", "a5", "kdtree", "none"})
+
+# Valid sort methods
+VALID_SORT_METHODS: frozenset[str] = frozenset({"hilbert", "quadkey", "none"})
+
+# Default resolutions per index type (geoparquet-io defaults)
+DEFAULT_RESOLUTIONS: dict[str, int] = {
+    "h3": 9,
+    "quadkey": 13,
+    "s2": 13,
+    "a5": 15,
+    "kdtree": 9,  # iterations for kdtree
+}
+
+
+@dataclass(frozen=True)
+class VectorSettings:
+    """Configuration for vector (GeoParquet) conversion.
+
+    Controls spatial optimization at conversion time via geoparquet-io's
+    fluent Table API. Both file and Iceberg backends receive the same
+    spatially-enriched output.
+
+    Attributes:
+        spatial_index: Spatial index column to add (h3, quadkey, s2, a5, kdtree, none).
+        resolution: Index resolution. "auto" uses geoparquet-io defaults which
+            include row-count-based tuning. Explicit int overrides.
+        sort: Row ordering method (hilbert, quadkey, none).
+        add_bbox: Whether to add a bbox struct column.
+        partition: Whether to produce hive-partitioned output. Only affects
+            file backend; Iceberg uses native partitioning on the spatial column.
+    """
+
+    spatial_index: str = "none"
+    resolution: int | str = "auto"
+    sort: str = "none"
+    add_bbox: bool = False
+    partition: bool = False
+
+
+def validate_vector_settings(settings: VectorSettings) -> list[str]:
+    """Validate vector settings and return warnings for any issues.
+
+    Does not raise exceptions — returns a list of warning messages.
+
+    Args:
+        settings: VectorSettings instance to validate.
+
+    Returns:
+        List of warning messages. Empty list if all settings are valid.
+    """
+    warnings: list[str] = []
+
+    # Validate spatial_index
+    if settings.spatial_index not in VALID_SPATIAL_INDEXES:
+        warnings.append(
+            f"Unknown spatial_index '{settings.spatial_index}'. "
+            f"Valid values: {', '.join(sorted(VALID_SPATIAL_INDEXES))}. "
+            "Falling back to 'none'."
+        )
+
+    # Validate sort
+    if settings.sort not in VALID_SORT_METHODS:
+        warnings.append(
+            f"Unknown sort method '{settings.sort}'. "
+            f"Valid values: {', '.join(sorted(VALID_SORT_METHODS))}. "
+            "Falling back to 'none'."
+        )
+
+    # Validate resolution if explicit
+    if settings.resolution != "auto":
+        if not isinstance(settings.resolution, int):
+            warnings.append(
+                f"Resolution '{settings.resolution}' is not valid. "
+                "Must be 'auto' or an integer. Using 'auto'."
+            )
+        elif settings.resolution < 0:
+            warnings.append(
+                f"Resolution {settings.resolution} is negative. Using default for index type."
+            )
+
+    # Warn if partition=True but spatial_index=none
+    if settings.partition and settings.spatial_index == "none":
+        warnings.append(
+            "partition=True requires a spatial_index. "
+            "Set spatial_index to h3, quadkey, s2, a5, or kdtree."
+        )
+
+    return warnings
+
+
+def get_vector_settings(catalog_path: Path) -> VectorSettings:
+    """Load vector conversion settings from catalog config.
+
+    Reads the 'conversion.vector' section from .portolan/config.yaml and returns
+    a VectorSettings instance with values from config merged with defaults.
+
+    Args:
+        catalog_path: Root path of the catalog.
+
+    Returns:
+        VectorSettings instance. Returns defaults if no config exists.
+    """
+    config = load_config(catalog_path)
+
+    conversion = _get_dict(config, "conversion")
+    if not conversion:
+        return VectorSettings()
+
+    vector = _get_dict(conversion, "vector")
+    if not vector:
+        return VectorSettings()
+
+    # Parse spatial_index
+    spatial_index = vector.get("spatial_index")
+    if not isinstance(spatial_index, str):
+        spatial_index = "none"
+    else:
+        spatial_index = spatial_index.lower()
+
+    # Parse resolution
+    resolution: int | str = vector.get("resolution", "auto")
+    if isinstance(resolution, str):
+        resolution = resolution.lower()
+        if resolution != "auto":
+            # Try to parse as int
+            try:
+                resolution = int(resolution)
+            except ValueError:
+                resolution = "auto"
+    elif not isinstance(resolution, int):
+        resolution = "auto"
+
+    # Parse sort
+    sort = vector.get("sort")
+    if not isinstance(sort, str):
+        sort = "none"
+    else:
+        sort = sort.lower()
+
+    # Parse add_bbox
+    add_bbox = vector.get("add_bbox")
+    if not isinstance(add_bbox, bool):
+        add_bbox = False
+
+    # Parse partition
+    partition = vector.get("partition")
+    if not isinstance(partition, bool):
+        partition = False
+
+    settings = VectorSettings(
+        spatial_index=spatial_index,
+        resolution=resolution,
+        sort=sort,
+        add_bbox=add_bbox,
+        partition=partition,
+    )
+
+    # Validate and log warnings
+    warnings = validate_vector_settings(settings)
+    for warning in warnings:
+        logger.warning("Vector config: %s", warning)
+
+    return settings

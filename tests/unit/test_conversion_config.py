@@ -891,3 +891,311 @@ conversion:
         settings = get_cog_settings(tmp_path)
 
         assert settings.resampling == "bilinear"
+
+
+# =============================================================================
+# VectorSettings Tests (Issue #340)
+# =============================================================================
+
+
+class TestVectorSettingsDefaults:
+    """Tests for VectorSettings default values."""
+
+    @pytest.mark.unit
+    def test_default_values(self) -> None:
+        """VectorSettings has correct defaults (no optimization)."""
+        from portolan_cli.conversion_config import VectorSettings
+
+        settings = VectorSettings()
+
+        assert settings.spatial_index == "none"
+        assert settings.resolution == "auto"
+        assert settings.sort == "none"
+        assert settings.add_bbox is False
+        assert settings.partition is False
+
+    @pytest.mark.unit
+    def test_custom_values(self) -> None:
+        """VectorSettings accepts custom values."""
+        from portolan_cli.conversion_config import VectorSettings
+
+        settings = VectorSettings(
+            spatial_index="h3",
+            resolution=6,
+            sort="hilbert",
+            add_bbox=True,
+            partition=True,
+        )
+
+        assert settings.spatial_index == "h3"
+        assert settings.resolution == 6
+        assert settings.sort == "hilbert"
+        assert settings.add_bbox is True
+        assert settings.partition is True
+
+
+class TestValidateVectorSettings:
+    """Tests for validate_vector_settings()."""
+
+    @pytest.mark.unit
+    def test_valid_defaults_no_warnings(self) -> None:
+        """Default VectorSettings produces no warnings."""
+        from portolan_cli.conversion_config import VectorSettings, validate_vector_settings
+
+        settings = VectorSettings()
+        warnings = validate_vector_settings(settings)
+
+        assert warnings == []
+
+    @pytest.mark.unit
+    def test_unknown_spatial_index_warns(self) -> None:
+        """Unknown spatial_index produces warning."""
+        from portolan_cli.conversion_config import VectorSettings, validate_vector_settings
+
+        settings = VectorSettings(spatial_index="magic")
+        warnings = validate_vector_settings(settings)
+
+        assert len(warnings) == 1
+        assert "Unknown spatial_index 'magic'" in warnings[0]
+
+    @pytest.mark.unit
+    def test_unknown_sort_warns(self) -> None:
+        """Unknown sort method produces warning."""
+        from portolan_cli.conversion_config import VectorSettings, validate_vector_settings
+
+        settings = VectorSettings(sort="supersort")
+        warnings = validate_vector_settings(settings)
+
+        assert len(warnings) == 1
+        assert "Unknown sort method 'supersort'" in warnings[0]
+
+    @pytest.mark.unit
+    def test_negative_resolution_warns(self) -> None:
+        """Negative resolution produces warning."""
+        from portolan_cli.conversion_config import VectorSettings, validate_vector_settings
+
+        settings = VectorSettings(spatial_index="h3", resolution=-5)
+        warnings = validate_vector_settings(settings)
+
+        assert len(warnings) == 1
+        assert "Resolution -5 is negative" in warnings[0]
+
+    @pytest.mark.unit
+    def test_partition_without_index_warns(self) -> None:
+        """partition=True without spatial_index produces warning."""
+        from portolan_cli.conversion_config import VectorSettings, validate_vector_settings
+
+        settings = VectorSettings(partition=True, spatial_index="none")
+        warnings = validate_vector_settings(settings)
+
+        assert len(warnings) == 1
+        assert "partition=True requires a spatial_index" in warnings[0]
+
+    @pytest.mark.unit
+    def test_valid_h3_config_no_warnings(self) -> None:
+        """Valid H3 config produces no warnings."""
+        from portolan_cli.conversion_config import VectorSettings, validate_vector_settings
+
+        settings = VectorSettings(
+            spatial_index="h3",
+            resolution=9,
+            sort="hilbert",
+            add_bbox=True,
+            partition=True,
+        )
+        warnings = validate_vector_settings(settings)
+
+        assert warnings == []
+
+
+class TestGetVectorSettings:
+    """Tests for get_vector_settings()."""
+
+    @pytest.mark.unit
+    def test_missing_config_returns_defaults(self, tmp_path: Path) -> None:
+        """Missing config returns default VectorSettings."""
+        from portolan_cli.conversion_config import VectorSettings, get_vector_settings
+
+        settings = get_vector_settings(tmp_path)
+
+        assert settings == VectorSettings()
+
+    @pytest.mark.unit
+    def test_empty_vector_section_returns_defaults(self, tmp_path: Path) -> None:
+        """Empty vector section returns defaults."""
+        from portolan_cli.conversion_config import VectorSettings, get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector: {}
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings == VectorSettings()
+
+    @pytest.mark.unit
+    def test_load_spatial_index(self, tmp_path: Path) -> None:
+        """spatial_index is loaded and normalized to lowercase."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    spatial_index: H3
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.spatial_index == "h3"
+
+    @pytest.mark.unit
+    def test_load_resolution_auto(self, tmp_path: Path) -> None:
+        """resolution: auto is loaded correctly."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    spatial_index: h3
+    resolution: auto
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.resolution == "auto"
+
+    @pytest.mark.unit
+    def test_load_resolution_explicit(self, tmp_path: Path) -> None:
+        """Explicit resolution int is loaded correctly."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    spatial_index: h3
+    resolution: 6
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.resolution == 6
+
+    @pytest.mark.unit
+    def test_load_sort(self, tmp_path: Path) -> None:
+        """sort is loaded and normalized to lowercase."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    sort: HILBERT
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.sort == "hilbert"
+
+    @pytest.mark.unit
+    def test_load_add_bbox(self, tmp_path: Path) -> None:
+        """add_bbox boolean is loaded correctly."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    add_bbox: true
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.add_bbox is True
+
+    @pytest.mark.unit
+    def test_load_partition(self, tmp_path: Path) -> None:
+        """partition boolean is loaded correctly."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    spatial_index: h3
+    partition: true
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.partition is True
+
+    @pytest.mark.unit
+    def test_load_full_config(self, tmp_path: Path) -> None:
+        """Full vector config is loaded correctly."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    spatial_index: s2
+    resolution: 10
+    sort: hilbert
+    add_bbox: true
+    partition: true
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.spatial_index == "s2"
+        assert settings.resolution == 10
+        assert settings.sort == "hilbert"
+        assert settings.add_bbox is True
+        assert settings.partition is True
+
+    @pytest.mark.unit
+    def test_invalid_resolution_falls_back_to_auto(self, tmp_path: Path) -> None:
+        """Invalid resolution string falls back to auto."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    resolution: invalid
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.resolution == "auto"
+
+    @pytest.mark.unit
+    def test_non_bool_add_bbox_falls_back_to_false(self, tmp_path: Path) -> None:
+        """Non-boolean add_bbox falls back to false."""
+        from portolan_cli.conversion_config import get_vector_settings
+
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_file = portolan_dir / "config.yaml"
+        config_file.write_text("""
+conversion:
+  vector:
+    add_bbox: "yes"
+""")
+        settings = get_vector_settings(tmp_path)
+
+        assert settings.add_bbox is False

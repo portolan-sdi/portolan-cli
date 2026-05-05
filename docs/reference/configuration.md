@@ -229,6 +229,49 @@ conversion:
 !!! tip "Thumbnails"
     When `generate_thumbnail` is enabled, a JPEG thumbnail is created next to each converted COG (e.g., `data.tif` → `data.thumb.jpg`). The thumbnail is automatically picked up by `portolan scan` with `roles: ["thumbnail"]`, following STAC best practices.
 
+### Vector Settings
+
+Configure spatial optimization for GeoParquet conversion. Uses [geoparquet-io](https://github.com/geoparquet/geoparquet-io)'s fluent Table API for spatial indexing, sorting, and partitioning.
+
+```yaml
+conversion:
+  vector:
+    spatial_index: h3     # h3 | quadkey | s2 | a5 | kdtree | none (default: none)
+    resolution: auto      # auto | explicit int (default: auto)
+    sort: hilbert         # hilbert | quadkey | none (default: none)
+    add_bbox: true        # Add bbox struct column (default: false)
+    partition: false      # Produce hive-partitioned output (default: false)
+```
+
+!!! note "Resolution auto-tuning"
+    When `resolution: auto`, geoparquet-io uses smart defaults that include row-count-based tuning. Explicit values override this behavior.
+
+#### Spatial Index Types
+
+| Index | Description | Resolution Range |
+|-------|-------------|------------------|
+| `h3` | Uber H3 hexagonal cells | 0-15 (default: 9) |
+| `quadkey` | Bing Maps tile IDs | 0-23 (default: 13) |
+| `s2` | Google S2 spherical cells | 0-30 (default: 13) |
+| `a5` | A5 hierarchical grid | 0-30 (default: 15) |
+| `kdtree` | KD-tree balanced spatial splits | 1-20 iterations (default: 9) |
+
+#### Use Cases
+
+| Scenario | Configuration |
+|----------|---------------|
+| Analytics queries (spatial filtering) | `spatial_index: h3`, `add_bbox: true` |
+| Optimal row group statistics | `sort: hilbert`, `add_bbox: true` |
+| Partitioned output for large files | `spatial_index: kdtree`, `partition: true` |
+| Web map tiling (PMTiles input) | `spatial_index: quadkey`, `sort: quadkey` |
+
+#### Partitioning vs Auto-Partitioning
+
+- **`conversion.vector.partition: true`** — Always produce hive-partitioned output during conversion
+- **`partitioning.enabled: true`** — Auto-partition files exceeding `threshold_gb` (see [Spatial Partitioning](#spatial-partitioning))
+
+These are complementary. Use `conversion.vector` for consistent spatial optimization, `partitioning` for size-based auto-splitting.
+
 #### Use Cases
 
 | Scenario | Configuration |

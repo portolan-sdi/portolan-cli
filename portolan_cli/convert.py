@@ -26,7 +26,9 @@ from portolan_cli.conversion_config import (
     LOSSY_COMPRESSIONS,
     QUALITY_COMPRESSIONS,
     CogSettings,
+    VectorSettings,
     get_cog_settings,
+    get_vector_settings,
 )
 from portolan_cli.errors import (
     ConversionFailedError,
@@ -280,6 +282,7 @@ def convert_file(
     output_dir: Path | None = None,
     catalog_path: Path | None = None,
     cog_settings: CogSettings | None = None,
+    vector_settings: VectorSettings | None = None,
 ) -> ConversionResult:
     """Convert a single file to cloud-native format.
 
@@ -295,6 +298,9 @@ def convert_file(
         cog_settings: Explicit COG settings override. Takes precedence over
             ``catalog_path``-loaded settings. If None, loads from
             ``catalog_path`` or falls back to ADR-0019 defaults.
+        vector_settings: Explicit vector settings override. Takes precedence over
+            ``catalog_path``-loaded settings. If None, loads from
+            ``catalog_path`` or falls back to no spatial optimization.
 
     Returns:
         ConversionResult with conversion outcome, timing, and paths.
@@ -349,10 +355,14 @@ def convert_file(
     if cog_settings is None:
         cog_settings = get_cog_settings(catalog_path) if catalog_path else CogSettings()
 
+    # Load vector settings: explicit arg > catalog config > defaults
+    if vector_settings is None:
+        vector_settings = get_vector_settings(catalog_path) if catalog_path else VectorSettings()
+
     # Convert based on format type
     try:
         if format_type == FormatType.VECTOR:
-            output_path = _convert_vector(source, out_dir)
+            output_path = _convert_vector(source, out_dir, vector_settings)
             target_format = "GeoParquet"
             # Validate output is valid GeoParquet
             validation_error = _validate_geoparquet(output_path)
@@ -431,24 +441,154 @@ def convert_file(
         )
 
 
-def _convert_vector(source: Path, output_dir: Path) -> Path:
-    """Convert a vector file to GeoParquet.
+def _convert_vector(
+    source: Path,
+    output_dir: Path,
+    settings: VectorSettings | None = None,
+) -> Path:
+    """Convert a vector file to GeoParquet with optional spatial optimization.
+
+    Uses geoparquet-io's fluent Table API to apply spatial index columns,
+    sorting, and bbox based on VectorSettings configuration.
 
     Args:
         source: Source vector file.
         output_dir: Directory for output file.
+        settings: Vector conversion settings. If None, uses defaults (no optimization).
 
     Returns:
-        Path to the output GeoParquet file.
+        Path to the output GeoParquet file (or directory if partitioned).
     """
     import geoparquet_io as gpio  # type: ignore[import-untyped]
 
+    if settings is None:
+        settings = VectorSettings()
+
     output_path = output_dir / f"{source.stem}.parquet"
 
-    # Use geoparquet-io fluent API for conversion
-    gpio.convert(str(source)).write(str(output_path))
+    # Convert source to gpio Table
+    table = gpio.convert(str(source))
 
-    return output_path
+    # Apply spatial optimizations based on settings
+    table = _apply_vector_settings(table, settings)
+
+    # Write output (partitioned or single file)
+    if settings.partition and settings.spatial_index != "none":
+        # Partitioned output to directory
+        partition_dir = output_dir / source.stem
+        _write_partitioned(table, partition_dir, settings)
+        return partition_dir
+    else:
+        # Single file output
+        table.write(str(output_path))
+        return output_path
+
+
+def _apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
+    """Apply spatial optimization settings to a gpio Table.
+
+    Args:
+        table: geoparquet-io Table instance.
+        settings: Vector conversion settings.
+
+    Returns:
+        Modified Table with optimizations applied.
+    """
+    # Add bbox column if requested
+    if settings.add_bbox:
+        table = table.add_bbox()
+
+    # Add spatial index column if specified
+    if settings.spatial_index != "none":
+        resolution = _resolve_resolution(settings.spatial_index, settings.resolution)
+        table = _add_spatial_index(table, settings.spatial_index, resolution)
+
+    # Apply sorting
+    if settings.sort == "hilbert":
+        table = table.sort_hilbert()
+    elif settings.sort == "quadkey":
+        table = table.sort_quadkey()
+
+    return table
+
+
+def _resolve_resolution(index_type: str, resolution: int | str) -> int | None:
+    """Resolve resolution value for a spatial index type.
+
+    Args:
+        index_type: Spatial index type (h3, s2, quadkey, a5, kdtree).
+        resolution: Either "auto" or explicit int.
+
+    Returns:
+        Resolution int, or None to use geoparquet-io defaults.
+    """
+    if resolution == "auto":
+        return None  # Let gpio use its defaults (includes row-count tuning)
+    return int(resolution)
+
+
+def _add_spatial_index(table: Any, index_type: str, resolution: int | None) -> Any:
+    """Add a spatial index column to the table.
+
+    Args:
+        table: geoparquet-io Table instance.
+        index_type: Type of spatial index (h3, s2, quadkey, a5, kdtree).
+        resolution: Resolution/level/iterations, or None for defaults.
+
+    Returns:
+        Table with spatial index column added.
+    """
+    if index_type == "h3":
+        return table.add_h3() if resolution is None else table.add_h3(resolution=resolution)
+    elif index_type == "s2":
+        return table.add_s2() if resolution is None else table.add_s2(level=resolution)
+    elif index_type == "quadkey":
+        return (
+            table.add_quadkey() if resolution is None else table.add_quadkey(resolution=resolution)
+        )
+    elif index_type == "a5":
+        return table.add_a5() if resolution is None else table.add_a5(resolution=resolution)
+    elif index_type == "kdtree":
+        return table.add_kdtree() if resolution is None else table.add_kdtree(iterations=resolution)
+    return table
+
+
+def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -> None:
+    """Write table as hive-partitioned output.
+
+    Args:
+        table: geoparquet-io Table instance with spatial index column.
+        output_dir: Output directory for partitioned files.
+        settings: Vector settings with partition strategy.
+    """
+    resolution = _resolve_resolution(settings.spatial_index, settings.resolution)
+    index_type = settings.spatial_index
+
+    if index_type == "h3":
+        if resolution is None:
+            table.partition_by_h3(str(output_dir))
+        else:
+            table.partition_by_h3(str(output_dir), resolution=resolution)
+    elif index_type == "s2":
+        if resolution is None:
+            table.partition_by_s2(str(output_dir))
+        else:
+            table.partition_by_s2(str(output_dir), level=resolution)
+    elif index_type == "quadkey":
+        if resolution is None:
+            table.partition_by_quadkey(str(output_dir))
+        else:
+            table.partition_by_quadkey(str(output_dir), resolution=resolution)
+    elif index_type == "a5":
+        if resolution is None:
+            table.partition_by_a5(str(output_dir))
+        else:
+            table.partition_by_a5(str(output_dir), resolution=resolution)
+    elif index_type == "kdtree":
+        if resolution is None:
+            table.partition_by_kdtree(str(output_dir))
+        else:
+            table.partition_by_kdtree(str(output_dir), iterations=resolution)
 
 
 def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
