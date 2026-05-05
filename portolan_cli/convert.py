@@ -507,7 +507,12 @@ def _apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
     if settings.sort == "hilbert":
         table = table.sort_hilbert()
     elif settings.sort == "quadkey":
-        table = table.sort_quadkey()
+        # sort_quadkey needs resolution; use quadkey default (13) if not set
+        sort_resolution = _resolve_resolution("quadkey", settings.resolution)
+        if sort_resolution is None:
+            table = table.sort_quadkey()
+        else:
+            table = table.sort_quadkey(resolution=sort_resolution)
 
     return table
 
@@ -523,7 +528,7 @@ def _resolve_resolution(index_type: str, resolution: int | str) -> int | None:
         Resolution int, or None to use geoparquet-io defaults.
     """
     if resolution == "auto":
-        return None  # Let gpio use its defaults (includes row-count tuning)
+        return None  # Let gpio use its defaults
     return int(resolution)
 
 
@@ -537,6 +542,9 @@ def _add_spatial_index(table: Any, index_type: str, resolution: int | None) -> A
 
     Returns:
         Table with spatial index column added.
+
+    Raises:
+        ValueError: If index_type is not recognized.
     """
     if index_type == "h3":
         return table.add_h3() if resolution is None else table.add_h3(resolution=resolution)
@@ -550,7 +558,10 @@ def _add_spatial_index(table: Any, index_type: str, resolution: int | None) -> A
         return table.add_a5() if resolution is None else table.add_a5(resolution=resolution)
     elif index_type == "kdtree":
         return table.add_kdtree() if resolution is None else table.add_kdtree(iterations=resolution)
-    return table
+    else:
+        raise ValueError(
+            f"Unknown spatial index type: '{index_type}'. Valid types: h3, s2, quadkey, a5, kdtree"
+        )
 
 
 def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -> None:
@@ -827,6 +838,7 @@ class LayerConversionResult:
 def convert_multilayer_file(
     source: Path,
     output_dir: Path,
+    settings: VectorSettings | None = None,
 ) -> list[LayerConversionResult]:
     """Convert all layers in a multi-layer file to separate GeoParquet files.
 
@@ -837,6 +849,7 @@ def convert_multilayer_file(
     Args:
         source: Path to the multi-layer file (GeoPackage or FileGDB).
         output_dir: Directory for output files.
+        settings: Vector conversion settings. If None, uses defaults (no optimization).
 
     Returns:
         List of LayerConversionResult, one per layer.
@@ -853,6 +866,9 @@ def convert_multilayer_file(
     if not source.exists():
         raise FileNotFoundError(f"Source file not found: {source}")
 
+    if settings is None:
+        settings = VectorSettings()
+
     # Get all layers in the file
     layers = list_layers(source)
     if layers is None or len(layers) == 0:
@@ -867,7 +883,7 @@ def convert_multilayer_file(
         output_path = output_dir / f"{source.stem}_{layer_name}.parquet"
 
         try:
-            _convert_vector_layer(source, layer_name, output_path)
+            _convert_vector_layer(source, layer_name, output_path, settings)
 
             # Validate output
             validation_error = _validate_geoparquet(output_path)
@@ -906,7 +922,12 @@ def convert_multilayer_file(
     return results
 
 
-def _convert_vector_layer(source: Path, layer: str, output: Path) -> None:
+def _convert_vector_layer(
+    source: Path,
+    layer: str,
+    output: Path,
+    settings: VectorSettings | None = None,
+) -> None:
     """Convert a single layer from a multi-layer file to GeoParquet.
 
     Uses geoparquet-io's layer parameter for multi-layer format support.
@@ -915,10 +936,16 @@ def _convert_vector_layer(source: Path, layer: str, output: Path) -> None:
         source: Path to the multi-layer file.
         layer: Name of the layer to convert.
         output: Path for the output GeoParquet file.
+        settings: Vector conversion settings. If None, uses defaults (no optimization).
 
     Raises:
         Exception: If conversion fails.
     """
     import geoparquet_io as gpio
 
-    gpio.convert(source, layer=layer).write(output)
+    if settings is None:
+        settings = VectorSettings()
+
+    table = gpio.convert(source, layer=layer)
+    table = _apply_vector_settings(table, settings)
+    table.write(output)

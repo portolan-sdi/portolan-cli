@@ -1602,3 +1602,164 @@ class TestGenerateCogThumbnail:
         assert result.output is not None
         thumb = result.output.with_name(f"{result.output.stem}.thumb.jpg")
         assert thumb.exists()
+
+
+# =============================================================================
+# VectorSettings Integration Tests (Issue #340)
+# =============================================================================
+
+
+class TestVectorSettingsIntegration:
+    """Integration tests for VectorSettings in convert module."""
+
+    @pytest.fixture
+    def sample_geojson(self, tmp_path: Path) -> Path:
+        """Create a simple GeoJSON file for testing."""
+        geojson = tmp_path / "test.geojson"
+        geojson.write_text(
+            """{
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {"name": "test"},
+                    "geometry": {"type": "Point", "coordinates": [-73.9857, 40.7484]}
+                }
+            ]
+        }"""
+        )
+        return geojson
+
+    @pytest.mark.unit
+    def test_add_spatial_index_raises_for_unknown_type(self) -> None:
+        """_add_spatial_index raises ValueError for unknown index types."""
+        from unittest.mock import MagicMock
+
+        from portolan_cli.convert import _add_spatial_index
+
+        mock_table = MagicMock()
+
+        with pytest.raises(ValueError, match="Unknown spatial index type: 'invalid'"):
+            _add_spatial_index(mock_table, "invalid", resolution=9)
+
+    @pytest.mark.unit
+    def test_add_spatial_index_h3_with_resolution(self) -> None:
+        """_add_spatial_index calls add_h3 with resolution."""
+        from unittest.mock import MagicMock
+
+        from portolan_cli.convert import _add_spatial_index
+
+        mock_table = MagicMock()
+        mock_table.add_h3.return_value = mock_table
+
+        result = _add_spatial_index(mock_table, "h3", resolution=6)
+
+        mock_table.add_h3.assert_called_once_with(resolution=6)
+        assert result == mock_table
+
+    @pytest.mark.unit
+    def test_add_spatial_index_h3_default_resolution(self) -> None:
+        """_add_spatial_index calls add_h3 without resolution when None."""
+        from unittest.mock import MagicMock
+
+        from portolan_cli.convert import _add_spatial_index
+
+        mock_table = MagicMock()
+        mock_table.add_h3.return_value = mock_table
+
+        result = _add_spatial_index(mock_table, "h3", resolution=None)
+
+        mock_table.add_h3.assert_called_once_with()
+        assert result == mock_table
+
+    @pytest.mark.unit
+    def test_convert_vector_with_h3_adds_column(self, sample_geojson: Path, tmp_path: Path) -> None:
+        """Converting with H3 spatial index adds h3_cell column."""
+        import pyarrow.parquet as pq
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = VectorSettings(spatial_index="h3", resolution=6)
+        output = _convert_vector(sample_geojson, output_dir, settings)
+
+        assert output.exists()
+        table = pq.read_table(output)
+        assert "h3_cell" in table.schema.names
+
+    @pytest.mark.unit
+    def test_convert_vector_with_bbox_adds_column(
+        self, sample_geojson: Path, tmp_path: Path
+    ) -> None:
+        """Converting with add_bbox=True adds bbox column."""
+        import pyarrow.parquet as pq
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = VectorSettings(add_bbox=True)
+        output = _convert_vector(sample_geojson, output_dir, settings)
+
+        assert output.exists()
+        table = pq.read_table(output)
+        assert "bbox" in table.schema.names
+
+    @pytest.mark.unit
+    def test_convert_vector_with_hilbert_sort(self, sample_geojson: Path, tmp_path: Path) -> None:
+        """Converting with sort=hilbert succeeds."""
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = VectorSettings(sort="hilbert")
+        output = _convert_vector(sample_geojson, output_dir, settings)
+
+        assert output.exists()
+
+    @pytest.mark.unit
+    def test_convert_vector_with_quadkey_sort_uses_resolution(
+        self, sample_geojson: Path, tmp_path: Path
+    ) -> None:
+        """Converting with sort=quadkey and explicit resolution uses that resolution."""
+        import pyarrow.parquet as pq
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = VectorSettings(sort="quadkey", resolution=10)
+        output = _convert_vector(sample_geojson, output_dir, settings)
+
+        assert output.exists()
+        # quadkey sort adds a quadkey column
+        table = pq.read_table(output)
+        assert "quadkey" in table.schema.names
+
+    @pytest.mark.unit
+    def test_convert_file_passes_vector_settings(
+        self, sample_geojson: Path, tmp_path: Path
+    ) -> None:
+        """convert_file correctly passes VectorSettings to _convert_vector."""
+        import pyarrow.parquet as pq
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        settings = VectorSettings(spatial_index="s2", resolution=10)
+        result = convert_file(sample_geojson, output_dir=tmp_path, vector_settings=settings)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+
+        table = pq.read_table(result.output)
+        assert "s2_cell" in table.schema.names

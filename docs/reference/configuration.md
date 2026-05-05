@@ -243,8 +243,8 @@ conversion:
     partition: false      # Produce hive-partitioned output (default: false)
 ```
 
-!!! note "Resolution auto-tuning"
-    When `resolution: auto`, geoparquet-io uses smart defaults that include row-count-based tuning. Explicit values override this behavior.
+!!! note "Resolution defaults"
+    When `resolution: auto`, geoparquet-io uses sensible defaults per index type (H3: 9, Quadkey: 13, S2: 13, A5: 15, KD-tree: 9 iterations). Explicit values override these defaults.
 
 #### Spatial Index Types
 
