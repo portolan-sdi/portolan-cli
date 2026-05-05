@@ -382,22 +382,13 @@ collection/
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `partitioning.enabled` | `true` | Auto-partition files over threshold during `add` |
-| `partitioning.threshold_gb` | `2.0` | Size threshold in GB for auto-partitioning |
+| `partitioning.enabled` | `false` | Enable partitioning features |
+| `partitioning.threshold_gb` | `2.0` | Size threshold for `--preview` recommendation |
 | `partitioning.strategy` | `kdtree` | Spatial partitioning strategy |
 | `partitioning.target_rows` | `120000` | Target rows per partition |
 
-### Strategies
-
-| Strategy | Description |
-|----------|-------------|
-| `kdtree` | Data-driven recursive spatial splits (default, recommended) |
-| `h3` | Uber's hexagonal hierarchical index |
-| `s2` | Google's S2 cells |
-| `quadkey` | Bing Maps tile-based partitioning |
-
 !!! tip "Why KD-tree?"
-    KD-tree is the default because it's **data-driven**: partitions adapt to actual feature density, producing balanced partition sizes. Grid-based strategies (H3, S2, quadkey) use fixed cells regardless of data distribution, which can create huge imbalances.
+    KD-tree is **data-driven**: partitions adapt to actual feature density, producing balanced partition sizes. Grid-based strategies (H3, S2, quadkey) are planned but not yet implemented.
 
 ## STAC GeoParquet Settings
 
