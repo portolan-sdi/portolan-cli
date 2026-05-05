@@ -704,6 +704,60 @@ def _extract_bbox_wgs84(metadata: AllMetadata) -> list[float]:
     return list(transform_bbox_to_wgs84(metadata.bbox, crs_str))  # type: ignore[arg-type]
 
 
+def _warn_if_source_newer(source_path: Path, output_path: Path) -> None:
+    """Warn if source file is newer than output (suggests --reconvert)."""
+    from portolan_cli.output import warn as warn_output
+
+    if source_path.stat().st_mtime > output_path.stat().st_mtime:
+        warn_output(
+            f"Source file '{source_path.name}' is newer than converted output. "
+            "Use --reconvert to re-convert from source."
+        )
+
+
+def _handle_cloud_native_vector(
+    source_path: Path,
+    output_path: Path,
+    extract_fn: Callable[[Path], AllMetadata],
+    force: bool,
+    reconvert: bool,
+) -> AllMetadata:
+    """Handle cloud-native vector formats (PMTiles, FlatGeobuf) with force/reconvert.
+
+    Args:
+        source_path: Source file path.
+        output_path: Target output path.
+        extract_fn: Metadata extraction function.
+        force: If True, allow overwriting existing output.
+        reconvert: If True, re-copy from source.
+
+    Returns:
+        Extracted metadata.
+    """
+    same_file = source_path.resolve() == output_path.resolve()
+
+    if output_path.exists() and not same_file:
+        if force and not reconvert:
+            # Re-extract metadata from existing, warn if source newer
+            _warn_if_source_newer(source_path, output_path)
+            return extract_fn(output_path)
+        elif force and reconvert:
+            # Re-copy from source
+            shutil.copy2(source_path, output_path)
+            return extract_fn(output_path)
+        else:
+            # No force — raise error to prevent accidental overwrite
+            raise FileExistsError(
+                f"File already exists: {output_path}. "
+                "Rename the source file or remove the existing file."
+            )
+
+    # Output doesn't exist or same file — copy if needed
+    if not same_file:
+        shutil.copy2(source_path, output_path)
+    return extract_fn(output_path)
+
+
 def _convert_and_extract_metadata(
     path: Path,
     item_dir: Path,
@@ -731,8 +785,6 @@ def _convert_and_extract_metadata(
     Returns:
         Tuple of (output_path, metadata).
     """
-    from portolan_cli.output import warn as warn_output
-
     metadata: AllMetadata
     suffix = path.suffix.lower()
 
@@ -740,54 +792,27 @@ def _convert_and_extract_metadata(
         # Check for cloud-native vector formats (skip conversion per issue #368)
         if suffix == ".pmtiles":
             output_path = item_dir / path.name
-            if output_path.exists() and path.resolve() != output_path.resolve():
-                raise FileExistsError(
-                    f"File already exists: {output_path}. "
-                    "Rename the source file or remove the existing file."
-                )
-            if path.resolve() != output_path.resolve():
-                shutil.copy2(path, output_path)
-            metadata = extract_pmtiles_metadata(output_path)
+            metadata = _handle_cloud_native_vector(
+                path, output_path, extract_pmtiles_metadata, force, reconvert
+            )
         elif suffix in (".fgb", ".flatgeobuf"):
             output_path = item_dir / path.name
-            if output_path.exists() and path.resolve() != output_path.resolve():
-                raise FileExistsError(
-                    f"File already exists: {output_path}. "
-                    "Rename the source file or remove the existing file."
-                )
-            if path.resolve() != output_path.resolve():
-                shutil.copy2(path, output_path)
-            metadata = extract_flatgeobuf_metadata(output_path)
+            metadata = _handle_cloud_native_vector(
+                path, output_path, extract_flatgeobuf_metadata, force, reconvert
+            )
         else:
             # Convert to GeoParquet
             output_path = item_dir / f"{path.stem}.parquet"
-
-            # Issue #386: Skip conversion if force=True, reconvert=False, output exists
             if force and not reconvert and output_path.exists():
-                # Warn if source is newer than output
-                if path.stat().st_mtime > output_path.stat().st_mtime:
-                    warn_output(
-                        f"Source file '{path.name}' is newer than converted output. "
-                        "Use --reconvert to re-convert from source."
-                    )
-                # Extract metadata from existing output (skip conversion)
+                _warn_if_source_newer(path, output_path)
                 metadata = extract_geoparquet_metadata(output_path)
             else:
                 output_path = convert_vector(path, item_dir)
                 metadata = extract_geoparquet_metadata(output_path)
     else:  # RASTER
-        # For rasters, determine expected output path
         output_path = item_dir / f"{path.stem}.tif"
-
-        # Issue #386: Skip conversion if force=True, reconvert=False, output exists
         if force and not reconvert and output_path.exists():
-            # Warn if source is newer than output
-            if path.stat().st_mtime > output_path.stat().st_mtime:
-                warn_output(
-                    f"Source file '{path.name}' is newer than converted output. "
-                    "Use --reconvert to re-convert from source."
-                )
-            # Extract metadata from existing output (skip conversion)
+            _warn_if_source_newer(path, output_path)
             metadata = extract_cog_metadata(output_path)
         else:
             output_path = convert_raster(path, item_dir)
@@ -1541,6 +1566,8 @@ def add_dataset(
     description: str | None = None,
     item_id: str | None = None,
     item_datetime: datetime | None = None,
+    force: bool = False,
+    reconvert: bool = False,
 ) -> DatasetInfo:
     """Add a dataset to a Portolan catalog.
 
@@ -1557,6 +1584,8 @@ def add_dataset(
         item_id: Optional item ID (defaults to parent directory name).
         item_datetime: Optional acquisition/creation datetime (per ADR-0035).
             If None, uses null datetime with open interval (per ADR-0035).
+        force: If True, bypass change detection and re-process (Issue #386).
+        reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
         DatasetInfo with details about the added dataset.
@@ -1574,6 +1603,8 @@ def add_dataset(
         description=description,
         item_id=item_id,
         item_datetime=item_datetime,
+        force=force,
+        reconvert=reconvert,
     )
 
     # Finalize: batch write versions.json and collection.json
@@ -2151,6 +2182,8 @@ def add_directory(
     catalog_root: Path,
     collection_id: str,
     recursive: bool = True,
+    force: bool = False,
+    reconvert: bool = False,
 ) -> list[DatasetInfo]:
     """Add all geospatial files in a directory to a collection.
 
@@ -2161,6 +2194,8 @@ def add_directory(
         catalog_root: Root directory containing .portolan/.
         collection_id: Collection to add datasets to.
         recursive: If True, process subdirectories recursively.
+        force: If True, bypass change detection and re-process (Issue #386).
+        reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
         List of DatasetInfo for each added dataset.
@@ -2174,6 +2209,8 @@ def add_directory(
             path=file_path,
             catalog_root=catalog_root,
             collection_id=collection_id,
+            force=force,
+            reconvert=reconvert,
         )
         prepared.append(result)
 
