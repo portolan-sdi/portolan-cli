@@ -600,7 +600,7 @@ class TestPMTilesRecommendedRule:
                 "data-tiles": {
                     "href": "./data.pmtiles",
                     "type": "application/vnd.pmtiles",
-                    "roles": ["overview"],
+                    "roles": ["visual"],
                 },
             },
         }

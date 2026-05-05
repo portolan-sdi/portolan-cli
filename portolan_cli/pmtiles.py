@@ -3,7 +3,7 @@
 This module provides functionality to generate PMTiles (vector tiles) from
 GeoParquet files in STAC collections. PMTiles are stored as sibling files
 to the source GeoParquet, registered as collection-level assets with role
-["overview"], and tracked in versions.json for push.
+["visual"], and tracked in versions.json for push.
 
 Requires:
 - gpio-pmtiles package (optional dependency: `pip install portolan-cli[pmtiles]`)
@@ -268,7 +268,7 @@ def add_pmtiles_asset_to_collection(
 ) -> None:
     """Add PMTiles asset to collection.json.
 
-    Adds a collection-level asset with role ["overview"] for the PMTiles file.
+    Adds a collection-level asset with role ["visual"] for the PMTiles file.
     The asset key is derived from the source parquet key with "-tiles" suffix.
 
     Args:
@@ -301,7 +301,7 @@ def add_pmtiles_asset_to_collection(
         "href": pmtiles_href,
         "type": PMTILES_MEDIA_TYPE,
         "title": f"{source_title} (vector tiles)",
-        "roles": ["overview"],
+        "roles": ["visual"],
     }
     data["assets"] = assets
 

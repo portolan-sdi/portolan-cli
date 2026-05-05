@@ -200,7 +200,7 @@ class TestPMTilesGeneration:
         pmtiles_asset = assets["roads-data-tiles"]
         assert pmtiles_asset["href"] == "./roads.pmtiles"
         assert pmtiles_asset["type"] == "application/vnd.pmtiles"
-        assert pmtiles_asset["roles"] == ["overview"]
+        assert pmtiles_asset["roles"] == ["visual"]
         assert "tiles" in pmtiles_asset["title"].lower()
 
     def test_version_tracked(self, collection_with_geoparquet: Path) -> None:
