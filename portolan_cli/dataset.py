@@ -2585,6 +2585,9 @@ def add_files(
     # Track source_dir -> item_dir mappings for non-geo file placement (ADR-0028)
     source_to_item_dir: dict[Path, tuple[Path, str, str]] = {}
 
+    # Track source_dir -> collection_dir mappings for collection-level assets (Issue #383)
+    source_to_collection_dir: dict[Path, tuple[Path, str]] = {}
+
     # Deferred non-geo files: (file_path, source_dir, collection_id)
     deferred_non_geo: list[tuple[Path, Path, str]] = []
 
@@ -2707,8 +2710,14 @@ def add_files(
             for prepared in prepared_list:
                 prepared_datasets.append(prepared)
                 source_dir = file_path.parent
-                item_dir = catalog_root / Path(*coll_id.split("/")) / prepared.item_id
-                source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
+                collection_dir = catalog_root / Path(*coll_id.split("/"))
+                if prepared.is_collection_level_asset:
+                    # Collection-level: map source to collection dir (Issue #383)
+                    source_to_collection_dir[source_dir] = (collection_dir, coll_id)
+                else:
+                    # Item-level: map source to item dir
+                    item_dir = collection_dir / prepared.item_id
+                    source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
             failures.extend(failure_list)
             if deferred is not None:
                 deferred_non_geo.append(deferred)
@@ -2742,8 +2751,14 @@ def add_files(
                 for prepared in prepared_list:
                     prepared_datasets.append(prepared)
                     source_dir = file_path.parent
-                    item_dir = catalog_root / Path(*coll_id.split("/")) / prepared.item_id
-                    source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
+                    collection_dir = catalog_root / Path(*coll_id.split("/"))
+                    if prepared.is_collection_level_asset:
+                        # Collection-level: map source to collection dir (Issue #383)
+                        source_to_collection_dir[source_dir] = (collection_dir, coll_id)
+                    else:
+                        # Item-level: map source to item dir
+                        item_dir = collection_dir / prepared.item_id
+                        source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
                 failures.extend(failure_list)
                 if deferred is not None:
                     deferred_non_geo.append(deferred)
@@ -2761,6 +2776,7 @@ def add_files(
     _process_deferred_non_geo_files(
         deferred_non_geo=deferred_non_geo,
         source_to_item_dir=source_to_item_dir,
+        source_to_collection_dir=source_to_collection_dir,
         catalog_root=catalog_root,
         skipped=skipped,
         failures=failures,
@@ -2773,6 +2789,7 @@ def _process_deferred_non_geo_files(
     *,
     deferred_non_geo: list[tuple[Path, Path, str]],
     source_to_item_dir: dict[Path, tuple[Path, str, str]],
+    source_to_collection_dir: dict[Path, tuple[Path, str]],
     catalog_root: Path,
     skipped: list[Path],
     failures: list[AddFailure],
@@ -2785,6 +2802,8 @@ def _process_deferred_non_geo_files(
     Args:
         deferred_non_geo: List of (file_path, source_dir, collection_id) tuples.
         source_to_item_dir: Mapping from source dirs to (item_dir, coll_id, item_id).
+        source_to_collection_dir: Mapping from source dirs to (collection_dir, coll_id)
+            for collection-level assets (Issue #383).
         catalog_root: Root directory of the catalog.
         skipped: List to append skipped files to (modified in place).
         failures: List to append failures to (modified in place).
@@ -2792,6 +2811,7 @@ def _process_deferred_non_geo_files(
     for file_path, source_dir, coll_id in deferred_non_geo:
         try:
             if source_dir in source_to_item_dir:
+                # Item-level: existing behavior
                 resolved_item_dir, _, resolved_item_id = source_to_item_dir[source_dir]
 
                 # Copy non-geo file to item directory as companion asset
@@ -2816,6 +2836,42 @@ def _process_deferred_non_geo_files(
 
                 # Add to skipped (tracked but not converted)
                 skipped.append(file_path)
+
+            elif source_dir in source_to_collection_dir:
+                # Collection-level: new behavior for Issue #383
+                resolved_collection_dir, resolved_coll_id = source_to_collection_dir[source_dir]
+
+                # For collection-level, file is already in place (same as geo file)
+                # Register it as an asset in collection.json AND versions.json
+                ext = file_path.suffix.upper().lstrip(".")
+                logger.info(
+                    "Tracking %s as non-geospatial %s collection-level asset: %s",
+                    file_path,
+                    ext,
+                    file_path.name,
+                )
+
+                # Update collection.json with the non-geo asset
+                _update_collection_with_asset(
+                    collection_dir=resolved_collection_dir,
+                    asset_path=file_path,
+                )
+
+                # Update versions.json so is_current() finds the asset
+                file_checksum = compute_checksum(file_path)
+                asset_files = {file_path.name: (file_path, file_checksum)}
+                _update_versions(
+                    collection_dir=resolved_collection_dir,
+                    item_id=file_path.stem,  # Use file stem as item_id for collection-level
+                    collection_id=resolved_coll_id,
+                    asset_files=asset_files,
+                    is_collection_level_asset=True,
+                    catalog_root=catalog_root,
+                )
+
+                # Add to skipped (tracked but not converted)
+                skipped.append(file_path)
+
             else:
                 # No geo file in same dir - cannot create item without bbox
                 ext = file_path.suffix.upper().lstrip(".")
@@ -2932,6 +2988,46 @@ def _update_item_with_asset(
         is_collection_level_asset=is_collection_level,
         catalog_root=catalog_root,
     )
+
+
+def _update_collection_with_asset(
+    collection_dir: Path,
+    asset_path: Path,
+) -> None:
+    """Update a collection.json to include a new non-geo asset file (Issue #383).
+
+    For collection-level non-geospatial files, this adds them as assets directly
+    to collection.json rather than an item.json.
+
+    Args:
+        collection_dir: Path to the collection directory.
+        asset_path: Path to the non-geo asset file.
+    """
+    collection_json_path = collection_dir / "collection.json"
+
+    if not collection_json_path.exists():
+        logger.warning("collection.json not found: %s", collection_json_path)
+        return
+
+    # Load existing collection
+    with open(collection_json_path) as f:
+        collection_data = json.load(f)
+
+    # Add asset to collection
+    assets = collection_data.setdefault("assets", {})
+    asset_key = asset_path.stem  # Use file stem as key (e.g., "stats" for stats.parquet)
+    media_type = _get_media_type(asset_path)
+    role = _get_asset_role(asset_path)
+
+    assets[asset_key] = {
+        "href": f"./{asset_path.name}",
+        "type": media_type,
+        "roles": [role],
+    }
+
+    # Write updated collection
+    with open(collection_json_path, "w") as f:
+        json.dump(collection_data, f, indent=2)
 
 
 def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path]:

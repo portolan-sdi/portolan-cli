@@ -263,7 +263,7 @@ class TestAddPMTilesAssetToCollection:
         updated = json.loads((collection_dir / "collection.json").read_text())
 
         assert "data-tiles" in updated["assets"]
-        assert updated["assets"]["data-tiles"]["roles"] == ["overview"]
+        assert updated["assets"]["data-tiles"]["roles"] == ["visual"]
         assert updated["assets"]["data-tiles"]["type"] == "application/vnd.pmtiles"
 
     @pytest.mark.unit

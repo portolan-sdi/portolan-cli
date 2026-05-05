@@ -262,3 +262,172 @@ class TestCollectionLevelAssets:
         links = collection_data.get("links", [])
         item_links = [link for link in links if link.get("rel") == "item"]
         assert len(item_links) == 1, "Should have item link when explicit item_id is provided"
+
+
+# =============================================================================
+# Issue #383: Non-geospatial parquet files with collection-level geo companions
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestCollectionLevelNonGeoCompanions:
+    """Tests for issue #383: non-geo parquet files with collection-level geo companions.
+
+    Bug: Non-geo parquet files fail to track when their companion geo file is
+    collection-level because `source_to_item_dir` doesn't include collection-level
+    sources.
+
+    Fix: Add `source_to_collection_dir` mapping for collection-level sources.
+    """
+
+    def test_process_deferred_accepts_collection_dir_mapping(
+        self, initialized_catalog, fixtures_dir
+    ):
+        """_process_deferred_non_geo_files accepts source_to_collection_dir parameter.
+
+        TDD: Verify the function signature includes the new parameter.
+        """
+        from portolan_cli.dataset import _process_deferred_non_geo_files
+
+        # Set up minimal arguments
+        deferred_non_geo: list = []
+        source_to_item_dir: dict = {}
+        source_to_collection_dir: dict = {}  # NEW parameter
+        skipped: list = []
+        failures: list = []
+
+        # Should not raise TypeError for unexpected keyword argument
+        _process_deferred_non_geo_files(
+            deferred_non_geo=deferred_non_geo,
+            source_to_item_dir=source_to_item_dir,
+            source_to_collection_dir=source_to_collection_dir,
+            catalog_root=initialized_catalog,
+            skipped=skipped,
+            failures=failures,
+        )
+
+    def test_non_geo_with_collection_level_geo_is_tracked(self, initialized_catalog, fixtures_dir):
+        """Non-geo parquet tracks when geo companion is collection-level (fix #383).
+
+        When a geo file is added as a collection-level asset, its non-geo
+        companion parquet should also be registered as a collection-level asset
+        in collection.json.
+        """
+        from portolan_cli.dataset import _process_deferred_non_geo_files
+
+        # Set up collection with collection.json
+        collection_dir = initialized_catalog / "my-collection"
+        collection_dir.mkdir()
+
+        collection_json = collection_dir / "collection.json"
+        collection_json.write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "stac_version": "1.0.0",
+                    "id": "my-collection",
+                    "description": "Test collection",
+                    "extent": {
+                        "spatial": {"bbox": [[0, 0, 1, 1]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "license": "proprietary",
+                    "links": [],
+                    "assets": {
+                        "data": {
+                            "href": "./data.parquet",
+                            "type": "application/vnd.apache.parquet",
+                            "roles": ["data"],
+                        }
+                    },
+                }
+            )
+        )
+
+        versions_json = collection_dir / "versions.json"
+        versions_json.write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": None,
+                    "versions": [],
+                }
+            )
+        )
+
+        # Non-geo file in collection directory (same location as geo file)
+        non_geo_file = collection_dir / "stats.parquet"
+        non_geo_file.write_bytes(b"fake parquet")
+
+        # Mappings: collection-level source
+        source_to_item_dir: dict = {}
+        source_to_collection_dir = {collection_dir: (collection_dir, "my-collection")}
+        deferred_non_geo = [(non_geo_file, collection_dir, "my-collection")]
+        skipped: list = []
+        failures: list = []
+
+        _process_deferred_non_geo_files(
+            deferred_non_geo=deferred_non_geo,
+            source_to_item_dir=source_to_item_dir,
+            source_to_collection_dir=source_to_collection_dir,
+            catalog_root=initialized_catalog,
+            skipped=skipped,
+            failures=failures,
+        )
+
+        # Verify: non-geo file was tracked (not failed)
+        assert non_geo_file in skipped
+        assert len(failures) == 0
+
+        # Verify: asset added to collection.json
+        updated = json.loads(collection_json.read_text())
+        assert "stats" in updated["assets"], (
+            f"Non-geo asset 'stats' should be in collection.json, got: {list(updated['assets'].keys())}"
+        )
+        assert updated["assets"]["stats"]["href"] == "./stats.parquet"
+
+        # Verify: asset added to versions.json (Issue #383 fix includes versioning)
+        versions_data = json.loads(versions_json.read_text())
+        assert len(versions_data["versions"]) == 1, "Should have one version entry"
+        version_assets = versions_data["versions"][0]["assets"]
+        assert "stats.parquet" in version_assets, (
+            f"Non-geo asset should be in versions.json, got: {list(version_assets.keys())}"
+        )
+
+    def test_non_geo_without_any_companion_warns(self, initialized_catalog):
+        """Non-geo file without geo companion logs warning (existing behavior)."""
+        from unittest.mock import patch
+
+        from portolan_cli.dataset import _process_deferred_non_geo_files
+
+        # Source dir with no geo companion
+        orphan_dir = initialized_catalog / "orphan"
+        orphan_dir.mkdir()
+        non_geo_file = orphan_dir / "lonely.parquet"
+        non_geo_file.write_bytes(b"fake parquet")
+
+        # Empty mappings - no companion found
+        source_to_item_dir: dict = {}
+        source_to_collection_dir: dict = {}
+        deferred_non_geo = [(non_geo_file, orphan_dir, "orphan")]
+        skipped: list = []
+        failures: list = []
+
+        with patch("portolan_cli.dataset.logger") as mock_logger:
+            _process_deferred_non_geo_files(
+                deferred_non_geo=deferred_non_geo,
+                source_to_item_dir=source_to_item_dir,
+                source_to_collection_dir=source_to_collection_dir,
+                catalog_root=initialized_catalog,
+                skipped=skipped,
+                failures=failures,
+            )
+
+        # Should log warning about no geo companion
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "no geospatial file" in warning_msg.lower()
+
+        # File is skipped (not failed)
+        assert non_geo_file in skipped
+        assert len(failures) == 0
