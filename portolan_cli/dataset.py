@@ -37,6 +37,7 @@ from portolan_cli.constants import (
     SIDECAR_PATTERNS,
     TABULAR_EXTENSIONS,
 )
+from portolan_cli.conversion_config import get_vector_settings
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.crs import transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError
@@ -2879,8 +2880,12 @@ def add_files(
         # Check for multi-layer files (GeoPackage, FileGDB) - Issue #265
         if is_multilayer(file_path):
             try:
+                # Load vector settings from catalog config
+                vector_settings = get_vector_settings(catalog_root)
                 # Convert all layers to separate parquet files
-                results = convert_multilayer_file(file_path, file_path.parent)
+                results = convert_multilayer_file(
+                    file_path, file_path.parent, settings=vector_settings
+                )
 
                 for result in results:
                     if result.success and result.output:
