@@ -114,6 +114,15 @@ portolan metadata init demographics   # Create template for collection
 portolan metadata validate            # Validate metadata.yaml
 ```
 
+### `portolan partition`
+Partition a large GeoParquet file for better query performance.
+
+```bash
+portolan partition buildings.parquet --preview
+portolan partition buildings.parquet output/
+portolan partition buildings.parquet output/ --target-rows 50000
+```
+
 ### `portolan pull`
 Pull updates from a remote catalog.
 

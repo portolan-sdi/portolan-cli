@@ -52,6 +52,10 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "statistics.raster_mode",
         "parquet.enabled",  # Generate items.parquet for large collections
         "parquet.threshold",  # Item count threshold to suggest parquet generation
+        "partitioning.enabled",  # Auto-partition large GeoParquet files (Issue #352)
+        "partitioning.threshold_gb",  # Size threshold in GB (default: 2.0)
+        "partitioning.strategy",  # Spatial partitioning strategy (default: kdtree)
+        "partitioning.target_rows",  # Target rows per partition (default: 120000)
         "pmtiles.enabled",  # Generate PMTiles for GeoParquet collections
         "pmtiles.min_zoom",  # Minimum zoom level (None = auto-detect)
         "pmtiles.max_zoom",  # Maximum zoom level (None = auto-detect)
@@ -77,6 +81,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "statistics.raster_mode": "approx",
     "parquet.enabled": False,  # Disabled by default (100% optional per issue #319)
     "parquet.threshold": 100,  # Suggest parquet generation when items > threshold
+    "partitioning.enabled": True,  # Auto-partition files > threshold (Issue #352)
+    "partitioning.threshold_gb": 2.0,  # 2GB per OGC best practices
+    "partitioning.strategy": "kdtree",  # KD-tree: data-driven, auto-balancing
+    "partitioning.target_rows": 120_000,  # geoparquet-io default
     "pmtiles.enabled": False,  # Disabled by default (requires tippecanoe)
     "pmtiles.min_zoom": None,  # None = tippecanoe auto-detection
     "pmtiles.max_zoom": None,  # None = tippecanoe auto-detection
