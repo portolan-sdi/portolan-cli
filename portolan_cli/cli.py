@@ -65,6 +65,7 @@ from portolan_cli.scan_output import (
     render_tree_view,
 )
 from portolan_cli.scan_progress import ScanProgressReporter, count_directories
+from portolan_cli.status import CollectionStatus, get_collection_status
 from portolan_cli.temporal import FLEXIBLE_DATETIME
 from portolan_cli.validation import (
     Severity,
@@ -728,6 +729,154 @@ def list_cmd(
             return
 
         _list_tree_output_with_status(result)
+
+
+# =============================================================================
+# Status command (Issue #389 - git-like version management)
+# =============================================================================
+
+
+@cli.command("status")
+@click.option(
+    "--collection",
+    "-c",
+    help="Show status for a specific collection only.",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to catalog root (default: auto-detect).",
+)
+@click.option(
+    "--offline",
+    is_flag=True,
+    help="Skip remote version check (show local state only).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def status_cmd(
+    ctx: click.Context,
+    collection: str | None,
+    catalog_path: Path | None,
+    offline: bool,
+    json_output: bool,
+) -> None:
+    """Show local vs remote version state for collections.
+
+    Git-style status showing version sync state, modified files, and
+    untracked files for each collection in the catalog.
+
+    \b
+    Status information:
+        Local version   Current version in local versions.json
+        Remote version  Current version on remote (unless --offline)
+        Sync state      in_sync, ahead, behind, or unknown
+        Modified        Files changed since last version
+        Untracked       Files on disk not in versions.json
+        Deleted         Files in versions.json but missing from disk
+
+    \b
+    Examples:
+        portolan status                    # Status for all collections
+        portolan status -c demographics    # Status for one collection
+        portolan status --offline          # Skip remote check
+        portolan status --json             # JSON output for agents
+    """
+    use_json = should_output_json(ctx, json_output)
+
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "status")
+
+    # Load remote URL from config (if not offline)
+    remote_url: str | None = None
+    if not offline:
+        remote_url = resolve_remote(None, catalog_path, collection)
+
+    # Discover collections
+    from portolan_cli.push import discover_collections
+
+    if collection:
+        collections = [collection]
+    else:
+        collections = discover_collections(catalog_path)
+
+    if not collections:
+        if use_json:
+            envelope = success_envelope("status", {"collections": []})
+            output_json_envelope(envelope)
+        else:
+            info_output("No collections found")
+        return
+
+    # Get status for each collection
+    statuses: list[CollectionStatus] = []
+    for coll in collections:
+        status = get_collection_status(
+            catalog_root=catalog_path,
+            collection=coll,
+            offline=offline,
+            remote_url=remote_url,
+        )
+        statuses.append(status)
+
+    if use_json:
+        envelope = success_envelope(
+            "status",
+            {"collections": [s.to_dict() for s in statuses]},
+        )
+        output_json_envelope(envelope)
+    else:
+        _output_status_human(statuses)
+
+
+def _output_status_human(statuses: list[CollectionStatus]) -> None:
+    """Format status output for human consumption."""
+    for status in statuses:
+        info_output(f"Collection: {status.collection}")
+
+        # Version info
+        local_str = status.local_version or "(not initialized)"
+        info_output(f"  Local version: {local_str}")
+
+        if status.remote_version is not None:
+            sync_indicator = ""
+            if status.sync_state == "behind":
+                sync_indicator = "  ⚠ behind remote"
+            elif status.sync_state == "ahead":
+                sync_indicator = "  ↑ ahead of remote"
+            info_output(f"  Remote version: {status.remote_version}{sync_indicator}")
+        elif status.sync_state == "unknown":
+            detail("  Remote version: (offline or not configured)")
+
+        # Modified files
+        if status.modified_files:
+            info_output("")
+            info_output("  Modified files:")
+            for f in status.modified_files:
+                warn(f"    {f} (checksum changed)")
+
+        # Deleted files
+        if status.deleted_files:
+            info_output("")
+            info_output("  Deleted files:")
+            for f in status.deleted_files:
+                error(f"    {f} (missing from disk)")
+
+        # Untracked files
+        if status.untracked_files:
+            info_output("")
+            info_output("  Untracked files:")
+            for f in status.untracked_files:
+                detail(f"    {f}")
+
+        # Clean state message
+        if not status.modified_files and not status.deleted_files and not status.untracked_files:
+            if status.local_version:
+                success("  No local changes")
+
+        info_output("")
 
 
 # =============================================================================
@@ -6523,14 +6672,17 @@ def _require_iceberg_backend(
 
 @cli.group()
 def version() -> None:
-    """Iceberg version management commands.
+    """Version management commands.
+
+    Works with any versioning backend (file, iceberg). Backend is auto-detected
+    from catalog configuration.
 
     \b
     Subcommands:
         current   Show current version of a collection
         list      List all versions of a collection
-        rollback  Rollback to a previous version
-        prune     Remove old versions
+        rollback  Rollback to a previous version (iceberg only)
+        prune     Remove old versions (iceberg only)
     """
 
 
@@ -6553,20 +6705,22 @@ def current(
 ) -> None:
     """Show the current version of a collection.
 
+    Works with any versioning backend (auto-detected from config).
+
     \b
     Examples:
         portolan version current boundaries
         portolan version current boundaries --json
     """
+    from portolan_cli.version_ops import get_current_version
+
     use_json = should_output_json(ctx, json_output)
 
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "version current")
 
-    backend = _require_iceberg_backend(catalog_path, use_json, "current")
-
     try:
-        ver = backend.get_current_version(collection)
+        ver = get_current_version(collection, catalog_root=catalog_path)
     except (FileNotFoundError, Exception) as e:
         if use_json:
             envelope = error_envelope(
@@ -6620,20 +6774,22 @@ def version_list_cmd(
 ) -> None:
     """List all versions of a collection.
 
+    Works with any versioning backend (auto-detected from config).
+
     \b
     Examples:
         portolan version list boundaries
         portolan version list boundaries --json
     """
+    from portolan_cli.version_ops import list_versions
+
     use_json = should_output_json(ctx, json_output)
 
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "version list")
 
-    backend = _require_iceberg_backend(catalog_path, use_json, "list")
-
     try:
-        versions = backend.list_versions(collection)
+        versions = list_versions(collection, catalog_root=catalog_path)
     except (FileNotFoundError, Exception) as e:
         if use_json:
             envelope = error_envelope(
@@ -6676,6 +6832,192 @@ def version_list_cmd(
             if v.changes:
                 for change in v.changes:
                     detail(f"    {change}")
+
+
+def _bump_show_changes(
+    collection: str,
+    new_version: str,
+    current_version: str | None,
+    modified: list[str],
+    deleted: list[str],
+) -> bool:
+    """Show changes and get confirmation for version bump."""
+    info_output(f"Creating version {new_version} for '{collection}'")
+    info_output(f"  Current version: {current_version}")
+    info_output("")
+
+    if modified:
+        info_output("Modified files:")
+        for f in modified:
+            warn(f"  {f}")
+
+    if deleted:
+        info_output("Deleted files:")
+        for f in deleted:
+            error(f"  {f}")
+
+    info_output("")
+    return click.confirm("Create this version?")
+
+
+@version.command()
+@click.argument("collection")
+@click.argument("new_version")
+@click.option(
+    "--notes",
+    "-m",
+    help="Version notes/message describing the change.",
+)
+@click.option(
+    "--breaking",
+    is_flag=True,
+    help="Mark this version as having breaking changes.",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt.",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to catalog root (default: auto-detect).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def bump(
+    ctx: click.Context,
+    collection: str,
+    new_version: str,
+    notes: str | None,
+    breaking: bool,
+    yes: bool,
+    catalog_path: Path | None,
+    json_output: bool,
+) -> None:
+    """Create a new version from current file state.
+
+    Detects modified files by comparing checksums, computes new checksums,
+    and creates a new version entry in versions.json.
+
+    NEW_VERSION must be an explicit semver string (e.g., "1.2.0").
+
+    \b
+    Examples:
+        portolan version bump demographics 1.4.0 -m "Updated source data"
+        portolan version bump demographics 2.0.0 --breaking -m "Schema change"
+        portolan version bump demographics 1.4.0 -y  # Skip confirmation
+    """
+    from portolan_cli.status import detect_deleted_files, detect_modified_files
+    from portolan_cli.version_ops import publish_version
+    from portolan_cli.versions import read_versions
+
+    use_json = should_output_json(ctx, json_output)
+
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "version bump")
+
+    collection_path = catalog_path / collection
+    versions_path = collection_path / "versions.json"
+
+    # Read current versions
+    if not versions_path.exists():
+        if use_json:
+            envelope = error_envelope(
+                "version bump",
+                [ErrorDetail(type="NotFoundError", message=f"No versions.json in {collection}")],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Collection '{collection}' has no versions.json")
+        raise SystemExit(1)
+
+    try:
+        versions_file = read_versions(versions_path)
+    except ValueError as e:
+        if use_json:
+            envelope = error_envelope(
+                "version bump",
+                [ErrorDetail(type="ParseError", message=str(e))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Invalid versions.json: {e}")
+        raise SystemExit(1) from None
+
+    current_version = versions_file.current_version
+
+    # Detect changes
+    modified = detect_modified_files(collection_path, versions_file)
+    deleted = detect_deleted_files(collection_path, versions_file)
+
+    if not modified and not deleted:
+        if use_json:
+            envelope = success_envelope(
+                "version bump",
+                {"collection": collection, "message": "No changes detected", "created": False},
+            )
+            output_json_envelope(envelope)
+        else:
+            info_output(f"No changes detected in '{collection}'")
+        return
+
+    # Show what will be versioned and get confirmation
+    if not use_json and not yes:
+        if not _bump_show_changes(collection, new_version, current_version, modified, deleted):
+            info_output("Aborted")
+            return
+
+    # Compute checksums for modified files
+    assets: dict[str, str] = {}
+    for filename in modified:
+        file_path = collection_path / filename
+        if file_path.exists():
+            assets[filename] = str(file_path)
+
+    # Publish the version
+    try:
+        ver = publish_version(
+            collection,
+            assets=assets,
+            breaking=breaking,
+            message=notes or "",
+            removed=set(deleted) if deleted else None,
+            catalog_root=catalog_path,
+        )
+    except Exception as e:
+        if use_json:
+            envelope = error_envelope(
+                "version bump",
+                [ErrorDetail(type=type(e).__name__, message=str(e))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Failed to create version: {e}")
+        raise SystemExit(1) from None
+
+    if use_json:
+        envelope = success_envelope(
+            "version bump",
+            {
+                "collection": collection,
+                "version": ver.version,
+                "previous_version": current_version,
+                "created": ver.created.isoformat(),
+                "breaking": ver.breaking,
+                "message": ver.message,
+                "modified_files": modified,
+                "deleted_files": deleted,
+            },
+        )
+        output_json_envelope(envelope)
+    else:
+        success(f"Created version {ver.version}")
+        if ver.message:
+            detail(f"  {ver.message}")
 
 
 @version.command()
