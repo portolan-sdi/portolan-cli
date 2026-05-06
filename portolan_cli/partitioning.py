@@ -288,9 +288,9 @@ def detect_partitioning(directory: Path) -> dict[str, object] | None:
 
     # Try to detect strategy from column name
     strategy = None
-    for strat, col in PARTITION_COLUMNS.items():
+    for strategy_name, col in PARTITION_COLUMNS.items():
         if col in partition_keys:
-            strategy = strat
+            strategy = strategy_name
             break
 
     result: dict[str, object] = {
