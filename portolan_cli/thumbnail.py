@@ -26,7 +26,7 @@ from portolan_cli.config import load_config
 from portolan_cli.utils import get_dict
 
 if TYPE_CHECKING:
-    from matplotlib.axes import Axes  # type: ignore
+    from matplotlib.axes import Axes
 
 logger = logging.getLogger(__name__)
 
@@ -464,9 +464,9 @@ def _render_geometries(
         True if successful, False otherwise.
     """
     try:
-        import matplotlib.pyplot as plt  # type: ignore
-        from matplotlib.collections import PatchCollection  # type: ignore
-        from matplotlib.patches import Polygon as MplPolygon  # type: ignore
+        import matplotlib.pyplot as plt
+        from matplotlib.collections import PatchCollection
+        from matplotlib.patches import Polygon as MplPolygon
     except ImportError:
         logger.debug("matplotlib not available")
         return False

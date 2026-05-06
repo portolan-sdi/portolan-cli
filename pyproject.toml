@@ -195,7 +195,7 @@ python_version = "3.10"
 strict = true  # Enables all strict flags at once
 
 [[tool.mypy.overrides]]
-module = ["pyarrow.*", "rasterio.*", "gitingest.*"]
+module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*"]
 ignore_missing_imports = true
 
 # ---------- security ----------
