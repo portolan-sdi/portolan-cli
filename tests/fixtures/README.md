@@ -139,6 +139,29 @@ These fixtures test the `check` command's metadata validation and the versions.j
 | `versions_missing_current.json` | `current_version` not in versions array | Reference integrity |
 | `versions_duplicate.json` | Same version appears twice | Uniqueness constraint |
 
+### Style Fixtures (Issue #13)
+
+Mapbox GL style specs for PMTiles assets.
+
+**Valid fixtures:**
+
+| File | Description | Purpose |
+|------|-------------|---------|
+| `style_point.json` | Circle layer | Basic point styling |
+| `style_polygon.json` | Fill layer | Basic polygon styling |
+| `style_line.json` | Line layer | Basic linestring styling |
+| `style_categorical.json` | Match expression | Data-driven categorical colors |
+| `style_graduated.json` | Interpolate expression | Graduated color ramp |
+
+**Invalid fixtures:**
+
+| File | Issue | Purpose |
+|------|-------|---------|
+| `style_bad_syntax.json` | Missing comma | JSON parse error handling |
+| `style_missing_layers.json` | No `layers` array | Schema validation |
+
+See `metadata/style/README.md` for style schema details.
+
 ## Adding New Fixtures
 
 1. Add generation logic to `generate.py`

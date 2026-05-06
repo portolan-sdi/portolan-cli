@@ -39,6 +39,11 @@ from portolan_cli.formats import (
     detect_format,
     get_cloud_native_status,
 )
+from portolan_cli.thumbnail import (
+    ThumbnailConfig,
+    generate_vector_thumbnail,
+    get_thumbnail_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -366,6 +371,18 @@ def convert_file(
             target_format = "GeoParquet"
             # Validate output is valid GeoParquet
             validation_error = _validate_geoparquet(output_path)
+            # Generate thumbnail next to the GeoParquet (Issue #13).
+            # Only on a successful, valid conversion to avoid orphan thumbnails.
+            if validation_error is None:
+                thumb_config = (
+                    get_thumbnail_config(catalog_path) if catalog_path else ThumbnailConfig()
+                )
+                if thumb_config.enabled:
+                    generate_vector_thumbnail(
+                        pmtiles_path=None,  # PMTiles generated separately if enabled
+                        geoparquet_path=output_path if isinstance(output_path, Path) else None,
+                        config=thumb_config,
+                    )
         elif format_type == FormatType.RASTER:
             output_path = _convert_raster(source, out_dir, cog_settings)
             target_format = "COG"

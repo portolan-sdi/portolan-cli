@@ -26,6 +26,8 @@ class PMTilesMetadata:
         max_zoom: Maximum zoom level.
         tile_type: Tile type ("mvt", "png", "jpeg", "webp", "avif").
         center: Optional center point as (lon, lat, zoom).
+        layer_name: Name of the primary layer in the PMTiles (for styling).
+        style: Optional Mapbox GL style spec (Issue #13).
     """
 
     bbox: tuple[float, float, float, float] | None
@@ -33,16 +35,23 @@ class PMTilesMetadata:
     max_zoom: int
     tile_type: str
     center: tuple[float, float, int] | None
+    layer_name: str | None = None
+    style: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
-        return {
+        result: dict[str, Any] = {
             "bbox": list(self.bbox) if self.bbox else None,
             "min_zoom": self.min_zoom,
             "max_zoom": self.max_zoom,
             "tile_type": self.tile_type,
             "center": list(self.center) if self.center else None,
         }
+        if self.layer_name:
+            result["layer_name"] = self.layer_name
+        if self.style:
+            result["style"] = self.style
+        return result
 
     def to_stac_properties(self) -> dict[str, Any]:
         """Convert to STAC Item/Collection properties format.
@@ -59,6 +68,12 @@ class PMTilesMetadata:
 
         if self.center:
             props["pmtiles:center"] = list(self.center)
+
+        if self.layer_name:
+            props["pmtiles:layers"] = [self.layer_name]
+
+        if self.style:
+            props["pmtiles:style"] = self.style
 
         return props
 
@@ -96,6 +111,7 @@ def extract_pmtiles_metadata(path: Path) -> PMTilesMetadata:
         with open(path, "rb") as f:
             reader = Reader(MmapSource(f))  # type: ignore[no-untyped-call]
             header = reader.header()  # type: ignore[no-untyped-call]
+            metadata = reader.metadata()  # type: ignore[no-untyped-call]
     except MagicNumberNotFound as e:
         raise ValueError(f"Invalid PMTiles file: {path}") from e
     except Exception as e:
@@ -125,10 +141,21 @@ def extract_pmtiles_metadata(path: Path) -> PMTilesMetadata:
     else:
         tile_type = _TILE_TYPE_MAP.get(tile_type_value, "unknown")
 
+    # Try to extract layer name from metadata (Issue #13)
+    layer_name: str | None = None
+    if isinstance(metadata, dict):
+        # TileJSON format: {"vector_layers": [{"id": "layer_name", ...}]}
+        vector_layers = metadata.get("vector_layers", [])
+        if isinstance(vector_layers, list) and vector_layers:
+            first_layer = vector_layers[0]
+            if isinstance(first_layer, dict):
+                layer_name = first_layer.get("id")
+
     return PMTilesMetadata(
         bbox=bbox,
         min_zoom=header["min_zoom"],
         max_zoom=header["max_zoom"],
         tile_type=tile_type,
         center=center,
+        layer_name=layer_name,
     )

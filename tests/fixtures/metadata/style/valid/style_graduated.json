@@ -1,0 +1,23 @@
+{
+  "version": 8,
+  "layers": [
+    {
+      "id": "population-fill",
+      "type": "fill",
+      "source-layer": "census",
+      "paint": {
+        "fill-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "population"],
+          0, "#ffffcc",
+          10000, "#a1dab4",
+          50000, "#41b6c4",
+          100000, "#2c7fb8",
+          500000, "#253494"
+        ],
+        "fill-opacity": 0.8
+      }
+    }
+  ]
+}

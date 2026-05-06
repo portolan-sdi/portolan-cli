@@ -1,0 +1,22 @@
+{
+  "version": 8,
+  "layers": [
+    {
+      "id": "landuse-fill",
+      "type": "fill",
+      "source-layer": "landuse",
+      "paint": {
+        "fill-color": [
+          "match",
+          ["get", "type"],
+          "residential", "#f0e68c",
+          "commercial", "#ff6347",
+          "industrial", "#808080",
+          "park", "#90ee90",
+          "#3388ff"
+        ],
+        "fill-opacity": 0.7
+      }
+    }
+  ]
+}

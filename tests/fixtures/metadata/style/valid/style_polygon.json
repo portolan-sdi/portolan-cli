@@ -1,0 +1,15 @@
+{
+  "version": 8,
+  "layers": [
+    {
+      "id": "parcels-fill",
+      "type": "fill",
+      "source-layer": "parcels",
+      "paint": {
+        "fill-color": "#3388ff",
+        "fill-opacity": 0.6,
+        "fill-outline-color": "#2266cc"
+      }
+    }
+  ]
+}
