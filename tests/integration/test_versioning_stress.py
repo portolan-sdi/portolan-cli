@@ -1183,6 +1183,8 @@ class TestCatalogVersionsEdgeCases:
 # =============================================================================
 
 
+@pytest.mark.slow
+@pytest.mark.integration
 class TestScaleAt1000Files:
     """Test at scale matching original issue #339 (1900 files).
 
