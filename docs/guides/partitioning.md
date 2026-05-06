@@ -45,7 +45,7 @@ Configure partitioning in `.portolan/config.yaml`:
 
 ```yaml
 partitioning:
-  enabled: true           # Enable auto-partitioning (default: false)
+  enabled: true           # Enable auto-partitioning (default: true)
   prompt: true            # Ask before partitioning in interactive mode (default: true)
   threshold_gb: 2.0       # Size threshold in GB (default: 2.0)
   strategy: kdtree        # Partitioning strategy (default: kdtree)
@@ -56,7 +56,7 @@ partitioning:
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `partitioning.enabled` | bool | `false` | Enable automatic partitioning during `portolan add` |
+| `partitioning.enabled` | bool | `true` | Enable automatic partitioning during `portolan add` |
 | `partitioning.prompt` | bool | `true` | Prompt user before partitioning (interactive mode) |
 | `partitioning.threshold_gb` | float | `2.0` | File size threshold in GB |
 | `partitioning.strategy` | string | `kdtree` | Partitioning strategy |

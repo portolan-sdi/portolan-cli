@@ -500,11 +500,11 @@ class PartitionStructureRule(ValidationRule):
                 issues.append(f"{coll_dir.name}: {len(orphan_files)} orphan .parquet at root")
 
             # Check collection.json has partition:* fields
+            # STAC Collections store extension fields at top level, not in "properties"
             try:
                 with open(coll_json) as f:
                     coll_data = json.load(f)
-                props = coll_data.get("properties", coll_data)
-                if "partition:scheme" not in props:
+                if "partition:scheme" not in coll_data:
                     issues.append(f"{coll_dir.name}: missing partition:scheme in collection.json")
             except (json.JSONDecodeError, OSError):
                 pass

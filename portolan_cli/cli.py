@@ -2747,7 +2747,9 @@ def _check_partition_prompt(
     from portolan_cli.config import get_setting
     from portolan_cli.partitioning import should_partition
 
-    part_enabled = get_setting("partitioning.enabled", catalog_root) or False
+    part_enabled = get_setting("partitioning.enabled", catalog_root)
+    if part_enabled is None:
+        part_enabled = True  # Default: enabled (prompt before partitioning large files)
     part_prompt = get_setting("partitioning.prompt", catalog_root)
     if part_prompt is None:
         part_prompt = True  # Default: prompt in interactive mode
@@ -3180,7 +3182,7 @@ def add_cmd(
         spatial chunks using KD-tree partitioning. In interactive mode,
         you'll be prompted before partitioning. Configure via:
 
-            partitioning.enabled: true/false (default: false)
+            partitioning.enabled: true/false (default: true)
             partitioning.prompt: true/false (default: true)
             partitioning.threshold_gb: size in GB (default: 2.0)
     """
