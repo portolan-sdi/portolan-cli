@@ -306,3 +306,118 @@ styles:
         # Defaults
         assert config.polygon_fill_opacity == 0.6
         assert config.point_color == "#3388ff"
+
+
+# =============================================================================
+# Coordinate Transformation Tests
+# =============================================================================
+
+
+class TestPmtilesCoordinateTransformation:
+    """Tests for PMTiles tile-space to geographic coordinate transformation."""
+
+    @pytest.mark.integration
+    def test_tile_bounds_calculation(self) -> None:
+        """Tile bounds are calculated correctly from z/x/y."""
+        from portolan_cli.thumbnail import _tile_bounds
+
+        # z=0 x=0 y=0 should cover the whole world
+        bounds = _tile_bounds(0, 0, 0)
+        assert bounds[0] == pytest.approx(-180.0, abs=0.01)  # lon_min
+        assert bounds[2] == pytest.approx(180.0, abs=0.01)  # lon_max
+        # Web Mercator doesn't reach poles exactly
+        assert bounds[1] < -80  # lat_min (south)
+        assert bounds[3] > 80  # lat_max (north)
+
+    @pytest.mark.integration
+    def test_tile_bounds_at_zoom_1(self) -> None:
+        """Tile bounds at zoom 1 divide world into quadrants."""
+        from portolan_cli.thumbnail import _tile_bounds
+
+        # z=1 x=0 y=0 is NW quadrant
+        nw = _tile_bounds(1, 0, 0)
+        assert nw[0] == pytest.approx(-180.0, abs=0.01)
+        assert nw[2] == pytest.approx(0.0, abs=0.01)
+        assert nw[3] > 0  # North hemisphere
+
+        # z=1 x=1 y=1 is SE quadrant
+        se = _tile_bounds(1, 1, 1)
+        assert se[0] == pytest.approx(0.0, abs=0.01)
+        assert se[2] == pytest.approx(180.0, abs=0.01)
+        assert se[1] < 0  # South hemisphere
+
+    @pytest.mark.integration
+    def test_coord_transformation(self) -> None:
+        """MVT coordinates transform to geographic correctly."""
+        from portolan_cli.thumbnail import _tile_bounds, _transform_coord
+
+        # Tile z=0 x=0 y=0 covers whole world
+        bounds = _tile_bounds(0, 0, 0)
+
+        # MVT coord (0, 0) is top-left of tile = NW corner
+        lon, lat = _transform_coord(0, 0, bounds, extent=4096)
+        assert lon == pytest.approx(-180.0, abs=0.1)
+        assert lat == pytest.approx(bounds[3], abs=0.1)  # lat_max (north)
+
+        # MVT coord (4096, 4096) is bottom-right = SE corner
+        lon, lat = _transform_coord(4096, 4096, bounds, extent=4096)
+        assert lon == pytest.approx(180.0, abs=0.1)
+        assert lat == pytest.approx(bounds[1], abs=0.1)  # lat_min (south)
+
+        # MVT coord (2048, 2048) is center = near (0, 0)
+        lon, lat = _transform_coord(2048, 2048, bounds, extent=4096)
+        assert lon == pytest.approx(0.0, abs=0.1)
+        assert lat == pytest.approx(0.0, abs=5.0)  # Web Mercator center not exactly 0
+
+    @pytest.mark.integration
+    def test_transform_coords_recursive(self) -> None:
+        """Coordinate arrays transform recursively for all geometry types."""
+        from portolan_cli.thumbnail import _tile_bounds, _transform_coords
+
+        bounds = _tile_bounds(0, 0, 0)
+
+        # Point: [x, y]
+        point = [2048, 2048]
+        transformed = _transform_coords(point, bounds)
+        assert len(transformed) == 2
+        assert transformed[0] == pytest.approx(0.0, abs=0.1)
+
+        # LineString: [[x1, y1], [x2, y2]]
+        line = [[0, 0], [4096, 4096]]
+        transformed = _transform_coords(line, bounds)
+        assert len(transformed) == 2
+        assert transformed[0][0] == pytest.approx(-180.0, abs=0.1)
+        assert transformed[1][0] == pytest.approx(180.0, abs=0.1)
+
+        # Polygon: [[[x1, y1], [x2, y2], ...]]
+        polygon = [[[0, 0], [4096, 0], [4096, 4096], [0, 0]]]
+        transformed = _transform_coords(polygon, bounds)
+        assert len(transformed) == 1  # One ring
+        assert len(transformed[0]) == 4  # Four vertices
+        assert transformed[0][0][0] == pytest.approx(-180.0, abs=0.1)
+
+    @pytest.mark.integration
+    def test_real_pmtiles_produces_geographic_bounds(self, fixtures_dir: Path) -> None:
+        """Real PMTiles file produces valid geographic bounds."""
+        pytest.importorskip("pmtiles")
+        pytest.importorskip("mapbox_vector_tile")
+
+        from portolan_cli.thumbnail import _read_pmtiles_geometries
+
+        pmtiles_path = fixtures_dir / "cloud_native" / "sample.pmtiles"
+        if not pmtiles_path.exists():
+            pytest.skip("PMTiles fixture not available")
+
+        geometries, bounds = _read_pmtiles_geometries(pmtiles_path)
+
+        # May have no geometries at low zoom, that's ok
+        if bounds is not None:
+            lon_min, lat_min, lon_max, lat_max = bounds
+            # Bounds should be valid geographic coordinates
+            assert -180.0 <= lon_min <= 180.0
+            assert -180.0 <= lon_max <= 180.0
+            assert -90.0 <= lat_min <= 90.0
+            assert -90.0 <= lat_max <= 90.0
+            # Bounds should be ordered correctly
+            assert lon_min <= lon_max
+            assert lat_min <= lat_max

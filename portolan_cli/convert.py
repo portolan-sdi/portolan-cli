@@ -180,7 +180,12 @@ class ConversionReport:
         }
 
 
-def generate_cog_thumbnail(cog_path: Path, max_size: int = 512, quality: int = 75) -> Path | None:
+def generate_cog_thumbnail(
+    cog_path: Path,
+    max_size: int = 512,
+    quality: int = 75,
+    basemap_provider: str = "none",
+) -> Path | None:
     """Generate a JPEG thumbnail from a COG file (Issue #372).
 
     Reads the lowest-resolution overview when available, downsamples to fit
@@ -192,11 +197,19 @@ def generate_cog_thumbnail(cog_path: Path, max_size: int = 512, quality: int = 7
         cog_path: Path to the source COG file.
         max_size: Maximum pixel dimension for the longest edge (default 512).
         quality: JPEG quality 1-100 (default 75).
+        basemap_provider: Contextily basemap provider (default 'none').
+            Note: Basemap compositing for rasters requires CRS reprojection
+            and is not yet implemented. This parameter is reserved for future use.
 
     Returns:
         Path to the written JPEG thumbnail, or None if the source could not be
         read as a raster (e.g., corrupt file).
     """
+    # TODO(Issue #13): Implement basemap compositing for raster thumbnails.
+    # Requires: reprojecting COG to Web Mercator, fetching basemap tiles,
+    # alpha-compositing raster over basemap. For now, basemap is ignored.
+    if basemap_provider != "none":
+        logger.debug("Basemap for raster thumbnails not yet implemented, ignoring")
     try:
         import numpy as np
         import rasterio

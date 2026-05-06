@@ -89,14 +89,15 @@ class TestGenerateThumbnailFromPmtiles:
         pmtiles_path = tmp_path / "data.pmtiles"
         pmtiles_path.touch()
 
-        # Mock the PMTiles reading to return fake geometries
+        # Mock the PMTiles reading to return fake geometries and bounds
         with (
             patch("portolan_cli.thumbnail._read_pmtiles_geometries") as mock_read,
             patch("portolan_cli.thumbnail._render_geometries") as mock_render,
         ):
-            mock_read.return_value = [
-                {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}
-            ]
+            mock_read.return_value = (
+                [{"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}],
+                (0.0, 0.0, 1.0, 1.0),  # bounds
+            )
             mock_render.return_value = True
 
             config = ThumbnailConfig()
@@ -115,7 +116,7 @@ class TestGenerateThumbnailFromPmtiles:
         pmtiles_path.touch()
 
         with patch("portolan_cli.thumbnail._read_pmtiles_geometries") as mock_read:
-            mock_read.return_value = []
+            mock_read.return_value = ([], None)  # empty geometries, no bounds
 
             config = ThumbnailConfig()
             result = generate_thumbnail_from_pmtiles(pmtiles_path, config)
@@ -150,7 +151,10 @@ class TestGenerateThumbnailFromPmtiles:
             patch("portolan_cli.thumbnail._read_pmtiles_geometries") as mock_read,
             patch("portolan_cli.thumbnail._render_geometries") as mock_render,
         ):
-            mock_read.return_value = [{"type": "Point", "coordinates": [0, 0]}]
+            mock_read.return_value = (
+                [{"type": "Point", "coordinates": [0, 0]}],
+                (-122.0, 37.0, -121.0, 38.0),  # bounds
+            )
             mock_render.return_value = True
 
             config = ThumbnailConfig()

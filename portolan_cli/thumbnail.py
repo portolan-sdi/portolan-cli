@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import gzip
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.config import load_config
+from portolan_cli.utils import get_dict
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes  # type: ignore[import-not-found]
@@ -72,12 +74,6 @@ class ThumbnailConfig:
     basemap_zoom_adjust: int = 0
 
 
-def _get_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
-    """Safely get a dict value, returning empty dict if not a dict."""
-    value = data.get(key, {})
-    return value if isinstance(value, dict) else {}
-
-
 def get_thumbnail_config(catalog_path: Path) -> ThumbnailConfig:
     """Load thumbnail config from catalog's config.yaml.
 
@@ -91,12 +87,12 @@ def get_thumbnail_config(catalog_path: Path) -> ThumbnailConfig:
     """
     config = load_config(catalog_path)
 
-    thumbnails = _get_dict(config, "thumbnails")
+    thumbnails = get_dict(config, "thumbnails")
     if not thumbnails:
         return ThumbnailConfig()
 
     # Parse basemap subsection
-    basemap = _get_dict(thumbnails, "basemap")
+    basemap = get_dict(thumbnails, "basemap")
 
     enabled = thumbnails.get("enabled")
     if not isinstance(enabled, bool):
@@ -133,35 +129,130 @@ def get_thumbnail_config(catalog_path: Path) -> ThumbnailConfig:
 
 
 # =============================================================================
+# Tile Coordinate Transformation
+# =============================================================================
+
+# MVT default tile extent (coordinates range from 0 to EXTENT)
+MVT_EXTENT = 4096
+
+
+def _tile_to_lon(x: int, z: int) -> float:
+    """Convert tile X coordinate to longitude."""
+    n = float(2**z)
+    return x / n * 360.0 - 180.0
+
+
+def _tile_to_lat(y: int, z: int) -> float:
+    """Convert tile Y coordinate to latitude (Web Mercator)."""
+    n = 2**z
+    lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
+    return math.degrees(lat_rad)
+
+
+def _tile_bounds(z: int, x: int, y: int) -> tuple[float, float, float, float]:
+    """Get geographic bounds for a tile.
+
+    Returns:
+        (lon_min, lat_min, lon_max, lat_max)
+    """
+    lon_min = _tile_to_lon(x, z)
+    lon_max = _tile_to_lon(x + 1, z)
+    lat_max = _tile_to_lat(y, z)  # Y=0 is north
+    lat_min = _tile_to_lat(y + 1, z)
+    return (lon_min, lat_min, lon_max, lat_max)
+
+
+def _transform_coord(
+    mvt_x: float,
+    mvt_y: float,
+    tile_bounds: tuple[float, float, float, float],
+    extent: int = MVT_EXTENT,
+) -> tuple[float, float]:
+    """Transform MVT tile-space coordinate to geographic.
+
+    Args:
+        mvt_x: X coordinate in tile extent space (0 to extent).
+        mvt_y: Y coordinate in tile extent space (0 to extent).
+        tile_bounds: (lon_min, lat_min, lon_max, lat_max).
+        extent: MVT tile extent (default 4096).
+
+    Returns:
+        (longitude, latitude)
+    """
+    lon_min, lat_min, lon_max, lat_max = tile_bounds
+    lon = lon_min + (mvt_x / extent) * (lon_max - lon_min)
+    # Y is inverted in MVT (0 at top)
+    lat = lat_max - (mvt_y / extent) * (lat_max - lat_min)
+    return (lon, lat)
+
+
+def _transform_coords(
+    coords: Any,
+    tile_bounds: tuple[float, float, float, float],
+    depth: int = 0,
+) -> Any:
+    """Recursively transform coordinate arrays from tile-space to geographic.
+
+    Handles Point, LineString, Polygon, and Multi* geometry coordinate structures.
+    """
+    if depth > 4:
+        return coords  # Safety limit
+
+    if not coords:
+        return coords
+
+    # Check if this is a coordinate pair [x, y]
+    if (
+        isinstance(coords, (list, tuple))
+        and len(coords) >= 2
+        and isinstance(coords[0], (int, float))
+        and isinstance(coords[1], (int, float))
+    ):
+        lon, lat = _transform_coord(coords[0], coords[1], tile_bounds)
+        return [lon, lat]
+
+    # Otherwise recurse into nested arrays
+    if isinstance(coords, list):
+        return [_transform_coords(c, tile_bounds, depth + 1) for c in coords]
+
+    return coords
+
+
+# =============================================================================
 # PMTiles Reading (Internal)
 # =============================================================================
 
 
-def _read_pmtiles_geometries(pmtiles_path: Path) -> list[dict[str, Any]]:
-    """Read geometries from low-zoom PMTiles tiles.
+def _read_pmtiles_geometries(
+    pmtiles_path: Path,
+) -> tuple[list[dict[str, Any]], tuple[float, float, float, float] | None]:
+    """Read geometries from low-zoom PMTiles tiles with geographic coordinates.
+
+    Transforms MVT tile-space coordinates to geographic (lon/lat) coordinates.
 
     Args:
         pmtiles_path: Path to PMTiles file.
 
     Returns:
-        List of geometry dicts with 'type' and 'coordinates' keys.
-
-    Raises:
-        Exception: If PMTiles cannot be read.
+        Tuple of (geometries, bounds) where:
+        - geometries: List of geometry dicts with 'type' and 'coordinates' keys.
+        - bounds: (minx, miny, maxx, maxy) bounding box, or None if no geometries.
     """
     try:
         from pmtiles.reader import MmapSource, Reader
     except ImportError:
         logger.debug("pmtiles library not available")
-        return []
+        return [], None
 
     try:
         import mapbox_vector_tile  # type: ignore[import-not-found]
     except ImportError:
         logger.debug("mapbox-vector-tile library not available")
-        return []
+        return [], None
 
     geometries: list[dict[str, Any]] = []
+    all_lons: list[float] = []
+    all_lats: list[float] = []
 
     with open(pmtiles_path, "rb") as f:
         reader: Any = Reader(MmapSource(f))  # type: ignore[no-untyped-call]
@@ -184,17 +275,25 @@ def _read_pmtiles_geometries(pmtiles_path: Path) -> list[dict[str, Any]]:
                             tile_data = gzip.decompress(tile_data)
 
                         decoded = mapbox_vector_tile.decode(tile_data)
+                        tile_bounds = _tile_bounds(z, x, y)
 
                         for layer in decoded.values():
                             for feature in layer.get("features", []):
                                 geom = feature.get("geometry", {})
                                 if geom.get("type") and geom.get("coordinates"):
+                                    # Transform coords from tile-space to geographic
+                                    transformed = _transform_coords(
+                                        geom["coordinates"], tile_bounds
+                                    )
                                     geometries.append(
                                         {
                                             "type": geom["type"],
-                                            "coordinates": geom["coordinates"],
+                                            "coordinates": transformed,
                                         }
                                     )
+                                    # Collect bounds from tile
+                                    all_lons.extend([tile_bounds[0], tile_bounds[2]])
+                                    all_lats.extend([tile_bounds[1], tile_bounds[3]])
 
                     # Limit search at higher zooms
                     if tiles_checked > 256:
@@ -205,7 +304,12 @@ def _read_pmtiles_geometries(pmtiles_path: Path) -> list[dict[str, Any]]:
             if geometries:
                 break  # Got data, stop
 
-    return geometries
+    # Calculate overall bounds
+    bounds: tuple[float, float, float, float] | None = None
+    if all_lons and all_lats:
+        bounds = (min(all_lons), min(all_lats), max(all_lons), max(all_lats))
+
+    return geometries, bounds
 
 
 def _add_polygon_patches(coords: list[Any], patches: list[Any], mpl_polygon_cls: type) -> None:
@@ -245,8 +349,19 @@ def _render_geometries(
     geometries: list[dict[str, Any]],
     output_path: Path,
     config: ThumbnailConfig,
+    bounds: tuple[float, float, float, float] | None = None,
 ) -> bool:
-    """Render geometries to JPEG thumbnail."""
+    """Render geometries to JPEG thumbnail with optional basemap.
+
+    Args:
+        geometries: List of geometry dicts with 'type' and 'coordinates'.
+        output_path: Where to write the JPEG.
+        config: Thumbnail configuration.
+        bounds: Geographic bounds (minx, miny, maxx, maxy) for basemap.
+
+    Returns:
+        True if successful, False otherwise.
+    """
     try:
         import matplotlib.pyplot as plt  # type: ignore[import-not-found]
         from matplotlib.collections import PatchCollection  # type: ignore[import-not-found]
@@ -258,6 +373,16 @@ def _render_geometries(
     fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
     ax.set_aspect("equal")
     ax.axis("off")
+
+    # Add basemap first (behind data) if bounds available
+    if bounds is not None and config.basemap_provider != "none":
+        add_basemap(
+            ax,
+            bounds,
+            config.basemap_provider,
+            config.basemap_opacity,
+            config.basemap_zoom_adjust,
+        )
 
     patches: list[Any] = []
     for geom in geometries:
@@ -451,12 +576,12 @@ def generate_thumbnail_from_pmtiles(
     thumb_path = pmtiles_path.with_name(f"{pmtiles_path.stem}.thumb.jpg")
 
     try:
-        geometries = _read_pmtiles_geometries(pmtiles_path)
+        geometries, bounds = _read_pmtiles_geometries(pmtiles_path)
         if not geometries:
             logger.debug("No geometries found in PMTiles: %s", pmtiles_path)
             return None
 
-        if _render_geometries(geometries, thumb_path, config):
+        if _render_geometries(geometries, thumb_path, config, bounds=bounds):
             logger.debug("Generated PMTiles thumbnail: %s", thumb_path)
             return thumb_path
         return None

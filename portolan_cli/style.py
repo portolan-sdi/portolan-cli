@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.config import load_config
+from portolan_cli.utils import get_dict, get_list
 
 logger = logging.getLogger(__name__)
 
@@ -168,18 +169,6 @@ def build_raster_style(config: RasterStyleConfig) -> dict[str, Any]:
 # =============================================================================
 
 
-def _get_dict(data: dict[str, Any], key: str) -> dict[str, Any]:
-    """Safely get a dict value, returning empty dict if not a dict."""
-    value = data.get(key, {})
-    return value if isinstance(value, dict) else {}
-
-
-def _get_list(data: dict[str, Any], key: str) -> list[Any]:
-    """Safely get a list value, returning empty list if not a list."""
-    value = data.get(key, [])
-    return value if isinstance(value, list) else []
-
-
 def get_vector_style_config(catalog_path: Path) -> VectorStyleConfig:
     """Load vector style config from catalog's config.yaml.
 
@@ -206,16 +195,16 @@ def get_vector_style_config(catalog_path: Path) -> VectorStyleConfig:
     """
     config = load_config(catalog_path)
 
-    styles = _get_dict(config, "styles")
+    styles = get_dict(config, "styles")
     if not styles:
         return VectorStyleConfig()
 
-    vector = _get_dict(styles, "vector")
+    vector = get_dict(styles, "vector")
     if not vector:
         return VectorStyleConfig()
 
     # Parse point settings
-    point = _get_dict(vector, "point")
+    point = get_dict(vector, "point")
     point_color = point.get("circle-color")
     if not isinstance(point_color, str):
         point_color = "#3388ff"
@@ -229,7 +218,7 @@ def get_vector_style_config(catalog_path: Path) -> VectorStyleConfig:
         point_opacity = 0.8
 
     # Parse line settings
-    line = _get_dict(vector, "line")
+    line = get_dict(vector, "line")
     line_color = line.get("line-color")
     if not isinstance(line_color, str):
         line_color = "#3388ff"
@@ -243,7 +232,7 @@ def get_vector_style_config(catalog_path: Path) -> VectorStyleConfig:
         line_opacity = 0.8
 
     # Parse polygon settings
-    polygon = _get_dict(vector, "polygon")
+    polygon = get_dict(vector, "polygon")
     polygon_fill_color = polygon.get("fill-color")
     if not isinstance(polygon_fill_color, str):
         polygon_fill_color = "#3388ff"
@@ -288,11 +277,11 @@ def get_raster_style_config(catalog_path: Path) -> RasterStyleConfig:
     """
     config = load_config(catalog_path)
 
-    styles = _get_dict(config, "styles")
+    styles = get_dict(config, "styles")
     if not styles:
         return RasterStyleConfig()
 
-    raster = _get_dict(styles, "raster")
+    raster = get_dict(styles, "raster")
     if not raster:
         return RasterStyleConfig()
 
@@ -300,7 +289,7 @@ def get_raster_style_config(catalog_path: Path) -> RasterStyleConfig:
     if not isinstance(colormap, str):
         colormap = "viridis"
 
-    rescale = _get_list(raster, "rescale")
+    rescale = get_list(raster, "rescale")
     rescale_min: float | None = None
     rescale_max: float | None = None
 

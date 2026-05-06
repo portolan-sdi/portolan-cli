@@ -32,6 +32,7 @@ from typing import Any
 
 from portolan_cli.errors import PortolanError
 from portolan_cli.output import warn
+from portolan_cli.thumbnail import ThumbnailConfig, generate_vector_thumbnail, get_thumbnail_config
 
 logger = logging.getLogger(__name__)
 
@@ -554,6 +555,15 @@ def generate_pmtiles_for_collection(
 
             # Track in versions.json
             track_pmtiles_in_versions(collection_path, pmtiles_path, catalog_root)
+
+            # Generate thumbnail from the new PMTiles (Issue #13)
+            thumb_config = get_thumbnail_config(catalog_root) if catalog_root else ThumbnailConfig()
+            if thumb_config.enabled:
+                generate_vector_thumbnail(
+                    pmtiles_path=pmtiles_path,
+                    geoparquet_path=parquet_path,  # fallback
+                    config=thumb_config,
+                )
 
             result.generated.append(pmtiles_path)
             generation_succeeded = True
