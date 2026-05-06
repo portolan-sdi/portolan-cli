@@ -268,11 +268,15 @@ def _transform_collection_glob_assets(
     prefix: str,
     collection_path: str,
 ) -> bytes:
-    """Transform collection.json to populate portolan:glob fields.
+    """Transform collection.json to populate glob fields for partitioned assets.
 
     Per Issue #351: Partitioned GeoParquet datasets expose a glob pattern in
-    collection-level assets. On push, we populate the portolan:glob field with
-    the full remote URL.
+    collection-level assets. On push, we populate glob fields with the full
+    remote URL.
+
+    Emits both fields during transition period (per ADR-0042):
+    - partition:glob (new, per STAC Partition Extension)
+    - portolan:glob (legacy, for backwards compatibility)
 
     Args:
         content: Original collection.json bytes.
@@ -280,7 +284,7 @@ def _transform_collection_glob_assets(
         collection_path: Relative path to collection (e.g., "buildings").
 
     Returns:
-        Transformed collection.json bytes with portolan:glob populated.
+        Transformed collection.json bytes with glob fields populated.
     """
     try:
         data = json.loads(content)
@@ -293,16 +297,23 @@ def _transform_collection_glob_assets(
     for _asset_key, asset_data in assets.items():
         href = asset_data.get("href", "")
         # Check if this is a glob pattern (contains *)
-        if "*" in href and "portolan:glob" not in asset_data:
+        if "*" in href:
             # Build full remote glob URL
-            # href is relative to collection.json (e.g., "./*/data.parquet")
+            # href is relative to collection.json (e.g., "./kdtree_cell=*/*.parquet")
             # We need to convert to absolute remote URL
             glob_pattern = href.lstrip("./")
             # Build URL preserving protocol separator
             base = prefix.rstrip("/")
             remote_glob = f"{base}/{collection_path}/{glob_pattern}"
-            asset_data["portolan:glob"] = remote_glob
-            modified = True
+
+            # Emit both fields during transition (ADR-0042)
+            # Always overwrite to keep both fields in sync with current remote
+            if asset_data.get("partition:glob") != remote_glob:
+                asset_data["partition:glob"] = remote_glob
+                modified = True
+            if asset_data.get("portolan:glob") != remote_glob:
+                asset_data["portolan:glob"] = remote_glob
+                modified = True
 
     if modified:
         return json.dumps(data, indent=2).encode("utf-8")

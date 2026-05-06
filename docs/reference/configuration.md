@@ -378,14 +378,25 @@ Split large GeoParquet files into spatially-organized partitions for better quer
 
 ```yaml
 # .portolan/config.yaml
-partitioning.enabled: true       # Enable partitioning features (default: false)
-partitioning.threshold_gb: 2     # Size threshold in GB for --preview (default: 2.0)
+partitioning.enabled: true       # Enable auto-partitioning during add (default: true)
+partitioning.prompt: true        # Ask before partitioning in interactive mode (default: true)
+partitioning.threshold_gb: 2     # Size threshold in GB (default: 2.0)
 partitioning.strategy: kdtree    # Partitioning strategy (default: kdtree)
 partitioning.target_rows: 120000 # Target rows per partition (default: 120,000)
 ```
 
-!!! note "Standalone command"
-    Partitioning is performed via `portolan partition`, not automatically during `add`. Use the command below to partition large files before or after tracking.
+With `partitioning.enabled: true`, large files are automatically partitioned during `portolan add`:
+
+```
+$ portolan add large-dataset.parquet
+
+Found 1 file(s) exceeding 2.0 GB threshold:
+  large-dataset.parquet (4.23 GB)
+
+Partition large files into spatial chunks? [Y/n] y
+```
+
+Set `partitioning.prompt: false` to partition without asking.
 
 ### Commands
 
@@ -425,8 +436,9 @@ collection/
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `partitioning.enabled` | `false` | Enable partitioning features |
-| `partitioning.threshold_gb` | `2.0` | Size threshold for `--preview` recommendation |
+| `partitioning.enabled` | `true` | Enable auto-partitioning during `portolan add` |
+| `partitioning.prompt` | `true` | Ask before partitioning in interactive mode |
+| `partitioning.threshold_gb` | `2.0` | File size threshold in GB |
 | `partitioning.strategy` | `kdtree` | Spatial partitioning strategy |
 | `partitioning.target_rows` | `120000` | Target rows per partition |
 

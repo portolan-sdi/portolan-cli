@@ -10,13 +10,15 @@ from portolan_cli.validation.rules import (
     CatalogExistsRule,
     CatalogJsonValidRule,
     MetadataFreshRule,
+    PartitionSchemaConsistencyRule,
+    PartitionStructureRule,
     PMTilesRecommendedRule,
     ProvisionalDatetimeRule,
     StacFieldsRule,
     ValidationRule,
 )
 
-# Default rules for v0.4 (catalog structure + metadata freshness)
+# Default rules for v0.4 (catalog structure + metadata freshness + partitions)
 # Immutable tuple to prevent accidental mutation
 DEFAULT_RULES: tuple[ValidationRule, ...] = (
     CatalogExistsRule(),
@@ -25,6 +27,8 @@ DEFAULT_RULES: tuple[ValidationRule, ...] = (
     PMTilesRecommendedRule(),
     MetadataFreshRule(),
     ProvisionalDatetimeRule(),
+    PartitionStructureRule(),
+    PartitionSchemaConsistencyRule(),
 )
 
 

@@ -71,6 +71,7 @@ from portolan_cli.stac import (
     add_collection_extensions_from_summaries,
     add_collection_properties_from_metadata,
     add_item_to_collection,
+    add_partition_metadata_to_collection,
     add_projection_extension,
     add_raster_extension,
     add_table_extension,
@@ -406,6 +407,7 @@ class PreparedDataset:
         stac_item: The PySTAC Item object (None for collection-level vector assets).
         stac_assets: Assets to add to collection.json (for collection-level assets).
         metadata: Extracted metadata (GeoParquet or COG) for table extension (Issue #304).
+        partition_metadata: Partition extension fields from get_partition_metadata() (Issue #232).
     """
 
     item_id: str
@@ -418,12 +420,14 @@ class PreparedDataset:
     stac_item: pystac.Item | None = None
     stac_assets: dict[str, pystac.Asset] | None = None  # For collection-level addition
     metadata: AllMetadata | None = None
+    partition_metadata: dict[str, object] | None = None
 
 
 def _maybe_partition_large_file(
     prepared: PreparedDataset,
     catalog_root: Path,
     item_datetime: datetime | None,
+    skip_partitioning: bool = False,
 ) -> list[PreparedDataset]:
     """Partition a large GeoParquet file if it exceeds the size threshold.
 
@@ -434,6 +438,8 @@ def _maybe_partition_large_file(
         prepared: The prepared dataset to potentially partition.
         catalog_root: Root directory of the catalog.
         item_datetime: Optional datetime for created items.
+        skip_partitioning: If True, skip partitioning even if file exceeds threshold.
+            Used when user declines interactive prompt.
 
     Returns:
         List of PreparedDatasets. If partitioning occurred, contains multiple
@@ -442,12 +448,17 @@ def _maybe_partition_large_file(
     from portolan_cli.config import get_setting
     from portolan_cli.partitioning import (
         build_glob_pattern,
+        get_partition_metadata,
         partition_geoparquet,
         should_partition,
     )
 
     # Only partition vector formats (GeoParquet)
     if prepared.format_type != FormatType.VECTOR:
+        return [prepared]
+
+    # Skip if user declined interactive prompt
+    if skip_partitioning:
         return [prepared]
 
     # Only partition item-level assets (collection-level means single file < 2GB)
@@ -556,6 +567,9 @@ def _maybe_partition_large_file(
         # portolan:glob will be populated on push with remote URL
     )
 
+    # Extract partition metadata for STAC partition extension (Issue #232)
+    partition_meta = get_partition_metadata(partition_output_dir, str(strategy))
+
     # Create a PreparedDataset for the glob asset (collection-level)
     # Use original item_id as base to avoid collisions across collections
     glob_item_id = f"{prepared.item_id}_partitioned"
@@ -570,6 +584,7 @@ def _maybe_partition_large_file(
         stac_item=None,
         stac_assets={glob_item_id: glob_asset},
         metadata=None,
+        partition_metadata=partition_meta,
     )
     partitioned_datasets.append(glob_prepared)
 
@@ -1485,6 +1500,12 @@ def finalize_datasets(
                 vector_metadata.insert(0, existing_meta)
             aggregated = aggregate_table_metadata(vector_metadata)
             add_table_extension(collection, aggregated)
+
+        # Add partition extension if any items have partition metadata (Issue #232)
+        for p in items:
+            if p.partition_metadata is not None:
+                add_partition_metadata_to_collection(collection, p.partition_metadata)
+                break  # Only one partition metadata per collection
 
         # Compute collection summaries from items (per ADR-0036)
         # Moved here from push.py for separation of concerns - summaries are now
@@ -2777,6 +2798,7 @@ def add_files(
     json_mode: bool = False,
     force: bool = False,
     reconvert: bool = False,
+    skip_partitioning: bool = False,
 ) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
     """Add files to a Portolan catalog.
 
@@ -2901,7 +2923,14 @@ def add_files(
                                 force=force,
                                 reconvert=reconvert,
                             )
-                            prepared_list.append(prepared)
+                            # Apply partitioning to each layer (Issue #352)
+                            partitioned = _maybe_partition_large_file(
+                                prepared=prepared,
+                                catalog_root=catalog_root,
+                                item_datetime=item_datetime,
+                                skip_partitioning=skip_partitioning,
+                            )
+                            prepared_list.extend(partitioned)
                         except Exception as err:
                             failure_list.append(
                                 AddFailure(
@@ -2939,6 +2968,7 @@ def add_files(
                 prepared=prepared,
                 catalog_root=catalog_root,
                 item_datetime=item_datetime,
+                skip_partitioning=skip_partitioning,
             )
             return (partitioned, [], None)
 

@@ -297,6 +297,32 @@ def add_collection_properties_from_metadata(
             collection.stac_extensions.append(proj_ext_url)
 
 
+def add_partition_metadata_to_collection(
+    collection: pystac.Collection,
+    partition_metadata: dict[str, object],
+) -> None:
+    """Add partition extension fields to a collection.
+
+    Adds partition:* fields from the provided metadata dict and registers
+    the partition extension URL in stac_extensions.
+
+    Args:
+        collection: The collection to add partition metadata to.
+        partition_metadata: Dict with partition:* fields from get_partition_metadata().
+    """
+    # Add partition:* fields to collection extra_fields
+    for key, value in partition_metadata.items():
+        if key.startswith("partition:"):
+            collection.extra_fields[key] = value
+
+    # Register partition extension
+    ext_url = EXTENSION_URLS["partition"]
+    if collection.stac_extensions is None:
+        collection.stac_extensions = []
+    if ext_url not in collection.stac_extensions:
+        collection.stac_extensions.append(ext_url)
+
+
 def _update_collection_extent_from_bbox(
     collection: pystac.Collection,
     bbox: list[float],
@@ -390,6 +416,7 @@ EXTENSION_URLS = {
     "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
     "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",  # Reserved for future
     "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",  # Proposal maturity
+    "partition": "https://portolan-sdi.github.io/stac-partition-extension/v1.0.0/schema.json",
 }
 
 
@@ -427,6 +454,10 @@ def build_stac_extensions(properties: dict[str, object]) -> list[str]:
     # Check for vector extension fields
     if any(k.startswith("vector:") for k in properties):
         extensions.append(EXTENSION_URLS["vector"])
+
+    # Check for partition extension fields
+    if any(k.startswith("partition:") for k in properties):
+        extensions.append(EXTENSION_URLS["partition"])
 
     return extensions
 

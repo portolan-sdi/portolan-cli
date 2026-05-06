@@ -223,8 +223,6 @@ class PMTilesRecommendedRule(ValidationRule):
         Returns:
             ValidationResult with warning if any GeoParquet lacks PMTiles.
         """
-        import json
-
         # Find all collection.json files
         collection_files = list(catalog_path.rglob("collection.json"))
 
@@ -445,4 +443,148 @@ class ProvisionalDatetimeRule(ValidationRule):
         return self._fail(
             f"{len(provisional_items)} item(s) have provisional datetime: {item_list}",
             fix_hint="Use 'portolan add --datetime YYYY-MM-DD' to set explicit datetime",
+        )
+
+
+# --- Thorough rules (expensive, run with --thorough) ---
+
+
+class PartitionStructureRule(ValidationRule):
+    """Check that partitioned collections have consistent Hive-style structure.
+
+    Validates:
+    - All partition directories follow same key=value pattern
+    - No orphan files outside partition structure
+    - partition:* extension fields are present when partitions detected
+    """
+
+    name = "partition_structure"
+    severity = Severity.WARNING
+    description = "Verify partition directory structure consistency"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Check partition structure for all collections."""
+        issues: list[str] = []
+
+        # Find all collection.json files
+        for coll_json in catalog_path.rglob("collection.json"):
+            coll_dir = coll_json.parent
+
+            # Look for Hive-style partition directories (key=value pattern)
+            partition_dirs = [
+                d
+                for d in coll_dir.iterdir()
+                if d.is_dir() and "=" in d.name and not d.name.startswith(".")
+            ]
+
+            if not partition_dirs:
+                continue
+
+            # Extract partition key from first directory
+            first_key = partition_dirs[0].name.split("=")[0]
+
+            # Check all partition dirs use same key
+            for pdir in partition_dirs:
+                if "=" not in pdir.name:
+                    issues.append(f"{coll_dir.name}: orphan dir '{pdir.name}'")
+                    continue
+                key = pdir.name.split("=")[0]
+                if key != first_key:
+                    issues.append(f"{coll_dir.name}: mixed keys '{first_key}' and '{key}'")
+
+            # Check for orphan parquet files at collection level
+            orphan_files = list(coll_dir.glob("*.parquet"))
+            if orphan_files and partition_dirs:
+                issues.append(f"{coll_dir.name}: {len(orphan_files)} orphan .parquet at root")
+
+            # Check collection.json has partition:* fields
+            # STAC Collections store extension fields at top level, not in "properties"
+            try:
+                with open(coll_json) as f:
+                    coll_data = json.load(f)
+                if "partition:scheme" not in coll_data:
+                    issues.append(f"{coll_dir.name}: missing partition:scheme in collection.json")
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        if not issues:
+            return self._pass("All partitioned collections have consistent structure")
+
+        issue_list = "; ".join(issues[:5])
+        if len(issues) > 5:
+            issue_list += f" (+{len(issues) - 5} more)"
+
+        return self._fail(
+            f"Partition structure issues: {issue_list}",
+            fix_hint="Ensure all partition directories use same key pattern",
+        )
+
+
+class PartitionSchemaConsistencyRule(ValidationRule):
+    """Check that all parquet files in a partition have consistent schema.
+
+    Reads parquet metadata (footer only) from all partition files to verify
+    they share the same schema.
+    """
+
+    name = "partition_schema_consistency"
+    severity = Severity.ERROR
+    description = "Verify all partition files have same Parquet schema"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Check schema consistency across partition files."""
+        try:
+            import pyarrow.parquet as pq
+            from pyarrow import ArrowInvalid
+        except ImportError:
+            return ValidationResult(
+                rule_name=self.name,
+                passed=True,
+                severity=Severity.WARNING,
+                message="PyArrow not available, schema consistency not checked",
+            )
+
+        issues: list[str] = []
+
+        for coll_json in catalog_path.rglob("collection.json"):
+            coll_dir = coll_json.parent
+
+            # Find Hive-style partition directories
+            partition_dirs = [
+                d
+                for d in coll_dir.iterdir()
+                if d.is_dir() and "=" in d.name and not d.name.startswith(".")
+            ]
+
+            if not partition_dirs:
+                continue
+
+            # Collect schemas from all parquet files
+            schemas: dict[str, list[str]] = {}
+            for pdir in partition_dirs:
+                for pq_file in pdir.glob("*.parquet"):
+                    try:
+                        schema = pq.read_schema(pq_file)
+                        schema_key = str(sorted(schema.names))
+                        if schema_key not in schemas:
+                            schemas[schema_key] = []
+                        schemas[schema_key].append(str(pq_file.relative_to(coll_dir)))
+                    except (OSError, ArrowInvalid) as e:
+                        issues.append(f"{coll_dir.name}: unreadable {pq_file.name} ({e})")
+
+            if len(schemas) > 1:
+                issues.append(
+                    f"{coll_dir.name}: {len(schemas)} different schemas across partitions"
+                )
+
+        if not issues:
+            return self._pass("All partition files have consistent schema")
+
+        issue_list = "; ".join(issues[:3])
+        if len(issues) > 3:
+            issue_list += f" (+{len(issues) - 3} more)"
+
+        return self._fail(
+            f"Schema inconsistency: {issue_list}",
+            fix_hint="Re-partition with consistent source data",
         )
