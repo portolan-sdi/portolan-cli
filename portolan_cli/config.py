@@ -53,6 +53,7 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "parquet.enabled",  # Generate items.parquet for large collections
         "parquet.threshold",  # Item count threshold to suggest parquet generation
         "partitioning.enabled",  # Auto-partition large GeoParquet files (Issue #352)
+        "partitioning.prompt",  # Prompt before partitioning in interactive mode (default: true)
         "partitioning.threshold_gb",  # Size threshold in GB (default: 2.0)
         "partitioning.strategy",  # Spatial partitioning strategy (default: kdtree)
         "partitioning.target_rows",  # Target rows per partition (default: 120000)
@@ -82,6 +83,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "parquet.enabled": False,  # Disabled by default (100% optional per issue #319)
     "parquet.threshold": 100,  # Suggest parquet generation when items > threshold
     "partitioning.enabled": False,  # Partitioning features disabled by default
+    "partitioning.prompt": True,  # Prompt before partitioning in interactive mode
     "partitioning.threshold_gb": 2.0,  # 2GB per OGC best practices
     "partitioning.strategy": "kdtree",  # KD-tree: data-driven, auto-balancing
     "partitioning.target_rows": 120_000,  # geoparquet-io default

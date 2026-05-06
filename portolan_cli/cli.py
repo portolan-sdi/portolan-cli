@@ -2709,6 +2709,63 @@ def _validate_item_id_usage(
         raise SystemExit(1)
 
 
+def _check_partition_prompt(
+    resolved_paths: list[Path],
+    catalog_root: Path,
+) -> bool:
+    """Check if user wants to skip partitioning for large files.
+
+    Pre-scans files against partition threshold and prompts user in interactive
+    mode. Returns True if partitioning should be skipped.
+
+    Args:
+        resolved_paths: List of resolved paths to check.
+        catalog_root: Path to catalog root for config lookup.
+
+    Returns:
+        True if user declined partitioning, False otherwise.
+    """
+    from portolan_cli.config import get_setting
+    from portolan_cli.partitioning import should_partition
+
+    part_enabled = get_setting("partitioning.enabled", catalog_root) or False
+    part_prompt = get_setting("partitioning.prompt", catalog_root)
+    if part_prompt is None:
+        part_prompt = True  # Default: prompt in interactive mode
+    threshold_gb = get_setting("partitioning.threshold_gb", catalog_root) or 2.0
+
+    if not (part_enabled and part_prompt and sys.stderr.isatty()):
+        return False
+
+    # Pre-scan for large files that would trigger partitioning
+    large_files: list[tuple[Path, float]] = []
+    for p in resolved_paths:
+        if p.is_file() and p.suffix.lower() == ".parquet":
+            if should_partition(p, threshold_gb=threshold_gb, enabled=True):
+                size_gb = p.stat().st_size / (1024 * 1024 * 1024)
+                large_files.append((p, size_gb))
+        elif p.is_dir():
+            for pq in p.rglob("*.parquet"):
+                if should_partition(pq, threshold_gb=threshold_gb, enabled=True):
+                    size_gb = pq.stat().st_size / (1024 * 1024 * 1024)
+                    large_files.append((pq, size_gb))
+
+    if not large_files:
+        return False
+
+    warn(f"Found {len(large_files)} file(s) exceeding {threshold_gb} GB threshold:")
+    for lf, size in large_files[:5]:  # Show first 5
+        detail(f"  {lf.name} ({size:.2f} GB)")
+    if len(large_files) > 5:
+        detail(f"  ... and {len(large_files) - 5} more")
+
+    if not click.confirm("Partition large files into spatial chunks?", default=True):
+        info_output("Skipping partitioning (files will be added as-is)")
+        return True
+
+    return False
+
+
 def _handle_parquet_after_add(
     catalog_root: Path,
     affected_collections: set[str],
@@ -3097,6 +3154,16 @@ def add_cmd(
     - Changed files are re-extracted with new metadata
     - Sidecar files (.dbf, .shx, .prj for shapefiles) are auto-detected
     - All files in the item directory are tracked, not just geo files (ADR-0028)
+
+    \b
+    Large file partitioning:
+        GeoParquet files exceeding 2GB are automatically partitioned into
+        spatial chunks using KD-tree partitioning. In interactive mode,
+        you'll be prompted before partitioning. Configure via:
+
+            partitioning.enabled: true/false (default: false)
+            partitioning.prompt: true/false (default: true)
+            partitioning.threshold_gb: size in GB (default: 2.0)
     """
     use_json = should_output_json(ctx, json_output)
 
@@ -3163,6 +3230,11 @@ def add_cmd(
         if should_show_progress:
             progress_reporter.advance()
 
+    # Check if user wants to skip partitioning for large files (Phase 5: auto-partition UX)
+    skip_partitioning = (
+        _check_partition_prompt(resolved_paths, catalog_root) if not use_json else False
+    )
+
     # item_datetime is parsed by Click via FLEXIBLE_DATETIME type (ADR-0035)
     try:
         with progress_reporter:
@@ -3178,6 +3250,7 @@ def add_cmd(
                 json_mode=use_json,
                 force=force,
                 reconvert=reconvert,
+                skip_partitioning=skip_partitioning,
             )
     except (ValueError, FileNotFoundError) as err:
         err_type = type(err).__name__

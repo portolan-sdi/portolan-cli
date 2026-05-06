@@ -211,12 +211,17 @@ def get_partition_metadata(output_dir: Path, strategy: str) -> dict:
 
 **Deliverable**: Large files auto-partition during `portolan add`
 
-- [ ] Add `partitioning.auto_partition` config option (default: true)
-- [ ] Add `partitioning.prompt` config option (default: true for interactive)
-- [ ] In `portolan add`, check `should_partition()` after file analysis
-- [ ] If interactive + prompt enabled: ask user
-- [ ] If `--auto` or non-interactive: use config threshold
-- [ ] Wire partitioned output through to STAC generation
+- [x] Add `partitioning.prompt` config option (default: true for interactive)
+  - Added to `config.py` KNOWN_SETTINGS and DEFAULT_SETTINGS
+- [x] In `portolan add`, pre-scan files with `should_partition()` before processing
+  - CLI pre-scans .parquet files against threshold before calling `add_files`
+- [x] If interactive + prompt enabled: ask user
+  - `click.confirm("Partition large files into spatial chunks?")` prompt added
+- [x] If non-interactive (JSON mode/no-TTY): use config threshold silently
+  - Prompt logic only runs when `not use_json and sys.stderr.isatty()`
+- [x] Wire `skip_partitioning` through dataset.py call chain
+  - `add_files()` → `prepare_single_file()` → `_maybe_partition_large_file()`
+- [x] Wire partitioned output through to STAC generation (done in Phase 3)
 - [ ] Update `--help` and docs
 
 **UX flow**:

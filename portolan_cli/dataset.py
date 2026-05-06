@@ -427,6 +427,7 @@ def _maybe_partition_large_file(
     prepared: PreparedDataset,
     catalog_root: Path,
     item_datetime: datetime | None,
+    skip_partitioning: bool = False,
 ) -> list[PreparedDataset]:
     """Partition a large GeoParquet file if it exceeds the size threshold.
 
@@ -437,6 +438,8 @@ def _maybe_partition_large_file(
         prepared: The prepared dataset to potentially partition.
         catalog_root: Root directory of the catalog.
         item_datetime: Optional datetime for created items.
+        skip_partitioning: If True, skip partitioning even if file exceeds threshold.
+            Used when user declines interactive prompt.
 
     Returns:
         List of PreparedDatasets. If partitioning occurred, contains multiple
@@ -452,6 +455,10 @@ def _maybe_partition_large_file(
 
     # Only partition vector formats (GeoParquet)
     if prepared.format_type != FormatType.VECTOR:
+        return [prepared]
+
+    # Skip if user declined interactive prompt
+    if skip_partitioning:
         return [prepared]
 
     # Only partition item-level assets (collection-level means single file < 2GB)
@@ -2791,6 +2798,7 @@ def add_files(
     json_mode: bool = False,
     force: bool = False,
     reconvert: bool = False,
+    skip_partitioning: bool = False,
 ) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
     """Add files to a Portolan catalog.
 
@@ -2953,6 +2961,7 @@ def add_files(
                 prepared=prepared,
                 catalog_root=catalog_root,
                 item_datetime=item_datetime,
+                skip_partitioning=skip_partitioning,
             )
             return (partitioned, [], None)
 
