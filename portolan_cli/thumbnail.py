@@ -26,7 +26,7 @@ from portolan_cli.config import load_config
 from portolan_cli.utils import get_dict
 
 if TYPE_CHECKING:
-    from matplotlib.axes import Axes  # type: ignore[import-not-found]
+    from matplotlib.axes import Axes  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def _ensure_contextily() -> Any:
         if _ctx_loaded:
             return _ctx_module
         try:
-            import contextily as ctx  # type: ignore[import-not-found]
+            import contextily as ctx  # type: ignore
 
             _ctx_module = ctx
         except ImportError:
@@ -304,7 +304,7 @@ def _read_pmtiles_geometries(
         return [], None
 
     try:
-        import mapbox_vector_tile  # type: ignore[import-not-found]
+        import mapbox_vector_tile  # type: ignore
     except ImportError:
         logger.debug("mapbox-vector-tile library not available")
         return [], None
@@ -422,9 +422,9 @@ def _render_geometries(
         True if successful, False otherwise.
     """
     try:
-        import matplotlib.pyplot as plt  # type: ignore[import-not-found]
-        from matplotlib.collections import PatchCollection  # type: ignore[import-not-found]
-        from matplotlib.patches import Polygon as MplPolygon  # type: ignore[import-not-found]
+        import matplotlib.pyplot as plt  # type: ignore
+        from matplotlib.collections import PatchCollection  # type: ignore
+        from matplotlib.patches import Polygon as MplPolygon  # type: ignore
     except ImportError:
         logger.debug("matplotlib not available")
         return False
@@ -490,7 +490,7 @@ def _read_geoparquet_bounds(gpq_path: Path) -> tuple[float, float, float, float]
         Tuple of (minx, miny, maxx, maxy) or None if empty.
     """
     try:
-        import geopandas as gpd  # type: ignore[import-untyped]
+        import geopandas as gpd  # type: ignore
     except ImportError:
         logger.debug("geopandas not available")
         return None
