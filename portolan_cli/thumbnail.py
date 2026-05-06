@@ -17,6 +17,7 @@ from __future__ import annotations
 import gzip
 import logging
 import math
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,22 +30,98 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Lazy import for optional dependencies
-ctx: Any = None  # contextily module, set on first use
+# Thread-safe lazy import for optional contextily dependency
+_ctx_lock = threading.Lock()
+_ctx_module: Any = None
+_ctx_loaded = False
 
 
 def _ensure_contextily() -> Any:
-    """Lazy-load contextily, returning module or None if unavailable."""
-    global ctx
-    if ctx is None:
-        try:
-            import contextily as _ctx  # type: ignore[import-not-found]
+    """Lazy-load contextily, returning module or None if unavailable.
 
-            ctx = _ctx
+    Thread-safe: uses a lock to prevent race conditions on first import.
+    """
+    global _ctx_module, _ctx_loaded
+    if _ctx_loaded:
+        return _ctx_module
+
+    with _ctx_lock:
+        if _ctx_loaded:
+            return _ctx_module
+        try:
+            import contextily as ctx  # type: ignore[import-not-found]
+
+            _ctx_module = ctx
         except ImportError:
             logger.debug("contextily not available, basemaps disabled")
-            return None
-    return ctx
+            _ctx_module = None
+        _ctx_loaded = True
+        return _ctx_module
+
+
+# =============================================================================
+# Config Parsing Helpers
+# =============================================================================
+
+
+def _parse_bool(value: Any, key: str, default: bool) -> bool:
+    """Parse config value as bool, warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    logger.warning("%s must be bool, got %s; using default", key, type(value).__name__)
+    return default
+
+
+def _parse_positive_int(value: Any, key: str, default: int) -> int:
+    """Parse config value as positive int, warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    logger.warning("%s must be positive int, got %r; using default %d", key, value, default)
+    return default
+
+
+def _parse_bounded_int(value: Any, key: str, default: int, lo: int, hi: int) -> int:
+    """Parse config value as int in [lo, hi], warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, int) and not isinstance(value, bool) and lo <= value <= hi:
+        return value
+    logger.warning("%s must be int %d-%d, got %r; using default %d", key, lo, hi, value, default)
+    return default
+
+
+def _parse_str(value: Any, key: str, default: str) -> str:
+    """Parse config value as string, warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    logger.warning("%s must be str, got %s; using default", key, type(value).__name__)
+    return default
+
+
+def _parse_bounded_float(value: Any, key: str, default: float, lo: float, hi: float) -> float:
+    """Parse config value as float in [lo, hi], warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and lo <= value <= hi:
+        return float(value)
+    logger.warning("%s must be float %g-%g, got %r; using default %g", key, lo, hi, value, default)
+    return default
+
+
+def _parse_int(value: Any, key: str, default: int) -> int:
+    """Parse config value as int, warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    logger.warning("%s must be int, got %s; using default %d", key, type(value).__name__, default)
+    return default
 
 
 # =============================================================================
@@ -86,45 +163,25 @@ def get_thumbnail_config(catalog_path: Path) -> ThumbnailConfig:
         ThumbnailConfig instance. Returns defaults if no config exists.
     """
     config = load_config(catalog_path)
-
     thumbnails = get_dict(config, "thumbnails")
     if not thumbnails:
         return ThumbnailConfig()
 
-    # Parse basemap subsection
     basemap = get_dict(thumbnails, "basemap")
 
-    enabled = thumbnails.get("enabled")
-    if not isinstance(enabled, bool):
-        enabled = True
-
-    max_size = thumbnails.get("max_size")
-    if not isinstance(max_size, int) or max_size <= 0:
-        max_size = 512
-
-    quality = thumbnails.get("quality")
-    if not isinstance(quality, int) or not 1 <= quality <= 100:
-        quality = 75
-
-    basemap_provider = basemap.get("provider")
-    if not isinstance(basemap_provider, str):
-        basemap_provider = "CartoDB.Positron"
-
-    basemap_opacity = basemap.get("opacity")
-    if not isinstance(basemap_opacity, (int, float)) or not 0 <= basemap_opacity <= 1:
-        basemap_opacity = 1.0
-
-    basemap_zoom_adjust = basemap.get("zoom_adjust")
-    if not isinstance(basemap_zoom_adjust, int):
-        basemap_zoom_adjust = 0
-
     return ThumbnailConfig(
-        enabled=enabled,
-        max_size=max_size,
-        quality=quality,
-        basemap_provider=basemap_provider,
-        basemap_opacity=float(basemap_opacity),
-        basemap_zoom_adjust=basemap_zoom_adjust,
+        enabled=_parse_bool(thumbnails.get("enabled"), "thumbnails.enabled", True),
+        max_size=_parse_positive_int(thumbnails.get("max_size"), "thumbnails.max_size", 512),
+        quality=_parse_bounded_int(thumbnails.get("quality"), "thumbnails.quality", 75, 1, 100),
+        basemap_provider=_parse_str(
+            basemap.get("provider"), "thumbnails.basemap.provider", "CartoDB.Positron"
+        ),
+        basemap_opacity=_parse_bounded_float(
+            basemap.get("opacity"), "thumbnails.basemap.opacity", 1.0, 0.0, 1.0
+        ),
+        basemap_zoom_adjust=_parse_int(
+            basemap.get("zoom_adjust"), "thumbnails.basemap.zoom_adjust", 0
+        ),
     )
 
 
@@ -195,8 +252,10 @@ def _transform_coords(
 
     Handles Point, LineString, Polygon, and Multi* geometry coordinate structures.
     """
+    # Depth limit: Point=0, LineString=1, Polygon=2 (ring), MultiPolygon=3.
+    # GeometryCollection with nested Multi* could reach 4. Beyond that is malformed.
     if depth > 4:
-        return coords  # Safety limit
+        return coords
 
     if not coords:
         return coords

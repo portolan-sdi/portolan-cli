@@ -361,7 +361,8 @@ class TestAddBasemap:
         mock_ax = MagicMock()
         bounds = (-122.5, 37.5, -122.0, 38.0)  # SF Bay area
 
-        with patch("portolan_cli.thumbnail.ctx") as mock_ctx:
+        mock_ctx = MagicMock()
+        with patch("portolan_cli.thumbnail._ensure_contextily", return_value=mock_ctx):
             add_basemap(mock_ax, bounds, "CartoDB.Positron", opacity=1.0, zoom_adjust=0)
 
             mock_ctx.add_basemap.assert_called_once()
@@ -376,7 +377,8 @@ class TestAddBasemap:
         mock_ax = MagicMock()
         bounds = (-122.5, 37.5, -122.0, 38.0)
 
-        with patch("portolan_cli.thumbnail.ctx") as mock_ctx:
+        mock_ctx = MagicMock()
+        with patch("portolan_cli.thumbnail._ensure_contextily", return_value=mock_ctx):
             add_basemap(mock_ax, bounds, "none", opacity=1.0, zoom_adjust=0)
 
             mock_ctx.add_basemap.assert_not_called()
@@ -389,7 +391,7 @@ class TestAddBasemap:
         mock_ax = MagicMock()
         bounds = (-122.5, 37.5, -122.0, 38.0)
 
-        with patch("portolan_cli.thumbnail.ctx", None):
+        with patch("portolan_cli.thumbnail._ensure_contextily", return_value=None):
             # Should not raise, just skip basemap
             add_basemap(mock_ax, bounds, "CartoDB.Positron", opacity=1.0, zoom_adjust=0)
 

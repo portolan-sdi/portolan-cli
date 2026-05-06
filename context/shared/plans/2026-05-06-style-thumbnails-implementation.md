@@ -260,7 +260,7 @@ This is non-blocking — we use asset properties now, migrate to extension when 
 - [x] Config schema supports thumbnail and style customization
 - [x] All test fixtures created
 - [x] Unit and integration tests passing
-- [ ] Documentation updated
+- [x] Documentation updated
 
 **Dropped:** COG thumbnails with basemap. Rasters fill their entire extent — basemaps would be invisible underneath. Vector data needs basemaps because points/lines are sparse and benefit from geographic context. See ADR-0042.
 

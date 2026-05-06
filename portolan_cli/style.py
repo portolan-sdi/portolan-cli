@@ -25,6 +25,41 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Config Parsing Helpers
+# =============================================================================
+
+
+def _parse_config_str(value: Any, key: str, default: str) -> str:
+    """Parse config value as string, warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    logger.warning("%s must be str, got %s; using default", key, type(value).__name__)
+    return default
+
+
+def _parse_config_int(value: Any, key: str, default: int) -> int:
+    """Parse config value as int, warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    logger.warning("%s must be int, got %s; using default", key, type(value).__name__)
+    return default
+
+
+def _parse_config_float(value: Any, key: str, default: float) -> float:
+    """Parse config value as float, warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    logger.warning("%s must be number, got %s; using default", key, type(value).__name__)
+    return default
+
+
+# =============================================================================
 # Configuration Dataclasses
 # =============================================================================
 
@@ -164,6 +199,54 @@ def build_raster_style(config: RasterStyleConfig) -> dict[str, Any]:
     return props
 
 
+_COG_MEDIA_TYPES = (
+    "image/tiff; application=geotiff; profile=cloud-optimized",
+    "image/tiff",
+)
+
+
+def enrich_cog_asset_with_style(
+    asset: Any,
+    catalog_path: Path | None = None,
+) -> None:
+    """Add render extension properties to a COG asset in-place.
+
+    Modifies the asset's extra_fields to include render:colormap_name and
+    optionally render:rescale based on catalog style config.
+
+    Args:
+        asset: A pystac.Asset object for a COG file.
+        catalog_path: Optional catalog path for loading style config.
+    """
+    if catalog_path:
+        config = get_raster_style_config(catalog_path)
+    else:
+        config = RasterStyleConfig()
+
+    style_props = build_raster_style(config)
+
+    # pystac.Asset stores extra properties in extra_fields dict
+    if not hasattr(asset, "extra_fields") or asset.extra_fields is None:
+        asset.extra_fields = {}
+
+    asset.extra_fields.update(style_props)
+
+
+def enrich_cog_assets(
+    assets: dict[str, Any],
+    catalog_path: Path | None = None,
+) -> None:
+    """Enrich all COG assets in a dict with render extension properties.
+
+    Args:
+        assets: Dict of asset_key -> pystac.Asset.
+        catalog_path: Catalog root for loading style config.
+    """
+    for asset in assets.values():
+        if getattr(asset, "media_type", None) in _COG_MEDIA_TYPES:
+            enrich_cog_asset_with_style(asset, catalog_path)
+
+
 # =============================================================================
 # Config Loading
 # =============================================================================
@@ -174,19 +257,6 @@ def get_vector_style_config(catalog_path: Path) -> VectorStyleConfig:
 
     Reads the 'styles.vector' section and returns a VectorStyleConfig instance.
 
-    Config format:
-        styles:
-          vector:
-            point:
-              circle-color: "#ff0000"
-              circle-radius: 8
-            line:
-              line-color: "#00ff00"
-              line-width: 3
-            polygon:
-              fill-color: "#0000ff"
-              fill-opacity: 0.5
-
     Args:
         catalog_path: Root path of the catalog.
 
@@ -194,67 +264,43 @@ def get_vector_style_config(catalog_path: Path) -> VectorStyleConfig:
         VectorStyleConfig instance. Returns defaults if no config exists.
     """
     config = load_config(catalog_path)
-
     styles = get_dict(config, "styles")
     if not styles:
         return VectorStyleConfig()
-
     vector = get_dict(styles, "vector")
     if not vector:
         return VectorStyleConfig()
 
-    # Parse point settings
     point = get_dict(vector, "point")
-    point_color = point.get("circle-color")
-    if not isinstance(point_color, str):
-        point_color = "#3388ff"
-
-    point_radius = point.get("circle-radius")
-    if not isinstance(point_radius, int):
-        point_radius = 4
-
-    point_opacity = point.get("circle-opacity")
-    if not isinstance(point_opacity, (int, float)):
-        point_opacity = 0.8
-
-    # Parse line settings
     line = get_dict(vector, "line")
-    line_color = line.get("line-color")
-    if not isinstance(line_color, str):
-        line_color = "#3388ff"
-
-    line_width = line.get("line-width")
-    if not isinstance(line_width, int):
-        line_width = 2
-
-    line_opacity = line.get("line-opacity")
-    if not isinstance(line_opacity, (int, float)):
-        line_opacity = 0.8
-
-    # Parse polygon settings
     polygon = get_dict(vector, "polygon")
-    polygon_fill_color = polygon.get("fill-color")
-    if not isinstance(polygon_fill_color, str):
-        polygon_fill_color = "#3388ff"
-
-    polygon_fill_opacity = polygon.get("fill-opacity")
-    if not isinstance(polygon_fill_opacity, (int, float)):
-        polygon_fill_opacity = 0.6
-
-    polygon_outline_color = polygon.get("fill-outline-color")
-    if not isinstance(polygon_outline_color, str):
-        polygon_outline_color = "#2266cc"
 
     return VectorStyleConfig(
-        point_color=point_color,
-        point_radius=point_radius,
-        point_opacity=float(point_opacity),
-        line_color=line_color,
-        line_width=line_width,
-        line_opacity=float(line_opacity),
-        polygon_fill_color=polygon_fill_color,
-        polygon_fill_opacity=float(polygon_fill_opacity),
-        polygon_outline_color=polygon_outline_color,
+        point_color=_parse_config_str(
+            point.get("circle-color"), "styles.vector.point.circle-color", "#3388ff"
+        ),
+        point_radius=_parse_config_int(
+            point.get("circle-radius"), "styles.vector.point.circle-radius", 4
+        ),
+        point_opacity=_parse_config_float(
+            point.get("circle-opacity"), "styles.vector.point.circle-opacity", 0.8
+        ),
+        line_color=_parse_config_str(
+            line.get("line-color"), "styles.vector.line.line-color", "#3388ff"
+        ),
+        line_width=_parse_config_int(line.get("line-width"), "styles.vector.line.line-width", 2),
+        line_opacity=_parse_config_float(
+            line.get("line-opacity"), "styles.vector.line.line-opacity", 0.8
+        ),
+        polygon_fill_color=_parse_config_str(
+            polygon.get("fill-color"), "styles.vector.polygon.fill-color", "#3388ff"
+        ),
+        polygon_fill_opacity=_parse_config_float(
+            polygon.get("fill-opacity"), "styles.vector.polygon.fill-opacity", 0.6
+        ),
+        polygon_outline_color=_parse_config_str(
+            polygon.get("fill-outline-color"), "styles.vector.polygon.fill-outline-color", "#2266cc"
+        ),
     )
 
 
@@ -286,18 +332,38 @@ def get_raster_style_config(catalog_path: Path) -> RasterStyleConfig:
         return RasterStyleConfig()
 
     colormap = raster.get("colormap")
-    if not isinstance(colormap, str):
+    if colormap is not None and not isinstance(colormap, str):
+        logger.warning(
+            "styles.raster.colormap must be str, got %s; using default", type(colormap).__name__
+        )
+        colormap = "viridis"
+    elif colormap is None:
         colormap = "viridis"
 
     rescale = get_list(raster, "rescale")
     rescale_min: float | None = None
     rescale_max: float | None = None
 
-    if len(rescale) >= 2:
-        if isinstance(rescale[0], (int, float)):
-            rescale_min = float(rescale[0])
-        if isinstance(rescale[1], (int, float)):
-            rescale_max = float(rescale[1])
+    if rescale:
+        if len(rescale) < 2:
+            logger.warning(
+                "styles.raster.rescale must be [min, max], got %d values; ignoring", len(rescale)
+            )
+        else:
+            if isinstance(rescale[0], (int, float)):
+                rescale_min = float(rescale[0])
+            else:
+                logger.warning(
+                    "styles.raster.rescale[0] must be number, got %s; ignoring",
+                    type(rescale[0]).__name__,
+                )
+            if isinstance(rescale[1], (int, float)):
+                rescale_max = float(rescale[1])
+            else:
+                logger.warning(
+                    "styles.raster.rescale[1] must be number, got %s; ignoring",
+                    type(rescale[1]).__name__,
+                )
 
     return RasterStyleConfig(
         colormap=colormap,

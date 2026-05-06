@@ -8,12 +8,15 @@ Per ADR-0031, PMTiles are collection-level assets when added to a catalog.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from pmtiles.reader import MmapSource, Reader
 from pmtiles.tile import MagicNumberNotFound
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -142,14 +145,35 @@ def extract_pmtiles_metadata(path: Path) -> PMTilesMetadata:
         tile_type = _TILE_TYPE_MAP.get(tile_type_value, "unknown")
 
     # Try to extract layer name from metadata (Issue #13)
+    # For multi-layer PMTiles, we use the first data layer (skip common utility
+    # layers like "labels", "place_names", etc.) and warn if there are multiple.
     layer_name: str | None = None
     if isinstance(metadata, dict):
         # TileJSON format: {"vector_layers": [{"id": "layer_name", ...}]}
         vector_layers = metadata.get("vector_layers", [])
         if isinstance(vector_layers, list) and vector_layers:
-            first_layer = vector_layers[0]
-            if isinstance(first_layer, dict):
-                layer_name = first_layer.get("id")
+            # Filter out common non-data layers
+            utility_layers = {"labels", "label", "place_names", "place-names", "text"}
+            data_layers: list[str] = []
+            for layer in vector_layers:
+                if isinstance(layer, dict):
+                    layer_id = layer.get("id")
+                    if isinstance(layer_id, str) and layer_id.lower() not in utility_layers:
+                        data_layers.append(layer_id)
+            if data_layers:
+                layer_name = data_layers[0]
+                if len(data_layers) > 1:
+                    logger.warning(
+                        "PMTiles has %d data layers %s; using first layer '%s' for style",
+                        len(data_layers),
+                        data_layers,
+                        layer_name,
+                    )
+            elif vector_layers:
+                # No data layers found, fall back to first layer
+                first_layer = vector_layers[0]
+                if isinstance(first_layer, dict):
+                    layer_name = first_layer.get("id")
 
     return PMTilesMetadata(
         bbox=bbox,
