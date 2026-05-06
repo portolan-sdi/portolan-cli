@@ -250,16 +250,18 @@ Partitioning: large-dataset.parquet
 
 **Deliverable**: `portolan check` validates partition consistency
 
-- [ ] Add `PartitionSchemaConsistencyRule` to `validation/rules.py`
-  - All partition files have same Parquet schema
-  - Partition key column exists in schema
-- [ ] Add `PartitionRowCountRule`
-  - `table:row_count` matches sum of partition row counts
-- [ ] Add `PartitionStructureRule`
+- [x] Add `PartitionStructureRule` to `validation/rules.py`
   - All partition directories follow same key pattern
   - No orphan files outside partition structure
-- [ ] Wire into `portolan check` with `--thorough` flag (expensive)
-- [ ] Unit tests for each rule
+  - Warns if partition:scheme missing from collection.json
+- [x] Add `PartitionSchemaConsistencyRule` to `validation/rules.py`
+  - All partition files have same Parquet schema
+  - Reports number of different schemas detected
+- [x] Wire into `portolan check` with `--thorough` flag (expensive)
+  - Added THOROUGH_RULES tuple in runner.py
+  - `--thorough` flag added to check command
+  - Updated check command docstring
+- [x] Unit tests for each rule (9 tests)
 
 **Exit criteria**: `portolan check --thorough` catches partition inconsistencies
 

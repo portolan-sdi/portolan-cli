@@ -1215,3 +1215,198 @@ class TestMetadataFreshRule:
 
         assert result.passed is False
         assert "missing" in result.message.lower()
+
+
+# --- Partition validation rules (thorough) ---
+
+
+class TestPartitionStructureRule:
+    """Tests for PartitionStructureRule."""
+
+    @pytest.mark.unit
+    def test_passes_when_no_partitions(self, tmp_path: Path) -> None:
+        """Rule passes when collection has no Hive-style partitions."""
+        from portolan_cli.validation.rules import PartitionStructureRule
+
+        # Setup catalog with non-partitioned collection
+        (tmp_path / ".portolan").mkdir()
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        rule = PartitionStructureRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_passes_with_consistent_partition_keys(self, tmp_path: Path) -> None:
+        """Rule passes when all partition dirs use same key."""
+        from portolan_cli.validation.rules import PartitionStructureRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","partition:scheme":"hive","partition:keys":[{"name":"kdtree_cell"}]}'
+        )
+
+        # Create consistent Hive partitions
+        (coll / "kdtree_cell=0").mkdir()
+        (coll / "kdtree_cell=1").mkdir()
+
+        rule = PartitionStructureRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_with_mixed_partition_keys(self, tmp_path: Path) -> None:
+        """Rule fails when partition dirs use different keys."""
+        from portolan_cli.validation.rules import PartitionStructureRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        # Create mixed partition keys
+        (coll / "kdtree_cell=0").mkdir()
+        (coll / "h3_cell=abc").mkdir()  # Different key!
+
+        rule = PartitionStructureRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "mixed keys" in result.message
+
+    @pytest.mark.unit
+    def test_fails_with_orphan_parquet_at_root(self, tmp_path: Path) -> None:
+        """Rule fails when parquet files exist at collection root alongside partitions."""
+        from portolan_cli.validation.rules import PartitionStructureRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        # Create partition dir AND orphan parquet at root
+        (coll / "kdtree_cell=0").mkdir()
+        (coll / "orphan.parquet").write_text("fake")
+
+        rule = PartitionStructureRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "orphan" in result.message
+
+    @pytest.mark.unit
+    def test_warns_missing_partition_scheme_field(self, tmp_path: Path) -> None:
+        """Rule fails when partitions exist but partition:scheme missing."""
+        from portolan_cli.validation.rules import PartitionStructureRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        # Collection JSON missing partition:scheme
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        (coll / "kdtree_cell=0").mkdir()
+
+        rule = PartitionStructureRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "partition:scheme" in result.message
+
+
+class TestPartitionSchemaConsistencyRule:
+    """Tests for PartitionSchemaConsistencyRule."""
+
+    @pytest.mark.unit
+    def test_passes_when_no_partitions(self, tmp_path: Path) -> None:
+        """Rule passes when no Hive-style partitions exist."""
+        from portolan_cli.validation.rules import PartitionSchemaConsistencyRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        rule = PartitionSchemaConsistencyRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_passes_with_consistent_schemas(self, tmp_path: Path) -> None:
+        """Rule passes when all partition files have same schema."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.validation.rules import PartitionSchemaConsistencyRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        # Create partitions with same schema
+        p1 = coll / "kdtree_cell=0"
+        p1.mkdir()
+        p2 = coll / "kdtree_cell=1"
+        p2.mkdir()
+
+        table = pa.table({"id": [1], "name": ["test"]})
+        pq.write_table(table, p1 / "data.parquet")
+        pq.write_table(table, p2 / "data.parquet")
+
+        rule = PartitionSchemaConsistencyRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_with_inconsistent_schemas(self, tmp_path: Path) -> None:
+        """Rule fails when partition files have different schemas."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.validation.rules import PartitionSchemaConsistencyRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        p1 = coll / "kdtree_cell=0"
+        p1.mkdir()
+        p2 = coll / "kdtree_cell=1"
+        p2.mkdir()
+
+        # Different schemas!
+        table1 = pa.table({"id": [1], "name": ["test"]})
+        table2 = pa.table({"id": [2], "value": [42]})  # Different columns
+        pq.write_table(table1, p1 / "data.parquet")
+        pq.write_table(table2, p2 / "data.parquet")
+
+        rule = PartitionSchemaConsistencyRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "different schemas" in result.message.lower()
+
+    @pytest.mark.unit
+    def test_has_error_severity(self) -> None:
+        """Schema inconsistency is an ERROR (data corruption)."""
+        from portolan_cli.validation.rules import PartitionSchemaConsistencyRule
+
+        rule = PartitionSchemaConsistencyRule()
+        assert rule.severity == Severity.ERROR

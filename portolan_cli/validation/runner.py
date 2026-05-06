@@ -10,6 +10,8 @@ from portolan_cli.validation.rules import (
     CatalogExistsRule,
     CatalogJsonValidRule,
     MetadataFreshRule,
+    PartitionSchemaConsistencyRule,
+    PartitionStructureRule,
     PMTilesRecommendedRule,
     ProvisionalDatetimeRule,
     StacFieldsRule,
@@ -25,6 +27,13 @@ DEFAULT_RULES: tuple[ValidationRule, ...] = (
     PMTilesRecommendedRule(),
     MetadataFreshRule(),
     ProvisionalDatetimeRule(),
+)
+
+# Thorough rules (expensive, require reading file contents)
+# Run with --thorough flag
+THOROUGH_RULES: tuple[ValidationRule, ...] = (
+    PartitionStructureRule(),
+    PartitionSchemaConsistencyRule(),
 )
 
 
