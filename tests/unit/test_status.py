@@ -367,6 +367,116 @@ class TestDetectUntrackedFiles:
         untracked = detect_untracked_files(collection_path, versions_file)
         assert sorted(untracked) == ["file1.parquet", "file2.parquet"]
 
+    @pytest.mark.unit
+    def test_excludes_collection_json(self, tmp_path: Path) -> None:
+        """collection.json is a managed file and never reported as untracked."""
+        from portolan_cli.status import detect_untracked_files
+
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
+        (collection_path / "collection.json").write_text('{"type": "Collection"}')
+
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.0.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime.now(timezone.utc),
+                    breaking=False,
+                    assets={},
+                    changes=[],
+                )
+            ],
+        )
+
+        untracked = detect_untracked_files(collection_path, versions_file)
+        assert "collection.json" not in untracked
+
+    @pytest.mark.unit
+    def test_excludes_readme(self, tmp_path: Path) -> None:
+        """README.md is a managed file and never reported as untracked."""
+        from portolan_cli.status import detect_untracked_files
+
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
+        (collection_path / "README.md").write_text("# Collection")
+
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.0.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime.now(timezone.utc),
+                    breaking=False,
+                    assets={},
+                    changes=[],
+                )
+            ],
+        )
+
+        untracked = detect_untracked_files(collection_path, versions_file)
+        assert "README.md" not in untracked
+
+    @pytest.mark.unit
+    def test_excludes_stac_item_files(self, tmp_path: Path) -> None:
+        """STAC item JSON files (type: Feature) are not reported as untracked."""
+        from portolan_cli.status import detect_untracked_files
+
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
+        # Create a STAC item file
+        (collection_path / "item-2020.json").write_text(
+            '{"type": "Feature", "id": "item-2020", "geometry": null, "properties": {}}'
+        )
+        # Create a non-STAC JSON file (should be reported as untracked)
+        (collection_path / "config.json").write_text('{"setting": "value"}')
+
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.0.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime.now(timezone.utc),
+                    breaking=False,
+                    assets={},
+                    changes=[],
+                )
+            ],
+        )
+
+        untracked = detect_untracked_files(collection_path, versions_file)
+        assert "item-2020.json" not in untracked
+        assert "config.json" in untracked
+
+    @pytest.mark.unit
+    def test_excludes_metadata_yaml(self, tmp_path: Path) -> None:
+        """metadata.yaml is a managed file and never reported as untracked."""
+        from portolan_cli.status import detect_untracked_files
+
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
+        (collection_path / "metadata.yaml").write_text("title: My Collection")
+
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.0.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime.now(timezone.utc),
+                    breaking=False,
+                    assets={},
+                    changes=[],
+                )
+            ],
+        )
+
+        untracked = detect_untracked_files(collection_path, versions_file)
+        assert "metadata.yaml" not in untracked
+
 
 class TestParseVersion:
     """Tests for semver parsing in sync_state calculation."""

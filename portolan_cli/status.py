@@ -158,18 +158,46 @@ def detect_deleted_files(
     return sorted(deleted)
 
 
+# Files managed by Portolan that should not appear as "untracked"
+MANAGED_FILES = frozenset(
+    {
+        "versions.json",
+        "collection.json",
+        "catalog.json",
+        "README.md",
+        "metadata.yaml",
+    }
+)
+
+
+def _is_stac_item(file_path: Path) -> bool:
+    """Check if a JSON file is a STAC item (has type: Feature)."""
+    if file_path.suffix != ".json":
+        return False
+    try:
+        import json
+
+        data = json.loads(file_path.read_text())
+        return bool(data.get("type") == "Feature")
+    except (json.JSONDecodeError, OSError, KeyError):
+        return False
+
+
 def detect_untracked_files(
     collection_path: Path,
     versions_file: VersionsFile,
 ) -> list[str]:
-    """Detect files on disk not tracked in versions.json.
+    """Detect data files on disk not tracked in versions.json.
+
+    Excludes Portolan-managed files (STAC metadata, versions.json, README.md)
+    since those are derived/generated and managed separately from data versioning.
 
     Args:
         collection_path: Path to the collection directory.
         versions_file: Parsed versions.json content.
 
     Returns:
-        List of filenames on disk but not in versions.json.
+        List of data filenames on disk but not in versions.json.
     """
     if not versions_file.versions:
         # No versions = everything is untracked
@@ -179,9 +207,22 @@ def detect_untracked_files(
 
     untracked = []
     for file_path in collection_path.iterdir():
-        if file_path.is_file() and file_path.name != "versions.json":
-            if file_path.name not in tracked:
-                untracked.append(file_path.name)
+        if not file_path.is_file():
+            continue
+
+        name = file_path.name
+
+        # Skip Portolan-managed files
+        if name in MANAGED_FILES:
+            continue
+
+        # Skip STAC item files (*.json with type: Feature)
+        if _is_stac_item(file_path):
+            continue
+
+        # Report as untracked if not in versions.json
+        if name not in tracked:
+            untracked.append(name)
 
     return sorted(untracked)
 
