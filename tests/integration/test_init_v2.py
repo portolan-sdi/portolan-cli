@@ -107,6 +107,36 @@ class TestInitCreatesRequiredFiles:
             # versions.json must NOT be inside .portolan/ (ADR-0023)
             assert not Path(".portolan/versions.json").exists()
 
+    @pytest.mark.integration
+    def test_init_with_explicit_absolute_path(self, runner: CliRunner, tmp_path: Path) -> None:
+        """Init with explicit absolute path should create catalog.json in that directory.
+
+        Regression test for issue #401: pystac normalize_hrefs treats paths with dots
+        (like /tmp/tmp.XXXXXX from mktemp -d) as files, causing catalog.json to be
+        written to parent directory.
+
+        This test uses a path WITH A DOT to trigger the bug. Paths without dots
+        (like pytest's tmp_path) don't trigger it.
+        """
+        # Use dotted path like shell's mktemp -d produces (e.g., tmp.XXXXXX)
+        target_dir = tmp_path / "my.catalog"
+        target_dir.mkdir()
+
+        result = runner.invoke(cli, ["init", str(target_dir), "--auto"])
+
+        assert result.exit_code == 0, f"Failed: {result.output}"
+        assert (target_dir / "catalog.json").exists(), "catalog.json should be in target directory"
+        assert (target_dir / "versions.json").exists(), (
+            "versions.json should be in target directory"
+        )
+        assert (target_dir / ".portolan" / "config.yaml").exists(), (
+            "config.yaml should be in target directory"
+        )
+        # Negative assertion: files must NOT leak to parent directory
+        assert not (tmp_path / "catalog.json").exists(), (
+            "catalog.json must NOT leak to parent directory"
+        )
+
 
 class TestCatalogJsonValidity:
     """Tests that catalog.json is a valid STAC catalog."""

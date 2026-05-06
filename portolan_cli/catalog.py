@@ -437,7 +437,8 @@ def init_catalog(
     )
 
     catalog_file = path / "catalog.json"
-    catalog.normalize_hrefs(str(path))
+    # Trailing slash required: pystac treats dotted paths (e.g., tmp.xyz) as files
+    catalog.normalize_hrefs(f"{path}/")
     try:
         catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
     except OSError as e:

@@ -1209,7 +1209,8 @@ def _save_collection_with_links(
     """
     _deduplicate_collection_item_links(collection)
     collection.set_self_href(str(collection_dir / "collection.json"))
-    collection.normalize_hrefs(str(collection_dir), strategy=AsIsLayoutStrategy())
+    # Trailing slash required: pystac treats paths with dots in final component as files
+    collection.normalize_hrefs(f"{collection_dir}/", strategy=AsIsLayoutStrategy())
     collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
 
     collection_json_path = collection_dir / "collection.json"
@@ -1990,8 +1991,8 @@ def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
     catalog_path = catalog_root / "catalog.json"
     catalog = load_catalog(catalog_path)
 
-    # Normalize hrefs to ensure consistent comparison
-    catalog.normalize_hrefs(str(catalog_root))
+    # Trailing slash required: pystac treats paths with dots in final component as files
+    catalog.normalize_hrefs(f"{catalog_root}/")
 
     # Extract collection IDs from existing child links
     # Links are in format: "./{collection_id}/collection.json"
