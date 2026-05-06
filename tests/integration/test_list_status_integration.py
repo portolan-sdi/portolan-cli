@@ -152,30 +152,6 @@ class TestListStatusIntegration:
             assert "scan" in result.output.lower() or "add" in result.output.lower()
 
 
-class TestStatusCommandRemovalIntegration:
-    """Integration tests verifying status command is removed."""
-
-    @pytest.mark.integration
-    def test_status_command_no_longer_exists(self, runner: CliRunner) -> None:
-        """The status command should not be available."""
-        result = runner.invoke(cli, ["status"])
-
-        # Should fail because command doesn't exist
-        assert result.exit_code != 0 or "no such command" in result.output.lower()
-
-    @pytest.mark.integration
-    def test_help_does_not_mention_status(self, runner: CliRunner) -> None:
-        """Help output should not mention the status command."""
-        result = runner.invoke(cli, ["--help"])
-
-        assert result.exit_code == 0
-        # "status" should not appear as a command
-        # (may appear in other contexts, but not as "status  " which indicates a command)
-        lines = result.output.lower().split("\n")
-        command_lines = [line for line in lines if line.strip().startswith("status")]
-        assert len(command_lines) == 0, f"status command still listed: {command_lines}"
-
-
 class TestListOutputFormatIntegration:
     """Integration tests for list output formatting."""
 

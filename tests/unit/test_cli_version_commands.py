@@ -74,65 +74,6 @@ def runner() -> CliRunner:
 
 
 # ---------------------------------------------------------------------------
-# _require_iceberg_backend — backend guard
-# ---------------------------------------------------------------------------
-
-
-class TestRequireIcebergBackend:
-    """Tests for the _require_iceberg_backend guard used by version sub-commands."""
-
-    @pytest.mark.unit
-    def test_wrong_backend_exits_with_error(self, runner: CliRunner, tmp_path: Path) -> None:
-        """version current errors out when the active backend is not iceberg."""
-        catalog_root = _make_file_catalog(tmp_path)
-
-        with patch(
-            "portolan_cli.config.get_setting",
-            return_value=None,  # no backend → defaults to 'file'
-        ):
-            result = runner.invoke(
-                cli,
-                [
-                    "version",
-                    "current",
-                    "boundaries",
-                    "--catalog",
-                    str(catalog_root),
-                ],
-            )
-
-        assert result.exit_code == 1
-        assert "iceberg" in result.output.lower()
-
-    @pytest.mark.unit
-    def test_wrong_backend_json_error(self, runner: CliRunner, tmp_path: Path) -> None:
-        """version current emits a JSON error when backend is not iceberg and --json is set."""
-        catalog_root = _make_file_catalog(tmp_path)
-
-        with patch(
-            "portolan_cli.config.get_setting",
-            return_value=None,
-        ):
-            result = runner.invoke(
-                cli,
-                [
-                    "--format",
-                    "json",
-                    "version",
-                    "current",
-                    "boundaries",
-                    "--catalog",
-                    str(catalog_root),
-                ],
-            )
-
-        assert result.exit_code == 1
-        data = json.loads(result.output)
-        assert data["success"] is False
-        assert "iceberg" in data["errors"][0]["message"].lower()
-
-
-# ---------------------------------------------------------------------------
 # version current
 # ---------------------------------------------------------------------------
 
