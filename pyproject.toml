@@ -74,7 +74,6 @@ dev = [
     "mutmut>=3.4.0",
     "mypy>=1.19.1",
     "pip-audit>=2.10.0",
-    "pre-commit>=4.5.1",
     "pytest>=9.0.3",
     "pytest-benchmark>=5.0.0",
     "pytest-cov>=4.0.0",

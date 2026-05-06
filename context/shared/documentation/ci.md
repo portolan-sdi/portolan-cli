@@ -15,17 +15,17 @@ AI agents write most of the code. Human review doesn't scale to match AI output 
 
 | Tier | Trigger | Duration | Purpose |
 |------|---------|----------|---------|
-| **Tier 1** | Pre-commit hook | < 30s | Fast feedback loop for developers |
+| **Tier 1** | prek hook | < 30s | Fast feedback loop for developers |
 | **Tier 2** | PR / push to main | 2-5 min | Comprehensive quality gates |
 | **Tier 3** | Nightly schedule | 10-30 min | Expensive checks, trend tracking |
 
 ---
 
-## Tier 1: Pre-commit
+## Tier 1: prek
 
-Configured in `.pre-commit-config.yaml`. Runs locally before every commit.
+Configured in `prek.toml`. Runs locally before every commit.
 
-Install with: `uv run pre-commit install`
+Install with: `uv tool install prek && prek install`
 
 **Checks (all blocking):**
 
@@ -38,7 +38,7 @@ Install with: `uv run pre-commit install`
 - `menard check` — Documentation freshness (requires Python 3.11+)
 - `menard check-protected` — Protected content validation
 - `commitizen` — Commit message validation (commit-msg stage)
-- Standard hooks: trailing whitespace, YAML validation, large file detection
+- Builtin hooks: trailing whitespace, YAML validation, large file detection
 
 **Philosophy:** All hooks block. No `--no-verify`. Fix issues before committing.
 
