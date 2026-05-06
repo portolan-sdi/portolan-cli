@@ -39,6 +39,11 @@ from portolan_cli.formats import (
     detect_format,
     get_cloud_native_status,
 )
+from portolan_cli.thumbnail import (
+    ThumbnailConfig,
+    generate_vector_thumbnail,
+    get_thumbnail_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +180,12 @@ class ConversionReport:
         }
 
 
-def generate_cog_thumbnail(cog_path: Path, max_size: int = 512, quality: int = 75) -> Path | None:
+def generate_cog_thumbnail(
+    cog_path: Path,
+    max_size: int = 512,
+    quality: int = 75,
+    basemap_provider: str = "none",
+) -> Path | None:
     """Generate a JPEG thumbnail from a COG file (Issue #372).
 
     Reads the lowest-resolution overview when available, downsamples to fit
@@ -187,11 +197,20 @@ def generate_cog_thumbnail(cog_path: Path, max_size: int = 512, quality: int = 7
         cog_path: Path to the source COG file.
         max_size: Maximum pixel dimension for the longest edge (default 512).
         quality: JPEG quality 1-100 (default 75).
+        basemap_provider: Unused. Raster thumbnails don't need basemaps because
+            the raster data fills the entire extent — a basemap underneath would
+            be invisible. Vector data needs basemaps because points/lines are
+            sparse and benefit from geographic context. See ADR-0042.
 
     Returns:
         Path to the written JPEG thumbnail, or None if the source could not be
         read as a raster (e.g., corrupt file).
     """
+    # Basemaps intentionally not supported for rasters (ADR-0042):
+    # Raster data fills the extent, so a basemap would be hidden underneath.
+    # Vector thumbnails need basemaps because points/lines are sparse.
+    if basemap_provider != "none":
+        logger.debug("Basemap ignored for raster thumbnail (not needed, see ADR-0042)")
     try:
         import numpy as np
         import rasterio
@@ -366,6 +385,22 @@ def convert_file(
             target_format = "GeoParquet"
             # Validate output is valid GeoParquet
             validation_error = _validate_geoparquet(output_path)
+            # Generate thumbnail next to the GeoParquet (Issue #13).
+            # Only on a successful, valid conversion to avoid orphan thumbnails.
+            # Thumbnail failure should not flip a successful conversion to FAILED.
+            if validation_error is None:
+                try:
+                    thumb_config = (
+                        get_thumbnail_config(catalog_path) if catalog_path else ThumbnailConfig()
+                    )
+                    if thumb_config.enabled and isinstance(output_path, Path):
+                        generate_vector_thumbnail(
+                            pmtiles_path=None,  # PMTiles generated separately if enabled
+                            geoparquet_path=output_path,
+                            config=thumb_config,
+                        )
+                except Exception as e:
+                    logger.warning("Thumbnail generation failed for %s: %s", source.name, e)
         elif format_type == FormatType.RASTER:
             output_path = _convert_raster(source, out_dir, cog_settings)
             target_format = "COG"

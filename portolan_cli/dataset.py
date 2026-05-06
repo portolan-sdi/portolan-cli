@@ -83,6 +83,7 @@ from portolan_cli.stac import (
     load_catalog,
     update_collection_summaries,
 )
+from portolan_cli.style import enrich_cog_assets
 from portolan_cli.versions import (
     Asset,
     VersionsFile,
@@ -1336,6 +1337,11 @@ def prepare_dataset(
         primary_file=output_path,
         collection_dir=collection_dir,
     )
+
+    # Enrich COG assets with render extension properties (Issue #13)
+    if format_type == FormatType.RASTER:
+        enrich_cog_assets(stac_assets, catalog_root)
+
     band_stats, parquet_stats = _extract_statistics_best_effort(
         output_path, format_type, catalog_root, collection_path=collection_dir
     )
@@ -3258,12 +3264,19 @@ def _update_item_with_asset(
         collection_dir=collection_dir,
     )
 
-    # Update item assets
+    # Enrich COG assets with render extension properties (Issue #13)
+    enrich_cog_assets(stac_assets, catalog_root)
+
+    # Update item assets - include extra_fields for style properties
+    # Merge with existing asset metadata to preserve title/description
+    existing_assets = item_data.get("assets", {})
     item_data["assets"] = {
         key: {
+            **existing_assets.get(key, {}),  # Preserve existing metadata
             "href": asset.href,
             "type": asset.media_type,
             "roles": asset.roles,
+            **(asset.extra_fields or {}),
         }
         for key, asset in stac_assets.items()
     }

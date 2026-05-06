@@ -1,0 +1,372 @@
+"""Style generation for vector and raster assets (Issue #13).
+
+Generates Mapbox GL style specs for PMTiles and render extension properties for COGs.
+
+Public API:
+- VectorStyleConfig: Configuration for vector styling
+- RasterStyleConfig: Configuration for raster styling
+- build_pmtiles_style: Generate Mapbox GL style for PMTiles
+- build_raster_style: Generate render extension properties for COG
+- get_vector_style_config: Load vector style config from catalog
+- get_raster_style_config: Load raster style config from catalog
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from portolan_cli.config import load_config
+from portolan_cli.utils import get_dict, get_list
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Config Parsing Helpers
+# =============================================================================
+
+
+def _parse_config_str(value: Any, key: str, default: str) -> str:
+    """Parse config value as string, warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    logger.warning("%s must be str, got %s; using default", key, type(value).__name__)
+    return default
+
+
+def _parse_config_int(value: Any, key: str, default: int) -> int:
+    """Parse config value as int, warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    logger.warning("%s must be int, got %s; using default", key, type(value).__name__)
+    return default
+
+
+def _parse_config_float(value: Any, key: str, default: float) -> float:
+    """Parse config value as float, warn and return default if invalid."""
+    if value is None:
+        return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    logger.warning("%s must be number, got %s; using default", key, type(value).__name__)
+    return default
+
+
+# =============================================================================
+# Configuration Dataclasses
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class VectorStyleConfig:
+    """Configuration for vector styling.
+
+    Defines default colors, sizes, and opacities for point, line, and polygon
+    geometries. These values are used to generate Mapbox GL style specs for
+    PMTiles assets.
+
+    Attributes:
+        point_color: Circle fill color for points (default #3388ff).
+        point_radius: Circle radius in pixels (default 4).
+        point_opacity: Circle opacity 0.0-1.0 (default 0.8).
+        line_color: Line color for linestrings (default #3388ff).
+        line_width: Line width in pixels (default 2).
+        line_opacity: Line opacity 0.0-1.0 (default 0.8).
+        polygon_fill_color: Fill color for polygons (default #3388ff).
+        polygon_fill_opacity: Fill opacity 0.0-1.0 (default 0.6).
+        polygon_outline_color: Outline color for polygons (default #2266cc).
+    """
+
+    point_color: str = "#3388ff"
+    point_radius: int = 4
+    point_opacity: float = 0.8
+    line_color: str = "#3388ff"
+    line_width: int = 2
+    line_opacity: float = 0.8
+    polygon_fill_color: str = "#3388ff"
+    polygon_fill_opacity: float = 0.6
+    polygon_outline_color: str = "#2266cc"
+
+
+@dataclass(frozen=True)
+class RasterStyleConfig:
+    """Configuration for raster styling (render extension).
+
+    Defines colormap and rescale settings for COG visualization.
+
+    Attributes:
+        colormap: Named colormap (default 'viridis').
+        rescale_min: Minimum value for rescaling (None = auto).
+        rescale_max: Maximum value for rescaling (None = auto).
+    """
+
+    colormap: str = "viridis"
+    rescale_min: float | None = None
+    rescale_max: float | None = None
+
+
+# =============================================================================
+# Style Building Functions
+# =============================================================================
+
+
+def build_pmtiles_style(
+    geometry_type: str,
+    source_layer: str,
+    config: VectorStyleConfig,
+) -> dict[str, Any]:
+    """Build Mapbox GL style spec for PMTiles based on geometry type.
+
+    Generates a minimal Mapbox GL style spec (version 8) with a single layer
+    appropriate for the geometry type.
+
+    Args:
+        geometry_type: OGC geometry type (Point, LineString, Polygon, etc.).
+        source_layer: Name of the source layer in PMTiles.
+        config: Style configuration.
+
+    Returns:
+        Mapbox GL style spec dict with version and layers.
+    """
+    # Normalize geometry type to layer type
+    geom_lower = geometry_type.lower()
+
+    if "point" in geom_lower:
+        layer_type = "circle"
+        paint = {
+            "circle-color": config.point_color,
+            "circle-radius": config.point_radius,
+            "circle-opacity": config.point_opacity,
+        }
+        suffix = "circle"
+    elif "line" in geom_lower:
+        layer_type = "line"
+        paint = {
+            "line-color": config.line_color,
+            "line-width": config.line_width,
+            "line-opacity": config.line_opacity,
+        }
+        suffix = "line"
+    else:
+        # Polygon, MultiPolygon, GeometryCollection, or unknown -> fill
+        layer_type = "fill"
+        paint = {
+            "fill-color": config.polygon_fill_color,
+            "fill-opacity": config.polygon_fill_opacity,
+            "fill-outline-color": config.polygon_outline_color,
+        }
+        suffix = "fill"
+
+    layer = {
+        "id": f"{source_layer}-{suffix}",
+        "type": layer_type,
+        "source-layer": source_layer,
+        "paint": paint,
+    }
+
+    return {
+        "version": 8,
+        "layers": [layer],
+    }
+
+
+def build_raster_style(config: RasterStyleConfig) -> dict[str, Any]:
+    """Build render extension properties for COG styling.
+
+    Generates STAC render extension properties for COG visualization.
+
+    Args:
+        config: Raster style configuration.
+
+    Returns:
+        Dict with render:* properties.
+    """
+    props: dict[str, Any] = {
+        "render:colormap_name": config.colormap,
+    }
+
+    # Only include rescale if both min and max are set
+    if config.rescale_min is not None and config.rescale_max is not None:
+        props["render:rescale"] = [[config.rescale_min, config.rescale_max]]
+
+    return props
+
+
+_COG_MEDIA_TYPES = (
+    "image/tiff; application=geotiff; profile=cloud-optimized",
+    "image/tiff",
+)
+
+
+def enrich_cog_asset_with_style(
+    asset: Any,
+    catalog_path: Path | None = None,
+) -> None:
+    """Add render extension properties to a COG asset in-place.
+
+    Modifies the asset's extra_fields to include render:colormap_name and
+    optionally render:rescale based on catalog style config.
+
+    Args:
+        asset: A pystac.Asset object for a COG file.
+        catalog_path: Optional catalog path for loading style config.
+    """
+    if catalog_path:
+        config = get_raster_style_config(catalog_path)
+    else:
+        config = RasterStyleConfig()
+
+    style_props = build_raster_style(config)
+
+    # pystac.Asset stores extra properties in extra_fields dict
+    if not hasattr(asset, "extra_fields") or asset.extra_fields is None:
+        asset.extra_fields = {}
+
+    asset.extra_fields.update(style_props)
+
+
+def enrich_cog_assets(
+    assets: dict[str, Any],
+    catalog_path: Path | None = None,
+) -> None:
+    """Enrich all COG assets in a dict with render extension properties.
+
+    Args:
+        assets: Dict of asset_key -> pystac.Asset.
+        catalog_path: Catalog root for loading style config.
+    """
+    for asset in assets.values():
+        if getattr(asset, "media_type", None) in _COG_MEDIA_TYPES:
+            enrich_cog_asset_with_style(asset, catalog_path)
+
+
+# =============================================================================
+# Config Loading
+# =============================================================================
+
+
+def get_vector_style_config(catalog_path: Path) -> VectorStyleConfig:
+    """Load vector style config from catalog's config.yaml.
+
+    Reads the 'styles.vector' section and returns a VectorStyleConfig instance.
+
+    Args:
+        catalog_path: Root path of the catalog.
+
+    Returns:
+        VectorStyleConfig instance. Returns defaults if no config exists.
+    """
+    config = load_config(catalog_path)
+    styles = get_dict(config, "styles")
+    if not styles:
+        return VectorStyleConfig()
+    vector = get_dict(styles, "vector")
+    if not vector:
+        return VectorStyleConfig()
+
+    point = get_dict(vector, "point")
+    line = get_dict(vector, "line")
+    polygon = get_dict(vector, "polygon")
+
+    return VectorStyleConfig(
+        point_color=_parse_config_str(
+            point.get("circle-color"), "styles.vector.point.circle-color", "#3388ff"
+        ),
+        point_radius=_parse_config_int(
+            point.get("circle-radius"), "styles.vector.point.circle-radius", 4
+        ),
+        point_opacity=_parse_config_float(
+            point.get("circle-opacity"), "styles.vector.point.circle-opacity", 0.8
+        ),
+        line_color=_parse_config_str(
+            line.get("line-color"), "styles.vector.line.line-color", "#3388ff"
+        ),
+        line_width=_parse_config_int(line.get("line-width"), "styles.vector.line.line-width", 2),
+        line_opacity=_parse_config_float(
+            line.get("line-opacity"), "styles.vector.line.line-opacity", 0.8
+        ),
+        polygon_fill_color=_parse_config_str(
+            polygon.get("fill-color"), "styles.vector.polygon.fill-color", "#3388ff"
+        ),
+        polygon_fill_opacity=_parse_config_float(
+            polygon.get("fill-opacity"), "styles.vector.polygon.fill-opacity", 0.6
+        ),
+        polygon_outline_color=_parse_config_str(
+            polygon.get("fill-outline-color"), "styles.vector.polygon.fill-outline-color", "#2266cc"
+        ),
+    )
+
+
+def get_raster_style_config(catalog_path: Path) -> RasterStyleConfig:
+    """Load raster style config from catalog's config.yaml.
+
+    Reads the 'styles.raster' section and returns a RasterStyleConfig instance.
+
+    Config format:
+        styles:
+          raster:
+            colormap: terrain
+            rescale: [0, 1000]
+
+    Args:
+        catalog_path: Root path of the catalog.
+
+    Returns:
+        RasterStyleConfig instance. Returns defaults if no config exists.
+    """
+    config = load_config(catalog_path)
+
+    styles = get_dict(config, "styles")
+    if not styles:
+        return RasterStyleConfig()
+
+    raster = get_dict(styles, "raster")
+    if not raster:
+        return RasterStyleConfig()
+
+    colormap = raster.get("colormap")
+    if colormap is not None and not isinstance(colormap, str):
+        logger.warning(
+            "styles.raster.colormap must be str, got %s; using default", type(colormap).__name__
+        )
+        colormap = "viridis"
+    elif colormap is None:
+        colormap = "viridis"
+
+    rescale = get_list(raster, "rescale")
+    rescale_min: float | None = None
+    rescale_max: float | None = None
+
+    if rescale:
+        if len(rescale) < 2:
+            logger.warning(
+                "styles.raster.rescale must be [min, max], got %d values; ignoring", len(rescale)
+            )
+        else:
+            if isinstance(rescale[0], (int, float)):
+                rescale_min = float(rescale[0])
+            else:
+                logger.warning(
+                    "styles.raster.rescale[0] must be number, got %s; ignoring",
+                    type(rescale[0]).__name__,
+                )
+            if isinstance(rescale[1], (int, float)):
+                rescale_max = float(rescale[1])
+            else:
+                logger.warning(
+                    "styles.raster.rescale[1] must be number, got %s; ignoring",
+                    type(rescale[1]).__name__,
+                )
+
+    return RasterStyleConfig(
+        colormap=colormap,
+        rescale_min=rescale_min,
+        rescale_max=rescale_max,
+    )

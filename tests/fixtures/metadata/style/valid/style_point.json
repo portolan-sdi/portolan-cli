@@ -1,0 +1,15 @@
+{
+  "version": 8,
+  "layers": [
+    {
+      "id": "cities-circle",
+      "type": "circle",
+      "source-layer": "cities",
+      "paint": {
+        "circle-color": "#3388ff",
+        "circle-radius": 4,
+        "circle-opacity": 0.8
+      }
+    }
+  ]
+}

@@ -292,6 +292,105 @@ These are complementary. Use `conversion.vector` for consistent spatial optimiza
 | `JPEG` | RGB imagery | Lossy, smallest files for photos |
 | `WEBP` | Web display | Lossy, modern browsers only |
 
+## Thumbnails
+
+Configure automatic thumbnail generation for preview images. Thumbnails are registered as STAC assets with `roles: ["thumbnail"]`.
+
+```yaml
+# .portolan/config.yaml
+thumbnails:
+  enabled: true              # Auto-generate thumbnails (default: true)
+  max_size: 512              # Max dimension in pixels (default: 512)
+  quality: 75                # JPEG quality 1-100 (default: 75)
+  basemap:
+    provider: CartoDB.Positron  # Basemap tile provider (default)
+    opacity: 1.0             # Basemap opacity 0-1 (default: 1.0)
+    zoom_adjust: 0           # Zoom level adjustment (default: 0)
+```
+
+### Vector vs Raster Thumbnails
+
+| Type | Basemap | Source |
+|------|---------|--------|
+| **Vector** | Included (configurable) | PMTiles preferred, GeoParquet fallback |
+| **Raster (COG)** | Not needed | Rasterio overviews |
+
+Vector data (points, lines, sparse polygons) benefits from basemap context. Raster data fills its extent, so basemaps would be hidden underneath.
+
+### Basemap Providers
+
+Uses [contextily](https://contextily.readthedocs.io/) for basemaps. Common providers:
+
+| Provider | Description |
+|----------|-------------|
+| `CartoDB.Positron` | Light gray (default) |
+| `CartoDB.DarkMatter` | Dark theme |
+| `CartoDB.Voyager` | Colorful streets |
+| `OpenStreetMap.Mapnik` | Standard OSM |
+| `none` | Disable basemap |
+
+Set `basemap.provider: none` to disable basemaps entirely.
+
+### Settings Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `thumbnails.enabled` | `true` | Generate thumbnails during conversion |
+| `thumbnails.max_size` | `512` | Maximum pixel dimension |
+| `thumbnails.quality` | `75` | JPEG quality (1-100) |
+| `thumbnails.basemap.provider` | `CartoDB.Positron` | Basemap tile provider |
+| `thumbnails.basemap.opacity` | `1.0` | Basemap opacity (0-1) |
+| `thumbnails.basemap.zoom_adjust` | `0` | Zoom level adjustment |
+
+## Styles
+
+Configure default styling for assets. Styles are stored inline in STAC asset properties.
+
+### Vector Styles (PMTiles)
+
+Vector assets get Mapbox GL style specs stored in `pmtiles:style`:
+
+```yaml
+# .portolan/config.yaml
+styles:
+  vector:
+    point:
+      circle-color: "#3388ff"    # Point fill color
+      circle-radius: 4           # Point radius in pixels
+      circle-opacity: 0.8        # Point opacity
+    line:
+      line-color: "#3388ff"      # Line color
+      line-width: 2              # Line width in pixels
+      line-opacity: 0.8          # Line opacity
+    polygon:
+      fill-color: "#3388ff"      # Polygon fill color
+      fill-opacity: 0.6          # Polygon fill opacity
+      fill-outline-color: "#2266cc"  # Polygon outline color
+```
+
+### Raster Styles (COG)
+
+Raster assets get [STAC render extension](https://github.com/stac-extensions/render) properties:
+
+```yaml
+# .portolan/config.yaml
+styles:
+  raster:
+    colormap: viridis           # Named colormap (default: viridis)
+    rescale: [0, 255]           # Min/max for rescaling (optional)
+```
+
+Common colormaps: `viridis`, `plasma`, `terrain`, `blues`, `reds`, `greens`.
+
+### How Styles Are Used
+
+| Asset Type | Property | Format |
+|------------|----------|--------|
+| PMTiles | `pmtiles:style` | Mapbox GL v8 subset |
+| COG | `render:colormap_name`, `render:rescale` | STAC render extension |
+
+Styles are auto-generated based on geometry type (point/line/polygon) for vectors, or colormap config for rasters. Map renderers (MapLibre GL, etc.) can read these properties directly.
+
 ## PMTiles Generation
 
 Generate vector tile overviews from GeoParquet assets for efficient web map rendering.

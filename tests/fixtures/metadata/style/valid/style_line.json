@@ -1,0 +1,15 @@
+{
+  "version": 8,
+  "layers": [
+    {
+      "id": "roads-line",
+      "type": "line",
+      "source-layer": "roads",
+      "paint": {
+        "line-color": "#3388ff",
+        "line-width": 2,
+        "line-opacity": 0.8
+      }
+    }
+  ]
+}
