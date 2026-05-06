@@ -223,8 +223,6 @@ class PMTilesRecommendedRule(ValidationRule):
         Returns:
             ValidationResult with warning if any GeoParquet lacks PMTiles.
         """
-        import json
-
         # Find all collection.json files
         collection_files = list(catalog_path.rglob("collection.json"))
 
@@ -525,8 +523,8 @@ class PartitionStructureRule(ValidationRule):
 class PartitionSchemaConsistencyRule(ValidationRule):
     """Check that all parquet files in a partition have consistent schema.
 
-    This is an expensive check that reads parquet metadata from all files.
-    Only runs with --thorough flag.
+    Reads parquet metadata (footer only) from all partition files to verify
+    they share the same schema.
     """
 
     name = "partition_schema_consistency"
@@ -537,8 +535,14 @@ class PartitionSchemaConsistencyRule(ValidationRule):
         """Check schema consistency across partition files."""
         try:
             import pyarrow.parquet as pq
+            from pyarrow import ArrowInvalid
         except ImportError:
-            return self._pass("PyArrow not available, skipping schema check")
+            return ValidationResult(
+                rule_name=self.name,
+                passed=True,
+                severity=Severity.WARNING,
+                message="PyArrow not available, schema consistency not checked",
+            )
 
         issues: list[str] = []
 
@@ -565,8 +569,8 @@ class PartitionSchemaConsistencyRule(ValidationRule):
                         if schema_key not in schemas:
                             schemas[schema_key] = []
                         schemas[schema_key].append(str(pq_file.relative_to(coll_dir)))
-                    except Exception:
-                        issues.append(f"{coll_dir.name}: unreadable {pq_file.name}")
+                    except (OSError, ArrowInvalid) as e:
+                        issues.append(f"{coll_dir.name}: unreadable {pq_file.name} ({e})")
 
             if len(schemas) > 1:
                 issues.append(

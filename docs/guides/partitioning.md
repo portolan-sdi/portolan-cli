@@ -80,7 +80,7 @@ Partitioned collections include `partition:*` extension fields:
 ```json
 {
   "stac_extensions": [
-    "https://portolan.org/stac-extensions/partition/v1.0.0/schema.json"
+    "https://portolan-sdi.github.io/stac-partition-extension/v1.0.0/schema.json"
   ],
   "partition:scheme": "hive",
   "partition:strategy": "kdtree",

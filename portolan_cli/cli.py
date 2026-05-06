@@ -71,7 +71,7 @@ from portolan_cli.validation import (
     Severity,
 )
 from portolan_cli.validation import check as validate_catalog
-from portolan_cli.validation.runner import DEFAULT_RULES, THOROUGH_RULES
+from portolan_cli.validation.runner import DEFAULT_RULES
 
 
 def format_size(size_bytes: int) -> str:
@@ -1181,11 +1181,6 @@ def _output_combined_check_json(
     is_flag=True,
     help="Only check/fix geospatial assets (cloud-native status, convertibility)",
 )
-@click.option(
-    "--thorough",
-    is_flag=True,
-    help="Run expensive validation (partition schema consistency, file content checks)",
-)
 @click.pass_context
 def check(
     ctx: click.Context,
@@ -1197,7 +1192,6 @@ def check(
     remove_legacy: bool,
     metadata: bool,
     geo_assets: bool,
-    thorough: bool,
 ) -> None:
     """Validate a Portolan catalog or check files for cloud-native status.
 
@@ -1211,10 +1205,6 @@ def check(
     - --geo-assets: Only check/fix geospatial assets (cloud-native status)
     - Neither: Check/fix both (default)
 
-    Use --thorough for expensive validation (reads file contents):
-    - Partition structure consistency (Hive-style directories)
-    - Partition schema consistency (all parquet files match)
-
     Examples:
 
         portolan check                        # Validate all (metadata + geo-assets)
@@ -1222,8 +1212,6 @@ def check(
         portolan check --metadata             # Validate metadata only
 
         portolan check --geo-assets           # Check geo-assets only
-
-        portolan check --thorough             # Include partition validation
 
         portolan check --fix                  # Fix both metadata and geo-assets
 
@@ -1261,7 +1249,6 @@ def check(
         remove_legacy=remove_legacy,
         use_json=use_json,
         verbose=verbose,
-        thorough=thorough,
     )
 
 
@@ -1413,17 +1400,14 @@ def _execute_check_workflow(
     remove_legacy: bool,
     use_json: bool,
     verbose: bool,
-    thorough: bool = False,
 ) -> None:
     """Execute the check workflow based on flags.
 
     The workflow varies based on scope (--metadata, --geo-assets) and --fix:
     - Without --fix: run validation and report issues
     - With --fix: run validation AND apply fixes for the selected scope
-    - With --thorough: also run expensive partition validation rules
     """
-    # Build rules list based on --thorough flag
-    rules = DEFAULT_RULES + THOROUGH_RULES if thorough else DEFAULT_RULES
+    rules = DEFAULT_RULES
 
     # Handle fix workflows (may exit early)
     if fix:
