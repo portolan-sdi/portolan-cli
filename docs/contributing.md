@@ -20,9 +20,10 @@ Thank you for your interest in contributing to portolan-cli!
    uv sync --all-extras
    ```
 
-4. **Install pre-commit hooks**
+4. **Install prek** (git hook manager)
    ```bash
-   uv run pre-commit install
+   uv tool install prek
+   prek install
    ```
 
 5. **Verify setup**
@@ -58,7 +59,7 @@ Use `uv run cz commit` for interactive commit creation.
 
 1. Create a branch from `main`
 2. Write tests first, then implement (TDD is required — see Testing section)
-3. Run `uv run pre-commit run --all-files` to check everything locally
+3. Run `prek run --all-files` to check everything locally
 4. Push and open a PR — CI runs automatically
 5. Fill in the PR template and link related issues
 

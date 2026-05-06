@@ -115,7 +115,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 ```bash
 # Environment setup
 uv sync --all-extras                    # Install all dependencies
-uv run pre-commit install               # Install git hooks
+prek install                            # Install git hooks (requires: uv tool install prek)
 
 # Development
 uv run pytest                           # Run tests
@@ -231,9 +231,9 @@ Store small, representative data files in `tests/fixtures/`. Fixtures should be:
 
 **All checks are strict** — no `continue-on-error`. Fix issues or they block.
 
-### Pre-commit Hooks
+### prek Hooks
 
-Install: `uv run pre-commit install`. All hooks block—no `--no-verify`. See `.pre-commit-config.yaml` for full list.
+Install: `uv tool install prek && prek install`. All hooks block—no `--no-verify`. See `prek.toml` for full list.
 
 ## Code Quality
 
@@ -378,7 +378,7 @@ detail("Processing chunk 3/10...")         # Dimmed text
 
 **Progress UI:** The `add` and `scan` commands have excellent progress printing with real-time updates. Use this pattern (Rich progress bars + batched output) for any long-running operations.
 
-<!-- freshness: last-verified: 2026-04-08 -->
+<!-- freshness: last-verified: 2026-05-06 -->
 ## Design Principles
 
 | Principle | Meaning | ADR |
