@@ -1760,3 +1760,92 @@ class TestScanOutputIntegration:
                 assert file_dict["inferred_collection_id"] is not None, (
                     f"Expected collection ID for nested file {file_dict['relative_path']}"
                 )
+
+
+class TestPartitionOutputFormatting:
+    """Tests for partition metadata display in scan output (Issue #232 Phase 4)."""
+
+    @pytest.mark.unit
+    def test_format_special_formats_shows_hive_partition_with_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        """_format_special_formats displays Hive partitions with rich metadata."""
+        from portolan_cli.scan_detect import SpecialFormat
+        from portolan_cli.scan_output import _format_special_formats
+
+        # Create Hive-style partition structure
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        (data_dir / "kdtree_cell=0001").mkdir()
+        (data_dir / "kdtree_cell=0001" / "data.parquet").touch()
+        (data_dir / "kdtree_cell=0002").mkdir()
+        (data_dir / "kdtree_cell=0002" / "data.parquet").touch()
+
+        sf = SpecialFormat(
+            path=data_dir,
+            relative_path="data",
+            format_type="hive_partition",
+            details={"partition_keys": ["kdtree_cell"]},
+        )
+
+        result = ScanResult(
+            root=tmp_path,
+            ready=[],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+            special_formats=[sf],
+        )
+
+        lines = _format_special_formats(result)
+        output = "\n".join(lines)
+
+        assert "Detected special formats:" in output
+        assert "Hive-partitioned" in output
+        assert "kdtree" in output.lower()
+        assert "2 partitions" in output
+
+    @pytest.mark.unit
+    def test_format_special_formats_fallback_without_rich_metadata(self) -> None:
+        """_format_special_formats falls back to basic info when path doesn't exist."""
+        from portolan_cli.scan_detect import SpecialFormat
+        from portolan_cli.scan_output import _format_special_formats
+
+        sf = SpecialFormat(
+            path=Path("/nonexistent/path"),
+            relative_path="nonexistent",
+            format_type="hive_partition",
+            details={"partition_keys": ["year", "state"]},
+        )
+
+        result = ScanResult(
+            root=Path("/tmp"),
+            ready=[],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+            special_formats=[sf],
+        )
+
+        lines = _format_special_formats(result)
+        output = "\n".join(lines)
+
+        assert "Hive-partitioned" in output
+        assert "year, state" in output
+
+    @pytest.mark.unit
+    def test_format_special_formats_empty_returns_empty(self) -> None:
+        """_format_special_formats returns empty list when no special formats."""
+        from portolan_cli.scan_output import _format_special_formats
+
+        result = ScanResult(
+            root=Path("/tmp"),
+            ready=[],
+            issues=[],
+            skipped=[],
+            directories_scanned=1,
+            special_formats=[],
+        )
+
+        lines = _format_special_formats(result)
+        assert lines == []

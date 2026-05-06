@@ -604,6 +604,69 @@ class TestPartitionExtensionInStac:
         assert EXTENSION_URLS["partition"] in extensions
 
 
+class TestFinalizeDatasetPartitionWiring:
+    """Tests for partition metadata wiring through finalize_datasets (Issue #232 Phase 3)."""
+
+    @pytest.mark.unit
+    def test_finalize_datasets_applies_partition_metadata_to_collection(
+        self, tmp_path: Path
+    ) -> None:
+        """finalize_datasets applies partition_metadata from PreparedDataset to collection."""
+        import pystac
+
+        from portolan_cli.dataset import PreparedDataset, finalize_datasets
+        from portolan_cli.formats import FormatType
+        from portolan_cli.stac import EXTENSION_URLS
+
+        # Initialize catalog structure
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+
+        catalog = pystac.Catalog(id="test-catalog", description="Test")
+        catalog.normalize_hrefs(f"{catalog_root}/")
+        catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
+
+        # Create PreparedDataset with partition_metadata
+        partition_metadata = {
+            "partition:scheme": "hive",
+            "partition:strategy": "kdtree",
+            "partition:keys": [{"name": "kdtree_cell", "type": "string"}],
+            "partition:file_count": 42,
+        }
+
+        glob_asset = pystac.Asset(
+            href="./kdtree_cell=*/*.parquet",
+            media_type="application/vnd.apache.parquet",
+            roles=["data"],
+        )
+
+        prepared = PreparedDataset(
+            item_id="test_partitioned",
+            collection_id="test-collection",
+            format_type=FormatType.VECTOR,
+            bbox=[-180, -90, 180, 90],
+            asset_files={},
+            item_json_path=None,
+            is_collection_level_asset=True,
+            stac_assets={"test_partitioned": glob_asset},
+            partition_metadata=partition_metadata,
+        )
+
+        # Finalize
+        finalize_datasets(catalog_root, [prepared])
+
+        # Verify collection has partition metadata
+        collection_path = catalog_root / "test-collection" / "collection.json"
+        assert collection_path.exists()
+
+        collection = pystac.Collection.from_file(str(collection_path))
+
+        assert collection.extra_fields.get("partition:scheme") == "hive"
+        assert collection.extra_fields.get("partition:strategy") == "kdtree"
+        assert collection.extra_fields.get("partition:file_count") == 42
+        assert EXTENSION_URLS["partition"] in (collection.stac_extensions or [])
+
+
 class TestGlobTransformationPartitionExtension:
     """Tests for partition:glob field emission (ADR-0042 transition)."""
 

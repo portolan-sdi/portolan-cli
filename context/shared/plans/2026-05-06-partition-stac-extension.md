@@ -153,7 +153,10 @@ stac-partition-extension/
   - Accept optional partition_metadata parameter
   - Add `partition:*` fields to collection properties
   - Add extension URL to `stac_extensions`
-- [ ] Wire through from `partition_geoparquet()` result
+- [x] Wire through from `partition_geoparquet()` result
+  - Added `partition_metadata` field to `PreparedDataset`
+  - `_maybe_partition_large_file()` extracts and stores partition metadata
+  - `finalize_datasets()` applies partition metadata to collection via `add_partition_metadata_to_collection()`
 - [x] Update `portolan:glob` → `partition:glob` in `push.py`
 - [x] Unit tests for metadata emission
 
@@ -190,12 +193,14 @@ def get_partition_metadata(output_dir: Path, strategy: str) -> dict:
   - Detect Hive-style directories (`column=value/`)
   - Extract partition keys from directory names
   - Return `PartitionInfo` dataclass or None
-- [ ] Update `portolan scan` output to show partition info
+- [x] Update `portolan scan` output to show partition info
   - "Detected: Hive-partitioned (keys: kdtree_cell, 42 partitions)"
-- [ ] Handle edge cases:
-  - Mixed partition depths
-  - Non-Hive directory structures
-  - Empty partition directories
+  - Added `_format_special_formats()` in scan_output.py
+  - Integrates with `detect_partitioning()` for rich metadata
+- [x] Handle edge cases:
+  - Mixed partition depths (detected at first level)
+  - Non-Hive directory structures (returns None, uses fallback display)
+  - Empty partition directories (handled gracefully)
 - [x] Unit tests for detection
 
 **Exit criteria**: `portolan scan` on partitioned directory shows partition summary
