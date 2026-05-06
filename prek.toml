@@ -5,23 +5,34 @@
 # Install: prek install (requires: uv tool install prek)
 #:schema https://www.schemastore.org/prek.json
 
+# Stop after first hook failure for faster feedback
+fail_fast = true
+
 # =============================================================================
 # Built-in hooks (native Rust, no network fetch required)
 # =============================================================================
 [[repos]]
 repo = "builtin"
 hooks = [
+  # --- Format & whitespace ---
   { id = "trailing-whitespace" },
   { id = "end-of-file-fixer" },
+  { id = "mixed-line-ending" },
+
+  # --- Syntax validation ---
   { id = "check-yaml" },
+  { id = "check-toml" },
+
+  # --- Safety & security ---
+  { id = "check-merge-conflict" },
+  { id = "detect-private-key" },
+  { id = "check-case-conflict" },
+  { id = "no-commit-to-branch", args = ["--branch", "main"] },
   {
     id = "check-added-large-files",
     args = ["--maxkb=500"],
-    exclude = '^tests/fixtures/(realdata|raster|vector)/.*\.(parquet|tif)$'
+    exclude = { glob = ["tests/fixtures/realdata/**", "tests/fixtures/raster/**", "tests/fixtures/vector/**"] },
   },
-  { id = "check-merge-conflict" },
-  { id = "check-toml" },
-  { id = "mixed-line-ending" },
 ]
 
 # =============================================================================
@@ -80,9 +91,10 @@ hooks = [
   {
     id = "forbid-worktrees",
     name = "forbid worktree files",
-    entry = "bash -c 'echo ERROR - Worktree files should not be committed. Remove .claude/worktrees/ from staging. && exit 1'",
+    shell = "bash",
+    entry = "echo 'ERROR - Worktree files should not be committed. Remove .claude/worktrees/ from staging.' && exit 1",
     language = "system",
-    files = '^\.claude/worktrees/',
+    files = { glob = ".claude/worktrees/**" },
     pass_filenames = false,
   },
 
@@ -93,7 +105,7 @@ hooks = [
     name = "auto-update CLAUDE.md sections",
     entry = "uv run python scripts/generate_claude_md_sections.py --update",
     language = "system",
-    files = '^(CLAUDE\.md|context/shared/adr/.*\.md|context/shared/known-issues/.*\.md|pyproject\.toml|portolan_cli/cli\.py)$',
+    files = { glob = ["CLAUDE.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md", "pyproject.toml", "portolan_cli/cli.py"] },
     pass_filenames = false,
   },
   {
@@ -101,7 +113,7 @@ hooks = [
     name = "auto-update SKILL.md sections",
     entry = "uv run python scripts/generate_skill_md.py --write",
     language = "system",
-    files = '^(SKILL\.md|portolan_cli/__init__\.py|portolan_cli/cli\.py)$',
+    files = { glob = ["SKILL.md", "portolan_cli/__init__.py", "portolan_cli/cli.py"] },
     pass_filenames = false,
   },
   {
@@ -109,7 +121,7 @@ hooks = [
     name = "auto-update freshness markers",
     entry = "uv run python scripts/update_freshness.py",
     language = "system",
-    files = '^portolan_cli/(output|errors|constants|json_output|cli)\.py$',
+    files = { glob = ["portolan_cli/output.py", "portolan_cli/errors.py", "portolan_cli/constants.py", "portolan_cli/json_output.py", "portolan_cli/cli.py"] },
     pass_filenames = true,
   },
   {
@@ -117,7 +129,7 @@ hooks = [
     name = "sync Source Co-op skill CLI reference",
     entry = "uv run python scripts/sync_sourcecoop_skill.py --update",
     language = "system",
-    files = '^(portolan_cli/cli\.py|portolan_cli/push\.py|portolan_cli/config\.py|portolan_cli/metadata_yaml\.py|portolan_cli/readme\.py|scripts/sync_sourcecoop_skill\.py|portolan_cli/skills/sourcecoop\.md)$',
+    files = { glob = ["portolan_cli/cli.py", "portolan_cli/push.py", "portolan_cli/config.py", "portolan_cli/metadata_yaml.py", "portolan_cli/readme.py", "scripts/sync_sourcecoop_skill.py", "portolan_cli/skills/sourcecoop.md"] },
     pass_filenames = false,
   },
 
@@ -127,7 +139,7 @@ hooks = [
     name = "validate CLAUDE.md references",
     entry = "uv run python scripts/validate_claude_md.py",
     language = "system",
-    files = '^(CLAUDE\.md|context/shared/adr/.*\.md|context/shared/known-issues/.*\.md)$',
+    files = { glob = ["CLAUDE.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md"] },
     pass_filenames = false,
   },
   {
@@ -135,7 +147,7 @@ hooks = [
     name = "validate SKILL.md structure",
     entry = "uv run python scripts/validate_skill_md.py",
     language = "system",
-    files = '^(SKILL\.md|portolan_cli/__init__\.py|portolan_cli/cli\.py)$',
+    files = { glob = ["SKILL.md", "portolan_cli/__init__.py", "portolan_cli/cli.py"] },
     pass_filenames = false,
   },
   {
@@ -146,6 +158,7 @@ hooks = [
     types = ["python"],
     args = ["portolan_cli"],
     pass_filenames = false,
+    require_serial = true,
   },
   {
     id = "fast-tests",
@@ -155,14 +168,15 @@ hooks = [
     types = ["python"],
     args = ["tests/", "-m", "unit", "--timeout=30", "-q", "-x"],
     pass_filenames = false,
-    stages = ["pre-push"],  # Moved from pre-commit for faster commits
+    stages = ["pre-push"],
+    require_serial = true,
   },
   {
     id = "import-linter",
     name = "architecture rules",
     entry = "uv run lint-imports",
     language = "system",
-    files = '^(pyproject\.toml|portolan_cli/.*\.py)$',
+    files = { glob = ["pyproject.toml", "portolan_cli/**/*.py"] },
     pass_filenames = false,
   },
   {
@@ -170,7 +184,7 @@ hooks = [
     name = "dependency checker",
     entry = "uv run deptry .",
     language = "system",
-    files = '^(pyproject\.toml|portolan_cli/.*\.py)$',
+    files = { glob = ["pyproject.toml", "portolan_cli/**/*.py"] },
     pass_filenames = false,
   },
 
@@ -181,7 +195,7 @@ hooks = [
     name = "check documentation freshness",
     entry = "uv run menard check",
     language = "system",
-    files = '^portolan_cli/.*\.py$',
+    files = { glob = "portolan_cli/**/*.py" },
     pass_filenames = false,
   },
   {
@@ -189,8 +203,8 @@ hooks = [
     name = "check protected content",
     entry = "uv run menard check-protected",
     language = "system",
-    files = '\.(md|py)$',
-    exclude = '\.gdb/',
+    files = { glob = ["**/*.md", "**/*.py"] },
+    exclude = { glob = "**/*.gdb/**" },
     pass_filenames = false,
   },
 ]
