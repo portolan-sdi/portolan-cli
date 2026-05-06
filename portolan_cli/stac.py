@@ -194,8 +194,8 @@ def save_catalog(catalog: pystac.Catalog, dest_dir: Path) -> None:
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # Normalize the catalog before saving (sets up hrefs)
-    catalog.normalize_hrefs(str(dest_dir))
+    # Trailing slash required: pystac treats dotted paths (e.g., tmp.xyz) as files
+    catalog.normalize_hrefs(f"{dest_dir}/")
 
     # Save as self-contained (relative links)
     catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
