@@ -141,6 +141,19 @@ class TestValidateBboxCrs:
             result = validate_bbox_crs(bbox, crs)
             assert result is None, f"Unexpected warning for CRS {crs}"
 
+    def test_no_warning_when_geographic_crs_with_lonlat_coords(self) -> None:
+        """No warning for non-WGS84 geographic CRSes like ETRS89.
+
+        Geographic CRSes (ETRS89, NAD83, etc.) naturally have coordinates in
+        the same lon/lat range as WGS84. This is not a mismatch — unlike
+        projected CRSes (EPSG:28992) where lon/lat-range coordinates indicate
+        the data was mislabeled.
+        """
+        bbox = (3.16, 50.75, 7.23, 53.54)  # Netherlands in ETRS89
+        for crs in ["EPSG:4258", "EPSG:4269"]:  # ETRS89, NAD83
+            result = validate_bbox_crs(bbox, crs)
+            assert result is None, f"Unexpected warning for geographic CRS {crs}"
+
 
 class TestTransformBboxToWgs84WithValidation:
     """Tests for CRS mismatch detection during bbox transformation."""
