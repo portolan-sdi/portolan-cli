@@ -222,7 +222,7 @@ def get_partition_metadata(output_dir: Path, strategy: str) -> dict:
 - [x] Wire `skip_partitioning` through dataset.py call chain
   - `add_files()` → `prepare_single_file()` → `_maybe_partition_large_file()`
 - [x] Wire partitioned output through to STAC generation (done in Phase 3)
-- [ ] Update `--help` and docs
+- [x] Update `--help` docstring with partitioning configuration section
 
 **UX flow**:
 ```
