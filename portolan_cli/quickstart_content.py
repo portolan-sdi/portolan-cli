@@ -94,11 +94,11 @@ portolan add buildings.parquet --pmtiles --json
 ```
 
 This generates:
-- PMTiles vector tiles (web-optimized)
-- Mapbox GL style.json (auto-generated color scheme)
-- PNG thumbnail (preview image)
+- PMTiles vector tiles (.pmtiles)
+- Mapbox GL style (inline in STAC as `pmtiles:style`)
+- Thumbnail (.thumb.jpg)
 
-All three are registered as STAC assets automatically.
+PMTiles and thumbnail are registered as STAC assets.
 
 ## JSON Output
 

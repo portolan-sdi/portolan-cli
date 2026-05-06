@@ -15,17 +15,15 @@ portolan extract wfs \
   --auto
 ```
 
-This creates `buildings/` with GeoParquet (Hilbert-ordered for spatial queries), STAC catalog/collection JSON, and metadata seeded from the service's ISO 19139 records. The full dataset is 3.8M features (~750MB).
+Creates `buildings/` with GeoParquet (Hilbert-ordered), STAC catalog/collection JSON, and metadata seeded from ISO 19139 records. The full dataset is 3.8M features (~750MB).
 
 ## Generate PMTiles
 
 ```bash
-portolan add buildings/**/*.parquet \
-  --pmtiles \
-  --workers 4
+portolan add buildings/**/*.parquet --pmtiles --workers 4
 ```
 
-The `--pmtiles` flag generates vector tiles, a Mapbox GL style, and a PNG thumbnail for each GeoParquet. The `--workers` flag parallelizes metadata extraction across files.
+Generates vector tiles (`.pmtiles`), a Mapbox GL style (embedded in STAC as `pmtiles:style`), and a thumbnail (`.thumb.jpg`). The `--workers` flag parallelizes metadata extraction.
 
 ## Validate and Fix
 
@@ -34,7 +32,7 @@ portolan scan --tree
 portolan check --fix
 ```
 
-The `--tree` flag shows directory structure with status markers. The `--fix` flag converts non-cloud-native formats, updates stale STAC metadata, and generates missing bbox/temporal extents. Add `--dry-run` to preview changes.
+Scan shows directory structure with status markers. Check validates STAC and converts non-cloud-native formats. The `--fix` flag updates stale metadata and generates missing bbox/temporal extents. Add `--dry-run` to preview.
 
 ## Generate READMEs
 
@@ -42,7 +40,7 @@ The `--tree` flag shows directory structure with status markers. The `--fix` fla
 portolan readme --recursive
 ```
 
-READMEs are generated from STAC metadata plus `.portolan/metadata.yaml` (human enrichment layer). Edit `metadata.yaml` to add descriptions, licenses, and attribution—never edit README.md directly.
+Generates from STAC metadata plus `.portolan/metadata.yaml`. Edit `metadata.yaml` for descriptions, licenses, attribution—never edit README.md directly.
 
 ## Configure Remote
 
@@ -59,8 +57,8 @@ EOF
 portolan push --workers 4 --concurrency 16
 ```
 
-The `--workers` flag parallelizes across collections (each gets its own upload thread). The `--concurrency` flag controls parallel file uploads within each collection. With 4 workers and 16 concurrency, you get up to 64 simultaneous uploads.
+Parallelizes across collections (`--workers`) and files within each collection (`--concurrency`). With 4 workers and 16 concurrency: up to 64 simultaneous uploads.
 
 ## Result
 
-The published catalog includes GeoParquet, PMTiles, style.json, thumbnail.png, and READMEs—all accessible via HTTP range requests without a tile server.
+Published catalog includes GeoParquet, PMTiles with inline style, thumbnails, and READMEs—all accessible via HTTP range requests.
