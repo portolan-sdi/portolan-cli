@@ -254,14 +254,15 @@ This is non-blocking — we use asset properties now, migrate to extension when 
 
 ## Acceptance Criteria
 
-- [ ] Vector thumbnails auto-generated with configurable basemap
-- [ ] COG thumbnails include basemap (update existing implementation)
-- [ ] Style properties written to PMTiles assets
-- [ ] Render extension properties written to COG assets
-- [ ] Config schema supports thumbnail and style customization
-- [ ] All test fixtures created
-- [ ] Unit and integration tests passing
+- [x] Vector thumbnails auto-generated with configurable basemap
+- [x] Style properties written to PMTiles assets
+- [x] Render extension properties written to COG assets
+- [x] Config schema supports thumbnail and style customization
+- [x] All test fixtures created
+- [x] Unit and integration tests passing
 - [ ] Documentation updated
+
+**Dropped:** COG thumbnails with basemap. Rasters fill their entire extent — basemaps would be invisible underneath. Vector data needs basemaps because points/lines are sparse and benefit from geographic context. See ADR-0042.
 
 ---
 
@@ -271,8 +272,9 @@ This is non-blocking — we use asset properties now, migrate to extension when 
 |----------|------------|
 | Separate style.json or inline? | **Inline** in asset properties |
 | Render extension for vectors? | **No** — it's raster-only, use `pmtiles:style` |
-| Basemaps? | **Yes** — Carto Positron default, configurable |
-| When generate? | **During scan/convert** — same as COG thumbnails |
+| Basemaps for vectors? | **Yes** — Carto Positron default, configurable |
+| Basemaps for rasters? | **No** — rasters fill extent, basemap would be hidden (ADR-0042) |
+| When generate? | **During convert/PMTiles generation** — not scan (scan is read-only per ADR-0016) |
 
 ---
 

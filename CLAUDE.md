@@ -110,6 +110,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0040](context/shared/adr/0040-unified-progress-output.md) | Progress + summary model: Rich progress bars, immediate errors, batched warnings |
 | [0041](context/shared/adr/0041-stac-manifest-as-canonical-scan-source.md) | STAC manifest as canonical scan source for metadata_fresh; unifies check/--fix; adds ORPHANED status |
 | [0042](context/shared/adr/0042-partition-stac-extension.md) | Standalone `partition:` STAC extension for Hive-style partitioned datasets |
+| [0043](context/shared/adr/0043-style-and-thumbnail-architecture.md) | Style/thumbnail: inline in STAC, Mapbox GL spec, basemaps for vectors only |
 
 ## Common Commands
 

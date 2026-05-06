@@ -197,19 +197,20 @@ def generate_cog_thumbnail(
         cog_path: Path to the source COG file.
         max_size: Maximum pixel dimension for the longest edge (default 512).
         quality: JPEG quality 1-100 (default 75).
-        basemap_provider: Contextily basemap provider (default 'none').
-            Note: Basemap compositing for rasters requires CRS reprojection
-            and is not yet implemented. This parameter is reserved for future use.
+        basemap_provider: Unused. Raster thumbnails don't need basemaps because
+            the raster data fills the entire extent — a basemap underneath would
+            be invisible. Vector data needs basemaps because points/lines are
+            sparse and benefit from geographic context. See ADR-0042.
 
     Returns:
         Path to the written JPEG thumbnail, or None if the source could not be
         read as a raster (e.g., corrupt file).
     """
-    # TODO(Issue #13): Implement basemap compositing for raster thumbnails.
-    # Requires: reprojecting COG to Web Mercator, fetching basemap tiles,
-    # alpha-compositing raster over basemap. For now, basemap is ignored.
+    # Basemaps intentionally not supported for rasters (ADR-0042):
+    # Raster data fills the extent, so a basemap would be hidden underneath.
+    # Vector thumbnails need basemaps because points/lines are sparse.
     if basemap_provider != "none":
-        logger.debug("Basemap for raster thumbnails not yet implemented, ignoring")
+        logger.debug("Basemap ignored for raster thumbnail (not needed, see ADR-0042)")
     try:
         import numpy as np
         import rasterio
