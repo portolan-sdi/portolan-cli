@@ -252,9 +252,15 @@ def _transform_coords(
 
     Handles Point, LineString, Polygon, and Multi* geometry coordinate structures.
     """
-    # Depth limit: Point=0, LineString=1, Polygon=2 (ring), MultiPolygon=3.
-    # GeometryCollection with nested Multi* could reach 4. Beyond that is malformed.
-    if depth > 4:
+    # Depth limit for coordinate nesting:
+    # - Point: 0 (coords = [x, y])
+    # - LineString: 1 (coords = [[x,y], ...])
+    # - Polygon: 2 (coords = [[[x,y], ...]])
+    # - MultiPolygon: 3
+    # - GeometryCollection containing MultiPolygon: 4
+    # - Nested GeometryCollection edge cases: 5-6
+    # Beyond 6 is almost certainly malformed data.
+    if depth > 6:
         return coords
 
     if not coords:
@@ -280,6 +286,45 @@ def _transform_coords(
 # =============================================================================
 # PMTiles Reading (Internal)
 # =============================================================================
+
+# Limit geometries to prevent OOM on dense tiles (thumbnails don't need all features)
+_MAX_GEOMETRIES = 10000
+_MAX_TILES_PER_ZOOM = 256
+
+
+def _process_tile_data(
+    tile_data: bytes,
+    z: int,
+    x: int,
+    y: int,
+    geometries: list[dict[str, Any]],
+    all_lons: list[float],
+    all_lats: list[float],
+    mvt_decoder: Any,
+) -> bool:
+    """Process a single tile's data and extract geometries.
+
+    Returns True if geometry limit reached, False otherwise.
+    """
+    # Decompress if gzipped
+    if tile_data[:2] == b"\x1f\x8b":
+        tile_data = gzip.decompress(tile_data)
+
+    decoded = mvt_decoder.decode(tile_data)
+    tile_bounds = _tile_bounds(z, x, y)
+
+    for layer in decoded.values():
+        for feature in layer.get("features", []):
+            geom = feature.get("geometry", {})
+            if geom.get("type") and geom.get("coordinates"):
+                transformed = _transform_coords(geom["coordinates"], tile_bounds)
+                geometries.append({"type": geom["type"], "coordinates": transformed})
+                all_lons.extend([tile_bounds[0], tile_bounds[2]])
+                all_lats.extend([tile_bounds[1], tile_bounds[3]])
+
+                if len(geometries) >= _MAX_GEOMETRIES:
+                    return True
+    return False
 
 
 def _read_pmtiles_geometries(
@@ -320,55 +365,52 @@ def _read_pmtiles_geometries(
 
         # Try min_zoom through min_zoom+2, collecting geometries
         for z in range(min_zoom, min_zoom + 3):
-            max_tile = 2**z
-            tiles_checked = 0
+            limit_reached = _collect_geometries_at_zoom(
+                reader, z, geometries, all_lons, all_lats, mapbox_vector_tile
+            )
+            if geometries or limit_reached:
+                break
 
-            for x in range(max_tile):
-                for y in range(max_tile):
-                    tile_data: bytes | None = reader.get(z, x, y)
-                    tiles_checked += 1
-
-                    if tile_data:
-                        # Decompress if gzipped
-                        if tile_data[:2] == b"\x1f\x8b":
-                            tile_data = gzip.decompress(tile_data)
-
-                        decoded = mapbox_vector_tile.decode(tile_data)
-                        tile_bounds = _tile_bounds(z, x, y)
-
-                        for layer in decoded.values():
-                            for feature in layer.get("features", []):
-                                geom = feature.get("geometry", {})
-                                if geom.get("type") and geom.get("coordinates"):
-                                    # Transform coords from tile-space to geographic
-                                    transformed = _transform_coords(
-                                        geom["coordinates"], tile_bounds
-                                    )
-                                    geometries.append(
-                                        {
-                                            "type": geom["type"],
-                                            "coordinates": transformed,
-                                        }
-                                    )
-                                    # Collect bounds from tile
-                                    all_lons.extend([tile_bounds[0], tile_bounds[2]])
-                                    all_lats.extend([tile_bounds[1], tile_bounds[3]])
-
-                    # Limit search at higher zooms
-                    if tiles_checked > 256:
-                        break
-                if tiles_checked > 256:
-                    break
-
-            if geometries:
-                break  # Got data, stop
-
-    # Calculate overall bounds
     bounds: tuple[float, float, float, float] | None = None
     if all_lons and all_lats:
         bounds = (min(all_lons), min(all_lats), max(all_lons), max(all_lats))
 
     return geometries, bounds
+
+
+def _collect_geometries_at_zoom(
+    reader: Any,
+    z: int,
+    geometries: list[dict[str, Any]],
+    all_lons: list[float],
+    all_lats: list[float],
+    mvt_decoder: Any,
+) -> bool:
+    """Collect geometries from all tiles at a zoom level.
+
+    Returns True if limit reached, False otherwise.
+    """
+    max_tile = 2**z
+    tiles_checked = 0
+
+    for x in range(max_tile):
+        for y in range(max_tile):
+            tile_data: bytes | None = reader.get(z, x, y)
+            tiles_checked += 1
+
+            if tile_data:
+                limit_reached = _process_tile_data(
+                    tile_data, z, x, y, geometries, all_lons, all_lats, mvt_decoder
+                )
+                if limit_reached:
+                    return True
+
+            if tiles_checked > _MAX_TILES_PER_ZOOM or len(geometries) >= _MAX_GEOMETRIES:
+                return len(geometries) >= _MAX_GEOMETRIES
+        if tiles_checked > _MAX_TILES_PER_ZOOM or len(geometries) >= _MAX_GEOMETRIES:
+            return len(geometries) >= _MAX_GEOMETRIES
+
+    return False
 
 
 def _add_polygon_patches(coords: list[Any], patches: list[Any], mpl_polygon_cls: type) -> None:
@@ -613,8 +655,14 @@ def add_basemap(
             alpha=opacity,
             zoom_adjust=zoom_adjust,
         )
+    except AttributeError:
+        logger.warning(
+            "Unknown basemap provider '%s'. Valid examples: CartoDB.Positron, "
+            "CartoDB.DarkMatter, OpenStreetMap.Mapnik",
+            provider,
+        )
     except Exception as e:
-        logger.debug("Failed to add basemap: %s", e)
+        logger.debug("Failed to add basemap '%s': %s", provider, e)
 
 
 def generate_thumbnail_from_pmtiles(

@@ -13,9 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pmtiles.reader import MmapSource, Reader
-from pmtiles.tile import MagicNumberNotFound
-
 logger = logging.getLogger(__name__)
 
 
@@ -106,7 +103,17 @@ def extract_pmtiles_metadata(path: Path) -> PMTilesMetadata:
     Raises:
         FileNotFoundError: If file doesn't exist.
         ValueError: If file is not a valid PMTiles file.
+        ImportError: If pmtiles package is not installed.
     """
+    # Lazy import - pmtiles is an optional dependency
+    try:
+        from pmtiles.reader import MmapSource, Reader
+        from pmtiles.tile import MagicNumberNotFound
+    except ImportError as e:
+        raise ImportError(
+            "pmtiles package not installed. Install with: pip install portolan-cli[pmtiles]"
+        ) from e
+
     if not path.exists():
         raise FileNotFoundError(f"PMTiles file not found: {path}")
 
@@ -145,35 +152,27 @@ def extract_pmtiles_metadata(path: Path) -> PMTilesMetadata:
         tile_type = _TILE_TYPE_MAP.get(tile_type_value, "unknown")
 
     # Try to extract layer name from metadata (Issue #13)
-    # For multi-layer PMTiles, we use the first data layer (skip common utility
-    # layers like "labels", "place_names", etc.) and warn if there are multiple.
+    # For multi-layer PMTiles, we use the first layer and warn if there are multiple.
     layer_name: str | None = None
     if isinstance(metadata, dict):
         # TileJSON format: {"vector_layers": [{"id": "layer_name", ...}]}
         vector_layers = metadata.get("vector_layers", [])
         if isinstance(vector_layers, list) and vector_layers:
-            # Filter out common non-data layers
-            utility_layers = {"labels", "label", "place_names", "place-names", "text"}
-            data_layers: list[str] = []
+            layer_ids: list[str] = []
             for layer in vector_layers:
                 if isinstance(layer, dict):
                     layer_id = layer.get("id")
-                    if isinstance(layer_id, str) and layer_id.lower() not in utility_layers:
-                        data_layers.append(layer_id)
-            if data_layers:
-                layer_name = data_layers[0]
-                if len(data_layers) > 1:
+                    if isinstance(layer_id, str):
+                        layer_ids.append(layer_id)
+            if layer_ids:
+                layer_name = layer_ids[0]
+                if len(layer_ids) > 1:
                     logger.warning(
-                        "PMTiles has %d data layers %s; using first layer '%s' for style",
-                        len(data_layers),
-                        data_layers,
+                        "PMTiles has %d layers %s; using first layer '%s' for style",
+                        len(layer_ids),
+                        layer_ids,
                         layer_name,
                     )
-            elif vector_layers:
-                # No data layers found, fall back to first layer
-                first_layer = vector_layers[0]
-                if isinstance(first_layer, dict):
-                    layer_name = first_layer.get("id")
 
     return PMTilesMetadata(
         bbox=bbox,

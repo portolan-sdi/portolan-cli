@@ -344,13 +344,30 @@ def add_pmtiles_asset_to_collection(
     # Generate asset key from parquet key
     pmtiles_key = f"{parquet_key}-tiles"
 
-    # Check if already exists
-    if pmtiles_key in assets:
-        return
-
     # Get title from source asset if available
     source_asset = assets.get(parquet_key, {})
     source_title = source_asset.get("title", parquet_key)
+
+    # Check if already exists - update style if changed, otherwise skip
+    if pmtiles_key in assets:
+        existing = assets[pmtiles_key]
+        needs_update = False
+
+        # Update style if provided and different
+        if style and existing.get("pmtiles:style") != style:
+            existing["pmtiles:style"] = style
+            needs_update = True
+
+        # Update extra properties if provided
+        if extra_properties:
+            for key, value in extra_properties.items():
+                if existing.get(key) != value:
+                    existing[key] = value
+                    needs_update = True
+
+        if needs_update:
+            collection_json_path.write_text(json.dumps(data, indent=2))
+        return
 
     asset_dict: dict[str, Any] = {
         "href": pmtiles_href,
@@ -514,14 +531,12 @@ def generate_pmtiles_for_collection(
         except ValueError:
             pmtiles_href = f"./{pmtiles_path.name}"
 
-        # Determine layer name for style (Issue #13)
+        # Determine layer name and build style once (Issue #13)
         layer_name = layer if layer else parquet_path.stem
+        style = _build_style_for_geoparquet(parquet_path, layer_name, catalog_root)
 
         if not _should_generate(parquet_path, pmtiles_path, force):
-            # Ensure asset is registered in collection.json even when skipping
-            # (idempotent - won't duplicate if already registered)
-            # Build style from source GeoParquet (Issue #13)
-            style = _build_style_for_geoparquet(parquet_path, layer_name, catalog_root)
+            # Ensure asset is registered/updated in collection.json even when skipping
             add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href, style=style)
             result.skipped.append(pmtiles_path)
             continue
@@ -550,20 +565,10 @@ def generate_pmtiles_for_collection(
             )
 
             # Register asset in collection.json with style (Issue #13)
-            style = _build_style_for_geoparquet(parquet_path, layer_name, catalog_root)
             add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href, style=style)
 
             # Track in versions.json
             track_pmtiles_in_versions(collection_path, pmtiles_path, catalog_root)
-
-            # Generate thumbnail from the new PMTiles (Issue #13)
-            thumb_config = get_thumbnail_config(catalog_root) if catalog_root else ThumbnailConfig()
-            if thumb_config.enabled:
-                generate_vector_thumbnail(
-                    pmtiles_path=pmtiles_path,
-                    geoparquet_path=parquet_path,  # fallback
-                    config=thumb_config,
-                )
 
             result.generated.append(pmtiles_path)
             generation_succeeded = True
@@ -578,5 +583,20 @@ def generate_pmtiles_for_collection(
             if not generation_succeeded and pmtiles_path.exists():
                 pmtiles_path.unlink(missing_ok=True)
                 warn(f"Cleaned up partial file after failure: {pmtiles_path.name}")
+
+        # Generate thumbnail separately - failure shouldn't affect PMTiles success (Issue #13)
+        if generation_succeeded:
+            try:
+                thumb_config = (
+                    get_thumbnail_config(catalog_root) if catalog_root else ThumbnailConfig()
+                )
+                if thumb_config.enabled:
+                    generate_vector_thumbnail(
+                        pmtiles_path=pmtiles_path,
+                        geoparquet_path=parquet_path,  # fallback
+                        config=thumb_config,
+                    )
+            except Exception as e:
+                logger.warning("Thumbnail generation failed for %s: %s", pmtiles_path.name, e)
 
     return result

@@ -398,8 +398,6 @@ class TestStyleFixtures:
         import json
 
         style_path = valid_style_dir / "style_point.json"
-        if not style_path.exists():
-            pytest.skip("Style fixtures not created yet")
 
         style = json.loads(style_path.read_text())
 
@@ -413,8 +411,6 @@ class TestStyleFixtures:
         import json
 
         style_path = valid_style_dir / "style_polygon.json"
-        if not style_path.exists():
-            pytest.skip("Style fixtures not created yet")
 
         style = json.loads(style_path.read_text())
 
@@ -428,8 +424,6 @@ class TestStyleFixtures:
         import json
 
         style_path = valid_style_dir / "style_line.json"
-        if not style_path.exists():
-            pytest.skip("Style fixtures not created yet")
 
         style = json.loads(style_path.read_text())
 
@@ -443,8 +437,6 @@ class TestStyleFixtures:
         import json
 
         style_path = valid_style_dir / "style_categorical.json"
-        if not style_path.exists():
-            pytest.skip("Style fixtures not created yet")
 
         style = json.loads(style_path.read_text())
         paint = style["layers"][0]["paint"]
@@ -460,8 +452,6 @@ class TestStyleFixtures:
         import json
 
         style_path = valid_style_dir / "style_graduated.json"
-        if not style_path.exists():
-            pytest.skip("Style fixtures not created yet")
 
         style = json.loads(style_path.read_text())
         paint = style["layers"][0]["paint"]
@@ -477,8 +467,6 @@ class TestStyleFixtures:
         import json
 
         style_path = invalid_style_dir / "style_bad_syntax.json"
-        if not style_path.exists():
-            pytest.skip("Style fixtures not created yet")
 
         with pytest.raises(json.JSONDecodeError):
             json.loads(style_path.read_text())
@@ -489,8 +477,6 @@ class TestStyleFixtures:
         import json
 
         style_path = invalid_style_dir / "style_missing_layers.json"
-        if not style_path.exists():
-            pytest.skip("Style fixtures not created yet")
 
         style = json.loads(style_path.read_text())
         assert "layers" not in style
