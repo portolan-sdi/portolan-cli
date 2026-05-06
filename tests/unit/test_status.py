@@ -235,6 +235,191 @@ class TestDetectDeletedFiles:
         assert deleted == []
 
 
+class TestDetectUntrackedFiles:
+    """Tests for detecting untracked files."""
+
+    @pytest.mark.unit
+    def test_detects_untracked_file(self, tmp_path: Path) -> None:
+        """Files on disk but not in versions.json are reported as untracked."""
+        from portolan_cli.status import detect_untracked_files
+
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
+        (collection_path / "untracked.parquet").write_bytes(b"content")
+
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.0.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime.now(timezone.utc),
+                    breaking=False,
+                    assets={},
+                    changes=[],
+                )
+            ],
+        )
+
+        untracked = detect_untracked_files(collection_path, versions_file)
+        assert untracked == ["untracked.parquet"]
+
+    @pytest.mark.unit
+    def test_no_untracked_when_all_tracked(self, tmp_path: Path) -> None:
+        """No untracked files when all files are in versions.json."""
+        from portolan_cli.status import detect_untracked_files
+
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
+        (collection_path / "data.parquet").write_bytes(b"content")
+
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.0.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime.now(timezone.utc),
+                    breaking=False,
+                    assets={
+                        "data.parquet": Asset(
+                            sha256=_sha256("content"),
+                            size_bytes=100,
+                            href="collection/data.parquet",
+                        )
+                    },
+                    changes=["data.parquet"],
+                )
+            ],
+        )
+
+        untracked = detect_untracked_files(collection_path, versions_file)
+        assert untracked == []
+
+    @pytest.mark.unit
+    def test_excludes_versions_json(self, tmp_path: Path) -> None:
+        """versions.json itself is never reported as untracked."""
+        from portolan_cli.status import detect_untracked_files
+
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
+        (collection_path / "versions.json").write_text("{}")
+
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.0.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime.now(timezone.utc),
+                    breaking=False,
+                    assets={},
+                    changes=[],
+                )
+            ],
+        )
+
+        untracked = detect_untracked_files(collection_path, versions_file)
+        assert "versions.json" not in untracked
+
+    @pytest.mark.unit
+    def test_ignores_subdirectories(self, tmp_path: Path) -> None:
+        """Subdirectories are not reported as untracked files."""
+        from portolan_cli.status import detect_untracked_files
+
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
+        (collection_path / "subdir").mkdir()
+
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version="1.0.0",
+            versions=[
+                Version(
+                    version="1.0.0",
+                    created=datetime.now(timezone.utc),
+                    breaking=False,
+                    assets={},
+                    changes=[],
+                )
+            ],
+        )
+
+        untracked = detect_untracked_files(collection_path, versions_file)
+        assert untracked == []
+
+    @pytest.mark.unit
+    def test_all_files_untracked_with_no_versions(self, tmp_path: Path) -> None:
+        """All files are untracked when versions list is empty."""
+        from portolan_cli.status import detect_untracked_files
+
+        collection_path = tmp_path / "collection"
+        collection_path.mkdir()
+        (collection_path / "file1.parquet").write_bytes(b"a")
+        (collection_path / "file2.parquet").write_bytes(b"b")
+
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version=None,
+            versions=[],
+        )
+
+        untracked = detect_untracked_files(collection_path, versions_file)
+        assert sorted(untracked) == ["file1.parquet", "file2.parquet"]
+
+
+class TestParseVersion:
+    """Tests for semver parsing in sync_state calculation."""
+
+    @pytest.mark.unit
+    def test_parses_standard_semver(self) -> None:
+        """Standard semver strings are parsed correctly."""
+        from portolan_cli.status import CollectionStatus
+
+        result = CollectionStatus._parse_version("1.2.3")
+        assert result == (1, 2, 3)
+
+    @pytest.mark.unit
+    def test_parses_semver_with_prerelease(self) -> None:
+        """Prerelease tags are stripped before parsing."""
+        from portolan_cli.status import CollectionStatus
+
+        result = CollectionStatus._parse_version("1.2.3-beta.1")
+        assert result == (1, 2, 3)
+
+    @pytest.mark.unit
+    def test_parses_semver_with_build_metadata(self) -> None:
+        """Build metadata is stripped before parsing."""
+        from portolan_cli.status import CollectionStatus
+
+        result = CollectionStatus._parse_version("1.2.3+build.456")
+        assert result == (1, 2, 3)
+
+    @pytest.mark.unit
+    def test_handles_invalid_version(self) -> None:
+        """Invalid version strings return (0, 0, 0)."""
+        from portolan_cli.status import CollectionStatus
+
+        result = CollectionStatus._parse_version("not-a-version")
+        assert result == (0, 0, 0)
+
+    @pytest.mark.unit
+    def test_handles_partial_version(self) -> None:
+        """Partial version strings return (0, 0, 0)."""
+        from portolan_cli.status import CollectionStatus
+
+        result = CollectionStatus._parse_version("1.2")
+        assert result == (0, 0, 0)
+
+    @pytest.mark.unit
+    def test_handles_empty_string(self) -> None:
+        """Empty string returns (0, 0, 0)."""
+        from portolan_cli.status import CollectionStatus
+
+        result = CollectionStatus._parse_version("")
+        assert result == (0, 0, 0)
+
+
 class TestCollectionStatus:
     """Tests for the main get_collection_status function."""
 

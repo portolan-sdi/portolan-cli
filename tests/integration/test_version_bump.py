@@ -272,3 +272,158 @@ class TestVersionBumpConfirmation:
 
         assert result.exit_code == 0
         assert "Created version 1.1.0" in result.output
+
+
+class TestVersionBumpValidation:
+    """Tests for version bump validation."""
+
+    @pytest.mark.integration
+    def test_bump_uses_explicit_version(self, catalog_with_tracked_file: Path) -> None:
+        """Bump creates the exact version specified, not auto-computed."""
+        # Modify the file
+        data_file = catalog_with_tracked_file / "demographics" / "data.parquet"
+        data_file.write_bytes(b"modified content")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "version",
+                "bump",
+                "demographics",
+                "9.8.7",  # Explicit version that differs from auto-computed
+                "--catalog",
+                str(catalog_with_tracked_file),
+                "-y",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        # Critical: verify the ACTUAL version created matches what user specified
+        assert data["data"]["version"] == "9.8.7"
+
+        # Double-check by reading versions.json directly
+        versions_data = json.loads(
+            (catalog_with_tracked_file / "demographics" / "versions.json").read_text()
+        )
+        assert versions_data["current_version"] == "9.8.7"
+
+    @pytest.mark.integration
+    def test_bump_rejects_invalid_semver(self, catalog_with_tracked_file: Path) -> None:
+        """Bump rejects invalid semver strings."""
+        data_file = catalog_with_tracked_file / "demographics" / "data.parquet"
+        data_file.write_bytes(b"modified content")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "version",
+                "bump",
+                "demographics",
+                "not-a-version",
+                "--catalog",
+                str(catalog_with_tracked_file),
+                "-y",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "Invalid semver" in result.output
+
+    @pytest.mark.integration
+    def test_bump_rejects_partial_version(self, catalog_with_tracked_file: Path) -> None:
+        """Bump rejects partial version strings like '1.2'."""
+        data_file = catalog_with_tracked_file / "demographics" / "data.parquet"
+        data_file.write_bytes(b"modified content")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "version",
+                "bump",
+                "demographics",
+                "1.2",
+                "--catalog",
+                str(catalog_with_tracked_file),
+                "-y",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "Invalid semver" in result.output
+
+    @pytest.mark.integration
+    def test_bump_accepts_prerelease_version(self, catalog_with_tracked_file: Path) -> None:
+        """Bump accepts valid semver with prerelease tag."""
+        data_file = catalog_with_tracked_file / "demographics" / "data.parquet"
+        data_file.write_bytes(b"modified content")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "version",
+                "bump",
+                "demographics",
+                "1.1.0-beta.1",
+                "--catalog",
+                str(catalog_with_tracked_file),
+                "-y",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert "Created version 1.1.0-beta.1" in result.output
+
+    @pytest.mark.integration
+    def test_bump_rejects_duplicate_version(self, catalog_with_tracked_file: Path) -> None:
+        """Bump rejects creating a version that already exists."""
+        data_file = catalog_with_tracked_file / "demographics" / "data.parquet"
+        data_file.write_bytes(b"modified content")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "version",
+                "bump",
+                "demographics",
+                "1.0.0",  # Same as existing version in fixture
+                "--catalog",
+                str(catalog_with_tracked_file),
+                "-y",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "already exists" in result.output
+
+    @pytest.mark.integration
+    def test_bump_invalid_semver_json_output(self, catalog_with_tracked_file: Path) -> None:
+        """Bump returns proper JSON error for invalid semver."""
+        data_file = catalog_with_tracked_file / "demographics" / "data.parquet"
+        data_file.write_bytes(b"modified content")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "version",
+                "bump",
+                "demographics",
+                "bad",
+                "--catalog",
+                str(catalog_with_tracked_file),
+                "-y",
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert data["success"] is False
+        assert data["errors"][0]["type"] == "ValidationError"

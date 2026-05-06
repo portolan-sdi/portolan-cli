@@ -127,6 +127,7 @@ class JsonFileBackend:
         breaking: bool,
         message: str,
         removed: set[str] | None = None,
+        version: str | None = None,
     ) -> Version:
         """Publish a new version of a collection.
 
@@ -139,6 +140,7 @@ class JsonFileBackend:
             schema: Schema fingerprint for change detection (CRITICAL #1).
             breaking: Whether this is a breaking change.
             message: Human-readable description of the change (MAJOR #6).
+            version: Explicit version string. If None, auto-compute next version.
 
         Returns:
             The newly created Version object.
@@ -158,8 +160,8 @@ class JsonFileBackend:
                 versions=[],
             )
 
-        # Compute next version
-        next_version = self._compute_next_version(versions_file, breaking)
+        # Use explicit version if provided, otherwise auto-compute
+        next_version = version if version else self._compute_next_version(versions_file, breaking)
 
         # Build asset objects with checksums
         asset_objects: dict[str, Asset] = {}

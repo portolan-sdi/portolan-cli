@@ -6860,6 +6860,27 @@ def _bump_show_changes(
     return click.confirm("Create this version?")
 
 
+def _bump_error(use_json: bool, error_type: str, message: str) -> None:
+    """Output a version bump error and exit."""
+    if use_json:
+        envelope = error_envelope(
+            "version bump",
+            [ErrorDetail(type=error_type, message=message)],
+        )
+        output_json_envelope(envelope)
+    else:
+        error(message)
+    raise SystemExit(1)
+
+
+def _validate_semver(version: str) -> bool:
+    """Validate semver format (major.minor.patch with optional prerelease/build)."""
+    import re
+
+    semver_pattern = r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$"
+    return bool(re.match(semver_pattern, version))
+
+
 @version.command()
 @click.argument("collection")
 @click.argument("new_version")
@@ -6917,6 +6938,11 @@ def bump(
 
     use_json = should_output_json(ctx, json_output)
 
+    # Validate semver format
+    if not _validate_semver(new_version):
+        msg = f"Invalid semver: '{new_version}'. Expected format: MAJOR.MINOR.PATCH (e.g., '1.2.0')"
+        _bump_error(use_json, "ValidationError", msg)
+
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "version bump")
 
@@ -6925,30 +6951,19 @@ def bump(
 
     # Read current versions
     if not versions_path.exists():
-        if use_json:
-            envelope = error_envelope(
-                "version bump",
-                [ErrorDetail(type="NotFoundError", message=f"No versions.json in {collection}")],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Collection '{collection}' has no versions.json")
-        raise SystemExit(1)
+        _bump_error(use_json, "NotFoundError", f"No versions.json in {collection}")
 
     try:
         versions_file = read_versions(versions_path)
     except ValueError as e:
-        if use_json:
-            envelope = error_envelope(
-                "version bump",
-                [ErrorDetail(type="ParseError", message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Invalid versions.json: {e}")
-        raise SystemExit(1) from None
+        _bump_error(use_json, "ParseError", f"Invalid versions.json: {e}")
 
     current_version = versions_file.current_version
+
+    # Check for duplicate version
+    existing_versions = {v.version for v in versions_file.versions}
+    if new_version in existing_versions:
+        _bump_error(use_json, "DuplicateVersionError", f"Version '{new_version}' already exists")
 
     # Detect changes
     modified = detect_modified_files(collection_path, versions_file)
@@ -6986,18 +7001,11 @@ def bump(
             breaking=breaking,
             message=notes or "",
             removed=set(deleted) if deleted else None,
+            version=new_version,
             catalog_root=catalog_path,
         )
     except Exception as e:
-        if use_json:
-            envelope = error_envelope(
-                "version bump",
-                [ErrorDetail(type=type(e).__name__, message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Failed to create version: {e}")
-        raise SystemExit(1) from None
+        _bump_error(use_json, type(e).__name__, f"Failed to create version: {e}")
 
     if use_json:
         envelope = success_envelope(
