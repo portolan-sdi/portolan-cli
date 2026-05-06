@@ -132,6 +132,10 @@ class TestInitCreatesRequiredFiles:
         assert (target_dir / ".portolan" / "config.yaml").exists(), (
             "config.yaml should be in target directory"
         )
+        # Negative assertion: files must NOT leak to parent directory
+        assert not (tmp_path / "catalog.json").exists(), (
+            "catalog.json must NOT leak to parent directory"
+        )
 
 
 class TestCatalogJsonValidity:
