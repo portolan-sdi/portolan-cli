@@ -182,6 +182,33 @@ jobs:
             --timeout=120 \
             -v
 
+  slow-tests:
+    name: Slow Tests (Stress/Scale)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run slow tests (stress/scale scenarios)
+        run: |
+          uv run pytest tests/ \
+            -m slow \
+            --timeout=300 \
+            -v
+
   dependency-check:
     name: Dependency Audit
     runs-on: ubuntu-latest
