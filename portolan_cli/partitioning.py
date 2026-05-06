@@ -211,3 +211,91 @@ def build_remote_glob(
     base = remote_base.rstrip("/")
     partition_col = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
     return f"{base}/{collection_id}/{partition_col}=*/*.parquet"
+
+
+def get_partition_metadata(output_dir: Path, strategy: str = DEFAULT_STRATEGY) -> dict[str, object]:
+    """Extract partition metadata from Hive-style output directory.
+
+    Returns metadata conforming to the STAC Partition Extension schema:
+    https://portolan-sdi.github.io/stac-partition-extension/v1.0.0/schema.json
+
+    Args:
+        output_dir: Directory containing Hive-style partitioned output.
+        strategy: Partitioning strategy used (kdtree, h3, etc.).
+
+    Returns:
+        Dict with partition extension fields:
+        - partition:scheme: "hive"
+        - partition:strategy: The strategy used
+        - partition:keys: List of partition key definitions
+        - partition:file_count: Total number of partition files
+    """
+    partition_col = PARTITION_COLUMNS.get(strategy, f"{strategy}_cell")
+    partition_dirs = list(output_dir.glob(f"{partition_col}=*"))
+
+    file_count = sum(len(list(d.glob("*.parquet"))) for d in partition_dirs)
+
+    return {
+        "partition:scheme": "hive",
+        "partition:strategy": strategy,
+        "partition:keys": [
+            {
+                "name": partition_col,
+                "type": "string",
+                "description": f"{strategy.upper()} spatial partition cell identifier",
+            }
+        ],
+        "partition:file_count": file_count,
+    }
+
+
+def detect_partitioning(directory: Path) -> dict[str, object] | None:
+    """Detect existing Hive-style partitioning in a directory.
+
+    Scans for directories matching the pattern "column=value/" and extracts
+    partition metadata if found.
+
+    Args:
+        directory: Directory to scan for partitions.
+
+    Returns:
+        Partition metadata dict if partitioning detected, None otherwise.
+    """
+    import re
+
+    # Look for Hive-style directories: column=value
+    hive_pattern = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)=.+$")
+
+    partition_keys: list[str] = []
+    partition_dirs: list[Path] = []
+
+    for item in directory.iterdir():
+        if item.is_dir():
+            match = hive_pattern.match(item.name)
+            if match:
+                key_name = match.group(1)
+                if key_name not in partition_keys:
+                    partition_keys.append(key_name)
+                partition_dirs.append(item)
+
+    if not partition_keys:
+        return None
+
+    # Count total files
+    file_count = 0
+    for pdir in partition_dirs:
+        file_count += len(list(pdir.glob("*.parquet")))
+
+    # Try to detect strategy from column name
+    strategy = None
+    for strat, col in PARTITION_COLUMNS.items():
+        if col in partition_keys:
+            strategy = strat
+            break
+
+    return {
+        "partition:scheme": "hive",
+        "partition:strategy": strategy,
+        "partition:keys": [{"name": key, "type": "string"} for key in partition_keys],
+        "partition:file_count": file_count,
+    }

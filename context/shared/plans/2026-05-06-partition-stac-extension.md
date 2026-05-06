@@ -103,12 +103,12 @@ portolan_cli/
 
 **Deliverable**: `stac-partition-extension` repo with v1.0.0 release
 
-- [ ] Create repo from STAC extension template
-- [ ] Write JSON Schema for `partition:*` fields
-- [ ] Add examples (kdtree, h3, multi-key)
-- [ ] Add validation test fixtures
-- [ ] README with consumer code examples (DuckDB, PyArrow)
-- [ ] Tag v1.0.0 release
+- [x] Create repo from STAC extension template
+- [x] Write JSON Schema for `partition:*` fields
+- [x] Add examples (kdtree, h3, multi-key)
+- [x] Add validation test fixtures
+- [x] README with consumer code examples (DuckDB, PyArrow)
+- [x] Tag v1.0.0 release
 
 **Files to create**:
 ```
@@ -132,11 +132,11 @@ stac-partition-extension/
 
 **Deliverable**: ADR-0042 documenting extension design decisions
 
-- [ ] Create `context/shared/adr/0042-partition-stac-extension.md`
-- [ ] Document: why separate extension (m-mohr feedback)
-- [ ] Document: relationship to table extension
-- [ ] Document: `portolan:glob` → `partition:glob` migration
-- [ ] Update CLAUDE.md ADR index
+- [x] Create `context/shared/adr/0042-partition-stac-extension.md`
+- [x] Document: why separate extension (m-mohr feedback)
+- [x] Document: relationship to table extension
+- [x] Document: `portolan:glob` → `partition:glob` migration
+- [x] Update CLAUDE.md ADR index
 
 **Exit criteria**: ADR reviewed and merged
 
@@ -146,16 +146,16 @@ stac-partition-extension/
 
 **Deliverable**: Portolan STAC output includes `partition:*` fields
 
-- [ ] Add `get_partition_metadata(output_dir, strategy)` to `partitioning.py`
+- [x] Add `get_partition_metadata(output_dir, strategy)` to `partitioning.py`
   - Returns dict with scheme, strategy, keys, file_count
   - Parses Hive directory structure
-- [ ] Update `_create_collection_stac()` in `stac.py`
+- [x] Update `_create_collection_stac()` in `stac.py`
   - Accept optional partition_metadata parameter
   - Add `partition:*` fields to collection properties
   - Add extension URL to `stac_extensions`
 - [ ] Wire through from `partition_geoparquet()` result
-- [ ] Update `portolan:glob` → `partition:glob` in `push.py`
-- [ ] Unit tests for metadata emission
+- [x] Update `portolan:glob` → `partition:glob` in `push.py`
+- [x] Unit tests for metadata emission
 
 **Key code changes**:
 
@@ -186,7 +186,7 @@ def get_partition_metadata(output_dir: Path, strategy: str) -> dict:
 
 **Deliverable**: `portolan scan` detects and reports existing partitions
 
-- [ ] Add `detect_partitioning(directory: Path)` to `partitioning.py`
+- [x] Add `detect_partitioning(directory: Path)` to `partitioning.py`
   - Detect Hive-style directories (`column=value/`)
   - Extract partition keys from directory names
   - Return `PartitionInfo` dataclass or None
@@ -196,7 +196,7 @@ def get_partition_metadata(output_dir: Path, strategy: str) -> dict:
   - Mixed partition depths
   - Non-Hive directory structures
   - Empty partition directories
-- [ ] Unit tests for detection
+- [x] Unit tests for detection
 
 **Exit criteria**: `portolan scan` on partitioned directory shows partition summary
 
