@@ -483,6 +483,7 @@ def _render_geometries(
             config.basemap_provider,
             config.basemap_opacity,
             config.basemap_zoom_adjust,
+            crs="EPSG:4326",  # PMTiles are always WGS84
         )
 
     patches: list[Any] = []
@@ -510,7 +511,7 @@ def _render_geometries(
         pad_inches=0,
         facecolor="white",
         edgecolor="none",
-        quality=config.quality,
+        pil_kwargs={"quality": config.quality},
     )
     plt.close()
 
@@ -587,6 +588,7 @@ def _render_geoparquet(
                 config.basemap_provider,
                 config.basemap_opacity,
                 config.basemap_zoom_adjust,
+                crs=str(gdf.crs) if gdf.crs else None,
             )
 
         # Plot data on top
@@ -624,6 +626,7 @@ def add_basemap(
     provider: str,
     opacity: float = 1.0,
     zoom_adjust: int = 0,
+    crs: str | None = None,
 ) -> None:
     """Add a contextily basemap to matplotlib axes.
 
@@ -634,6 +637,8 @@ def add_basemap(
             Pass 'none' to skip basemap.
         opacity: Basemap opacity 0.0-1.0.
         zoom_adjust: Zoom level adjustment.
+        crs: Coordinate reference system (e.g., 'EPSG:4326'). Required for
+            correct basemap alignment when data is not in Web Mercator.
     """
     if provider == "none":
         return
@@ -654,6 +659,7 @@ def add_basemap(
             source=tile_provider,
             alpha=opacity,
             zoom_adjust=zoom_adjust,
+            crs=crs,
         )
     except AttributeError:
         logger.warning(

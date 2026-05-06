@@ -3268,8 +3268,11 @@ def _update_item_with_asset(
     enrich_cog_assets(stac_assets, catalog_root)
 
     # Update item assets - include extra_fields for style properties
+    # Merge with existing asset metadata to preserve title/description
+    existing_assets = item_data.get("assets", {})
     item_data["assets"] = {
         key: {
+            **existing_assets.get(key, {}),  # Preserve existing metadata
             "href": asset.href,
             "type": asset.media_type,
             "roles": asset.roles,

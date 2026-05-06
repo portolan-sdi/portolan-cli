@@ -390,6 +390,43 @@ def add_pmtiles_asset_to_collection(
     collection_json_path.write_text(json.dumps(data, indent=2))
 
 
+def add_thumbnail_asset_to_collection(
+    collection_path: Path,
+    pmtiles_key: str,
+    thumbnail_path: Path,
+) -> None:
+    """Add thumbnail asset to collection.json.
+
+    Args:
+        collection_path: Path to collection directory.
+        pmtiles_key: Asset key of the PMTiles file (thumbnail key will be pmtiles_key + "-thumbnail").
+        thumbnail_path: Path to thumbnail file.
+    """
+    collection_json_path = collection_path / "collection.json"
+    if not collection_json_path.exists():
+        return
+
+    data = json.loads(collection_json_path.read_text())
+    assets = data.get("assets", {})
+
+    thumb_key = f"{pmtiles_key}-thumbnail"
+    thumb_href = f"./{thumbnail_path.name}"
+
+    # Get title from PMTiles asset if available
+    pmtiles_asset = assets.get(pmtiles_key, {})
+    pmtiles_title = pmtiles_asset.get("title", pmtiles_key)
+
+    assets[thumb_key] = {
+        "href": thumb_href,
+        "type": "image/jpeg",
+        "title": f"{pmtiles_title} (thumbnail)",
+        "roles": ["thumbnail"],
+    }
+    data["assets"] = assets
+
+    collection_json_path.write_text(json.dumps(data, indent=2))
+
+
 def track_pmtiles_in_versions(
     collection_path: Path,
     pmtiles_path: Path,
@@ -591,11 +628,15 @@ def generate_pmtiles_for_collection(
                     get_thumbnail_config(catalog_root) if catalog_root else ThumbnailConfig()
                 )
                 if thumb_config.enabled:
-                    generate_vector_thumbnail(
+                    thumb_path = generate_vector_thumbnail(
                         pmtiles_path=pmtiles_path,
                         geoparquet_path=parquet_path,  # fallback
                         config=thumb_config,
                     )
+                    # Register thumbnail as asset so it's tracked in STAC
+                    if thumb_path:
+                        pmtiles_key = f"{asset_key}-tiles"
+                        add_thumbnail_asset_to_collection(collection_path, pmtiles_key, thumb_path)
             except Exception as e:
                 logger.warning("Thumbnail generation failed for %s: %s", pmtiles_path.name, e)
 
