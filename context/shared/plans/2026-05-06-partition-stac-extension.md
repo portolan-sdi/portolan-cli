@@ -271,13 +271,17 @@ Partitioning: large-dataset.parquet
 
 **Deliverable**: User-facing partitioning guide
 
-- [ ] Add `docs/guides/partitioning.md`
+- [x] Add `docs/guides/partitioning.md`
   - When to partition (thresholds, use cases)
-  - Configuration options
-  - Consumer code examples
-- [ ] Update `docs/reference/configuration.md` with partition settings
-- [ ] Update `docs/reference/cli.md` with `portolan partition` command
-- [ ] Add partitioning to "Getting Started" if appropriate
+  - Configuration options (all settings documented)
+  - Consumer code examples (DuckDB, PyArrow, GDAL)
+  - Validation with `portolan check --thorough`
+- [x] Update `docs/reference/configuration.md` with partition settings
+  - Added `partitioning.prompt` setting
+  - Updated Settings Reference table
+  - Added auto-partition example output
+- [ ] Update `docs/reference/cli.md` with `portolan partition` command (already documented)
+- [ ] Add partitioning to "Getting Started" if appropriate (deferred - not essential for MVP)
 
 **Exit criteria**: User can learn partitioning from docs alone
 
