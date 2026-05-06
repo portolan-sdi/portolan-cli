@@ -68,16 +68,34 @@ def publish_version(
     breaking: bool = False,
     message: str = "",
     removed: set[str] | None = None,
+    version: str | None = None,
     backend_name: str | None = None,
     catalog_root: Path | None = None,
 ) -> Version:
-    """Publish a new version of a collection."""
+    """Publish a new version of a collection.
+
+    Args:
+        collection: Collection identifier/path.
+        assets: Mapping of asset names to asset paths/URIs.
+        schema: Schema fingerprint for change detection.
+        breaking: Whether this is a breaking change.
+        message: Human-readable description of the change.
+        removed: Set of asset keys to remove from the version.
+        version: Explicit version string. If None, auto-compute next version.
+        backend_name: Backend to use. If None, resolved from config.
+        catalog_root: Path to catalog root for config lookup.
+
+    Returns:
+        The newly created Version object.
+    """
     from portolan_cli.backends import get_backend
 
     name = _resolve_backend_name(backend_name, catalog_root)
     backend = get_backend(name, catalog_root=catalog_root)
     schema = schema or {"columns": [], "types": {}, "hash": "unknown"}
-    return backend.publish(collection, assets, schema, breaking, message, removed=removed)
+    return backend.publish(
+        collection, assets, schema, breaking, message, removed=removed, version=version
+    )
 
 
 def rollback_version(
