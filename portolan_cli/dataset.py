@@ -2923,7 +2923,14 @@ def add_files(
                                 force=force,
                                 reconvert=reconvert,
                             )
-                            prepared_list.append(prepared)
+                            # Apply partitioning to each layer (Issue #352)
+                            partitioned = _maybe_partition_large_file(
+                                prepared=prepared,
+                                catalog_root=catalog_root,
+                                item_datetime=item_datetime,
+                                skip_partitioning=skip_partitioning,
+                            )
+                            prepared_list.extend(partitioned)
                         except Exception as err:
                             failure_list.append(
                                 AddFailure(

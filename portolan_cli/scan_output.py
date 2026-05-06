@@ -749,22 +749,20 @@ def _format_special_formats(result: ScanResult) -> list[str]:
     if not result.special_formats:
         return []
 
-    from portolan_cli.partitioning import detect_partitioning
-
     lines: list[str] = []
     lines.append("")
     lines.append("Detected special formats:")
 
     for sf in result.special_formats:
         if sf.format_type == "hive_partition":
-            # Get rich partition metadata (handle missing directories gracefully)
-            partition_meta = None
-            if sf.path.exists():
-                partition_meta = detect_partitioning(sf.path)
-            if partition_meta:
-                keys_raw = partition_meta.get("partition:keys", [])
-                keys = keys_raw if isinstance(keys_raw, list) else []
-                key_names = [k.get("name", "unknown") for k in keys if isinstance(k, dict)]
+            # Use scan-time snapshot from sf.details instead of re-scanning filesystem
+            partition_meta = getattr(sf, "details", None) or {}
+
+            # Check for new format (partition:keys) first, then legacy (partition_keys)
+            keys_raw = partition_meta.get("partition:keys", [])
+            if keys_raw and isinstance(keys_raw, list) and isinstance(keys_raw[0], dict):
+                # New format: [{"name": "x", "type": "string"}, ...]
+                key_names = [k.get("name", "unknown") for k in keys_raw]
                 file_count = partition_meta.get("partition:file_count", 0)
                 strategy = partition_meta.get("partition:strategy")
 
@@ -773,9 +771,9 @@ def _format_special_formats(result: ScanResult) -> list[str]:
                 lines.append(f"  ✓ Hive-partitioned{strategy_str}: {sf.relative_path}")
                 lines.append(f"      Keys: {keys_str}, {file_count} partitions")
             else:
-                # Fallback to basic info from SpecialFormat
-                keys = sf.details.get("partition_keys", [])
-                keys_str = ", ".join(keys) if keys else "unknown"
+                # Legacy format: {"partition_keys": ["x", "y"]}
+                legacy_keys = partition_meta.get("partition_keys", [])
+                keys_str = ", ".join(legacy_keys) if legacy_keys else "unknown"
                 lines.append(f"  ✓ Hive-partitioned: {sf.relative_path}")
                 lines.append(f"      Keys: {keys_str}")
         elif sf.format_type == "filegdb":

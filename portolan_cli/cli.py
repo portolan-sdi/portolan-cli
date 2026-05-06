@@ -2731,13 +2731,13 @@ def _check_partition_prompt(
     from portolan_cli.config import get_setting
     from portolan_cli.partitioning import should_partition
 
-    part_enabled = get_setting("partitioning.enabled", catalog_root)
+    part_enabled = get_setting("partitioning.enabled", catalog_path=catalog_root)
     if part_enabled is None:
         part_enabled = True  # Default: enabled (prompt before partitioning large files)
-    part_prompt = get_setting("partitioning.prompt", catalog_root)
+    part_prompt = get_setting("partitioning.prompt", catalog_path=catalog_root)
     if part_prompt is None:
         part_prompt = True  # Default: prompt in interactive mode
-    threshold_gb = get_setting("partitioning.threshold_gb", catalog_root) or 2.0
+    threshold_gb = get_setting("partitioning.threshold_gb", catalog_path=catalog_root) or 2.0
 
     if not (part_enabled and part_prompt and sys.stderr.isatty()):
         return False
@@ -2745,15 +2745,23 @@ def _check_partition_prompt(
     # Pre-scan for large files that would trigger partitioning
     large_files: list[tuple[Path, float]] = []
     for p in resolved_paths:
-        if p.is_file() and p.suffix.lower() == ".parquet":
-            if should_partition(p, threshold_gb=threshold_gb, enabled=True):
-                size_gb = p.stat().st_size / (1024 * 1024 * 1024)
-                large_files.append((p, size_gb))
-        elif p.is_dir():
-            for pq in p.rglob("*.parquet"):
-                if should_partition(pq, threshold_gb=threshold_gb, enabled=True):
-                    size_gb = pq.stat().st_size / (1024 * 1024 * 1024)
-                    large_files.append((pq, size_gb))
+        try:
+            if p.is_file() and p.suffix.lower() == ".parquet":
+                if should_partition(p, threshold_gb=threshold_gb, enabled=True):
+                    size_gb = p.stat().st_size / (1024 * 1024 * 1024)
+                    large_files.append((p, size_gb))
+            elif p.is_dir():
+                for pq in p.rglob("*.parquet"):
+                    try:
+                        if should_partition(pq, threshold_gb=threshold_gb, enabled=True):
+                            size_gb = pq.stat().st_size / (1024 * 1024 * 1024)
+                            large_files.append((pq, size_gb))
+                    except OSError:
+                        # Skip files with permission errors or broken symlinks
+                        continue
+        except OSError:
+            # Skip paths with permission errors or broken symlinks
+            continue
 
     if not large_files:
         return False

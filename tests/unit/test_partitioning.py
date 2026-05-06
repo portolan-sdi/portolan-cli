@@ -278,8 +278,8 @@ class TestGlobTransformation:
         assert "portolan:glob" not in thumbnail
 
     @pytest.mark.unit
-    def test_transform_skips_assets_with_existing_glob(self) -> None:
-        """_transform_collection_glob_assets doesn't overwrite existing portolan:glob."""
+    def test_transform_overwrites_existing_glob_for_sync(self) -> None:
+        """_transform_collection_glob_assets overwrites existing globs to keep in sync."""
         import json
 
         from portolan_cli.push import _transform_collection_glob_assets
@@ -291,7 +291,7 @@ class TestGlobTransformation:
                 "partitioned_data": {
                     "href": "./kdtree_cell=*/*.parquet",
                     "type": "application/vnd.apache.parquet",
-                    "portolan:glob": "s3://existing/path/*/*.parquet",
+                    "portolan:glob": "s3://old-bucket/old-path/*/*.parquet",
                 },
             },
         }
@@ -300,10 +300,10 @@ class TestGlobTransformation:
         result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
         result_json = json.loads(result)
 
-        # Should preserve existing value
+        # Should overwrite with current remote URL to keep in sync
         assert (
             result_json["assets"]["partitioned_data"]["portolan:glob"]
-            == "s3://existing/path/*/*.parquet"
+            == "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
         )
 
     @pytest.mark.unit
@@ -519,8 +519,8 @@ class TestDetectPartitioning:
         assert result["partition:strategy"] == "h3"
 
     @pytest.mark.unit
-    def test_detect_partitioning_unknown_column_returns_none_strategy(self, tmp_path: Path) -> None:
-        """detect_partitioning returns None strategy for unknown column names."""
+    def test_detect_partitioning_unknown_column_omits_strategy(self, tmp_path: Path) -> None:
+        """detect_partitioning omits strategy key for unknown column names."""
         from portolan_cli.partitioning import detect_partitioning
 
         (tmp_path / "custom_partition=value1").mkdir()
@@ -529,7 +529,8 @@ class TestDetectPartitioning:
         result = detect_partitioning(tmp_path)
 
         assert result is not None
-        assert result["partition:strategy"] is None
+        # Strategy key should be omitted (not null) for unknown columns
+        assert "partition:strategy" not in result
         assert result["partition:keys"][0]["name"] == "custom_partition"
 
 
@@ -700,8 +701,8 @@ class TestGlobTransformationPartitionExtension:
         assert asset["portolan:glob"] == expected_glob
 
     @pytest.mark.unit
-    def test_transform_respects_existing_partition_glob(self) -> None:
-        """_transform_collection_glob_assets doesn't overwrite existing partition:glob."""
+    def test_transform_syncs_both_glob_fields(self) -> None:
+        """_transform_collection_glob_assets syncs both partition:glob and portolan:glob."""
         import json
 
         from portolan_cli.push import _transform_collection_glob_assets
@@ -712,7 +713,7 @@ class TestGlobTransformationPartitionExtension:
             "assets": {
                 "partitioned_data": {
                     "href": "./kdtree_cell=*/*.parquet",
-                    "partition:glob": "s3://existing/path/*/*.parquet",
+                    "partition:glob": "s3://old-bucket/old-path/*/*.parquet",
                 },
             },
         }
@@ -721,7 +722,8 @@ class TestGlobTransformationPartitionExtension:
         result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
         result_json = json.loads(result)
 
-        # partition:glob preserved, portolan:glob added
+        # Both fields should be updated to current remote URL
         asset = result_json["assets"]["partitioned_data"]
-        assert asset["partition:glob"] == "s3://existing/path/*/*.parquet"
-        assert asset["portolan:glob"] == "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
+        expected_glob = "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
+        assert asset["partition:glob"] == expected_glob
+        assert asset["portolan:glob"] == expected_glob

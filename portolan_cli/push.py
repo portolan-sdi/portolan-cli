@@ -307,10 +307,11 @@ def _transform_collection_glob_assets(
             remote_glob = f"{base}/{collection_path}/{glob_pattern}"
 
             # Emit both fields during transition (ADR-0042)
-            if "partition:glob" not in asset_data:
+            # Always overwrite to keep both fields in sync with current remote
+            if asset_data.get("partition:glob") != remote_glob:
                 asset_data["partition:glob"] = remote_glob
                 modified = True
-            if "portolan:glob" not in asset_data:
+            if asset_data.get("portolan:glob") != remote_glob:
                 asset_data["portolan:glob"] = remote_glob
                 modified = True
 

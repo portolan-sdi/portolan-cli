@@ -1769,23 +1769,24 @@ class TestPartitionOutputFormatting:
     def test_format_special_formats_shows_hive_partition_with_metadata(
         self, tmp_path: Path
     ) -> None:
-        """_format_special_formats displays Hive partitions with rich metadata."""
+        """_format_special_formats displays Hive partitions with rich metadata from details."""
         from portolan_cli.scan_detect import SpecialFormat
         from portolan_cli.scan_output import _format_special_formats
 
-        # Create Hive-style partition structure
         data_dir = tmp_path / "data"
         data_dir.mkdir()
-        (data_dir / "kdtree_cell=0001").mkdir()
-        (data_dir / "kdtree_cell=0001" / "data.parquet").touch()
-        (data_dir / "kdtree_cell=0002").mkdir()
-        (data_dir / "kdtree_cell=0002" / "data.parquet").touch()
 
+        # Provide full partition metadata in sf.details (scan-time snapshot)
         sf = SpecialFormat(
             path=data_dir,
             relative_path="data",
             format_type="hive_partition",
-            details={"partition_keys": ["kdtree_cell"]},
+            details={
+                "partition:scheme": "hive",
+                "partition:strategy": "kdtree",
+                "partition:keys": [{"name": "kdtree_cell", "type": "string"}],
+                "partition:file_count": 2,
+            },
         )
 
         result = ScanResult(
@@ -1807,10 +1808,11 @@ class TestPartitionOutputFormatting:
 
     @pytest.mark.unit
     def test_format_special_formats_fallback_without_rich_metadata(self) -> None:
-        """_format_special_formats falls back to basic info when path doesn't exist."""
+        """_format_special_formats falls back to basic info from partition_keys."""
         from portolan_cli.scan_detect import SpecialFormat
         from portolan_cli.scan_output import _format_special_formats
 
+        # Provide minimal details with just partition_keys (fallback format)
         sf = SpecialFormat(
             path=Path("/nonexistent/path"),
             relative_path="nonexistent",

@@ -293,9 +293,12 @@ def detect_partitioning(directory: Path) -> dict[str, object] | None:
             strategy = strat
             break
 
-    return {
+    result: dict[str, object] = {
         "partition:scheme": "hive",
-        "partition:strategy": strategy,
         "partition:keys": [{"name": key, "type": "string"} for key in partition_keys],
         "partition:file_count": file_count,
     }
+    # Only include strategy if detected (avoid null in JSON output)
+    if strategy is not None:
+        result["partition:strategy"] = strategy
+    return result

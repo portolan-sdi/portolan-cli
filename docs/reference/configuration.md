@@ -378,7 +378,7 @@ Split large GeoParquet files into spatially-organized partitions for better quer
 
 ```yaml
 # .portolan/config.yaml
-partitioning.enabled: true       # Enable auto-partitioning during add (default: false)
+partitioning.enabled: true       # Enable auto-partitioning during add (default: true)
 partitioning.prompt: true        # Ask before partitioning in interactive mode (default: true)
 partitioning.threshold_gb: 2     # Size threshold in GB (default: 2.0)
 partitioning.strategy: kdtree    # Partitioning strategy (default: kdtree)
@@ -436,7 +436,7 @@ collection/
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `partitioning.enabled` | `false` | Enable auto-partitioning during `portolan add` |
+| `partitioning.enabled` | `true` | Enable auto-partitioning during `portolan add` |
 | `partitioning.prompt` | `true` | Ask before partitioning in interactive mode |
 | `partitioning.threshold_gb` | `2.0` | File size threshold in GB |
 | `partitioning.strategy` | `kdtree` | Spatial partitioning strategy |
