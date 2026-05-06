@@ -7656,3 +7656,52 @@ def skills_show_cmd(ctx: click.Context, name: str, json_output: bool) -> None:
     else:
         # Print raw content for AI agents to ingest
         click.echo(content)
+
+
+@cli.command()
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def quickstart(ctx: click.Context, json_output: bool) -> None:
+    """Print agent quickstart instructions.
+
+    Dense, actionable reference for AI coding agents (kata-style).
+    Includes STAC terminology, example session, and command patterns.
+
+    \b
+    Examples:
+        portolan quickstart
+        portolan quickstart --json
+    """
+    from portolan_cli.quickstart_content import QUICKSTART
+
+    use_json = should_output_json(ctx, json_output)
+
+    if use_json:
+        envelope = success_envelope("quickstart", {"content": QUICKSTART})
+        output_json_envelope(envelope)
+    else:
+        click.echo(QUICKSTART)
+
+
+@cli.command("agent-instructions")
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def agent_instructions(ctx: click.Context, json_output: bool) -> None:
+    """Alias for quickstart command.
+
+    Print agent quickstart instructions for AI coding agents.
+
+    \b
+    Examples:
+        portolan agent-instructions
+        portolan agent-instructions --json
+    """
+    from portolan_cli.quickstart_content import QUICKSTART
+
+    use_json = should_output_json(ctx, json_output)
+
+    if use_json:
+        envelope = success_envelope("agent-instructions", {"content": QUICKSTART})
+        output_json_envelope(envelope)
+    else:
+        click.echo(QUICKSTART)

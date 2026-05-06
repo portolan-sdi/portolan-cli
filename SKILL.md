@@ -29,6 +29,14 @@ portolan add imagery/                      # Add all files in directory
 portolan add .                             # Add all files in catalog
 ```
 
+### `portolan agent-instructions`
+Alias for quickstart command.
+
+```bash
+portolan agent-instructions
+portolan agent-instructions --json
+```
+
 ### `portolan check`
 Validate a Portolan catalog or check files for cloud-native status.
 
@@ -141,6 +149,14 @@ portolan push s3://mybucket/catalog --collection demographics
 portolan push gs://mybucket/catalog -c imagery --dry-run
 portolan push s3://mybucket/catalog
 portolan push --dry-run  # Uses configured remote
+```
+
+### `portolan quickstart`
+Print agent quickstart instructions.
+
+```bash
+portolan quickstart
+portolan quickstart --json
 ```
 
 ### `portolan readme`

@@ -76,6 +76,8 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Tutorials:
+    - End-to-End: tutorials/end-to-end.md
   - Guides:
     - Version Management: guides/version-management.md
     - AI Skills: guides/skills.md
@@ -83,6 +85,7 @@ nav:
     - Extracting from WFS: guides/extract-wfs.md
     - Metadata Defaults: guides/metadata-defaults.md
     - Nested Catalogs: guides/nested-catalogs.md
+    - Partitioning: guides/partitioning.md
   - Reference:
     - CLI: reference/cli.md
     - Configuration: reference/configuration.md

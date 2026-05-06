@@ -151,6 +151,14 @@ hooks = [
     pass_filenames = false,
   },
   {
+    id = "validate-quickstart",
+    name = "validate quickstart content",
+    entry = "uv run python scripts/validate_quickstart.py",
+    language = "system",
+    files = { glob = ["portolan_cli/quickstart_content.py"] },
+    pass_filenames = false,
+  },
+  {
     id = "mypy",
     name = "mypy",
     entry = "uv run mypy",
