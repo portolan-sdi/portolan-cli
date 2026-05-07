@@ -37,6 +37,7 @@ class StacSchemaRule(ValidationRule):
         {
             "must be iri",  # Relative hrefs are valid in Portolan
             "is not a 'iri'",  # Alternate phrasing
+            "list index out of range",  # stac-check bug on Windows with recursive validation
         }
     )
 
