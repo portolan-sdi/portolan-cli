@@ -1,0 +1,37 @@
+{
+  "type": "Feature",
+  "stac_version": "1.0.0",
+  "id": "test-item",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [0, 0]
+  },
+  "bbox": [-1, -1, 1, 1],
+  "properties": {
+    "datetime": "2020-06-15T12:00:00Z"
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "parent",
+      "href": "./collection.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./test-item.json",
+      "type": "application/geo+json"
+    },
+    {
+      "rel": "collection",
+      "href": "./collection.json",
+      "type": "application/json"
+    }
+  ],
+  "assets": {},
+  "collection": "test-collection"
+}

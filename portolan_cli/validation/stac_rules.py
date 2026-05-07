@@ -54,14 +54,28 @@ class StacSchemaRule(ValidationRule):
                 fix_hint="Check that all STAC files have valid JSON syntax",
             )
 
-        if linter.valid_stac:
-            return self._pass("All STAC objects pass schema validation")
+        # Check root-level validation
+        if not linter.valid_stac:
+            recommendation = getattr(linter, "recommendation", None)
+            return self._fail(
+                linter.error_msg or "STAC schema validation failed",
+                fix_hint=recommendation,
+            )
 
-        recommendation = getattr(linter, "recommendation", None)
-        return self._fail(
-            linter.error_msg or "STAC schema validation failed",
-            fix_hint=recommendation,
-        )
+        # Check recursive validation results (stac-check stores these separately)
+        validate_all = getattr(linter, "validate_all", [])
+        failed = [r for r in validate_all if not r.get("valid_stac", True)]
+        if failed:
+            first_error = failed[0]
+            msg = first_error.get("error_message", "Schema validation failed")
+            path = first_error.get("path", "unknown")
+            hint = first_error.get("recommendation")
+            return self._fail(
+                f"{msg} in {path}",
+                fix_hint=hint,
+            )
+
+        return self._pass("All STAC objects pass schema validation")
 
 
 class StacLintRule(ValidationRule):
@@ -105,7 +119,8 @@ class StacLintRule(ValidationRule):
     ) -> None:
         self.strict = strict
         self.config = config or {}
-        self._runtime_skip_checks: set[str] = set()
+        # Compute skip checks once at init time (not as side effect of _get_severity_map)
+        self._runtime_skip_checks: frozenset[str] = self._compute_skip_checks()
 
     def check(self, catalog_path: Path) -> ValidationResult:
         catalog_json = catalog_path / "catalog.json"
@@ -172,6 +187,15 @@ class StacLintRule(ValidationRule):
             fix_hint="Run with --verbose to see all issues",
         )
 
+    def _compute_skip_checks(self) -> frozenset[str]:
+        """Compute checks to skip based on config (called once at init)."""
+        skip = set()
+        overrides = self.config.get("stac_lint", {}).get("severity", {})
+        for check_name, level in overrides.items():
+            if isinstance(level, str) and level.lower() == "skip":
+                skip.add(check_name)
+        return frozenset(skip)
+
     def _get_severity_map(self) -> dict[str, Severity]:
         """Get severity map, merging defaults with config overrides."""
         result = dict(self.DEFAULT_SEVERITIES)
@@ -180,9 +204,7 @@ class StacLintRule(ValidationRule):
         for check_name, level in overrides.items():
             if isinstance(level, str):
                 level_lower = level.lower()
-                if level_lower == "skip":
-                    self._runtime_skip_checks.add(check_name)
-                else:
+                if level_lower != "skip":
                     try:
                         result[check_name] = Severity(level_lower)
                     except ValueError:

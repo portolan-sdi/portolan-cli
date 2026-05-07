@@ -71,7 +71,6 @@ from portolan_cli.validation import (
     Severity,
 )
 from portolan_cli.validation import check as validate_catalog
-from portolan_cli.validation.runner import DEFAULT_RULES
 
 
 def format_size(size_bytes: int) -> str:
@@ -1415,13 +1414,14 @@ def _execute_check_workflow(
     - Without --fix: run validation and report issues
     - With --fix: run validation AND apply fixes for the selected scope
     """
-    # Use _build_rules if strict mode, otherwise DEFAULT_RULES
-    if strict:
-        from portolan_cli.validation.runner import _build_rules
+    from portolan_cli.config import load_config
+    from portolan_cli.validation.runner import _build_rules
 
-        rules = _build_rules(strict=strict)
-    else:
-        rules = DEFAULT_RULES
+    # Load config for severity overrides (stac_lint.severity.*)
+    config = load_config(path) if (path / ".portolan" / "config.yaml").exists() else None
+
+    # Always use _build_rules to respect config and strict flag
+    rules = _build_rules(strict=strict, config=config)
 
     # Handle fix workflows (may exit early)
     if fix:

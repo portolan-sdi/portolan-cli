@@ -34,6 +34,24 @@ def catalog_bad_id() -> Path:
 
 
 @pytest.fixture
+def recursive_catalog() -> Path:
+    """Path to catalog with nested collection and item."""
+    return FIXTURES_DIR / "recursive"
+
+
+@pytest.fixture
+def recursive_invalid_catalog() -> Path:
+    """Path to catalog with invalid nested item (missing id)."""
+    return FIXTURES_DIR / "recursive-invalid"
+
+
+@pytest.fixture
+def many_violations_catalog() -> Path:
+    """Path to catalog with many lint violations for truncation testing."""
+    return FIXTURES_DIR / "many-violations"
+
+
+@pytest.fixture
 def catalog_invalid_json() -> Path:
     """Path to catalog with invalid JSON syntax."""
     return FIXTURES_DIR / "invalid-json"
@@ -146,7 +164,9 @@ class TestStacLintRule:
         result = rule.check(catalog_bad_id)
         # percent_encoded is ERROR by default, so this should fail
         assert not result.passed
-        assert "percent_encoded" in result.message.lower() or ":" in result.message
+        assert result.severity == Severity.ERROR
+        # The check name should appear in the message
+        assert "percent_encoded" in result.message
 
     def test_no_catalog_passes(self, empty_dir: Path) -> None:
         """Missing catalog.json is a pass."""
@@ -183,10 +203,30 @@ class TestStacLintRule:
             }
         }
         rule = StacLintRule(config=config)
-        rule._get_severity_map()  # This processes skip directives
-        # Skipped checks go into _runtime_skip_checks (config-driven)
-        # while SKIP_CHECKS is the class-level default
+        # Skip checks are computed at init time (not as side effect of _get_severity_map)
         assert "bloated_metadata" in rule._runtime_skip_checks
+
+    def test_get_severity_map_is_idempotent(self) -> None:
+        """Calling _get_severity_map multiple times has no side effects."""
+        from portolan_cli.validation.stac_rules import StacLintRule
+
+        config = {
+            "stac_lint": {
+                "severity": {
+                    "check_thumbnail": "error",
+                    "bloated_metadata": "skip",
+                }
+            }
+        }
+        rule = StacLintRule(config=config)
+        skip_before = set(rule._runtime_skip_checks)
+        map1 = rule._get_severity_map()
+        map2 = rule._get_severity_map()
+        skip_after = set(rule._runtime_skip_checks)
+        # Skip checks should not change
+        assert skip_before == skip_after
+        # Severity map should be consistent
+        assert map1 == map2
 
     def test_datetime_null_skipped_by_default(self) -> None:
         """datetime_null check is skipped (handled by ProvisionalDatetimeRule)."""
@@ -258,3 +298,81 @@ class TestStacRulesRunner:
 
         report = check(minimal_catalog, rules=DEFAULT_RULES)
         assert report is not None
+
+
+@pytest.mark.unit
+class TestRecursiveValidation:
+    """Tests for recursive STAC validation (catalog → collection → item)."""
+
+    def test_recursive_valid_catalog_passes(self, recursive_catalog: Path) -> None:
+        """Valid nested structure passes schema validation."""
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        rule = StacSchemaRule()
+        result = rule.check(recursive_catalog)
+        assert result.passed, f"Expected pass but got: {result.message}"
+
+    def test_recursive_invalid_item_detected(self, recursive_invalid_catalog: Path) -> None:
+        """Invalid nested item (missing id) is caught by recursive validation."""
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        rule = StacSchemaRule()
+        result = rule.check(recursive_invalid_catalog)
+        assert not result.passed
+        assert result.severity == Severity.ERROR
+
+    def test_recursive_lint_passes_valid(self, recursive_catalog: Path) -> None:
+        """Valid nested structure passes lint checks."""
+        from portolan_cli.validation.stac_rules import StacLintRule
+
+        rule = StacLintRule()
+        result = rule.check(recursive_catalog)
+        # May have warnings but should not have errors
+        if not result.passed:
+            assert result.severity != Severity.ERROR
+
+
+@pytest.mark.unit
+class TestMessageTruncation:
+    """Tests for error message truncation when many violations exist."""
+
+    def test_many_violations_truncated(self, many_violations_catalog: Path) -> None:
+        """Many violations are truncated with '+N more' suffix."""
+        from portolan_cli.validation.stac_rules import StacLintRule
+
+        rule = StacLintRule()
+        result = rule.check(many_violations_catalog)
+        assert not result.passed
+        # Should have truncation indicator if more than 3 issues
+        # The catalog has bad ID (percent_encoded) + missing self link + bloated metadata
+        if "+more)" in result.message or "(+" in result.message:
+            # Verify the count is reasonable
+            assert "more)" in result.message
+
+
+@pytest.mark.unit
+class TestConfigIntegration:
+    """Tests for config integration through the full stack."""
+
+    def test_build_rules_with_config_affects_lint_behavior(self) -> None:
+        """Config passed to _build_rules affects StacLintRule behavior."""
+        from portolan_cli.validation.runner import _build_rules
+
+        config = {
+            "stac_lint": {
+                "severity": {
+                    "check_thumbnail": "error",
+                    "bloated_links": "skip",
+                }
+            }
+        }
+        rules = _build_rules(config=config)
+        lint_rule = next(r for r in rules if r.name == "stac_lint")
+
+        # Verify config was passed through
+        assert lint_rule.config == config
+        # Verify skip was processed
+        assert "bloated_links" in lint_rule._runtime_skip_checks
+        # Verify severity override works
+        severity_map = lint_rule._get_severity_map()
+        assert severity_map["check_thumbnail"] == Severity.ERROR

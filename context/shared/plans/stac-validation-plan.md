@@ -1,10 +1,10 @@
 # STAC Validation Implementation Plan
 
 **Issue:** #397 — feat(check): STAC schema validation rule
-**Status:** Ready for Implementation
+**Status:** Implemented
 **Author:** Claude + Nissim
 **Date:** 2026-05-07
-**Last Updated:** 2026-05-07 (API corrections after research pass)
+**Last Updated:** 2026-05-07 (Adversarial review fixes applied)
 
 ## Summary
 
