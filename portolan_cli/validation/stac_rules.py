@@ -22,20 +22,39 @@ class StacSchemaRule(ValidationRule):
     Uses stac-check's schema validation (via stac-validator).
     Validates catalog.json and follows STAC link relations to
     validate collections and items.
+
+    Note: Portolan uses relative hrefs by design (for portability). The STAC
+    JSON Schema requires absolute IRIs, so IRI format errors are treated as
+    acceptable. Use --strict for full IRI validation.
     """
 
     name = "stac_schema"
     severity = Severity.ERROR
     description = "Validate STAC JSON against official schemas"
 
+    # Errors to treat as acceptable (Portolan uses relative paths by design)
+    ACCEPTABLE_ERRORS: frozenset[str] = frozenset(
+        {
+            "must be iri",  # Relative hrefs are valid in Portolan
+            "is not a 'iri'",  # Alternate phrasing
+        }
+    )
+
     def __init__(self, *, strict: bool = False) -> None:
         """Initialize rule.
 
         Args:
-            strict: If True, enable full geometry validation (fast=False).
-                    If False, skip geometry checks (fast=True).
+            strict: If True, enable full geometry validation AND strict IRI checks.
+                    If False, skip geometry checks and accept relative hrefs.
         """
         self.strict = strict
+
+    def _is_acceptable_error(self, error_msg: str) -> bool:
+        """Check if error is acceptable (e.g., relative href IRI error)."""
+        if self.strict:
+            return False  # In strict mode, no errors are acceptable
+        error_lower = error_msg.lower()
+        return any(pattern in error_lower for pattern in self.ACCEPTABLE_ERRORS)
 
     def check(self, catalog_path: Path) -> ValidationResult:
         catalog_json = catalog_path / "catalog.json"
@@ -56,24 +75,29 @@ class StacSchemaRule(ValidationRule):
 
         # Check root-level validation
         if not linter.valid_stac:
+            error_msg = linter.error_msg or "STAC schema validation failed"
+            if self._is_acceptable_error(error_msg):
+                return self._pass("Schema valid (relative hrefs accepted)")
             recommendation = getattr(linter, "recommendation", None)
-            return self._fail(
-                linter.error_msg or "STAC schema validation failed",
-                fix_hint=recommendation,
-            )
+            return self._fail(error_msg, fix_hint=recommendation)
 
         # Check recursive validation results (stac-check stores these separately)
         validate_all = getattr(linter, "validate_all", [])
         failed = [r for r in validate_all if not r.get("valid_stac", True)]
-        if failed:
-            first_error = failed[0]
+
+        # Filter out acceptable errors
+        real_failures = []
+        for f in failed:
+            msg = f.get("error_message", "")
+            if not self._is_acceptable_error(msg):
+                real_failures.append(f)
+
+        if real_failures:
+            first_error = real_failures[0]
             msg = first_error.get("error_message", "Schema validation failed")
             path = first_error.get("path", "unknown")
             hint = first_error.get("recommendation")
-            return self._fail(
-                f"{msg} in {path}",
-                fix_hint=hint,
-            )
+            return self._fail(f"{msg} in {path}", fix_hint=hint)
 
         return self._pass("All STAC objects pass schema validation")
 

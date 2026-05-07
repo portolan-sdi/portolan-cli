@@ -1,0 +1,18 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.0.0",
+  "id": "test-catalog",
+  "description": "A minimal valid STAC catalog for testing",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./catalog.json",
+      "type": "application/json"
+    }
+  ]
+}

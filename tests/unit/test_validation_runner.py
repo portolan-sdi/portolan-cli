@@ -88,7 +88,7 @@ class TestCheck:
         # No .portolan dir = first rule fails
         report = check(tmp_path)
 
-        # Should have run all 8 default rules even though the first one failed
-        # (6 original + 2 partition rules: PartitionStructureRule, PartitionSchemaConsistencyRule)
+        # Should have run all 10 default rules even though the first one failed
+        # (6 original + 2 partition rules + 2 STAC rules: StacSchemaRule, StacLintRule)
         # This verifies the runner doesn't short-circuit on failure
-        assert len(report.results) == 8
+        assert len(report.results) == 10
