@@ -480,3 +480,290 @@ class TestStyleFixtures:
 
         style = json.loads(style_path.read_text())
         assert "layers" not in style
+
+
+# =============================================================================
+# Phase 7: Full Style Building Tests
+# =============================================================================
+
+
+class TestBuildFullStyle:
+    """Tests for build_full_style function."""
+
+    @pytest.mark.unit
+    def test_polygon_full_style(self) -> None:
+        """Builds complete Mapbox GL style for Polygon geometry."""
+        from portolan_cli.style import VectorStyleConfig, build_full_style
+
+        config = VectorStyleConfig()
+        style = build_full_style(
+            name="Default",
+            geometry_type="Polygon",
+            source_layer="parcels",
+            pmtiles_relative_path="../data.pmtiles",
+            config=config,
+        )
+
+        # Check version and name
+        assert style["version"] == 8
+        assert style["name"] == "Default"
+
+        # Check sources
+        assert "sources" in style
+        assert "data" in style["sources"]
+        assert style["sources"]["data"]["type"] == "vector"
+        assert style["sources"]["data"]["url"] == "../data.pmtiles"
+
+        # Check layers
+        assert "layers" in style
+        assert len(style["layers"]) == 1
+        layer = style["layers"][0]
+        assert layer["type"] == "fill"
+        assert layer["source"] == "data"
+        assert layer["source-layer"] == "parcels"
+        assert layer["paint"]["fill-color"] == "#3388ff"
+        assert layer["paint"]["fill-opacity"] == 0.6
+        assert layer["paint"]["fill-outline-color"] == "#2266cc"
+
+    @pytest.mark.unit
+    def test_linestring_full_style(self) -> None:
+        """Builds complete Mapbox GL style for LineString geometry."""
+        from portolan_cli.style import VectorStyleConfig, build_full_style
+
+        config = VectorStyleConfig()
+        style = build_full_style(
+            name="Roads",
+            geometry_type="LineString",
+            source_layer="roads",
+            pmtiles_relative_path="../roads.pmtiles",
+            config=config,
+        )
+
+        # Check layer type is line
+        assert style["layers"][0]["type"] == "line"
+        assert style["layers"][0]["source"] == "data"
+        assert style["layers"][0]["paint"]["line-color"] == "#3388ff"
+
+    @pytest.mark.unit
+    def test_point_full_style(self) -> None:
+        """Builds complete Mapbox GL style for Point geometry."""
+        from portolan_cli.style import VectorStyleConfig, build_full_style
+
+        config = VectorStyleConfig()
+        style = build_full_style(
+            name="Cities",
+            geometry_type="Point",
+            source_layer="cities",
+            pmtiles_relative_path="../cities.pmtiles",
+            config=config,
+        )
+
+        # Check layer type is circle
+        assert style["layers"][0]["type"] == "circle"
+        assert style["layers"][0]["source"] == "data"
+        assert style["layers"][0]["paint"]["circle-color"] == "#3388ff"
+
+    @pytest.mark.unit
+    def test_custom_config_applied(self) -> None:
+        """Custom VectorStyleConfig values appear in paint properties."""
+        from portolan_cli.style import VectorStyleConfig, build_full_style
+
+        config = VectorStyleConfig(
+            polygon_fill_color="#ff0000",
+            polygon_fill_opacity=0.9,
+            polygon_outline_color="#000000",
+        )
+        style = build_full_style(
+            name="Custom",
+            geometry_type="Polygon",
+            source_layer="parcels",
+            pmtiles_relative_path="../data.pmtiles",
+            config=config,
+        )
+
+        paint = style["layers"][0]["paint"]
+        assert paint["fill-color"] == "#ff0000"
+        assert paint["fill-opacity"] == 0.9
+        assert paint["fill-outline-color"] == "#000000"
+
+    @pytest.mark.unit
+    def test_full_style_is_json_serializable(self) -> None:
+        """Full style dict is JSON-serializable."""
+        import json
+
+        from portolan_cli.style import VectorStyleConfig, build_full_style
+
+        config = VectorStyleConfig()
+        style = build_full_style(
+            name="Test",
+            geometry_type="Polygon",
+            source_layer="layer",
+            pmtiles_relative_path="../data.pmtiles",
+            config=config,
+        )
+
+        # Should round-trip through JSON
+        serialized = json.dumps(style)
+        deserialized = json.loads(serialized)
+        assert deserialized == style
+
+
+# =============================================================================
+# Phase 8: Style File Writing Tests
+# =============================================================================
+
+
+class TestWriteStyleFile:
+    """Tests for write_style_file function."""
+
+    @pytest.mark.unit
+    def test_writes_style_to_disk(self, tmp_path: Path) -> None:
+        """Writes style dict to disk as JSON."""
+        from portolan_cli.style import write_style_file
+
+        style_dir = tmp_path / "styles"
+        style_dict = {
+            "version": 8,
+            "name": "Test",
+            "sources": {"data": {"type": "vector", "url": "../data.pmtiles"}},
+            "layers": [],
+        }
+
+        result_path = write_style_file(style_dir, "default", style_dict)
+
+        assert result_path == style_dir / "default.json"
+        assert result_path.exists()
+
+        # Verify content
+        import json
+
+        written = json.loads(result_path.read_text())
+        assert written == style_dict
+
+    @pytest.mark.unit
+    def test_creates_styles_directory(self, tmp_path: Path) -> None:
+        """Creates styles directory if it doesn't exist."""
+        from portolan_cli.style import write_style_file
+
+        style_dir = tmp_path / "styles"
+        assert not style_dir.exists()
+
+        style_dict = {"version": 8}
+        write_style_file(style_dir, "test", style_dict)
+
+        assert style_dir.exists()
+        assert style_dir.is_dir()
+
+    @pytest.mark.unit
+    def test_overwrites_existing_file(self, tmp_path: Path) -> None:
+        """Overwrites existing style file."""
+        from portolan_cli.style import write_style_file
+
+        style_dir = tmp_path / "styles"
+        style_dir.mkdir()
+
+        # Write original
+        original = {"version": 7}
+        write_style_file(style_dir, "default", original)
+
+        # Overwrite with new
+        new = {"version": 8}
+        write_style_file(style_dir, "default", new)
+
+        # Verify new content
+        import json
+
+        written = json.loads((style_dir / "default.json").read_text())
+        assert written == new
+
+
+# =============================================================================
+# Phase 9: Default Style Writing Tests
+# =============================================================================
+
+
+class TestWriteDefaultStyle:
+    """Tests for write_default_style function."""
+
+    @pytest.mark.unit
+    def test_writes_default_style_file(self, tmp_path: Path) -> None:
+        """Creates styles/default.json with correct content."""
+        from portolan_cli.style import VectorStyleConfig, write_default_style
+
+        config = VectorStyleConfig()
+        result_path = write_default_style(
+            collection_path=tmp_path,
+            geometry_type="Polygon",
+            source_layer="parcels",
+            pmtiles_filename="data.pmtiles",
+            config=config,
+        )
+
+        assert result_path is not None
+        assert result_path == tmp_path / "styles" / "default.json"
+        assert result_path.exists()
+
+        # Verify content
+        import json
+
+        style = json.loads(result_path.read_text())
+        assert style["version"] == 8
+        assert style["name"] == "Default"
+        assert style["sources"]["data"]["url"] == "../data.pmtiles"
+        assert style["layers"][0]["type"] == "fill"
+        assert style["layers"][0]["source"] == "data"
+        assert style["layers"][0]["source-layer"] == "parcels"
+
+    @pytest.mark.unit
+    def test_uses_custom_config(self, tmp_path: Path) -> None:
+        """Custom VectorStyleConfig affects output."""
+        from portolan_cli.style import VectorStyleConfig, write_default_style
+
+        config = VectorStyleConfig(
+            polygon_fill_color="#ff0000",
+            polygon_fill_opacity=0.9,
+        )
+        result_path = write_default_style(
+            collection_path=tmp_path,
+            geometry_type="Polygon",
+            source_layer="parcels",
+            pmtiles_filename="data.pmtiles",
+            config=config,
+        )
+
+        import json
+
+        style = json.loads(result_path.read_text())  # type: ignore[union-attr]
+        paint = style["layers"][0]["paint"]
+        assert paint["fill-color"] == "#ff0000"
+        assert paint["fill-opacity"] == 0.9
+
+    @pytest.mark.unit
+    def test_does_not_overwrite_existing(self, tmp_path: Path) -> None:
+        """Returns None if default.json already exists, doesn't overwrite."""
+        from portolan_cli.style import write_default_style
+
+        # Create existing default.json
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        default_path = styles_dir / "default.json"
+        original_content = {"version": 7, "name": "Original"}
+
+        import json
+
+        default_path.write_text(json.dumps(original_content))
+
+        # Try to write default style
+        result = write_default_style(
+            collection_path=tmp_path,
+            geometry_type="Polygon",
+            source_layer="parcels",
+            pmtiles_filename="data.pmtiles",
+        )
+
+        # Should return None
+        assert result is None
+
+        # Original content should be unchanged
+        written = json.loads(default_path.read_text())
+        assert written == original_content

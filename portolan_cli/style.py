@@ -6,6 +6,9 @@ Public API:
 - VectorStyleConfig: Configuration for vector styling
 - RasterStyleConfig: Configuration for raster styling
 - build_pmtiles_style: Generate Mapbox GL style for PMTiles
+- build_full_style: Generate complete Mapbox GL style with sources
+- write_style_file: Write style dict to JSON file
+- write_default_style: Convenience function to write default.json
 - build_raster_style: Generate render extension properties for COG
 - get_vector_style_config: Load vector style config from catalog
 - get_raster_style_config: Load raster style config from catalog
@@ -13,6 +16,7 @@ Public API:
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -175,6 +179,116 @@ def build_pmtiles_style(
         "version": 8,
         "layers": [layer],
     }
+
+
+def build_full_style(
+    name: str,
+    geometry_type: str,
+    source_layer: str,
+    pmtiles_relative_path: str,
+    config: VectorStyleConfig,
+) -> dict[str, Any]:
+    """Build complete Mapbox GL v8 style with sources and layers.
+
+    Generates a full Mapbox GL style spec (version 8) including sources
+    section with PMTiles URL and a single layer appropriate for the
+    geometry type.
+
+    Args:
+        name: Style name (e.g., "Default").
+        geometry_type: OGC geometry type (Point, LineString, Polygon, etc.).
+        source_layer: Name of the source layer in PMTiles.
+        pmtiles_relative_path: Relative path to PMTiles file (e.g., "../data.pmtiles").
+        config: Style configuration.
+
+    Returns:
+        Complete Mapbox GL style spec dict with version, name, sources, and layers.
+    """
+    # Reuse build_pmtiles_style logic for layer generation
+    partial_style = build_pmtiles_style(geometry_type, source_layer, config)
+
+    # Extract layer and add source reference
+    layer = partial_style["layers"][0]
+    layer["source"] = "data"
+
+    return {
+        "version": 8,
+        "name": name,
+        "sources": {
+            "data": {
+                "type": "vector",
+                "url": pmtiles_relative_path,
+            }
+        },
+        "layers": [layer],
+    }
+
+
+def write_style_file(
+    style_dir: Path,
+    name: str,
+    style_dict: dict[str, Any],
+) -> Path:
+    """Write a style dict to a JSON file.
+
+    Creates the directory if needed, writes {style_dir}/{name}.json with
+    indented JSON formatting.
+
+    Args:
+        style_dir: Directory to write the style file into.
+        name: Style filename (without .json extension).
+        style_dict: Style dict to serialize.
+
+    Returns:
+        Path to the written file.
+    """
+    style_dir.mkdir(parents=True, exist_ok=True)
+    style_path = style_dir / f"{name}.json"
+    style_path.write_text(json.dumps(style_dict, indent=2))
+    return style_path
+
+
+def write_default_style(
+    collection_path: Path,
+    geometry_type: str,
+    source_layer: str,
+    pmtiles_filename: str,
+    config: VectorStyleConfig | None = None,
+) -> Path | None:
+    """Write default style to {collection_path}/styles/default.json.
+
+    Convenience function that creates a default.json style file. Does NOT
+    overwrite if file already exists (returns None).
+
+    Args:
+        collection_path: Path to the collection directory.
+        geometry_type: OGC geometry type (Point, LineString, Polygon, etc.).
+        source_layer: Name of the source layer in PMTiles.
+        pmtiles_filename: PMTiles filename (e.g., "data.pmtiles").
+        config: Optional style configuration (uses defaults if None).
+
+    Returns:
+        Path to written file, or None if default.json already exists.
+    """
+    styles_dir = collection_path / "styles"
+    default_path = styles_dir / "default.json"
+
+    # Don't overwrite existing file
+    if default_path.exists():
+        return None
+
+    if config is None:
+        config = VectorStyleConfig()
+
+    style_dict = build_full_style(
+        name="Default",
+        geometry_type=geometry_type,
+        source_layer=source_layer,
+        pmtiles_relative_path=f"../{pmtiles_filename}",
+        config=config,
+    )
+
+    return write_style_file(styles_dir, "default", style_dict)
 
 
 def build_raster_style(config: RasterStyleConfig) -> dict[str, Any]:
