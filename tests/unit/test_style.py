@@ -823,3 +823,91 @@ class TestWriteDefaultStyle:
         # Original content should be unchanged
         written = json.loads(default_path.read_text())
         assert written == original_content
+
+
+# =============================================================================
+# Phase 10: Style Registration Tests
+# =============================================================================
+
+
+class TestRegisterStyleAssets:
+    """Tests for registering discovered styles as STAC assets."""
+
+    @pytest.mark.unit
+    def test_registers_style_assets_in_collection(self, tmp_path: Path) -> None:
+        """Discovered styles are added as assets in collection.json."""
+        import json
+        from portolan_cli.style import discover_styles, register_style_assets
+
+        collection_data = {
+            "type": "Collection",
+            "id": "test",
+            "assets": {"data": {"href": "./data.parquet", "type": "application/x-parquet"}},
+        }
+        (tmp_path / "collection.json").write_text(json.dumps(collection_data))
+
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        (styles_dir / "default.json").write_text(
+            '{"version":8,"name":"Default","sources":{},"layers":[]}'
+        )
+        (styles_dir / "by-age.json").write_text(
+            '{"version":8,"name":"By Age","description":"Buildings colored by construction year","sources":{},"layers":[]}'
+        )
+
+        styles = discover_styles(tmp_path)
+        register_style_assets(tmp_path, styles)
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+
+        assert "styles/default" in updated["assets"]
+        assert "styles/by-age" in updated["assets"]
+
+        default_asset = updated["assets"]["styles/default"]
+        assert default_asset["type"] == "application/json"
+        assert default_asset["roles"] == ["style"]
+        assert default_asset["title"] == "Default"
+
+        by_age_asset = updated["assets"]["styles/by-age"]
+        assert by_age_asset["title"] == "By Age"
+        assert by_age_asset["description"] == "Buildings colored by construction year"
+
+        assert updated["portolan:styles"] == ["styles/default", "styles/by-age"]
+
+    @pytest.mark.unit
+    def test_no_styles_no_manifest(self, tmp_path: Path) -> None:
+        """No portolan:styles property when no styles exist."""
+        import json
+        from portolan_cli.style import register_style_assets
+
+        collection_data = {"type": "Collection", "id": "test", "assets": {}}
+        (tmp_path / "collection.json").write_text(json.dumps(collection_data))
+
+        register_style_assets(tmp_path, [])
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+        assert "portolan:styles" not in updated
+
+    @pytest.mark.unit
+    def test_removes_stale_style_assets(self, tmp_path: Path) -> None:
+        """Removes style assets that no longer have files on disk."""
+        import json
+        from portolan_cli.style import register_style_assets
+
+        collection_data = {
+            "type": "Collection",
+            "id": "test",
+            "portolan:styles": ["styles/default", "styles/old"],
+            "assets": {
+                "styles/default": {"href": "./styles/default.json", "type": "application/json", "roles": ["style"]},
+                "styles/old": {"href": "./styles/old.json", "type": "application/json", "roles": ["style"]},
+            },
+        }
+        (tmp_path / "collection.json").write_text(json.dumps(collection_data))
+
+        current_styles = [{"key": "styles/default", "href": "./styles/default.json", "title": "Default", "description": ""}]
+        register_style_assets(tmp_path, current_styles)
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+        assert "styles/old" not in updated["assets"]
+        assert updated["portolan:styles"] == ["styles/default"]

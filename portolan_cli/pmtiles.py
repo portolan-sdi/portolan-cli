@@ -651,4 +651,11 @@ def generate_pmtiles_for_collection(
             except Exception as e:
                 logger.warning("Thumbnail generation failed for %s: %s", pmtiles_path.name, e)
 
+    # Discover and register style assets (ADR-0044)
+    from portolan_cli.style import discover_styles, register_style_assets
+
+    styles = discover_styles(collection_path)
+    if styles:
+        register_style_assets(collection_path, styles)
+
     return result

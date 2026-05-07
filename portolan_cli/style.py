@@ -14,6 +14,7 @@ Public API:
 - get_raster_style_config: Load raster style config from catalog
 - discover_styles: Discover style JSON files in styles/ directory
 - build_styles_manifest: Build portolan:styles manifest array
+- register_style_assets: Register styles as STAC assets in collection.json
 """
 
 from __future__ import annotations
@@ -405,6 +406,57 @@ def build_styles_manifest(styles: list[dict[str, Any]]) -> list[str]:
 
     # No default, just sort all
     return sorted(keys)
+
+
+def register_style_assets(
+    collection_path: Path,
+    styles: list[dict[str, Any]],
+) -> None:
+    """Register discovered styles as STAC assets and set portolan:styles manifest.
+
+    Updates collection.json to add/update style assets and remove stale ones.
+
+    Args:
+        collection_path: Path to the collection directory.
+        styles: List of style dicts from discover_styles().
+    """
+    collection_json_path = collection_path / "collection.json"
+    if not collection_json_path.exists():
+        return
+
+    data = json.loads(collection_json_path.read_text())
+    assets = data.get("assets", {})
+
+    # Remove stale style assets (assets with "styles/" prefix that no longer have files)
+    current_keys = {s["key"] for s in styles}
+    stale_keys = [
+        k for k in assets
+        if k.startswith("styles/") and k not in current_keys
+    ]
+    for key in stale_keys:
+        del assets[key]
+
+    # Add/update style assets
+    for style_info in styles:
+        asset_dict: dict[str, Any] = {
+            "href": style_info["href"],
+            "type": "application/json",
+            "title": style_info["title"],
+            "roles": ["style"],
+        }
+        if style_info.get("description"):
+            asset_dict["description"] = style_info["description"]
+        assets[style_info["key"]] = asset_dict
+
+    data["assets"] = assets
+
+    # Set or remove portolan:styles manifest
+    if styles:
+        data["portolan:styles"] = build_styles_manifest(styles)
+    else:
+        data.pop("portolan:styles", None)
+
+    collection_json_path.write_text(json.dumps(data, indent=2))
 
 
 # =============================================================================
