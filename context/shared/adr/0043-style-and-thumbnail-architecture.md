@@ -1,7 +1,7 @@
 # ADR-0043: Style and Thumbnail Architecture
 
 ## Status
-Accepted
+Accepted (style storage section superseded by ADR-0044; thumbnail and basemap decisions remain active)
 
 ## Context
 
