@@ -71,7 +71,6 @@ from portolan_cli.validation import (
     Severity,
 )
 from portolan_cli.validation import check as validate_catalog
-from portolan_cli.validation.runner import DEFAULT_RULES
 
 
 def format_size(size_bytes: int) -> str:
@@ -1181,6 +1180,11 @@ def _output_combined_check_json(
     is_flag=True,
     help="Only check/fix geospatial assets (cloud-native status, convertibility)",
 )
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Enable strict STAC validation (includes geometry checks)",
+)
 @click.pass_context
 def check(
     ctx: click.Context,
@@ -1192,6 +1196,7 @@ def check(
     remove_legacy: bool,
     metadata: bool,
     geo_assets: bool,
+    strict: bool,
 ) -> None:
     """Validate a Portolan catalog or check files for cloud-native status.
 
@@ -1249,6 +1254,7 @@ def check(
         remove_legacy=remove_legacy,
         use_json=use_json,
         verbose=verbose,
+        strict=strict,
     )
 
 
@@ -1400,6 +1406,7 @@ def _execute_check_workflow(
     remove_legacy: bool,
     use_json: bool,
     verbose: bool,
+    strict: bool = False,
 ) -> None:
     """Execute the check workflow based on flags.
 
@@ -1407,7 +1414,14 @@ def _execute_check_workflow(
     - Without --fix: run validation and report issues
     - With --fix: run validation AND apply fixes for the selected scope
     """
-    rules = DEFAULT_RULES
+    from portolan_cli.config import load_config
+    from portolan_cli.validation.runner import _build_rules
+
+    # Load config for severity overrides (stac_lint.severity.*)
+    config = load_config(path) if (path / ".portolan" / "config.yaml").exists() else None
+
+    # Always use _build_rules to respect config and strict flag
+    rules = _build_rules(strict=strict, config=config)
 
     # Handle fix workflows (may exit early)
     if fix:

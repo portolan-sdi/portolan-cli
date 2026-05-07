@@ -49,6 +49,7 @@ dependencies = [
     "requests>=2.33.0",  # CVE-2026-25645 fix (transitive, pinned for security)
     "rich>=13.0.0",  # Terminal progress bars (transitive via geoparquet-io, but we import directly)
     "rio-cogeo>=5.0.0",  # COG creation/validation (includes rasterio)
+    "stac-check>=1.4.0",  # STAC schema validation + best practices linting
     "typing_extensions>=4.0.0; python_version < '3.11'",
 ]
 

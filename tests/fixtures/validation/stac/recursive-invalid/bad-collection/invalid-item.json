@@ -1,0 +1,14 @@
+{
+  "type": "Feature",
+  "stac_version": "1.0.0",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [0, 0]
+  },
+  "bbox": [-1, -1, 1, 1],
+  "properties": {
+    "datetime": "2020-06-15T12:00:00Z"
+  },
+  "links": [],
+  "assets": {}
+}
