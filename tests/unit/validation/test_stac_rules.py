@@ -6,6 +6,7 @@ TDD: These tests are written before the implementation.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -312,6 +313,10 @@ class TestRecursiveValidation:
         result = rule.check(recursive_catalog)
         assert result.passed, f"Expected pass but got: {result.message}"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="stac-check recursive validation has bugs on Windows",
+    )
     def test_recursive_invalid_item_detected(self, recursive_invalid_catalog: Path) -> None:
         """Invalid nested item (missing id) is caught by recursive validation."""
         from portolan_cli.validation.stac_rules import StacSchemaRule
