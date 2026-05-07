@@ -1,9 +1,17 @@
 {
   "version": 8,
+  "name": "Default",
+  "sources": {
+    "data": {
+      "type": "vector",
+      "url": "../parcels.pmtiles"
+    }
+  },
   "layers": [
     {
       "id": "parcels-fill",
       "type": "fill",
+      "source": "data",
       "source-layer": "parcels",
       "paint": {
         "fill-color": "#3388ff",

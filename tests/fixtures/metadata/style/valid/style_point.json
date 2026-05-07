@@ -1,9 +1,17 @@
 {
   "version": 8,
+  "name": "Default",
+  "sources": {
+    "data": {
+      "type": "vector",
+      "url": "../cities.pmtiles"
+    }
+  },
   "layers": [
     {
       "id": "cities-circle",
       "type": "circle",
+      "source": "data",
       "source-layer": "cities",
       "paint": {
         "circle-color": "#3388ff",

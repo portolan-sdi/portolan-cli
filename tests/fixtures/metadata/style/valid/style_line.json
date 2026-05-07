@@ -1,9 +1,17 @@
 {
   "version": 8,
+  "name": "Default",
+  "sources": {
+    "data": {
+      "type": "vector",
+      "url": "../roads.pmtiles"
+    }
+  },
   "layers": [
     {
       "id": "roads-line",
       "type": "line",
+      "source": "data",
       "source-layer": "roads",
       "paint": {
         "line-color": "#3388ff",

@@ -1,22 +1,26 @@
 {
   "version": 8,
+  "name": "Population Density",
+  "sources": {
+    "data": {
+      "type": "vector",
+      "url": "../parcels.pmtiles"
+    }
+  },
   "layers": [
     {
-      "id": "population-fill",
+      "id": "parcels-graduated",
       "type": "fill",
-      "source-layer": "census",
+      "source": "data",
+      "source-layer": "parcels",
       "paint": {
         "fill-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "population"],
-          0, "#ffffcc",
-          10000, "#a1dab4",
-          50000, "#41b6c4",
-          100000, "#2c7fb8",
-          500000, "#253494"
+          "interpolate", ["linear"], ["get", "population"],
+          0, "#f7fbff",
+          100, "#6baed6",
+          1000, "#08306b"
         ],
-        "fill-opacity": 0.8
+        "fill-opacity": 0.7
       }
     }
   ]
