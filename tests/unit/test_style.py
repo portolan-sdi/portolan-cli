@@ -375,6 +375,192 @@ class TestStyleInAssetProperties:
 
 
 # =============================================================================
+# Phase 5b: Style Discovery Tests
+# =============================================================================
+
+
+class TestDiscoverStyles:
+    """Tests for discover_styles function."""
+
+    @pytest.mark.unit
+    def test_discovers_style_files(self, tmp_path: Path) -> None:
+        """Creates 2 style files and verifies both found with correct keys."""
+        import json
+
+        from portolan_cli.style import discover_styles
+
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+
+        # Create two style files
+        (styles_dir / "default.json").write_text(json.dumps({"version": 8, "layers": []}))
+        (styles_dir / "custom.json").write_text(json.dumps({"version": 8, "layers": []}))
+
+        styles = discover_styles(tmp_path)
+
+        assert len(styles) == 2
+        keys = {s["key"] for s in styles}
+        assert keys == {"styles/default", "styles/custom"}
+
+    @pytest.mark.unit
+    def test_extracts_name_as_title(self, tmp_path: Path) -> None:
+        """Style with 'name' field returns that as title."""
+        import json
+
+        from portolan_cli.style import discover_styles
+
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+
+        (styles_dir / "buildings.json").write_text(
+            json.dumps({"version": 8, "name": "Buildings by Age", "layers": []})
+        )
+
+        styles = discover_styles(tmp_path)
+
+        assert len(styles) == 1
+        assert styles[0]["title"] == "Buildings by Age"
+
+    @pytest.mark.unit
+    def test_returns_empty_when_no_styles_dir(self, tmp_path: Path) -> None:
+        """No styles/ directory returns empty list."""
+        from portolan_cli.style import discover_styles
+
+        styles = discover_styles(tmp_path)
+
+        assert styles == []
+
+    @pytest.mark.unit
+    def test_skips_non_json_files(self, tmp_path: Path) -> None:
+        """Non-JSON files in styles/ directory are ignored."""
+        import json
+
+        from portolan_cli.style import discover_styles
+
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+
+        # Create a valid JSON file and a .md file
+        (styles_dir / "default.json").write_text(json.dumps({"version": 8, "layers": []}))
+        (styles_dir / "README.md").write_text("# Styles\n")
+
+        styles = discover_styles(tmp_path)
+
+        assert len(styles) == 1
+        assert styles[0]["key"] == "styles/default"
+
+    @pytest.mark.unit
+    def test_skips_invalid_json(self, tmp_path: Path) -> None:
+        """Malformed JSON is skipped, valid files still returned."""
+        import json
+
+        from portolan_cli.style import discover_styles
+
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+
+        # Create valid and invalid JSON files
+        (styles_dir / "default.json").write_text(json.dumps({"version": 8, "layers": []}))
+        (styles_dir / "broken.json").write_text("{invalid json")
+        (styles_dir / "custom.json").write_text(json.dumps({"version": 8, "layers": []}))
+
+        styles = discover_styles(tmp_path)
+
+        # Should only find the two valid files
+        assert len(styles) == 2
+        keys = {s["key"] for s in styles}
+        assert keys == {"styles/default", "styles/custom"}
+
+    @pytest.mark.unit
+    def test_fallback_title_from_filename(self, tmp_path: Path) -> None:
+        """Style without 'name' field uses filename stem as title."""
+        import json
+
+        from portolan_cli.style import discover_styles
+
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+
+        # Create style without name field
+        (styles_dir / "custom-theme.json").write_text(json.dumps({"version": 8, "layers": []}))
+
+        styles = discover_styles(tmp_path)
+
+        assert len(styles) == 1
+        assert styles[0]["title"] == "custom-theme"
+
+
+class TestBuildStylesManifest:
+    """Tests for build_styles_manifest function."""
+
+    @pytest.mark.unit
+    def test_default_first(self) -> None:
+        """Default style always first regardless of input order."""
+        from portolan_cli.style import build_styles_manifest
+
+        styles = [
+            {"key": "styles/zebra"},
+            {"key": "styles/default"},
+            {"key": "styles/alpha"},
+        ]
+
+        manifest = build_styles_manifest(styles)
+
+        assert manifest[0] == "styles/default"
+        assert len(manifest) == 3
+
+    @pytest.mark.unit
+    def test_alphabetical_after_default(self) -> None:
+        """Non-default styles sorted alphabetically."""
+        from portolan_cli.style import build_styles_manifest
+
+        styles = [
+            {"key": "styles/zebra"},
+            {"key": "styles/default"},
+            {"key": "styles/alpha"},
+            {"key": "styles/beta"},
+        ]
+
+        manifest = build_styles_manifest(styles)
+
+        assert manifest == ["styles/default", "styles/alpha", "styles/beta", "styles/zebra"]
+
+    @pytest.mark.unit
+    def test_no_default(self) -> None:
+        """Works without a style named 'default'."""
+        from portolan_cli.style import build_styles_manifest
+
+        styles = [
+            {"key": "styles/zebra"},
+            {"key": "styles/alpha"},
+        ]
+
+        manifest = build_styles_manifest(styles)
+
+        assert manifest == ["styles/alpha", "styles/zebra"]
+
+    @pytest.mark.unit
+    def test_empty_list(self) -> None:
+        """Empty input returns empty output."""
+        from portolan_cli.style import build_styles_manifest
+
+        manifest = build_styles_manifest([])
+
+        assert manifest == []
+
+    @pytest.mark.unit
+    def test_single_style(self) -> None:
+        """Single style returns single-element list."""
+        from portolan_cli.style import build_styles_manifest
+
+        styles = [{"key": "styles/custom"}]
+
+        manifest = build_styles_manifest(styles)
+
+        assert manifest == ["styles/custom"]
+
+
+# =============================================================================
 # Phase 6: Style Fixture Tests
 # =============================================================================
 

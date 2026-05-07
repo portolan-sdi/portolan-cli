@@ -12,6 +12,8 @@ Public API:
 - build_raster_style: Generate render extension properties for COG
 - get_vector_style_config: Load vector style config from catalog
 - get_raster_style_config: Load raster style config from catalog
+- discover_styles: Discover style JSON files in styles/ directory
+- build_styles_manifest: Build portolan:styles manifest array
 """
 
 from __future__ import annotations
@@ -359,6 +361,80 @@ def enrich_cog_assets(
     for asset in assets.values():
         if getattr(asset, "media_type", None) in _COG_MEDIA_TYPES:
             enrich_cog_asset_with_style(asset, catalog_path)
+
+
+# =============================================================================
+# Style Discovery
+# =============================================================================
+
+
+def discover_styles(collection_path: Path) -> list[dict[str, Any]]:
+    """Discover style JSON files in {collection_path}/styles/ directory.
+
+    Returns a list of dicts with keys: key, href, title, description, path.
+
+    Args:
+        collection_path: Path to the collection directory.
+
+    Returns:
+        List of style dicts. Empty list if no styles/ directory exists.
+    """
+    styles_dir = collection_path / "styles"
+
+    if not styles_dir.exists():
+        return []
+
+    styles: list[dict[str, Any]] = []
+
+    for path in sorted(styles_dir.glob("*.json")):
+        try:
+            style_data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Skipping style file %s: %s", path, e)
+            continue
+
+        # Skip if parsed result is not a dict
+        if not isinstance(style_data, dict):
+            continue
+
+        name = path.stem
+        title = style_data.get("name", name)
+        description = style_data.get("description", "")
+
+        styles.append(
+            {
+                "key": f"styles/{name}",
+                "href": f"./styles/{path.name}",
+                "title": title,
+                "description": description,
+                "path": path,
+            }
+        )
+
+    return styles
+
+
+def build_styles_manifest(styles: list[dict[str, Any]]) -> list[str]:
+    """Build the portolan:styles manifest array.
+
+    Returns ordered list of asset keys with styles/default first if present,
+    then remaining styles sorted alphabetically.
+
+    Args:
+        styles: List of style dicts (from discover_styles).
+
+    Returns:
+        List of style asset keys.
+    """
+    keys = [s["key"] for s in styles]
+
+    if "styles/default" in keys:
+        # Put default first, sort the rest
+        remaining = [k for k in keys if k != "styles/default"]
+        return ["styles/default"] + sorted(remaining)
+
+    # No default, just sort all
+    return sorted(keys)
 
 
 # =============================================================================
