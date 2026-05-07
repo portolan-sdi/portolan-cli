@@ -105,31 +105,24 @@ class TestStyleInStacAssets:
     """Integration tests for style storage in STAC assets."""
 
     @pytest.mark.integration
-    def test_pmtiles_metadata_includes_style(self) -> None:
-        """PMTilesMetadata.to_stac_properties includes style when set."""
-        from portolan_cli.metadata.pmtiles import PMTilesMetadata
-        from portolan_cli.style import VectorStyleConfig, build_pmtiles_style
+    def test_build_full_style_creates_valid_mapbox_gl_spec(self) -> None:
+        """build_full_style produces a complete Mapbox GL v8 style spec."""
+        from portolan_cli.style import VectorStyleConfig, build_full_style
 
-        # Build a style
         config = VectorStyleConfig()
-        style = build_pmtiles_style("Polygon", "parcels", config)
-
-        # Create metadata with style
-        metadata = PMTilesMetadata(
-            bbox=(-122.5, 37.5, -122.0, 38.0),
-            min_zoom=0,
-            max_zoom=14,
-            tile_type="mvt",
-            center=None,
-            layer_name="parcels",
-            style=style,
+        style = build_full_style(
+            name="Default",
+            geometry_type="Polygon",
+            source_layer="parcels",
+            pmtiles_relative_path="../data.pmtiles",
+            config=config,
         )
 
-        props = metadata.to_stac_properties()
-
-        assert "pmtiles:style" in props
-        assert props["pmtiles:style"]["version"] == 8
-        assert len(props["pmtiles:style"]["layers"]) == 1
+        assert style["version"] == 8
+        assert style["name"] == "Default"
+        assert style["sources"]["data"]["url"] == "../data.pmtiles"
+        assert len(style["layers"]) == 1
+        assert style["layers"][0]["type"] == "fill"
 
     @pytest.mark.integration
     def test_pmtiles_metadata_includes_layer_name(self) -> None:
@@ -143,7 +136,6 @@ class TestStyleInStacAssets:
             tile_type="mvt",
             center=None,
             layer_name="boundaries",
-            style=None,
         )
 
         props = metadata.to_stac_properties()
@@ -172,10 +164,14 @@ styles:
         assert config.polygon_fill_opacity == 0.75
 
     @pytest.mark.integration
-    def test_style_applied_to_generated_pmtiles_asset(self, tmp_path: Path) -> None:
-        """Style is written to PMTiles asset in collection.json."""
-        from portolan_cli.pmtiles import add_pmtiles_asset_to_collection
-        from portolan_cli.style import VectorStyleConfig, build_pmtiles_style
+    def test_style_registered_as_stac_asset(self, tmp_path: Path) -> None:
+        """Style files are registered as STAC assets with portolan:styles manifest."""
+        from portolan_cli.style import (
+            VectorStyleConfig,
+            discover_styles,
+            register_style_assets,
+            write_default_style,
+        )
 
         # Create minimal collection.json
         collection_path = tmp_path / "test-collection"
@@ -200,23 +196,25 @@ styles:
             )
         )
 
-        # Build style and add asset
+        # Write a default style and register it
         config = VectorStyleConfig(polygon_fill_color="#00ff00")
-        style = build_pmtiles_style("Polygon", "data", config)
-
-        add_pmtiles_asset_to_collection(
-            collection_path,
-            "data",
-            "./data.pmtiles",
-            style=style,
+        write_default_style(
+            collection_path=collection_path,
+            geometry_type="Polygon",
+            source_layer="data",
+            pmtiles_filename="data.pmtiles",
+            config=config,
         )
 
-        # Verify style in collection.json
-        collection = json.loads((collection_path / "collection.json").read_text())
-        pmtiles_asset = collection["assets"]["data-tiles"]
+        styles = discover_styles(collection_path)
+        register_style_assets(collection_path, styles)
 
-        assert "pmtiles:style" in pmtiles_asset
-        assert pmtiles_asset["pmtiles:style"]["layers"][0]["paint"]["fill-color"] == "#00ff00"
+        # Verify style asset in collection.json
+        collection = json.loads((collection_path / "collection.json").read_text())
+
+        assert "styles/default" in collection["assets"]
+        assert collection["assets"]["styles/default"]["roles"] == ["style"]
+        assert collection["portolan:styles"] == ["styles/default"]
 
 
 # =============================================================================

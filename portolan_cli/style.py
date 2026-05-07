@@ -5,7 +5,6 @@ Generates Mapbox GL style specs for PMTiles and render extension properties for 
 Public API:
 - VectorStyleConfig: Configuration for vector styling
 - RasterStyleConfig: Configuration for raster styling
-- build_pmtiles_style: Generate Mapbox GL style for PMTiles
 - build_full_style: Generate complete Mapbox GL style with sources
 - write_style_file: Write style dict to JSON file
 - write_default_style: Convenience function to write default.json
@@ -429,10 +428,7 @@ def register_style_assets(
 
     # Remove stale style assets (assets with "styles/" prefix that no longer have files)
     current_keys = {s["key"] for s in styles}
-    stale_keys = [
-        k for k in assets
-        if k.startswith("styles/") and k not in current_keys
-    ]
+    stale_keys = [k for k in assets if k.startswith("styles/") and k not in current_keys]
     for key in stale_keys:
         del assets[key]
 

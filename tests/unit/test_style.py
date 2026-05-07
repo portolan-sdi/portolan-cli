@@ -837,6 +837,7 @@ class TestRegisterStyleAssets:
     def test_registers_style_assets_in_collection(self, tmp_path: Path) -> None:
         """Discovered styles are added as assets in collection.json."""
         import json
+
         from portolan_cli.style import discover_styles, register_style_assets
 
         collection_data = {
@@ -878,6 +879,7 @@ class TestRegisterStyleAssets:
     def test_no_styles_no_manifest(self, tmp_path: Path) -> None:
         """No portolan:styles property when no styles exist."""
         import json
+
         from portolan_cli.style import register_style_assets
 
         collection_data = {"type": "Collection", "id": "test", "assets": {}}
@@ -892,6 +894,7 @@ class TestRegisterStyleAssets:
     def test_removes_stale_style_assets(self, tmp_path: Path) -> None:
         """Removes style assets that no longer have files on disk."""
         import json
+
         from portolan_cli.style import register_style_assets
 
         collection_data = {
@@ -899,13 +902,28 @@ class TestRegisterStyleAssets:
             "id": "test",
             "portolan:styles": ["styles/default", "styles/old"],
             "assets": {
-                "styles/default": {"href": "./styles/default.json", "type": "application/json", "roles": ["style"]},
-                "styles/old": {"href": "./styles/old.json", "type": "application/json", "roles": ["style"]},
+                "styles/default": {
+                    "href": "./styles/default.json",
+                    "type": "application/json",
+                    "roles": ["style"],
+                },
+                "styles/old": {
+                    "href": "./styles/old.json",
+                    "type": "application/json",
+                    "roles": ["style"],
+                },
             },
         }
         (tmp_path / "collection.json").write_text(json.dumps(collection_data))
 
-        current_styles = [{"key": "styles/default", "href": "./styles/default.json", "title": "Default", "description": ""}]
+        current_styles = [
+            {
+                "key": "styles/default",
+                "href": "./styles/default.json",
+                "title": "Default",
+                "description": "",
+            }
+        ]
         register_style_assets(tmp_path, current_styles)
 
         updated = json.loads((tmp_path / "collection.json").read_text())
