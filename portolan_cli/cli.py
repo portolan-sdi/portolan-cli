@@ -1181,6 +1181,11 @@ def _output_combined_check_json(
     is_flag=True,
     help="Only check/fix geospatial assets (cloud-native status, convertibility)",
 )
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Enable strict STAC validation (includes geometry checks)",
+)
 @click.pass_context
 def check(
     ctx: click.Context,
@@ -1192,6 +1197,7 @@ def check(
     remove_legacy: bool,
     metadata: bool,
     geo_assets: bool,
+    strict: bool,
 ) -> None:
     """Validate a Portolan catalog or check files for cloud-native status.
 
@@ -1249,6 +1255,7 @@ def check(
         remove_legacy=remove_legacy,
         use_json=use_json,
         verbose=verbose,
+        strict=strict,
     )
 
 
@@ -1400,6 +1407,7 @@ def _execute_check_workflow(
     remove_legacy: bool,
     use_json: bool,
     verbose: bool,
+    strict: bool = False,
 ) -> None:
     """Execute the check workflow based on flags.
 
@@ -1407,7 +1415,13 @@ def _execute_check_workflow(
     - Without --fix: run validation and report issues
     - With --fix: run validation AND apply fixes for the selected scope
     """
-    rules = DEFAULT_RULES
+    # Use _build_rules if strict mode, otherwise DEFAULT_RULES
+    if strict:
+        from portolan_cli.validation.runner import _build_rules
+
+        rules = _build_rules(strict=strict)
+    else:
+        rules = DEFAULT_RULES
 
     # Handle fix workflows (may exit early)
     if fix:
