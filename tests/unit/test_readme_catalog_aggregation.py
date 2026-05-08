@@ -282,3 +282,123 @@ class TestGenerateCatalogReadme:
         # The readme should reflect the full US extent
         assert "-125" in readme  # West bound
         assert "-65" in readme or "-66" in readme  # East bound
+
+
+class TestCollapsibleCollections:
+    """Tests for collapsible collections list (#424).
+
+    Large catalogs (many collections) should use <details> tags to make
+    the collections list collapsible, improving README navigability.
+    """
+
+    def _create_collections(self, tmp_path: Path, count: int) -> None:
+        """Helper to create N collections."""
+        (tmp_path / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": "test-catalog",
+                    "title": "Test Catalog",
+                    "description": "Catalog for testing collapsible collections",
+                }
+            )
+        )
+        for i in range(count):
+            coll_dir = tmp_path / f"collection-{i:03d}"
+            coll_dir.mkdir()
+            (coll_dir / "collection.json").write_text(
+                json.dumps(
+                    {
+                        "type": "Collection",
+                        "id": f"collection-{i:03d}",
+                        "title": f"Collection {i}",
+                        "description": f"Test collection number {i}",
+                        "extent": {
+                            "spatial": {"bbox": [[0, 0, 1, 1]]},
+                            "temporal": {"interval": [[None, None]]},
+                        },
+                    }
+                )
+            )
+
+    @pytest.mark.unit
+    def test_small_catalog_not_collapsible(self, tmp_path: Path) -> None:
+        """Catalogs with few collections should NOT use <details> tags."""
+        self._create_collections(tmp_path, 5)
+
+        readme = generate_catalog_readme(tmp_path)
+
+        # Should NOT contain <details> tags for small catalogs
+        assert "<details>" not in readme
+        assert "</details>" not in readme
+        # Should still list collections normally
+        assert "## Collections" in readme
+        assert "Collection 0" in readme
+
+    @pytest.mark.unit
+    def test_large_catalog_is_collapsible(self, tmp_path: Path) -> None:
+        """Catalogs with many collections SHOULD use <details> tags."""
+        self._create_collections(tmp_path, 15)
+
+        readme = generate_catalog_readme(tmp_path)
+
+        # Should contain <details> tags
+        assert "<details>" in readme
+        assert "</details>" in readme
+        # Should have summary with count
+        assert "<summary>" in readme
+        assert "15 collections" in readme
+
+    @pytest.mark.unit
+    def test_collapsible_at_threshold(self, tmp_path: Path) -> None:
+        """Collections should be collapsible at exactly the threshold."""
+        # Default threshold is 10
+        self._create_collections(tmp_path, 10)
+
+        readme = generate_catalog_readme(tmp_path)
+
+        # At threshold, should be collapsible
+        assert "<details>" in readme
+        assert "10 collections" in readme
+
+    @pytest.mark.unit
+    def test_just_below_threshold_not_collapsible(self, tmp_path: Path) -> None:
+        """Collections just below threshold should NOT be collapsible."""
+        self._create_collections(tmp_path, 9)
+
+        readme = generate_catalog_readme(tmp_path)
+
+        # Just below threshold, should NOT be collapsible
+        assert "<details>" not in readme
+
+    @pytest.mark.unit
+    def test_collapsible_contains_all_collections(self, tmp_path: Path) -> None:
+        """Collapsible section should contain all collection links."""
+        self._create_collections(tmp_path, 12)
+
+        readme = generate_catalog_readme(tmp_path)
+
+        # All collections should be present
+        for i in range(12):
+            assert f"collection-{i:03d}" in readme
+            assert f"Collection {i}" in readme
+
+    @pytest.mark.unit
+    def test_collapsible_summary_emoji(self, tmp_path: Path) -> None:
+        """Summary should include folder emoji for visual clarity."""
+        self._create_collections(tmp_path, 20)
+
+        readme = generate_catalog_readme(tmp_path)
+
+        # Summary should have emoji
+        assert "📁" in readme
+
+    @pytest.mark.unit
+    def test_very_large_catalog_collapsible(self, tmp_path: Path) -> None:
+        """Very large catalogs (100+ collections) should be collapsible."""
+        self._create_collections(tmp_path, 100)
+
+        readme = generate_catalog_readme(tmp_path)
+
+        assert "<details>" in readme
+        assert "100 collections" in readme

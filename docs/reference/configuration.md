@@ -855,7 +855,7 @@ portolan readme --recursive
 **Catalog-level README:** When run at catalog root, generates an index README with:
 - Aggregated spatial extent (envelope of all collections)
 - Aggregated temporal extent (earliest to latest)
-- List of collections with links
+- List of collections with links (collapsible when ≥10 collections)
 
 ### Data Defaults
 

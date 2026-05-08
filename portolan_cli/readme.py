@@ -708,18 +708,36 @@ def aggregate_catalog_extent(catalog_path: Path) -> dict[str, Any]:
     }
 
 
+# Default threshold for making collections list collapsible (#424)
+# Catalogs with >= this many collections will use <details> tags
+COLLAPSIBLE_COLLECTIONS_THRESHOLD = 10
+
+
 def _add_collections_section(
     sections: list[str],
     catalog_path: Path,
     aggregation: dict[str, Any],
 ) -> None:
-    """Add collections listing section for catalog README."""
+    """Add collections listing section for catalog README.
+
+    For large catalogs (>= COLLAPSIBLE_COLLECTIONS_THRESHOLD), wraps the
+    collections list in an HTML <details> tag to make it collapsible.
+    This improves README navigability for catalogs with many collections (#424).
+    """
     collections = aggregation.get("collections", [])
     if not collections:
         return
 
+    collection_count = len(collections)
+    use_collapsible = collection_count >= COLLAPSIBLE_COLLECTIONS_THRESHOLD
+
     sections.append("## Collections")
     sections.append("")
+
+    if use_collapsible:
+        sections.append("<details>")
+        sections.append(f"<summary>📁 {collection_count} collections (click to expand)</summary>")
+        sections.append("")
 
     for coll_id in sorted(collections):
         coll_json = catalog_path / coll_id / "collection.json"
@@ -743,6 +761,10 @@ def _add_collections_section(
                 description = description[:197] + "..."
             sections.append(description)
             sections.append("")
+
+    if use_collapsible:
+        sections.append("</details>")
+        sections.append("")
 
 
 def _add_aggregated_extent_section(
