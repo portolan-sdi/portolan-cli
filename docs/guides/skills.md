@@ -6,6 +6,7 @@ Portolan includes **skills** — markdown guides that help AI assistants guide y
 
 | Skill | Description |
 |-------|-------------|
+| `bootstrap` | End-to-end catalog creation from any data source |
 | `sourcecoop` | Upload data to [Source Cooperative](https://source.coop) |
 | `consume` | Query and explore Portolan catalogs with DuckDB/Python |
 
@@ -29,6 +30,18 @@ portolan skills list
 
 # View a specific skill
 portolan skills show sourcecoop
+```
+
+---
+
+## Bootstrap Skill
+
+End-to-end catalog creation from any data source. Checkpoint-based — pauses at key decisions and asks rather than assumes.
+
+Supports remote services (WFS, ArcGIS) and local files (Shapefile, GeoPackage, etc.).
+
+```bash
+portolan skills show bootstrap
 ```
 
 ---
