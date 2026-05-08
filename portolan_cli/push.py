@@ -794,6 +794,43 @@ def _get_effective_exclude_patterns(
     return list(patterns)
 
 
+def _load_versioned_asset_paths(catalog_root: Path, collection: str) -> set[str]:
+    """Load versioned asset relative paths from versions.json.
+
+    Args:
+        catalog_root: Path to catalog root.
+        collection: Collection identifier.
+
+    Returns:
+        Set of relative paths (as POSIX strings) for all versioned assets.
+        Returns empty set if versions.json doesn't exist or is invalid.
+    """
+    versions_file = catalog_root / collection / "versions.json"
+    if not versions_file.exists():
+        return set()
+
+    try:
+        data = json.loads(versions_file.read_text())
+        versioned_paths: set[str] = set()
+
+        # Extract asset paths from all versions
+        for version_entry in data.get("versions", []):
+            assets = version_entry.get("assets", {})
+            for asset_key, asset_info in assets.items():
+                # asset_key is typically the relative path like "data.parquet"
+                # or can be nested like "v1/data.parquet"
+                if isinstance(asset_info, dict):
+                    # Check for explicit href if available
+                    href = asset_info.get("href", asset_key)
+                    versioned_paths.add(href)
+                versioned_paths.add(asset_key)
+
+        return versioned_paths
+    except (json.JSONDecodeError, KeyError, TypeError):
+        # Invalid versions.json - return empty set, don't fail discovery
+        return set()
+
+
 def _discover_catalog_files(
     catalog_root: Path,
     collection: str | None = None,
@@ -806,7 +843,7 @@ def _discover_catalog_files(
 
     This discovers ALL files in the catalog/collection except:
     - Files matching exclusion patterns (ALWAYS includes security patterns)
-    - Versioned assets (handled separately by existing asset upload)
+    - Versioned assets (loaded from versions.json, handled by asset upload)
     - versions.json (uploaded last for atomicity)
     - Files already discovered by _discover_stac_files (collection.json, item/*.json)
     - Symlinks (security: could point outside catalog)
@@ -840,6 +877,12 @@ def _discover_catalog_files(
         "README.md",  # Uploaded by _upload_readmes_async
     }
 
+    # Load versioned asset paths from versions.json (if collection specified)
+    # These are already handled by _upload_assets_async
+    versioned_asset_paths: set[str] = set()
+    if collection is not None:
+        versioned_asset_paths = _load_versioned_asset_paths(catalog_root, collection)
+
     discovered: list[Path] = []
 
     def should_exclude(path: Path, base_dir: Path) -> bool:
@@ -847,6 +890,24 @@ def _discover_catalog_files(
         # Files handled by other upload phases
         if path.name in handled_separately:
             return True
+
+        # Versioned assets (handled by _upload_assets_async)
+        # Check if the relative path matches any versioned asset
+        if versioned_asset_paths:
+            try:
+                rel_path = path.relative_to(base_dir)
+                rel_posix = rel_path.as_posix()
+                # Check both full relative path and just the filename
+                # (versions.json may use either format)
+                if rel_posix in versioned_asset_paths or path.name in versioned_asset_paths:
+                    return True
+                # Also check collection-relative path
+                if collection is not None:
+                    coll_rel = rel_posix.removeprefix(f"{collection}/")
+                    if coll_rel in versioned_asset_paths:
+                        return True
+            except ValueError:
+                pass
 
         # Item STAC files (handled by _discover_stac_files)
         if stac_item_paths is not None:

@@ -182,11 +182,8 @@ class TestDiscoverCatalogFiles:
         assert len(pycache_files) == 0
 
     @pytest.mark.unit
-    def test_excludes_versioned_assets(self, catalog_with_metadata: Path) -> None:
-        """Versioned assets (in versions.json) should NOT be in metadata files.
-
-        These are handled separately by the existing asset upload logic.
-        """
+    def test_excludes_versions_json_file(self, catalog_with_metadata: Path) -> None:
+        """versions.json should NOT be in metadata files (uploaded separately)."""
         from portolan_cli.push import _discover_catalog_files
 
         files = _discover_catalog_files(
@@ -197,6 +194,66 @@ class TestDiscoverCatalogFiles:
         # versions.json itself should not be in the list (uploaded separately)
         versions_files = [f for f in files if f.name == "versions.json"]
         assert len(versions_files) == 0
+
+    @pytest.mark.unit
+    def test_excludes_versioned_assets_from_versions_json(self, tmp_path: Path) -> None:
+        """Versioned assets listed in versions.json should be excluded.
+
+        These are handled separately by the existing asset upload logic.
+        """
+        from portolan_cli.push import _discover_catalog_files
+
+        # Create catalog with versioned asset
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        collection_dir = catalog_root / "collection1"
+        collection_dir.mkdir()
+
+        # Create versioned asset file
+        (collection_dir / "data.parquet").write_bytes(b"parquet data")
+
+        # Create metadata file (should be discovered)
+        (collection_dir / "style.json").write_text('{"version": 8}')
+
+        # Create versions.json listing the parquet as versioned asset
+        (collection_dir / "versions.json").write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "v1",
+                    "versions": [
+                        {
+                            "version": "v1",
+                            "created": "2024-01-01T00:00:00Z",
+                            "assets": {
+                                "data.parquet": {
+                                    "href": "data.parquet",
+                                    "sha256": "abc123",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+        # Create .portolan to make it a valid catalog
+        portolan_dir = catalog_root / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("backend: filesystem")
+
+        files = _discover_catalog_files(
+            catalog_root,
+            collection="collection1",
+        )
+
+        names = [f.name for f in files]
+
+        # data.parquet should be excluded (it's a versioned asset)
+        assert "data.parquet" not in names, "Versioned assets should be excluded"
+
+        # style.json should be included (it's metadata)
+        assert "style.json" in names, "Metadata files should be included"
 
     @pytest.mark.unit
     def test_additional_exclude_patterns(self, catalog_with_metadata: Path) -> None:
