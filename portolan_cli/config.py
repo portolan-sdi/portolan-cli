@@ -99,18 +99,18 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pmtiles.attribution": None,  # None = gpio-pmtiles default
     "pmtiles.src_crs": None,  # None = use metadata CRS
     # Push exclusion patterns for metadata sync (Issue #426)
-    # These files/directories are never synced to remote storage
+    # These files/directories are never synced to remote storage.
+    # Note: Security-critical patterns (.env, .git/, .portolan/) are also
+    # enforced in push.py's _SECURITY_EXCLUDE_PATTERNS and cannot be overridden.
+    # Directory patterns (ending with /) match if ANY path component equals the name.
     "push.exclude": [
         ".portolan/",  # Internal Portolan state
-        ".portolan/*",  # Internal Portolan state (alternate pattern)
         ".git/",  # Git repository data
-        ".git/*",  # Git repository data (alternate pattern)
         ".env",  # Environment files with secrets
-        ".env.*",  # Environment file variants
+        ".env.*",  # Environment file variants (.env.local, etc.)
         "*.py",  # Python source files
         "*.pyc",  # Python bytecode
         "__pycache__/",  # Python cache directories
-        "__pycache__/*",  # Python cache (alternate pattern)
         ".DS_Store",  # macOS metadata
         "Thumbs.db",  # Windows thumbnails
         "*.log",  # Log files

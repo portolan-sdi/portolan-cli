@@ -199,8 +199,8 @@ class TestDiscoverCatalogFiles:
         assert len(versions_files) == 0
 
     @pytest.mark.unit
-    def test_custom_exclude_patterns(self, catalog_with_metadata: Path) -> None:
-        """Custom exclude patterns should be respected."""
+    def test_additional_exclude_patterns(self, catalog_with_metadata: Path) -> None:
+        """Additional exclude patterns should be merged with defaults."""
         from portolan_cli.push import _discover_catalog_files
 
         # Add a file that matches a custom pattern
@@ -209,11 +209,66 @@ class TestDiscoverCatalogFiles:
         files = _discover_catalog_files(
             catalog_with_metadata,
             collection="collection1",
-            exclude_patterns=["*.log"],
+            additional_exclude_patterns=["*.log"],
         )
 
         log_files = [f for f in files if f.suffix == ".log"]
         assert len(log_files) == 0
+
+    @pytest.mark.unit
+    def test_security_patterns_always_enforced(self, catalog_with_metadata: Path) -> None:
+        """Security patterns (.env, .git/, .portolan/) are ALWAYS enforced.
+
+        Even when additional_exclude_patterns is provided, security-critical
+        patterns must still be applied to prevent accidental secret upload.
+        """
+        from portolan_cli.push import _discover_catalog_files
+
+        # Add a .git directory with a config file
+        git_dir = catalog_with_metadata / "collection1" / ".git"
+        git_dir.mkdir()
+        (git_dir / "config").write_text("[core]\n\tbare = false")
+
+        # Add .env.local in collection
+        (catalog_with_metadata / "collection1" / ".env.local").write_text("SECRET=value")
+
+        # Use custom patterns that don't include security patterns
+        files = _discover_catalog_files(
+            catalog_with_metadata,
+            collection="collection1",
+            additional_exclude_patterns=["*.backup"],  # Custom pattern only
+        )
+
+        # Security patterns must STILL be enforced
+        git_files = [f for f in files if ".git" in str(f)]
+        assert len(git_files) == 0, "Security: .git/ must always be excluded"
+
+        env_files = [f for f in files if ".env" in f.name]
+        assert len(env_files) == 0, "Security: .env* must always be excluded"
+
+        portolan_files = [f for f in files if ".portolan" in str(f)]
+        assert len(portolan_files) == 0, "Security: .portolan/ must always be excluded"
+
+    @pytest.mark.unit
+    def test_symlinks_excluded(self, catalog_with_metadata: Path) -> None:
+        """Symlinks should be excluded for security (could point outside catalog)."""
+        from portolan_cli.push import _discover_catalog_files
+
+        # Create a symlink in the collection
+        symlink_path = catalog_with_metadata / "collection1" / "link-to-passwd"
+        try:
+            symlink_path.symlink_to("/etc/passwd")
+        except OSError:
+            pytest.skip("Cannot create symlinks on this system")
+
+        files = _discover_catalog_files(
+            catalog_with_metadata,
+            collection="collection1",
+        )
+
+        # Symlinks should NOT be in the discovered files
+        symlink_files = [f for f in files if f.name == "link-to-passwd"]
+        assert len(symlink_files) == 0, "Symlinks must be excluded for security"
 
     @pytest.mark.unit
     def test_returns_relative_paths_structure(self, catalog_with_metadata: Path) -> None:
@@ -424,3 +479,169 @@ class TestPushAllMetadataSync:
         captured = capsys.readouterr()
         # Should mention root metadata files
         assert "root-style.json" in captured.out or "metadata" in captured.out.lower()
+
+
+# =============================================================================
+# Tests for security patterns
+# =============================================================================
+
+
+class TestSecurityExcludePatterns:
+    """Tests for security-critical exclusion patterns."""
+
+    @pytest.mark.unit
+    def test_security_patterns_exist(self) -> None:
+        """Security patterns constant should exist and include critical files."""
+        from portolan_cli.push import _SECURITY_EXCLUDE_PATTERNS
+
+        # These patterns MUST be in the security set
+        assert ".env" in _SECURITY_EXCLUDE_PATTERNS
+        assert ".env.*" in _SECURITY_EXCLUDE_PATTERNS
+        assert ".git/" in _SECURITY_EXCLUDE_PATTERNS
+        assert ".portolan/" in _SECURITY_EXCLUDE_PATTERNS
+
+    @pytest.mark.unit
+    def test_effective_patterns_include_security(self, tmp_path: Path) -> None:
+        """_get_effective_exclude_patterns must always include security patterns."""
+        from portolan_cli.push import (
+            _SECURITY_EXCLUDE_PATTERNS,
+            _get_effective_exclude_patterns,
+        )
+
+        # Even with custom additional patterns, security patterns are included
+        patterns = _get_effective_exclude_patterns(
+            catalog_root=tmp_path,
+            additional_patterns=["*.custom"],
+        )
+
+        for security_pattern in _SECURITY_EXCLUDE_PATTERNS:
+            assert security_pattern in patterns, f"Missing security pattern: {security_pattern}"
+
+        # Custom pattern should also be included
+        assert "*.custom" in patterns
+
+
+# =============================================================================
+# Tests for PushResult metadata_errors field
+# =============================================================================
+
+
+class TestPushResultMetadataErrors:
+    """Tests for PushResult.metadata_errors field."""
+
+    @pytest.mark.unit
+    def test_push_result_has_metadata_errors_field(self) -> None:
+        """PushResult should have metadata_errors field."""
+        from portolan_cli.push import PushResult
+
+        result = PushResult(
+            success=True,
+            files_uploaded=5,
+            versions_pushed=1,
+            metadata_errors=["Failed to upload style.json: permission denied"],
+        )
+
+        assert result.metadata_errors == ["Failed to upload style.json: permission denied"]
+        assert result.has_metadata_errors is True
+
+    @pytest.mark.unit
+    def test_push_result_no_metadata_errors(self) -> None:
+        """PushResult with no metadata errors should return empty list."""
+        from portolan_cli.push import PushResult
+
+        result = PushResult(
+            success=True,
+            files_uploaded=5,
+            versions_pushed=1,
+        )
+
+        assert result.metadata_errors == []
+        assert result.has_metadata_errors is False
+
+
+# =============================================================================
+# Tests for upload ordering (integration)
+# =============================================================================
+
+
+class TestUploadOrdering:
+    """Tests for upload ordering verification.
+
+    Manifest-last atomicity requires:
+    1. Assets first
+    2. STAC files
+    3. Metadata files
+    4. versions.json LAST
+    """
+
+    @pytest.mark.unit
+    def test_upload_metadata_files_uses_posix_paths(self, catalog_with_metadata: Path) -> None:
+        """_upload_metadata_files_async should use POSIX paths for object keys."""
+        import asyncio
+
+        from portolan_cli.push import _upload_metadata_files_async
+
+        uploaded_keys: list[str] = []
+
+        async def mock_put_async(store, key, content):
+            uploaded_keys.append(key)
+
+        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async):
+            mock_store = MagicMock()
+
+            asyncio.run(
+                _upload_metadata_files_async(
+                    mock_store,
+                    catalog_with_metadata,
+                    "prefix",
+                    "collection1",
+                    include_catalog_root=False,
+                    concurrency=10,
+                )
+            )
+
+        # All keys should use forward slashes (POSIX)
+        for key in uploaded_keys:
+            assert "\\" not in key, f"Key should use POSIX paths: {key}"
+            assert key.startswith("prefix/collection1/"), f"Key should have correct prefix: {key}"
+
+
+# =============================================================================
+# Tests for _discover_catalog_files with collection=None
+# =============================================================================
+
+
+class TestDiscoverRootOnlyFiles:
+    """Tests for discovering root-level files only (collection=None)."""
+
+    @pytest.mark.unit
+    def test_discover_root_only_no_collection(self, catalog_with_metadata: Path) -> None:
+        """With collection=None and include_catalog_root=True, only root files."""
+        from portolan_cli.push import _discover_catalog_files
+
+        files = _discover_catalog_files(
+            catalog_with_metadata,
+            collection=None,  # No collection
+            include_catalog_root=True,
+        )
+
+        # Should only have root-level files, not collection files
+        names = [f.name for f in files]
+        assert "root-style.json" in names
+
+        # Should NOT include collection files
+        assert "style.json" not in names  # This is in collection1/
+        assert "collection1.thumb.png" not in names
+
+    @pytest.mark.unit
+    def test_discover_nothing_when_no_collection_no_root(self, catalog_with_metadata: Path) -> None:
+        """With collection=None and include_catalog_root=False, should find nothing."""
+        from portolan_cli.push import _discover_catalog_files
+
+        files = _discover_catalog_files(
+            catalog_with_metadata,
+            collection=None,
+            include_catalog_root=False,
+        )
+
+        assert len(files) == 0

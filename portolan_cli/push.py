@@ -20,6 +20,7 @@ See ADR-0007 for CLI wraps Python API (all logic in library layer).
 from __future__ import annotations
 
 import asyncio
+import fnmatch  # Module-level import for performance (used in hot path)
 import json
 import threading
 import time
@@ -95,7 +96,9 @@ class PushResult:
         files_uploaded: Number of asset files uploaded.
         versions_pushed: Number of new versions pushed (from versions.json).
         conflicts: List of conflict descriptions.
-        errors: List of error messages.
+        errors: List of error messages (fatal errors that caused push to fail).
+        metadata_errors: List of metadata upload errors (non-fatal, push continues).
+            These indicate partial sync - metadata files failed but assets succeeded.
         dry_run: True if this was a dry-run operation (no network calls made).
         would_push_versions: In dry-run mode, max versions that would be pushed
             (upper bound; actual count depends on remote state).
@@ -107,9 +110,15 @@ class PushResult:
     versions_pushed: int
     conflicts: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    metadata_errors: list[str] = field(default_factory=list)
     dry_run: bool = False
     would_push_versions: int = 0
     metrics: UploadMetrics | None = None
+
+    @property
+    def has_metadata_errors(self) -> bool:
+        """True if any metadata files failed to upload."""
+        return len(self.metadata_errors) > 0
 
 
 @dataclass
@@ -672,8 +681,12 @@ def _matches_exclude_pattern(path: Path, pattern: str, base_dir: Path) -> bool:
 
     Supports:
     - Directory patterns ending with / (e.g., ".portolan/", "__pycache__/")
+      These match if ANY path component equals the directory name.
     - Glob patterns with * (e.g., "*.py", ".env.*")
     - Exact filename matches (e.g., ".env", ".DS_Store")
+
+    Note: fnmatch is imported at module level for performance since this
+    function is called O(files × patterns) times during discovery.
 
     Args:
         path: Absolute path to check.
@@ -683,8 +696,6 @@ def _matches_exclude_pattern(path: Path, pattern: str, base_dir: Path) -> bool:
     Returns:
         True if the path matches the pattern and should be excluded.
     """
-    import fnmatch
-
     # Get relative path for pattern matching
     try:
         rel_path = path.relative_to(base_dir)
@@ -694,19 +705,13 @@ def _matches_exclude_pattern(path: Path, pattern: str, base_dir: Path) -> bool:
     rel_str = str(rel_path)
     name = path.name
 
-    # Directory pattern (ends with /)
-    if pattern.endswith("/"):
-        dir_name = pattern.rstrip("/")
-        # Check if any path component matches
+    # Directory pattern (ends with / or /*)
+    # Unified handling: ".portolan/" and ".portolan/*" both mean
+    # "exclude anything under a directory named .portolan"
+    if pattern.endswith("/") or pattern.endswith("/*"):
+        dir_name = pattern.rstrip("/").rstrip("*").rstrip("/")
+        # Check if any path component matches the directory name
         for part in rel_path.parts:
-            if part == dir_name:
-                return True
-        return False
-
-    # Directory pattern with /* (matches contents)
-    if pattern.endswith("/*"):
-        dir_name = pattern[:-2]
-        for part in rel_path.parts[:-1]:  # Check parent directories
             if part == dir_name:
                 return True
         return False
@@ -745,32 +750,86 @@ def _get_exclude_patterns(catalog_root: Path | None = None) -> list[str]:
     return list(patterns)
 
 
+# Security-critical patterns that MUST always be excluded.
+# These are never overridden by user config - they are merged with user patterns.
+# Prevents accidental upload of secrets, git history, or internal state.
+_SECURITY_EXCLUDE_PATTERNS: frozenset[str] = frozenset(
+    [
+        ".env",  # Environment files with secrets
+        ".env.*",  # Environment file variants (.env.local, .env.production)
+        ".git/",  # Git repository data
+        ".portolan/",  # Internal Portolan state
+    ]
+)
+
+
+def _get_effective_exclude_patterns(
+    catalog_root: Path | None = None,
+    additional_patterns: list[str] | None = None,
+) -> list[str]:
+    """Get effective exclusion patterns, always including security-critical ones.
+
+    This function ensures security patterns (.env, .git/, .portolan/) are ALWAYS
+    included, even when custom patterns are provided. This prevents accidental
+    upload of secrets or internal state.
+
+    Args:
+        catalog_root: Catalog root for loading config. If None, uses defaults.
+        additional_patterns: Extra patterns to add (merged with defaults, not replacing).
+
+    Returns:
+        List of exclusion patterns including security-critical ones.
+    """
+    # Start with security-critical patterns (always included)
+    patterns: set[str] = set(_SECURITY_EXCLUDE_PATTERNS)
+
+    # Add config/default patterns
+    config_patterns = _get_exclude_patterns(catalog_root)
+    patterns.update(config_patterns)
+
+    # Add any additional patterns
+    if additional_patterns:
+        patterns.update(additional_patterns)
+
+    return list(patterns)
+
+
 def _discover_catalog_files(
     catalog_root: Path,
-    collection: str,
+    collection: str | None = None,
     *,
     include_catalog_root: bool = False,
-    exclude_patterns: list[str] | None = None,
+    additional_exclude_patterns: list[str] | None = None,
+    stac_item_paths: set[Path] | None = None,
 ) -> list[Path]:
     """Discover all catalog files that should be synced to remote (Issue #426).
 
     This discovers ALL files in the catalog/collection except:
-    - Files matching exclusion patterns (from config or defaults)
+    - Files matching exclusion patterns (ALWAYS includes security patterns)
     - Versioned assets (handled separately by existing asset upload)
     - versions.json (uploaded last for atomicity)
     - Files already discovered by _discover_stac_files (collection.json, item/*.json)
+    - Symlinks (security: could point outside catalog)
+
+    Security: The security-critical patterns (.env, .git/, .portolan/) are ALWAYS
+    applied, even when additional_exclude_patterns is provided. This prevents
+    accidental upload of secrets.
 
     Args:
         catalog_root: Path to catalog root.
-        collection: Collection identifier.
+        collection: Collection identifier. If None and include_catalog_root=True,
+            only discovers root-level files.
         include_catalog_root: If True, include root-level files (not in collection).
-        exclude_patterns: Custom exclusion patterns. If None, loads from config.
+        additional_exclude_patterns: Extra patterns to add (merged with defaults,
+            never replaces security patterns).
+        stac_item_paths: Optional set of known STAC item JSON paths to exclude.
+            If provided, used instead of heuristic detection.
 
     Returns:
         List of absolute paths to files that should be synced.
     """
-    if exclude_patterns is None:
-        exclude_patterns = _get_exclude_patterns(catalog_root)
+    # Always use effective patterns which include security-critical ones
+    exclude_patterns = _get_effective_exclude_patterns(catalog_root, additional_exclude_patterns)
 
     # Files to exclude because they're handled by other upload phases
     # These are uploaded in specific order for atomicity
@@ -782,7 +841,6 @@ def _discover_catalog_files(
     }
 
     discovered: list[Path] = []
-    collection_dir = catalog_root / collection
 
     def should_exclude(path: Path, base_dir: Path) -> bool:
         """Check if a file should be excluded."""
@@ -791,9 +849,16 @@ def _discover_catalog_files(
             return True
 
         # Item STAC files (handled by _discover_stac_files)
-        # Pattern: collection/item_dir/item_dir.json
-        if path.suffix == ".json" and path.parent.name == path.stem:
-            return True
+        if stac_item_paths is not None:
+            # Use explicit list if provided (more precise)
+            if path in stac_item_paths:
+                return True
+        else:
+            # Heuristic fallback: collection/item_dir/item_dir.json
+            # This pattern matches STAC item files where the JSON filename
+            # matches its parent directory name
+            if path.suffix == ".json" and path.parent.name == path.stem:
+                return True
 
         # Check exclusion patterns
         for pattern in exclude_patterns:
@@ -802,17 +867,25 @@ def _discover_catalog_files(
 
         return False
 
-    # Walk collection directory
-    if collection_dir.exists():
-        for item in collection_dir.rglob("*"):
-            if item.is_file() and not should_exclude(item, catalog_root):
-                discovered.append(item)
+    # Walk collection directory if specified
+    if collection is not None:
+        collection_dir = catalog_root / collection
+        if collection_dir.exists():
+            for item in collection_dir.rglob("*"):
+                # Skip symlinks (security: could point outside catalog)
+                if item.is_symlink():
+                    continue
+                if item.is_file() and not should_exclude(item, catalog_root):
+                    discovered.append(item)
 
     # Optionally include catalog root files
     if include_catalog_root:
         for item in catalog_root.iterdir():
             # Skip directories (collections are handled separately)
             if item.is_dir():
+                continue
+            # Skip symlinks (security)
+            if item.is_symlink():
                 continue
             if item.is_file() and not should_exclude(item, catalog_root):
                 discovered.append(item)
@@ -1624,6 +1697,9 @@ async def _upload_metadata_files_async(
     This uploads ALL catalog files that aren't versioned assets or STAC metadata.
     Happens after assets and STAC files, before versions.json (manifest-last).
 
+    Security: Uses _get_effective_exclude_patterns which always includes
+    security-critical patterns (.env, .git/, .portolan/).
+
     Args:
         store: Object store instance.
         catalog_root: Path to catalog root.
@@ -1634,7 +1710,8 @@ async def _upload_metadata_files_async(
         verbose: If True, print per-file upload details.
 
     Returns:
-        Tuple of (files_uploaded, errors).
+        Tuple of (files_uploaded, errors). Errors are returned, not swallowed,
+        so callers can decide how to handle partial failures.
     """
     metadata_files = _discover_catalog_files(
         catalog_root,
@@ -1653,14 +1730,15 @@ async def _upload_metadata_files_async(
         async with semaphore:
             try:
                 rel_path = file_path.relative_to(catalog_root)
-                target_key = f"{prefix}/{rel_path}".lstrip("/")
+                # Use as_posix() for consistent path separators in object keys
+                target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
                 content = file_path.read_bytes()
                 await obs.put_async(store, target_key, content)
                 if verbose:
                     detail(f"  Uploaded {rel_path} ({len(content)} bytes)")
                 return True
             except Exception as e:
-                error_msg = f"Failed to upload {file_path}: {e}"
+                error_msg = f"Failed to upload metadata file {file_path.name}: {e}"
                 errors.append(error_msg)
                 error(error_msg)
                 return False
@@ -1799,10 +1877,9 @@ async def _execute_push_uploads_async(
     )
     files_uploaded += metadata_uploaded
 
-    if metadata_errors:
-        # Metadata errors are warnings, not fatal (don't abort push)
-        for err in metadata_errors:
-            warn(err)
+    # Metadata errors are warnings, not fatal (push continues)
+    # But we surface them in PushResult so callers can act on partial sync
+    all_metadata_errors: list[str] = list(metadata_errors)
 
     # Upload versions.json (async, manifest-last)
     info("Uploading versions.json...")
@@ -1826,6 +1903,7 @@ async def _execute_push_uploads_async(
             versions_pushed=0,
             conflicts=[],
             errors=[f"Failed to upload versions.json: {e}"],
+            metadata_errors=all_metadata_errors,
             metrics=metrics,
         )
 
@@ -1834,8 +1912,14 @@ async def _execute_push_uploads_async(
         store, catalog_root, prefix, stac_files, concurrency=concurrency
     )
     files_uploaded += readme_uploaded
-    for err in readme_errors:
-        warn(err)
+    # README errors are also non-fatal metadata issues
+    all_metadata_errors.extend(readme_errors)
+
+    # Log metadata warnings (after push succeeds, so user sees them)
+    if all_metadata_errors:
+        warn(f"{len(all_metadata_errors)} metadata file(s) failed to upload:")
+        for err in all_metadata_errors:
+            warn(f"  {err}")
 
     return PushResult(
         success=True,
@@ -1843,6 +1927,7 @@ async def _execute_push_uploads_async(
         versions_pushed=len(diff.local_only),
         conflicts=[],
         errors=[],
+        metadata_errors=all_metadata_errors,
         metrics=metrics,
     )
 
@@ -2102,12 +2187,8 @@ def _push_all_process_result(
 def _discover_root_metadata_files(catalog_root: Path) -> list[Path]:
     """Discover root-level metadata files that should be synced (Issue #426).
 
-    These are files at the catalog root that aren't:
-    - catalog.json (uploaded by _push_all_upload_root_files)
-    - README.md (uploaded by _push_all_upload_root_files)
-    - versions.json (uploaded last for atomicity)
-    - Directories (collections are handled separately)
-    - Excluded by push.exclude patterns
+    This is a convenience wrapper around _discover_catalog_files for root-only
+    discovery. Delegates to the unified discovery function for consistency.
 
     Args:
         catalog_root: Path to catalog root.
@@ -2115,33 +2196,11 @@ def _discover_root_metadata_files(catalog_root: Path) -> list[Path]:
     Returns:
         List of absolute paths to root metadata files.
     """
-    exclude_patterns = _get_exclude_patterns(catalog_root)
-
-    # Files handled by other upload phases
-    handled_separately = {"catalog.json", "README.md", "versions.json"}
-
-    discovered: list[Path] = []
-
-    for item in catalog_root.iterdir():
-        # Skip directories
-        if item.is_dir():
-            continue
-
-        # Skip files handled separately
-        if item.name in handled_separately:
-            continue
-
-        # Check exclusion patterns
-        should_exclude = False
-        for pattern in exclude_patterns:
-            if _matches_exclude_pattern(item, pattern, catalog_root):
-                should_exclude = True
-                break
-
-        if not should_exclude:
-            discovered.append(item)
-
-    return discovered
+    return _discover_catalog_files(
+        catalog_root,
+        collection=None,  # No collection, root only
+        include_catalog_root=True,
+    )
 
 
 def _push_all_upload_root_files(
