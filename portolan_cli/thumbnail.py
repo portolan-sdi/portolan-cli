@@ -561,10 +561,6 @@ def _render_geometries(
 # =============================================================================
 
 
-# Maximum rows to read for thumbnail rendering (avoids loading multi-GB files)
-_MAX_THUMBNAIL_ROWS = 5000
-
-
 def _read_geoparquet_bounds(gpq_path: Path) -> tuple[float, float, float, float] | None:
     """Read bounding box from GeoParquet file metadata (O(1) operation).
 
@@ -627,21 +623,19 @@ def _read_geoparquet_bounds_from_data(gpq_path: Path) -> tuple[float, float, flo
 
 def _read_geoparquet_for_thumbnail(
     gpq_path: Path,
-    max_rows: int = _MAX_THUMBNAIL_ROWS,
 ) -> tuple[Any, tuple[float, float, float, float] | None, Any]:
-    """Read limited rows from GeoParquet for thumbnail rendering.
+    """Read GeoParquet for thumbnail rendering.
 
-    Gets bbox from metadata (O(1)) for accurate extent, then reads and limits
-    rows to max_rows for efficient rendering. The bbox from metadata ensures
-    the thumbnail shows the correct extent even when only rendering a subset.
+    Gets bbox from metadata (O(1)) for accurate extent, then reads the full file.
+    We render ALL features without sampling — contextily handles CRS reprojection
+    of basemap tiles, which is far more efficient than reprojecting geometry data.
 
     Args:
         gpq_path: Path to GeoParquet file.
-        max_rows: Maximum rows to read for rendering (default 5000).
 
     Returns:
         Tuple of (gdf, full_bbox, source_crs) where:
-        - gdf: GeoDataFrame with limited rows (or None if failed)
+        - gdf: GeoDataFrame with all features (or None if failed)
         - full_bbox: (minx, miny, maxx, maxy) from metadata or computed
         - source_crs: Original CRS of the data
     """
@@ -655,21 +649,17 @@ def _read_geoparquet_for_thumbnail(
         # Get bbox from metadata first (O(1), no geometry parsing)
         full_bbox = _read_geoparquet_bounds(gpq_path)
 
-        # Read file with geopandas (handles geo metadata correctly)
+        # Read full file — no sampling, render all features
         gdf = gpd.read_parquet(gpq_path)
         if gdf.empty:
             return None, None, None
 
         source_crs = gdf.crs
 
-        # If no bbox from metadata, compute from full data BEFORE limiting
+        # If no bbox from metadata, compute from data
         if full_bbox is None:
             bounds = gdf.total_bounds
             full_bbox = (bounds[0], bounds[1], bounds[2], bounds[3])
-
-        # Limit rows for rendering (thumbnails don't need all features)
-        if len(gdf) > max_rows:
-            gdf = gdf.head(max_rows)
 
         return gdf, full_bbox, source_crs
 
@@ -685,8 +675,9 @@ def _render_geoparquet(
 ) -> bool:
     """Render GeoParquet to JPEG thumbnail.
 
-    Uses efficient row-group-based reading to avoid loading entire file.
-    Handles CRS reprojection to EPSG:3857 for contextily basemap compatibility.
+    Renders ALL features in their native CRS without reprojection. Contextily's
+    `crs` parameter handles basemap tile reprojection, which is far more efficient
+    than transforming potentially millions of geometry vertices.
 
     Args:
         gpq_path: Path to GeoParquet file.
@@ -703,41 +694,28 @@ def _render_geoparquet(
         return False
 
     try:
-        # Read limited rows + full bbox from metadata
+        # Read full file + bbox from metadata
         gdf, full_bounds, source_crs = _read_geoparquet_for_thumbnail(gpq_path)
         if gdf is None or full_bounds is None:
             return False
-
-        # Reproject to EPSG:3857 for contextily basemap compatibility
-        needs_reprojection = source_crs is not None and str(source_crs) != "EPSG:3857"
-        if needs_reprojection:
-            gdf = gdf.to_crs(epsg=3857)
 
         fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
         ax.set_aspect("equal")
         ax.axis("off")
 
-        # Transform full bounds to 3857 for axis limits
-        if needs_reprojection and source_crs is not None:
-            from pyproj import Transformer
-
-            transformer = Transformer.from_crs(source_crs, "EPSG:3857", always_xy=True)
-            bounds_3857 = transformer.transform_bounds(*full_bounds)
-        else:
-            bounds_3857 = full_bounds
-
-        # Add basemap first (behind data)
+        # Add basemap first (behind data) — contextily reprojects tiles to match data CRS
         if config.basemap_provider != "none":
+            crs_str = str(source_crs) if source_crs is not None else "EPSG:4326"
             add_basemap(
                 ax,
-                bounds_3857,
+                full_bounds,
                 config.basemap_provider,
                 config.basemap_opacity,
                 config.basemap_zoom_adjust,
-                crs=None,  # Data already in 3857
+                crs=crs_str,
             )
 
-        # Plot data on top
+        # Plot data in native CRS (no reprojection needed)
         gdf.plot(
             ax=ax,
             facecolor="#3388ff",
@@ -746,9 +724,9 @@ def _render_geoparquet(
             linewidth=0.5,
         )
 
-        # Set axis limits to full bounds (not just loaded rows' bounds)
-        ax.set_xlim(bounds_3857[0], bounds_3857[2])
-        ax.set_ylim(bounds_3857[1], bounds_3857[3])
+        # Set axis limits to full bounds from metadata
+        ax.set_xlim(full_bounds[0], full_bounds[2])
+        ax.set_ylim(full_bounds[1], full_bounds[3])
 
         plt.savefig(
             output_path,
