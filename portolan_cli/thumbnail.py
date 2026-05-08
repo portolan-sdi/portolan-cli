@@ -15,6 +15,7 @@ Public API:
 from __future__ import annotations
 
 import gzip
+import json
 import logging
 import math
 import threading
@@ -292,6 +293,43 @@ _MAX_GEOMETRIES = 10000
 _MAX_TILES_PER_ZOOM = 256
 
 
+def _extract_coord_bounds(
+    coords: Any,
+    lons: list[float],
+    lats: list[float],
+    depth: int = 0,
+) -> None:
+    """Recursively extract lon/lat bounds from coordinate arrays.
+
+    Handles all GeoJSON geometry coordinate structures (Point, LineString,
+    Polygon, Multi* types). Appends found coordinates to the lons/lats lists.
+
+    Args:
+        coords: Coordinate array from GeoJSON geometry.
+        lons: List to append longitude values to.
+        lats: List to append latitude values to.
+        depth: Recursion depth (safety limit).
+    """
+    if depth > 6 or not coords:
+        return
+
+    # Check if this is a coordinate pair [lon, lat]
+    if (
+        isinstance(coords, (list, tuple))
+        and len(coords) >= 2
+        and isinstance(coords[0], (int, float))
+        and isinstance(coords[1], (int, float))
+    ):
+        lons.append(float(coords[0]))
+        lats.append(float(coords[1]))
+        return
+
+    # Otherwise recurse into nested arrays
+    if isinstance(coords, list):
+        for c in coords:
+            _extract_coord_bounds(c, lons, lats, depth + 1)
+
+
 def _process_tile_data(
     tile_data: bytes,
     z: int,
@@ -319,8 +357,8 @@ def _process_tile_data(
             if geom.get("type") and geom.get("coordinates"):
                 transformed = _transform_coords(geom["coordinates"], tile_bounds)
                 geometries.append({"type": geom["type"], "coordinates": transformed})
-                all_lons.extend([tile_bounds[0], tile_bounds[2]])
-                all_lats.extend([tile_bounds[1], tile_bounds[3]])
+                # Extract actual geometry bounds (not tile bounds) for accurate basemap extent
+                _extract_coord_bounds(transformed, all_lons, all_lats)
 
                 if len(geometries) >= _MAX_GEOMETRIES:
                     return True
@@ -524,28 +562,110 @@ def _render_geometries(
 
 
 def _read_geoparquet_bounds(gpq_path: Path) -> tuple[float, float, float, float] | None:
-    """Read bounding box from GeoParquet file.
+    """Read bounding box from GeoParquet file metadata (O(1) operation).
+
+    Attempts to read bbox from GeoParquet metadata without loading geometry data.
+    Falls back to computing bounds from data if metadata is unavailable.
 
     Args:
         gpq_path: Path to GeoParquet file.
 
     Returns:
-        Tuple of (minx, miny, maxx, maxy) or None if empty.
+        Tuple of (minx, miny, maxx, maxy) or None if empty/unavailable.
     """
     try:
-        import geopandas as gpd  # type: ignore
+        import pyarrow.parquet as pq
     except ImportError:
-        logger.debug("geopandas not available")
+        logger.debug("pyarrow not available")
+        return None
+
+    try:
+        pq_file = pq.ParquetFile(gpq_path)
+
+        # Try to get bbox from GeoParquet metadata (O(1), no geometry parsing)
+        schema_meta = pq_file.schema_arrow.metadata or {}
+        geo_meta_bytes = schema_meta.get(b"geo", b"{}")
+        geo_meta = json.loads(geo_meta_bytes.decode("utf-8"))
+
+        # GeoParquet spec: columns.<geom_col>.bbox = [minx, miny, maxx, maxy]
+        columns = geo_meta.get("columns", {})
+        for col_meta in columns.values():
+            bbox = col_meta.get("bbox")
+            if bbox and len(bbox) >= 4:
+                return (bbox[0], bbox[1], bbox[2], bbox[3])
+
+        # No bbox in metadata — fall back to reading data
+        logger.debug("No bbox in GeoParquet metadata, falling back to data read")
+        return _read_geoparquet_bounds_from_data(gpq_path)
+
+    except Exception as e:
+        logger.debug("Failed to read GeoParquet metadata: %s", e)
+        return _read_geoparquet_bounds_from_data(gpq_path)
+
+
+def _read_geoparquet_bounds_from_data(gpq_path: Path) -> tuple[float, float, float, float] | None:
+    """Fallback: compute bounds by reading GeoParquet data."""
+    try:
+        import geopandas as gpd  # type: ignore[import-untyped]
+    except ImportError:
         return None
 
     try:
         gdf = gpd.read_parquet(gpq_path)
         if gdf.empty:
             return None
-        return tuple(gdf.total_bounds)
+        bounds = gdf.total_bounds
+        return (bounds[0], bounds[1], bounds[2], bounds[3])
     except Exception as e:
-        logger.debug("Failed to read GeoParquet bounds: %s", e)
+        logger.debug("Failed to read GeoParquet bounds from data: %s", e)
         return None
+
+
+def _read_geoparquet_for_thumbnail(
+    gpq_path: Path,
+) -> tuple[Any, tuple[float, float, float, float] | None, Any]:
+    """Read GeoParquet for thumbnail rendering.
+
+    Gets bbox from metadata (O(1)) for accurate extent, then reads the full file.
+    We render ALL features without sampling — contextily handles CRS reprojection
+    of basemap tiles, which is far more efficient than reprojecting geometry data.
+
+    Args:
+        gpq_path: Path to GeoParquet file.
+
+    Returns:
+        Tuple of (gdf, full_bbox, source_crs) where:
+        - gdf: GeoDataFrame with all features (or None if failed)
+        - full_bbox: (minx, miny, maxx, maxy) from metadata or computed
+        - source_crs: Original CRS of the data
+    """
+    try:
+        import geopandas as gpd
+    except ImportError:
+        logger.debug("geopandas not available")
+        return None, None, None
+
+    try:
+        # Get bbox from metadata first (O(1), no geometry parsing)
+        full_bbox = _read_geoparquet_bounds(gpq_path)
+
+        # Read full file — no sampling, render all features
+        gdf = gpd.read_parquet(gpq_path)
+        if gdf.empty:
+            return None, None, None
+
+        source_crs = gdf.crs
+
+        # If no bbox from metadata, compute from data
+        if full_bbox is None:
+            bounds = gdf.total_bounds
+            full_bbox = (bounds[0], bounds[1], bounds[2], bounds[3])
+
+        return gdf, full_bbox, source_crs
+
+    except Exception as e:
+        logger.debug("Failed to read GeoParquet for thumbnail: %s", e)
+        return None, None, None
 
 
 def _render_geoparquet(
@@ -554,6 +674,10 @@ def _render_geoparquet(
     config: ThumbnailConfig,
 ) -> bool:
     """Render GeoParquet to JPEG thumbnail.
+
+    Renders ALL features in their native CRS without reprojection. Contextily's
+    `crs` parameter handles basemap tile reprojection, which is far more efficient
+    than transforming potentially millions of geometry vertices.
 
     Args:
         gpq_path: Path to GeoParquet file.
@@ -564,34 +688,22 @@ def _render_geoparquet(
         True if successful, False otherwise.
     """
     try:
-        import geopandas as gpd
         import matplotlib.pyplot as plt
     except ImportError:
-        logger.debug("geopandas/matplotlib not available")
+        logger.debug("matplotlib not available")
         return False
 
     try:
-        gdf = gpd.read_parquet(gpq_path)
-        if gdf.empty:
+        # Read full file + bbox from metadata
+        gdf, full_bounds, source_crs = _read_geoparquet_for_thumbnail(gpq_path)
+        if gdf is None or full_bounds is None:
             return False
 
         fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
         ax.set_aspect("equal")
         ax.axis("off")
 
-        # Add basemap first (behind data)
-        bounds = gdf.total_bounds
-        if config.basemap_provider != "none":
-            add_basemap(
-                ax,
-                tuple(bounds),
-                config.basemap_provider,
-                config.basemap_opacity,
-                config.basemap_zoom_adjust,
-                crs=str(gdf.crs) if gdf.crs else None,
-            )
-
-        # Plot data on top
+        # Plot data first (establishes axes extent for basemap zoom calculation)
         gdf.plot(
             ax=ax,
             facecolor="#3388ff",
@@ -599,6 +711,23 @@ def _render_geoparquet(
             alpha=0.6,
             linewidth=0.5,
         )
+
+        # Set axis limits to full bounds from metadata
+        ax.set_xlim(full_bounds[0], full_bounds[2])
+        ax.set_ylim(full_bounds[1], full_bounds[3])
+
+        # Add basemap AFTER data (contextily needs axes extent for zoom calculation)
+        # zorder=-1 renders basemap behind data
+        if config.basemap_provider != "none":
+            crs_str = str(source_crs) if source_crs is not None else "EPSG:4326"
+            add_basemap(
+                ax,
+                full_bounds,
+                config.basemap_provider,
+                config.basemap_opacity,
+                config.basemap_zoom_adjust,
+                crs=crs_str,
+            )
 
         plt.savefig(
             output_path,
