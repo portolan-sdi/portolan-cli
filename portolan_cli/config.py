@@ -67,6 +67,7 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "pmtiles.precision",  # Coordinate decimal precision (default: 6)
         "pmtiles.attribution",  # Attribution HTML for tiles
         "pmtiles.src_crs",  # Override source CRS if metadata is incorrect
+        "push.exclude",  # Glob patterns to exclude from metadata sync (Issue #426)
     }
 )
 
@@ -97,6 +98,26 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "pmtiles.precision": 6,  # Coordinate decimal precision
     "pmtiles.attribution": None,  # None = gpio-pmtiles default
     "pmtiles.src_crs": None,  # None = use metadata CRS
+    # Push exclusion patterns for metadata sync (Issue #426)
+    # These files/directories are never synced to remote storage
+    "push.exclude": [
+        ".portolan/",  # Internal Portolan state
+        ".portolan/*",  # Internal Portolan state (alternate pattern)
+        ".git/",  # Git repository data
+        ".git/*",  # Git repository data (alternate pattern)
+        ".env",  # Environment files with secrets
+        ".env.*",  # Environment file variants
+        "*.py",  # Python source files
+        "*.pyc",  # Python bytecode
+        "__pycache__/",  # Python cache directories
+        "__pycache__/*",  # Python cache (alternate pattern)
+        ".DS_Store",  # macOS metadata
+        "Thumbs.db",  # Windows thumbnails
+        "*.log",  # Log files
+        "*.tmp",  # Temporary files
+        "*.bak",  # Backup files
+        "*~",  # Editor backup files
+    ],
 }
 
 # Default glob patterns for files to exclude from asset tracking (per ADR-0028).
