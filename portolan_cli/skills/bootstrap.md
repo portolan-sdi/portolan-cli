@@ -343,21 +343,3 @@ Present:
 | Mixed languages | Checkpoint and ask |
 | Field exists in source but not extracted | Checkpoint with exact source text |
 | Required field missing from source | Checkpoint and ask user to provide |
-
----
-
-## Supported Sources
-
-**Remote services** (check `portolan extract --help` for latest):
-- `wfs` - OGC Web Feature Service
-- `arcgis` - ArcGIS FeatureServer/MapServer
-- `imageserver` - ArcGIS ImageServer
-
-**Local files** (use init → scan → check → add workflow):
-- Shapefiles (.shp + sidecars)
-- GeoJSON (.geojson, .json)
-- GeoPackage (.gpkg)
-- GeoParquet (.parquet)
-- GeoTIFF (.tif, .tiff)
-
-Note: Non-cloud-native formats (Shapefile, GPKG) are converted to GeoParquet by `portolan check --fix`.
