@@ -497,3 +497,335 @@ thumbnails:
         config = get_thumbnail_config(tmp_path)
 
         assert config.enabled is False
+
+
+# =============================================================================
+# Phase 8: CRS Reprojection and Metadata-Based Reading Tests (Issue #423)
+# =============================================================================
+
+
+class TestPmtilesBoundsExtraction:
+    """Tests for PMTiles geometry bounds extraction (Issue #423 Bug 1)."""
+
+    @pytest.mark.unit
+    def test_process_tile_data_uses_geometry_bounds_not_tile_bounds(self) -> None:
+        """_process_tile_data accumulates geometry coordinate bounds, not tile bounds.
+
+        Bug: At z=0, tile (0,0) covers the entire world (-180 to 180, -85 to 85).
+        Using tile bounds causes basemap to render globally while data is invisible.
+        """
+        from portolan_cli.thumbnail import _process_tile_data, _tile_bounds
+
+        mock_mvt_data = {
+            "layer1": {
+                "features": [
+                    {
+                        "geometry": {
+                            "type": "Polygon",
+                            "coordinates": [
+                                [
+                                    [1800, 1800],
+                                    [2200, 1800],
+                                    [2200, 2200],
+                                    [1800, 2200],
+                                    [1800, 1800],
+                                ]
+                            ],
+                        }
+                    }
+                ]
+            }
+        }
+
+        class MockDecoder:
+            def decode(self, data: bytes) -> dict:
+                return mock_mvt_data
+
+        geometries: list[dict] = []
+        all_lons: list[float] = []
+        all_lats: list[float] = []
+
+        z, x, y = 0, 0, 0
+        tile_bounds = _tile_bounds(z, x, y)
+
+        assert tile_bounds[0] < -170  # lon_min near -180
+        assert tile_bounds[2] > 170  # lon_max near 180
+
+        _process_tile_data(b"mock_data", z, x, y, geometries, all_lons, all_lats, MockDecoder())
+
+        lon_range = max(all_lons) - min(all_lons)
+        lat_range = max(all_lats) - min(all_lats)
+
+        assert lon_range < 100, f"Lon range {lon_range} too large - using tile bounds?"
+        assert lat_range < 100, f"Lat range {lat_range} too large - using tile bounds?"
+
+
+class TestGeoparquetMetadataBounds:
+    """Tests for GeoParquet metadata-based bbox reading (Issue #423 Performance)."""
+
+    @pytest.mark.unit
+    def test_read_bounds_from_metadata(self, tmp_path: Path) -> None:
+        """_read_geoparquet_bounds extracts bbox from GeoParquet metadata (O(1))."""
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.thumbnail import _read_geoparquet_bounds
+
+        gpq_path = tmp_path / "test.parquet"
+
+        # Mock ParquetFile with geo metadata containing bbox
+        mock_pq_file = MagicMock()
+        geo_metadata = {"columns": {"geometry": {"bbox": [-60.5, -32.5, -60.0, -32.0]}}}
+        mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
+
+        with patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file):
+            bounds = _read_geoparquet_bounds(gpq_path)
+
+        assert bounds == (-60.5, -32.5, -60.0, -32.0)
+
+    @pytest.mark.unit
+    def test_read_bounds_fallback_when_no_metadata(self, tmp_path: Path) -> None:
+        """_read_geoparquet_bounds falls back to data read when no bbox in metadata."""
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.thumbnail import _read_geoparquet_bounds
+
+        gpq_path = tmp_path / "test.parquet"
+
+        # Mock ParquetFile with geo metadata but NO bbox
+        mock_pq_file = MagicMock()
+        geo_metadata = {"columns": {"geometry": {}}}  # No bbox
+        mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
+
+        # Mock fallback geopandas read
+        mock_gdf = MagicMock()
+        mock_gdf.empty = False
+        mock_gdf.total_bounds = [-61.0, -33.0, -59.0, -31.0]
+
+        with (
+            patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file),
+            patch("geopandas.read_parquet", return_value=mock_gdf),
+        ):
+            bounds = _read_geoparquet_bounds(gpq_path)
+
+        assert bounds == (-61.0, -33.0, -59.0, -31.0)
+
+
+class TestGeoparquetLimitedReading:
+    """Tests for limited row reading (Issue #423 Performance)."""
+
+    @pytest.mark.unit
+    def test_limits_rows_for_large_files(self, tmp_path: Path) -> None:
+        """_read_geoparquet_for_thumbnail limits rows via .head() for large files."""
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq_path = tmp_path / "large.parquet"
+
+        # Mock a large GeoDataFrame (55,000 rows)
+        mock_gdf = MagicMock()
+        mock_gdf.empty = False
+        mock_gdf.crs = "EPSG:4326"
+        mock_gdf.total_bounds = [-60.5, -32.5, -60.0, -32.0]
+        mock_gdf.__len__ = lambda self: 55000
+
+        # Track .head() call
+        mock_limited_gdf = MagicMock()
+        mock_limited_gdf.empty = False
+        mock_limited_gdf.crs = "EPSG:4326"
+        mock_gdf.head.return_value = mock_limited_gdf
+
+        # Mock bbox from metadata
+        mock_pq_file = MagicMock()
+        geo_metadata = {"columns": {"geometry": {"bbox": [-60.5, -32.5, -60.0, -32.0]}}}
+        mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
+
+        with (
+            patch("geopandas.read_parquet", return_value=mock_gdf),
+            patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file),
+        ):
+            gdf, bbox, crs = _read_geoparquet_for_thumbnail(gpq_path, max_rows=5000)
+
+        # Verify .head() was called with max_rows
+        mock_gdf.head.assert_called_once_with(5000)
+        assert gdf is mock_limited_gdf
+        assert bbox == (-60.5, -32.5, -60.0, -32.0)
+
+    @pytest.mark.unit
+    def test_no_limit_for_small_files(self, tmp_path: Path) -> None:
+        """Small files are not limited (no .head() call)."""
+        import json
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.thumbnail import _read_geoparquet_for_thumbnail
+
+        gpq_path = tmp_path / "small.parquet"
+
+        # Mock a small GeoDataFrame (100 rows)
+        mock_gdf = MagicMock()
+        mock_gdf.empty = False
+        mock_gdf.crs = "EPSG:4326"
+        mock_gdf.total_bounds = [-60.5, -32.5, -60.0, -32.0]
+        mock_gdf.__len__ = lambda self: 100
+
+        mock_pq_file = MagicMock()
+        geo_metadata = {"columns": {"geometry": {"bbox": [-60.5, -32.5, -60.0, -32.0]}}}
+        mock_pq_file.schema_arrow.metadata = {b"geo": json.dumps(geo_metadata).encode("utf-8")}
+
+        with (
+            patch("geopandas.read_parquet", return_value=mock_gdf),
+            patch("pyarrow.parquet.ParquetFile", return_value=mock_pq_file),
+        ):
+            gdf, bbox, crs = _read_geoparquet_for_thumbnail(gpq_path, max_rows=5000)
+
+        # .head() should NOT be called for small files
+        mock_gdf.head.assert_not_called()
+        assert gdf is mock_gdf
+
+
+class TestGeoparquetCrsReprojection:
+    """Tests for EPSG:3857 reprojection (Issue #423 Bug 2)."""
+
+    @pytest.mark.unit
+    def test_render_reprojects_to_3857(self, tmp_path: Path) -> None:
+        """_render_geoparquet reprojects non-3857 data for contextily compatibility."""
+        pytest.importorskip("matplotlib")
+
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.thumbnail import ThumbnailConfig, _render_geoparquet
+
+        gpq_path = tmp_path / "test.parquet"
+        output_path = tmp_path / "test.thumb.jpg"
+        config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
+
+        # Mock the thumbnail reading function
+        mock_gdf = MagicMock()
+        mock_gdf.empty = False
+        mock_gdf.crs = "EPSG:4326"
+
+        mock_gdf_3857 = MagicMock()
+        mock_gdf.to_crs.return_value = mock_gdf_3857
+
+        full_bbox = (-60.5, -32.5, -60.0, -32.0)
+
+        with (
+            patch(
+                "portolan_cli.thumbnail._read_geoparquet_for_thumbnail",
+                return_value=(mock_gdf, full_bbox, "EPSG:4326"),
+            ),
+            patch("matplotlib.pyplot.subplots") as mock_subplots,
+            patch("matplotlib.pyplot.savefig"),
+            patch("matplotlib.pyplot.close"),
+            patch("portolan_cli.thumbnail.add_basemap"),
+            patch("pyproj.Transformer") as mock_transformer_cls,
+        ):
+            mock_ax = MagicMock()
+            mock_subplots.return_value = (MagicMock(), mock_ax)
+            output_path.touch()
+
+            mock_transformer = MagicMock()
+            mock_transformer.transform_bounds.return_value = (
+                -6735000,
+                -3830000,
+                -6680000,
+                -3770000,
+            )
+            mock_transformer_cls.from_crs.return_value = mock_transformer
+
+            _render_geoparquet(gpq_path, output_path, config)
+
+            # Verify reprojection was called
+            mock_gdf.to_crs.assert_called_once_with(epsg=3857)
+
+            # Verify the reprojected gdf was plotted
+            mock_gdf_3857.plot.assert_called_once()
+
+    @pytest.mark.unit
+    def test_render_uses_metadata_bbox_for_extent(self, tmp_path: Path) -> None:
+        """Axis limits use full bbox from metadata, not just loaded rows' bounds."""
+        pytest.importorskip("matplotlib")
+
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.thumbnail import ThumbnailConfig, _render_geoparquet
+
+        gpq_path = tmp_path / "test.parquet"
+        output_path = tmp_path / "test.thumb.jpg"
+        config = ThumbnailConfig(basemap_provider="none")
+
+        mock_gdf = MagicMock()
+        mock_gdf.empty = False
+        mock_gdf.crs = "EPSG:4326"
+        # Loaded rows have smaller bounds
+        mock_gdf.total_bounds = [-60.3, -32.3, -60.2, -32.2]
+
+        mock_gdf_3857 = MagicMock()
+        mock_gdf.to_crs.return_value = mock_gdf_3857
+
+        # Full bbox from metadata is larger
+        full_bbox = (-61.0, -33.0, -59.0, -31.0)
+
+        with (
+            patch(
+                "portolan_cli.thumbnail._read_geoparquet_for_thumbnail",
+                return_value=(mock_gdf, full_bbox, "EPSG:4326"),
+            ),
+            patch("matplotlib.pyplot.subplots") as mock_subplots,
+            patch("matplotlib.pyplot.savefig"),
+            patch("matplotlib.pyplot.close"),
+            patch("pyproj.Transformer") as mock_transformer_cls,
+        ):
+            mock_ax = MagicMock()
+            mock_subplots.return_value = (MagicMock(), mock_ax)
+            output_path.touch()
+
+            # Transform returns full bounds in 3857
+            mock_transformer = MagicMock()
+            mock_transformer.transform_bounds.return_value = (
+                -6790000,
+                -3900000,
+                -6570000,
+                -3650000,
+            )
+            mock_transformer_cls.from_crs.return_value = mock_transformer
+
+            _render_geoparquet(gpq_path, output_path, config)
+
+            # Verify set_xlim/set_ylim called with FULL transformed bounds
+            mock_ax.set_xlim.assert_called_once_with(-6790000, -6570000)
+            mock_ax.set_ylim.assert_called_once_with(-3900000, -3650000)
+
+
+class TestGeoparquetThumbnailIntegration:
+    """Integration tests using real GeoParquet fixtures."""
+
+    @pytest.mark.integration
+    def test_real_geoparquet_thumbnail_with_4326_data(
+        self, fixtures_dir: Path, tmp_path: Path
+    ) -> None:
+        """Generates thumbnail from real EPSG:4326 GeoParquet file."""
+        pytest.importorskip("geopandas")
+        pytest.importorskip("matplotlib")
+
+        import shutil
+
+        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        # Use simple.parquet which is in OGC:CRS84 (equivalent to EPSG:4326)
+        src_path = fixtures_dir / "simple.parquet"
+        if not src_path.exists():
+            pytest.skip("simple.parquet fixture not found")
+
+        test_gpq = tmp_path / "simple.parquet"
+        shutil.copy(src_path, test_gpq)
+
+        config = ThumbnailConfig(basemap_provider="none")  # No network for unit test
+        result = generate_thumbnail_from_geoparquet(test_gpq, config)
+
+        assert result is not None
+        assert result.exists()
+        assert result.stat().st_size > 0
