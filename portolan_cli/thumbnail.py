@@ -703,19 +703,7 @@ def _render_geoparquet(
         ax.set_aspect("equal")
         ax.axis("off")
 
-        # Add basemap first (behind data) — contextily reprojects tiles to match data CRS
-        if config.basemap_provider != "none":
-            crs_str = str(source_crs) if source_crs is not None else "EPSG:4326"
-            add_basemap(
-                ax,
-                full_bounds,
-                config.basemap_provider,
-                config.basemap_opacity,
-                config.basemap_zoom_adjust,
-                crs=crs_str,
-            )
-
-        # Plot data in native CRS (no reprojection needed)
+        # Plot data first (establishes axes extent for basemap zoom calculation)
         gdf.plot(
             ax=ax,
             facecolor="#3388ff",
@@ -727,6 +715,19 @@ def _render_geoparquet(
         # Set axis limits to full bounds from metadata
         ax.set_xlim(full_bounds[0], full_bounds[2])
         ax.set_ylim(full_bounds[1], full_bounds[3])
+
+        # Add basemap AFTER data (contextily needs axes extent for zoom calculation)
+        # zorder=-1 renders basemap behind data
+        if config.basemap_provider != "none":
+            crs_str = str(source_crs) if source_crs is not None else "EPSG:4326"
+            add_basemap(
+                ax,
+                full_bounds,
+                config.basemap_provider,
+                config.basemap_opacity,
+                config.basemap_zoom_adjust,
+                crs=crs_str,
+            )
 
         plt.savefig(
             output_path,
