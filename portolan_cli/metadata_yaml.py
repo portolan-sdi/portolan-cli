@@ -624,6 +624,30 @@ known_issues: ""                    # optional - Known limitations or caveats
 #     nodata: 0                     # Uniform nodata for all bands
 #     # Or per-band:
 #     # nodata: [0, 0, 255]         # Per-band nodata values
+
+# -----------------------------------------------------------------------------
+# OPTIONAL: Consumption examples
+# -----------------------------------------------------------------------------
+# Add dataset-specific query examples, especially when structure is unusual
+# (multiple related files, required joins, non-obvious column meanings).
+# Default examples (DuckDB SQL + GeoPandas) are auto-generated if omitted.
+#
+# examples:
+#   - engine: duckdb                # duckdb | python | r | other
+#     description: "Join census data with geographic boundaries"
+#     code: |
+#       SELECT r.*, c.population
+#       FROM read_parquet('https://.../radios.parquet') r
+#       JOIN read_parquet('https://.../census-data.parquet') c
+#         ON r.cod_2022 = c.id_geo
+#   - engine: python
+#     description: "Load and merge with GeoPandas"
+#     code: |
+#       import geopandas as gpd
+#       import pandas as pd
+#       radios = gpd.read_parquet('https://.../radios.parquet')
+#       census = pd.read_parquet('https://.../census-data.parquet')
+#       merged = radios.merge(census, left_on='cod_2022', right_on='id_geo')
 """
 
 
