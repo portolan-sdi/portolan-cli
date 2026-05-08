@@ -20,6 +20,7 @@ See ADR-0007 for CLI wraps Python API (all logic in library layer).
 from __future__ import annotations
 
 import asyncio
+import fnmatch  # Module-level import for performance (used in hot path)
 import json
 import threading
 import time
@@ -95,7 +96,9 @@ class PushResult:
         files_uploaded: Number of asset files uploaded.
         versions_pushed: Number of new versions pushed (from versions.json).
         conflicts: List of conflict descriptions.
-        errors: List of error messages.
+        errors: List of error messages (fatal errors that caused push to fail).
+        metadata_errors: List of metadata upload errors (non-fatal, push continues).
+            These indicate partial sync - metadata files failed but assets succeeded.
         dry_run: True if this was a dry-run operation (no network calls made).
         would_push_versions: In dry-run mode, max versions that would be pushed
             (upper bound; actual count depends on remote state).
@@ -107,9 +110,15 @@ class PushResult:
     versions_pushed: int
     conflicts: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    metadata_errors: list[str] = field(default_factory=list)
     dry_run: bool = False
     would_push_versions: int = 0
     metrics: UploadMetrics | None = None
+
+    @property
+    def has_metadata_errors(self) -> bool:
+        """True if any metadata files failed to upload."""
+        return len(self.metadata_errors) > 0
 
 
 @dataclass
@@ -662,6 +671,289 @@ def _discover_stac_files(
     return stac_files
 
 
+# =============================================================================
+# Metadata File Discovery (Issue #426)
+# =============================================================================
+
+
+def _matches_exclude_pattern(path: Path, pattern: str, base_dir: Path) -> bool:
+    """Check if a path matches an exclusion pattern.
+
+    Supports:
+    - Directory patterns ending with / (e.g., ".portolan/", "__pycache__/")
+      These match if ANY path component equals the directory name.
+    - Glob patterns with * (e.g., "*.py", ".env.*")
+    - Exact filename matches (e.g., ".env", ".DS_Store")
+
+    Note: fnmatch is imported at module level for performance since this
+    function is called O(files × patterns) times during discovery.
+
+    Args:
+        path: Absolute path to check.
+        pattern: Exclusion pattern.
+        base_dir: Base directory for relative path matching.
+
+    Returns:
+        True if the path matches the pattern and should be excluded.
+    """
+    # Get relative path for pattern matching
+    try:
+        rel_path = path.relative_to(base_dir)
+    except ValueError:
+        return False
+
+    rel_str = str(rel_path)
+    name = path.name
+
+    # Directory pattern (ends with / or /*)
+    # Unified handling: ".portolan/" and ".portolan/*" both mean
+    # "exclude anything under a directory named .portolan"
+    if pattern.endswith("/") or pattern.endswith("/*"):
+        dir_name = pattern.rstrip("/").rstrip("*").rstrip("/")
+        # Check if any path component matches the directory name
+        for part in rel_path.parts:
+            if part == dir_name:
+                return True
+        return False
+
+    # Glob pattern (contains *)
+    if "*" in pattern:
+        # Match against filename
+        if fnmatch.fnmatch(name, pattern):
+            return True
+        # Also match against relative path for patterns like "**/*.py"
+        if fnmatch.fnmatch(rel_str, pattern):
+            return True
+        return False
+
+    # Exact match against filename
+    return name == pattern
+
+
+def _get_exclude_patterns(catalog_root: Path | None = None) -> list[str]:
+    """Get exclusion patterns from config or defaults.
+
+    Args:
+        catalog_root: Catalog root for loading config. If None, uses defaults.
+
+    Returns:
+        List of exclusion patterns.
+    """
+    from portolan_cli.config import DEFAULT_SETTINGS, get_setting
+
+    if catalog_root is None:
+        return list(DEFAULT_SETTINGS.get("push.exclude", []))
+
+    patterns = get_setting("push.exclude", catalog_path=catalog_root)
+    if patterns is None:
+        return list(DEFAULT_SETTINGS.get("push.exclude", []))
+    return list(patterns)
+
+
+# Security-critical patterns that MUST always be excluded.
+# These are never overridden by user config - they are merged with user patterns.
+# Prevents accidental upload of secrets, git history, or internal state.
+_SECURITY_EXCLUDE_PATTERNS: frozenset[str] = frozenset(
+    [
+        ".env",  # Environment files with secrets
+        ".env.*",  # Environment file variants (.env.local, .env.production)
+        ".git/",  # Git repository data
+        ".portolan/",  # Internal Portolan state
+    ]
+)
+
+
+def _get_effective_exclude_patterns(
+    catalog_root: Path | None = None,
+    additional_patterns: list[str] | None = None,
+) -> list[str]:
+    """Get effective exclusion patterns, always including security-critical ones.
+
+    This function ensures security patterns (.env, .git/, .portolan/) are ALWAYS
+    included, even when custom patterns are provided. This prevents accidental
+    upload of secrets or internal state.
+
+    Args:
+        catalog_root: Catalog root for loading config. If None, uses defaults.
+        additional_patterns: Extra patterns to add (merged with defaults, not replacing).
+
+    Returns:
+        List of exclusion patterns including security-critical ones.
+    """
+    # Start with security-critical patterns (always included)
+    patterns: set[str] = set(_SECURITY_EXCLUDE_PATTERNS)
+
+    # Add config/default patterns
+    config_patterns = _get_exclude_patterns(catalog_root)
+    patterns.update(config_patterns)
+
+    # Add any additional patterns
+    if additional_patterns:
+        patterns.update(additional_patterns)
+
+    return list(patterns)
+
+
+def _load_versioned_asset_paths(catalog_root: Path, collection: str) -> set[str]:
+    """Load versioned asset relative paths from versions.json.
+
+    Args:
+        catalog_root: Path to catalog root.
+        collection: Collection identifier.
+
+    Returns:
+        Set of relative paths (as POSIX strings) for all versioned assets.
+        Returns empty set if versions.json doesn't exist or is invalid.
+    """
+    versions_file = catalog_root / collection / "versions.json"
+    if not versions_file.exists():
+        return set()
+
+    try:
+        data = json.loads(versions_file.read_text())
+        versioned_paths: set[str] = set()
+
+        # Extract asset paths from all versions
+        for version_entry in data.get("versions", []):
+            assets = version_entry.get("assets", {})
+            for asset_key, asset_info in assets.items():
+                # asset_key is typically the relative path like "data.parquet"
+                # or can be nested like "v1/data.parquet"
+                if isinstance(asset_info, dict):
+                    # Check for explicit href if available
+                    href = asset_info.get("href", asset_key)
+                    versioned_paths.add(href)
+                versioned_paths.add(asset_key)
+
+        return versioned_paths
+    except (json.JSONDecodeError, KeyError, TypeError):
+        # Invalid versions.json - return empty set, don't fail discovery
+        return set()
+
+
+def _discover_catalog_files(
+    catalog_root: Path,
+    collection: str | None = None,
+    *,
+    include_catalog_root: bool = False,
+    additional_exclude_patterns: list[str] | None = None,
+    stac_item_paths: set[Path] | None = None,
+) -> list[Path]:
+    """Discover all catalog files that should be synced to remote (Issue #426).
+
+    This discovers ALL files in the catalog/collection except:
+    - Files matching exclusion patterns (ALWAYS includes security patterns)
+    - Versioned assets (loaded from versions.json, handled by asset upload)
+    - versions.json (uploaded last for atomicity)
+    - Files already discovered by _discover_stac_files (collection.json, item/*.json)
+    - Symlinks (security: could point outside catalog)
+
+    Security: The security-critical patterns (.env, .git/, .portolan/) are ALWAYS
+    applied, even when additional_exclude_patterns is provided. This prevents
+    accidental upload of secrets.
+
+    Args:
+        catalog_root: Path to catalog root.
+        collection: Collection identifier. If None and include_catalog_root=True,
+            only discovers root-level files.
+        include_catalog_root: If True, include root-level files (not in collection).
+        additional_exclude_patterns: Extra patterns to add (merged with defaults,
+            never replaces security patterns).
+        stac_item_paths: Optional set of known STAC item JSON paths to exclude.
+            If provided, used instead of heuristic detection.
+
+    Returns:
+        List of absolute paths to files that should be synced.
+    """
+    # Always use effective patterns which include security-critical ones
+    exclude_patterns = _get_effective_exclude_patterns(catalog_root, additional_exclude_patterns)
+
+    # Files to exclude because they're handled by other upload phases
+    # These are uploaded in specific order for atomicity
+    handled_separately = {
+        "versions.json",  # Uploaded last (manifest-last)
+        "collection.json",  # Uploaded by _upload_stac_files
+        "catalog.json",  # Uploaded by _push_all_upload_root_files
+        "README.md",  # Uploaded by _upload_readmes_async
+    }
+
+    # Load versioned asset paths from versions.json (if collection specified)
+    # These are already handled by _upload_assets_async
+    versioned_asset_paths: set[str] = set()
+    if collection is not None:
+        versioned_asset_paths = _load_versioned_asset_paths(catalog_root, collection)
+
+    discovered: list[Path] = []
+
+    def should_exclude(path: Path, base_dir: Path) -> bool:
+        """Check if a file should be excluded."""
+        # Files handled by other upload phases
+        if path.name in handled_separately:
+            return True
+
+        # Versioned assets (handled by _upload_assets_async)
+        # Check if the relative path matches any versioned asset
+        if versioned_asset_paths:
+            try:
+                rel_path = path.relative_to(base_dir)
+                rel_posix = rel_path.as_posix()
+                # Check both full relative path and just the filename
+                # (versions.json may use either format)
+                if rel_posix in versioned_asset_paths or path.name in versioned_asset_paths:
+                    return True
+                # Also check collection-relative path
+                if collection is not None:
+                    coll_rel = rel_posix.removeprefix(f"{collection}/")
+                    if coll_rel in versioned_asset_paths:
+                        return True
+            except ValueError:
+                pass
+
+        # Item STAC files (handled by _discover_stac_files)
+        if stac_item_paths is not None:
+            # Use explicit list if provided (more precise)
+            if path in stac_item_paths:
+                return True
+        else:
+            # Heuristic fallback: collection/item_dir/item_dir.json
+            # This pattern matches STAC item files where the JSON filename
+            # matches its parent directory name
+            if path.suffix == ".json" and path.parent.name == path.stem:
+                return True
+
+        # Check exclusion patterns
+        for pattern in exclude_patterns:
+            if _matches_exclude_pattern(path, pattern, base_dir):
+                return True
+
+        return False
+
+    # Walk collection directory if specified
+    if collection is not None:
+        collection_dir = catalog_root / collection
+        if collection_dir.exists():
+            for item in collection_dir.rglob("*"):
+                # Skip symlinks (security: could point outside catalog)
+                if item.is_symlink():
+                    continue
+                if item.is_file() and not should_exclude(item, catalog_root):
+                    discovered.append(item)
+
+    # Optionally include catalog root files
+    if include_catalog_root:
+        for item in catalog_root.iterdir():
+            # Skip directories (collections are handled separately)
+            if item.is_dir():
+                continue
+            # Skip symlinks (security)
+            if item.is_symlink():
+                continue
+            if item.is_file() and not should_exclude(item, catalog_root):
+                discovered.append(item)
+
+    return discovered
+
+
 def _stat_files_safely(files: list[Path], errors: list[str]) -> tuple[dict[Path, int], list[Path]]:
     """Stat files safely, recording errors for files that can't be stat'd.
 
@@ -890,6 +1182,7 @@ def _upload_versions_json(
 
 def _handle_push_dry_run(
     catalog_root: Path,
+    collection: str,
     local_data: dict[str, Any],
     local_versions: list[str],
 ) -> PushResult:
@@ -899,6 +1192,7 @@ def _handle_push_dry_run(
 
     Args:
         catalog_root: Resolved catalog root path.
+        collection: Collection identifier.
         local_data: Parsed versions.json data.
         local_versions: List of version strings from local data.
 
@@ -922,6 +1216,19 @@ def _handle_push_dry_run(
     info(f"[DRY RUN] Would upload up to {asset_count} asset file(s)")
     for rel_path in asset_paths:
         detail(f"  {rel_path}")
+
+    # Show metadata files that would be synced (Issue #426)
+    metadata_files = _discover_catalog_files(
+        catalog_root,
+        collection,
+        include_catalog_root=True,  # Dry-run shows complete picture
+    )
+    if metadata_files:
+        info(f"[DRY RUN] Would sync {len(metadata_files)} metadata file(s)")
+        for f in metadata_files:
+            rel_path = f.relative_to(catalog_root)
+            detail(f"  {rel_path}")
+
     warn("[DRY RUN] Remote conflict detection skipped (requires network)")
     warn("[DRY RUN] Actual versions pushed may be fewer if remote already has some")
 
@@ -1436,6 +1743,78 @@ async def _upload_readmes_async(
     return uploaded_count, errors
 
 
+async def _upload_metadata_files_async(
+    store: ObjectStore,
+    catalog_root: Path,
+    prefix: str,
+    collection: str,
+    *,
+    include_catalog_root: bool = False,
+    concurrency: int = 50,
+    verbose: bool = False,
+) -> tuple[int, list[str]]:
+    """Upload metadata files (style.json, thumbnails, etc.) to remote (Issue #426).
+
+    This uploads ALL catalog files that aren't versioned assets or STAC metadata.
+    Happens after assets and STAC files, before versions.json (manifest-last).
+
+    Security: Uses _get_effective_exclude_patterns which always includes
+    security-critical patterns (.env, .git/, .portolan/).
+
+    Args:
+        store: Object store instance.
+        catalog_root: Path to catalog root.
+        prefix: Prefix in object storage.
+        collection: Collection identifier.
+        include_catalog_root: If True, include root-level metadata files.
+        concurrency: Maximum concurrent uploads.
+        verbose: If True, print per-file upload details.
+
+    Returns:
+        Tuple of (files_uploaded, errors). Errors are returned, not swallowed,
+        so callers can decide how to handle partial failures.
+    """
+    metadata_files = _discover_catalog_files(
+        catalog_root,
+        collection,
+        include_catalog_root=include_catalog_root,
+    )
+
+    if not metadata_files:
+        return 0, []
+
+    errors: list[str] = []
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def upload_one(file_path: Path) -> bool:
+        """Upload a single metadata file with semaphore control."""
+        async with semaphore:
+            try:
+                rel_path = file_path.relative_to(catalog_root)
+                # Use as_posix() for consistent path separators in object keys
+                target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+                content = file_path.read_bytes()
+                await obs.put_async(store, target_key, content)
+                if verbose:
+                    detail(f"  Uploaded {rel_path} ({len(content)} bytes)")
+                return True
+            except Exception as e:
+                error_msg = f"Failed to upload metadata file {file_path.name}: {e}"
+                errors.append(error_msg)
+                error(error_msg)
+                return False
+
+    # Upload all metadata files in parallel
+    tasks = [upload_one(f) for f in metadata_files]
+    results = await asyncio.gather(*tasks)
+    uploaded_count = sum(1 for r in results if r)
+
+    if uploaded_count > 0 and not verbose:
+        info(f"Synced {uploaded_count} metadata file(s)")
+
+    return uploaded_count, errors
+
+
 async def _execute_push_uploads_async(
     store: ObjectStore,
     catalog_root: Path,
@@ -1546,6 +1925,23 @@ async def _execute_push_uploads_async(
             metrics=metrics,
         )
 
+    # Upload metadata files (style.json, thumbnails, etc.) - Issue #426
+    # This happens after STAC files, before versions.json (manifest-last)
+    metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
+        store,
+        catalog_root,
+        prefix,
+        collection,
+        include_catalog_root=include_catalog,
+        concurrency=concurrency,
+        verbose=verbose,
+    )
+    files_uploaded += metadata_uploaded
+
+    # Metadata errors are warnings, not fatal (push continues)
+    # But we surface them in PushResult so callers can act on partial sync
+    all_metadata_errors: list[str] = list(metadata_errors)
+
     # Upload versions.json (async, manifest-last)
     info("Uploading versions.json...")
     try:
@@ -1568,6 +1964,7 @@ async def _execute_push_uploads_async(
             versions_pushed=0,
             conflicts=[],
             errors=[f"Failed to upload versions.json: {e}"],
+            metadata_errors=all_metadata_errors,
             metrics=metrics,
         )
 
@@ -1576,8 +1973,14 @@ async def _execute_push_uploads_async(
         store, catalog_root, prefix, stac_files, concurrency=concurrency
     )
     files_uploaded += readme_uploaded
-    for err in readme_errors:
-        warn(err)
+    # README errors are also non-fatal metadata issues
+    all_metadata_errors.extend(readme_errors)
+
+    # Log metadata warnings (after push succeeds, so user sees them)
+    if all_metadata_errors:
+        warn(f"{len(all_metadata_errors)} metadata file(s) failed to upload:")
+        for err in all_metadata_errors:
+            warn(f"  {err}")
 
     return PushResult(
         success=True,
@@ -1585,6 +1988,7 @@ async def _execute_push_uploads_async(
         versions_pushed=len(diff.local_only),
         conflicts=[],
         errors=[],
+        metadata_errors=all_metadata_errors,
         metrics=metrics,
     )
 
@@ -1656,7 +2060,7 @@ async def push_async(
 
     # Dry-run: return early without network I/O
     if dry_run:
-        return _handle_push_dry_run(catalog_root, local_data, local_versions)
+        return _handle_push_dry_run(catalog_root, collection, local_data, local_versions)
 
     # Setup store and fetch remote versions
     store, prefix = setup_store(destination, profile=profile, region=region)
@@ -1841,6 +2245,25 @@ def _push_all_process_result(
             stats["errors"][coll] = ["Unknown error"]
 
 
+def _discover_root_metadata_files(catalog_root: Path) -> list[Path]:
+    """Discover root-level metadata files that should be synced (Issue #426).
+
+    This is a convenience wrapper around _discover_catalog_files for root-only
+    discovery. Delegates to the unified discovery function for consistency.
+
+    Args:
+        catalog_root: Path to catalog root.
+
+    Returns:
+        List of absolute paths to root metadata files.
+    """
+    return _discover_catalog_files(
+        catalog_root,
+        collection=None,  # No collection, root only
+        include_catalog_root=True,
+    )
+
+
 def _push_all_upload_root_files(
     catalog_root: Path,
     destination: str,
@@ -1849,12 +2272,13 @@ def _push_all_upload_root_files(
     dry_run: bool,
     stats: dict[str, Any],
 ) -> bool:
-    """Upload root-level files after all collections (Issue #357).
+    """Upload root-level files after all collections (Issue #357, #426).
 
     Uploads from catalog root (in order):
     1. README.md (documentation, optional)
-    2. catalog.json (STAC catalog metadata, required)
-    3. versions.json (manifest, required - uploaded LAST per manifest-last atomicity)
+    2. Root metadata files (style.json, thumbnails, etc.) - Issue #426
+    3. catalog.json (STAC catalog metadata, required)
+    4. versions.json (manifest, required - uploaded LAST per manifest-last atomicity)
 
     These are uploaded AFTER all collections succeed.
 
@@ -1878,9 +2302,16 @@ def _push_all_upload_root_files(
         warn(f"catalog.json not found at {catalog_root} - remote catalog may be incomplete")
         return True
 
+    # Discover root metadata files (Issue #426)
+    root_metadata = _discover_root_metadata_files(catalog_root)
+
     if dry_run:
         if root_readme.exists():
             info("[DRY RUN] Would upload README.md")
+        if root_metadata:
+            info(f"[DRY RUN] Would sync {len(root_metadata)} root metadata file(s)")
+            for f in root_metadata:
+                detail(f"  {f.name}")
         info("[DRY RUN] Would upload catalog.json")
         if root_versions.exists():
             info("[DRY RUN] Would upload versions.json")
@@ -1895,6 +2326,16 @@ def _push_all_upload_root_files(
             obs.put(store, readme_key, root_readme.read_bytes())
             success("Uploaded README.md")
             stats["total_files"] += 1
+
+        # Upload root metadata files (Issue #426)
+        for meta_file in root_metadata:
+            meta_key = f"{prefix}/{meta_file.name}".lstrip("/")
+            obs.put(store, meta_key, meta_file.read_bytes())
+            detail(f"  Synced {meta_file.name}")
+            stats["total_files"] += 1
+
+        if root_metadata:
+            info(f"Synced {len(root_metadata)} root metadata file(s)")
 
         # Upload catalog.json (STAC metadata)
         catalog_key = f"{prefix}/catalog.json".lstrip("/")
