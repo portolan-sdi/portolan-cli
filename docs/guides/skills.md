@@ -6,6 +6,7 @@ Portolan includes **skills** — markdown guides that help AI assistants guide y
 
 | Skill | Description |
 |-------|-------------|
+| `bootstrap` | End-to-end catalog creation from any data source |
 | `sourcecoop` | Upload data to [Source Cooperative](https://source.coop) |
 | `consume` | Query and explore Portolan catalogs with DuckDB/Python |
 
@@ -30,6 +31,82 @@ portolan skills list
 # View a specific skill
 portolan skills show sourcecoop
 ```
+
+---
+
+## Bootstrap Skill
+
+The `bootstrap` skill guides you through creating a complete geospatial data catalog from scratch — from any source portolan supports.
+
+### What It Does
+
+1. **Discovers data** — Scans remote services or local files
+2. **Extracts/converts** — Pulls from WFS/ArcGIS or converts local files to cloud-native formats
+3. **Configures remote** — Sets up destination (Source Co-op, S3, GCS, etc.)
+4. **Generates assets** — PMTiles, thumbnails, styles
+5. **Enriches metadata** — Fills gaps from source metadata (never invents content)
+6. **Creates READMEs** — Documentation at all levels
+7. **Pushes catalog** — Uploads everything to remote storage
+
+### Key Principles
+
+The bootstrap skill is **checkpoint-based** — it pauses at key decisions and asks rather than assumes:
+
+- ⏸️ "Found 187 layers. Estimated 500MB. Proceed?"
+- ⏸️ "3 layers failed extraction. Continue with successful layers?"
+- ⏸️ "License for this data?"
+- ⏸️ "Generate PMTiles? (tippecanoe found)"
+
+### Two Workflows
+
+**Remote services** (WFS, ArcGIS FeatureServer, ImageServer):
+
+```bash
+portolan extract wfs "https://example.com/geoserver/wfs" --dry-run  # Discovery
+portolan extract wfs "https://example.com/geoserver/wfs" --output . # Extract
+```
+
+**Local files** (Shapefile, GeoPackage, GeoJSON, etc.):
+
+```bash
+portolan init --auto           # Initialize catalog
+portolan scan                  # Discover files
+portolan check --fix           # Convert to cloud-native formats
+portolan add <collection>/     # Register as collections
+```
+
+### Quick Example
+
+```bash
+# Bootstrap a WFS service
+cd ~/data/my-catalog
+portolan extract wfs "https://example.com/geoserver/wfs" --output .
+echo "PORTOLAN_REMOTE=s3://bucket/my-catalog/" > .env
+portolan add . --recursive --pmtiles
+portolan metadata init --recursive
+portolan readme --recursive
+portolan push
+```
+
+### Metadata Enrichment
+
+The skill **only uses information from the source** — it never invents content:
+
+✅ Fill fields that exist in source but weren't auto-extracted
+✅ Fix encoding issues (mojibake)
+✅ Clean up formatting
+
+❌ Invent titles not in source
+❌ Translate without source translations
+❌ Add context not in original
+
+### Troubleshooting
+
+**"File must be in subdirectory"** — Portolan requires files in subdirectories. Each subdirectory becomes a STAC collection.
+
+**Non-cloud-native files** — Run `portolan check --fix` to convert GPKG/Shapefile to GeoParquet.
+
+**Missing PMTiles** — Check `which tippecanoe`. PMTiles requires tippecanoe to be installed.
 
 ---
 
