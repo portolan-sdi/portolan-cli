@@ -202,7 +202,7 @@ styles:
             collection_path=collection_path,
             geometry_type="Polygon",
             source_layer="data",
-            pmtiles_filename="data.pmtiles",
+            pmtiles_relative_path="data.pmtiles",
             config=config,
         )
 

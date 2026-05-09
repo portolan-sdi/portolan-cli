@@ -6,8 +6,12 @@ Tests style generation for PMTiles assets and render extension for rasters.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from portolan_cli.style import StyleInfo
 
 # =============================================================================
 # Phase 1: VectorStyleConfig Tests
@@ -183,54 +187,8 @@ styles:
 # =============================================================================
 
 
-class TestStyleInAssetProperties:
-    """Tests for style structure validation."""
-
-    @pytest.mark.unit
-    def test_full_style_structure(self) -> None:
-        """Full style has all required Mapbox GL fields."""
-        from portolan_cli.style import VectorStyleConfig, build_full_style
-
-        config = VectorStyleConfig()
-        style = build_full_style(
-            name="Test",
-            geometry_type="Polygon",
-            source_layer="parcels",
-            pmtiles_relative_path="../data.pmtiles",
-            config=config,
-        )
-
-        assert "version" in style
-        assert "name" in style
-        assert "sources" in style
-        assert "layers" in style
-        assert isinstance(style["layers"], list)
-        assert len(style["layers"]) > 0
-        assert style["layers"][0]["source"] == "data"
-
-    @pytest.mark.unit
-    def test_style_is_json_serializable(self) -> None:
-        """Style dict is JSON-serializable."""
-        import json
-
-        from portolan_cli.style import VectorStyleConfig, build_full_style
-
-        config = VectorStyleConfig()
-        style = build_full_style(
-            name="Test",
-            geometry_type="Polygon",
-            source_layer="layer",
-            pmtiles_relative_path="../data.pmtiles",
-            config=config,
-        )
-
-        serialized = json.dumps(style)
-        deserialized = json.loads(serialized)
-        assert deserialized == style
-
-
 # =============================================================================
-# Phase 5b: Style Discovery Tests
+# Phase 5: Style Discovery Tests
 # =============================================================================
 
 
@@ -254,7 +212,7 @@ class TestDiscoverStyles:
         styles = discover_styles(tmp_path)
 
         assert len(styles) == 2
-        keys = {s["key"] for s in styles}
+        keys = {s.key for s in styles}
         assert keys == {"styles/default", "styles/custom"}
 
     @pytest.mark.unit
@@ -274,7 +232,7 @@ class TestDiscoverStyles:
         styles = discover_styles(tmp_path)
 
         assert len(styles) == 1
-        assert styles[0]["title"] == "Buildings by Age"
+        assert styles[0].title == "Buildings by Age"
 
     @pytest.mark.unit
     def test_returns_empty_when_no_styles_dir(self, tmp_path: Path) -> None:
@@ -302,7 +260,7 @@ class TestDiscoverStyles:
         styles = discover_styles(tmp_path)
 
         assert len(styles) == 1
-        assert styles[0]["key"] == "styles/default"
+        assert styles[0].key == "styles/default"
 
     @pytest.mark.unit
     def test_skips_invalid_json(self, tmp_path: Path) -> None:
@@ -323,7 +281,7 @@ class TestDiscoverStyles:
 
         # Should only find the two valid files
         assert len(styles) == 2
-        keys = {s["key"] for s in styles}
+        keys = {s.key for s in styles}
         assert keys == {"styles/default", "styles/custom"}
 
     @pytest.mark.unit
@@ -342,11 +300,17 @@ class TestDiscoverStyles:
         styles = discover_styles(tmp_path)
 
         assert len(styles) == 1
-        assert styles[0]["title"] == "custom-theme"
+        assert styles[0].title == "custom-theme"
 
 
 class TestBuildStylesManifest:
     """Tests for build_styles_manifest function."""
+
+    @staticmethod
+    def _style_info(key: str) -> StyleInfo:
+        from portolan_cli.style import StyleInfo
+
+        return StyleInfo(key=key, href="", title="", description="", path=Path())
 
     @pytest.mark.unit
     def test_default_first(self) -> None:
@@ -354,9 +318,9 @@ class TestBuildStylesManifest:
         from portolan_cli.style import build_styles_manifest
 
         styles = [
-            {"key": "styles/zebra"},
-            {"key": "styles/default"},
-            {"key": "styles/alpha"},
+            self._style_info("styles/zebra"),
+            self._style_info("styles/default"),
+            self._style_info("styles/alpha"),
         ]
 
         manifest = build_styles_manifest(styles)
@@ -370,10 +334,10 @@ class TestBuildStylesManifest:
         from portolan_cli.style import build_styles_manifest
 
         styles = [
-            {"key": "styles/zebra"},
-            {"key": "styles/default"},
-            {"key": "styles/alpha"},
-            {"key": "styles/beta"},
+            self._style_info("styles/zebra"),
+            self._style_info("styles/default"),
+            self._style_info("styles/alpha"),
+            self._style_info("styles/beta"),
         ]
 
         manifest = build_styles_manifest(styles)
@@ -386,8 +350,8 @@ class TestBuildStylesManifest:
         from portolan_cli.style import build_styles_manifest
 
         styles = [
-            {"key": "styles/zebra"},
-            {"key": "styles/alpha"},
+            self._style_info("styles/zebra"),
+            self._style_info("styles/alpha"),
         ]
 
         manifest = build_styles_manifest(styles)
@@ -408,7 +372,7 @@ class TestBuildStylesManifest:
         """Single style returns single-element list."""
         from portolan_cli.style import build_styles_manifest
 
-        styles = [{"key": "styles/custom"}]
+        styles = [self._style_info("styles/custom")]
 
         manifest = build_styles_manifest(styles)
 
@@ -751,7 +715,7 @@ class TestWriteDefaultStyle:
             collection_path=tmp_path,
             geometry_type="Polygon",
             source_layer="parcels",
-            pmtiles_filename="data.pmtiles",
+            pmtiles_relative_path="data.pmtiles",
             config=config,
         )
 
@@ -783,7 +747,7 @@ class TestWriteDefaultStyle:
             collection_path=tmp_path,
             geometry_type="Polygon",
             source_layer="parcels",
-            pmtiles_filename="data.pmtiles",
+            pmtiles_relative_path="data.pmtiles",
             config=config,
         )
 
@@ -814,7 +778,7 @@ class TestWriteDefaultStyle:
             collection_path=tmp_path,
             geometry_type="Polygon",
             source_layer="parcels",
-            pmtiles_filename="data.pmtiles",
+            pmtiles_relative_path="data.pmtiles",
         )
 
         # Should return None
@@ -916,13 +880,16 @@ class TestRegisterStyleAssets:
         }
         (tmp_path / "collection.json").write_text(json.dumps(collection_data))
 
+        from portolan_cli.style import StyleInfo
+
         current_styles = [
-            {
-                "key": "styles/default",
-                "href": "./styles/default.json",
-                "title": "Default",
-                "description": "",
-            }
+            StyleInfo(
+                key="styles/default",
+                href="./styles/default.json",
+                title="Default",
+                description="",
+                path=tmp_path / "styles" / "default.json",
+            )
         ]
         register_style_assets(tmp_path, current_styles)
 

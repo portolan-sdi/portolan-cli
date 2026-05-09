@@ -270,7 +270,7 @@ def _write_default_style_for_geoparquet(
     parquet_path: Path,
     layer_name: str,
     collection_path: Path,
-    pmtiles_filename: str,
+    pmtiles_relative_path: str,
     catalog_path: Path | None = None,
 ) -> Path | None:
     """Write a default style file for a PMTiles asset.
@@ -279,12 +279,17 @@ def _write_default_style_for_geoparquet(
         parquet_path: Path to source GeoParquet (for geometry type detection).
         layer_name: Layer name in the PMTiles.
         collection_path: Path to the collection directory.
-        pmtiles_filename: Name of the PMTiles file.
+        pmtiles_relative_path: PMTiles path relative to collection (e.g., "data.pmtiles").
         catalog_path: Optional catalog path for loading style config.
 
     Returns:
         Path to the written style file, or None if skipped.
     """
+    # Check existence before expensive metadata extraction
+    default_path = collection_path / "styles" / "default.json"
+    if default_path.exists():
+        return None
+
     try:
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
         from portolan_cli.style import (
@@ -309,7 +314,7 @@ def _write_default_style_for_geoparquet(
             collection_path=collection_path,
             geometry_type=geometry_type,
             source_layer=layer_name,
-            pmtiles_filename=pmtiles_filename,
+            pmtiles_relative_path=pmtiles_relative_path,
             config=config,
         )
     except Exception as e:
@@ -566,6 +571,12 @@ def generate_pmtiles_for_collection(
         # Determine layer name (Issue #13)
         layer_name = layer if layer else parquet_path.stem
 
+        # Compute collection-relative PMTiles path for style source URLs
+        try:
+            pmtiles_col_rel = pmtiles_path.relative_to(collection_path).as_posix()
+        except ValueError:
+            pmtiles_col_rel = pmtiles_path.name
+
         if not _should_generate(parquet_path, pmtiles_path, force):
             # Ensure asset is registered/updated in collection.json even when skipping
             add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
@@ -574,7 +585,7 @@ def generate_pmtiles_for_collection(
                 parquet_path=parquet_path,
                 layer_name=layer_name,
                 collection_path=collection_path,
-                pmtiles_filename=pmtiles_path.name,
+                pmtiles_relative_path=pmtiles_col_rel,
                 catalog_path=catalog_root,
             )
             result.skipped.append(pmtiles_path)
@@ -617,7 +628,7 @@ def generate_pmtiles_for_collection(
                 parquet_path=parquet_path,
                 layer_name=layer_name,
                 collection_path=collection_path,
-                pmtiles_filename=pmtiles_path.name,
+                pmtiles_relative_path=pmtiles_col_rel,
                 catalog_path=catalog_root,
             )
 
@@ -655,7 +666,6 @@ def generate_pmtiles_for_collection(
     from portolan_cli.style import discover_styles, register_style_assets
 
     styles = discover_styles(collection_path)
-    if styles:
-        register_style_assets(collection_path, styles)
+    register_style_assets(collection_path, styles)
 
     return result

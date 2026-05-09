@@ -5,6 +5,7 @@ Generates Mapbox GL style specs for PMTiles and render extension properties for 
 Public API:
 - VectorStyleConfig: Configuration for vector styling
 - RasterStyleConfig: Configuration for raster styling
+- StyleInfo: Discovered style file metadata
 - build_full_style: Generate complete Mapbox GL style with sources
 - write_style_file: Write style dict to JSON file
 - write_default_style: Convenience function to write default.json
@@ -68,6 +69,25 @@ def _parse_config_float(value: Any, key: str, default: float) -> float:
 # =============================================================================
 # Configuration Dataclasses
 # =============================================================================
+
+
+@dataclass(frozen=True)
+class StyleInfo:
+    """Metadata for a discovered style file.
+
+    Attributes:
+        key: STAC asset key (e.g., "styles/default").
+        href: Relative href for STAC asset (e.g., "./styles/default.json").
+        title: Human-readable title from style's "name" field or filename.
+        description: Description from style file (empty string if absent).
+        path: Absolute path to the style file on disk.
+    """
+
+    key: str
+    href: str
+    title: str
+    description: str
+    path: Path
 
 
 @dataclass(frozen=True)
@@ -208,12 +228,19 @@ def write_style_file(
 
     Args:
         style_dir: Directory to write the style file into.
-        name: Style filename (without .json extension).
+        name: Style filename (without .json extension). Must not contain
+            path separators or parent directory references.
         style_dict: Style dict to serialize.
 
     Returns:
         Path to the written file.
+
+    Raises:
+        ValueError: If name contains path traversal characters.
     """
+    if "/" in name or "\\" in name or ".." in name:
+        msg = f"Style name must not contain path separators or '..': {name!r}"
+        raise ValueError(msg)
     style_dir.mkdir(parents=True, exist_ok=True)
     style_path = style_dir / f"{name}.json"
     style_path.write_text(json.dumps(style_dict, indent=2))
@@ -224,7 +251,7 @@ def write_default_style(
     collection_path: Path,
     geometry_type: str,
     source_layer: str,
-    pmtiles_filename: str,
+    pmtiles_relative_path: str,
     config: VectorStyleConfig | None = None,
 ) -> Path | None:
     """Write default style to {collection_path}/styles/default.json.
@@ -236,7 +263,8 @@ def write_default_style(
         collection_path: Path to the collection directory.
         geometry_type: OGC geometry type (Point, LineString, Polygon, etc.).
         source_layer: Name of the source layer in PMTiles.
-        pmtiles_filename: PMTiles filename (e.g., "data.pmtiles").
+        pmtiles_relative_path: PMTiles path relative to collection (e.g., "data.pmtiles"
+            or "sub/data.pmtiles"). Will be prefixed with "../" for styles/ directory.
         config: Optional style configuration (uses defaults if None).
 
     Returns:
@@ -256,7 +284,7 @@ def write_default_style(
         name="Default",
         geometry_type=geometry_type,
         source_layer=source_layer,
-        pmtiles_relative_path=f"../{pmtiles_filename}",
+        pmtiles_relative_path=f"../{pmtiles_relative_path}",
         config=config,
     )
 
@@ -338,23 +366,21 @@ def enrich_cog_assets(
 # =============================================================================
 
 
-def discover_styles(collection_path: Path) -> list[dict[str, Any]]:
+def discover_styles(collection_path: Path) -> list[StyleInfo]:
     """Discover style JSON files in {collection_path}/styles/ directory.
-
-    Returns a list of dicts with keys: key, href, title, description, path.
 
     Args:
         collection_path: Path to the collection directory.
 
     Returns:
-        List of style dicts. Empty list if no styles/ directory exists.
+        List of StyleInfo objects. Empty list if no styles/ directory exists.
     """
     styles_dir = collection_path / "styles"
 
     if not styles_dir.exists():
         return []
 
-    styles: list[dict[str, Any]] = []
+    styles: list[StyleInfo] = []
 
     for path in sorted(styles_dir.glob("*.json")):
         try:
@@ -372,31 +398,31 @@ def discover_styles(collection_path: Path) -> list[dict[str, Any]]:
         description = style_data.get("description", "")
 
         styles.append(
-            {
-                "key": f"styles/{name}",
-                "href": f"./styles/{path.name}",
-                "title": title,
-                "description": description,
-                "path": path,
-            }
+            StyleInfo(
+                key=f"styles/{name}",
+                href=f"./styles/{path.name}",
+                title=title,
+                description=description,
+                path=path,
+            )
         )
 
     return styles
 
 
-def build_styles_manifest(styles: list[dict[str, Any]]) -> list[str]:
+def build_styles_manifest(styles: list[StyleInfo]) -> list[str]:
     """Build the portolan:styles manifest array.
 
     Returns ordered list of asset keys with styles/default first if present,
     then remaining styles sorted alphabetically.
 
     Args:
-        styles: List of style dicts (from discover_styles).
+        styles: List of StyleInfo objects (from discover_styles).
 
     Returns:
         List of style asset keys.
     """
-    keys = [s["key"] for s in styles]
+    keys = [s.key for s in styles]
 
     if "styles/default" in keys:
         # Put default first, sort the rest
@@ -409,7 +435,7 @@ def build_styles_manifest(styles: list[dict[str, Any]]) -> list[str]:
 
 def register_style_assets(
     collection_path: Path,
-    styles: list[dict[str, Any]],
+    styles: list[StyleInfo],
 ) -> None:
     """Register discovered styles as STAC assets and set portolan:styles manifest.
 
@@ -417,7 +443,7 @@ def register_style_assets(
 
     Args:
         collection_path: Path to the collection directory.
-        styles: List of style dicts from discover_styles().
+        styles: List of StyleInfo objects from discover_styles().
     """
     collection_json_path = collection_path / "collection.json"
     if not collection_json_path.exists():
@@ -427,7 +453,7 @@ def register_style_assets(
     assets = data.get("assets", {})
 
     # Remove stale style assets (assets with "styles/" prefix that no longer have files)
-    current_keys = {s["key"] for s in styles}
+    current_keys = {s.key for s in styles}
     stale_keys = [k for k in assets if k.startswith("styles/") and k not in current_keys]
     for key in stale_keys:
         del assets[key]
@@ -435,14 +461,14 @@ def register_style_assets(
     # Add/update style assets
     for style_info in styles:
         asset_dict: dict[str, Any] = {
-            "href": style_info["href"],
+            "href": style_info.href,
             "type": "application/json",
-            "title": style_info["title"],
+            "title": style_info.title,
             "roles": ["style"],
         }
-        if style_info.get("description"):
-            asset_dict["description"] = style_info["description"]
-        assets[style_info["key"]] = asset_dict
+        if style_info.description:
+            asset_dict["description"] = style_info.description
+        assets[style_info.key] = asset_dict
 
     data["assets"] = assets
 

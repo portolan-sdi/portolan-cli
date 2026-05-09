@@ -87,7 +87,7 @@ During scan, `styles/*.json` files are discovered and registered as STAC assets.
 **Easier:**
 - Multiple styles per collection (data-driven, thematic, labeled)
 - Styles are independently addressable by URL — no STAC parsing needed
-- Complete Mapbox GL specs work directly with MapLibre/Mapbox GL
+- Complete Mapbox GL specs work directly with Mapbox GL JS; MapLibre GL requires registering a `pmtiles://` protocol handler (see [protomaps docs](https://docs.protomaps.com/pmtiles/maplibre))
 - Browser-based style picker reads `portolan:styles` for discovery
 
 **Harder:**
