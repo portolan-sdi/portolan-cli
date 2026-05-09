@@ -623,7 +623,7 @@ def generate_pmtiles_for_collection(
             result.generated.append(pmtiles_path)
             generation_succeeded = True
 
-            # Generate default style file (ADR-0044)
+            # Generate default style file (ADR-0045)
             _write_default_style_for_geoparquet(
                 parquet_path=parquet_path,
                 layer_name=layer_name,
@@ -662,7 +662,7 @@ def generate_pmtiles_for_collection(
             except Exception as e:
                 logger.warning("Thumbnail generation failed for %s: %s", pmtiles_path.name, e)
 
-    # Discover and register style assets (ADR-0044)
+    # Discover and register style assets (ADR-0045)
     from portolan_cli.style import discover_styles, register_style_assets
 
     styles = discover_styles(collection_path)

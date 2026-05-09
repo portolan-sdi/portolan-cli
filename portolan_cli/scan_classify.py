@@ -260,7 +260,7 @@ def classify_file(
             f"{name} is a map style definition",
         )
 
-    # Check if file is inside a styles/ directory (ADR-0044)
+    # Check if file is inside a styles/ directory (ADR-0045)
     if path.parent.name == "styles" and ext == ".json":
         return (
             FileCategory.STYLE,

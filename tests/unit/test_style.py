@@ -285,6 +285,25 @@ class TestDiscoverStyles:
         assert keys == {"styles/default", "styles/custom"}
 
     @pytest.mark.unit
+    def test_skips_non_dict_json(self, tmp_path: Path) -> None:
+        """JSON files that parse to non-dict values are skipped."""
+        import json
+
+        from portolan_cli.style import discover_styles
+
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+
+        (styles_dir / "array.json").write_text(json.dumps([1, 2, 3]))
+        (styles_dir / "string.json").write_text(json.dumps("not a style"))
+        (styles_dir / "valid.json").write_text(json.dumps({"version": 8, "layers": []}))
+
+        styles = discover_styles(tmp_path)
+
+        assert len(styles) == 1
+        assert styles[0].key == "styles/valid"
+
+    @pytest.mark.unit
     def test_fallback_title_from_filename(self, tmp_path: Path) -> None:
         """Style without 'name' field uses filename stem as title."""
         import json
@@ -696,6 +715,30 @@ class TestWriteStyleFile:
         written = json.loads((style_dir / "default.json").read_text())
         assert written == new
 
+    @pytest.mark.unit
+    def test_rejects_path_traversal_slash(self, tmp_path: Path) -> None:
+        """Rejects style names containing forward slash."""
+        from portolan_cli.style import write_style_file
+
+        with pytest.raises(ValueError, match="path separators"):
+            write_style_file(tmp_path / "styles", "../evil", {"version": 8})
+
+    @pytest.mark.unit
+    def test_rejects_path_traversal_backslash(self, tmp_path: Path) -> None:
+        """Rejects style names containing backslash."""
+        from portolan_cli.style import write_style_file
+
+        with pytest.raises(ValueError, match="path separators"):
+            write_style_file(tmp_path / "styles", "..\\evil", {"version": 8})
+
+    @pytest.mark.unit
+    def test_rejects_path_traversal_dotdot(self, tmp_path: Path) -> None:
+        """Rejects style names containing '..'."""
+        from portolan_cli.style import write_style_file
+
+        with pytest.raises(ValueError, match="path separators"):
+            write_style_file(tmp_path / "styles", "..", {"version": 8})
+
 
 # =============================================================================
 # Phase 9: Default Style Writing Tests
@@ -853,6 +896,24 @@ class TestRegisterStyleAssets:
 
         updated = json.loads((tmp_path / "collection.json").read_text())
         assert "portolan:styles" not in updated
+
+    @pytest.mark.unit
+    def test_no_op_without_collection_json(self, tmp_path: Path) -> None:
+        """Does nothing when collection.json doesn't exist."""
+        from portolan_cli.style import StyleInfo, register_style_assets
+
+        styles = [
+            StyleInfo(
+                key="styles/default",
+                href="./styles/default.json",
+                title="Default",
+                description="",
+                path=tmp_path / "styles" / "default.json",
+            )
+        ]
+        register_style_assets(tmp_path, styles)
+
+        assert not (tmp_path / "collection.json").exists()
 
     @pytest.mark.unit
     def test_removes_stale_style_assets(self, tmp_path: Path) -> None:

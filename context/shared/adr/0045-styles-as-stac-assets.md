@@ -1,4 +1,4 @@
-# ADR-0044: Styles as STAC Assets
+# ADR-0045: Styles as STAC Assets
 
 ## Status
 Accepted (supersedes ADR-0043 style storage section)

@@ -590,6 +590,54 @@ portolan add imagery/ --stac-geoparquet
 !!! warning "Known Limitation"
     For existing catalogs with thousands of items, `push` after generating items.parquet may be slow ([#329](https://github.com/portolan-sdi/portolan-cli/issues/329)). This affects incremental updates to large catalogs. New catalogs and small catalogs work normally.
 
+## Push Settings
+
+Control which files are synced to remote storage during `portolan push`.
+
+### Metadata File Sync
+
+By default, `push` syncs **all catalog files** to remote storage, not just versioned assets. This includes:
+
+- `style.json` (map styling)
+- Thumbnails (`*.thumb.png`)
+- Updated `collection.json` and `catalog.json`
+- Any other catalog metadata files
+
+### Exclusion Patterns
+
+Files matching these patterns are **never** synced:
+
+| Pattern | Excluded Files |
+|---------|----------------|
+| `.portolan/` | Internal Portolan state |
+| `.git/` | Git repository data |
+| `.env`, `.env.*` | Environment files with secrets |
+| `*.py`, `*.pyc` | Python source and bytecode |
+| `__pycache__/` | Python cache directories |
+| `.DS_Store`, `Thumbs.db` | OS metadata files |
+| `*.log`, `*.tmp`, `*.bak`, `*~` | Temporary and backup files |
+
+### Custom Exclusions
+
+Add custom patterns to exclude additional files:
+
+```yaml
+# .portolan/config.yaml
+push.exclude:
+  - "*.backup"
+  - "temp/"
+  - "draft-*"
+```
+
+!!! warning "Security Patterns Always Enforced"
+    Patterns for `.env`, `.git/`, and `.portolan/` are **always** enforced regardless of custom configuration. This prevents accidental upload of secrets or internal state.
+
+### Settings Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `push.exclude` | See above | Glob patterns for files to exclude from sync |
+
 ## Collection-Level Configuration
 
 Override settings for specific collections using the `collections:` section:
@@ -855,7 +903,7 @@ portolan readme --recursive
 **Catalog-level README:** When run at catalog root, generates an index README with:
 - Aggregated spatial extent (envelope of all collections)
 - Aggregated temporal extent (earliest to latest)
-- List of collections with links
+- List of collections with links (collapsible when ≥10 collections)
 
 ### Data Defaults
 
