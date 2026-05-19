@@ -997,3 +997,96 @@ class TestRmJsonOutput:
                 envelope = json.loads(result.output)
                 assert envelope["success"] is True
                 assert envelope["data"]["dry_run"] is True
+
+
+class TestCheckPartitionPrompt:
+    """Tests for _check_partition_prompt helper function."""
+
+    @pytest.mark.unit
+    def test_returns_false_when_partitioning_disabled(self, tmp_path: Path) -> None:
+        """When partitioning.enabled is False, should return False (no skip)."""
+        from portolan_cli.cli import _check_partition_prompt
+
+        setup_catalog(tmp_path)
+
+        # Create config with partitioning disabled
+        config_path = tmp_path / ".portolan" / "config.yaml"
+        config_path.write_text("partitioning:\n  enabled: false\n")
+
+        # Create a "large" parquet file (mocked size)
+        parquet_file = tmp_path / "data.parquet"
+        parquet_file.write_bytes(b"x" * 100)
+
+        result = _check_partition_prompt([parquet_file], tmp_path)
+
+        assert result is False
+
+    @pytest.mark.unit
+    def test_returns_false_when_no_large_files(self, tmp_path: Path) -> None:
+        """When no files exceed threshold, should return False."""
+        from portolan_cli.cli import _check_partition_prompt
+
+        setup_catalog(tmp_path)
+
+        # Create a small parquet file
+        parquet_file = tmp_path / "small.parquet"
+        parquet_file.write_bytes(b"x" * 100)
+
+        result = _check_partition_prompt([parquet_file], tmp_path)
+
+        assert result is False
+
+    @pytest.mark.unit
+    def test_returns_false_when_not_tty(self, tmp_path: Path) -> None:
+        """When not running in TTY, should return False (non-interactive)."""
+        from portolan_cli.cli import _check_partition_prompt
+
+        setup_catalog(tmp_path)
+
+        parquet_file = tmp_path / "data.parquet"
+        parquet_file.write_bytes(b"x" * 100)
+
+        # Mock should_partition to return True (imported inside function from partitioning module)
+        with patch("portolan_cli.partitioning.should_partition", return_value=True):
+            # sys.stderr.isatty() returns False in test environment
+            result = _check_partition_prompt([parquet_file], tmp_path)
+
+        assert result is False
+
+    @pytest.mark.unit
+    def test_returns_false_when_prompt_disabled(self, tmp_path: Path) -> None:
+        """When partitioning.prompt is False, should not prompt."""
+        from portolan_cli.cli import _check_partition_prompt
+
+        setup_catalog(tmp_path)
+
+        # Create config with prompt disabled
+        config_path = tmp_path / ".portolan" / "config.yaml"
+        config_path.write_text("partitioning:\n  enabled: true\n  prompt: false\n")
+
+        parquet_file = tmp_path / "data.parquet"
+        parquet_file.write_bytes(b"x" * 100)
+
+        with patch("portolan_cli.partitioning.should_partition", return_value=True):
+            result = _check_partition_prompt([parquet_file], tmp_path)
+
+        assert result is False
+
+    @pytest.mark.unit
+    def test_scans_directories_recursively(self, tmp_path: Path) -> None:
+        """Should scan directories for parquet files."""
+        from portolan_cli.cli import _check_partition_prompt
+
+        setup_catalog(tmp_path)
+
+        # Create nested parquet file
+        subdir = tmp_path / "data" / "nested"
+        subdir.mkdir(parents=True)
+        parquet_file = subdir / "deep.parquet"
+        parquet_file.write_bytes(b"x" * 100)
+
+        # Pass directory, not file
+        result = _check_partition_prompt([tmp_path / "data"], tmp_path)
+
+        # Should return False (no TTY, no large files without mock)
+        assert result is False

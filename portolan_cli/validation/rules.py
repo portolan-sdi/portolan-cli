@@ -197,21 +197,25 @@ class StacFieldsRule(ValidationRule):
 
 
 class PMTilesRecommendedRule(ValidationRule):
-    """Recommend PMTiles for GeoParquet datasets without them.
+    """Recommend PMTiles for GeoParquet collection assets without them.
 
     This is a WARNING-level rule - it doesn't block validation,
     just suggests an improvement for web display capabilities.
 
-    PMTiles are generated from GeoParquet using the portolan-pmtiles
-    plugin and provide efficient vector tile rendering for web maps.
+    PMTiles are generated from GeoParquet using gpio-pmtiles and provide
+    efficient vector tile rendering for web maps. Per ADR-0031, vector
+    data is stored as collection-level assets.
     """
 
     name = "pmtiles_recommended"
     severity = Severity.WARNING
-    description = "Check if GeoParquet datasets have PMTiles derivatives"
+    description = "Check if GeoParquet collections have PMTiles derivatives"
 
     def check(self, catalog_path: Path) -> ValidationResult:
-        """Check for PMTiles derivatives alongside GeoParquet files.
+        """Check for PMTiles derivatives alongside GeoParquet collection assets.
+
+        Scans all collection.json files for GeoParquet assets and checks
+        if sibling PMTiles files exist.
 
         Args:
             catalog_path: Path to the directory containing .portolan.
@@ -219,64 +223,110 @@ class PMTilesRecommendedRule(ValidationRule):
         Returns:
             ValidationResult with warning if any GeoParquet lacks PMTiles.
         """
-        datasets_dir = catalog_path / ".portolan" / "datasets"
+        # Find all collection.json files
+        collection_files = list(catalog_path.rglob("collection.json"))
 
-        # Handle missing directories gracefully
-        if not datasets_dir.exists():
-            return self._pass("No datasets directory found")
+        if not collection_files:
+            return self._pass("No collections found")
 
-        # Find all .parquet files in datasets
-        parquet_files = list(datasets_dir.rglob("*.parquet"))
-
-        if not parquet_files:
-            return self._pass("No GeoParquet datasets found")
-
-        # Check each parquet file for a corresponding .pmtiles file
         missing_pmtiles: list[str] = []
-        for parquet_file in parquet_files:
-            # PMTiles file should have same name but .pmtiles extension
-            pmtiles_file = parquet_file.with_suffix(".pmtiles")
-            if not pmtiles_file.exists():
-                # Use relative path for cleaner messages
-                rel_path = parquet_file.relative_to(datasets_dir)
-                missing_pmtiles.append(str(rel_path))
+        total_geoparquet = 0
+
+        for collection_json in collection_files:
+            collection_dir = collection_json.parent
+
+            try:
+                data = json.loads(collection_json.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            assets = data.get("assets", {})
+
+            for _key, asset in assets.items():
+                href = asset.get("href", "")
+                media_type = asset.get("type", "")
+                roles = asset.get("roles", [])
+
+                # Skip stac-items parquet (metadata, not geodata)
+                if "stac-items" in roles:
+                    continue
+
+                # Check if it's a GeoParquet asset
+                is_geoparquet = (
+                    media_type == "application/vnd.apache.parquet"
+                    or media_type == "application/x-parquet"
+                    or href.endswith(".parquet")
+                )
+
+                if not is_geoparquet:
+                    continue
+
+                total_geoparquet += 1
+
+                # Resolve href to path
+                if href.startswith("./"):
+                    href = href[2:]
+                parquet_path = collection_dir / href
+
+                if not parquet_path.exists():
+                    continue
+
+                # Check for sibling PMTiles (both file existence AND asset registration)
+                pmtiles_path = parquet_path.with_suffix(".pmtiles")
+                pmtiles_filename = pmtiles_path.name
+
+                # Check if PMTiles is registered in collection assets
+                pmtiles_registered = any(
+                    asset.get("href", "").endswith(pmtiles_filename) for asset in assets.values()
+                )
+
+                if not pmtiles_path.exists() or not pmtiles_registered:
+                    try:
+                        rel_path = parquet_path.relative_to(catalog_path)
+                    except ValueError:
+                        rel_path = parquet_path
+                    missing_pmtiles.append(str(rel_path))
+
+        if total_geoparquet == 0:
+            return self._pass("No GeoParquet collection assets found")
 
         if missing_pmtiles:
             if len(missing_pmtiles) == 1:
-                msg = f"GeoParquet dataset missing PMTiles: {missing_pmtiles[0]}"
+                msg = f"GeoParquet missing PMTiles: {missing_pmtiles[0]}"
             else:
-                msg = f"{len(missing_pmtiles)} GeoParquet datasets missing PMTiles"
+                msg = f"{len(missing_pmtiles)} GeoParquet assets missing PMTiles"
 
             return self._fail(
                 msg,
-                fix_hint=(
-                    "Install portolan-pmtiles plugin and run "
-                    "'portolan dataset add --pmtiles' to generate vector tiles"
-                ),
+                fix_hint="Run 'portolan add --pmtiles' to generate vector tiles",
             )
 
-        return self._pass(f"All {len(parquet_files)} GeoParquet datasets have PMTiles derivatives")
+        return self._pass(f"All {total_geoparquet} GeoParquet assets have PMTiles derivatives")
 
 
 class MetadataFreshRule(ValidationRule):
-    """Check that all geo-asset files have fresh STAC metadata.
+    """Check that all registered geo-assets have fresh STAC metadata.
 
-    This rule scans for GeoParquet and COG files in collections
-    and verifies their STAC item metadata is up-to-date using
-    MTIME + heuristic change detection.
+    Delegates to `scan_catalog_metadata` (ADR-0041) so that `check` and
+    `check --fix` consume the same MetadataReport. The scanner walks the
+    STAC manifest tree (catalog.json -> collection.json -> item.json),
+    avoiding the false-MISSING reports that filesystem-walk approaches
+    produced for collection-level rollup assets like items.parquet.
 
     Reports:
-    - MISSING: Files without any STAC metadata (ERROR)
-    - STALE: Files where content has changed since last metadata generation (WARNING)
-    - BREAKING: Files with breaking schema changes (ERROR)
+    - MISSING: Item directory has data but no item.json (ERROR, auto-fixable).
+    - STALE: File changed since last metadata generation (WARNING).
+    - BREAKING: Schema-breaking change (ERROR).
+    - ORPHANED: File on disk but not registered in any STAC manifest
+      (WARNING, not auto-fixable — user must register or delete).
     """
 
     name = "metadata_fresh"
-    severity = Severity.WARNING  # Default to WARNING, but MISSING/BREAKING are ERROR
+    severity = Severity.WARNING
     description = "Verify all geo-assets have fresh STAC metadata"
 
     def check(self, catalog_path: Path) -> ValidationResult:
-        """Check metadata freshness for all geo-assets in catalog.
+        """Check metadata freshness for all registered geo-assets.
 
         Args:
             catalog_path: Path to the directory containing .portolan.
@@ -284,57 +334,19 @@ class MetadataFreshRule(ValidationRule):
         Returns:
             ValidationResult indicating overall metadata health.
         """
-        from portolan_cli.metadata.detection import check_file_metadata
-        from portolan_cli.metadata.models import MetadataCheckResult, MetadataReport
+        from portolan_cli.metadata.scan import scan_catalog_metadata
 
-        # Find all collections in the catalog (at root level per ADR-0023)
-        catalog_json = catalog_path / "catalog.json"
-        if not catalog_json.exists():
+        if not (catalog_path / "catalog.json").exists():
             return self._pass("No catalog.json found")
 
-        # Scan for geo-asset files in collections
-        check_results: list[MetadataCheckResult] = []
-        extensions = {".parquet", ".tif", ".tiff"}
+        report = scan_catalog_metadata(catalog_path)
 
-        # Collections are at root level, identified by collection.json
-        for collection_dir in catalog_path.iterdir():
-            if not collection_dir.is_dir():
-                continue
-            # Skip .portolan and hidden directories
-            if collection_dir.name.startswith("."):
-                continue
-            # Only process directories with collection.json
-            if not (collection_dir / "collection.json").exists():
-                continue
-            # Find geo-asset files in this collection
-            for file_path in collection_dir.rglob("*"):
-                if file_path.suffix.lower() in extensions:
-                    try:
-                        result = check_file_metadata(file_path, collection_dir)
-                        check_results.append(result)
-                    except (FileNotFoundError, ValueError, OSError):
-                        # Skip files we can't check:
-                        # - FileNotFoundError: broken symlinks
-                        # - ValueError: unsupported format
-                        # - OSError: corrupt COGs (rasterio errors inherit from OSError)
-                        continue
-                    except Exception as e:
-                        # Also catch pyarrow errors (ArrowInvalid, ArrowIOError, etc.)
-                        # which don't have a consistent base class
-                        if "arrow" in type(e).__module__.lower():
-                            continue
-                        raise  # Re-raise unexpected errors
-
-        if not check_results:
+        if not report.results:
             return self._pass("No geo-asset files found in collections")
-
-        # Build summary report
-        report = MetadataReport(results=check_results)
 
         if report.passed:
             return self._pass(f"All {report.total_count} geo-assets have fresh metadata")
 
-        # Build detailed message about issues
         issues = []
         if report.missing_count > 0:
             issues.append(f"{report.missing_count} missing")
@@ -342,19 +354,23 @@ class MetadataFreshRule(ValidationRule):
             issues.append(f"{report.stale_count} stale")
         if report.breaking_count > 0:
             issues.append(f"{report.breaking_count} breaking")
+        if report.orphaned_count > 0:
+            issues.append(f"{report.orphaned_count} orphaned")
 
         message = f"Metadata issues found: {', '.join(issues)}"
-
-        # Determine severity based on issue types
-        # MISSING and BREAKING are errors, STALE is warning
         has_errors = report.missing_count > 0 or report.breaking_count > 0
+        fix_hint = (
+            "Run 'portolan check --metadata --fix' to update STAC metadata"
+            if has_errors or report.stale_count > 0
+            else "Register orphan files in collection.json/item.json or delete them"
+        )
 
         return ValidationResult(
             rule_name=self.name,
             passed=False,
             severity=Severity.ERROR if has_errors else Severity.WARNING,
             message=message,
-            fix_hint="Run 'portolan check --metadata --fix' to update STAC metadata",
+            fix_hint=fix_hint,
         )
 
 
@@ -427,4 +443,148 @@ class ProvisionalDatetimeRule(ValidationRule):
         return self._fail(
             f"{len(provisional_items)} item(s) have provisional datetime: {item_list}",
             fix_hint="Use 'portolan add --datetime YYYY-MM-DD' to set explicit datetime",
+        )
+
+
+# --- Thorough rules (expensive, run with --thorough) ---
+
+
+class PartitionStructureRule(ValidationRule):
+    """Check that partitioned collections have consistent Hive-style structure.
+
+    Validates:
+    - All partition directories follow same key=value pattern
+    - No orphan files outside partition structure
+    - partition:* extension fields are present when partitions detected
+    """
+
+    name = "partition_structure"
+    severity = Severity.WARNING
+    description = "Verify partition directory structure consistency"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Check partition structure for all collections."""
+        issues: list[str] = []
+
+        # Find all collection.json files
+        for coll_json in catalog_path.rglob("collection.json"):
+            coll_dir = coll_json.parent
+
+            # Look for Hive-style partition directories (key=value pattern)
+            partition_dirs = [
+                d
+                for d in coll_dir.iterdir()
+                if d.is_dir() and "=" in d.name and not d.name.startswith(".")
+            ]
+
+            if not partition_dirs:
+                continue
+
+            # Extract partition key from first directory
+            first_key = partition_dirs[0].name.split("=")[0]
+
+            # Check all partition dirs use same key
+            for pdir in partition_dirs:
+                if "=" not in pdir.name:
+                    issues.append(f"{coll_dir.name}: orphan dir '{pdir.name}'")
+                    continue
+                key = pdir.name.split("=")[0]
+                if key != first_key:
+                    issues.append(f"{coll_dir.name}: mixed keys '{first_key}' and '{key}'")
+
+            # Check for orphan parquet files at collection level
+            orphan_files = list(coll_dir.glob("*.parquet"))
+            if orphan_files and partition_dirs:
+                issues.append(f"{coll_dir.name}: {len(orphan_files)} orphan .parquet at root")
+
+            # Check collection.json has partition:* fields
+            # STAC Collections store extension fields at top level, not in "properties"
+            try:
+                with open(coll_json) as f:
+                    coll_data = json.load(f)
+                if "partition:scheme" not in coll_data:
+                    issues.append(f"{coll_dir.name}: missing partition:scheme in collection.json")
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        if not issues:
+            return self._pass("All partitioned collections have consistent structure")
+
+        issue_list = "; ".join(issues[:5])
+        if len(issues) > 5:
+            issue_list += f" (+{len(issues) - 5} more)"
+
+        return self._fail(
+            f"Partition structure issues: {issue_list}",
+            fix_hint="Ensure all partition directories use same key pattern",
+        )
+
+
+class PartitionSchemaConsistencyRule(ValidationRule):
+    """Check that all parquet files in a partition have consistent schema.
+
+    Reads parquet metadata (footer only) from all partition files to verify
+    they share the same schema.
+    """
+
+    name = "partition_schema_consistency"
+    severity = Severity.ERROR
+    description = "Verify all partition files have same Parquet schema"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Check schema consistency across partition files."""
+        try:
+            import pyarrow.parquet as pq
+            from pyarrow import ArrowInvalid
+        except ImportError:
+            return ValidationResult(
+                rule_name=self.name,
+                passed=True,
+                severity=Severity.WARNING,
+                message="PyArrow not available, schema consistency not checked",
+            )
+
+        issues: list[str] = []
+
+        for coll_json in catalog_path.rglob("collection.json"):
+            coll_dir = coll_json.parent
+
+            # Find Hive-style partition directories
+            partition_dirs = [
+                d
+                for d in coll_dir.iterdir()
+                if d.is_dir() and "=" in d.name and not d.name.startswith(".")
+            ]
+
+            if not partition_dirs:
+                continue
+
+            # Collect schemas from all parquet files
+            schemas: dict[str, list[str]] = {}
+            for pdir in partition_dirs:
+                for pq_file in pdir.glob("*.parquet"):
+                    try:
+                        schema = pq.read_schema(pq_file)
+                        schema_key = str(sorted(schema.names))
+                        if schema_key not in schemas:
+                            schemas[schema_key] = []
+                        schemas[schema_key].append(str(pq_file.relative_to(coll_dir)))
+                    except (OSError, ArrowInvalid) as e:
+                        issues.append(f"{coll_dir.name}: unreadable {pq_file.name} ({e})")
+
+            if len(schemas) > 1:
+                issues.append(
+                    f"{coll_dir.name}: {len(schemas)} different schemas across partitions"
+                )
+
+        if not issues:
+            return self._pass("All partition files have consistent schema")
+
+        issue_list = "; ".join(issues[:3])
+        if len(issues) > 3:
+            issue_list += f" (+{len(issues) - 3} more)"
+
+        return self._fail(
+            f"Schema inconsistency: {issue_list}",
+            fix_hint="Re-partition with consistent source data",
         )

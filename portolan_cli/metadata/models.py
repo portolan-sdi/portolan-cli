@@ -48,19 +48,23 @@ class MetadataStatus(Enum):
     """Status of file metadata relative to stored state.
 
     Attributes:
-        MISSING: No STAC metadata exists for this file.
+        MISSING: Item directory has data but no item.json (auto-fixable).
         FRESH: Metadata is up to date with file contents.
         STALE: File has changed; metadata needs regeneration.
         BREAKING: Schema has breaking changes (column removed, type changed, etc.).
+        ORPHANED: File on disk under a collection but not registered in any
+            STAC manifest (collection.json.assets or item.json.assets). Not
+            auto-fixable — user must register or delete.
 
     The severity property allows sorting issues by importance:
-        BREAKING > MISSING > STALE > FRESH
+        BREAKING > MISSING > STALE > ORPHANED > FRESH
     """
 
     MISSING = "missing"
     FRESH = "fresh"
     STALE = "stale"
     BREAKING = "breaking"
+    ORPHANED = "orphaned"
 
     @property
     def severity(self) -> int:
@@ -69,13 +73,14 @@ class MetadataStatus(Enum):
         Higher values are more severe.
 
         Returns:
-            int: Severity level (0-3).
+            int: Severity level (0-4).
         """
         severity_map = {
             MetadataStatus.FRESH: 0,
-            MetadataStatus.STALE: 1,
-            MetadataStatus.MISSING: 2,
-            MetadataStatus.BREAKING: 3,
+            MetadataStatus.ORPHANED: 1,
+            MetadataStatus.STALE: 2,
+            MetadataStatus.MISSING: 3,
+            MetadataStatus.BREAKING: 4,
         }
         return severity_map[self]
 
@@ -131,20 +136,27 @@ class FileMetadataState:
         Returns:
             True if bbox or feature count differs, or if no stored values exist.
         """
-        # If no stored values, consider it changed (new file)
-        if self.stored_bbox is None or self.stored_feature_count is None:
-            return True
+        # Collection-level assets pass None for both stored_bbox and
+        # current_bbox (no item.json bbox source); treat that as
+        # "no bbox signal" and fall through to feature-count + schema
+        # checks rather than flagging it as a change.
+        bbox_unavailable = self.stored_bbox is None and self.current_bbox is None
+        if not bbox_unavailable:
+            if self.stored_bbox is None:
+                # New file: stored values absent but a current bbox exists.
+                return True
+            if self.current_bbox is not None and not _bboxes_equal(
+                self.current_bbox, self.stored_bbox
+            ):
+                return True
 
-        # If current extraction failed (None), don't flag as changed to avoid spurious detections
-        if self.current_bbox is None or self.current_feature_count is None:
-            return False
-
-        # Compare bbox with tolerance for floating-point precision
-        if not _bboxes_equal(self.current_bbox, self.stored_bbox):
-            return True
-
-        # Compare feature count
-        if self.current_feature_count != self.stored_feature_count:
+        # Feature count is the next signal. Same new-file logic applies.
+        if self.stored_feature_count is None:
+            return self.current_feature_count is not None
+        if (
+            self.current_feature_count is not None
+            and self.current_feature_count != self.stored_feature_count
+        ):
             return True
 
         return False
@@ -285,8 +297,21 @@ class MetadataReport:
         return sum(1 for r in self.results if r.status == MetadataStatus.BREAKING)
 
     @property
+    def orphaned_count(self) -> int:
+        """Count of files with ORPHANED status.
+
+        Returns:
+            Number of files unregistered in any STAC manifest.
+        """
+        return sum(1 for r in self.results if r.status == MetadataStatus.ORPHANED)
+
+    @property
     def passed(self) -> bool:
         """Check if all files have fresh metadata.
+
+        ORPHANED is *not* a pass — the rule emits passed=False with a
+        WARNING when only orphans are present, so this property must agree
+        for any other consumer (e.g. JSON callers) to read the same truth.
 
         Returns:
             True if all results are FRESH (or no results exist).
@@ -326,5 +351,6 @@ class MetadataReport:
             "stale_count": self.stale_count,
             "missing_count": self.missing_count,
             "breaking_count": self.breaking_count,
+            "orphaned_count": self.orphaned_count,
             "results": [r.to_dict() for r in self.results],
         }

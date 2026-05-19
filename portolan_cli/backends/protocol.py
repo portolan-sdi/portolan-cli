@@ -150,6 +150,7 @@ class VersioningBackend(Protocol):
         breaking: bool,
         message: str,
         removed: set[str] | None = None,
+        version: str | None = None,
     ) -> Version:
         """Publish a new version of a collection.
 
@@ -160,6 +161,7 @@ class VersioningBackend(Protocol):
             breaking: Whether this is a breaking change.
             message: Human-readable description of the change.
             removed: Set of asset keys to remove from the version.
+            version: Explicit version string. If None, auto-compute next version.
 
         Returns:
             The newly created Version object.

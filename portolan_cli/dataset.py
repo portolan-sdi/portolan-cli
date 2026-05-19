@@ -37,6 +37,7 @@ from portolan_cli.constants import (
     SIDECAR_PATTERNS,
     TABULAR_EXTENSIONS,
 )
+from portolan_cli.conversion_config import get_vector_settings
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.crs import transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError
@@ -49,11 +50,15 @@ from portolan_cli.formats import (
 from portolan_cli.metadata import (
     extract_band_statistics,
     extract_cog_metadata,
+    extract_flatgeobuf_metadata,
     extract_geoparquet_metadata,
     extract_parquet_statistics,
+    extract_pmtiles_metadata,
 )
 from portolan_cli.metadata.cog import COGMetadata
+from portolan_cli.metadata.flatgeobuf import FlatGeobufMetadata
 from portolan_cli.metadata.geoparquet import GeoParquetMetadata
+from portolan_cli.metadata.pmtiles import PMTilesMetadata
 from portolan_cli.metadata_yaml import (
     NodataMismatchError,
     apply_raster_nodata_defaults,
@@ -62,8 +67,11 @@ from portolan_cli.metadata_yaml import (
 )
 from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
+    add_asset_to_collection,
     add_collection_extensions_from_summaries,
+    add_collection_properties_from_metadata,
     add_item_to_collection,
+    add_partition_metadata_to_collection,
     add_projection_extension,
     add_raster_extension,
     add_table_extension,
@@ -75,6 +83,7 @@ from portolan_cli.stac import (
     load_catalog,
     update_collection_summaries,
 )
+from portolan_cli.style import enrich_cog_assets
 from portolan_cli.versions import (
     Asset,
     VersionsFile,
@@ -145,13 +154,37 @@ _MEDIA_TYPE_MAP: dict[str, str] = {
     ".xml": "application/xml",
     ".csv": "text/csv",
     ".gpkg": "application/geopackage+sqlite3",
-    ".fgb": "application/flatgeobuf",
+    ".fgb": "application/vnd.flatgeobuf",
+    ".flatgeobuf": "application/vnd.flatgeobuf",
     ".pmtiles": "application/vnd.pmtiles",
     ".shp": "application/x-shapefile",
     ".pdf": "application/pdf",
     ".txt": "text/plain",
     ".md": "text/markdown",
     ".html": "text/html",
+}
+
+# Default titles for well-known STAC asset roles. Matches the convention
+# used by Element 84 Earth Search (e.g. Sentinel-2 items always carry a
+# "title" on every asset). Used by _scan_item_assets when no explicit title
+# is set.
+_ROLE_TITLES: dict[str, str] = {
+    "data": "Data",
+    "thumbnail": "Thumbnail",
+    "metadata": "Metadata",
+    "documentation": "Documentation",
+}
+
+# Asset keys reserved for well-known roles. _scan_item_assets prefers these
+# keys over filename-derived stems so STAC consumers can find assets by role
+# without inspecting file paths. Order matters for collision priority: an
+# asset with role "thumbnail" prefers key "thumbnail"; if it's already taken
+# (e.g. by a user-named thumbnail.png), the second asset falls back to its
+# stem.
+_ROLE_KEYS: dict[str, str] = {
+    "thumbnail": "thumbnail",
+    "metadata": "metadata",
+    "documentation": "documentation",
 }
 
 # Extension-to-role mapping for asset files.
@@ -163,6 +196,7 @@ _ROLE_MAP: dict[str, str] = {
     ".geojson": "data",
     ".gpkg": "data",
     ".fgb": "data",
+    ".flatgeobuf": "data",
     ".csv": "data",
     ".shp": "data",
     ".pmtiles": "data",
@@ -261,16 +295,21 @@ def _scan_item_assets(
             # Skip special files (sockets, devices, etc.)
             continue
 
-        # Primary geo file gets "data" key, others use stem with disambiguation
+        # Primary geo file gets "data" key. Other files prefer the well-known
+        # role-keyed name ("thumbnail", "metadata", "documentation") so STAC
+        # consumers can find them by role; on collision, fall back to stem,
+        # then to filename.
         if file_path == primary_file:
             asset_key = "data"
         else:
-            # Use stem, but disambiguate on collision (e.g., metadata.json vs metadata.xml)
-            base_key = file_path.stem
-            asset_key = base_key
-            if asset_key in stac_assets or asset_key == "data":
-                # Collision: use full filename instead
-                asset_key = file_path.name
+            role_key = _ROLE_KEYS.get(file_role)
+            if role_key and role_key not in stac_assets and role_key != "data":
+                asset_key = role_key
+            else:
+                # Use stem, but disambiguate on collision (e.g. metadata.json vs metadata.xml)
+                asset_key = file_path.stem
+                if asset_key in stac_assets or asset_key == "data":
+                    asset_key = file_path.name
         # Asset href must be relative to item JSON location.
         # PySTAC places item JSON at: {collection_dir}/{item_id}/{item_id}.json
         #
@@ -299,6 +338,7 @@ def _scan_item_assets(
             href=asset_href,
             media_type=file_media_type,
             roles=[file_role],
+            title=_ROLE_TITLES.get(file_role),
         )
         asset_files[file_path.name] = (file_path, file_checksum)
         asset_paths.append(str(file_path))
@@ -358,15 +398,17 @@ class PreparedDataset:
     by batching all version writes at the end. See Issue #281.
 
     Attributes:
-        item_id: STAC item identifier.
+        item_id: STAC item identifier (for item-level) or asset key (for collection-level).
         collection_id: Collection identifier (may include '/' for nested).
         format_type: Vector or raster format.
         bbox: Bounding box [min_x, min_y, max_x, max_y] in WGS84.
         asset_files: Dict mapping filename to (path, checksum) tuples.
-        item_json_path: Path to the item.json file that was created.
+        item_json_path: Path to item.json (None for collection-level vector assets per ADR-0031).
         is_collection_level_asset: If True, asset is at collection level (ADR-0031).
-        stac_item: The PySTAC Item object (for collection link updates).
+        stac_item: The PySTAC Item object (None for collection-level vector assets).
+        stac_assets: Assets to add to collection.json (for collection-level assets).
         metadata: Extracted metadata (GeoParquet or COG) for table extension (Issue #304).
+        partition_metadata: Partition extension fields from get_partition_metadata() (Issue #232).
     """
 
     item_id: str
@@ -374,10 +416,180 @@ class PreparedDataset:
     format_type: FormatType
     bbox: list[float]
     asset_files: dict[str, tuple[Path, str]]
-    item_json_path: Path
+    item_json_path: Path | None  # None for collection-level vector assets
     is_collection_level_asset: bool = False
     stac_item: pystac.Item | None = None
-    metadata: GeoParquetMetadata | COGMetadata | None = None
+    stac_assets: dict[str, pystac.Asset] | None = None  # For collection-level addition
+    metadata: AllMetadata | None = None
+    partition_metadata: dict[str, object] | None = None
+
+
+def _maybe_partition_large_file(
+    prepared: PreparedDataset,
+    catalog_root: Path,
+    item_datetime: datetime | None,
+    skip_partitioning: bool = False,
+) -> list[PreparedDataset]:
+    """Partition a large GeoParquet file if it exceeds the size threshold.
+
+    Per ADR-0031 and Issue #352: Files > 2GB should be spatially partitioned.
+    Each partition becomes a STAC Item with its own bbox.
+
+    Args:
+        prepared: The prepared dataset to potentially partition.
+        catalog_root: Root directory of the catalog.
+        item_datetime: Optional datetime for created items.
+        skip_partitioning: If True, skip partitioning even if file exceeds threshold.
+            Used when user declines interactive prompt.
+
+    Returns:
+        List of PreparedDatasets. If partitioning occurred, contains multiple
+        items (one per partition). Otherwise, returns [prepared] unchanged.
+    """
+    from portolan_cli.config import get_setting
+    from portolan_cli.partitioning import (
+        build_glob_pattern,
+        get_partition_metadata,
+        partition_geoparquet,
+        should_partition,
+    )
+
+    # Only partition vector formats (GeoParquet)
+    if prepared.format_type != FormatType.VECTOR:
+        return [prepared]
+
+    # Skip if user declined interactive prompt
+    if skip_partitioning:
+        return [prepared]
+
+    # Only partition item-level assets (collection-level means single file < 2GB)
+    # But wait - if file is > 2GB, it should NOT be collection-level, it should be partitioned
+    # So we check the actual file, not the is_collection_level_asset flag
+
+    # Find the primary parquet file in asset_files
+    parquet_files = [
+        path
+        for filename, (path, _checksum) in prepared.asset_files.items()
+        if filename.endswith(".parquet")
+    ]
+    if not parquet_files:
+        return [prepared]
+
+    primary_parquet = parquet_files[0]
+
+    # Check if partitioning is enabled and file exceeds threshold
+    collection_dir = catalog_root / Path(*prepared.collection_id.split("/"))
+    partitioning_enabled = get_setting(
+        "partitioning.enabled",
+        catalog_path=catalog_root,
+        collection_path=collection_dir,
+    )
+    if partitioning_enabled is False:
+        return [prepared]
+
+    threshold_gb = (
+        get_setting(
+            "partitioning.threshold_gb",
+            catalog_path=catalog_root,
+            collection_path=collection_dir,
+        )
+        or 2.0
+    )
+
+    if not should_partition(primary_parquet, threshold_gb=float(threshold_gb)):
+        return [prepared]
+
+    # File needs partitioning
+    strategy = (
+        get_setting(
+            "partitioning.strategy",
+            catalog_path=catalog_root,
+            collection_path=collection_dir,
+        )
+        or "kdtree"
+    )
+
+    target_rows = (
+        get_setting(
+            "partitioning.target_rows",
+            catalog_path=catalog_root,
+            collection_path=collection_dir,
+        )
+        or 120_000
+    )
+
+    # Create partition output directory (same level as original file)
+    # Original: collection/data.parquet
+    # Partitioned: collection/kdtree_cell=001/data.parquet, etc.
+    partition_output_dir = primary_parquet.parent
+
+    # Partition the file FIRST, before any cleanup
+    # This ensures atomicity: if partitioning fails, original files remain intact
+    # Rollback on failure is handled by partition_geoparquet itself
+    partition_files = partition_geoparquet(
+        input_path=primary_parquet,
+        output_dir=partition_output_dir,
+        strategy=str(strategy),
+        target_rows=int(target_rows),
+    )
+
+    # Partitioning succeeded - now safe to clean up original artifacts
+    # Delete the item.json that was created for the single file
+    if prepared.item_json_path and prepared.item_json_path.exists():
+        prepared.item_json_path.unlink()
+
+    # Delete original large file (now replaced by partitions)
+    if primary_parquet.exists():
+        primary_parquet.unlink()
+
+    # Create PreparedDataset for each partition
+    partitioned_datasets: list[PreparedDataset] = []
+
+    for partition_path in partition_files:
+        # Create STAC item for this partition
+        # item_id auto-derived from partition_path.parent.name (e.g., "kdtree_cell=0000000000")
+        partition_prepared = prepare_dataset(
+            path=partition_path,
+            catalog_root=catalog_root,
+            collection_id=prepared.collection_id,
+            item_datetime=item_datetime,
+        )
+        partitioned_datasets.append(partition_prepared)
+
+    # Add collection-level glob asset for bulk access (Issue #351)
+    # This provides a single glob URL for DuckDB/PyArrow/GDAL to read all partitions
+    glob_pattern = build_glob_pattern(str(strategy))
+    glob_asset = pystac.Asset(
+        href=glob_pattern,
+        media_type="application/vnd.apache.parquet",
+        roles=["data"],
+        title="Partitioned GeoParquet",
+        description=f"Glob pattern for {len(partition_files)} spatial partitions",
+        # portolan:glob will be populated on push with remote URL
+    )
+
+    # Extract partition metadata for STAC partition extension (Issue #232)
+    partition_meta = get_partition_metadata(partition_output_dir, str(strategy))
+
+    # Create a PreparedDataset for the glob asset (collection-level)
+    # Use original item_id as base to avoid collisions across collections
+    glob_item_id = f"{prepared.item_id}_partitioned"
+    glob_prepared = PreparedDataset(
+        item_id=glob_item_id,
+        collection_id=prepared.collection_id,
+        format_type=FormatType.VECTOR,
+        bbox=prepared.bbox,
+        asset_files={},  # No physical files - glob is a pattern reference
+        item_json_path=None,
+        is_collection_level_asset=True,
+        stac_item=None,
+        stac_assets={glob_item_id: glob_asset},
+        metadata=None,
+        partition_metadata=partition_meta,
+    )
+    partitioned_datasets.append(glob_prepared)
+
+    return partitioned_datasets
 
 
 def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
@@ -636,28 +848,148 @@ def _validate_collection_id(collection_id: str) -> None:
         raise ValueError(f"Invalid collection ID '{collection_id}': {error_msg}.{suggestion}")
 
 
+# Type alias for all supported metadata types
+VectorMetadata = GeoParquetMetadata | PMTilesMetadata | FlatGeobufMetadata
+AllMetadata = VectorMetadata | COGMetadata
+
+
+def _extract_bbox_wgs84(metadata: AllMetadata) -> list[float]:
+    """Extract bbox from metadata, transforming to WGS84 if needed.
+
+    PMTiles bbox is already in WGS84 (4326). Other formats may need
+    CRS transformation.
+
+    Args:
+        metadata: Metadata object with bbox attribute.
+
+    Returns:
+        Bounding box as [min_x, min_y, max_x, max_y] in WGS84.
+    """
+    if isinstance(metadata, PMTilesMetadata):
+        # PMTiles store bounds in WGS84 (4326), no transformation needed
+        return list(metadata.bbox)  # type: ignore[arg-type]
+
+    # Other formats may need CRS transformation
+    crs_raw = getattr(metadata, "crs", None)
+    if isinstance(crs_raw, dict):
+        raise ValueError("PROJJSON CRS not supported. Convert to EPSG code or WKT string.")
+    crs_str = crs_raw if isinstance(crs_raw, str) else None
+    return list(transform_bbox_to_wgs84(metadata.bbox, crs_str))  # type: ignore[arg-type]
+
+
+def _warn_if_source_newer(source_path: Path, output_path: Path) -> None:
+    """Warn if source file is newer than output (suggests --reconvert)."""
+    from portolan_cli.output import warn as warn_output
+
+    if source_path.stat().st_mtime > output_path.stat().st_mtime:
+        warn_output(
+            f"Source file '{source_path.name}' is newer than converted output. "
+            "Use --reconvert to re-convert from source."
+        )
+
+
+def _handle_cloud_native_vector(
+    source_path: Path,
+    output_path: Path,
+    extract_fn: Callable[[Path], AllMetadata],
+    force: bool,
+    reconvert: bool,
+) -> AllMetadata:
+    """Handle cloud-native vector formats (PMTiles, FlatGeobuf) with force/reconvert.
+
+    Args:
+        source_path: Source file path.
+        output_path: Target output path.
+        extract_fn: Metadata extraction function.
+        force: If True, allow overwriting existing output.
+        reconvert: If True, re-copy from source.
+
+    Returns:
+        Extracted metadata.
+    """
+    same_file = source_path.resolve() == output_path.resolve()
+
+    if output_path.exists() and not same_file:
+        if force and not reconvert:
+            # Re-extract metadata from existing, warn if source newer
+            _warn_if_source_newer(source_path, output_path)
+            return extract_fn(output_path)
+        elif force and reconvert:
+            # Re-copy from source
+            shutil.copy2(source_path, output_path)
+            return extract_fn(output_path)
+        else:
+            # No force — raise error to prevent accidental overwrite
+            raise FileExistsError(
+                f"File already exists: {output_path}. "
+                "Rename the source file or remove the existing file."
+            )
+
+    # Output doesn't exist or same file — copy if needed
+    if not same_file:
+        shutil.copy2(source_path, output_path)
+    return extract_fn(output_path)
+
+
 def _convert_and_extract_metadata(
     path: Path,
     item_dir: Path,
     format_type: FormatType,
-) -> tuple[Path, GeoParquetMetadata | COGMetadata]:
+    *,
+    force: bool = False,
+    reconvert: bool = False,
+) -> tuple[Path, AllMetadata]:
     """Convert to cloud-native format and extract metadata.
+
+    For cloud-native vector formats (PMTiles, FlatGeobuf), copies the file
+    as-is and extracts format-specific metadata. For other vectors, converts
+    to GeoParquet.
+
+    Per Issue #386: When force=True and reconvert=False, skips conversion if
+    output already exists (extracts metadata from existing output).
 
     Args:
         path: Source file path.
         item_dir: Item directory for output.
         format_type: Detected format type.
+        force: If True, bypass change detection (Issue #386).
+        reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
         Tuple of (output_path, metadata).
     """
-    metadata: GeoParquetMetadata | COGMetadata
+    metadata: AllMetadata
+    suffix = path.suffix.lower()
+
     if format_type == FormatType.VECTOR:
-        output_path = convert_vector(path, item_dir)
-        metadata = extract_geoparquet_metadata(output_path)
+        # Check for cloud-native vector formats (skip conversion per issue #368)
+        if suffix == ".pmtiles":
+            output_path = item_dir / path.name
+            metadata = _handle_cloud_native_vector(
+                path, output_path, extract_pmtiles_metadata, force, reconvert
+            )
+        elif suffix in (".fgb", ".flatgeobuf"):
+            output_path = item_dir / path.name
+            metadata = _handle_cloud_native_vector(
+                path, output_path, extract_flatgeobuf_metadata, force, reconvert
+            )
+        else:
+            # Convert to GeoParquet
+            output_path = item_dir / f"{path.stem}.parquet"
+            if force and not reconvert and output_path.exists():
+                _warn_if_source_newer(path, output_path)
+                metadata = extract_geoparquet_metadata(output_path)
+            else:
+                output_path = convert_vector(path, item_dir)
+                metadata = extract_geoparquet_metadata(output_path)
     else:  # RASTER
-        output_path = convert_raster(path, item_dir)
-        metadata = extract_cog_metadata(output_path)
+        output_path = item_dir / f"{path.stem}.tif"
+        if force and not reconvert and output_path.exists():
+            _warn_if_source_newer(path, output_path)
+            metadata = extract_cog_metadata(output_path)
+        else:
+            output_path = convert_raster(path, item_dir)
+            metadata = extract_cog_metadata(output_path)
     return output_path, metadata
 
 
@@ -736,6 +1068,100 @@ def _add_statistics_to_properties(
             stac_properties["table:column_statistics"] = col_stats
 
 
+def _fix_collection_level_asset_hrefs(
+    stac_assets: dict[str, pystac.Asset],
+) -> dict[str, pystac.Asset]:
+    """Fix asset hrefs and keys for collection-level assets (ADR-0031).
+
+    _scan_item_assets() computes hrefs relative to item.json, but for
+    collection-level assets they should be relative to collection.json.
+    Since both collection.json and assets are in the same directory,
+    href should be ./filename (not ../filename).
+
+    Also fixes asset keys: _scan_item_assets assigns "data" to primary files,
+    but for collection-level assets we need unique keys to avoid collisions
+    when multiple vectors exist in the same collection. Use file stem instead.
+
+    Args:
+        stac_assets: Assets with hrefs relative to item.json location.
+
+    Returns:
+        Assets with hrefs relative to collection.json location, with unique keys.
+    """
+    fixed_assets: dict[str, pystac.Asset] = {}
+    for key, asset in stac_assets.items():
+        href = asset.href
+
+        # Normalize href: strip any ../ or ./ prefix, then add ./
+        if href.startswith("../"):
+            href = href[3:]
+        elif href.startswith("./"):
+            href = href[2:]
+        fixed_href = f"./{href}"
+
+        # Fix asset key: "data" → file stem for uniqueness across collection
+        # e.g., "data" with href "./census.parquet" → key "census"
+        if key == "data":
+            fixed_key = Path(href).stem
+        else:
+            fixed_key = key
+
+        fixed_assets[fixed_key] = pystac.Asset(
+            href=fixed_href,
+            media_type=asset.media_type,
+            roles=asset.roles,
+        )
+    return fixed_assets
+
+
+def _create_and_save_item(
+    *,
+    item_id: str,
+    bbox: list[float],
+    item_datetime: datetime | None,
+    stac_properties: dict[str, Any],
+    stac_assets: dict[str, pystac.Asset],
+    format_type: FormatType,
+    metadata: AllMetadata,
+    item_dir: Path,
+) -> tuple[pystac.Item, Path]:
+    """Create a STAC item with extensions and save it to disk.
+
+    Helper to reduce complexity in prepare_dataset().
+
+    Args:
+        item_id: STAC item identifier.
+        bbox: Bounding box [min_x, min_y, max_x, max_y].
+        item_datetime: Acquisition/creation datetime.
+        stac_properties: Properties to include in the item.
+        stac_assets: Assets to attach to the item.
+        format_type: Vector or raster format.
+        metadata: Extracted metadata for extension fields.
+        item_dir: Directory where item.json will be saved.
+
+    Returns:
+        Tuple of (item, item_json_path).
+    """
+    item = create_item(
+        item_id=item_id,
+        bbox=bbox,
+        datetime=item_datetime,
+        properties=stac_properties,
+        assets=stac_assets,
+    )
+    add_projection_extension(item, metadata)
+    if format_type == FormatType.VECTOR:
+        add_vector_extension(item, metadata)
+    elif format_type == FormatType.RASTER:
+        add_raster_extension(item, metadata)
+
+    item_json_path = item_dir / f"{item_id}.json"
+    item.set_self_href(str(item_json_path))
+    item.save_object()
+
+    return item, item_json_path
+
+
 def _apply_nodata_defaults_to_bands(
     stac_properties: dict[str, Any],
     metadata: COGMetadata,
@@ -799,7 +1225,8 @@ def _save_collection_with_links(
     """
     _deduplicate_collection_item_links(collection)
     collection.set_self_href(str(collection_dir / "collection.json"))
-    collection.normalize_hrefs(str(collection_dir), strategy=AsIsLayoutStrategy())
+    # Trailing slash required: pystac treats paths with dots in final component as files
+    collection.normalize_hrefs(f"{collection_dir}/", strategy=AsIsLayoutStrategy())
     collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
 
     collection_json_path = collection_dir / "collection.json"
@@ -816,6 +1243,8 @@ def prepare_dataset(
     description: str | None = None,
     item_id: str | None = None,
     item_datetime: datetime | None = None,
+    force: bool = False,
+    reconvert: bool = False,
 ) -> PreparedDataset:
     """Prepare a dataset for addition (convert, extract metadata, create STAC item).
 
@@ -824,6 +1253,7 @@ def prepare_dataset(
     O(n) versioning instead of O(n²) by batching writes in finalize_datasets().
 
     Per Issue #281: This is the parallelizable phase of the add workflow.
+    Per Issue #386: force/reconvert control conversion skip behavior.
 
     Args:
         path: Path to the source file.
@@ -833,6 +1263,8 @@ def prepare_dataset(
         description: Optional description.
         item_id: Optional item ID (defaults to parent directory name).
         item_datetime: Optional acquisition/creation datetime (per ADR-0035).
+        force: If True, bypass change detection (Issue #386).
+        reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
         PreparedDataset with all metadata needed for finalization.
@@ -870,7 +1302,9 @@ def prepare_dataset(
         ) from err
 
     # Step 3: Convert and extract metadata
-    output_path, metadata = _convert_and_extract_metadata(path, item_dir, format_type)
+    output_path, metadata = _convert_and_extract_metadata(
+        path, item_dir, format_type, force=force, reconvert=reconvert
+    )
 
     # Step 3b: Load metadata.yaml defaults (for temporal/nodata when source lacks them)
     metadata_yaml = load_merged_metadata(collection_dir, catalog_root)
@@ -894,8 +1328,7 @@ def prepare_dataset(
             path=metadata.id if hasattr(metadata, "id") else path.stem,
             reason="The source file may have no valid geometry.",
         )
-    crs_str = metadata.crs if isinstance(metadata.crs, str) else None
-    bbox = list(transform_bbox_to_wgs84(metadata.bbox, crs_str))
+    bbox = _extract_bbox_wgs84(metadata)
 
     # Step 5: Scan assets and compute statistics
     stac_assets, asset_files, _asset_paths = _scan_item_assets(
@@ -904,6 +1337,11 @@ def prepare_dataset(
         primary_file=output_path,
         collection_dir=collection_dir,
     )
+
+    # Enrich COG assets with render extension properties (Issue #13)
+    if format_type == FormatType.RASTER:
+        enrich_cog_assets(stac_assets, catalog_root)
+
     band_stats, parquet_stats = _extract_statistics_best_effort(
         output_path, format_type, catalog_root, collection_path=collection_dir
     )
@@ -935,24 +1373,35 @@ def prepare_dataset(
     if format_type == FormatType.RASTER and defaults and isinstance(metadata, COGMetadata):
         _apply_nodata_defaults_to_bands(stac_properties, metadata, defaults, path)
 
-    # Step 7: Create STAC item and save item.json (per-item file, no conflict)
-    item = create_item(
+    # Step 7: Create STAC item or collection-level assets (per ADR-0031)
+    # Collection-level vector assets: no item.json, assets go directly in collection.json
+    # Item-level assets (rasters, partitioned vectors): create item.json as usual
+    if is_collection_level_asset and format_type == FormatType.VECTOR:
+        # Collection-level vector asset: no item.json per ADR-0031
+        return PreparedDataset(
+            item_id=item_id_resolved,
+            collection_id=collection_id,
+            format_type=format_type,
+            bbox=bbox,
+            asset_files=asset_files,
+            item_json_path=None,  # No item.json for collection-level vector
+            is_collection_level_asset=True,
+            stac_item=None,
+            stac_assets=_fix_collection_level_asset_hrefs(stac_assets),
+            metadata=metadata,
+        )
+
+    # Item-level: create STAC item and save item.json
+    item, item_json_path = _create_and_save_item(
         item_id=item_id_resolved,
         bbox=bbox,
-        datetime=effective_datetime,
-        properties=stac_properties,
-        assets=stac_assets,
+        item_datetime=effective_datetime,
+        stac_properties=stac_properties,
+        stac_assets=stac_assets,
+        format_type=format_type,
+        metadata=metadata,
+        item_dir=item_dir,
     )
-    add_projection_extension(item, metadata)
-    if format_type == FormatType.VECTOR:
-        add_vector_extension(item, metadata)
-    elif format_type == FormatType.RASTER:
-        add_raster_extension(item, metadata)
-
-    item_json_path = item_dir / f"{item_id_resolved}.json"
-    item.set_self_href(str(item_json_path))
-    # Save item.json now (each item writes to its own file, no conflict)
-    item.save_object()
 
     return PreparedDataset(
         item_id=item_id_resolved,
@@ -965,6 +1414,34 @@ def prepare_dataset(
         stac_item=item,
         metadata=metadata,
     )
+
+
+def _add_prepared_items_to_collection(
+    collection: pystac.Collection,
+    items: list[PreparedDataset],
+) -> None:
+    """Add prepared items or collection-level assets to a collection.
+
+    Per ADR-0031: Collection-level vector assets go directly in collection.assets.
+    Item-level assets get linked via add_item_to_collection.
+
+    Args:
+        collection: The pystac Collection to add to.
+        items: List of PreparedDataset objects.
+    """
+    for p in items:
+        if p.is_collection_level_asset and p.stac_assets is not None:
+            # Collection-level asset: add directly to collection.assets
+            for asset_key, asset in p.stac_assets.items():
+                add_asset_to_collection(
+                    collection, asset_key, asset, update_extent_from_bbox=p.bbox
+                )
+            # Add format-specific properties (proj:epsg, pmtiles:*, flatgeobuf:*)
+            if p.metadata is not None:
+                add_collection_properties_from_metadata(collection, p.metadata)
+        elif p.stac_item is not None:
+            # Item-level: add item link to collection
+            add_item_to_collection(collection, p.stac_item, update_extent=True)
 
 
 def finalize_datasets(
@@ -1006,32 +1483,35 @@ def finalize_datasets(
             initial_bbox=first_item.bbox,
         )
 
-        # Add all items to collection (in memory)
-        for p in items:
-            if p.stac_item is not None:
-                add_item_to_collection(collection, p.stac_item, update_extent=True)
-                # Note: item_datetime would need to be passed through PreparedDataset
-                # if we want to update temporal extent per-item
+        # Add items or collection-level assets to collection (in memory)
+        _add_prepared_items_to_collection(collection, items)
 
-        # Add table extension if any items are vector format (Issue #304)
-        # Aggregate metadata from all vector items and apply to collection
+        # Add table extension if any items are GeoParquet format (Issue #304)
+        # Aggregate metadata from all GeoParquet items and apply to collection
         # Include existing table metadata to handle incremental adds correctly
         #
-        # Important: Only run aggregation if there's at least one NEW vector item
-        # in this batch. For raster-only batches, don't touch existing table extension.
-        new_vector_metadata: list[object] = [
+        # Important: Only run aggregation if there's at least one NEW GeoParquet item
+        # in this batch. PMTiles/FlatGeobuf are collection-level assets without
+        # table schema, so exclude them from table extension aggregation.
+        new_geoparquet_metadata: list[GeoParquetMetadata] = [
             p.metadata
             for p in items
-            if p.format_type == FormatType.VECTOR and p.metadata is not None
+            if p.format_type == FormatType.VECTOR and isinstance(p.metadata, GeoParquetMetadata)
         ]
-        if new_vector_metadata:
-            # We have new vector items - include existing metadata for aggregation
+        if new_geoparquet_metadata:
+            # We have new GeoParquet items - include existing metadata for aggregation
             existing_meta = get_existing_table_metadata(collection)
-            vector_metadata: list[object] = new_vector_metadata
+            vector_metadata: list[object] = list(new_geoparquet_metadata)
             if existing_meta is not None:
                 vector_metadata.insert(0, existing_meta)
             aggregated = aggregate_table_metadata(vector_metadata)
             add_table_extension(collection, aggregated)
+
+        # Add partition extension if any items have partition metadata (Issue #232)
+        for p in items:
+            if p.partition_metadata is not None:
+                add_partition_metadata_to_collection(collection, p.partition_metadata)
+                break  # Only one partition metadata per collection
 
         # Compute collection summaries from items (per ADR-0036)
         # Moved here from push.py for separation of concerns - summaries are now
@@ -1063,11 +1543,35 @@ def finalize_datasets(
             )
         else:
             # File backend: use optimized batch write (O(1) per collection)
-            _batch_update_versions(
+            current_version, asset_count, total_size = _batch_update_versions(
                 collection_dir=collection_dir,
                 collection_id=collection_id,
                 items=items,
             )
+
+            # Update catalog-level versions.json (ADR-0005)
+            # This keeps the catalog-level view in sync with collection state.
+            # Wrap in try/except to avoid failing the add if catalog update fails
+            # (collection-level versions.json was already written successfully).
+            from portolan_cli.catalog import update_catalog_versions
+
+            try:
+                update_catalog_versions(
+                    catalog_root=catalog_root,
+                    collection_id=collection_id,
+                    current_version=current_version,
+                    asset_count=asset_count,
+                    total_size_bytes=total_size,
+                )
+            except Exception:
+                # Collection-level versions.json was written successfully.
+                # Log warning but don't fail the add operation.
+                logger.warning(
+                    "Failed to update catalog-level versions.json for collection '%s'. "
+                    "Collection version was published but catalog-level view may be stale.",
+                    collection_id,
+                    exc_info=True,
+                )
 
         # Build results
         for p in items:
@@ -1124,18 +1628,20 @@ def _finalize_with_backend(
 
     remote = get_setting("remote", catalog_path=catalog_root, collection=collection_id)
     first = items[0]
+    # For collection-level assets, item_json_path is None; use collection_dir
+    first_item_dir = first.item_json_path.parent if first.item_json_path else collection_dir
     context = {
         "catalog_root": catalog_root,
         "collection_id": collection_id,
         "collection_dir": collection_dir,
         "collection": collection,
         "item_id": first.item_id,
-        "item_dir": first.item_json_path.parent,
+        "item_dir": first_item_dir,
         "asset_files": first.asset_files,
         "items": [
             {
                 "item_id": p.item_id,
-                "item_dir": p.item_json_path.parent,
+                "item_dir": (p.item_json_path.parent if p.item_json_path else collection_dir),
                 "asset_files": p.asset_files,
             }
             for p in items
@@ -1160,7 +1666,7 @@ def _batch_update_versions(
     collection_dir: Path,
     collection_id: str,
     items: list[PreparedDataset],
-) -> None:
+) -> tuple[str, int, int]:
     """Batch update versions.json for multiple items in a single read-modify-write.
 
     This is the key optimization for Issue #281: instead of O(n) writes
@@ -1170,6 +1676,10 @@ def _batch_update_versions(
         collection_dir: Path to collection directory.
         collection_id: Collection identifier.
         items: List of PreparedDataset objects to add versions for.
+
+    Returns:
+        Tuple of (current_version, asset_count, total_size_bytes) for catalog-level
+        versioning updates (ADR-0005).
     """
     versions_path = collection_dir / "versions.json"
 
@@ -1183,22 +1693,21 @@ def _batch_update_versions(
             versions=[],
         )
 
-    # Compute new version string
+    # Compute new version string using the helper (handles prerelease versions)
     if versions_file.current_version is None:
         new_version = "1.0.0"
     else:
-        parts = versions_file.current_version.split(".")
-        parts[-1] = str(int(parts[-1]) + 1)
-        new_version = ".".join(parts)
+        new_version = _increment_version(versions_file.current_version)
 
     # Build assets dict from ALL items (batch)
     all_assets: dict[str, Asset] = {}
     for p in items:
         for filename, (file_path, file_checksum) in p.asset_files.items():
             # For collection-level assets (ADR-0031), omit item_id from path
+            # asset_key is collection-relative; href is catalog-relative
             if p.is_collection_level_asset:
                 href = f"{collection_id}/{filename}"
-                asset_key = f"{collection_id}/{filename}"
+                asset_key = filename  # Issue #354: collection-relative, not doubled
             else:
                 href = f"{collection_id}/{p.item_id}/{filename}"
                 asset_key = f"{p.item_id}/{filename}"
@@ -1223,6 +1732,15 @@ def _batch_update_versions(
     # Single write for all items
     write_versions(versions_path, updated)
 
+    # Return info for catalog-level versioning (ADR-0005)
+    # Get latest version's asset info
+    latest = updated.versions[-1] if updated.versions else None
+    if latest:
+        asset_count = len(latest.assets)
+        total_size = sum(a.size_bytes for a in latest.assets.values())
+        return (updated.current_version or new_version, asset_count, total_size)
+    return (new_version, 0, 0)
+
 
 def add_dataset(
     *,
@@ -1233,6 +1751,8 @@ def add_dataset(
     description: str | None = None,
     item_id: str | None = None,
     item_datetime: datetime | None = None,
+    force: bool = False,
+    reconvert: bool = False,
 ) -> DatasetInfo:
     """Add a dataset to a Portolan catalog.
 
@@ -1249,6 +1769,8 @@ def add_dataset(
         item_id: Optional item ID (defaults to parent directory name).
         item_datetime: Optional acquisition/creation datetime (per ADR-0035).
             If None, uses null datetime with open interval (per ADR-0035).
+        force: If True, bypass change detection and re-process (Issue #386).
+        reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
         DatasetInfo with details about the added dataset.
@@ -1266,6 +1788,8 @@ def add_dataset(
         description=description,
         item_id=item_id,
         item_datetime=item_datetime,
+        force=force,
+        reconvert=reconvert,
     )
 
     # Finalize: batch write versions.json and collection.json
@@ -1494,8 +2018,8 @@ def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
     catalog_path = catalog_root / "catalog.json"
     catalog = load_catalog(catalog_path)
 
-    # Normalize hrefs to ensure consistent comparison
-    catalog.normalize_hrefs(str(catalog_root))
+    # Trailing slash required: pystac treats paths with dots in final component as files
+    catalog.normalize_hrefs(f"{catalog_root}/")
 
     # Extract collection IDs from existing child links
     # Links are in format: "./{collection_id}/collection.json"
@@ -1843,6 +2367,8 @@ def add_directory(
     catalog_root: Path,
     collection_id: str,
     recursive: bool = True,
+    force: bool = False,
+    reconvert: bool = False,
 ) -> list[DatasetInfo]:
     """Add all geospatial files in a directory to a collection.
 
@@ -1853,6 +2379,8 @@ def add_directory(
         catalog_root: Root directory containing .portolan/.
         collection_id: Collection to add datasets to.
         recursive: If True, process subdirectories recursively.
+        force: If True, bypass change detection and re-process (Issue #386).
+        reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
         List of DatasetInfo for each added dataset.
@@ -1866,6 +2394,8 @@ def add_directory(
             path=file_path,
             catalog_root=catalog_root,
             collection_id=collection_id,
+            force=force,
+            reconvert=reconvert,
         )
         prepared.append(result)
 
@@ -2104,17 +2634,21 @@ def is_current(
         current_checksum = compute_dir_checksum(path)
         return current_checksum == asset.sha256
 
-    # Fast path: check mtime (2s tolerance for NFS/CIFS compatibility)
-    if asset.mtime is not None:
-        if abs(file_stat.st_mtime - asset.mtime) < MTIME_TOLERANCE_SECONDS:
-            return True
+    # Fast path: mtime unchanged AND size unchanged → file is current
+    # Both conditions must hold; size check catches fast overwrites within mtime tolerance
+    mtime_unchanged = (
+        asset.mtime is not None and abs(file_stat.st_mtime - asset.mtime) < MTIME_TOLERANCE_SECONDS
+    )
+    size_unchanged = asset.size_bytes is not None and file_stat.st_size == asset.size_bytes
 
-    # Medium path: size check before expensive SHA256
-    # If size differs, file definitely changed - skip checksum
+    if mtime_unchanged and size_unchanged:
+        return True
+
+    # Medium path: size differs → definitely changed
     if asset.size_bytes is not None and file_stat.st_size != asset.size_bytes:
         return False
 
-    # Slow path: compare sha256 (only if mtime changed but size matches)
+    # Slow path: mtime changed but size matches → check sha256
     current_checksum = compute_checksum(path)
     return current_checksum == asset.sha256
 
@@ -2186,6 +2720,8 @@ def _collect_files_for_add(
     collection_id: str | None,
     skipped: list[Path],
     setup_collections: set[str],
+    *,
+    force: bool = False,
 ) -> list[tuple[Path, str]]:
     """Collect and filter files for add operation (Phase 1).
 
@@ -2198,6 +2734,7 @@ def _collect_files_for_add(
         collection_id: Optional explicit collection ID.
         skipped: List to append skipped paths to (mutated).
         setup_collections: Set to track which collections have been set up (mutated).
+        force: If True, bypass change detection (Issue #386).
 
     Returns:
         List of (file_path, collection_id) tuples to process.
@@ -2239,11 +2776,12 @@ def _collect_files_for_add(
                     skipped.append(file_path)
                     continue
 
-            # Check if unchanged
-            versions_path = catalog_root / Path(*coll_id.split("/")) / "versions.json"
-            if is_current(file_path, versions_path):
-                skipped.append(file_path)
-                continue
+            # Check if unchanged (skip this check when force=True per Issue #386)
+            if not force:
+                versions_path = catalog_root / Path(*coll_id.split("/")) / "versions.json"
+                if is_current(file_path, versions_path):
+                    skipped.append(file_path)
+                    continue
 
             # Set up nested catalog structure if needed (ADR-0032)
             _ensure_nested_catalogs(coll_id, catalog_root, setup_collections)
@@ -2264,6 +2802,9 @@ def add_files(
     on_progress: Callable[[Path], None] | None = None,
     workers: int = 1,
     json_mode: bool = False,
+    force: bool = False,
+    reconvert: bool = False,
+    skip_partitioning: bool = False,
 ) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
     """Add files to a Portolan catalog.
 
@@ -2279,6 +2820,10 @@ def add_files(
     - Continues processing all files even when some fail
     - Collects all errors and reports them at the end
     - Enables batch processing without stopping on first error
+
+    Per Issue #386 ("--force flag for re-tracking files"):
+    - force=True bypasses mtime-based change detection
+    - reconvert=True also re-converts from source (requires force=True)
 
     Args:
         paths: List of paths to add (files or directories).
@@ -2300,6 +2845,8 @@ def add_files(
         workers: Number of parallel workers for metadata extraction.
             Default is 1 (sequential). Higher values parallelize GDAL reads.
         json_mode: If True, suppress progress bar output.
+        force: If True, bypass change detection and re-process all files.
+        reconvert: If True, re-convert from source files (requires force=True).
 
     Returns:
         Tuple of (added_datasets, skipped_paths, failures).
@@ -2317,12 +2864,15 @@ def add_files(
     # Track source_dir -> item_dir mappings for non-geo file placement (ADR-0028)
     source_to_item_dir: dict[Path, tuple[Path, str, str]] = {}
 
+    # Track source_dir -> collection_dir mappings for collection-level assets (Issue #383)
+    source_to_collection_dir: dict[Path, tuple[Path, str]] = {}
+
     # Deferred non-geo files: (file_path, source_dir, collection_id)
     deferred_non_geo: list[tuple[Path, Path, str]] = []
 
     # Phase 1: Collect files (extracted to reduce complexity)
     files_to_process = _collect_files_for_add(
-        paths, catalog_root, collection_id, skipped, setup_collections
+        paths, catalog_root, collection_id, skipped, setup_collections, force=force
     )
 
     # Phase 2: Process files
@@ -2359,8 +2909,12 @@ def add_files(
         # Check for multi-layer files (GeoPackage, FileGDB) - Issue #265
         if is_multilayer(file_path):
             try:
+                # Load vector settings from catalog config
+                vector_settings = get_vector_settings(catalog_root)
                 # Convert all layers to separate parquet files
-                results = convert_multilayer_file(file_path, file_path.parent)
+                results = convert_multilayer_file(
+                    file_path, file_path.parent, settings=vector_settings
+                )
 
                 for result in results:
                     if result.success and result.output:
@@ -2372,8 +2926,17 @@ def add_files(
                                 collection_id=coll_id,
                                 item_id=None,  # Derive from output filename
                                 item_datetime=item_datetime,
+                                force=force,
+                                reconvert=reconvert,
                             )
-                            prepared_list.append(prepared)
+                            # Apply partitioning to each layer (Issue #352)
+                            partitioned = _maybe_partition_large_file(
+                                prepared=prepared,
+                                catalog_root=catalog_root,
+                                item_datetime=item_datetime,
+                                skip_partitioning=skip_partitioning,
+                            )
+                            prepared_list.extend(partitioned)
                         except Exception as err:
                             failure_list.append(
                                 AddFailure(
@@ -2402,8 +2965,18 @@ def add_files(
                 collection_id=coll_id,
                 item_id=item_id,
                 item_datetime=item_datetime,
+                force=force,
+                reconvert=reconvert,
             )
-            return ([prepared], [], None)
+            # Check if file should be partitioned (Issue #352)
+            # Returns multiple PreparedDatasets if partitioned, else [prepared]
+            partitioned = _maybe_partition_large_file(
+                prepared=prepared,
+                catalog_root=catalog_root,
+                item_datetime=item_datetime,
+                skip_partitioning=skip_partitioning,
+            )
+            return (partitioned, [], None)
 
         except click.ClickException as err:
             is_tabular = file_path.suffix.lower() in TABULAR_EXTENSIONS
@@ -2439,8 +3012,14 @@ def add_files(
             for prepared in prepared_list:
                 prepared_datasets.append(prepared)
                 source_dir = file_path.parent
-                item_dir = catalog_root / Path(*coll_id.split("/")) / prepared.item_id
-                source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
+                collection_dir = catalog_root / Path(*coll_id.split("/"))
+                if prepared.is_collection_level_asset:
+                    # Collection-level: map source to collection dir (Issue #383)
+                    source_to_collection_dir[source_dir] = (collection_dir, coll_id)
+                else:
+                    # Item-level: map source to item dir
+                    item_dir = collection_dir / prepared.item_id
+                    source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
             failures.extend(failure_list)
             if deferred is not None:
                 deferred_non_geo.append(deferred)
@@ -2474,8 +3053,14 @@ def add_files(
                 for prepared in prepared_list:
                     prepared_datasets.append(prepared)
                     source_dir = file_path.parent
-                    item_dir = catalog_root / Path(*coll_id.split("/")) / prepared.item_id
-                    source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
+                    collection_dir = catalog_root / Path(*coll_id.split("/"))
+                    if prepared.is_collection_level_asset:
+                        # Collection-level: map source to collection dir (Issue #383)
+                        source_to_collection_dir[source_dir] = (collection_dir, coll_id)
+                    else:
+                        # Item-level: map source to item dir
+                        item_dir = collection_dir / prepared.item_id
+                        source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
                 failures.extend(failure_list)
                 if deferred is not None:
                     deferred_non_geo.append(deferred)
@@ -2493,6 +3078,7 @@ def add_files(
     _process_deferred_non_geo_files(
         deferred_non_geo=deferred_non_geo,
         source_to_item_dir=source_to_item_dir,
+        source_to_collection_dir=source_to_collection_dir,
         catalog_root=catalog_root,
         skipped=skipped,
         failures=failures,
@@ -2505,6 +3091,7 @@ def _process_deferred_non_geo_files(
     *,
     deferred_non_geo: list[tuple[Path, Path, str]],
     source_to_item_dir: dict[Path, tuple[Path, str, str]],
+    source_to_collection_dir: dict[Path, tuple[Path, str]],
     catalog_root: Path,
     skipped: list[Path],
     failures: list[AddFailure],
@@ -2517,6 +3104,8 @@ def _process_deferred_non_geo_files(
     Args:
         deferred_non_geo: List of (file_path, source_dir, collection_id) tuples.
         source_to_item_dir: Mapping from source dirs to (item_dir, coll_id, item_id).
+        source_to_collection_dir: Mapping from source dirs to (collection_dir, coll_id)
+            for collection-level assets (Issue #383).
         catalog_root: Root directory of the catalog.
         skipped: List to append skipped files to (modified in place).
         failures: List to append failures to (modified in place).
@@ -2524,6 +3113,7 @@ def _process_deferred_non_geo_files(
     for file_path, source_dir, coll_id in deferred_non_geo:
         try:
             if source_dir in source_to_item_dir:
+                # Item-level: existing behavior
                 resolved_item_dir, _, resolved_item_id = source_to_item_dir[source_dir]
 
                 # Copy non-geo file to item directory as companion asset
@@ -2548,6 +3138,42 @@ def _process_deferred_non_geo_files(
 
                 # Add to skipped (tracked but not converted)
                 skipped.append(file_path)
+
+            elif source_dir in source_to_collection_dir:
+                # Collection-level: new behavior for Issue #383
+                resolved_collection_dir, resolved_coll_id = source_to_collection_dir[source_dir]
+
+                # For collection-level, file is already in place (same as geo file)
+                # Register it as an asset in collection.json AND versions.json
+                ext = file_path.suffix.upper().lstrip(".")
+                logger.info(
+                    "Tracking %s as non-geospatial %s collection-level asset: %s",
+                    file_path,
+                    ext,
+                    file_path.name,
+                )
+
+                # Update collection.json with the non-geo asset
+                _update_collection_with_asset(
+                    collection_dir=resolved_collection_dir,
+                    asset_path=file_path,
+                )
+
+                # Update versions.json so is_current() finds the asset
+                file_checksum = compute_checksum(file_path)
+                asset_files = {file_path.name: (file_path, file_checksum)}
+                _update_versions(
+                    collection_dir=resolved_collection_dir,
+                    item_id=file_path.stem,  # Use file stem as item_id for collection-level
+                    collection_id=resolved_coll_id,
+                    asset_files=asset_files,
+                    is_collection_level_asset=True,
+                    catalog_root=catalog_root,
+                )
+
+                # Add to skipped (tracked but not converted)
+                skipped.append(file_path)
+
             else:
                 # No geo file in same dir - cannot create item without bbox
                 ext = file_path.suffix.upper().lstrip(".")
@@ -2638,12 +3264,19 @@ def _update_item_with_asset(
         collection_dir=collection_dir,
     )
 
-    # Update item assets
+    # Enrich COG assets with render extension properties (Issue #13)
+    enrich_cog_assets(stac_assets, catalog_root)
+
+    # Update item assets - include extra_fields for style properties
+    # Merge with existing asset metadata to preserve title/description
+    existing_assets = item_data.get("assets", {})
     item_data["assets"] = {
         key: {
+            **existing_assets.get(key, {}),  # Preserve existing metadata
             "href": asset.href,
             "type": asset.media_type,
             "roles": asset.roles,
+            **(asset.extra_fields or {}),
         }
         for key, asset in stac_assets.items()
     }
@@ -2664,6 +3297,46 @@ def _update_item_with_asset(
         is_collection_level_asset=is_collection_level,
         catalog_root=catalog_root,
     )
+
+
+def _update_collection_with_asset(
+    collection_dir: Path,
+    asset_path: Path,
+) -> None:
+    """Update a collection.json to include a new non-geo asset file (Issue #383).
+
+    For collection-level non-geospatial files, this adds them as assets directly
+    to collection.json rather than an item.json.
+
+    Args:
+        collection_dir: Path to the collection directory.
+        asset_path: Path to the non-geo asset file.
+    """
+    collection_json_path = collection_dir / "collection.json"
+
+    if not collection_json_path.exists():
+        logger.warning("collection.json not found: %s", collection_json_path)
+        return
+
+    # Load existing collection
+    with open(collection_json_path) as f:
+        collection_data = json.load(f)
+
+    # Add asset to collection
+    assets = collection_data.setdefault("assets", {})
+    asset_key = asset_path.stem  # Use file stem as key (e.g., "stats" for stats.parquet)
+    media_type = _get_media_type(asset_path)
+    role = _get_asset_role(asset_path)
+
+    assets[asset_key] = {
+        "href": f"./{asset_path.name}",
+        "type": media_type,
+        "roles": [role],
+    }
+
+    # Write updated collection
+    with open(collection_json_path, "w") as f:
+        json.dump(collection_data, f, indent=2)
 
 
 def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path]:

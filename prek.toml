@@ -1,0 +1,210 @@
+# prek configuration - Tier 1 CI
+# See context/shared/documentation/ci.md for the full CI strategy
+#
+# All hooks BLOCK on failure. No warnings, no skips.
+# Install: prek install (requires: uv tool install prek)
+#:schema https://www.schemastore.org/prek.json
+
+# Stop after first hook failure for faster feedback
+fail_fast = true
+
+# =============================================================================
+# Built-in hooks (native Rust, no network fetch required)
+# =============================================================================
+[[repos]]
+repo = "builtin"
+hooks = [
+  # --- Format & whitespace ---
+  { id = "trailing-whitespace" },
+  { id = "end-of-file-fixer" },
+  { id = "mixed-line-ending" },
+
+  # --- Syntax validation ---
+  { id = "check-yaml" },
+  { id = "check-toml" },
+
+  # --- Safety & security ---
+  { id = "check-merge-conflict" },
+  { id = "detect-private-key" },
+  { id = "check-case-conflict" },
+  { id = "no-commit-to-branch", args = ["--branch", "main"] },
+  {
+    id = "check-added-large-files",
+    args = ["--maxkb=500"],
+    exclude = { glob = ["tests/fixtures/realdata/**", "tests/fixtures/raster/**", "tests/fixtures/vector/**"] },
+  },
+]
+
+# =============================================================================
+# External tool hooks
+# =============================================================================
+[[repos]]
+repo = "https://github.com/astral-sh/ruff-pre-commit"
+rev = "v0.14.1"
+hooks = [
+  { id = "ruff", args = ["--fix"] },
+  { id = "ruff-format" },
+]
+
+[[repos]]
+repo = "https://github.com/jendrikseipp/vulture"
+rev = "v2.14"
+hooks = [
+  {
+    id = "vulture",
+    args = [
+      "portolan_cli",
+      "tests",
+      "vulture_whitelist.py",
+      "--exclude",
+      "portolan_cli/validation/rules.py,portolan_cli/backends/protocol.py,portolan_cli/backends/json_file.py,portolan_cli/backends/iceberg/backend.py",
+    ],
+  },
+]
+
+[[repos]]
+repo = "https://github.com/rubik/xenon"
+rev = "v0.9.3"
+hooks = [
+  {
+    id = "xenon",
+    args = ["--max-absolute=C", "--max-modules=B", "--max-average=A", "portolan_cli/"],
+    pass_filenames = false,
+  },
+]
+
+[[repos]]
+repo = "https://github.com/commitizen-tools/commitizen"
+rev = "v4.1.0"
+hooks = [
+  { id = "commitizen", stages = ["commit-msg"] },
+]
+
+# =============================================================================
+# Local hooks
+# =============================================================================
+[[repos]]
+repo = "local"
+hooks = [
+  # === SAFETY HOOKS ===
+  # Prevent accidental commits of temporary/generated content
+  {
+    id = "forbid-worktrees",
+    name = "forbid worktree files",
+    shell = "bash",
+    entry = "echo 'ERROR - Worktree files should not be committed. Remove .claude/worktrees/ from staging.' && exit 1",
+    language = "system",
+    files = { glob = ".claude/worktrees/**" },
+    pass_filenames = false,
+  },
+
+  # === AUTO-UPDATE HOOKS ===
+  # These regenerate content from code - keeps docs in sync automatically
+  {
+    id = "update-claude-md",
+    name = "auto-update CLAUDE.md sections",
+    entry = "uv run python scripts/generate_claude_md_sections.py --update",
+    language = "system",
+    files = { glob = ["CLAUDE.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md", "pyproject.toml", "portolan_cli/cli.py"] },
+    pass_filenames = false,
+  },
+  {
+    id = "update-skill-md",
+    name = "auto-update SKILL.md sections",
+    entry = "uv run python scripts/generate_skill_md.py --write",
+    language = "system",
+    files = { glob = ["SKILL.md", "portolan_cli/__init__.py", "portolan_cli/cli.py"] },
+    pass_filenames = false,
+  },
+  {
+    id = "update-freshness",
+    name = "auto-update freshness markers",
+    entry = "uv run python scripts/update_freshness.py",
+    language = "system",
+    files = { glob = ["portolan_cli/output.py", "portolan_cli/errors.py", "portolan_cli/constants.py", "portolan_cli/json_output.py", "portolan_cli/cli.py"] },
+    pass_filenames = true,
+  },
+  {
+    id = "sync-sourcecoop-skill",
+    name = "sync Source Co-op skill CLI reference",
+    entry = "uv run python scripts/sync_sourcecoop_skill.py --update",
+    language = "system",
+    files = { glob = ["portolan_cli/cli.py", "portolan_cli/push.py", "portolan_cli/config.py", "portolan_cli/metadata_yaml.py", "portolan_cli/readme.py", "scripts/sync_sourcecoop_skill.py", "portolan_cli/skills/sourcecoop.md"] },
+    pass_filenames = false,
+  },
+
+  # === VALIDATION HOOKS ===
+  {
+    id = "validate-claude-md",
+    name = "validate CLAUDE.md references",
+    entry = "uv run python scripts/validate_claude_md.py",
+    language = "system",
+    files = { glob = ["CLAUDE.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md"] },
+    pass_filenames = false,
+  },
+  {
+    id = "validate-skill-md",
+    name = "validate SKILL.md structure",
+    entry = "uv run python scripts/validate_skill_md.py",
+    language = "system",
+    files = { glob = ["SKILL.md", "portolan_cli/__init__.py", "portolan_cli/cli.py"] },
+    pass_filenames = false,
+  },
+  {
+    id = "mypy",
+    name = "mypy",
+    entry = "uv run mypy",
+    language = "system",
+    types = ["python"],
+    args = ["portolan_cli"],
+    pass_filenames = false,
+    require_serial = true,
+  },
+  {
+    id = "fast-tests",
+    name = "fast tests",
+    entry = "uv run pytest",
+    language = "system",
+    types = ["python"],
+    args = ["tests/", "-m", "unit", "--timeout=30", "-q", "-x"],
+    pass_filenames = false,
+    stages = ["pre-push"],
+    require_serial = true,
+  },
+  {
+    id = "import-linter",
+    name = "architecture rules",
+    entry = "uv run lint-imports",
+    language = "system",
+    files = { glob = ["pyproject.toml", "portolan_cli/**/*.py"] },
+    pass_filenames = false,
+  },
+  {
+    id = "deptry",
+    name = "dependency checker",
+    entry = "uv run deptry .",
+    language = "system",
+    files = { glob = ["pyproject.toml", "portolan_cli/**/*.py"] },
+    pass_filenames = false,
+  },
+
+  # === DOCUMENTATION SYNC HOOKS ===
+  # menard: detect when code changes require doc updates
+  {
+    id = "menard-check",
+    name = "check documentation freshness",
+    entry = "uv run menard check",
+    language = "system",
+    files = { glob = "portolan_cli/**/*.py" },
+    pass_filenames = false,
+  },
+  {
+    id = "menard-protected",
+    name = "check protected content",
+    entry = "uv run menard check-protected",
+    language = "system",
+    files = { glob = ["**/*.md", "**/*.py"] },
+    exclude = { glob = "**/*.gdb/**" },
+    pass_filenames = false,
+  },
+]

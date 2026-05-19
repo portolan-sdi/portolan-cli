@@ -1,4 +1,4 @@
-# ADR-0041: Iceberg as Optional Extra, Not Separate Package
+# ADR-0046: Iceberg as Optional Extra, Not Separate Package
 
 ## Status
 

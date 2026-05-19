@@ -224,6 +224,9 @@ class CogSettings:
     tile_size: int = 512
     predictor: int = 2
     resampling: str = "nearest"
+    generate_thumbnail: bool = True
+    thumbnail_max_size: int = 512
+    thumbnail_quality: int = 75
 
 
 def validate_cog_settings(settings: CogSettings) -> list[str]:
@@ -305,6 +308,25 @@ def validate_cog_settings(settings: CogSettings) -> list[str]:
             f"'{settings.compression}'. Consider setting predictor=1 to avoid confusion."
         )
 
+    # Validate thumbnail_max_size (Issue #372)
+    if settings.thumbnail_max_size <= 0:
+        warnings.append(
+            f"thumbnail_max_size {settings.thumbnail_max_size} is invalid. "
+            "Must be > 0. Using default 512."
+        )
+    elif settings.thumbnail_max_size > 4096:
+        warnings.append(
+            f"thumbnail_max_size {settings.thumbnail_max_size} is very large. "
+            "Recommended: <= 4096. Defeats the purpose of a thumbnail."
+        )
+
+    # Validate thumbnail_quality (Issue #372)
+    if not 1 <= settings.thumbnail_quality <= 100:
+        warnings.append(
+            f"thumbnail_quality {settings.thumbnail_quality} is out of range. "
+            "Valid range: 1-100. Using clamped value."
+        )
+
     return warnings
 
 
@@ -363,12 +385,27 @@ def get_cog_settings(catalog_path: Path) -> CogSettings:
         # Normalize resampling to lowercase
         resampling = resampling.lower()
 
+    generate_thumbnail = cog.get("generate_thumbnail")
+    if not isinstance(generate_thumbnail, bool):
+        generate_thumbnail = True
+
+    thumbnail_max_size = cog.get("thumbnail_max_size")
+    if not isinstance(thumbnail_max_size, int) or thumbnail_max_size <= 0:
+        thumbnail_max_size = 512
+
+    thumbnail_quality = cog.get("thumbnail_quality")
+    if not isinstance(thumbnail_quality, int) or not 1 <= thumbnail_quality <= 100:
+        thumbnail_quality = 75
+
     settings = CogSettings(
         compression=compression,
         quality=quality,
         tile_size=tile_size,
         predictor=predictor,
         resampling=resampling,
+        generate_thumbnail=generate_thumbnail,
+        thumbnail_max_size=thumbnail_max_size,
+        thumbnail_quality=thumbnail_quality,
     )
 
     # Validate and log warnings
@@ -377,3 +414,184 @@ def get_cog_settings(catalog_path: Path) -> CogSettings:
         logger.warning("COG config: %s", warning)
 
     return settings
+
+
+# =============================================================================
+# Vector Settings (Issue #340)
+# =============================================================================
+
+# Valid spatial index types supported by geoparquet-io
+VALID_SPATIAL_INDEXES: frozenset[str] = frozenset({"h3", "quadkey", "s2", "a5", "kdtree", "none"})
+
+# Valid sort methods
+VALID_SORT_METHODS: frozenset[str] = frozenset({"hilbert", "quadkey", "none"})
+
+# Default resolutions per index type (geoparquet-io defaults)
+DEFAULT_RESOLUTIONS: dict[str, int] = {
+    "h3": 9,
+    "quadkey": 13,
+    "s2": 13,
+    "a5": 15,
+    "kdtree": 9,  # iterations for kdtree
+}
+
+
+@dataclass(frozen=True)
+class VectorSettings:
+    """Configuration for vector (GeoParquet) conversion.
+
+    Controls spatial optimization at conversion time via geoparquet-io's
+    fluent Table API. Both file and Iceberg backends receive the same
+    spatially-enriched output.
+
+    Attributes:
+        spatial_index: Spatial index column to add (h3, quadkey, s2, a5, kdtree, none).
+        resolution: Index resolution. "auto" uses geoparquet-io defaults which
+            include row-count-based tuning. Explicit int overrides.
+        sort: Row ordering method (hilbert, quadkey, none).
+        add_bbox: Whether to add a bbox struct column.
+        partition: Whether to produce hive-partitioned output. Only affects
+            file backend; Iceberg uses native partitioning on the spatial column.
+    """
+
+    spatial_index: str = "none"
+    resolution: int | str = "auto"
+    sort: str = "none"
+    add_bbox: bool = False
+    partition: bool = False
+
+
+def validate_vector_settings(settings: VectorSettings) -> list[str]:
+    """Validate vector settings and return warnings for any issues.
+
+    Does not raise exceptions — returns a list of warning messages.
+
+    Args:
+        settings: VectorSettings instance to validate.
+
+    Returns:
+        List of warning messages. Empty list if all settings are valid.
+    """
+    warnings: list[str] = []
+
+    # Validate spatial_index
+    if settings.spatial_index not in VALID_SPATIAL_INDEXES:
+        warnings.append(
+            f"Unknown spatial_index '{settings.spatial_index}'. "
+            f"Valid values: {', '.join(sorted(VALID_SPATIAL_INDEXES))}. "
+            "Falling back to 'none'."
+        )
+
+    # Validate sort
+    if settings.sort not in VALID_SORT_METHODS:
+        warnings.append(
+            f"Unknown sort method '{settings.sort}'. "
+            f"Valid values: {', '.join(sorted(VALID_SORT_METHODS))}. "
+            "Falling back to 'none'."
+        )
+
+    # Validate resolution if explicit
+    if settings.resolution != "auto":
+        if not isinstance(settings.resolution, int):
+            warnings.append(
+                f"Resolution '{settings.resolution}' is not valid. "
+                "Must be 'auto' or an integer. Using 'auto'."
+            )
+        elif settings.resolution < 0:
+            warnings.append(
+                f"Resolution {settings.resolution} is negative. Using default for index type."
+            )
+
+    # Warn if partition=True but spatial_index=none
+    if settings.partition and settings.spatial_index == "none":
+        warnings.append(
+            "partition=True requires a spatial_index. "
+            "Set spatial_index to h3, quadkey, s2, a5, or kdtree."
+        )
+
+    return warnings
+
+
+def get_vector_settings(catalog_path: Path) -> VectorSettings:
+    """Load vector conversion settings from catalog config.
+
+    Reads the 'conversion.vector' section from .portolan/config.yaml and returns
+    a VectorSettings instance with values from config merged with defaults.
+
+    Args:
+        catalog_path: Root path of the catalog.
+
+    Returns:
+        VectorSettings instance. Returns defaults if no config exists.
+    """
+    config = load_config(catalog_path)
+
+    conversion = _get_dict(config, "conversion")
+    if not conversion:
+        return VectorSettings()
+
+    vector = _get_dict(conversion, "vector")
+    if not vector:
+        return VectorSettings()
+
+    # Parse spatial_index
+    spatial_index = vector.get("spatial_index")
+    if not isinstance(spatial_index, str):
+        spatial_index = "none"
+    else:
+        spatial_index = spatial_index.lower()
+
+    # Parse resolution
+    resolution: int | str = vector.get("resolution", "auto")
+    if isinstance(resolution, str):
+        resolution = resolution.lower()
+        if resolution != "auto":
+            # Try to parse as int
+            try:
+                resolution = int(resolution)
+            except ValueError:
+                resolution = "auto"
+    elif not isinstance(resolution, int):
+        resolution = "auto"
+
+    # Parse sort
+    sort = vector.get("sort")
+    if not isinstance(sort, str):
+        sort = "none"
+    else:
+        sort = sort.lower()
+
+    # Parse add_bbox
+    add_bbox = vector.get("add_bbox")
+    if not isinstance(add_bbox, bool):
+        add_bbox = False
+
+    # Parse partition
+    partition = vector.get("partition")
+    if not isinstance(partition, bool):
+        partition = False
+
+    # Normalize invalid values before creating settings
+    if spatial_index not in VALID_SPATIAL_INDEXES:
+        logger.warning("Vector config: Unknown spatial_index '%s', using 'none'", spatial_index)
+        spatial_index = "none"
+
+    if sort not in VALID_SORT_METHODS:
+        logger.warning("Vector config: Unknown sort '%s', using 'none'", sort)
+        sort = "none"
+
+    if resolution != "auto" and (not isinstance(resolution, int) or resolution < 0):
+        logger.warning("Vector config: Invalid resolution '%s', using 'auto'", resolution)
+        resolution = "auto"
+
+    if partition and spatial_index == "none":
+        logger.warning("Vector config: partition=True requires spatial_index, disabling partition")
+        partition = False
+
+    return VectorSettings(
+        spatial_index=spatial_index,
+        resolution=resolution,
+        sort=sort,
+        add_bbox=add_bbox,
+        partition=partition,
+    )

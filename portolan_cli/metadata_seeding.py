@@ -140,6 +140,9 @@ def _build_metadata_dict(extracted: ExtractedMetadata) -> dict[str, Any]:
     if extracted.source_url:
         metadata["source_url"] = extracted.source_url
 
+    if extracted.description:
+        metadata["description"] = extracted.description
+
     if extracted.attribution:
         metadata["attribution"] = extracted.attribution
 

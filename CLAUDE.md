@@ -71,7 +71,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0001](context/shared/adr/0001-agentic-first-development.md) | Agentic-first: automate all quality gates, TDD mandatory |
 | [0002](context/shared/adr/0002-click-for-cli.md) | Click for CLI framework |
 | [0003](context/shared/adr/0003-plugin-architecture.md) | Plugin architecture for formats (GeoParquet/COG core, others optional) |
-| [0004](context/shared/adr/0004-iceberg-as-plugin.md) | ~~Iceberg as plugin~~ Superseded by ADR-0041 |
+| [0004](context/shared/adr/0004-iceberg-as-plugin.md) | ~~Iceberg as plugin~~ Superseded by ADR-0046 |
 | [0005](context/shared/adr/0005-versions-json-source-of-truth.md) | versions.json as single source of truth |
 | [0006](context/shared/adr/0006-remote-ownership-model.md) | Portolan owns bucket contents (no external edits) |
 | [0007](context/shared/adr/0007-cli-wraps-api.md) | CLI wraps Python API (all logic in library layer) |
@@ -108,14 +108,19 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0038](context/shared/adr/0038-metadata-yaml-enrichment.md) | metadata.yaml as human enrichment layer (supplements STAC, generates README) |
 | [0039](context/shared/adr/0039-hierarchical-portolan-folders.md) | Hierarchical .portolan/ at collection/subcatalog levels |
 | [0040](context/shared/adr/0040-unified-progress-output.md) | Progress + summary model: Rich progress bars, immediate errors, batched warnings |
-| [0041](context/shared/adr/0041-iceberg-as-optional-extra.md) | Iceberg as optional `[iceberg]` extra, not separate package (supersedes 0004) |
+| [0041](context/shared/adr/0041-stac-manifest-as-canonical-scan-source.md) | STAC manifest as canonical scan source for metadata_fresh; unifies check/--fix; adds ORPHANED status |
+| [0042](context/shared/adr/0042-partition-stac-extension.md) | Standalone `partition:` STAC extension for Hive-style partitioned datasets |
+| [0043](context/shared/adr/0043-style-and-thumbnail-architecture.md) | Style/thumbnail: inline in STAC, Mapbox GL spec, basemaps for vectors only |
+| [0044](context/shared/adr/0044-consumption-guides-architecture.md) | Consumption guides: DuckDB + Python in README, skill for advanced cases |
+| [0045](context/shared/adr/0045-styles-as-stac-assets.md) | Styles as standalone STAC assets (supersedes ADR-0043 style storage) |
+| [0046](context/shared/adr/0046-iceberg-as-optional-extra.md) | Iceberg as optional `[iceberg]` extra, not separate package (supersedes 0004) |
 
 ## Common Commands
 
 ```bash
 # Environment setup
 uv sync --all-extras                    # Install all dependencies
-uv run pre-commit install               # Install git hooks
+prek install                            # Install git hooks (requires: uv tool install prek)
 
 # Development
 uv run pytest                           # Run tests
@@ -243,9 +248,9 @@ Store small, representative data files in `tests/fixtures/`. Fixtures should be:
 
 **All checks are strict** — no `continue-on-error`. Fix issues or they block.
 
-### Pre-commit Hooks
+### prek Hooks
 
-Install: `uv run pre-commit install`. All hooks block—no `--no-verify`. See `.pre-commit-config.yaml` for full list.
+Install: `uv tool install prek && prek install`. All hooks block—no `--no-verify`. See `prek.toml` for full list.
 
 ## Code Quality
 
@@ -390,7 +395,7 @@ detail("Processing chunk 3/10...")         # Dimmed text
 
 **Progress UI:** The `add` and `scan` commands have excellent progress printing with real-time updates. Use this pattern (Rich progress bars + batched output) for any long-running operations.
 
-<!-- freshness: last-verified: 2026-04-08 -->
+<!-- freshness: last-verified: 2026-05-07 -->
 ## Design Principles
 
 | Principle | Meaning | ADR |
@@ -411,8 +416,8 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 |-------|--------|
 | [PyArrow v22+ ABI](context/shared/known-issues/pyarrow-abseil-abi.md) | Import failures on Ubuntu 22.04; pinned to `<22.0.0` |
 | [geoparquet-io Windows segfault](context/shared/known-issues/geoparquet-io-windows-segfault.md) | Crashes on malformed input; test skipped on Windows |
+| [geoparquet-io macOS abort](context/shared/known-issues/geoparquet-io-macos-abort.md) | Aborts on multilayer conversion; test skipped on macOS |
 | [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
-| [FileGDB MULTISURFACE](context/shared/known-issues/filegdb-multisurface-duckdb.md) | DuckDB spatial can't parse MULTISURFACE WKB from FileGDB |
 
 ## Active Technologies
 - Python 3.10+ (per pyproject.toml) + Click (CLI framework per ADR-0002) (004-json-output)

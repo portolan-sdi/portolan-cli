@@ -383,18 +383,20 @@ class TestPushCLI:
             assert call_kwargs.get("profile") == "myprofile"
 
     @pytest.mark.integration
-    def test_push_reads_aws_profile_from_config(self, catalog_with_versions: Path) -> None:
-        """Push should read aws_profile from .portolan/config.yaml when --profile not specified."""
+    def test_push_reads_aws_profile_from_env(self, catalog_with_versions: Path) -> None:
+        """Push should read aws_profile from PORTOLAN_AWS_PROFILE when --profile not specified.
+
+        Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue #356).
+        """
+        import os
+        from unittest.mock import patch as mock_patch
+
         from portolan_cli.cli import cli
         from portolan_cli.push import PushResult
 
         runner = CliRunner()
 
-        # Set aws_profile in config.yaml
-        config_file = catalog_with_versions / ".portolan" / "config.yaml"
-        config_file.write_text("remote: s3://test-bucket/catalog\naws_profile: config-profile\n")
-
-        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
+        with mock_patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -403,35 +405,45 @@ class TestPushCLI:
                 errors=[],
             )
 
-            runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            # Set profile via env var (Issue #356: sensitive settings)
+            with mock_patch.dict(
+                os.environ,
+                {
+                    "PORTOLAN_REMOTE": "s3://test-bucket/catalog",
+                    "PORTOLAN_AWS_PROFILE": "env-profile",
+                },
+            ):
+                runner.invoke(
+                    cli,
+                    [
+                        "push",
+                        "--collection",
+                        "demographics",
+                        "--catalog",
+                        str(catalog_with_versions),
+                    ],
+                    catch_exceptions=False,
+                )
 
-            # Should read profile from config, not use hardcoded "default"
+            # Should read profile from env var
             call_kwargs = mock_push.call_args[1]
-            assert call_kwargs.get("profile") == "config-profile"
+            assert call_kwargs.get("profile") == "env-profile"
 
     @pytest.mark.integration
-    def test_push_cli_profile_overrides_config(self, catalog_with_versions: Path) -> None:
-        """Push --profile should override aws_profile from config.yaml."""
+    def test_push_cli_profile_overrides_env(self, catalog_with_versions: Path) -> None:
+        """Push --profile should override PORTOLAN_AWS_PROFILE env var.
+
+        Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue #356).
+        """
+        import os
+        from unittest.mock import patch as mock_patch
+
         from portolan_cli.cli import cli
         from portolan_cli.push import PushResult
 
         runner = CliRunner()
 
-        # Set aws_profile in config.yaml
-        config_file = catalog_with_versions / ".portolan" / "config.yaml"
-        config_file.write_text("remote: s3://test-bucket/catalog\naws_profile: config-profile\n")
-
-        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
+        with mock_patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = PushResult(
                 success=True,
                 files_uploaded=0,
@@ -440,21 +452,29 @@ class TestPushCLI:
                 errors=[],
             )
 
-            runner.invoke(
-                cli,
-                [
-                    "push",
-                    "--collection",
-                    "demographics",
-                    "--profile",
-                    "cli-override",
-                    "--catalog",
-                    str(catalog_with_versions),
-                ],
-                catch_exceptions=False,
-            )
+            # Set profile via env var, but CLI should override
+            with mock_patch.dict(
+                os.environ,
+                {
+                    "PORTOLAN_REMOTE": "s3://test-bucket/catalog",
+                    "PORTOLAN_AWS_PROFILE": "env-profile",
+                },
+            ):
+                runner.invoke(
+                    cli,
+                    [
+                        "push",
+                        "--collection",
+                        "demographics",
+                        "--profile",
+                        "cli-override",
+                        "--catalog",
+                        str(catalog_with_versions),
+                    ],
+                    catch_exceptions=False,
+                )
 
-            # CLI flag should override config
+            # CLI flag should override env var
             call_kwargs = mock_push.call_args[1]
             assert call_kwargs.get("profile") == "cli-override"
 

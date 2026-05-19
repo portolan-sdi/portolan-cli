@@ -57,6 +57,10 @@ from portolan_cli.metadata.fix import (
     FixResult,
     fix_metadata,
 )
+from portolan_cli.metadata.flatgeobuf import (
+    FlatGeobufMetadata,
+    extract_flatgeobuf_metadata,
+)
 from portolan_cli.metadata.geoparquet import (
     GeoParquetMetadata,
     extract_geoparquet_metadata,
@@ -66,6 +70,10 @@ from portolan_cli.metadata.models import (
     MetadataCheckResult,
     MetadataReport,
     MetadataStatus,
+)
+from portolan_cli.metadata.pmtiles import (
+    PMTilesMetadata,
+    extract_pmtiles_metadata,
 )
 from portolan_cli.metadata.statistics import (
     BandStatistics,
@@ -90,9 +98,13 @@ from portolan_cli.metadata.validation import (
 __all__ = [
     # Extraction
     "COGMetadata",
+    "FlatGeobufMetadata",
     "GeoParquetMetadata",
+    "PMTilesMetadata",
     "extract_cog_metadata",
+    "extract_flatgeobuf_metadata",
     "extract_geoparquet_metadata",
+    "extract_pmtiles_metadata",
     # Statistics
     "BandStatistics",
     "ColumnStatistics",

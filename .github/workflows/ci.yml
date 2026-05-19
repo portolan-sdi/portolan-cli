@@ -81,7 +81,8 @@ jobs:
       - name: Audit dependencies
         # CVE-2026-4539: pygments 2.19.x ReDoS in AdlLexer (CVSS 3.3, local only)
         # No upstream fix available. Track: https://github.com/portolan-sdi/portolan-cli/issues/285
-        run: uv run pip-audit --ignore-vuln CVE-2026-4539
+        # CVE-2026-3219, CVE-2026-6357: pip 26.0.1 vulnerabilities (fix in 26.1, uv-managed)
+        run: uv run pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-6357
 
   test:
     name: Test (Python ${{ matrix.python-version }} / ${{ matrix.os }})
@@ -117,11 +118,19 @@ jobs:
           retry_wait_seconds: 10
           command: uv python install ${{ matrix.python-version }}
 
+      - name: Install tippecanoe (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y tippecanoe
+
+      - name: Install tippecanoe (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install tippecanoe
+
       - name: Install dependencies
         run: uv sync --all-extras
 
       - name: Run tests (unit + integration, no network, no iceberg)
-        run: uv run pytest tests/ --ignore=tests/iceberg/ -v --tb=short -m "not network and not slow and not benchmark" --cov=portolan_cli --cov-report=term-missing --cov-report=xml
+        run: uv run pytest tests/ --ignore=tests/iceberg/ -v --tb=short -m "not network and not slow and not benchmark" -n auto --dist loadscope --cov=portolan_cli --cov-report=term-missing --cov-report=xml
 
       - name: Upload coverage reports to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'

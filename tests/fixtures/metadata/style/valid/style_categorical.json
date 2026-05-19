@@ -1,0 +1,28 @@
+{
+  "version": 8,
+  "name": "Land Use Categories",
+  "sources": {
+    "data": {
+      "type": "vector",
+      "url": "../parcels.pmtiles"
+    }
+  },
+  "layers": [
+    {
+      "id": "parcels-categorical",
+      "type": "fill",
+      "source": "data",
+      "source-layer": "parcels",
+      "paint": {
+        "fill-color": [
+          "match", ["get", "land_use"],
+          "residential", "#ff6b6b",
+          "commercial", "#4ecdc4",
+          "industrial", "#45b7d1",
+          "#95afc0"
+        ],
+        "fill-opacity": 0.7
+      }
+    }
+  ]
+}

@@ -158,7 +158,8 @@ Not the intermediate subcatalogs (`climate/catalog.json`, `demographics/catalog.
 
 ## Restoring Missing Files
 
-If you accidentally delete local data files, use `--restore` to re-download them:
+If you accidentally delete local data files, use `--restore` to re-download them.
+The pull operation uses optimized concurrency settings (8 files × 4 chunks by default) to avoid overwhelming home networks:
 
 ```bash
 # Normal pull - won't download if versions match

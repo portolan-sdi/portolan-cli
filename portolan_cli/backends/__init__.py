@@ -12,7 +12,7 @@ Third-party plugins can still register additional backends via the
 "portolan.backends" entry point group.
 
 See ADR-0015 (Two-Tier Versioning Architecture) for architectural context.
-See ADR-0041 (Iceberg as Optional Extra) for the merge decision.
+See ADR-0046 (Iceberg as Optional Extra) for the merge decision.
 
 Usage:
     from portolan_cli.backends import get_backend

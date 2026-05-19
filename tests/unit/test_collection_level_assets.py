@@ -77,16 +77,17 @@ class TestCollectionLevelAssets:
         assert len(versions_data["versions"]) > 0, "Should have at least one version"
         version = versions_data["versions"][0]
 
-        # Check the asset href
-        assert "demographics/census.parquet" in version["assets"], (
-            f"Asset key should be 'demographics/census.parquet', got: {list(version['assets'].keys())}"
+        # Check the asset key - should be collection-relative (Issue #354)
+        # For collection-level assets, key is filename only; href includes collection path
+        assert "census.parquet" in version["assets"], (
+            f"Asset key should be 'census.parquet' (collection-relative), got: {list(version['assets'].keys())}"
         )
 
-        asset = version["assets"]["demographics/census.parquet"]
+        asset = version["assets"]["census.parquet"]
 
-        # The critical assertion - href should NOT have double nesting
+        # The critical assertion - href should include collection path (catalog-relative)
         assert asset["href"] == "demographics/census.parquet", (
-            f"Expected 'demographics/census.parquet', got '{asset['href']}' (double nesting bug)"
+            f"Expected href 'demographics/census.parquet', got '{asset['href']}'"
         )
 
     def test_collection_level_asset_no_duplicate_directory(self, initialized_catalog, fixtures_dir):
@@ -133,11 +134,11 @@ class TestCollectionLevelAssets:
             "Should not have duplicate 'demographics' subdirectory"
         )
 
-    def test_collection_level_asset_item_json_location(self, initialized_catalog, fixtures_dir):
-        """Test that item.json is created in correct location for collection-level assets.
+    def test_collection_level_vector_no_item_json(self, initialized_catalog, fixtures_dir):
+        """Test that collection-level vector assets do NOT create item.json (ADR-0031).
 
-        For collection-level assets, if an item.json is created, it should use a synthetic
-        item ID (not the collection name) to avoid path conflicts.
+        Per ADR-0031: Single vector files (GeoParquet, Shapefile, GeoPackage) are
+        collection-level assets - no item.json, asset directly in collection.json.
         """
         # Arrange
         collection_dir = initialized_catalog / "demographics"
@@ -157,20 +158,276 @@ class TestCollectionLevelAssets:
             description=None,
         )
 
-        # Assert: If item.json exists, it should NOT be at collection/collection/item.json
-        # It should either:
-        # 1. Not exist (collection-level assets don't need items), OR
-        # 2. Be at collection/item-id/item.json where item-id != collection-name
+        # Assert: NO item.json should exist anywhere in collection
+        item_json_files = list(collection_dir.rglob("*.json"))
+        item_json_names = [f.name for f in item_json_files]
 
-        # Check for the buggy path
-        buggy_item_json = collection_dir / "demographics" / "demographics.json"
-        assert not buggy_item_json.exists(), (
-            f"Should not create item.json at buggy path {buggy_item_json}"
+        # Only collection.json and versions.json should exist
+        assert "census.json" not in item_json_names, (
+            "Should NOT create item.json for collection-level vector asset"
         )
 
-        # If there's an item directory, it should NOT be named same as collection
-        item_dirs = [d for d in collection_dir.iterdir() if d.is_dir()]
-        for item_dir in item_dirs:
-            assert item_dir.name != "demographics", (
-                f"Item directory should not have same name as collection: {item_dir}"
+        # Verify no item subdirectory was created
+        subdirs = [d for d in collection_dir.iterdir() if d.is_dir()]
+        assert len(subdirs) == 0 or all(d.name.startswith(".") for d in subdirs), (
+            f"Should NOT create item subdirectory, found: {[d.name for d in subdirs]}"
+        )
+
+    def test_collection_level_vector_asset_in_collection_json(
+        self, initialized_catalog, fixtures_dir
+    ):
+        """Test that collection-level vector assets appear in collection.json assets.
+
+        Per ADR-0031: The asset should be in collection.json's "assets" field,
+        NOT as an item link.
+        """
+        # Arrange
+        collection_dir = initialized_catalog / "demographics"
+        collection_dir.mkdir()
+
+        test_file = fixtures_dir / "simple.parquet"
+        target_file = collection_dir / "census.parquet"
+        target_file.write_bytes(test_file.read_bytes())
+
+        # Act
+        add_dataset(
+            catalog_root=initialized_catalog,
+            path=target_file,
+            collection_id="demographics",
+            item_id=None,
+            title=None,
+            description=None,
+        )
+
+        # Assert: collection.json should have asset in "assets" field
+        collection_json = collection_dir / "collection.json"
+        assert collection_json.exists(), "collection.json should be created"
+
+        with open(collection_json) as f:
+            collection_data = json.load(f)
+
+        # Check assets field has our data (key is file stem, not "data")
+        assets = collection_data.get("assets", {})
+        assert "census" in assets, (
+            f"collection.json should have 'census' asset (file stem), got: {list(assets.keys())}"
+        )
+        assert assets["census"]["href"] == "./census.parquet", (
+            f"Asset href should be './census.parquet', got: {assets['census']['href']}"
+        )
+
+        # Verify NO item links exist for this asset
+        links = collection_data.get("links", [])
+        item_links = [link for link in links if link.get("rel") == "item"]
+        assert len(item_links) == 0, (
+            f"Should NOT have item links for collection-level asset, got: {item_links}"
+        )
+
+    def test_explicit_item_id_forces_item_level(self, initialized_catalog, fixtures_dir):
+        """Test that explicit --item-id forces item-level structure (traditional).
+
+        When user explicitly provides item_id, the asset should be item-level
+        (with item.json), not collection-level.
+        """
+        # Arrange
+        collection_dir = initialized_catalog / "demographics"
+        collection_dir.mkdir()
+
+        test_file = fixtures_dir / "simple.parquet"
+        target_file = collection_dir / "census.parquet"
+        target_file.write_bytes(test_file.read_bytes())
+
+        # Act: Explicitly provide item_id
+        add_dataset(
+            catalog_root=initialized_catalog,
+            path=target_file,
+            collection_id="demographics",
+            item_id="census-2020",  # Explicit item ID
+            title=None,
+            description=None,
+        )
+
+        # Assert: item.json SHOULD exist when item_id is explicit
+        # The item.json location depends on implementation - it may be in
+        # a subdirectory or at collection level. Key is that it exists.
+        item_json_files = list(collection_dir.rglob("census-2020.json"))
+        assert len(item_json_files) == 1, (
+            "Should create item.json when explicit item_id is provided"
+        )
+
+        # And collection.json should have item link, not direct asset
+        collection_json = collection_dir / "collection.json"
+        with open(collection_json) as f:
+            collection_data = json.load(f)
+
+        links = collection_data.get("links", [])
+        item_links = [link for link in links if link.get("rel") == "item"]
+        assert len(item_links) == 1, "Should have item link when explicit item_id is provided"
+
+
+# =============================================================================
+# Issue #383: Non-geospatial parquet files with collection-level geo companions
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestCollectionLevelNonGeoCompanions:
+    """Tests for issue #383: non-geo parquet files with collection-level geo companions.
+
+    Bug: Non-geo parquet files fail to track when their companion geo file is
+    collection-level because `source_to_item_dir` doesn't include collection-level
+    sources.
+
+    Fix: Add `source_to_collection_dir` mapping for collection-level sources.
+    """
+
+    def test_process_deferred_accepts_collection_dir_mapping(
+        self, initialized_catalog, fixtures_dir
+    ):
+        """_process_deferred_non_geo_files accepts source_to_collection_dir parameter.
+
+        TDD: Verify the function signature includes the new parameter.
+        """
+        from portolan_cli.dataset import _process_deferred_non_geo_files
+
+        # Set up minimal arguments
+        deferred_non_geo: list = []
+        source_to_item_dir: dict = {}
+        source_to_collection_dir: dict = {}  # NEW parameter
+        skipped: list = []
+        failures: list = []
+
+        # Should not raise TypeError for unexpected keyword argument
+        _process_deferred_non_geo_files(
+            deferred_non_geo=deferred_non_geo,
+            source_to_item_dir=source_to_item_dir,
+            source_to_collection_dir=source_to_collection_dir,
+            catalog_root=initialized_catalog,
+            skipped=skipped,
+            failures=failures,
+        )
+
+    def test_non_geo_with_collection_level_geo_is_tracked(self, initialized_catalog, fixtures_dir):
+        """Non-geo parquet tracks when geo companion is collection-level (fix #383).
+
+        When a geo file is added as a collection-level asset, its non-geo
+        companion parquet should also be registered as a collection-level asset
+        in collection.json.
+        """
+        from portolan_cli.dataset import _process_deferred_non_geo_files
+
+        # Set up collection with collection.json
+        collection_dir = initialized_catalog / "my-collection"
+        collection_dir.mkdir()
+
+        collection_json = collection_dir / "collection.json"
+        collection_json.write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "stac_version": "1.0.0",
+                    "id": "my-collection",
+                    "description": "Test collection",
+                    "extent": {
+                        "spatial": {"bbox": [[0, 0, 1, 1]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "license": "proprietary",
+                    "links": [],
+                    "assets": {
+                        "data": {
+                            "href": "./data.parquet",
+                            "type": "application/vnd.apache.parquet",
+                            "roles": ["data"],
+                        }
+                    },
+                }
             )
+        )
+
+        versions_json = collection_dir / "versions.json"
+        versions_json.write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": None,
+                    "versions": [],
+                }
+            )
+        )
+
+        # Non-geo file in collection directory (same location as geo file)
+        non_geo_file = collection_dir / "stats.parquet"
+        non_geo_file.write_bytes(b"fake parquet")
+
+        # Mappings: collection-level source
+        source_to_item_dir: dict = {}
+        source_to_collection_dir = {collection_dir: (collection_dir, "my-collection")}
+        deferred_non_geo = [(non_geo_file, collection_dir, "my-collection")]
+        skipped: list = []
+        failures: list = []
+
+        _process_deferred_non_geo_files(
+            deferred_non_geo=deferred_non_geo,
+            source_to_item_dir=source_to_item_dir,
+            source_to_collection_dir=source_to_collection_dir,
+            catalog_root=initialized_catalog,
+            skipped=skipped,
+            failures=failures,
+        )
+
+        # Verify: non-geo file was tracked (not failed)
+        assert non_geo_file in skipped
+        assert len(failures) == 0
+
+        # Verify: asset added to collection.json
+        updated = json.loads(collection_json.read_text())
+        assert "stats" in updated["assets"], (
+            f"Non-geo asset 'stats' should be in collection.json, got: {list(updated['assets'].keys())}"
+        )
+        assert updated["assets"]["stats"]["href"] == "./stats.parquet"
+
+        # Verify: asset added to versions.json (Issue #383 fix includes versioning)
+        versions_data = json.loads(versions_json.read_text())
+        assert len(versions_data["versions"]) == 1, "Should have one version entry"
+        version_assets = versions_data["versions"][0]["assets"]
+        assert "stats.parquet" in version_assets, (
+            f"Non-geo asset should be in versions.json, got: {list(version_assets.keys())}"
+        )
+
+    def test_non_geo_without_any_companion_warns(self, initialized_catalog):
+        """Non-geo file without geo companion logs warning (existing behavior)."""
+        from unittest.mock import patch
+
+        from portolan_cli.dataset import _process_deferred_non_geo_files
+
+        # Source dir with no geo companion
+        orphan_dir = initialized_catalog / "orphan"
+        orphan_dir.mkdir()
+        non_geo_file = orphan_dir / "lonely.parquet"
+        non_geo_file.write_bytes(b"fake parquet")
+
+        # Empty mappings - no companion found
+        source_to_item_dir: dict = {}
+        source_to_collection_dir: dict = {}
+        deferred_non_geo = [(non_geo_file, orphan_dir, "orphan")]
+        skipped: list = []
+        failures: list = []
+
+        with patch("portolan_cli.dataset.logger") as mock_logger:
+            _process_deferred_non_geo_files(
+                deferred_non_geo=deferred_non_geo,
+                source_to_item_dir=source_to_item_dir,
+                source_to_collection_dir=source_to_collection_dir,
+                catalog_root=initialized_catalog,
+                skipped=skipped,
+                failures=failures,
+            )
+
+        # Should log warning about no geo companion
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "no geospatial file" in warning_msg.lower()
+
+        # File is skipped (not failed)
+        assert non_geo_file in skipped
+        assert len(failures) == 0

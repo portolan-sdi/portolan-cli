@@ -1,0 +1,27 @@
+{
+  "version": 8,
+  "name": "Population Density",
+  "sources": {
+    "data": {
+      "type": "vector",
+      "url": "../parcels.pmtiles"
+    }
+  },
+  "layers": [
+    {
+      "id": "parcels-graduated",
+      "type": "fill",
+      "source": "data",
+      "source-layer": "parcels",
+      "paint": {
+        "fill-color": [
+          "interpolate", ["linear"], ["get", "population"],
+          0, "#f7fbff",
+          100, "#6baed6",
+          1000, "#08306b"
+        ],
+        "fill-opacity": 0.7
+      }
+    }
+  ]
+}

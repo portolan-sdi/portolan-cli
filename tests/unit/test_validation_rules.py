@@ -525,79 +525,135 @@ class TestCatalogJsonValidRuleOSError:
 class TestPMTilesRecommendedRule:
     """Tests for PMTilesRecommendedRule.
 
-    This rule emits a WARNING (not ERROR) when GeoParquet datasets
-    don't have corresponding PMTiles derivatives.
+    This rule emits a WARNING (not ERROR) when GeoParquet collection assets
+    don't have corresponding PMTiles derivatives as siblings.
     """
 
     @pytest.fixture
-    def catalog_with_geoparquet(self, tmp_path: Path, fixtures_dir: Path) -> Path:
-        """Create a catalog with a GeoParquet dataset but no PMTiles."""
-        import shutil
+    def catalog_with_geoparquet(self, tmp_path: Path) -> Path:
+        """Create a catalog with a GeoParquet collection asset but no PMTiles."""
+        import json
 
-        # Create catalog structure
+        # Create catalog structure with collection-level asset (ADR-0031)
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        datasets_dir = portolan_dir / "datasets" / "test-dataset"
-        datasets_dir.mkdir(parents=True)
 
-        # Copy sample.parquet to datasets dir
-        src = fixtures_dir / "validation" / "pmtiles" / "sample.parquet"
-        shutil.copy(src, datasets_dir / "test-dataset.parquet")
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+
+        # Create collection.json with GeoParquet asset
+        collection_json = {
+            "type": "Collection",
+            "id": "test-collection",
+            "stac_version": "1.0.0",
+            "description": "Test collection",
+            "license": "MIT",
+            "extent": {
+                "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [],
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+
+        # Create the parquet file (empty placeholder)
+        (collection_dir / "data.parquet").write_bytes(b"PAR1placeholder")
 
         return tmp_path
 
     @pytest.fixture
-    def catalog_with_pmtiles(self, tmp_path: Path, fixtures_dir: Path) -> Path:
-        """Create a catalog with both GeoParquet and PMTiles."""
-        import shutil
+    def catalog_with_pmtiles(self, tmp_path: Path) -> Path:
+        """Create a catalog with both GeoParquet and PMTiles assets."""
+        import json
 
-        # Create catalog structure
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        datasets_dir = portolan_dir / "datasets" / "test-dataset"
-        datasets_dir.mkdir(parents=True)
 
-        # Copy both files
-        src_parquet = fixtures_dir / "validation" / "pmtiles" / "sample.parquet"
-        src_pmtiles = fixtures_dir / "validation" / "pmtiles" / "sample.pmtiles"
-        shutil.copy(src_parquet, datasets_dir / "test-dataset.parquet")
-        shutil.copy(src_pmtiles, datasets_dir / "test-dataset.pmtiles")
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+
+        # Create collection.json with both assets
+        collection_json = {
+            "type": "Collection",
+            "id": "test-collection",
+            "stac_version": "1.0.0",
+            "description": "Test collection",
+            "license": "MIT",
+            "extent": {
+                "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [],
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                },
+                "data-tiles": {
+                    "href": "./data.pmtiles",
+                    "type": "application/vnd.pmtiles",
+                    "roles": ["visual"],
+                },
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+
+        # Create both files
+        (collection_dir / "data.parquet").write_bytes(b"PAR1placeholder")
+        (collection_dir / "data.pmtiles").write_bytes(b"PMTilesplaceholder")
 
         return tmp_path
 
     @pytest.fixture
     def catalog_empty(self, tmp_path: Path) -> Path:
-        """Create an empty catalog with no datasets."""
+        """Create an empty catalog with no collections."""
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        datasets_dir = portolan_dir / "datasets"
-        datasets_dir.mkdir()
         return tmp_path
 
     @pytest.fixture
-    def catalog_raster_only(self, tmp_path: Path, fixtures_dir: Path) -> Path:
-        """Create a catalog with only raster (COG) datasets."""
-        import shutil
+    def catalog_with_stac_items_parquet(self, tmp_path: Path) -> Path:
+        """Create a catalog with stac-items parquet (should be ignored)."""
+        import json
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
-        datasets_dir = portolan_dir / "datasets" / "raster-dataset"
-        datasets_dir.mkdir(parents=True)
 
-        # Copy a COG file (no PMTiles expected for raster)
-        src = fixtures_dir / "raster" / "valid" / "rgb.tif"
-        if src.exists():
-            shutil.copy(src, datasets_dir / "raster-dataset.tif")
-        else:
-            # Create a placeholder if fixture doesn't exist
-            (datasets_dir / "raster-dataset.tif").write_bytes(b"placeholder")
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+
+        # Create collection.json with stac-items parquet (not geodata)
+        collection_json = {
+            "type": "Collection",
+            "id": "test-collection",
+            "stac_version": "1.0.0",
+            "description": "Test collection",
+            "license": "MIT",
+            "extent": {
+                "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [],
+            "assets": {
+                "geoparquet-items": {
+                    "href": "./items.parquet",
+                    "type": "application/x-parquet",
+                    "roles": ["stac-items"],
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "items.parquet").write_bytes(b"PAR1placeholder")
 
         return tmp_path
-
-    @pytest.fixture
-    def fixtures_dir(self) -> Path:
-        """Return the path to the test fixtures directory."""
-        return Path(__file__).parent.parent / "fixtures"
 
     @pytest.mark.unit
     def test_has_warning_severity(self) -> None:
@@ -647,7 +703,7 @@ class TestPMTilesRecommendedRule:
 
     @pytest.mark.unit
     def test_passes_for_empty_catalog(self, catalog_empty: Path) -> None:
-        """Rule passes when catalog has no datasets (nothing to recommend)."""
+        """Rule passes when catalog has no collections."""
         from portolan_cli.validation.rules import PMTilesRecommendedRule
 
         rule = PMTilesRecommendedRule()
@@ -656,50 +712,35 @@ class TestPMTilesRecommendedRule:
         assert result.passed is True
 
     @pytest.mark.unit
-    def test_passes_for_raster_only_catalog(self, catalog_raster_only: Path) -> None:
-        """Rule passes for raster-only catalogs (PMTiles is for vector data)."""
+    def test_ignores_stac_items_parquet(self, catalog_with_stac_items_parquet: Path) -> None:
+        """Rule ignores stac-items parquet (metadata, not geodata)."""
         from portolan_cli.validation.rules import PMTilesRecommendedRule
 
         rule = PMTilesRecommendedRule()
-        result = rule.check(catalog_raster_only)
+        result = rule.check(catalog_with_stac_items_parquet)
 
+        # Should pass - stac-items parquet is metadata, not geodata
         assert result.passed is True
 
     @pytest.mark.unit
-    def test_provides_fix_hint_with_plugin_info(self, catalog_with_geoparquet: Path) -> None:
-        """Failure includes hint about portolan-pmtiles plugin."""
+    def test_provides_fix_hint(self, catalog_with_geoparquet: Path) -> None:
+        """Failure includes hint about generating PMTiles."""
         from portolan_cli.validation.rules import PMTilesRecommendedRule
 
         rule = PMTilesRecommendedRule()
         result = rule.check(catalog_with_geoparquet)
 
         assert result.fix_hint is not None
-        assert "portolan-pmtiles" in result.fix_hint.lower()
+        assert "pmtiles" in result.fix_hint.lower()
 
     @pytest.mark.unit
-    def test_handles_missing_datasets_dir_gracefully(self, tmp_path: Path) -> None:
-        """Rule handles missing datasets directory without error."""
-        from portolan_cli.validation.rules import PMTilesRecommendedRule
-
-        # Create catalog without datasets dir
-        portolan_dir = tmp_path / ".portolan"
-        portolan_dir.mkdir()
-
-        rule = PMTilesRecommendedRule()
-        result = rule.check(tmp_path)
-
-        # Should pass (no datasets to check)
-        assert result.passed is True
-
-    @pytest.mark.unit
-    def test_handles_missing_portolan_dir_gracefully(self, tmp_path: Path) -> None:
-        """Rule handles missing .portolan directory without error."""
+    def test_handles_no_collections_gracefully(self, tmp_path: Path) -> None:
+        """Rule handles catalog with no collection.json files."""
         from portolan_cli.validation.rules import PMTilesRecommendedRule
 
         rule = PMTilesRecommendedRule()
         result = rule.check(tmp_path)
 
-        # Should pass (no catalog to check)
         assert result.passed is True
 
 
@@ -835,17 +876,19 @@ class TestMetadataFreshRule:
         }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
-        # Copy a parquet file but don't create STAC item
+        # Item directory with data file but no item.json (per ADR-0041
+        # manifest-driven scan, this is the genuine MISSING shape).
+        item_dir = collection / "points"
+        item_dir.mkdir()
         src = fixtures_dir / "vector" / "valid" / "points.parquet"
         if src.exists():
-            shutil.copy(src, collection / "points.parquet")
+            shutil.copy(src, item_dir / "points.parquet")
         else:
-            # Create minimal parquet if fixture doesn't exist
             import pyarrow as pa
             import pyarrow.parquet as pq
 
             table = pa.table({"id": [1, 2], "geometry": ["POINT(0 0)", "POINT(1 1)"]})
-            pq.write_table(table, collection / "points.parquet")
+            pq.write_table(table, item_dir / "points.parquet")
 
         rule = MetadataFreshRule()
         result = rule.check(tmp_path)
@@ -883,12 +926,14 @@ class TestMetadataFreshRule:
         }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
-        # Create a parquet file
-        parquet_path = collection / "test.parquet"
+        # Hierarchical item layout per `add` convention (ADR-0041 scanner
+        # walks `<collection>/<item_id>/<item_id>.json`).
+        item_dir = collection / "test"
+        item_dir.mkdir()
+        parquet_path = item_dir / "test.parquet"
         table = pa.table({"id": [1, 2], "geometry": ["POINT(0 0)", "POINT(1 1)"]})
         pq.write_table(table, parquet_path)
 
-        # Extract metadata and create STAC item
         metadata = extract_geoparquet_metadata(parquet_path)
         stac_item = {
             "type": "Feature",
@@ -909,9 +954,10 @@ class TestMetadataFreshRule:
             },
             "links": [],
         }
-        (collection / "test.json").write_text(json.dumps(stac_item))
+        (item_dir / "test.json").write_text(json.dumps(stac_item))
 
-        # Create versions.json with current state
+        # versions.json lives at the collection level; tracked asset key
+        # uses the basename relative to versions.json (current convention).
         versions = {
             "schema_version": "1.0",
             "current_version": "v1",
@@ -966,12 +1012,13 @@ class TestMetadataFreshRule:
         }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
-        # Create a parquet file
-        parquet_path = collection / "test.parquet"
+        # Hierarchical item layout per ADR-0041 manifest scan.
+        item_dir = collection / "test"
+        item_dir.mkdir()
+        parquet_path = item_dir / "test.parquet"
         table = pa.table({"id": [1, 2], "geometry": ["POINT(0 0)", "POINT(1 1)"]})
         pq.write_table(table, parquet_path)
 
-        # Extract metadata and create STAC item
         metadata = extract_geoparquet_metadata(parquet_path)
         schema_fp = compute_schema_fingerprint(parquet_path)
         stac_item = {
@@ -993,10 +1040,15 @@ class TestMetadataFreshRule:
             },
             "links": [],
         }
-        (collection / "test.json").write_text(json.dumps(stac_item))
+        (item_dir / "test.json").write_text(json.dumps(stac_item))
 
-        # Create versions.json with STALE state (old mtime only, same schema)
-        # STALE = mtime changed but schema hasn't changed (BREAKING = schema changed)
+        # versions.json captures a stored feature_count one off from
+        # current — heuristics will flag STALE (content delta), not
+        # BREAKING (schema unchanged). Old version of this test relied on
+        # mtime-drift-alone to imply STALE; with the bbox-None heuristic
+        # guard a touch-only mtime change is correctly FRESH, so the
+        # test now drives a real content delta to keep its intent.
+        stored_feature_count = (metadata.feature_count or 0) + 5
         versions = {
             "schema_version": "1.0",
             "current_version": "v1",
@@ -1009,7 +1061,7 @@ class TestMetadataFreshRule:
                             "source_mtime": parquet_path.stat().st_mtime - 1000,  # Old mtime
                             "sha256": "abc123",
                             "bbox": metadata.bbox,
-                            "feature_count": metadata.feature_count,  # Same count
+                            "feature_count": stored_feature_count,
                             "schema_fingerprint": schema_fp,  # Same schema = not BREAKING
                         }
                     },
@@ -1052,7 +1104,10 @@ class TestMetadataFreshRule:
         }
         (collection / "collection.json").write_text(json.dumps(collection_data))
 
-        parquet_path = collection / "test.parquet"
+        # Item dir without item.json → MISSING (drives the --fix hint).
+        item_dir = collection / "test"
+        item_dir.mkdir()
+        parquet_path = item_dir / "test.parquet"
         table = pa.table({"id": [1], "geometry": ["POINT(0 0)"]})
         pq.write_table(table, parquet_path)
 
@@ -1118,7 +1173,8 @@ class TestMetadataFreshRule:
 
     @pytest.mark.integration
     def test_scans_nested_collection_files(self, tmp_path: Path) -> None:
-        """Rule scans files in subdirectories within collections."""
+        """Rule recurses through nested catalogs (ADR-0032 Pattern 2:
+        catalog.json under a collection organizes item subdirs)."""
         import json
 
         import pyarrow as pa
@@ -1126,12 +1182,10 @@ class TestMetadataFreshRule:
 
         from portolan_cli.validation.rules import MetadataFreshRule
 
-        # Create catalog.json at root (per ADR-0023)
         catalog_data = {"type": "Catalog", "stac_version": "1.0.0", "id": "test", "links": []}
         (tmp_path / "catalog.json").write_text(json.dumps(catalog_data))
-        # Create .portolan for internal state
         (tmp_path / ".portolan").mkdir()
-        # Create collection at root with collection.json
+
         collection = tmp_path / "test-collection"
         collection.mkdir()
         collection_data = {
@@ -1141,17 +1195,218 @@ class TestMetadataFreshRule:
             "links": [],
         }
         (collection / "collection.json").write_text(json.dumps(collection_data))
-        subdir = collection / "data" / "2024"
-        subdir.mkdir(parents=True)
 
-        # Create a parquet file in nested directory
-        parquet_path = subdir / "test.parquet"
+        # Sub-catalog organizing items by year (Pattern 2).
+        year_dir = collection / "2024"
+        year_dir.mkdir()
+        (year_dir / "catalog.json").write_text(
+            json.dumps({"type": "Catalog", "stac_version": "1.0.0", "id": "2024", "links": []})
+        )
+
+        # Item dir under sub-catalog with data but no item.json → MISSING.
+        item_dir = year_dir / "test"
+        item_dir.mkdir()
+        parquet_path = item_dir / "test.parquet"
         table = pa.table({"id": [1], "geometry": ["POINT(0 0)"]})
         pq.write_table(table, parquet_path)
 
         rule = MetadataFreshRule()
         result = rule.check(tmp_path)
 
-        # Should detect the nested file (and fail due to missing STAC metadata)
         assert result.passed is False
         assert "missing" in result.message.lower()
+
+
+# --- Partition validation rules (thorough) ---
+
+
+class TestPartitionStructureRule:
+    """Tests for PartitionStructureRule."""
+
+    @pytest.mark.unit
+    def test_passes_when_no_partitions(self, tmp_path: Path) -> None:
+        """Rule passes when collection has no Hive-style partitions."""
+        from portolan_cli.validation.rules import PartitionStructureRule
+
+        # Setup catalog with non-partitioned collection
+        (tmp_path / ".portolan").mkdir()
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        rule = PartitionStructureRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_passes_with_consistent_partition_keys(self, tmp_path: Path) -> None:
+        """Rule passes when all partition dirs use same key."""
+        from portolan_cli.validation.rules import PartitionStructureRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","partition:scheme":"hive","partition:keys":[{"name":"kdtree_cell"}]}'
+        )
+
+        # Create consistent Hive partitions
+        (coll / "kdtree_cell=0").mkdir()
+        (coll / "kdtree_cell=1").mkdir()
+
+        rule = PartitionStructureRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_with_mixed_partition_keys(self, tmp_path: Path) -> None:
+        """Rule fails when partition dirs use different keys."""
+        from portolan_cli.validation.rules import PartitionStructureRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        # Create mixed partition keys
+        (coll / "kdtree_cell=0").mkdir()
+        (coll / "h3_cell=abc").mkdir()  # Different key!
+
+        rule = PartitionStructureRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "mixed keys" in result.message
+
+    @pytest.mark.unit
+    def test_fails_with_orphan_parquet_at_root(self, tmp_path: Path) -> None:
+        """Rule fails when parquet files exist at collection root alongside partitions."""
+        from portolan_cli.validation.rules import PartitionStructureRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        # Create partition dir AND orphan parquet at root
+        (coll / "kdtree_cell=0").mkdir()
+        (coll / "orphan.parquet").write_text("fake")
+
+        rule = PartitionStructureRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "orphan" in result.message
+
+    @pytest.mark.unit
+    def test_warns_missing_partition_scheme_field(self, tmp_path: Path) -> None:
+        """Rule fails when partitions exist but partition:scheme missing."""
+        from portolan_cli.validation.rules import PartitionStructureRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        # Collection JSON missing partition:scheme
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        (coll / "kdtree_cell=0").mkdir()
+
+        rule = PartitionStructureRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "partition:scheme" in result.message
+
+
+class TestPartitionSchemaConsistencyRule:
+    """Tests for PartitionSchemaConsistencyRule."""
+
+    @pytest.mark.unit
+    def test_passes_when_no_partitions(self, tmp_path: Path) -> None:
+        """Rule passes when no Hive-style partitions exist."""
+        from portolan_cli.validation.rules import PartitionSchemaConsistencyRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        rule = PartitionSchemaConsistencyRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_passes_with_consistent_schemas(self, tmp_path: Path) -> None:
+        """Rule passes when all partition files have same schema."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.validation.rules import PartitionSchemaConsistencyRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        # Create partitions with same schema
+        p1 = coll / "kdtree_cell=0"
+        p1.mkdir()
+        p2 = coll / "kdtree_cell=1"
+        p2.mkdir()
+
+        table = pa.table({"id": [1], "name": ["test"]})
+        pq.write_table(table, p1 / "data.parquet")
+        pq.write_table(table, p2 / "data.parquet")
+
+        rule = PartitionSchemaConsistencyRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_with_inconsistent_schemas(self, tmp_path: Path) -> None:
+        """Rule fails when partition files have different schemas."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        from portolan_cli.validation.rules import PartitionSchemaConsistencyRule
+
+        coll = tmp_path / "test-collection"
+        coll.mkdir()
+        (coll / "collection.json").write_text(
+            '{"type":"Collection","stac_version":"1.0.0","id":"test"}'
+        )
+
+        p1 = coll / "kdtree_cell=0"
+        p1.mkdir()
+        p2 = coll / "kdtree_cell=1"
+        p2.mkdir()
+
+        # Different schemas!
+        table1 = pa.table({"id": [1], "name": ["test"]})
+        table2 = pa.table({"id": [2], "value": [42]})  # Different columns
+        pq.write_table(table1, p1 / "data.parquet")
+        pq.write_table(table2, p2 / "data.parquet")
+
+        rule = PartitionSchemaConsistencyRule()
+        result = rule.check(tmp_path)
+
+        assert result.passed is False
+        assert "different schemas" in result.message.lower()
+
+    @pytest.mark.unit
+    def test_has_error_severity(self) -> None:
+        """Schema inconsistency is an ERROR (data corruption)."""
+        from portolan_cli.validation.rules import PartitionSchemaConsistencyRule
+
+        rule = PartitionSchemaConsistencyRule()
+        assert rule.severity == Severity.ERROR

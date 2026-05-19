@@ -63,12 +63,26 @@ def make_collection(col_dir: Path) -> None:
     )
 
 
+# Windows reserved names that cannot be used as filenames
+_WINDOWS_RESERVED = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{i}" for i in range(1, 10)}
+    | {f"lpt{i}" for i in range(1, 10)}
+)
+
+
+def _is_windows_reserved(name: str) -> bool:
+    """Check if name is a Windows reserved filename (case-insensitive, with or without extension)."""
+    base = name.split(".")[0].lower()
+    return base in _WINDOWS_RESERVED
+
+
 # Strategy for valid collection names (alphanumeric, hyphens, underscores)
 collection_name_strategy = st.text(
     alphabet=st.sampled_from("abcdefghijklmnopqrstuvwxyz0123456789-_"),
     min_size=1,
     max_size=20,
-).filter(lambda x: not x.startswith("-") and not x.startswith("."))
+).filter(lambda x: not x.startswith("-") and not x.startswith(".") and not _is_windows_reserved(x))
 
 # Strategy for valid filenames
 filename_strategy = st.text(
@@ -81,6 +95,7 @@ filename_strategy = st.text(
         and not x.endswith(".")
         and ".." not in x
         and x not in DEFAULT_IGNORED_FILES
+        and not _is_windows_reserved(x)
     )
 )
 
@@ -311,5 +326,8 @@ class TestListIgnoredFilesHypothesis:
             result = runner.invoke(cli, ["list", "--catalog", str(tmp_path)])
 
         assert result.exit_code == 0
-        assert hidden_file not in result.output
+        # Check hidden file doesn't appear as a listed item
+        # Files appear as "+ filename" in output, so check for that pattern
+        # (not substring — ".parq" would match "visible.parquet")
+        assert f"+ {hidden_file}" not in result.output
         assert "visible.parquet" in result.output

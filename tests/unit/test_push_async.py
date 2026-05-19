@@ -689,11 +689,15 @@ class TestPushVersionDiffRename:
 
 @pytest.mark.unit
 class TestDefaultConcurrency:
-    """Tests for get_default_concurrency()."""
+    """Tests for get_default_concurrency().
 
-    def test_default_concurrency_returns_50(self) -> None:
-        """Default concurrency should be 50."""
-        assert get_default_concurrency() == 50
+    Note: Default changed from 50 to 8 in Issue #344 to prevent
+    overwhelming home networks. 8 files × 4 chunks = 32 connections.
+    """
+
+    def test_default_concurrency_returns_8(self) -> None:
+        """Default concurrency should be 8 (Issue #344: lowered from 50)."""
+        assert get_default_concurrency() == 8
 
     def test_default_concurrency_is_positive(self) -> None:
         """Default concurrency must be positive."""

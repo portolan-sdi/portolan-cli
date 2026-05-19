@@ -31,19 +31,43 @@ from typing import Any
 
 import yaml
 
-# Known settings for documentation/validation (but unknown keys are still allowed)
-KNOWN_SETTINGS: frozenset[str] = frozenset(
+# Sensitive settings that must NOT be stored in config.yaml (Issue #356)
+# These get pushed to remote storage and would expose credentials/infra details.
+# Use environment variables (PORTOLAN_<KEY>) or .env files instead.
+SENSITIVE_SETTINGS: frozenset[str] = frozenset(
     {
         "remote",
         "aws_profile",
-        "profile",  # Alias for aws_profile (more intuitive)
-        "region",  # AWS region for S3
+        "profile",
+        "region",
+    }
+)
+
+# Known settings for documentation/validation (but unknown keys are still allowed)
+KNOWN_SETTINGS: frozenset[str] = frozenset(
+    {
         "ignored_files",
         "backend",
         "statistics.enabled",
         "statistics.raster_mode",
         "parquet.enabled",  # Generate items.parquet for large collections
         "parquet.threshold",  # Item count threshold to suggest parquet generation
+        "partitioning.enabled",  # Auto-partition large GeoParquet files (Issue #352)
+        "partitioning.prompt",  # Prompt before partitioning in interactive mode (default: true)
+        "partitioning.threshold_gb",  # Size threshold in GB (default: 2.0)
+        "partitioning.strategy",  # Spatial partitioning strategy (default: kdtree)
+        "partitioning.target_rows",  # Target rows per partition (default: 120000)
+        "pmtiles.enabled",  # Generate PMTiles for GeoParquet collections
+        "pmtiles.min_zoom",  # Minimum zoom level (None = auto-detect)
+        "pmtiles.max_zoom",  # Maximum zoom level (None = auto-detect)
+        "pmtiles.layer",  # Layer name in PMTiles (defaults to filename)
+        "pmtiles.bbox",  # Bounding box filter as "minx,miny,maxx,maxy"
+        "pmtiles.where",  # SQL WHERE clause for filtering features
+        "pmtiles.include_cols",  # Comma-separated columns to include in tiles
+        "pmtiles.precision",  # Coordinate decimal precision (default: 6)
+        "pmtiles.attribution",  # Attribution HTML for tiles
+        "pmtiles.src_crs",  # Override source CRS if metadata is incorrect
+        "push.exclude",  # Glob patterns to exclude from metadata sync (Issue #426)
     }
 )
 
@@ -59,6 +83,41 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "statistics.raster_mode": "approx",
     "parquet.enabled": False,  # Disabled by default (100% optional per issue #319)
     "parquet.threshold": 100,  # Suggest parquet generation when items > threshold
+    "partitioning.enabled": True,  # Auto-partition large GeoParquet files (>2GB)
+    "partitioning.prompt": True,  # Prompt before partitioning in interactive mode
+    "partitioning.threshold_gb": 2.0,  # 2GB per OGC best practices
+    "partitioning.strategy": "kdtree",  # KD-tree: data-driven, auto-balancing
+    "partitioning.target_rows": 120_000,  # geoparquet-io default
+    "pmtiles.enabled": False,  # Disabled by default (requires tippecanoe)
+    "pmtiles.min_zoom": None,  # None = tippecanoe auto-detection
+    "pmtiles.max_zoom": None,  # None = tippecanoe auto-detection
+    "pmtiles.layer": None,  # None = use output filename
+    "pmtiles.bbox": None,  # None = no bounding box filter
+    "pmtiles.where": None,  # None = no SQL filter
+    "pmtiles.include_cols": None,  # None = include all columns
+    "pmtiles.precision": 6,  # Coordinate decimal precision
+    "pmtiles.attribution": None,  # None = gpio-pmtiles default
+    "pmtiles.src_crs": None,  # None = use metadata CRS
+    # Push exclusion patterns for metadata sync (Issue #426)
+    # These files/directories are never synced to remote storage.
+    # Note: Security-critical patterns (.env, .git/, .portolan/) are also
+    # enforced in push.py's _SECURITY_EXCLUDE_PATTERNS and cannot be overridden.
+    # Directory patterns (ending with /) match if ANY path component equals the name.
+    "push.exclude": [
+        ".portolan/",  # Internal Portolan state
+        ".git/",  # Git repository data
+        ".env",  # Environment files with secrets
+        ".env.*",  # Environment file variants (.env.local, etc.)
+        "*.py",  # Python source files
+        "*.pyc",  # Python bytecode
+        "__pycache__/",  # Python cache directories
+        ".DS_Store",  # macOS metadata
+        "Thumbs.db",  # Windows thumbnails
+        "*.log",  # Log files
+        "*.tmp",  # Temporary files
+        "*.bak",  # Backup files
+        "*~",  # Editor backup files
+    ],
 }
 
 # Default glob patterns for files to exclude from asset tracking (per ADR-0028).
@@ -74,6 +133,9 @@ DEFAULT_IGNORED_FILES: list[str] = [
     ".git*",  # Git internals (.gitignore, .gitattributes, etc.)
     "*.pyc",  # Python bytecode
     "__pycache__",  # Python cache directory marker
+    ".env",  # Environment files with credentials (Issue #356)
+    ".env.*",  # .env.local, .env.production, etc.
+    ".env.local",  # Explicit for common pattern
 ]
 
 # Config file name (inside .portolan/)
@@ -256,28 +318,62 @@ def get_setting(
         return cli_value
 
     # 2. Environment variable (skip empty strings)
+    # Check primary env var and alias-derived env vars
     env_var = _get_env_var_name(key)
     env_value = os.environ.get(env_var)
     if env_value:  # Non-empty string
         return env_value
+    # Check aliases (e.g., aws_profile aliases to profile, so check PORTOLAN_PROFILE)
+    for alias in SETTING_ALIASES.get(key, []):
+        alias_env_var = _get_env_var_name(alias)
+        alias_env_value = os.environ.get(alias_env_var)
+        if alias_env_value:
+            return alias_env_value
 
     # If no catalog path, can't check file-based config
     if catalog_path is None:
         return None
 
+    # Helper to traverse nested dicts for dotted keys like "pmtiles.src_crs"
+    def _get_nested(cfg: dict[str, Any], k: str) -> Any | None:
+        parts = k.split(".")
+        current: Any = cfg
+        for part in parts:
+            if not isinstance(current, dict) or part not in current:
+                return None
+            current = current[part]
+        return current
+
     # Helper to check key and its aliases in a config dict
     def _get_with_aliases(cfg: dict[str, Any], k: str) -> Any | None:
+        # Try direct key lookup first (flat key)
         if k in cfg:
             return cfg[k]
+        # Try nested traversal for dotted keys
+        if "." in k:
+            nested_val = _get_nested(cfg, k)
+            if nested_val is not None:
+                return nested_val
         # Check aliases (e.g., aws_profile -> profile)
         for alias in SETTING_ALIASES.get(k, []):
             if alias in cfg:
                 return cfg[alias]
         return None
 
+    # Helper to check if sensitive key exists in config and raise error
+    def _check_sensitive_in_config(cfg: dict[str, Any], k: str) -> None:
+        if k in SENSITIVE_SETTINGS:
+            if k in cfg or any(a in cfg for a in SETTING_ALIASES.get(k, [])):
+                env_var_name = _get_env_var_name(k)
+                raise ValueError(
+                    f"'{k}' found in config.yaml but sensitive settings cannot be read from "
+                    f"config files. Use environment variable {env_var_name} or .env file."
+                )
+
     # 3. Hierarchical .portolan/ config (ADR-0039)
     if collection_path is not None:
         merged_config = load_merged_config(collection_path, catalog_path)
+        _check_sensitive_in_config(merged_config, key)
         value = _get_with_aliases(merged_config, key)
         if value is not None:
             return value
@@ -292,11 +388,13 @@ def get_setting(
         if collection is not None:
             collections = config.get("collections", {})
             collection_config = collections.get(collection, {})
+            _check_sensitive_in_config(collection_config, key)
             value = _get_with_aliases(collection_config, key)
             if value is not None:
                 return value
 
         # 5. Catalog-level config
+        _check_sensitive_in_config(config, key)
         value = _get_with_aliases(config, key)
         if value is not None:
             return value
@@ -317,10 +415,21 @@ def set_setting(
 
     Args:
         catalog_path: Root path of the catalog.
-        key: Setting key (e.g., "remote", "aws_profile")
+        key: Setting key (e.g., "ignored_files", "statistics.enabled")
         value: Value to set
         collection: Optional collection name for collection-level config
+
+    Raises:
+        ValueError: If key is a sensitive setting (remote, profile, region).
+            These must be set via environment variables or .env files.
     """
+    if key in SENSITIVE_SETTINGS:
+        env_var = _get_env_var_name(key)
+        raise ValueError(
+            f"'{key}' cannot be stored in config.yaml (would be pushed to remote). "
+            f"Use environment variable {env_var} or add to .env file in catalog root."
+        )
+
     config = load_config(catalog_path)
 
     if collection is not None:
@@ -403,18 +512,28 @@ def list_settings(
     # Add known settings
     all_keys.update(KNOWN_SETTINGS)
 
-    # Check environment variables for all known settings
-    for key in KNOWN_SETTINGS:
+    # Check environment variables for all known + sensitive settings
+    # Sensitive settings can still be read from env vars, just not saved to config
+    for key in KNOWN_SETTINGS | SENSITIVE_SETTINGS:
         env_var = _get_env_var_name(key)
         if env_var in os.environ:
             all_keys.add(key)
 
     # Resolve each setting
     for key in sorted(all_keys):
-        value = get_setting(key, catalog_path=catalog_path, collection=collection)
-        source = get_setting_source(key, catalog_path, collection)
-        if value is not None or source != "default":
-            result[key] = {"value": value, "source": source}
+        try:
+            value = get_setting(key, catalog_path=catalog_path, collection=collection)
+            source = get_setting_source(key, catalog_path, collection)
+            if value is not None or source != "default":
+                result[key] = {"value": value, "source": source}
+        except ValueError:
+            # Sensitive key in config without env var - show with warning source
+            # Get the value directly from config for display purposes
+            cfg = load_config(catalog_path) if catalog_path else {}
+            if collection:
+                cfg = cfg.get("collections", {}).get(collection, cfg)
+            if key in cfg:
+                result[key] = {"value": cfg[key], "source": "config (INSECURE)"}
 
     return result
 
@@ -439,6 +558,12 @@ def get_setting_source(
     env_value = os.environ.get(env_var)
     if env_value:  # Non-empty string
         return "env"
+
+    # Check alias env vars (e.g., aws_profile aliases to profile, so check PORTOLAN_PROFILE)
+    for alias in SETTING_ALIASES.get(key, []):
+        alias_env_var = _get_env_var_name(alias)
+        if os.environ.get(alias_env_var):
+            return "env"
 
     if catalog_path is None:
         return "default"
@@ -688,3 +813,64 @@ def load_merged_metadata(
         Merged metadata dictionary.
     """
     return load_merged_yaml(path, "metadata.yaml", catalog_root)
+
+
+# =============================================================================
+# .env file support (Issue #356)
+# =============================================================================
+
+
+def load_dotenv_from_catalog(catalog_path: Path | None = None) -> bool:
+    """Load environment variables from .env file in catalog root.
+
+    Searches for .env file in catalog root directory and loads it using
+    python-dotenv. Does NOT override existing environment variables.
+
+    This enables storing sensitive settings (remote, profile, region) in
+    a .env file that won't be pushed to remote storage.
+
+    Args:
+        catalog_path: Path to catalog root. If None, attempts to find it.
+
+    Returns:
+        True if a .env file was found and loaded, False otherwise.
+    """
+    from dotenv import load_dotenv
+
+    if catalog_path is None:
+        return False
+
+    env_file = catalog_path / ".env"
+    if not env_file.is_file():
+        return False
+
+    load_dotenv(env_file, override=False)
+    return True
+
+
+def check_sensitive_settings_in_config(catalog_path: Path) -> list[str]:
+    """Check if config.yaml contains sensitive settings that should be in .env.
+
+    Args:
+        catalog_path: Path to catalog root.
+
+    Returns:
+        List of sensitive setting names found in config.yaml.
+    """
+    config = load_config(catalog_path)
+    found = []
+
+    # Check top-level sensitive settings
+    for key in SENSITIVE_SETTINGS:
+        if key in config:
+            found.append(key)
+
+    # Check collection-level sensitive settings
+    collections = config.get("collections", {})
+    for collection_name, collection_conf in collections.items():
+        if isinstance(collection_conf, dict):
+            for key in SENSITIVE_SETTINGS:
+                if key in collection_conf:
+                    found.append(f"collections.{collection_name}.{key}")
+
+    return found

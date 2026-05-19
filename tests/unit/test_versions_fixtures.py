@@ -193,7 +193,9 @@ class TestFixtureIntegrity:
             # Should not raise
             versions_file = read_versions(fixture_path)
             assert versions_file.spec_version == "1.0.0"
-            assert versions_file.current_version is not None
+            # current_version can be None for empty versions arrays (valid state)
+            if len(versions_file.versions) > 0:
+                assert versions_file.current_version is not None
 
     @pytest.mark.unit
     def test_invalid_fixtures_are_valid_json(self) -> None:

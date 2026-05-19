@@ -39,7 +39,7 @@ from portolan_cli.dataset import (
     resolve_collection_id,
 )
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
-from portolan_cli.metadata import check_directory_metadata, fix_metadata
+from portolan_cli.metadata import fix_metadata
 from portolan_cli.metadata.fix import FixReport
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
@@ -65,6 +65,7 @@ from portolan_cli.scan_output import (
     render_tree_view,
 )
 from portolan_cli.scan_progress import ScanProgressReporter, count_directories
+from portolan_cli.status import CollectionStatus, get_collection_status
 from portolan_cli.temporal import FLEXIBLE_DATETIME
 from portolan_cli.validation import (
     Severity,
@@ -120,6 +121,29 @@ def output_json_envelope(envelope: Any) -> None:
         envelope: OutputEnvelope instance to output.
     """
     click.echo(envelope.to_json())
+
+
+def load_dotenv_and_warn_sensitive(catalog_path: Path) -> None:
+    """Load .env from catalog and warn if config.yaml has sensitive settings.
+
+    This should be called after the actual catalog path is resolved (not in
+    the global CLI callback) to ensure the correct .env is loaded when
+    --catalog/--portolan-dir overrides the default.
+
+    Args:
+        catalog_path: Resolved catalog root path.
+    """
+    from portolan_cli.config import check_sensitive_settings_in_config, load_dotenv_from_catalog
+
+    load_dotenv_from_catalog(catalog_path)
+
+    sensitive_in_config = check_sensitive_settings_in_config(catalog_path)
+    if sensitive_in_config:
+        settings_str = ", ".join(sensitive_in_config)
+        warn(
+            f"config.yaml contains sensitive settings ({settings_str}) that will be "
+            f"pushed to remote. Move these to .env file or use PORTOLAN_* env vars."
+        )
 
 
 def require_catalog_root(
@@ -256,6 +280,11 @@ def cli(ctx: click.Context, output_format: str) -> None:
     # Store format in context for subcommands
     ctx.ensure_object(dict)
     ctx.obj["format"] = output_format
+
+    # Note: .env loading moved to individual commands after catalog path resolution
+    # to ensure correct .env is loaded when --catalog/--portolan-dir is used.
+    # See load_dotenv_and_warn_sensitive() helper.
+    pass
 
 
 @cli.command()
@@ -703,6 +732,154 @@ def list_cmd(
 
 
 # =============================================================================
+# Status command (Issue #389 - git-like version management)
+# =============================================================================
+
+
+@cli.command("status")
+@click.option(
+    "--collection",
+    "-c",
+    help="Show status for a specific collection only.",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to catalog root (default: auto-detect).",
+)
+@click.option(
+    "--offline",
+    is_flag=True,
+    help="Skip remote version check (show local state only).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def status_cmd(
+    ctx: click.Context,
+    collection: str | None,
+    catalog_path: Path | None,
+    offline: bool,
+    json_output: bool,
+) -> None:
+    """Show local vs remote version state for collections.
+
+    Git-style status showing version sync state, modified files, and
+    untracked files for each collection in the catalog.
+
+    \b
+    Status information:
+        Local version   Current version in local versions.json
+        Remote version  Current version on remote (unless --offline)
+        Sync state      in_sync, ahead, behind, or unknown
+        Modified        Files changed since last version
+        Untracked       Files on disk not in versions.json
+        Deleted         Files in versions.json but missing from disk
+
+    \b
+    Examples:
+        portolan status                    # Status for all collections
+        portolan status -c demographics    # Status for one collection
+        portolan status --offline          # Skip remote check
+        portolan status --json             # JSON output for agents
+    """
+    use_json = should_output_json(ctx, json_output)
+
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "status")
+
+    # Load remote URL from config (if not offline)
+    remote_url: str | None = None
+    if not offline:
+        remote_url = resolve_remote(None, catalog_path, collection)
+
+    # Discover collections
+    from portolan_cli.push import discover_collections
+
+    if collection:
+        collections = [collection]
+    else:
+        collections = discover_collections(catalog_path)
+
+    if not collections:
+        if use_json:
+            envelope = success_envelope("status", {"collections": []})
+            output_json_envelope(envelope)
+        else:
+            info_output("No collections found")
+        return
+
+    # Get status for each collection
+    statuses: list[CollectionStatus] = []
+    for coll in collections:
+        status = get_collection_status(
+            catalog_root=catalog_path,
+            collection=coll,
+            offline=offline,
+            remote_url=remote_url,
+        )
+        statuses.append(status)
+
+    if use_json:
+        envelope = success_envelope(
+            "status",
+            {"collections": [s.to_dict() for s in statuses]},
+        )
+        output_json_envelope(envelope)
+    else:
+        _output_status_human(statuses)
+
+
+def _output_status_human(statuses: list[CollectionStatus]) -> None:
+    """Format status output for human consumption."""
+    for status in statuses:
+        info_output(f"Collection: {status.collection}")
+
+        # Version info
+        local_str = status.local_version or "(not initialized)"
+        info_output(f"  Local version: {local_str}")
+
+        if status.remote_version is not None:
+            sync_indicator = ""
+            if status.sync_state == "behind":
+                sync_indicator = "  ⚠ behind remote"
+            elif status.sync_state == "ahead":
+                sync_indicator = "  ↑ ahead of remote"
+            info_output(f"  Remote version: {status.remote_version}{sync_indicator}")
+        elif status.sync_state == "unknown":
+            detail("  Remote version: (offline or not configured)")
+
+        # Modified files
+        if status.modified_files:
+            info_output("")
+            info_output("  Modified files:")
+            for f in status.modified_files:
+                warn(f"    {f} (checksum changed)")
+
+        # Deleted files
+        if status.deleted_files:
+            info_output("")
+            info_output("  Deleted files:")
+            for f in status.deleted_files:
+                error(f"    {f} (missing from disk)")
+
+        # Untracked files
+        if status.untracked_files:
+            info_output("")
+            info_output("  Untracked files:")
+            for f in status.untracked_files:
+                detail(f"    {f}")
+
+        # Clean state message
+        if not status.modified_files and not status.deleted_files and not status.untracked_files:
+            if status.local_version:
+                success("  No local changes")
+
+        info_output("")
+
+
+# =============================================================================
 # Info command (top-level, ADR-0022)
 # =============================================================================
 
@@ -1003,6 +1180,11 @@ def _output_combined_check_json(
     is_flag=True,
     help="Only check/fix geospatial assets (cloud-native status, convertibility)",
 )
+@click.option(
+    "--strict",
+    is_flag=True,
+    help="Enable strict STAC validation (includes geometry checks)",
+)
 @click.pass_context
 def check(
     ctx: click.Context,
@@ -1014,6 +1196,7 @@ def check(
     remove_legacy: bool,
     metadata: bool,
     geo_assets: bool,
+    strict: bool,
 ) -> None:
     """Validate a Portolan catalog or check files for cloud-native status.
 
@@ -1071,6 +1254,7 @@ def check(
         remove_legacy=remove_legacy,
         use_json=use_json,
         verbose=verbose,
+        strict=strict,
     )
 
 
@@ -1222,6 +1406,7 @@ def _execute_check_workflow(
     remove_legacy: bool,
     use_json: bool,
     verbose: bool,
+    strict: bool = False,
 ) -> None:
     """Execute the check workflow based on flags.
 
@@ -1229,6 +1414,15 @@ def _execute_check_workflow(
     - Without --fix: run validation and report issues
     - With --fix: run validation AND apply fixes for the selected scope
     """
+    from portolan_cli.config import load_config
+    from portolan_cli.validation.runner import _build_rules
+
+    # Load config for severity overrides (stac_lint.severity.*)
+    config = load_config(path) if (path / ".portolan" / "config.yaml").exists() else None
+
+    # Always use _build_rules to respect config and strict flag
+    rules = _build_rules(strict=strict, config=config)
+
     # Handle fix workflows (may exit early)
     if fix:
         _run_fix_workflow(
@@ -1246,15 +1440,35 @@ def _execute_check_workflow(
     # Check-only workflows (no --fix)
     if run_metadata and not run_geo_assets:
         # Metadata only
-        metadata_report = validate_catalog(path)
+        metadata_report = validate_catalog(path, rules=rules)
         _output_metadata_only(metadata_report, mode, use_json, verbose)
     elif run_geo_assets and not run_metadata:
         # Geo-assets only
         _output_format_only(path, mode, use_json, verbose)
     else:
         # Both (combined)
-        metadata_report = validate_catalog(path)
+        metadata_report = validate_catalog(path, rules=rules)
         _output_combined(path, metadata_report, mode, use_json, verbose)
+
+
+def _resolve_catalog_root_for_check(path: Path) -> Path | None:
+    """Walk up from `path` to find the directory containing catalog.json.
+
+    The metadata scanner only needs `catalog.json` to function, so this
+    deliberately does not require the `.portolan/config.yaml` sentinel
+    that `find_catalog_root` insists on. Returns None if no catalog.json
+    is found within the search depth.
+    """
+    from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+
+    candidate = path.resolve() if path.exists() else path
+    for _ in range(MAX_CATALOG_SEARCH_DEPTH):
+        if (candidate / "catalog.json").exists():
+            return candidate
+        if candidate.parent == candidate:
+            break
+        candidate = candidate.parent
+    return None
 
 
 def _run_fix_workflow(
@@ -1286,10 +1500,40 @@ def _run_fix_workflow(
 
     # Fix metadata if in scope
     if run_metadata:
-        metadata_check_report = check_directory_metadata(path)
-        metadata_fix_report = fix_metadata(path, metadata_check_report, dry_run=dry_run)
-        if metadata_fix_report.failure_count > 0:
-            has_failures = True
+        from portolan_cli.metadata.scan import scan_catalog_metadata
+
+        # Resolve to the catalog root before scanning. Without this the
+        # scanner returns an empty report whenever `path` points at a
+        # subdirectory below the root, causing --fix to silently no-op.
+        # The scanner's only structural requirement is catalog.json, so
+        # walk parents looking for it (tests and existing catalogs may
+        # not have a .portolan sentinel, so find_catalog_root is too
+        # strict here).
+        catalog_root = _resolve_catalog_root_for_check(path)
+        if catalog_root is None:
+            # Metadata-only mode: user explicitly asked, fail loudly so the
+            # silent-no-op trap is closed. Mixed mode (--fix without flags):
+            # stay backwards-compatible — skip metadata so the geo-assets
+            # pass can still operate on the directory.
+            if not run_geo_assets:
+                msg = (
+                    f"fatal: not a portolan catalog (or any parent of {path}): "
+                    "no catalog.json found, cannot run metadata fix"
+                )
+                if use_json:
+                    envelope = error_envelope(
+                        "check",
+                        [ErrorDetail(type="NotACatalogError", message=msg)],
+                    )
+                    output_json_envelope(envelope)
+                else:
+                    error(msg)
+                raise SystemExit(1)
+        else:
+            metadata_check_report = scan_catalog_metadata(catalog_root)
+            metadata_fix_report = fix_metadata(catalog_root, metadata_check_report, dry_run=dry_run)
+            if metadata_fix_report.failure_count > 0:
+                has_failures = True
 
     # Fix geo-assets if in scope
     if run_geo_assets:
@@ -2482,6 +2726,73 @@ def _validate_item_id_usage(
         raise SystemExit(1)
 
 
+def _check_partition_prompt(
+    resolved_paths: list[Path],
+    catalog_root: Path,
+) -> bool:
+    """Check if user wants to skip partitioning for large files.
+
+    Pre-scans files against partition threshold and prompts user in interactive
+    mode. Returns True if partitioning should be skipped.
+
+    Args:
+        resolved_paths: List of resolved paths to check.
+        catalog_root: Path to catalog root for config lookup.
+
+    Returns:
+        True if user declined partitioning, False otherwise.
+    """
+    from portolan_cli.config import get_setting
+    from portolan_cli.partitioning import should_partition
+
+    part_enabled = get_setting("partitioning.enabled", catalog_path=catalog_root)
+    if part_enabled is None:
+        part_enabled = True  # Default: enabled (prompt before partitioning large files)
+    part_prompt = get_setting("partitioning.prompt", catalog_path=catalog_root)
+    if part_prompt is None:
+        part_prompt = True  # Default: prompt in interactive mode
+    threshold_gb = get_setting("partitioning.threshold_gb", catalog_path=catalog_root) or 2.0
+
+    if not (part_enabled and part_prompt and sys.stderr.isatty()):
+        return False
+
+    # Pre-scan for large files that would trigger partitioning
+    large_files: list[tuple[Path, float]] = []
+    for p in resolved_paths:
+        try:
+            if p.is_file() and p.suffix.lower() == ".parquet":
+                if should_partition(p, threshold_gb=threshold_gb, enabled=True):
+                    size_gb = p.stat().st_size / (1024 * 1024 * 1024)
+                    large_files.append((p, size_gb))
+            elif p.is_dir():
+                for pq in p.rglob("*.parquet"):
+                    try:
+                        if should_partition(pq, threshold_gb=threshold_gb, enabled=True):
+                            size_gb = pq.stat().st_size / (1024 * 1024 * 1024)
+                            large_files.append((pq, size_gb))
+                    except OSError:
+                        # Skip files with permission errors or broken symlinks
+                        continue
+        except OSError:
+            # Skip paths with permission errors or broken symlinks
+            continue
+
+    if not large_files:
+        return False
+
+    warn(f"Found {len(large_files)} file(s) exceeding {threshold_gb} GB threshold:")
+    for lf, size in large_files[:5]:  # Show first 5
+        detail(f"  {lf.name} ({size:.2f} GB)")
+    if len(large_files) > 5:
+        detail(f"  ... and {len(large_files) - 5} more")
+
+    if not click.confirm("Partition large files into spatial chunks?", default=True):
+        info_output("Skipping partitioning (files will be added as-is)")
+        return True
+
+    return False
+
+
 def _handle_parquet_after_add(
     catalog_root: Path,
     affected_collections: set[str],
@@ -2566,6 +2877,154 @@ def _handle_parquet_after_add(
             )
 
 
+@dataclass
+class PMTilesSettings:
+    """Settings for PMTiles generation."""
+
+    enabled: bool = False
+    min_zoom: int | None = None
+    max_zoom: int | None = None
+    layer: str | None = None
+    bbox: str | None = None
+    where: str | None = None
+    include_cols: str | None = None
+    precision: int = 6
+    attribution: str | None = None
+    src_crs: str | None = None
+
+
+def _get_pmtiles_settings(catalog_root: Path, coll_id: str, coll_path: Path) -> PMTilesSettings:
+    """Get PMTiles settings for a collection."""
+    from portolan_cli.config import get_setting
+
+    def get(key: str) -> Any:
+        return get_setting(
+            f"pmtiles.{key}",
+            catalog_path=catalog_root,
+            collection=coll_id,
+            collection_path=coll_path,
+        )
+
+    return PMTilesSettings(
+        enabled=_coerce_bool(get("enabled"), default=False),
+        min_zoom=None if get("min_zoom") is None else _coerce_int(get("min_zoom"), default=0),
+        max_zoom=None if get("max_zoom") is None else _coerce_int(get("max_zoom"), default=14),
+        layer=get("layer"),
+        bbox=get("bbox"),
+        where=get("where"),
+        include_cols=get("include_cols"),
+        precision=_coerce_int(get("precision"), default=6),
+        attribution=get("attribution"),
+        src_crs=get("src_crs"),
+    )
+
+
+def _handle_pmtiles_after_add(
+    catalog_root: Path,
+    affected_collections: set[str],
+    generate_pmtiles: bool,
+    force: bool,
+    verbose: bool,
+    *,
+    use_json: bool = False,
+) -> None:
+    """Handle PMTiles generation after add command."""
+    if not affected_collections:
+        return
+
+    from portolan_cli.pmtiles import (
+        PMTilesNotAvailableError,
+        TippecanoeNotFoundError,
+        generate_pmtiles_for_collection,
+    )
+
+    for coll_id in affected_collections:
+        coll_path = catalog_root / coll_id
+        if not (coll_path / "collection.json").exists():
+            continue
+
+        settings = _get_pmtiles_settings(catalog_root, coll_id, coll_path)
+        if not (generate_pmtiles or settings.enabled):
+            continue
+
+        try:
+            result = generate_pmtiles_for_collection(
+                coll_path,
+                catalog_root,
+                force=force,
+                min_zoom=settings.min_zoom,
+                max_zoom=settings.max_zoom,
+                layer=settings.layer,
+                bbox=settings.bbox,
+                where=settings.where,
+                include_cols=settings.include_cols,
+                precision=settings.precision,
+                attribution=settings.attribution,
+                src_crs=settings.src_crs,
+            )
+            _report_pmtiles_result(result, verbose, generate_pmtiles, use_json=use_json)
+        except PMTilesNotAvailableError as e:
+            _handle_pmtiles_unavailable(
+                e, generate_pmtiles, settings.enabled, verbose, coll_id, use_json=use_json
+            )
+        except TippecanoeNotFoundError as e:
+            _handle_tippecanoe_missing(e, generate_pmtiles, coll_id, use_json=use_json)
+
+
+def _report_pmtiles_result(
+    result: Any, verbose: bool, explicit_flag: bool, *, use_json: bool = False
+) -> None:
+    """Report PMTiles generation results."""
+    if not use_json:
+        for p in result.generated:
+            success(f"Generated PMTiles: {p.name}")
+        if result.skipped and verbose:
+            for p in result.skipped:
+                info_output(f"Skipped PMTiles (up-to-date): {p.name}")
+    for path, error_msg in result.failed:
+        if explicit_flag:
+            if not use_json:
+                error(f"PMTiles generation failed: {error_msg}")
+            raise SystemExit(1)
+        if not use_json:
+            warn(f"Failed to generate PMTiles for '{path}': {error_msg}")
+
+
+def _handle_pmtiles_unavailable(
+    e: Exception,
+    explicit_flag: bool,
+    config_enabled: bool,
+    verbose: bool,
+    coll_id: str,
+    *,
+    use_json: bool = False,
+) -> None:
+    """Handle PMTilesNotAvailableError."""
+    if explicit_flag:
+        if not use_json:
+            error(str(e))
+        raise SystemExit(1) from e
+    if use_json:
+        return
+    # Warn if pmtiles.enabled in config (user expectation), or info if just verbose
+    if config_enabled:
+        warn(f"PMTiles enabled for '{coll_id}' but gpio-pmtiles not installed")
+    elif verbose:
+        info_output(f"Skipping PMTiles for '{coll_id}': gpio-pmtiles not installed")
+
+
+def _handle_tippecanoe_missing(
+    e: Exception, explicit_flag: bool, coll_id: str, *, use_json: bool = False
+) -> None:
+    """Handle TippecanoeNotFoundError."""
+    if explicit_flag:
+        if not use_json:
+            error(str(e))
+        raise SystemExit(1) from e
+    if not use_json:
+        warn(f"Skipping PMTiles for '{coll_id}': tippecanoe not installed")
+
+
 def _coerce_bool(value: Any, *, default: bool = False) -> bool:
     """Coerce a value to boolean.
 
@@ -2642,6 +3101,28 @@ def _coerce_int(value: Any, *, default: int) -> int:
     is_flag=True,
     help="Generate items.parquet for affected collections after add.",
 )
+@click.option(
+    "--pmtiles",
+    "generate_pmtiles",
+    is_flag=True,
+    help="Generate PMTiles from GeoParquet assets (requires tippecanoe).",
+)
+@click.option(
+    "--force-pmtiles",
+    "force_pmtiles",
+    is_flag=True,
+    help="Regenerate PMTiles even if they exist and are up-to-date.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Re-process all files, ignoring change detection.",
+)
+@click.option(
+    "--reconvert",
+    is_flag=True,
+    help="Re-convert from source files (requires --force).",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
@@ -2654,6 +3135,10 @@ def add_cmd(
     item_datetime: datetime | None,
     workers: int,
     generate_parquet: bool,
+    generate_pmtiles: bool,
+    force_pmtiles: bool,
+    force: bool,
+    reconvert: bool,
 ) -> None:
     """Track files in the catalog.
 
@@ -2696,8 +3181,28 @@ def add_cmd(
     - Changed files are re-extracted with new metadata
     - Sidecar files (.dbf, .shx, .prj for shapefiles) are auto-detected
     - All files in the item directory are tracked, not just geo files (ADR-0028)
+
+    \b
+    Large file partitioning:
+        GeoParquet files exceeding 2GB are automatically partitioned into
+        spatial chunks using KD-tree partitioning. In interactive mode,
+        you'll be prompted before partitioning. Configure via:
+
+            partitioning.enabled: true/false (default: true)
+            partitioning.prompt: true/false (default: true)
+            partitioning.threshold_gb: size in GB (default: 2.0)
     """
     use_json = should_output_json(ctx, json_output)
+
+    # Validate --reconvert requires --force
+    if reconvert and not force:
+        _handle_cmd_error(
+            "add",
+            "UsageError",
+            "--reconvert requires --force",
+            use_json,
+        )
+        raise SystemExit(1)
 
     # Resolve and validate catalog root (git-style auto-detection)
     catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
@@ -2752,6 +3257,11 @@ def add_cmd(
         if should_show_progress:
             progress_reporter.advance()
 
+    # Check if user wants to skip partitioning for large files (Phase 5: auto-partition UX)
+    skip_partitioning = (
+        _check_partition_prompt(resolved_paths, catalog_root) if not use_json else False
+    )
+
     # item_datetime is parsed by Click via FLEXIBLE_DATETIME type (ADR-0035)
     try:
         with progress_reporter:
@@ -2765,6 +3275,9 @@ def add_cmd(
                 on_progress=on_file_progress,
                 workers=workers,
                 json_mode=use_json,
+                force=force,
+                reconvert=reconvert,
+                skip_partitioning=skip_partitioning,
             )
     except (ValueError, FileNotFoundError) as err:
         err_type = type(err).__name__
@@ -2773,18 +3286,37 @@ def add_cmd(
         _handle_cmd_error("add", err_type, f"{path_context}{err}", use_json)
         raise SystemExit(1) from err
 
-    # Output combined results
-    _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
+    # Compute affected collections before any post-processing
+    # Include both added AND skipped assets so --pmtiles works on already-tracked files
+    # Note: all_added contains DatasetInfo objects, all_skipped contains Path objects
+    affected: set[str] = set()
+    for a in all_added:
+        if hasattr(a, "collection_id") and a.collection_id:
+            affected.add(a.collection_id)
+    for p in all_skipped:
+        # Extract collection_id from path relative to catalog_root
+        try:
+            rel = p.relative_to(catalog_root)
+            # Collection ID is the first path component
+            if rel.parts:
+                affected.add(rel.parts[0])
+        except ValueError:
+            pass  # Path not relative to catalog_root
 
-    # Handle stac-geoparquet generation/hints for affected collections
+    # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
     # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
     # Only show hints in non-JSON mode
-    affected = {
-        a.collection_id for a in all_added if hasattr(a, "collection_id") and a.collection_id
-    }
     _handle_parquet_after_add(
         catalog_root, affected, generate_parquet, verbose, show_hints=not use_json
     )
+
+    # Handle PMTiles generation BEFORE output (so JSON reflects final state)
+    _handle_pmtiles_after_add(
+        catalog_root, affected, generate_pmtiles, force_pmtiles, verbose, use_json=use_json
+    )
+
+    # Output combined results (after all processing complete)
+    _output_add_results(all_added, all_skipped, all_failures, verbose, use_json)
 
     # Exit with non-zero code if any failures occurred
     if all_failures:
@@ -2961,6 +3493,85 @@ def _check_backend_push_support(
     raise SystemExit(1)
 
 
+def _resolve_push_settings(
+    destination: str | None,
+    profile: str | None,
+    catalog_path: Path,
+    collection: str | None,
+    use_json: bool,
+    command: str,
+) -> tuple[str | None, str, str | None]:
+    """Resolve remote/profile/region for push/sync commands.
+
+    Args:
+        destination: CLI destination argument
+        profile: CLI profile argument
+        catalog_path: Resolved catalog path
+        collection: Optional collection name
+        use_json: Whether to output JSON
+        command: Command name for error messages
+
+    Returns:
+        Tuple of (resolved_destination, resolved_profile, resolved_region)
+
+    Raises:
+        SystemExit: If config.yaml contains stale sensitive settings
+    """
+    try:
+        resolved_destination = resolve_remote(destination, catalog_path, collection)
+        resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+        resolved_region = resolve_aws_region(None, catalog_path, collection)
+        return resolved_destination, resolved_profile, resolved_region
+    except ValueError as e:
+        if use_json:
+            envelope = error_envelope(command, [ErrorDetail(type="ConfigError", message=str(e))])
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
+
+
+def _prepare_push_concurrency(
+    concurrency: int,
+    chunk_concurrency: int,
+    max_connections: int | None,
+    workers: int | None,
+    collection: str | None,
+    use_json: bool,
+) -> tuple[int, int]:
+    """Compute effective concurrency and warn if too high (Issue #344).
+
+    Returns:
+        Tuple of (effective_file_concurrency, effective_chunk_concurrency).
+    """
+    from portolan_cli.async_utils import (
+        MAX_SAFE_CONNECTIONS,
+        adjust_concurrency_for_max_connections,
+        calculate_connection_footprint,
+    )
+
+    # Apply max_connections cap
+    effective_file = concurrency
+    effective_chunk = chunk_concurrency
+    if max_connections is not None:
+        effective_file, effective_chunk = adjust_concurrency_for_max_connections(
+            concurrency, chunk_concurrency, max_connections
+        )
+
+    # Warn if footprint exceeds safe threshold
+    eff_workers = workers if workers is not None else (4 if collection is None else 1)
+    footprint = calculate_connection_footprint(effective_file, effective_chunk, eff_workers)
+    if footprint > MAX_SAFE_CONNECTIONS and not use_json:
+        worker_part = f"{eff_workers} workers × " if eff_workers > 1 else ""
+        warn(
+            f"High connection count: {footprint} concurrent connections "
+            f"({worker_part}{effective_file} files × {effective_chunk} chunks). "
+            "This may overwhelm home networks. Consider using --max-connections to limit."
+        )
+
+    return effective_file, effective_chunk
+
+
 @cli.command()
 @click.argument("destination", required=False, default=None)
 @click.option(
@@ -3003,9 +3614,33 @@ def _check_backend_push_support(
 @click.option(
     "--concurrency",
     type=click.IntRange(min=1, max=500),
-    default=50,
-    help="Maximum concurrent file uploads within each collection (default: 50). "
-    "Higher values improve throughput but may hit rate limits.",
+    default=8,
+    help="Maximum concurrent file uploads within each collection (default: 8). "
+    "Per-worker connections = concurrency × chunk-concurrency; "
+    "catalog-wide total = workers × concurrency × chunk-concurrency.",
+)
+@click.option(
+    "--chunk-concurrency",
+    type=click.IntRange(min=1, max=50),
+    default=4,
+    help="Maximum concurrent chunks per file upload (default: 4). "
+    "Per-worker connections = concurrency × chunk-concurrency; "
+    "catalog-wide total = workers × concurrency × chunk-concurrency. "
+    "Lower values are safer for home networks.",
+)
+@click.option(
+    "--max-connections",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum total concurrent HTTP connections. If set, auto-adjusts "
+    "concurrency and chunk-concurrency to stay within limit. "
+    "Recommended for flaky or metered connections.",
+)
+@click.option(
+    "--adaptive/--no-adaptive",
+    default=True,
+    help="Enable adaptive concurrency (default: on). Starts with low concurrency, "
+    "ramps up on success, backs off on errors. Safer for home networks.",
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
@@ -3027,6 +3662,9 @@ def push(
     catalog_path: Path | None,
     workers: int | None,
     concurrency: int,
+    chunk_concurrency: int,
+    max_connections: int | None,
+    adaptive: bool,
 ) -> None:
     """Push local catalog changes to cloud object storage.
 
@@ -3038,7 +3676,7 @@ def push(
     Uses optimistic locking to detect concurrent modifications.
 
     DESTINATION is the object store URL (e.g., s3://mybucket/my-catalog).
-    If not provided, uses the 'remote' configured via `portolan config set remote`.
+    If not provided, uses 'remote' from PORTOLAN_REMOTE env var or .env file.
 
     If --collection is specified, pushes that collection only.
     If --collection is omitted, pushes all collections in the catalog.
@@ -3064,12 +3702,16 @@ def push(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "push")
 
+    # Load .env for credentials (must happen before any config reads)
+    load_dotenv_and_warn_sensitive(catalog_path)
+
     # Check if active backend supports push
     _check_backend_push_support(catalog_path, collection, use_json)
 
-    resolved_destination = resolve_remote(destination, catalog_path, collection)
-    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
-    resolved_region = resolve_aws_region(None, catalog_path, collection)
+    # Resolve remote/profile/region (raises SystemExit on stale config)
+    resolved_destination, resolved_profile, resolved_region = _resolve_push_settings(
+        destination, profile, catalog_path, collection, use_json, "push"
+    )
 
     if resolved_destination is None:
         if use_json:
@@ -3079,7 +3721,7 @@ def push(
                     ErrorDetail(
                         type="UsageError",
                         message="No destination provided and no 'remote' configured. "
-                        "Provide a DESTINATION argument or run: portolan config set remote <url>",
+                        "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)",
                     )
                 ],
             )
@@ -3087,9 +3729,14 @@ def push(
         else:
             error(
                 "No destination provided and no 'remote' configured. "
-                "Provide a DESTINATION argument or run: portolan config set remote <url>"
+                "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)"
             )
         raise SystemExit(1)
+
+    # Apply max_connections cap and warn about high connection count (Issue #344)
+    effective_file_conc, effective_chunk_conc = _prepare_push_concurrency(
+        concurrency, chunk_concurrency, max_connections, workers, collection, use_json
+    )
 
     # If no collection specified, push all collections
     if collection is None:
@@ -3102,7 +3749,10 @@ def push(
                 profile=resolved_profile,
                 region=resolved_region,
                 workers=workers,
-                file_concurrency=concurrency,
+                file_concurrency=effective_file_conc,
+                chunk_concurrency=effective_chunk_conc,
+                max_connections=max_connections,
+                adaptive=adaptive,
                 verbose=verbose,
                 json_mode=use_json,
             )
@@ -3140,6 +3790,7 @@ def push(
 
     try:
         # Use async push for single-collection push (concurrent uploads)
+        # max_connections already applied above via effective_*_conc
         result = asyncio.run(
             push_async(
                 catalog_root=catalog_path,
@@ -3149,7 +3800,9 @@ def push(
                 dry_run=dry_run,
                 profile=resolved_profile,
                 region=resolved_region,
-                concurrency=concurrency,
+                concurrency=effective_file_conc,
+                chunk_concurrency=effective_chunk_conc,
+                adaptive=adaptive,
                 json_mode=use_json,
             )
         )
@@ -3406,7 +4059,19 @@ def pull_command(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "pull")
 
-    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+    # Load .env for credentials (must happen after catalog_path resolution)
+    load_dotenv_and_warn_sensitive(catalog_path)
+
+    # Resolve profile - wrap in try/except for stale sensitive config
+    try:
+        resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
+    except ValueError as e:
+        if use_json:
+            envelope = error_envelope("pull", [ErrorDetail(type="ConfigError", message=str(e))])
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
 
     # Route to backend-specific pull if using non-file backend
     if _try_backend_pull(catalog_path, remote_url, collection, dry_run, use_json):
@@ -3610,9 +4275,13 @@ def sync(
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "sync")
 
-    resolved_destination = resolve_remote(destination, catalog_path, collection)
-    resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
-    resolved_region = resolve_aws_region(None, catalog_path, collection)
+    # Load .env for credentials (must happen after catalog_path resolution)
+    load_dotenv_and_warn_sensitive(catalog_path)
+
+    # Resolve remote/profile/region (raises SystemExit on stale config)
+    resolved_destination, resolved_profile, resolved_region = _resolve_push_settings(
+        destination, profile, catalog_path, collection, use_json, "sync"
+    )
 
     if resolved_destination is None:
         if use_json:
@@ -3622,7 +4291,7 @@ def sync(
                     ErrorDetail(
                         type="UsageError",
                         message="No destination provided and no 'remote' configured. "
-                        "Provide a DESTINATION argument or run: portolan config set remote <url>",
+                        "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)",
                     )
                 ],
             )
@@ -3630,7 +4299,7 @@ def sync(
         else:
             error(
                 "No destination provided and no 'remote' configured. "
-                "Provide a DESTINATION argument or run: portolan config set remote <url>"
+                "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)"
             )
         raise SystemExit(1)
 
@@ -3845,17 +4514,18 @@ def config() -> None:
 
     \b
     1. CLI argument (highest)
-    2. Environment variable (PORTOLAN_<KEY>)
+    2. Environment variable (PORTOLAN_<KEY>) or .env file
     3. Collection-level config
     4. Catalog-level config
     5. Built-in default (lowest)
 
+    Note: Sensitive settings (remote, profile, region) must use env vars or .env.
+
     \b
     Examples:
-        portolan config set remote s3://my-bucket/catalog/
+        portolan config set backend iceberg
         portolan config get remote
         portolan config list
-        portolan config unset remote
     """
 
 
@@ -3876,14 +4546,17 @@ def config_set(
 ) -> None:
     """Set a configuration value.
 
-    KEY is the setting name (e.g., remote, aws_profile).
+    KEY is the setting name (e.g., backend, statistics.enabled).
     VALUE is the value to set.
+
+    Note: Sensitive settings (remote, profile, region) cannot be stored in
+    config.yaml. Use environment variables or .env files instead.
 
     \b
     Examples:
-        portolan config set remote s3://my-bucket/
-        portolan config set aws_profile production
-        portolan config set remote s3://public/ --collection demographics
+        portolan config set backend iceberg
+        portolan config set statistics.enabled true
+        portolan config set pmtiles.enabled false --collection demographics
     """
     from portolan_cli.config import set_setting
 
@@ -3971,8 +4644,21 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    value = get_setting(key, catalog_path=catalog_path, collection=collection)
-    source = get_setting_source(key, catalog_path, collection)
+    # Load .env for credential precedence
+    load_dotenv_and_warn_sensitive(catalog_path)
+
+    try:
+        value = get_setting(key, catalog_path=catalog_path, collection=collection)
+        source = get_setting_source(key, catalog_path, collection)
+    except ValueError as e:
+        if use_json:
+            envelope = error_envelope(
+                "config get", [ErrorDetail(type="ConfigError", message=str(e))]
+            )
+            output_json_envelope(envelope)
+        else:
+            error(str(e))
+        raise SystemExit(1) from None
 
     if use_json:
         data = {
@@ -4031,6 +4717,9 @@ def config_list(ctx: click.Context, json_output: bool, collection: str | None) -
             error("Not in a Portolan catalog")
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
+
+    # Load .env for credential precedence
+    load_dotenv_and_warn_sensitive(catalog_path)
 
     settings = list_settings(catalog_path, collection=collection)
 
@@ -4476,10 +5165,32 @@ def metadata_validate(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _verbose_readme(msg: str, verbose: bool, use_json: bool) -> None:
+    """Output verbose message for readme command (if enabled and not JSON mode)."""
+    if verbose and not use_json:
+        info_output(msg)
+
+
+def _verbose_readme_files(
+    dirpath: Path,
+    rel_dir: str,
+    stac_file: str,
+    verbose: bool,
+    use_json: bool,
+) -> None:
+    """Output verbose file-read messages for a STAC directory."""
+    dir_suffix = "/" if rel_dir != "catalog root" else ""
+    _verbose_readme(f"Reading {stac_file} from {rel_dir}{dir_suffix}", verbose, use_json)
+    if (dirpath / ".portolan" / "metadata.yaml").exists():
+        metadata_loc = ".portolan/" if rel_dir == "catalog root" else f"{rel_dir}/.portolan/"
+        _verbose_readme(f"Reading metadata.yaml from {metadata_loc}", verbose, use_json)
+
+
 def _generate_readme_content(
     target_dir: Path,
     catalog_path: Path,
     use_json: bool,
+    verbose: bool = False,
 ) -> tuple[str, bool]:
     """Generate README content for a target directory.
 
@@ -4487,6 +5198,7 @@ def _generate_readme_content(
         target_dir: Directory to generate README for.
         catalog_path: Root catalog path.
         use_json: Whether to output errors as JSON.
+        verbose: Whether to show detailed output.
 
     Returns:
         Tuple of (readme_content, is_catalog_root).
@@ -4498,12 +5210,26 @@ def _generate_readme_content(
     from portolan_cli.errors import ConfigInvalidStructureError
     from portolan_cli.readme import generate_catalog_readme, generate_readme
 
+    # Compute relative path for display
+    try:
+        rel_dir = target_dir.relative_to(catalog_path)
+        display_dir = str(rel_dir) if str(rel_dir) != "." else ""
+    except ValueError:
+        display_dir = str(target_dir)
+    dir_prefix = f"{display_dir}/" if display_dir else ""
+
     # Check if at catalog root (has catalog.json, not collection.json)
     is_catalog_root = (target_dir / "catalog.json").exists() and not (
         target_dir / "collection.json"
     ).exists()
 
     if is_catalog_root:
+        _verbose_readme(
+            f"Reading catalog.json from {dir_prefix or 'catalog root'}", verbose, use_json
+        )
+        if (target_dir / ".portolan" / "metadata.yaml").exists():
+            _verbose_readme(f"Reading metadata.yaml from {dir_prefix}.portolan/", verbose, use_json)
+        _verbose_readme("Generating README.md", verbose, use_json)
         return generate_catalog_readme(target_dir), True
 
     # Load STAC (collection.json or catalog.json)
@@ -4511,11 +5237,16 @@ def _generate_readme_content(
     for stac_file in ["collection.json", "catalog.json"]:
         stac_path = target_dir / stac_file
         if stac_path.exists():
+            _verbose_readme(
+                f"Reading {stac_file} from {dir_prefix or 'catalog root'}", verbose, use_json
+            )
             stac = json.loads(stac_path.read_text())
             break
 
     # Load merged metadata
     try:
+        if (target_dir / ".portolan" / "metadata.yaml").exists():
+            _verbose_readme(f"Reading metadata.yaml from {dir_prefix}.portolan/", verbose, use_json)
         metadata_dict = load_merged_metadata(target_dir, catalog_path)
     except ConfigInvalidStructureError as err:
         if use_json:
@@ -4527,6 +5258,8 @@ def _generate_readme_content(
         else:
             error(f"Invalid YAML in metadata.yaml: {err}")
         raise SystemExit(1) from err
+
+    _verbose_readme("Generating README.md", verbose, use_json)
 
     return generate_readme(stac=stac, metadata=metadata_dict), False
 
@@ -4708,6 +5441,7 @@ def _readme_recursive(
     use_json: bool,
     check: bool,
     stdout: bool,
+    verbose: bool = False,
 ) -> None:
     """Generate READMEs for catalog and all collections recursively.
 
@@ -4720,6 +5454,7 @@ def _readme_recursive(
         use_json: Output JSON format.
         check: CI mode - check freshness only.
         stdout: Print to stdout (not supported in recursive mode).
+        verbose: Whether to show detailed output.
     """
     from portolan_cli.readme import (
         generate_catalog_readme,
@@ -4745,17 +5480,23 @@ def _readme_recursive(
         rel_path = str(rel_dir / "README.md")
 
         if (dirpath / "collection.json").exists():
+            _verbose_readme(f"Processing collection: {rel_dir}/", verbose, use_json)
+            _verbose_readme_files(dirpath, str(rel_dir), "collection.json", verbose, use_json)
             content = generate_readme_for_collection(dirpath, catalog_path)
             _process_readme_entry(
                 readme_path, content, rel_path, check, generated_paths, stale_paths
             )
         elif (dirpath / "catalog.json").exists():
+            _verbose_readme(f"Processing subcatalog: {rel_dir}/", verbose, use_json)
+            _verbose_readme_files(dirpath, str(rel_dir), "catalog.json", verbose, use_json)
             content = generate_catalog_readme(dirpath)
             _process_readme_entry(
                 readme_path, content, rel_path, check, generated_paths, stale_paths
             )
 
     # Generate root catalog README
+    _verbose_readme("Processing catalog root", verbose, use_json)
+    _verbose_readme_files(catalog_path, "catalog root", "catalog.json", verbose, use_json)
     root_content = generate_catalog_readme(catalog_path)
     _process_readme_entry(
         catalog_path / "README.md", root_content, "README.md", check, generated_paths, stale_paths
@@ -4824,6 +5565,7 @@ def _readme_recursive(
     default=False,
     help="Generate READMEs for catalog and all collections.",
 )
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed output.")
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def readme(
@@ -4833,6 +5575,7 @@ def readme(
     stdout: bool,
     check: bool,
     recursive: bool,
+    verbose: bool,
 ) -> None:
     """Generate README.md from STAC metadata and metadata.yaml.
 
@@ -4874,7 +5617,7 @@ def readme(
 
     # Handle recursive mode
     if recursive:
-        _readme_recursive(catalog_path, use_json, check, stdout)
+        _readme_recursive(catalog_path, use_json, check, stdout, verbose)
         return
 
     # Determine target directory
@@ -4884,7 +5627,9 @@ def readme(
         target_dir = catalog_path
 
     # Generate README content
-    readme_content, is_catalog_root = _generate_readme_content(target_dir, catalog_path, use_json)
+    readme_content, is_catalog_root = _generate_readme_content(
+        target_dir, catalog_path, use_json, verbose
+    )
 
     # Determine output path
     readme_path = target_dir / "README.md"
@@ -5164,13 +5909,19 @@ def _handle_imageserver_extraction(
     raise SystemExit(exit_code)
 
 
-def _output_extract_error(use_json: bool, error_type: str, message: str, url: str) -> None:
+def _output_extract_error(
+    use_json: bool,
+    error_type: str,
+    message: str,
+    url: str,
+    command: str = "extract-arcgis",
+) -> None:
     """Output extraction error in JSON or text format."""
     from portolan_cli.output import error
 
     if use_json:
         err = ErrorDetail(type=error_type, message=message)
-        envelope = error_envelope("extract-arcgis", [err], data={"url": url})
+        envelope = error_envelope(command, [err], data={"url": url})
         output_json_envelope(envelope)
     else:
         error(message)
@@ -5181,6 +5932,7 @@ def _output_extract_result(
     output_dir: Path,
     use_json: bool,
     dry_run: bool,
+    command: str = "extract-arcgis",
 ) -> None:
     """Output extraction results in JSON or text format."""
     from portolan_cli.output import error, success, warn
@@ -5224,11 +5976,11 @@ def _output_extract_result(
                 )
                 for fl in failed_layers
             ]
-            envelope = error_envelope("extract-arcgis", errors, data=data)
+            envelope = error_envelope(command, errors, data=data)
             output_json_envelope(envelope)
             raise SystemExit(1)
 
-        envelope = success_envelope("extract-arcgis", data)
+        envelope = success_envelope(command, data)
         output_json_envelope(envelope)
         return
 
@@ -5583,9 +6335,419 @@ def extract_arcgis_cmd(
     _output_extract_result(report, output_dir, use_json, dry_run)
 
 
+@extract.command("wfs")
+@click.argument("url")
+@click.argument("output_dir", type=click.Path(path_type=Path), required=False)
+@click.option(
+    "--layers",
+    type=str,
+    default=None,
+    help="Include layers matching glob patterns (comma-separated). Example: 'buildings*,roads*'",
+)
+@click.option(
+    "--exclude-layers",
+    type=str,
+    default=None,
+    help="Exclude layers matching glob patterns (comma-separated). Example: 'test_*'",
+)
+@click.option(
+    "--wfs-version",
+    type=click.Choice(["1.0.0", "1.1.0", "2.0.0", "auto"]),
+    default="auto",
+    help="WFS version (default: auto-detect).",
+)
+@click.option(
+    "--output-crs",
+    type=str,
+    default=None,
+    help="Target CRS for output (e.g., 'EPSG:4326'). Default keeps source CRS.",
+)
+@click.option(
+    "--bbox",
+    type=str,
+    default=None,
+    help="Bounding box filter: minx,miny,maxx,maxy in output CRS.",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum features per layer.",
+)
+@click.option(
+    "--workers",
+    type=click.IntRange(min=1),
+    default=1,
+    help="Parallel workers for layer extraction (default: 1). "
+    "Each layer is extracted independently.",
+)
+@click.option(
+    "--retries",
+    type=click.IntRange(min=1),
+    default=3,
+    help="Retry attempts per failed layer (default: 3).",
+)
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0.0, min_open=True),
+    default=300.0,
+    help="Per-layer timeout in seconds (default: 300). "
+    "Note: large layers use gpio's internal 10-minute HTTP timeout.",
+)
+@click.option(
+    "--page-size",
+    type=click.IntRange(min=100),
+    default=10000,
+    help="Features per page for large layer pagination (default: 10000).",
+)
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="Resume from existing extraction-report.json (skip succeeded layers).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="List layers without extracting.",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output extraction report as JSON.",
+)
+@click.option(
+    "--auto",
+    is_flag=True,
+    help="Skip confirmation prompts.",
+)
+@click.option(
+    "--raw",
+    is_flag=True,
+    help="Skip auto-init: create only extraction files, no STAC catalog.",
+)
+@click.pass_context
+def extract_wfs_cmd(
+    ctx: click.Context,
+    url: str,
+    output_dir: Path | None,
+    layers: str | None,
+    exclude_layers: str | None,
+    wfs_version: str,
+    output_crs: str | None,
+    bbox: str | None,
+    limit: int | None,
+    workers: int,
+    retries: int,
+    timeout: float,
+    page_size: int,
+    resume: bool,
+    dry_run: bool,
+    json_output: bool,
+    auto: bool,
+    raw: bool,
+) -> None:
+    """Extract data from WFS (Web Feature Service) endpoints.
+
+    Downloads layers from a WFS service and creates a Portolan catalog
+    with GeoParquet files and STAC metadata.
+
+    URL is the WFS service endpoint URL.
+    OUTPUT_DIR is the directory to write extracted data (default: 'wfs_extract').
+
+    \b
+    WFS Versions:
+        1.0.0: Basic WFS (GML 2.x output)
+        1.1.0: Common version (GML 3.x, coordinate axis handling)
+        2.0.0: Modern WFS (paging, stored queries)
+        auto: Let the client auto-detect (default)
+
+    \b
+    Examples:
+        # Extract all layers from a WFS service
+        portolan extract wfs https://example.com/wfs ./output
+
+        # Extract specific layers by typename
+        portolan extract wfs URL --layers "buildings*,roads*"
+
+        # Extract with bounding box filter
+        portolan extract wfs URL --bbox "-122.5,37.5,-122.0,38.0"
+
+        # Dry run to see available layers
+        portolan extract wfs URL --dry-run
+
+        # Extract with specific WFS version
+        portolan extract wfs URL --wfs-version 2.0.0
+
+        # Extract 4 layers in parallel with 5-minute timeout per layer
+        portolan extract wfs URL --workers 4 --timeout 300
+    """
+    from portolan_cli.extract.wfs.orchestrator import (
+        ExtractionOptions,
+        ExtractionProgress,
+        extract_wfs_catalog,
+    )
+    from portolan_cli.output import detail, info, warn
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Default output directory
+    if output_dir is None:
+        output_dir = Path("wfs_extract")
+
+    # Parse bbox if provided
+    bbox_tuple: tuple[float, float, float, float] | None = None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) != 4:
+                _output_extract_error(
+                    use_json,
+                    "InvalidBBoxError",
+                    "bbox must have 4 values: minx,miny,maxx,maxy",
+                    url,
+                    command="extract-wfs",
+                )
+                raise SystemExit(1)
+            bbox_tuple = (parts[0], parts[1], parts[2], parts[3])
+        except ValueError as e:
+            _output_extract_error(use_json, "InvalidBBoxError", str(e), url, command="extract-wfs")
+            raise SystemExit(1) from None
+
+    # Build filter lists
+    layer_include = _parse_filter_patterns(layers)
+    layer_exclude = _parse_filter_patterns(exclude_layers)
+
+    # Build options
+    options = ExtractionOptions(
+        workers=workers,
+        retries=retries,
+        timeout=timeout,
+        resume=resume,
+        dry_run=dry_run,
+        raw=raw,
+        wfs_version=wfs_version,
+        output_crs=output_crs,
+        bbox=bbox_tuple,
+        limit=limit,
+        page_size=page_size,
+    )
+
+    # Progress callback for text output
+    def on_progress(progress: ExtractionProgress) -> None:
+        if progress.status == "starting":
+            info(f"[{progress.layer_index + 1}/{progress.total_layers}] {progress.layer_name}")
+        elif progress.status == "success":
+            detail("  ✓ Success")
+        elif progress.status == "failed":
+            warn("  ✗ Failed")
+        elif progress.status == "skipped":
+            detail("  ↪ Skipped (already extracted)")
+
+    # Confirmation prompt
+    if not auto and not dry_run and not use_json:
+        info(f"Extract from: {url}")
+        info(f"Output to: {output_dir}")
+        if layer_include:
+            detail(f"Layer filter: {', '.join(layer_include)}")
+        if layer_exclude:
+            detail(f"Exclude: {', '.join(layer_exclude)}")
+        if not click.confirm("Continue?", default=True):
+            raise SystemExit(0)
+
+    try:
+        report = extract_wfs_catalog(
+            url=url,
+            output_dir=output_dir,
+            layer_filter=layer_include,
+            layer_exclude=layer_exclude,
+            options=options,
+            on_progress=None if use_json else on_progress,
+        )
+    except Exception as e:
+        _output_extract_error(
+            use_json, type(e).__name__, f"Extraction failed: {e}", url, command="extract-wfs"
+        )
+        raise SystemExit(1) from None
+
+    _output_extract_result(report, output_dir, use_json, dry_run, command="extract-wfs")
+
+
 # =============================================================================
 # Version management commands (iceberg backend only)
 # =============================================================================
+
+
+@cli.command()
+@click.argument(
+    "input_file",
+    type=click.Path(exists=True, path_type=Path),
+)
+@click.argument(
+    "output_dir",
+    type=click.Path(path_type=Path),
+    required=False,
+)
+@click.option(
+    "--strategy",
+    type=click.Choice(["kdtree"]),
+    default="kdtree",
+    help="Spatial partitioning strategy. Default: kdtree (data-driven, auto-balancing).",
+)
+@click.option(
+    "--target-rows",
+    type=int,
+    default=120_000,
+    help="Target rows per partition. Default: 120,000.",
+)
+@click.option(
+    "--preview",
+    is_flag=True,
+    help="Analyze and preview partition strategy without creating files.",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Show detailed output.",
+)
+@click.pass_context
+def partition(
+    ctx: click.Context,
+    input_file: Path,
+    output_dir: Path | None,
+    strategy: str,
+    target_rows: int,
+    preview: bool,
+    verbose: bool,
+) -> None:
+    """Partition a large GeoParquet file for better query performance.
+
+    Splits a GeoParquet file into spatially-organized partitions using
+    geoparquet-io. Per OGC best practices, files over 2GB should be partitioned.
+
+    \b
+    Output structure (Hive-style, per ADR-0031):
+        output_dir/
+        ├── kdtree_cell=001/
+        │   └── data.parquet
+        ├── kdtree_cell=002/
+        │   └── data.parquet
+        └── ...
+
+    \b
+    Examples:
+        # Preview partition strategy
+        portolan partition buildings.parquet --preview
+
+        # Partition with default settings (kdtree, 120k rows/partition)
+        portolan partition buildings.parquet output/
+
+        # Custom target rows
+        portolan partition buildings.parquet output/ --target-rows 50000
+    """
+    from portolan_cli.config import get_setting
+    from portolan_cli.partitioning import partition_geoparquet, should_partition
+
+    use_json = should_output_json(ctx)
+
+    # Check if file is GeoParquet
+    if input_file.suffix.lower() != ".parquet":
+        if use_json:
+            envelope = error_envelope(
+                "partition",
+                [ErrorDetail(type="FormatError", message="Input must be a .parquet file")],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("Input must be a .parquet file")
+        raise SystemExit(1)
+
+    # Preview mode: show analysis without creating files
+    if preview:
+        file_size_gb = input_file.stat().st_size / (1024 * 1024 * 1024)
+        threshold_gb = get_setting("partitioning.threshold_gb") or 2.0
+        part_enabled = get_setting("partitioning.enabled")
+        should_part = should_partition(
+            input_file, threshold_gb=float(threshold_gb), enabled=part_enabled is not False
+        )
+
+        if use_json:
+            result = {
+                "file": str(input_file),
+                "size_gb": round(file_size_gb, 2),
+                "recommended_partition": should_part,
+                "strategy": strategy,
+                "target_rows": target_rows,
+            }
+            output_json_envelope(success_envelope("partition", result))
+        else:
+            info_output(f"File: {input_file}")
+            info_output(f"Size: {file_size_gb:.2f} GB")
+            if should_part:
+                success("Partitioning recommended (> 2GB threshold)")
+            else:
+                info_output("File is under 2GB threshold - partitioning optional")
+            info_output(f"Strategy: {strategy}")
+            info_output(f"Target rows per partition: {target_rows:,}")
+        return
+
+    # Require output_dir for actual partitioning
+    if output_dir is None:
+        if use_json:
+            envelope = error_envelope(
+                "partition",
+                [
+                    ErrorDetail(
+                        type="UsageError",
+                        message="OUTPUT_DIR required (use --preview for analysis only)",
+                    )
+                ],
+            )
+            output_json_envelope(envelope)
+        else:
+            error("OUTPUT_DIR required (use --preview for analysis only)")
+        raise SystemExit(1)
+
+    # Create output directory
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        if not use_json:
+            info_output(f"Partitioning {input_file.name} with {strategy} strategy...")
+
+        partition_files = partition_geoparquet(
+            input_path=input_file,
+            output_dir=output_dir,
+            strategy=strategy,
+            target_rows=target_rows,
+            verbose=verbose,
+        )
+
+        if use_json:
+            result = {
+                "input": str(input_file),
+                "output_dir": str(output_dir),
+                "partitions": len(partition_files),
+                "files": [str(p) for p in partition_files],
+            }
+            output_json_envelope(success_envelope("partition", result))
+        else:
+            success(f"Created {len(partition_files)} partitions in {output_dir}")
+            if verbose:
+                for pf in partition_files:
+                    detail(f"  {pf.parent.name}/{pf.name}")
+
+    except Exception as e:
+        if use_json:
+            envelope = error_envelope(
+                "partition",
+                [ErrorDetail(type="PartitionError", message=str(e))],
+            )
+            output_json_envelope(envelope)
+        else:
+            error(f"Partitioning failed: {e}")
+        raise SystemExit(1) from None
 
 
 def _require_iceberg_backend(
@@ -5610,14 +6772,17 @@ def _require_iceberg_backend(
 
 @cli.group()
 def version() -> None:
-    """Iceberg version management commands.
+    """Version management commands.
+
+    Works with any versioning backend (file, iceberg). Backend is auto-detected
+    from catalog configuration.
 
     \b
     Subcommands:
         current   Show current version of a collection
         list      List all versions of a collection
-        rollback  Rollback to a previous version
-        prune     Remove old versions
+        rollback  Rollback to a previous version (iceberg only)
+        prune     Remove old versions (iceberg only)
     """
 
 
@@ -5640,20 +6805,22 @@ def current(
 ) -> None:
     """Show the current version of a collection.
 
+    Works with any versioning backend (auto-detected from config).
+
     \b
     Examples:
         portolan version current boundaries
         portolan version current boundaries --json
     """
+    from portolan_cli.version_ops import get_current_version
+
     use_json = should_output_json(ctx, json_output)
 
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "version current")
 
-    backend = _require_iceberg_backend(catalog_path, use_json, "current")
-
     try:
-        ver = backend.get_current_version(collection)
+        ver = get_current_version(collection, catalog_root=catalog_path)
     except (FileNotFoundError, Exception) as e:
         if use_json:
             envelope = error_envelope(
@@ -5707,20 +6874,22 @@ def version_list_cmd(
 ) -> None:
     """List all versions of a collection.
 
+    Works with any versioning backend (auto-detected from config).
+
     \b
     Examples:
         portolan version list boundaries
         portolan version list boundaries --json
     """
+    from portolan_cli.version_ops import list_versions
+
     use_json = should_output_json(ctx, json_output)
 
     if catalog_path is None:
         catalog_path = require_catalog_root(use_json, "version list")
 
-    backend = _require_iceberg_backend(catalog_path, use_json, "list")
-
     try:
-        versions = backend.list_versions(collection)
+        versions = list_versions(collection, catalog_root=catalog_path)
     except (FileNotFoundError, Exception) as e:
         if use_json:
             envelope = error_envelope(
@@ -5763,6 +6932,200 @@ def version_list_cmd(
             if v.changes:
                 for change in v.changes:
                     detail(f"    {change}")
+
+
+def _bump_show_changes(
+    collection: str,
+    new_version: str,
+    current_version: str | None,
+    modified: list[str],
+    deleted: list[str],
+) -> bool:
+    """Show changes and get confirmation for version bump."""
+    info_output(f"Creating version {new_version} for '{collection}'")
+    info_output(f"  Current version: {current_version}")
+    info_output("")
+
+    if modified:
+        info_output("Modified files:")
+        for f in modified:
+            warn(f"  {f}")
+
+    if deleted:
+        info_output("Deleted files:")
+        for f in deleted:
+            error(f"  {f}")
+
+    info_output("")
+    return click.confirm("Create this version?")
+
+
+def _bump_error(use_json: bool, error_type: str, message: str) -> None:
+    """Output a version bump error and exit."""
+    if use_json:
+        envelope = error_envelope(
+            "version bump",
+            [ErrorDetail(type=error_type, message=message)],
+        )
+        output_json_envelope(envelope)
+    else:
+        error(message)
+    raise SystemExit(1)
+
+
+def _validate_semver(version: str) -> bool:
+    """Validate semver format (major.minor.patch with optional prerelease/build)."""
+    import re
+
+    semver_pattern = r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$"
+    return bool(re.match(semver_pattern, version))
+
+
+@version.command()
+@click.argument("collection")
+@click.argument("new_version")
+@click.option(
+    "--notes",
+    "-m",
+    help="Version notes/message describing the change.",
+)
+@click.option(
+    "--breaking",
+    is_flag=True,
+    help="Mark this version as having breaking changes.",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt.",
+)
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to catalog root (default: auto-detect).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def bump(
+    ctx: click.Context,
+    collection: str,
+    new_version: str,
+    notes: str | None,
+    breaking: bool,
+    yes: bool,
+    catalog_path: Path | None,
+    json_output: bool,
+) -> None:
+    """Create a new version from current file state.
+
+    Detects modified files by comparing checksums, computes new checksums,
+    and creates a new version entry in versions.json.
+
+    NEW_VERSION must be an explicit semver string (e.g., "1.2.0").
+
+    \b
+    Examples:
+        portolan version bump demographics 1.4.0 -m "Updated source data"
+        portolan version bump demographics 2.0.0 --breaking -m "Schema change"
+        portolan version bump demographics 1.4.0 -y  # Skip confirmation
+    """
+    from portolan_cli.status import detect_deleted_files, detect_modified_files
+    from portolan_cli.version_ops import publish_version
+    from portolan_cli.versions import read_versions
+
+    use_json = should_output_json(ctx, json_output)
+
+    # Validate semver format
+    if not _validate_semver(new_version):
+        msg = f"Invalid semver: '{new_version}'. Expected format: MAJOR.MINOR.PATCH (e.g., '1.2.0')"
+        _bump_error(use_json, "ValidationError", msg)
+
+    if catalog_path is None:
+        catalog_path = require_catalog_root(use_json, "version bump")
+
+    collection_path = catalog_path / collection
+    versions_path = collection_path / "versions.json"
+
+    # Read current versions
+    if not versions_path.exists():
+        _bump_error(use_json, "NotFoundError", f"No versions.json in {collection}")
+
+    try:
+        versions_file = read_versions(versions_path)
+    except ValueError as e:
+        _bump_error(use_json, "ParseError", f"Invalid versions.json: {e}")
+
+    current_version = versions_file.current_version
+
+    # Check for duplicate version
+    existing_versions = {v.version for v in versions_file.versions}
+    if new_version in existing_versions:
+        _bump_error(use_json, "DuplicateVersionError", f"Version '{new_version}' already exists")
+
+    # Detect changes
+    modified = detect_modified_files(collection_path, versions_file)
+    deleted = detect_deleted_files(collection_path, versions_file)
+
+    if not modified and not deleted:
+        if use_json:
+            envelope = success_envelope(
+                "version bump",
+                {"collection": collection, "message": "No changes detected", "created": False},
+            )
+            output_json_envelope(envelope)
+        else:
+            info_output(f"No changes detected in '{collection}'")
+        return
+
+    # Show what will be versioned and get confirmation
+    if not use_json and not yes:
+        if not _bump_show_changes(collection, new_version, current_version, modified, deleted):
+            info_output("Aborted")
+            return
+
+    # Compute checksums for modified files
+    assets: dict[str, str] = {}
+    for filename in modified:
+        file_path = collection_path / filename
+        if file_path.exists():
+            assets[filename] = str(file_path)
+
+    # Publish the version
+    try:
+        ver = publish_version(
+            collection,
+            assets=assets,
+            breaking=breaking,
+            message=notes or "",
+            removed=set(deleted) if deleted else None,
+            version=new_version,
+            catalog_root=catalog_path,
+        )
+    except Exception as e:
+        _bump_error(use_json, type(e).__name__, f"Failed to create version: {e}")
+
+    if use_json:
+        envelope = success_envelope(
+            "version bump",
+            {
+                "collection": collection,
+                "version": ver.version,
+                "previous_version": current_version,
+                "created": ver.created.isoformat(),
+                "breaking": ver.breaking,
+                "message": ver.message,
+                "modified_files": modified,
+                "deleted_files": deleted,
+            },
+        )
+        output_json_envelope(envelope)
+    else:
+        success(f"Created version {ver.version}")
+        if ver.message:
+            detail(f"  {ver.message}")
 
 
 @version.command()

@@ -4,46 +4,89 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from portolan_cli.validation.results import ValidationReport, ValidationResult
 from portolan_cli.validation.rules import (
     CatalogExistsRule,
     CatalogJsonValidRule,
     MetadataFreshRule,
+    PartitionSchemaConsistencyRule,
+    PartitionStructureRule,
     PMTilesRecommendedRule,
     ProvisionalDatetimeRule,
     StacFieldsRule,
     ValidationRule,
 )
+from portolan_cli.validation.stac_rules import StacLintRule, StacSchemaRule
 
-# Default rules for v0.4 (catalog structure + metadata freshness)
+# Default rules (no configuration options)
 # Immutable tuple to prevent accidental mutation
 DEFAULT_RULES: tuple[ValidationRule, ...] = (
     CatalogExistsRule(),
     CatalogJsonValidRule(),
     StacFieldsRule(),
+    StacSchemaRule(),
+    StacLintRule(),
     PMTilesRecommendedRule(),
     MetadataFreshRule(),
     ProvisionalDatetimeRule(),
+    PartitionStructureRule(),
+    PartitionSchemaConsistencyRule(),
 )
+
+
+def _build_rules(
+    *,
+    strict: bool = False,
+    config: dict[str, Any] | None = None,
+) -> tuple[ValidationRule, ...]:
+    """Build rule tuple with configuration options.
+
+    Args:
+        strict: Enable strict STAC validation (geometry checks).
+        config: Portolan config dict for severity overrides.
+
+    Returns:
+        Tuple of configured validation rules.
+    """
+    return (
+        CatalogExistsRule(),
+        CatalogJsonValidRule(),
+        StacFieldsRule(),
+        StacSchemaRule(strict=strict),
+        StacLintRule(strict=strict, config=config),
+        PMTilesRecommendedRule(),
+        MetadataFreshRule(),
+        ProvisionalDatetimeRule(),
+        PartitionStructureRule(),
+        PartitionSchemaConsistencyRule(),
+    )
 
 
 def check(
     catalog_path: Path,
     *,
     rules: Sequence[ValidationRule] | None = None,
+    strict: bool = False,
+    config: dict[str, Any] | None = None,
 ) -> ValidationReport:
     """Run validation rules against a catalog.
 
     Args:
         catalog_path: Path to the directory containing .portolan.
-        rules: Optional sequence of rules to run. Defaults to DEFAULT_RULES.
+        rules: Optional sequence of rules to run. If provided, strict/config ignored.
+        strict: Enable strict STAC validation (geometry checks).
+        config: Portolan config dict for severity overrides.
 
     Returns:
         ValidationReport with results from all rules.
     """
     if rules is None:
-        rules = DEFAULT_RULES
+        if strict or config:
+            rules = _build_rules(strict=strict, config=config)
+        else:
+            rules = DEFAULT_RULES
 
     results: list[ValidationResult] = []
 

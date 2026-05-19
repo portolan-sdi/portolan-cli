@@ -92,7 +92,7 @@ class TestPublishVersion:
             result = publish_version("col", assets={"a": "/path"}, schema=schema, message="test")
 
         mock_backend.publish.assert_called_once_with(
-            "col", {"a": "/path"}, schema, False, "test", removed=None
+            "col", {"a": "/path"}, schema, False, "test", removed=None, version=None
         )
         assert result is mock_version
 
@@ -112,7 +112,7 @@ class TestPublishVersion:
             )
 
         mock_backend.publish.assert_called_once_with(
-            "col", {}, schema, False, "remove", removed={"old.parquet"}
+            "col", {}, schema, False, "remove", removed={"old.parquet"}, version=None
         )
 
 

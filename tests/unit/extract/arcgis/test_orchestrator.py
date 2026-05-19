@@ -598,11 +598,12 @@ class TestServicesRootExtraction:
             assert (tmp_path / ".portolan" / "extraction-report.json").exists()
 
             # Verify _extract_single_layer was called with correct path structure
-            # (service as subcatalog: census_2020/block_groups/block_groups.parquet)
+            # Single-layer service is FLATTENED: census_2020/census_2020.parquet
+            # (not nested: census_2020/block_groups/block_groups.parquet)
             call_args = mock_extract.call_args
             output_path = call_args[0][2]  # Third positional arg is output_path
-            assert "census_2020" in str(output_path)
-            assert "block_groups" in str(output_path)
+            relative_path = output_path.relative_to(tmp_path)
+            assert relative_path.as_posix() == "census_2020/census_2020.parquet"
 
     def test_services_root_applies_service_filter(self, tmp_path: Path) -> None:
         """Services root should apply service filter."""
@@ -643,3 +644,444 @@ class TestServicesRootExtraction:
 
             # Should only extract Census layers
             assert result.summary.total_layers == 1
+
+    def test_single_layer_service_flattened(self, tmp_path: Path) -> None:
+        """Single-layer service should create collection directly (no subcatalog).
+
+        Expected output structure:
+            bag_woonfunctie/
+            ├── collection.json  (created by auto-init)
+            └── bag_woonfunctie.parquet
+
+        NOT:
+            bag_woonfunctie/
+            ├── catalog.json  (subcatalog)
+            └── bag_woonfunctie/
+                └── bag_woonfunctie.parquet
+        """
+        mock_services = [
+            ServiceInfo(name="BAG_Woonfunctie", service_type="FeatureServer"),
+        ]
+        mock_single_layer = ServiceDiscoveryResult(
+            layers=[
+                LayerInfo(id=0, name="BAG_Woonfunctie", layer_type="Feature Layer"),
+            ],
+        )
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_services"
+            ) as mock_discover_services,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
+            ) as mock_discover_layers,
+            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
+        ):
+            mock_discover_services.return_value = (mock_services, [])
+            mock_discover_layers.return_value = mock_single_layer
+            mock_extract.return_value = (100, 2048, 2.5)
+
+            options = ExtractionOptions(raw=True)
+            result = extract_arcgis_catalog(
+                url=TEST_SERVICES_ROOT_URL,
+                output_dir=tmp_path,
+                options=options,
+            )
+
+            # Should extract the layer
+            assert mock_extract.call_count == 1
+            assert result.summary.succeeded == 1
+
+            # Output path should be FLATTENED: service_name/service_name.parquet
+            # NOT nested: service_name/layer_name/layer_name.parquet
+            call_args = mock_extract.call_args
+            output_path = call_args[0][2]  # Third positional arg is output_path
+            relative_path = output_path.relative_to(tmp_path)
+
+            # Should be: bag_woonfunctie/bag_woonfunctie.parquet (flattened)
+            # NOT: bag_woonfunctie/bag_woonfunctie/bag_woonfunctie.parquet (nested)
+            assert relative_path.as_posix() == "bag_woonfunctie/bag_woonfunctie.parquet"
+
+            # Verify the result output_path in report
+            layer_result = result.layers[0]
+            assert layer_result.output_path == "bag_woonfunctie/bag_woonfunctie.parquet"
+
+    def test_multi_layer_service_keeps_nesting(self, tmp_path: Path) -> None:
+        """Multi-layer service should keep subcatalog structure.
+
+        Expected output structure:
+            woontypering/
+            ├── catalog.json  (subcatalog)
+            ├── layer_a/
+            │   └── layer_a.parquet
+            └── layer_b/
+                └── layer_b.parquet
+        """
+        mock_services = [
+            ServiceInfo(name="Woontypering", service_type="FeatureServer"),
+        ]
+        mock_multi_layers = ServiceDiscoveryResult(
+            layers=[
+                LayerInfo(id=0, name="Woontypering_2020", layer_type="Feature Layer"),
+                LayerInfo(id=1, name="Woontypering_2021", layer_type="Feature Layer"),
+                LayerInfo(id=2, name="Woontypering_2022", layer_type="Feature Layer"),
+            ],
+        )
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_services"
+            ) as mock_discover_services,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
+            ) as mock_discover_layers,
+            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
+        ):
+            mock_discover_services.return_value = (mock_services, [])
+            mock_discover_layers.return_value = mock_multi_layers
+            mock_extract.return_value = (100, 2048, 2.5)
+
+            options = ExtractionOptions(raw=True)
+            result = extract_arcgis_catalog(
+                url=TEST_SERVICES_ROOT_URL,
+                output_dir=tmp_path,
+                options=options,
+            )
+
+            # Should extract all 3 layers
+            assert mock_extract.call_count == 3
+            assert result.summary.succeeded == 3
+
+            # Output paths should be NESTED: service_name/layer_name/layer_name.parquet
+            # First layer: woontypering/woontypering_2020/woontypering_2020.parquet
+            first_call_output = mock_extract.call_args_list[0][0][2]
+            relative_first = first_call_output.relative_to(tmp_path)
+            assert (
+                relative_first.as_posix()
+                == "woontypering/woontypering_2020/woontypering_2020.parquet"
+            )
+
+            # Verify all layers have nested structure
+            for layer_result in result.layers:
+                parts = layer_result.output_path.split("/")
+                # Should have 3 parts: service/layer/file.parquet
+                assert len(parts) == 3, f"Expected nested path, got: {layer_result.output_path}"
+
+    def test_mixed_services_flatten_and_nest_appropriately(self, tmp_path: Path) -> None:
+        """Mix of single and multi-layer services should handle each correctly.
+
+        Single-layer service → flatten
+        Multi-layer service → keep nesting
+        """
+        mock_services = [
+            ServiceInfo(name="SingleLayer", service_type="FeatureServer"),
+            ServiceInfo(name="MultiLayer", service_type="FeatureServer"),
+        ]
+        mock_single = ServiceDiscoveryResult(
+            layers=[LayerInfo(id=0, name="OnlyLayer", layer_type="Feature Layer")],
+        )
+        mock_multi = ServiceDiscoveryResult(
+            layers=[
+                LayerInfo(id=0, name="LayerA", layer_type="Feature Layer"),
+                LayerInfo(id=1, name="LayerB", layer_type="Feature Layer"),
+            ],
+        )
+
+        with (
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_services"
+            ) as mock_discover_services,
+            patch(
+                "portolan_cli.extract.arcgis.orchestrator.discover_layers"
+            ) as mock_discover_layers,
+            patch("portolan_cli.extract.arcgis.orchestrator._extract_single_layer") as mock_extract,
+        ):
+            mock_discover_services.return_value = (mock_services, [])
+            mock_discover_layers.side_effect = [mock_single, mock_multi]
+            mock_extract.return_value = (100, 2048, 2.5)
+
+            options = ExtractionOptions(raw=True)
+            result = extract_arcgis_catalog(
+                url=TEST_SERVICES_ROOT_URL,
+                output_dir=tmp_path,
+                options=options,
+            )
+
+            assert result.summary.succeeded == 3
+
+            # Find results by output path
+            output_paths = [r.output_path for r in result.layers]
+
+            # Single-layer service should be flattened
+            # Expected: singlelayer/singlelayer.parquet (2 parts)
+            single_path = [p for p in output_paths if "singlelayer" in p][0]
+            assert single_path.count("/") == 1, f"Single-layer should be flat: {single_path}"
+
+            # Multi-layer service should keep nesting
+            # Expected: multilayer/layer_a/layer_a.parquet (3 parts)
+            multi_paths = [p for p in output_paths if "multilayer" in p]
+            for path in multi_paths:
+                assert path.count("/") == 2, f"Multi-layer should be nested: {path}"
+
+
+class TestArcGISCollectionMetadataSeeding:
+    """Tests for ArcGIS collection-level metadata seeding."""
+
+    def test_seed_collection_metadata_creates_file(self, tmp_path: Path) -> None:
+        """Collection metadata seeding creates .portolan/metadata.yaml."""
+        from portolan_cli.extract.arcgis.orchestrator import _seed_collection_metadata_arcgis
+        from portolan_cli.extract.common.report import (
+            ExtractionReport,
+            ExtractionSummary,
+            LayerResult,
+            MetadataExtracted,
+        )
+
+        # Create collection directory structure
+        collection_dir = tmp_path / "test_layer"
+        collection_dir.mkdir()
+        (collection_dir / ".portolan").mkdir()
+
+        report = ExtractionReport(
+            extraction_date="2024-01-01T00:00:00Z",
+            source_url="https://services.arcgis.com/test/FeatureServer",
+            portolan_version="0.1.0",
+            gpio_version="1.0.0",
+            metadata_extracted=MetadataExtracted(
+                source_url="https://services.arcgis.com/test/FeatureServer",
+                description=None,
+                attribution=None,
+                keywords=None,
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            ),
+            layers=[
+                LayerResult(
+                    id=0,
+                    name="Test Layer",
+                    status="success",
+                    features=100,
+                    size_bytes=2048,
+                    duration_seconds=1.0,
+                    output_path="test_layer/test_layer.parquet",
+                    warnings=[],
+                    error=None,
+                    attempts=1,
+                ),
+            ],
+            summary=ExtractionSummary(
+                total_layers=1,
+                succeeded=1,
+                failed=0,
+                skipped=0,
+                total_features=100,
+                total_size_bytes=2048,
+                total_duration_seconds=1.0,
+            ),
+        )
+
+        with patch("portolan_cli.extract.arcgis.discovery.fetch_layer_details") as mock_fetch:
+            mock_fetch.return_value = {
+                "name": "Test Layer",
+                "description": "A test layer with buildings",
+            }
+
+            _seed_collection_metadata_arcgis(tmp_path, report)
+
+        metadata_path = collection_dir / ".portolan" / "metadata.yaml"
+        assert metadata_path.exists()
+        content = metadata_path.read_text()
+        assert "A test layer with buildings" in content
+
+    def test_seed_collection_metadata_graceful_on_fetch_failure(self, tmp_path: Path) -> None:
+        """Collection seeding continues even if layer details fetch fails."""
+        from portolan_cli.extract.arcgis.orchestrator import _seed_collection_metadata_arcgis
+        from portolan_cli.extract.common.report import (
+            ExtractionReport,
+            ExtractionSummary,
+            LayerResult,
+            MetadataExtracted,
+        )
+
+        # Create collection directory
+        collection_dir = tmp_path / "test_layer"
+        collection_dir.mkdir()
+        (collection_dir / ".portolan").mkdir()
+
+        report = ExtractionReport(
+            extraction_date="2024-01-01T00:00:00Z",
+            source_url="https://services.arcgis.com/test/FeatureServer",
+            portolan_version="0.1.0",
+            gpio_version="1.0.0",
+            metadata_extracted=MetadataExtracted(
+                source_url="https://services.arcgis.com/test/FeatureServer",
+                description=None,
+                attribution=None,
+                keywords=None,
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            ),
+            layers=[
+                LayerResult(
+                    id=0,
+                    name="Test Layer",
+                    status="success",
+                    features=100,
+                    size_bytes=2048,
+                    duration_seconds=1.0,
+                    output_path="test_layer/test_layer.parquet",
+                    warnings=[],
+                    error=None,
+                    attempts=1,
+                ),
+            ],
+            summary=ExtractionSummary(
+                total_layers=1,
+                succeeded=1,
+                failed=0,
+                skipped=0,
+                total_features=100,
+                total_size_bytes=2048,
+                total_duration_seconds=1.0,
+            ),
+        )
+
+        with patch("portolan_cli.extract.arcgis.discovery.fetch_layer_details") as mock_fetch:
+            mock_fetch.side_effect = Exception("Network error")
+
+            # Should not raise
+            _seed_collection_metadata_arcgis(tmp_path, report)
+
+        # Metadata file should still be created with basic info
+        metadata_path = collection_dir / ".portolan" / "metadata.yaml"
+        assert metadata_path.exists()
+        content = metadata_path.read_text()
+        assert "Test Layer" in content
+
+    def test_seed_collection_metadata_skips_failed_layers(self, tmp_path: Path) -> None:
+        """Collection seeding skips layers that failed extraction."""
+        from portolan_cli.extract.arcgis.orchestrator import _seed_collection_metadata_arcgis
+        from portolan_cli.extract.common.report import (
+            ExtractionReport,
+            ExtractionSummary,
+            LayerResult,
+            MetadataExtracted,
+        )
+
+        report = ExtractionReport(
+            extraction_date="2024-01-01T00:00:00Z",
+            source_url="https://services.arcgis.com/test/FeatureServer",
+            portolan_version="0.1.0",
+            gpio_version="1.0.0",
+            metadata_extracted=MetadataExtracted(
+                source_url="https://services.arcgis.com/test/FeatureServer",
+                description=None,
+                attribution=None,
+                keywords=None,
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            ),
+            layers=[
+                LayerResult(
+                    id=0,
+                    name="Failed Layer",
+                    status="failed",
+                    features=0,
+                    size_bytes=0,
+                    duration_seconds=0.0,
+                    output_path="",
+                    warnings=[],
+                    error="Connection timeout",
+                    attempts=3,
+                ),
+            ],
+            summary=ExtractionSummary(
+                total_layers=1,
+                succeeded=0,
+                failed=1,
+                skipped=0,
+                total_features=0,
+                total_size_bytes=0,
+                total_duration_seconds=0.0,
+            ),
+        )
+
+        with patch("portolan_cli.extract.arcgis.discovery.fetch_layer_details") as mock_fetch:
+            # Should not be called for failed layers
+            _seed_collection_metadata_arcgis(tmp_path, report)
+            mock_fetch.assert_not_called()
+
+    def test_seed_collection_metadata_arcgis_nested_output_path(self, tmp_path: Path) -> None:
+        """Collection seeding handles nested output paths correctly."""
+        from portolan_cli.extract.arcgis.orchestrator import _seed_collection_metadata_arcgis
+        from portolan_cli.extract.common.report import (
+            ExtractionReport,
+            ExtractionSummary,
+            LayerResult,
+            MetadataExtracted,
+        )
+
+        # Create nested collection directory structure (like services-root extract)
+        nested_dir = tmp_path / "MyService" / "layer_abc123"
+        nested_dir.mkdir(parents=True)
+        (nested_dir / ".portolan").mkdir()
+
+        report = ExtractionReport(
+            extraction_date="2024-01-01T00:00:00Z",
+            source_url="https://example.com/arcgis/rest/services",
+            portolan_version="0.1.0",
+            gpio_version="1.0.0",
+            metadata_extracted=MetadataExtracted(
+                source_url="https://example.com/arcgis/rest/services",
+                description=None,
+                attribution=None,
+                keywords=None,
+                contact_name=None,
+                processing_notes=None,
+                known_issues=None,
+                license_info_raw=None,
+            ),
+            layers=[
+                LayerResult(
+                    id=5,
+                    name="Nested Layer",
+                    status="success",
+                    features=200,
+                    size_bytes=2000,
+                    duration_seconds=2.0,
+                    # Nested output path from services-root extract
+                    output_path="MyService/layer_abc123/layer_abc123.parquet",
+                    warnings=[],
+                    error=None,
+                    attempts=1,
+                ),
+            ],
+            summary=ExtractionSummary(
+                total_layers=1,
+                succeeded=1,
+                failed=0,
+                skipped=0,
+                total_features=200,
+                total_size_bytes=2000,
+                total_duration_seconds=2.0,
+            ),
+        )
+
+        with patch("portolan_cli.extract.arcgis.discovery.fetch_layer_details") as mock_fetch:
+            mock_fetch.return_value = {
+                "name": "Nested Layer",
+                "description": "Description from ArcGIS API",
+            }
+            _seed_collection_metadata_arcgis(tmp_path, report)
+
+        # Metadata should be in the nested collection directory (parent of parquet)
+        metadata_path = nested_dir / ".portolan" / "metadata.yaml"
+        assert metadata_path.exists()
+        content = metadata_path.read_text()
+        assert "Description from ArcGIS API" in content

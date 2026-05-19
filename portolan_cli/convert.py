@@ -26,7 +26,9 @@ from portolan_cli.conversion_config import (
     LOSSY_COMPRESSIONS,
     QUALITY_COMPRESSIONS,
     CogSettings,
+    VectorSettings,
     get_cog_settings,
+    get_vector_settings,
 )
 from portolan_cli.errors import (
     ConversionFailedError,
@@ -36,6 +38,11 @@ from portolan_cli.formats import (
     FormatType,
     detect_format,
     get_cloud_native_status,
+)
+from portolan_cli.thumbnail import (
+    ThumbnailConfig,
+    generate_vector_thumbnail,
+    get_thumbnail_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,10 +180,128 @@ class ConversionReport:
         }
 
 
+def generate_cog_thumbnail(
+    cog_path: Path,
+    max_size: int = 512,
+    quality: int = 75,
+    basemap_provider: str = "none",
+) -> Path | None:
+    """Generate a JPEG thumbnail from a COG file (Issue #372).
+
+    Reads the lowest-resolution overview when available, downsamples to fit
+    within ``max_size`` pixels on the longest edge, and writes a JPEG next to
+    the COG. Per STAC best practices, this is the asset that should carry the
+    ``thumbnail`` role.
+
+    Args:
+        cog_path: Path to the source COG file.
+        max_size: Maximum pixel dimension for the longest edge (default 512).
+        quality: JPEG quality 1-100 (default 75).
+        basemap_provider: Unused. Raster thumbnails don't need basemaps because
+            the raster data fills the entire extent — a basemap underneath would
+            be invisible. Vector data needs basemaps because points/lines are
+            sparse and benefit from geographic context. See ADR-0042.
+
+    Returns:
+        Path to the written JPEG thumbnail, or None if the source could not be
+        read as a raster (e.g., corrupt file).
+    """
+    # Basemaps intentionally not supported for rasters (ADR-0042):
+    # Raster data fills the extent, so a basemap would be hidden underneath.
+    # Vector thumbnails need basemaps because points/lines are sparse.
+    if basemap_provider != "none":
+        logger.debug("Basemap ignored for raster thumbnail (not needed, see ADR-0042)")
+    try:
+        import numpy as np
+        import rasterio
+        from rasterio.enums import Resampling
+    except ImportError:
+        logger.debug("rasterio/numpy not available, skipping thumbnail generation")
+        return None
+
+    # Use ".thumb.jpg" rather than ".jpg" so we don't clobber a user-supplied
+    # sibling thumbnail (e.g. hand-curated data.jpg next to data.tif). The
+    # extension is still .jpg, so _scan_item_assets assigns role "thumbnail".
+    thumb_path = cog_path.with_name(f"{cog_path.stem}.thumb.jpg")
+
+    try:
+        with rasterio.open(cog_path) as src:
+            # Compute target shape preserving aspect ratio
+            longest = max(src.width, src.height)
+            scale = min(1.0, max_size / float(longest))
+            out_w = max(1, int(round(src.width * scale)))
+            out_h = max(1, int(round(src.height * scale)))
+
+            # Pick up to 3 bands for RGB; fall back to first band for grayscale
+            indexes: list[int] = [1, 2, 3] if src.count >= 3 else [1]
+
+            # masked=True applies the dataset mask (nodata sentinels, alpha,
+            # internal mask band) so percentile stretch on float/int rasters
+            # ignores fill values like -9999.
+            masked = src.read(
+                indexes=indexes,
+                out_shape=(len(indexes), out_h, out_w),
+                resampling=Resampling.average,
+                masked=True,
+            )
+
+            # Normalize to uint8 for JPEG
+            if masked.dtype == np.uint8:
+                data = masked.filled(0)
+            else:
+                valid = masked.compressed()
+                # Drop non-finite samples (NaN/inf in float rasters)
+                if valid.size:
+                    valid = valid[np.isfinite(valid)]
+                if valid.size == 0:
+                    return None
+                lo = float(np.percentile(valid, 2))
+                hi = float(np.percentile(valid, 98))
+                if hi <= lo:
+                    hi = lo + 1.0
+                stretched = (masked.astype("float32") - lo) / (hi - lo) * 255.0
+                # Fill masked samples with 0 (black) after stretch
+                data = np.clip(stretched.filled(0), 0, 255).astype("uint8")
+
+            # JPEG needs 1 or 3 bands
+            if data.shape[0] == 1:
+                jpeg_data = data
+                photometric = "minisblack"
+            else:
+                jpeg_data = data[:3]
+                photometric = "rgb"
+
+            profile = {
+                "driver": "JPEG",
+                "width": out_w,
+                "height": out_h,
+                "count": jpeg_data.shape[0],
+                "dtype": "uint8",
+                "quality": int(max(1, min(100, quality))),
+                "photometric": photometric,
+            }
+
+            with rasterio.open(thumb_path, "w", **profile) as dst:
+                dst.write(jpeg_data)
+    except Exception as e:
+        logger.debug("Could not generate thumbnail for %s: %s", cog_path, e)
+        if thumb_path.exists():
+            try:
+                thumb_path.unlink()
+            except OSError:
+                pass
+        return None
+
+    logger.debug("Generated thumbnail %s (%dx%d)", thumb_path.name, out_w, out_h)
+    return thumb_path
+
+
 def convert_file(
     source: Path,
     output_dir: Path | None = None,
     catalog_path: Path | None = None,
+    cog_settings: CogSettings | None = None,
+    vector_settings: VectorSettings | None = None,
 ) -> ConversionResult:
     """Convert a single file to cloud-native format.
 
@@ -189,6 +314,12 @@ def convert_file(
             directory as the source file.
         catalog_path: Path to the catalog root for loading conversion config.
             If None, uses ADR-0019 defaults.
+        cog_settings: Explicit COG settings override. Takes precedence over
+            ``catalog_path``-loaded settings. If None, loads from
+            ``catalog_path`` or falls back to ADR-0019 defaults.
+        vector_settings: Explicit vector settings override. Takes precedence over
+            ``catalog_path``-loaded settings. If None, loads from
+            ``catalog_path`` or falls back to no spatial optimization.
 
     Returns:
         ConversionResult with conversion outcome, timing, and paths.
@@ -239,21 +370,50 @@ def convert_file(
     out_dir = output_dir if output_dir else source.parent
     format_type = detect_format(source)
 
-    # Load COG settings from config if catalog_path provided
-    cog_settings = get_cog_settings(catalog_path) if catalog_path else CogSettings()
+    # Load COG settings: explicit arg > catalog config > defaults
+    if cog_settings is None:
+        cog_settings = get_cog_settings(catalog_path) if catalog_path else CogSettings()
+
+    # Load vector settings: explicit arg > catalog config > defaults
+    if vector_settings is None:
+        vector_settings = get_vector_settings(catalog_path) if catalog_path else VectorSettings()
 
     # Convert based on format type
     try:
         if format_type == FormatType.VECTOR:
-            output_path = _convert_vector(source, out_dir)
+            output_path = _convert_vector(source, out_dir, vector_settings)
             target_format = "GeoParquet"
             # Validate output is valid GeoParquet
             validation_error = _validate_geoparquet(output_path)
+            # Generate thumbnail next to the GeoParquet (Issue #13).
+            # Only on a successful, valid conversion to avoid orphan thumbnails.
+            # Thumbnail failure should not flip a successful conversion to FAILED.
+            if validation_error is None:
+                try:
+                    thumb_config = (
+                        get_thumbnail_config(catalog_path) if catalog_path else ThumbnailConfig()
+                    )
+                    if thumb_config.enabled and isinstance(output_path, Path):
+                        generate_vector_thumbnail(
+                            pmtiles_path=None,  # PMTiles generated separately if enabled
+                            geoparquet_path=output_path,
+                            config=thumb_config,
+                        )
+                except Exception as e:
+                    logger.warning("Thumbnail generation failed for %s: %s", source.name, e)
         elif format_type == FormatType.RASTER:
             output_path = _convert_raster(source, out_dir, cog_settings)
             target_format = "COG"
             # Validate output is valid COG
             validation_error = _validate_cog(output_path)
+            # Generate thumbnail next to the COG (Issue #372).
+            # Only on a successful, valid conversion to avoid orphan thumbnails.
+            if validation_error is None and cog_settings.generate_thumbnail:
+                generate_cog_thumbnail(
+                    output_path,
+                    max_size=cog_settings.thumbnail_max_size,
+                    quality=cog_settings.thumbnail_quality,
+                )
         else:
             duration_ms = int((time.perf_counter() - start_time) * 1000)
             return ConversionResult(
@@ -316,24 +476,165 @@ def convert_file(
         )
 
 
-def _convert_vector(source: Path, output_dir: Path) -> Path:
-    """Convert a vector file to GeoParquet.
+def _convert_vector(
+    source: Path,
+    output_dir: Path,
+    settings: VectorSettings | None = None,
+) -> Path:
+    """Convert a vector file to GeoParquet with optional spatial optimization.
+
+    Uses geoparquet-io's fluent Table API to apply spatial index columns,
+    sorting, and bbox based on VectorSettings configuration.
 
     Args:
         source: Source vector file.
         output_dir: Directory for output file.
+        settings: Vector conversion settings. If None, uses defaults (no optimization).
 
     Returns:
-        Path to the output GeoParquet file.
+        Path to the output GeoParquet file (or directory if partitioned).
     """
     import geoparquet_io as gpio  # type: ignore[import-untyped]
 
+    if settings is None:
+        settings = VectorSettings()
+
     output_path = output_dir / f"{source.stem}.parquet"
 
-    # Use geoparquet-io fluent API for conversion
-    gpio.convert(str(source)).write(str(output_path))
+    # Convert source to gpio Table
+    table = gpio.convert(str(source))
 
-    return output_path
+    # Apply spatial optimizations based on settings
+    table = _apply_vector_settings(table, settings)
+
+    # Write output (partitioned or single file)
+    if settings.partition and settings.spatial_index != "none":
+        # Partitioned output to directory
+        partition_dir = output_dir / source.stem
+        _write_partitioned(table, partition_dir, settings)
+        return partition_dir
+    else:
+        # Single file output
+        table.write(str(output_path))
+        return output_path
+
+
+def _apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
+    """Apply spatial optimization settings to a gpio Table.
+
+    Args:
+        table: geoparquet-io Table instance.
+        settings: Vector conversion settings.
+
+    Returns:
+        Modified Table with optimizations applied.
+    """
+    # Add bbox column if requested
+    if settings.add_bbox:
+        table = table.add_bbox()
+
+    # Add spatial index column if specified
+    if settings.spatial_index != "none":
+        resolution = _resolve_resolution(settings.spatial_index, settings.resolution)
+        table = _add_spatial_index(table, settings.spatial_index, resolution)
+
+    # Apply sorting
+    if settings.sort == "hilbert":
+        table = table.sort_hilbert()
+    elif settings.sort == "quadkey":
+        # sort_quadkey needs resolution; use quadkey default (13) if not set
+        sort_resolution = _resolve_resolution("quadkey", settings.resolution)
+        if sort_resolution is None:
+            table = table.sort_quadkey()
+        else:
+            table = table.sort_quadkey(resolution=sort_resolution)
+
+    return table
+
+
+def _resolve_resolution(index_type: str, resolution: int | str) -> int | None:
+    """Resolve resolution value for a spatial index type.
+
+    Args:
+        index_type: Spatial index type (h3, s2, quadkey, a5, kdtree).
+        resolution: Either "auto" or explicit int.
+
+    Returns:
+        Resolution int, or None to use geoparquet-io defaults.
+    """
+    if resolution == "auto":
+        return None  # Let gpio use its defaults
+    return int(resolution)
+
+
+def _add_spatial_index(table: Any, index_type: str, resolution: int | None) -> Any:
+    """Add a spatial index column to the table.
+
+    Args:
+        table: geoparquet-io Table instance.
+        index_type: Type of spatial index (h3, s2, quadkey, a5, kdtree).
+        resolution: Resolution/level/iterations, or None for defaults.
+
+    Returns:
+        Table with spatial index column added.
+
+    Raises:
+        ValueError: If index_type is not recognized.
+    """
+    if index_type == "h3":
+        return table.add_h3() if resolution is None else table.add_h3(resolution=resolution)
+    elif index_type == "s2":
+        return table.add_s2() if resolution is None else table.add_s2(level=resolution)
+    elif index_type == "quadkey":
+        return (
+            table.add_quadkey() if resolution is None else table.add_quadkey(resolution=resolution)
+        )
+    elif index_type == "a5":
+        return table.add_a5() if resolution is None else table.add_a5(resolution=resolution)
+    elif index_type == "kdtree":
+        return table.add_kdtree() if resolution is None else table.add_kdtree(iterations=resolution)
+    else:
+        raise ValueError(
+            f"Unknown spatial index type: '{index_type}'. Valid types: h3, s2, quadkey, a5, kdtree"
+        )
+
+
+def _write_partitioned(table: Any, output_dir: Path, settings: VectorSettings) -> None:
+    """Write table as hive-partitioned output.
+
+    Args:
+        table: geoparquet-io Table instance with spatial index column.
+        output_dir: Output directory for partitioned files.
+        settings: Vector settings with partition strategy.
+    """
+    resolution = _resolve_resolution(settings.spatial_index, settings.resolution)
+    index_type = settings.spatial_index
+
+    if index_type == "h3":
+        if resolution is None:
+            table.partition_by_h3(str(output_dir))
+        else:
+            table.partition_by_h3(str(output_dir), resolution=resolution)
+    elif index_type == "s2":
+        if resolution is None:
+            table.partition_by_s2(str(output_dir))
+        else:
+            table.partition_by_s2(str(output_dir), level=resolution)
+    elif index_type == "quadkey":
+        if resolution is None:
+            table.partition_by_quadkey(str(output_dir))
+        else:
+            table.partition_by_quadkey(str(output_dir), resolution=resolution)
+    elif index_type == "a5":
+        if resolution is None:
+            table.partition_by_a5(str(output_dir))
+        else:
+            table.partition_by_a5(str(output_dir), resolution=resolution)
+    elif index_type == "kdtree":
+        if resolution is None:
+            table.partition_by_kdtree(str(output_dir))
+        else:
+            table.partition_by_kdtree(str(output_dir), iterations=resolution)
 
 
 def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None = None) -> Path:
@@ -430,10 +731,10 @@ def _convert_raster(source: Path, output_dir: Path, settings: CogSettings | None
 
 
 def _validate_geoparquet(path: Path) -> str | None:
-    """Validate that the output file is valid GeoParquet.
+    """Validate that the output is valid GeoParquet (file or partitioned directory).
 
     Args:
-        path: Path to the parquet file to validate.
+        path: Path to the parquet file or hive-partitioned directory.
 
     Returns:
         Error message if validation failed, None if valid.
@@ -441,11 +742,39 @@ def _validate_geoparquet(path: Path) -> str | None:
     try:
         from portolan_cli.formats import is_geoparquet
 
+        if path.is_dir():
+            return _validate_partitioned_geoparquet(path)
+
         if not is_geoparquet(path):
             return "Output file is not valid GeoParquet (missing geo metadata)"
         return None
     except Exception as e:
         return f"Failed to validate GeoParquet: {e}"
+
+
+def _validate_partitioned_geoparquet(partition_dir: Path) -> str | None:
+    """Validate a hive-partitioned GeoParquet directory.
+
+    Checks that at least one parquet file exists and is valid GeoParquet.
+
+    Args:
+        partition_dir: Path to the partitioned output directory.
+
+    Returns:
+        Error message if validation failed, None if valid.
+    """
+    from portolan_cli.formats import is_geoparquet
+
+    parquet_files = list(partition_dir.rglob("*.parquet"))
+    if not parquet_files:
+        return f"Partitioned directory contains no parquet files: {partition_dir}"
+
+    # Validate first parquet file as representative sample
+    sample_file = parquet_files[0]
+    if not is_geoparquet(sample_file):
+        return f"Partitioned output is not valid GeoParquet: {sample_file}"
+
+    return None
 
 
 def _validate_cog(path: Path) -> str | None:
@@ -572,6 +901,7 @@ class LayerConversionResult:
 def convert_multilayer_file(
     source: Path,
     output_dir: Path,
+    settings: VectorSettings | None = None,
 ) -> list[LayerConversionResult]:
     """Convert all layers in a multi-layer file to separate GeoParquet files.
 
@@ -582,6 +912,7 @@ def convert_multilayer_file(
     Args:
         source: Path to the multi-layer file (GeoPackage or FileGDB).
         output_dir: Directory for output files.
+        settings: Vector conversion settings. If None, uses defaults (no optimization).
 
     Returns:
         List of LayerConversionResult, one per layer.
@@ -598,6 +929,9 @@ def convert_multilayer_file(
     if not source.exists():
         raise FileNotFoundError(f"Source file not found: {source}")
 
+    if settings is None:
+        settings = VectorSettings()
+
     # Get all layers in the file
     layers = list_layers(source)
     if layers is None or len(layers) == 0:
@@ -612,7 +946,7 @@ def convert_multilayer_file(
         output_path = output_dir / f"{source.stem}_{layer_name}.parquet"
 
         try:
-            _convert_vector_layer(source, layer_name, output_path)
+            _convert_vector_layer(source, layer_name, output_path, settings)
 
             # Validate output
             validation_error = _validate_geoparquet(output_path)
@@ -651,7 +985,12 @@ def convert_multilayer_file(
     return results
 
 
-def _convert_vector_layer(source: Path, layer: str, output: Path) -> None:
+def _convert_vector_layer(
+    source: Path,
+    layer: str,
+    output: Path,
+    settings: VectorSettings | None = None,
+) -> None:
     """Convert a single layer from a multi-layer file to GeoParquet.
 
     Uses geoparquet-io's layer parameter for multi-layer format support.
@@ -660,10 +999,16 @@ def _convert_vector_layer(source: Path, layer: str, output: Path) -> None:
         source: Path to the multi-layer file.
         layer: Name of the layer to convert.
         output: Path for the output GeoParquet file.
+        settings: Vector conversion settings. If None, uses defaults (no optimization).
 
     Raises:
         Exception: If conversion fails.
     """
     import geoparquet_io as gpio
 
-    gpio.convert(source, layer=layer).write(output)
+    if settings is None:
+        settings = VectorSettings()
+
+    table = gpio.convert(source, layer=layer)
+    table = _apply_vector_settings(table, settings)
+    table.write(output)

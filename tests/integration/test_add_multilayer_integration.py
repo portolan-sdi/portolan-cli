@@ -11,6 +11,7 @@ Per GitHub issue #265.
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,10 @@ def initialized_catalog(tmp_path: Path) -> Path:
     return tmp_path
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="geoparquet-io aborts on multilayer conversion on macOS (upstream bug)",
+)
 class TestAddMultilayerIntegration:
     """Integration tests for adding multi-layer files."""
 

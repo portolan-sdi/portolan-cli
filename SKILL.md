@@ -61,10 +61,9 @@ portolan clone s3://mybucket/catalog ./local-copy
 Manage catalog configuration.
 
 ```bash
-portolan config set remote s3://my-bucket/catalog/
+portolan config set backend iceberg
 portolan config get remote
 portolan config list
-portolan config unset remote
 ```
 
 ### `portolan extract`
@@ -113,6 +112,15 @@ Manage catalog metadata for README generation.
 portolan metadata init                # Create template at catalog root
 portolan metadata init demographics   # Create template for collection
 portolan metadata validate            # Validate metadata.yaml
+```
+
+### `portolan partition`
+Partition a large GeoParquet file for better query performance.
+
+```bash
+portolan partition buildings.parquet --preview
+portolan partition buildings.parquet output/
+portolan partition buildings.parquet output/ --target-rows 50000
 ```
 
 ### `portolan pull`
@@ -183,6 +191,16 @@ portolan stac-geoparquet -c imagery --dry-run  # Preview without creating
 portolan stac-geoparquet --json             # JSON output for all collections
 ```
 
+### `portolan status`
+Show local vs remote version state for collections.
+
+```bash
+portolan status                    # Status for all collections
+portolan status -c demographics    # Status for one collection
+portolan status --offline          # Skip remote check
+portolan status --json             # JSON output for agents
+```
+
 ### `portolan sync`
 Sync local catalog with remote storage (pull + push).
 
@@ -194,7 +212,7 @@ portolan sync s3://mybucket/catalog -c data --profile prod
 ```
 
 ### `portolan version`
-Iceberg version management commands.
+Version management commands.
 
 <!-- END GENERATED: cli-commands -->
 
@@ -331,7 +349,7 @@ portolan sync s3://mybucket/my-catalog -c demographics --fix
 
 **Solution:** Use `portolan check --fix` to convert:
 - Vectors → GeoParquet
-- Rasters → COG (Cloud-Optimized GeoTIFF)
+- COG (Cloud-Optimized GeoTIFF)
 
 ### Getting JSON Output
 

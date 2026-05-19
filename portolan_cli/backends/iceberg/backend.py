@@ -139,6 +139,7 @@ class IcebergBackend:
         breaking: bool,
         message: str,
         removed: set[str] | None = None,
+        version: str | None = None,
     ) -> Version:
         """Publish a new version of a collection.
 
@@ -147,8 +148,11 @@ class IcebergBackend:
         """
         table_id = self._table_id(collection)
 
-        current_version = self._get_current_version_str_safe(table_id)
-        next_ver = compute_next_version(current_version, breaking)
+        if version:
+            next_ver = version
+        else:
+            current_version = self._get_current_version_str_safe(table_id)
+            next_ver = compute_next_version(current_version, breaking)
 
         # Build asset metadata (sha256, size, href)
         new_asset_objects, changes = build_assets(assets, collection=collection)

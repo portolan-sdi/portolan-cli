@@ -14,7 +14,7 @@ Future: Icechunk support for array/raster data (COG, NetCDF, Zarr) is planned
 per ADR-0015.
 
 See: https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0015-two-tier-versioning-architecture.md
-See: ADR-0041 (Iceberg as Optional Extra)
+See: ADR-0046 (Iceberg as Optional Extra)
 """
 
 from __future__ import annotations

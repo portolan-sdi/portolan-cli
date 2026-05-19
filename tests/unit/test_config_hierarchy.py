@@ -490,7 +490,11 @@ class TestLoadMergedMetadata:
 
 
 class TestGetSettingWithHierarchy:
-    """Tests for get_setting() using hierarchical .portolan/ folders."""
+    """Tests for get_setting() using hierarchical .portolan/ folders.
+
+    Note: Tests use non-sensitive keys (workers, backend) because sensitive keys
+    (remote, profile, region) cannot be read from config.yaml per Issue #356.
+    """
 
     @pytest.mark.unit
     def test_collection_folder_config_overrides_catalog(self, tmp_path: Path) -> None:
@@ -500,21 +504,21 @@ class TestGetSettingWithHierarchy:
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
         (catalog_root / ".portolan").mkdir()
-        (catalog_root / ".portolan" / "config.yaml").write_text("aws_profile: catalog-profile\n")
+        (catalog_root / ".portolan" / "config.yaml").write_text("workers: 4\n")
 
         collection = catalog_root / "demographics"
         collection.mkdir()
         (collection / ".portolan").mkdir()
-        (collection / ".portolan" / "config.yaml").write_text("aws_profile: collection-profile\n")
+        (collection / ".portolan" / "config.yaml").write_text("workers: 8\n")
 
         result = get_setting(
-            "aws_profile",
+            "workers",
             catalog_path=catalog_root,
             collection="demographics",
             collection_path=collection,  # New parameter for hierarchy lookup
         )
 
-        assert result == "collection-profile"
+        assert result == 8
 
     @pytest.mark.unit
     def test_collection_folder_inherits_from_catalog(self, tmp_path: Path) -> None:
@@ -524,26 +528,24 @@ class TestGetSettingWithHierarchy:
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
         (catalog_root / ".portolan").mkdir()
-        (catalog_root / ".portolan" / "config.yaml").write_text(
-            "aws_profile: catalog-profile\nremote: s3://catalog/\n"
-        )
+        (catalog_root / ".portolan" / "config.yaml").write_text("workers: 4\nbackend: file\n")
 
         collection = catalog_root / "demographics"
         collection.mkdir()
         (collection / ".portolan").mkdir()
         (collection / ".portolan" / "config.yaml").write_text(
-            "remote: s3://collection/\n"  # Only override remote
+            "backend: iceberg\n"  # Only override backend
         )
 
-        # aws_profile should inherit from catalog
+        # workers should inherit from catalog
         result = get_setting(
-            "aws_profile",
+            "workers",
             catalog_path=catalog_root,
             collection="demographics",
             collection_path=collection,
         )
 
-        assert result == "catalog-profile"
+        assert result == 4
 
     @pytest.mark.unit
     def test_env_var_overrides_collection_folder_config(self, tmp_path: Path) -> None:
@@ -610,25 +612,25 @@ class TestGetSettingWithHierarchy:
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
         (catalog_root / ".portolan").mkdir()
-        (catalog_root / ".portolan" / "config.yaml").write_text("aws_profile: root\n")
+        (catalog_root / ".portolan" / "config.yaml").write_text("workers: 2\n")
 
         subcatalog = catalog_root / "historical"
         subcatalog.mkdir()
         (subcatalog / ".portolan").mkdir()
-        (subcatalog / ".portolan" / "config.yaml").write_text("aws_profile: subcatalog\n")
+        (subcatalog / ".portolan" / "config.yaml").write_text("workers: 4\n")
 
         collection = subcatalog / "census-1990"
         collection.mkdir()
         # No .portolan here - should inherit from subcatalog
 
         result = get_setting(
-            "aws_profile",
+            "workers",
             catalog_path=catalog_root,
             collection="historical/census-1990",
             collection_path=collection,
         )
 
-        assert result == "subcatalog"
+        assert result == 4
 
     @pytest.mark.unit
     def test_backwards_compatible_without_collection_path(self, tmp_path: Path) -> None:
@@ -639,14 +641,14 @@ class TestGetSettingWithHierarchy:
         catalog_root.mkdir()
         (catalog_root / ".portolan").mkdir()
         (catalog_root / ".portolan" / "config.yaml").write_text(
-            "remote: s3://catalog/\ncollections:\n  demographics:\n    remote: s3://legacy/\n"
+            "workers: 2\ncollections:\n  demographics:\n    workers: 8\n"
         )
 
         # Without collection_path, uses legacy collections: section
         result = get_setting(
-            "remote",
+            "workers",
             catalog_path=catalog_root,
             collection="demographics",
         )
 
-        assert result == "s3://legacy/"
+        assert result == 8

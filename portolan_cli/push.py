@@ -20,6 +20,7 @@ See ADR-0007 for CLI wraps Python API (all logic in library layer).
 from __future__ import annotations
 
 import asyncio
+import fnmatch  # Module-level import for performance (used in hot path)
 import json
 import threading
 import time
@@ -95,7 +96,9 @@ class PushResult:
         files_uploaded: Number of asset files uploaded.
         versions_pushed: Number of new versions pushed (from versions.json).
         conflicts: List of conflict descriptions.
-        errors: List of error messages.
+        errors: List of error messages (fatal errors that caused push to fail).
+        metadata_errors: List of metadata upload errors (non-fatal, push continues).
+            These indicate partial sync - metadata files failed but assets succeeded.
         dry_run: True if this was a dry-run operation (no network calls made).
         would_push_versions: In dry-run mode, max versions that would be pushed
             (upper bound; actual count depends on remote state).
@@ -107,9 +110,15 @@ class PushResult:
     versions_pushed: int
     conflicts: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    metadata_errors: list[str] = field(default_factory=list)
     dry_run: bool = False
     would_push_versions: int = 0
     metrics: UploadMetrics | None = None
+
+    @property
+    def has_metadata_errors(self) -> bool:
+        """True if any metadata files failed to upload."""
+        return len(self.metadata_errors) > 0
 
 
 @dataclass
@@ -256,6 +265,68 @@ def format_speed(bytes_per_second: float) -> str:
         return f"{bytes_per_second / (1024 * 1024):.1f} MiB/s"
     else:
         return f"{bytes_per_second / (1024 * 1024 * 1024):.1f} GiB/s"
+
+
+# =============================================================================
+# Glob Asset Transformation (Issue #351)
+# =============================================================================
+
+
+def _transform_collection_glob_assets(
+    content: bytes,
+    prefix: str,
+    collection_path: str,
+) -> bytes:
+    """Transform collection.json to populate glob fields for partitioned assets.
+
+    Per Issue #351: Partitioned GeoParquet datasets expose a glob pattern in
+    collection-level assets. On push, we populate glob fields with the full
+    remote URL.
+
+    Emits both fields during transition period (per ADR-0042):
+    - partition:glob (new, per STAC Partition Extension)
+    - portolan:glob (legacy, for backwards compatibility)
+
+    Args:
+        content: Original collection.json bytes.
+        prefix: Remote storage prefix (e.g., "s3://bucket/catalog").
+        collection_path: Relative path to collection (e.g., "buildings").
+
+    Returns:
+        Transformed collection.json bytes with glob fields populated.
+    """
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        return content  # Return unchanged if not valid JSON
+
+    assets = data.get("assets", {})
+    modified = False
+
+    for _asset_key, asset_data in assets.items():
+        href = asset_data.get("href", "")
+        # Check if this is a glob pattern (contains *)
+        if "*" in href:
+            # Build full remote glob URL
+            # href is relative to collection.json (e.g., "./kdtree_cell=*/*.parquet")
+            # We need to convert to absolute remote URL
+            glob_pattern = href.lstrip("./")
+            # Build URL preserving protocol separator
+            base = prefix.rstrip("/")
+            remote_glob = f"{base}/{collection_path}/{glob_pattern}"
+
+            # Emit both fields during transition (ADR-0042)
+            # Always overwrite to keep both fields in sync with current remote
+            if asset_data.get("partition:glob") != remote_glob:
+                asset_data["partition:glob"] = remote_glob
+                modified = True
+            if asset_data.get("portolan:glob") != remote_glob:
+                asset_data["portolan:glob"] = remote_glob
+                modified = True
+
+    if modified:
+        return json.dumps(data, indent=2).encode("utf-8")
+    return content
 
 
 # =============================================================================
@@ -600,6 +671,289 @@ def _discover_stac_files(
     return stac_files
 
 
+# =============================================================================
+# Metadata File Discovery (Issue #426)
+# =============================================================================
+
+
+def _matches_exclude_pattern(path: Path, pattern: str, base_dir: Path) -> bool:
+    """Check if a path matches an exclusion pattern.
+
+    Supports:
+    - Directory patterns ending with / (e.g., ".portolan/", "__pycache__/")
+      These match if ANY path component equals the directory name.
+    - Glob patterns with * (e.g., "*.py", ".env.*")
+    - Exact filename matches (e.g., ".env", ".DS_Store")
+
+    Note: fnmatch is imported at module level for performance since this
+    function is called O(files × patterns) times during discovery.
+
+    Args:
+        path: Absolute path to check.
+        pattern: Exclusion pattern.
+        base_dir: Base directory for relative path matching.
+
+    Returns:
+        True if the path matches the pattern and should be excluded.
+    """
+    # Get relative path for pattern matching
+    try:
+        rel_path = path.relative_to(base_dir)
+    except ValueError:
+        return False
+
+    rel_str = str(rel_path)
+    name = path.name
+
+    # Directory pattern (ends with / or /*)
+    # Unified handling: ".portolan/" and ".portolan/*" both mean
+    # "exclude anything under a directory named .portolan"
+    if pattern.endswith("/") or pattern.endswith("/*"):
+        dir_name = pattern.rstrip("/").rstrip("*").rstrip("/")
+        # Check if any path component matches the directory name
+        for part in rel_path.parts:
+            if part == dir_name:
+                return True
+        return False
+
+    # Glob pattern (contains *)
+    if "*" in pattern:
+        # Match against filename
+        if fnmatch.fnmatch(name, pattern):
+            return True
+        # Also match against relative path for patterns like "**/*.py"
+        if fnmatch.fnmatch(rel_str, pattern):
+            return True
+        return False
+
+    # Exact match against filename
+    return name == pattern
+
+
+def _get_exclude_patterns(catalog_root: Path | None = None) -> list[str]:
+    """Get exclusion patterns from config or defaults.
+
+    Args:
+        catalog_root: Catalog root for loading config. If None, uses defaults.
+
+    Returns:
+        List of exclusion patterns.
+    """
+    from portolan_cli.config import DEFAULT_SETTINGS, get_setting
+
+    if catalog_root is None:
+        return list(DEFAULT_SETTINGS.get("push.exclude", []))
+
+    patterns = get_setting("push.exclude", catalog_path=catalog_root)
+    if patterns is None:
+        return list(DEFAULT_SETTINGS.get("push.exclude", []))
+    return list(patterns)
+
+
+# Security-critical patterns that MUST always be excluded.
+# These are never overridden by user config - they are merged with user patterns.
+# Prevents accidental upload of secrets, git history, or internal state.
+_SECURITY_EXCLUDE_PATTERNS: frozenset[str] = frozenset(
+    [
+        ".env",  # Environment files with secrets
+        ".env.*",  # Environment file variants (.env.local, .env.production)
+        ".git/",  # Git repository data
+        ".portolan/",  # Internal Portolan state
+    ]
+)
+
+
+def _get_effective_exclude_patterns(
+    catalog_root: Path | None = None,
+    additional_patterns: list[str] | None = None,
+) -> list[str]:
+    """Get effective exclusion patterns, always including security-critical ones.
+
+    This function ensures security patterns (.env, .git/, .portolan/) are ALWAYS
+    included, even when custom patterns are provided. This prevents accidental
+    upload of secrets or internal state.
+
+    Args:
+        catalog_root: Catalog root for loading config. If None, uses defaults.
+        additional_patterns: Extra patterns to add (merged with defaults, not replacing).
+
+    Returns:
+        List of exclusion patterns including security-critical ones.
+    """
+    # Start with security-critical patterns (always included)
+    patterns: set[str] = set(_SECURITY_EXCLUDE_PATTERNS)
+
+    # Add config/default patterns
+    config_patterns = _get_exclude_patterns(catalog_root)
+    patterns.update(config_patterns)
+
+    # Add any additional patterns
+    if additional_patterns:
+        patterns.update(additional_patterns)
+
+    return list(patterns)
+
+
+def _load_versioned_asset_paths(catalog_root: Path, collection: str) -> set[str]:
+    """Load versioned asset relative paths from versions.json.
+
+    Args:
+        catalog_root: Path to catalog root.
+        collection: Collection identifier.
+
+    Returns:
+        Set of relative paths (as POSIX strings) for all versioned assets.
+        Returns empty set if versions.json doesn't exist or is invalid.
+    """
+    versions_file = catalog_root / collection / "versions.json"
+    if not versions_file.exists():
+        return set()
+
+    try:
+        data = json.loads(versions_file.read_text())
+        versioned_paths: set[str] = set()
+
+        # Extract asset paths from all versions
+        for version_entry in data.get("versions", []):
+            assets = version_entry.get("assets", {})
+            for asset_key, asset_info in assets.items():
+                # asset_key is typically the relative path like "data.parquet"
+                # or can be nested like "v1/data.parquet"
+                if isinstance(asset_info, dict):
+                    # Check for explicit href if available
+                    href = asset_info.get("href", asset_key)
+                    versioned_paths.add(href)
+                versioned_paths.add(asset_key)
+
+        return versioned_paths
+    except (json.JSONDecodeError, KeyError, TypeError):
+        # Invalid versions.json - return empty set, don't fail discovery
+        return set()
+
+
+def _discover_catalog_files(
+    catalog_root: Path,
+    collection: str | None = None,
+    *,
+    include_catalog_root: bool = False,
+    additional_exclude_patterns: list[str] | None = None,
+    stac_item_paths: set[Path] | None = None,
+) -> list[Path]:
+    """Discover all catalog files that should be synced to remote (Issue #426).
+
+    This discovers ALL files in the catalog/collection except:
+    - Files matching exclusion patterns (ALWAYS includes security patterns)
+    - Versioned assets (loaded from versions.json, handled by asset upload)
+    - versions.json (uploaded last for atomicity)
+    - Files already discovered by _discover_stac_files (collection.json, item/*.json)
+    - Symlinks (security: could point outside catalog)
+
+    Security: The security-critical patterns (.env, .git/, .portolan/) are ALWAYS
+    applied, even when additional_exclude_patterns is provided. This prevents
+    accidental upload of secrets.
+
+    Args:
+        catalog_root: Path to catalog root.
+        collection: Collection identifier. If None and include_catalog_root=True,
+            only discovers root-level files.
+        include_catalog_root: If True, include root-level files (not in collection).
+        additional_exclude_patterns: Extra patterns to add (merged with defaults,
+            never replaces security patterns).
+        stac_item_paths: Optional set of known STAC item JSON paths to exclude.
+            If provided, used instead of heuristic detection.
+
+    Returns:
+        List of absolute paths to files that should be synced.
+    """
+    # Always use effective patterns which include security-critical ones
+    exclude_patterns = _get_effective_exclude_patterns(catalog_root, additional_exclude_patterns)
+
+    # Files to exclude because they're handled by other upload phases
+    # These are uploaded in specific order for atomicity
+    handled_separately = {
+        "versions.json",  # Uploaded last (manifest-last)
+        "collection.json",  # Uploaded by _upload_stac_files
+        "catalog.json",  # Uploaded by _push_all_upload_root_files
+        "README.md",  # Uploaded by _upload_readmes_async
+    }
+
+    # Load versioned asset paths from versions.json (if collection specified)
+    # These are already handled by _upload_assets_async
+    versioned_asset_paths: set[str] = set()
+    if collection is not None:
+        versioned_asset_paths = _load_versioned_asset_paths(catalog_root, collection)
+
+    discovered: list[Path] = []
+
+    def should_exclude(path: Path, base_dir: Path) -> bool:
+        """Check if a file should be excluded."""
+        # Files handled by other upload phases
+        if path.name in handled_separately:
+            return True
+
+        # Versioned assets (handled by _upload_assets_async)
+        # Check if the relative path matches any versioned asset
+        if versioned_asset_paths:
+            try:
+                rel_path = path.relative_to(base_dir)
+                rel_posix = rel_path.as_posix()
+                # Check both full relative path and just the filename
+                # (versions.json may use either format)
+                if rel_posix in versioned_asset_paths or path.name in versioned_asset_paths:
+                    return True
+                # Also check collection-relative path
+                if collection is not None:
+                    coll_rel = rel_posix.removeprefix(f"{collection}/")
+                    if coll_rel in versioned_asset_paths:
+                        return True
+            except ValueError:
+                pass
+
+        # Item STAC files (handled by _discover_stac_files)
+        if stac_item_paths is not None:
+            # Use explicit list if provided (more precise)
+            if path in stac_item_paths:
+                return True
+        else:
+            # Heuristic fallback: collection/item_dir/item_dir.json
+            # This pattern matches STAC item files where the JSON filename
+            # matches its parent directory name
+            if path.suffix == ".json" and path.parent.name == path.stem:
+                return True
+
+        # Check exclusion patterns
+        for pattern in exclude_patterns:
+            if _matches_exclude_pattern(path, pattern, base_dir):
+                return True
+
+        return False
+
+    # Walk collection directory if specified
+    if collection is not None:
+        collection_dir = catalog_root / collection
+        if collection_dir.exists():
+            for item in collection_dir.rglob("*"):
+                # Skip symlinks (security: could point outside catalog)
+                if item.is_symlink():
+                    continue
+                if item.is_file() and not should_exclude(item, catalog_root):
+                    discovered.append(item)
+
+    # Optionally include catalog root files
+    if include_catalog_root:
+        for item in catalog_root.iterdir():
+            # Skip directories (collections are handled separately)
+            if item.is_dir():
+                continue
+            # Skip symlinks (security)
+            if item.is_symlink():
+                continue
+            if item.is_file() and not should_exclude(item, catalog_root):
+                discovered.append(item)
+
+    return discovered
+
+
 def _stat_files_safely(files: list[Path], errors: list[str]) -> tuple[dict[Path, int], list[Path]]:
     """Stat files safely, recording errors for files that can't be stat'd.
 
@@ -706,6 +1060,14 @@ def _upload_stac_files(
                     if verbose:
                         detail(f"Uploading STAC: {rel_path}")
                     content = file_path.read_bytes()
+
+                    # Transform collection.json to populate portolan:glob (Issue #351)
+                    if file_path.name == "collection.json":
+                        collection_path = rel_path.parent.as_posix()
+                        content = _transform_collection_glob_assets(
+                            content, prefix, collection_path
+                        )
+
                     obs.put(store, target_key, content)
                     files_uploaded += 1
                     uploaded_keys.append(target_key)
@@ -820,6 +1182,7 @@ def _upload_versions_json(
 
 def _handle_push_dry_run(
     catalog_root: Path,
+    collection: str,
     local_data: dict[str, Any],
     local_versions: list[str],
 ) -> PushResult:
@@ -829,6 +1192,7 @@ def _handle_push_dry_run(
 
     Args:
         catalog_root: Resolved catalog root path.
+        collection: Collection identifier.
         local_data: Parsed versions.json data.
         local_versions: List of version strings from local data.
 
@@ -852,6 +1216,19 @@ def _handle_push_dry_run(
     info(f"[DRY RUN] Would upload up to {asset_count} asset file(s)")
     for rel_path in asset_paths:
         detail(f"  {rel_path}")
+
+    # Show metadata files that would be synced (Issue #426)
+    metadata_files = _discover_catalog_files(
+        catalog_root,
+        collection,
+        include_catalog_root=True,  # Dry-run shows complete picture
+    )
+    if metadata_files:
+        info(f"[DRY RUN] Would sync {len(metadata_files)} metadata file(s)")
+        for f in metadata_files:
+            rel_path = f.relative_to(catalog_root)
+            detail(f"  {rel_path}")
+
     warn("[DRY RUN] Remote conflict detection skipped (requires network)")
     warn("[DRY RUN] Actual versions pushed may be fewer if remote already has some")
 
@@ -986,20 +1363,28 @@ async def _upload_assets_async(
     assets: list[Path],
     *,
     concurrency: int = 50,
+    chunk_concurrency: int = 4,
     json_mode: bool = False,
     suppress_progress: bool = False,
     verbose: bool = False,
+    adaptive: bool = True,
 ) -> tuple[int, list[str], list[str], UploadMetrics]:
     """Upload asset files to object storage with async concurrent uploads.
 
     Uses AsyncIOExecutor for bounded concurrency with circuit breaker.
+
+    For large files (>5MB), uses sync obs.put() with multipart concurrency
+    to respect chunk_concurrency. For small files, uses obs.put_async()
+    which is more efficient but doesn't support multipart.
 
     Args:
         store: Object store instance.
         catalog_root: Path to catalog root (for relative path calculation).
         prefix: Prefix in object storage.
         assets: List of asset file paths to upload.
-        concurrency: Maximum concurrent uploads (default 50).
+        concurrency: Maximum concurrent file uploads (default 50).
+        chunk_concurrency: Maximum concurrent chunks per file (default 4).
+            Only applies to files >5MB using multipart upload.
         json_mode: If True, suppress progress bar.
         suppress_progress: If True, suppress progress bar.
         verbose: If True, print per-file upload details (ADR-0040).
@@ -1007,6 +1392,13 @@ async def _upload_assets_async(
     Returns:
         Tuple of (files_uploaded, errors, uploaded_keys, metrics).
     """
+    import functools
+    from concurrent.futures import ThreadPoolExecutor
+
+    # Threshold for using multipart upload with chunk_concurrency
+    # Files below this use put_async (more efficient, no multipart)
+    MULTIPART_THRESHOLD = 5 * 1024 * 1024  # 5MB
+
     metrics = UploadMetrics()
 
     if not assets:
@@ -1021,20 +1413,44 @@ async def _upload_assets_async(
     uploaded_keys: list[str] = []
     errors_list: list[str] = []
 
+    # Thread pool for large file uploads that need multipart concurrency
+    thread_pool = ThreadPoolExecutor(max_workers=concurrency)
+
+    def _upload_large_file_sync(
+        file_path: Path, target_key: str, max_conc: int
+    ) -> tuple[str, int, float]:
+        """Upload large file with multipart concurrency (sync, runs in thread)."""
+        size_bytes = file_sizes[file_path]
+        start = time.perf_counter()
+        obs.put(store, target_key, file_path, max_concurrency=max_conc)
+        duration = time.perf_counter() - start
+        return target_key, size_bytes, duration
+
     async def upload_one(asset_path_str: str) -> tuple[str, int, float]:
-        """Upload a single asset asynchronously."""
+        """Upload a single asset, using appropriate method based on size."""
         asset_path = Path(asset_path_str)
         rel_path = asset_path.relative_to(catalog_root)
         target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
 
         size_bytes = file_sizes[asset_path]
 
-        start = time.perf_counter()
-        content = asset_path.read_bytes()
-        await obs.put_async(store, target_key, content)
-        duration = time.perf_counter() - start
-
-        return target_key, size_bytes, duration
+        if size_bytes >= MULTIPART_THRESHOLD:
+            # Large file: use sync put() with multipart in thread pool
+            # This respects chunk_concurrency for per-file parallelism
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                thread_pool,
+                functools.partial(
+                    _upload_large_file_sync, asset_path, target_key, chunk_concurrency
+                ),
+            )
+        else:
+            # Small file: use put_async (more efficient, no multipart needed)
+            start = time.perf_counter()
+            content = asset_path.read_bytes()
+            await obs.put_async(store, target_key, content)
+            duration = time.perf_counter() - start
+            return target_key, size_bytes, duration
 
     asset_strs = [str(p) for p in assets]
 
@@ -1069,9 +1485,20 @@ async def _upload_assets_async(
                         f"Uploaded ({completed}/{total_count}): {rel_path} ({format_file_size(size_bytes)}, {format_speed(speed)})"
                     )
 
+        # Create adaptive concurrency manager for slow-start (Issue #344)
+        adaptive_manager = None
+        if adaptive:
+            from portolan_cli.async_utils import AdaptiveConcurrencyManager
+
+            adaptive_manager = AdaptiveConcurrencyManager(
+                max_concurrency=concurrency,
+                initial_concurrency=min(2, concurrency),
+            )
+
         executor = AsyncIOExecutor[tuple[str, int, float]](
-            concurrency=concurrency,
+            concurrency=adaptive_manager.current_concurrency if adaptive_manager else concurrency,
             circuit_breaker_threshold=5,
+            adaptive_manager=adaptive_manager,
         )
 
         try:
@@ -1154,6 +1581,13 @@ async def _upload_stac_files_async(
                 file_size = file_sizes[file_path]
 
                 content = file_path.read_bytes()
+
+                # Transform collection.json to populate portolan:glob (Issue #351)
+                if file_path.name == "collection.json":
+                    # Extract collection path (e.g., "buildings" from "buildings/collection.json")
+                    collection_path = rel_path.parent.as_posix()
+                    content = _transform_collection_glob_assets(content, prefix, collection_path)
+
                 await obs.put_async(store, target_key, content)
                 return target_key, file_size
             except Exception as e:
@@ -1309,6 +1743,78 @@ async def _upload_readmes_async(
     return uploaded_count, errors
 
 
+async def _upload_metadata_files_async(
+    store: ObjectStore,
+    catalog_root: Path,
+    prefix: str,
+    collection: str,
+    *,
+    include_catalog_root: bool = False,
+    concurrency: int = 50,
+    verbose: bool = False,
+) -> tuple[int, list[str]]:
+    """Upload metadata files (style.json, thumbnails, etc.) to remote (Issue #426).
+
+    This uploads ALL catalog files that aren't versioned assets or STAC metadata.
+    Happens after assets and STAC files, before versions.json (manifest-last).
+
+    Security: Uses _get_effective_exclude_patterns which always includes
+    security-critical patterns (.env, .git/, .portolan/).
+
+    Args:
+        store: Object store instance.
+        catalog_root: Path to catalog root.
+        prefix: Prefix in object storage.
+        collection: Collection identifier.
+        include_catalog_root: If True, include root-level metadata files.
+        concurrency: Maximum concurrent uploads.
+        verbose: If True, print per-file upload details.
+
+    Returns:
+        Tuple of (files_uploaded, errors). Errors are returned, not swallowed,
+        so callers can decide how to handle partial failures.
+    """
+    metadata_files = _discover_catalog_files(
+        catalog_root,
+        collection,
+        include_catalog_root=include_catalog_root,
+    )
+
+    if not metadata_files:
+        return 0, []
+
+    errors: list[str] = []
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def upload_one(file_path: Path) -> bool:
+        """Upload a single metadata file with semaphore control."""
+        async with semaphore:
+            try:
+                rel_path = file_path.relative_to(catalog_root)
+                # Use as_posix() for consistent path separators in object keys
+                target_key = f"{prefix}/{rel_path.as_posix()}".lstrip("/")
+                content = file_path.read_bytes()
+                await obs.put_async(store, target_key, content)
+                if verbose:
+                    detail(f"  Uploaded {rel_path} ({len(content)} bytes)")
+                return True
+            except Exception as e:
+                error_msg = f"Failed to upload metadata file {file_path.name}: {e}"
+                errors.append(error_msg)
+                error(error_msg)
+                return False
+
+    # Upload all metadata files in parallel
+    tasks = [upload_one(f) for f in metadata_files]
+    results = await asyncio.gather(*tasks)
+    uploaded_count = sum(1 for r in results if r)
+
+    if uploaded_count > 0 and not verbose:
+        info(f"Synced {uploaded_count} metadata file(s)")
+
+    return uploaded_count, errors
+
+
 async def _execute_push_uploads_async(
     store: ObjectStore,
     catalog_root: Path,
@@ -1319,12 +1825,14 @@ async def _execute_push_uploads_async(
     etag: str | None,
     *,
     concurrency: int,
+    chunk_concurrency: int,
     json_mode: bool,
     suppress_progress: bool,
     verbose: bool,
     force: bool,
     include_catalog: bool = True,
     remote_data: dict[str, Any] | None = None,
+    adaptive: bool = True,
 ) -> PushResult:
     """Execute the upload phase of push_async.
 
@@ -1332,6 +1840,9 @@ async def _execute_push_uploads_async(
     This is extracted from push_async to reduce cyclomatic complexity.
 
     Args:
+        concurrency: Maximum concurrent file uploads.
+        chunk_concurrency: Maximum concurrent chunks per file upload.
+            For files >5MB, this limits per-file multipart parallelism.
         include_catalog: If True, upload catalog.json and root README.md.
         verbose: If True, print per-file upload details (ADR-0040).
         remote_data: Remote versions.json for sha256 diffing (Issue #329).
@@ -1345,15 +1856,19 @@ async def _execute_push_uploads_async(
     )
 
     # Upload assets first (async, manifest-last pattern)
+    # chunk_concurrency now properly limits per-file multipart parallelism
+    # for files >5MB (Issue #344)
     files_uploaded, upload_errors, uploaded_keys, metrics = await _upload_assets_async(
         store,
         catalog_root,
         prefix,
         assets,
         concurrency=concurrency,
+        chunk_concurrency=chunk_concurrency,
         json_mode=json_mode,
         suppress_progress=suppress_progress,
         verbose=verbose,
+        adaptive=adaptive,
     )
 
     if upload_errors:
@@ -1410,6 +1925,23 @@ async def _execute_push_uploads_async(
             metrics=metrics,
         )
 
+    # Upload metadata files (style.json, thumbnails, etc.) - Issue #426
+    # This happens after STAC files, before versions.json (manifest-last)
+    metadata_uploaded, metadata_errors = await _upload_metadata_files_async(
+        store,
+        catalog_root,
+        prefix,
+        collection,
+        include_catalog_root=include_catalog,
+        concurrency=concurrency,
+        verbose=verbose,
+    )
+    files_uploaded += metadata_uploaded
+
+    # Metadata errors are warnings, not fatal (push continues)
+    # But we surface them in PushResult so callers can act on partial sync
+    all_metadata_errors: list[str] = list(metadata_errors)
+
     # Upload versions.json (async, manifest-last)
     info("Uploading versions.json...")
     try:
@@ -1432,6 +1964,7 @@ async def _execute_push_uploads_async(
             versions_pushed=0,
             conflicts=[],
             errors=[f"Failed to upload versions.json: {e}"],
+            metadata_errors=all_metadata_errors,
             metrics=metrics,
         )
 
@@ -1440,8 +1973,14 @@ async def _execute_push_uploads_async(
         store, catalog_root, prefix, stac_files, concurrency=concurrency
     )
     files_uploaded += readme_uploaded
-    for err in readme_errors:
-        warn(err)
+    # README errors are also non-fatal metadata issues
+    all_metadata_errors.extend(readme_errors)
+
+    # Log metadata warnings (after push succeeds, so user sees them)
+    if all_metadata_errors:
+        warn(f"{len(all_metadata_errors)} metadata file(s) failed to upload:")
+        for err in all_metadata_errors:
+            warn(f"  {err}")
 
     return PushResult(
         success=True,
@@ -1449,6 +1988,7 @@ async def _execute_push_uploads_async(
         versions_pushed=len(diff.local_only),
         conflicts=[],
         errors=[],
+        metadata_errors=all_metadata_errors,
         metrics=metrics,
     )
 
@@ -1463,6 +2003,8 @@ async def push_async(
     profile: str | None = None,
     region: str | None = None,
     concurrency: int | None = None,
+    chunk_concurrency: int | None = None,
+    adaptive: bool = True,
     json_mode: bool = False,
     suppress_progress: bool = False,
     verbose: bool = False,
@@ -1481,7 +2023,10 @@ async def push_async(
         dry_run: If True, show what would be uploaded without uploading.
         profile: AWS profile name (for S3 only).
         region: AWS region (for S3 only).
-        concurrency: Maximum concurrent uploads (default 50).
+        concurrency: Maximum concurrent file uploads (default: 8).
+        chunk_concurrency: Maximum concurrent chunks per file (default: 4).
+            Total connections = concurrency × chunk_concurrency.
+        adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
         json_mode: If True, suppress progress bar.
         suppress_progress: If True, suppress progress bar.
         verbose: If True, print per-file upload details (ADR-0040).
@@ -1496,7 +2041,10 @@ async def push_async(
         ValueError: If destination URL is invalid.
         PushConflictError: If remote diverged and force=False.
     """
+    from portolan_cli.async_utils import get_default_chunk_concurrency
+
     concurrency = concurrency or get_default_concurrency()
+    chunk_concurrency = chunk_concurrency or get_default_chunk_concurrency()
 
     # Validate catalog exists
     if not catalog_root.exists():
@@ -1512,7 +2060,7 @@ async def push_async(
 
     # Dry-run: return early without network I/O
     if dry_run:
-        return _handle_push_dry_run(catalog_root, local_data, local_versions)
+        return _handle_push_dry_run(catalog_root, collection, local_data, local_versions)
 
     # Setup store and fetch remote versions
     store, prefix = setup_store(destination, profile=profile, region=region)
@@ -1552,12 +2100,14 @@ async def push_async(
         diff,
         etag,
         concurrency=concurrency,
+        chunk_concurrency=chunk_concurrency,
         json_mode=json_mode,
         suppress_progress=suppress_progress,
         verbose=verbose,
         force=force,
         include_catalog=include_catalog,
         remote_data=remote_data,
+        adaptive=adaptive,
     )
 
 
@@ -1695,7 +2245,26 @@ def _push_all_process_result(
             stats["errors"][coll] = ["Unknown error"]
 
 
-def _push_all_upload_catalog(
+def _discover_root_metadata_files(catalog_root: Path) -> list[Path]:
+    """Discover root-level metadata files that should be synced (Issue #426).
+
+    This is a convenience wrapper around _discover_catalog_files for root-only
+    discovery. Delegates to the unified discovery function for consistency.
+
+    Args:
+        catalog_root: Path to catalog root.
+
+    Returns:
+        List of absolute paths to root metadata files.
+    """
+    return _discover_catalog_files(
+        catalog_root,
+        collection=None,  # No collection, root only
+        include_catalog_root=True,
+    )
+
+
+def _push_all_upload_root_files(
     catalog_root: Path,
     destination: str,
     profile: str | None,
@@ -1703,32 +2272,89 @@ def _push_all_upload_catalog(
     dry_run: bool,
     stats: dict[str, Any],
 ) -> bool:
-    """Upload catalog.json after all collections (helper for push_all_collections).
+    """Upload root-level files after all collections (Issue #357, #426).
 
-    Returns True if upload succeeded or was skipped, False if failed.
+    Uploads from catalog root (in order):
+    1. README.md (documentation, optional)
+    2. Root metadata files (style.json, thumbnails, etc.) - Issue #426
+    3. catalog.json (STAC catalog metadata, required)
+    4. versions.json (manifest, required - uploaded LAST per manifest-last atomicity)
+
+    These are uploaded AFTER all collections succeed.
+
+    Returns True if uploads succeeded or were skipped, False if any failed.
     """
     catalog_json = catalog_root / "catalog.json"
+    root_readme = catalog_root / "README.md"
+    root_versions = catalog_root / "versions.json"
 
-    if stats["successful"] > 0 and stats["failed"] == 0 and catalog_json.exists():
-        if dry_run:
-            info("[DRY RUN] Would upload catalog.json")
-            return True
-        try:
-            store, prefix = setup_store(destination, profile=profile, region=region)
-            target_key = f"{prefix}/catalog.json".lstrip("/")
-            obs.put(store, target_key, catalog_json.read_bytes())
-            success("Uploaded catalog.json")
+    # Skip root file uploads if any collection failed
+    if stats["failed"] > 0:
+        warn("Skipping root file upload because some collections failed")
+        return True
+
+    # Also skip if no collections succeeded (nothing to manifest)
+    if stats["successful"] == 0:
+        warn("Skipping root file upload because no collections were pushed")
+        return True
+
+    if not catalog_json.exists():
+        warn(f"catalog.json not found at {catalog_root} - remote catalog may be incomplete")
+        return True
+
+    # Discover root metadata files (Issue #426)
+    root_metadata = _discover_root_metadata_files(catalog_root)
+
+    if dry_run:
+        if root_readme.exists():
+            info("[DRY RUN] Would upload README.md")
+        if root_metadata:
+            info(f"[DRY RUN] Would sync {len(root_metadata)} root metadata file(s)")
+            for f in root_metadata:
+                detail(f"  {f.name}")
+        info("[DRY RUN] Would upload catalog.json")
+        if root_versions.exists():
+            info("[DRY RUN] Would upload versions.json")
+        return True
+
+    try:
+        store, prefix = setup_store(destination, profile=profile, region=region)
+
+        # Upload README.md first (documentation, not critical)
+        if root_readme.exists():
+            readme_key = f"{prefix}/README.md".lstrip("/")
+            obs.put(store, readme_key, root_readme.read_bytes())
+            success("Uploaded README.md")
             stats["total_files"] += 1
-            return True
-        except Exception as e:
-            error(f"Failed to upload catalog.json: {e}")
-            stats["errors"]["catalog.json"] = [str(e)]
-            return False
-    elif stats["failed"] > 0:
-        warn("Skipping catalog.json upload because some collections failed")
-    elif not catalog_json.exists():
-        warn(f"catalog.json not found at {catalog_json} - remote catalog may be incomplete")
-    return True
+
+        # Upload root metadata files (Issue #426)
+        for meta_file in root_metadata:
+            meta_key = f"{prefix}/{meta_file.name}".lstrip("/")
+            obs.put(store, meta_key, meta_file.read_bytes())
+            detail(f"  Synced {meta_file.name}")
+            stats["total_files"] += 1
+
+        if root_metadata:
+            info(f"Synced {len(root_metadata)} root metadata file(s)")
+
+        # Upload catalog.json (STAC metadata)
+        catalog_key = f"{prefix}/catalog.json".lstrip("/")
+        obs.put(store, catalog_key, catalog_json.read_bytes())
+        success("Uploaded catalog.json")
+        stats["total_files"] += 1
+
+        # Upload versions.json LAST (manifest-last atomicity per ADR-0005)
+        if root_versions.exists():
+            versions_key = f"{prefix}/versions.json".lstrip("/")
+            obs.put(store, versions_key, root_versions.read_bytes())
+            success("Uploaded versions.json")
+            stats["total_files"] += 1
+
+        return True
+    except Exception as e:
+        error(f"Failed to upload root files: {e}")
+        stats["errors"]["root_files"] = [str(e)]
+        return False
 
 
 async def push_all_collections_async(
@@ -1741,6 +2367,8 @@ async def push_all_collections_async(
     region: str | None = None,
     concurrency: int | None = None,
     file_concurrency: int | None = None,
+    chunk_concurrency: int | None = None,
+    adaptive: bool = True,
     verbose: bool = False,
     json_mode: bool = False,
 ) -> PushAllResult:
@@ -1759,6 +2387,9 @@ async def push_all_collections_async(
         concurrency: Maximum concurrent collection pushes. None = auto-detect.
         file_concurrency: Maximum concurrent file uploads within each collection.
             None = use push_async default. (Maps to --concurrency CLI flag.)
+        chunk_concurrency: Maximum concurrent chunks per file upload.
+            None = use default (4). Total connections = file_concurrency × chunk_concurrency.
+        adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
 
@@ -1818,10 +2449,12 @@ async def push_all_collections_async(
                     profile=profile,
                     region=region,
                     concurrency=file_concurrency,  # Pass file-level concurrency
+                    chunk_concurrency=chunk_concurrency,  # Pass chunk-level concurrency
+                    adaptive=adaptive,  # Pass adaptive slow-start flag
                     json_mode=json_mode,
                     suppress_progress=True,
                     verbose=verbose,
-                    include_catalog=False,  # Uploaded once at end by _push_all_upload_catalog
+                    include_catalog=False,  # Uploaded once at end by _push_all_upload_root_files
                 )
                 return (collection, result, None)
             except Exception as e:
@@ -1842,7 +2475,7 @@ async def push_all_collections_async(
             coll, push_result, err_msg = result
             _push_all_process_result(coll, push_result, err_msg, i + 1, total, stats)
 
-    catalog_ok = _push_all_upload_catalog(
+    catalog_ok = _push_all_upload_root_files(
         catalog_root, destination, profile, region, dry_run, stats
     )
 
@@ -1885,8 +2518,11 @@ def push_all_collections(
     region: str | None = None,
     workers: int | None = None,
     file_concurrency: int | None = None,
+    chunk_concurrency: int | None = None,
+    adaptive: bool = True,
     verbose: bool = False,
     json_mode: bool = False,
+    max_connections: int | None = None,
 ) -> PushAllResult:
     """Push all collections in a catalog to cloud storage (sync wrapper).
 
@@ -1904,8 +2540,13 @@ def push_all_collections(
             (Maps to 'concurrency' in async implementation.)
         file_concurrency: Maximum concurrent file uploads within each collection.
             None = use push_async default. (Maps to --concurrency CLI flag.)
+        chunk_concurrency: Maximum concurrent chunks per file upload.
+            None = use default (4). Total connections = file_concurrency × chunk_concurrency.
+        adaptive: If True, use slow-start ramp-up for network-safe uploads (default: True).
         verbose: If True, show per-file upload details.
         json_mode: If True, suppress progress bar (for --json output).
+        max_connections: Maximum total concurrent connections. If set, adjusts
+            file_concurrency and chunk_concurrency to stay within limit.
 
     Returns:
         PushAllResult with aggregate statistics and per-collection errors.
@@ -1913,6 +2554,33 @@ def push_all_collections(
     Raises:
         ValueError: If catalog_root is not a valid catalog.
     """
+    from portolan_cli.async_utils import (
+        adjust_concurrency_for_max_connections,
+        get_default_chunk_concurrency,
+        get_default_concurrency,
+    )
+
+    # Apply max_connections limit if specified
+    # CRITICAL (Issue #344): Divide max_connections by worker count to get
+    # per-collection budget. Otherwise workers=4 with max_connections=32
+    # would actually run 4 × 32 = 128 connections.
+    effective_file_conc = file_concurrency or get_default_concurrency()
+    effective_chunk_conc = chunk_concurrency or get_default_chunk_concurrency()
+
+    if max_connections is not None:
+        # Compute effective worker count for budget calculation
+        # workers=None means auto-detect, which uses min(total_collections, default_concurrency)
+        # We use default_concurrency (8) as a conservative estimate when workers is None
+        effective_workers = workers if workers is not None else get_default_concurrency()
+        effective_workers = max(1, effective_workers)  # Ensure at least 1
+
+        # Divide max_connections by workers to get per-collection budget
+        per_collection_budget = max(1, max_connections // effective_workers)
+
+        effective_file_conc, effective_chunk_conc = adjust_concurrency_for_max_connections(
+            effective_file_conc, effective_chunk_conc, per_collection_budget
+        )
+
     return asyncio.run(
         push_all_collections_async(
             catalog_root=catalog_root,
@@ -1922,7 +2590,9 @@ def push_all_collections(
             profile=profile,
             region=region,
             concurrency=workers,
-            file_concurrency=file_concurrency,
+            file_concurrency=effective_file_conc,
+            chunk_concurrency=effective_chunk_conc,
+            adaptive=adaptive,
             verbose=verbose,
             json_mode=json_mode,
         )

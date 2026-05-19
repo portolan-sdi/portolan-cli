@@ -1354,3 +1354,451 @@ class TestConvertFileSourceMtime:
 # Those functions were part of the DuckDB workaround for multi-layer support.
 # Now using geoparquet-io's native layer parameter instead.
 # See: https://github.com/geoparquet/geoparquet-io/issues/315
+
+
+# =============================================================================
+# COG Thumbnail Generation Tests (Issue #372)
+# =============================================================================
+
+
+class TestGenerateCogThumbnail:
+    """Tests for generate_cog_thumbnail() function."""
+
+    @pytest.mark.unit
+    def test_generates_jpeg_next_to_cog(self, valid_rgb_cog: Path, tmp_path: Path) -> None:
+        """A thumbnail JPEG is created next to the COG file."""
+        import shutil
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "data.tif"
+        shutil.copy(valid_rgb_cog, cog)
+
+        thumb = generate_cog_thumbnail(cog)
+
+        assert thumb is not None
+        assert thumb.exists()
+        assert thumb.suffix == ".jpg"
+        assert thumb.parent == cog.parent
+        assert thumb.stat().st_size > 0
+
+    @pytest.mark.unit
+    def test_thumbnail_is_smaller_than_max_size(self, valid_rgb_cog: Path, tmp_path: Path) -> None:
+        """Generated thumbnail respects max pixel size."""
+        import shutil
+
+        import rasterio
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "data.tif"
+        shutil.copy(valid_rgb_cog, cog)
+
+        thumb = generate_cog_thumbnail(cog, max_size=128)
+        assert thumb is not None
+
+        with rasterio.open(thumb) as src:
+            assert max(src.width, src.height) <= 128
+
+    @pytest.mark.unit
+    def test_returns_none_on_invalid_raster(self, tmp_path: Path) -> None:
+        """Returns None if the source is not a readable raster."""
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        bad = tmp_path / "not_a_raster.tif"
+        bad.write_bytes(b"not a tiff")
+
+        result = generate_cog_thumbnail(bad)
+        assert result is None
+
+    @pytest.mark.unit
+    def test_convert_to_cog_emits_thumbnail_when_enabled(
+        self, non_cog_tif: Path, tmp_path: Path
+    ) -> None:
+        """convert_file generates a thumbnail when generate_thumbnail is True."""
+        from portolan_cli.conversion_config import CogSettings
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        settings = CogSettings(generate_thumbnail=True)
+        result = convert_file(non_cog_tif, output_dir=tmp_path, cog_settings=settings)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+        thumb = result.output.with_name(f"{result.output.stem}.thumb.jpg")
+        assert thumb.exists()
+
+    @pytest.mark.unit
+    def test_convert_to_cog_skips_thumbnail_when_disabled(
+        self, non_cog_tif: Path, tmp_path: Path
+    ) -> None:
+        """convert_file does not emit a thumbnail when generate_thumbnail is False."""
+        from portolan_cli.conversion_config import CogSettings
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        settings = CogSettings(generate_thumbnail=False)
+        result = convert_file(non_cog_tif, output_dir=tmp_path, cog_settings=settings)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+        thumb = result.output.with_name(f"{result.output.stem}.thumb.jpg")
+        assert not thumb.exists()
+
+    @pytest.mark.unit
+    def test_thumbnail_for_float32_singleband(
+        self, valid_float32_cog: Path, tmp_path: Path
+    ) -> None:
+        """Float32 (elevation-like) singleband rasters get a stretched thumbnail."""
+        import shutil
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "elevation.tif"
+        shutil.copy(valid_float32_cog, cog)
+
+        thumb = generate_cog_thumbnail(cog)
+        assert thumb is not None
+        assert thumb.exists()
+        assert thumb.stat().st_size > 0
+
+    @pytest.mark.unit
+    def test_thumbnail_does_not_clobber_user_jpg(self, valid_rgb_cog: Path, tmp_path: Path) -> None:
+        """A user-supplied data.jpg next to data.tif must not be overwritten."""
+        import shutil
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "data.tif"
+        shutil.copy(valid_rgb_cog, cog)
+
+        # Pre-existing user thumbnail
+        user_jpg = tmp_path / "data.jpg"
+        user_payload = b"USER_THUMBNAIL_DO_NOT_OVERWRITE"
+        user_jpg.write_bytes(user_payload)
+
+        thumb = generate_cog_thumbnail(cog)
+        assert thumb is not None
+        assert thumb.name == "data.thumb.jpg"
+        assert user_jpg.read_bytes() == user_payload
+
+    @pytest.mark.unit
+    def test_thumbnail_excludes_nodata_from_stretch(
+        self, valid_nodata_cog: Path, tmp_path: Path
+    ) -> None:
+        """Nodata sentinels are masked out so they don't dominate the stretch."""
+        import shutil
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "with_nodata.tif"
+        shutil.copy(valid_nodata_cog, cog)
+
+        thumb = generate_cog_thumbnail(cog)
+        assert thumb is not None
+        assert thumb.exists()
+        assert thumb.stat().st_size > 0
+
+    @pytest.mark.unit
+    def test_thumbnail_returns_none_for_all_nodata_raster(self, tmp_path: Path) -> None:
+        """Returns None if raster contains only nodata (no valid pixels)."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        # Create a raster where ALL pixels are nodata
+        cog = tmp_path / "all_nodata.tif"
+        data = np.full((1, 64, 64), -9999, dtype=np.float32)
+        transform = from_bounds(0, 0, 1, 1, 64, 64)
+
+        profile = {
+            "driver": "GTiff",
+            "dtype": "float32",
+            "width": 64,
+            "height": 64,
+            "count": 1,
+            "crs": "EPSG:4326",
+            "transform": transform,
+            "nodata": -9999,
+        }
+        with rasterio.open(cog, "w", **profile) as dst:
+            dst.write(data)
+
+        result = generate_cog_thumbnail(cog)
+        assert result is None
+
+    @pytest.mark.unit
+    def test_thumbnail_handles_rgba_4band_raster(self, tmp_path: Path) -> None:
+        """4-band RGBA rasters produce valid 3-band RGB thumbnails."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import from_bounds
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        # Create a 4-band RGBA raster
+        cog = tmp_path / "rgba.tif"
+        data = np.random.randint(0, 255, (4, 128, 128), dtype=np.uint8)
+        transform = from_bounds(0, 0, 1, 1, 128, 128)
+
+        profile = {
+            "driver": "GTiff",
+            "dtype": "uint8",
+            "width": 128,
+            "height": 128,
+            "count": 4,
+            "crs": "EPSG:4326",
+            "transform": transform,
+            "photometric": "RGBA",
+        }
+        with rasterio.open(cog, "w", **profile) as dst:
+            dst.write(data)
+
+        thumb = generate_cog_thumbnail(cog)
+        assert thumb is not None
+        assert thumb.exists()
+
+        # Verify thumbnail is 3-band (RGB, not RGBA)
+        with rasterio.open(thumb) as src:
+            assert src.count == 3
+
+    @pytest.mark.unit
+    def test_thumbnail_respects_quality_setting(self, valid_rgb_cog: Path, tmp_path: Path) -> None:
+        """Lower quality produces smaller file size."""
+        import shutil
+
+        from portolan_cli.convert import generate_cog_thumbnail
+
+        cog = tmp_path / "data.tif"
+        shutil.copy(valid_rgb_cog, cog)
+
+        # Generate with high quality
+        thumb_high = generate_cog_thumbnail(cog, quality=95)
+        assert thumb_high is not None
+        size_high = thumb_high.stat().st_size
+
+        # Remove and regenerate with low quality
+        thumb_high.unlink()
+        thumb_low = generate_cog_thumbnail(cog, quality=10)
+        assert thumb_low is not None
+        size_low = thumb_low.stat().st_size
+
+        # Low quality should be smaller (unless image is trivially small)
+        # Allow some tolerance for very small test images
+        assert size_low <= size_high
+
+    @pytest.mark.unit
+    def test_convert_file_uses_thumbnail_quality_from_settings(
+        self, non_cog_tif: Path, tmp_path: Path
+    ) -> None:
+        """convert_file passes thumbnail_quality from CogSettings."""
+        from portolan_cli.conversion_config import CogSettings
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        settings = CogSettings(generate_thumbnail=True, thumbnail_quality=50)
+        result = convert_file(non_cog_tif, output_dir=tmp_path, cog_settings=settings)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+        thumb = result.output.with_name(f"{result.output.stem}.thumb.jpg")
+        assert thumb.exists()
+
+
+# =============================================================================
+# VectorSettings Integration Tests (Issue #340)
+# =============================================================================
+
+
+class TestVectorSettingsIntegration:
+    """Integration tests for VectorSettings in convert module."""
+
+    @pytest.fixture
+    def sample_geojson(self, tmp_path: Path) -> Path:
+        """Create a simple GeoJSON file for testing."""
+        geojson = tmp_path / "test.geojson"
+        geojson.write_text(
+            """{
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {"name": "test"},
+                    "geometry": {"type": "Point", "coordinates": [-73.9857, 40.7484]}
+                }
+            ]
+        }"""
+        )
+        return geojson
+
+    @pytest.mark.unit
+    def test_add_spatial_index_raises_for_unknown_type(self) -> None:
+        """_add_spatial_index raises ValueError for unknown index types."""
+        from unittest.mock import MagicMock
+
+        from portolan_cli.convert import _add_spatial_index
+
+        mock_table = MagicMock()
+
+        with pytest.raises(ValueError, match="Unknown spatial index type: 'invalid'"):
+            _add_spatial_index(mock_table, "invalid", resolution=9)
+
+    @pytest.mark.unit
+    def test_add_spatial_index_h3_with_resolution(self) -> None:
+        """_add_spatial_index calls add_h3 with resolution."""
+        from unittest.mock import MagicMock
+
+        from portolan_cli.convert import _add_spatial_index
+
+        mock_table = MagicMock()
+        mock_table.add_h3.return_value = mock_table
+
+        result = _add_spatial_index(mock_table, "h3", resolution=6)
+
+        mock_table.add_h3.assert_called_once_with(resolution=6)
+        assert result == mock_table
+
+    @pytest.mark.unit
+    def test_add_spatial_index_h3_default_resolution(self) -> None:
+        """_add_spatial_index calls add_h3 without resolution when None."""
+        from unittest.mock import MagicMock
+
+        from portolan_cli.convert import _add_spatial_index
+
+        mock_table = MagicMock()
+        mock_table.add_h3.return_value = mock_table
+
+        result = _add_spatial_index(mock_table, "h3", resolution=None)
+
+        mock_table.add_h3.assert_called_once_with()
+        assert result == mock_table
+
+    @pytest.mark.unit
+    def test_convert_vector_with_h3_adds_column(self, sample_geojson: Path, tmp_path: Path) -> None:
+        """Converting with H3 spatial index adds h3_cell column."""
+        import pyarrow.parquet as pq
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = VectorSettings(spatial_index="h3", resolution=6)
+        output = _convert_vector(sample_geojson, output_dir, settings)
+
+        assert output.exists()
+        table = pq.read_table(output)
+        assert "h3_cell" in table.schema.names
+
+    @pytest.mark.unit
+    def test_convert_vector_with_bbox_adds_column(
+        self, sample_geojson: Path, tmp_path: Path
+    ) -> None:
+        """Converting with add_bbox=True adds bbox column."""
+        import pyarrow.parquet as pq
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = VectorSettings(add_bbox=True)
+        output = _convert_vector(sample_geojson, output_dir, settings)
+
+        assert output.exists()
+        table = pq.read_table(output)
+        assert "bbox" in table.schema.names
+
+    @pytest.mark.unit
+    def test_convert_vector_with_hilbert_sort(self, sample_geojson: Path, tmp_path: Path) -> None:
+        """Converting with sort=hilbert succeeds."""
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = VectorSettings(sort="hilbert")
+        output = _convert_vector(sample_geojson, output_dir, settings)
+
+        assert output.exists()
+
+    @pytest.mark.unit
+    def test_convert_vector_with_quadkey_sort_uses_resolution(
+        self, sample_geojson: Path, tmp_path: Path
+    ) -> None:
+        """Converting with sort=quadkey and explicit resolution uses that resolution."""
+        import pyarrow.parquet as pq
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        settings = VectorSettings(sort="quadkey", resolution=10)
+        output = _convert_vector(sample_geojson, output_dir, settings)
+
+        assert output.exists()
+        # quadkey sort adds a quadkey column
+        table = pq.read_table(output)
+        assert "quadkey" in table.schema.names
+
+    @pytest.mark.unit
+    def test_convert_file_passes_vector_settings(
+        self, sample_geojson: Path, tmp_path: Path
+    ) -> None:
+        """convert_file correctly passes VectorSettings to _convert_vector."""
+        import pyarrow.parquet as pq
+
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import ConversionStatus, convert_file
+
+        settings = VectorSettings(spatial_index="s2", resolution=10)
+        result = convert_file(sample_geojson, output_dir=tmp_path, vector_settings=settings)
+
+        assert result.status == ConversionStatus.SUCCESS
+        assert result.output is not None
+
+        table = pq.read_table(result.output)
+        assert "s2_cell" in table.schema.names
+
+    @pytest.mark.unit
+    def test_validate_geoparquet_handles_directory(self, tmp_path: Path) -> None:
+        """_validate_geoparquet handles partitioned directories correctly."""
+        from portolan_cli.convert import _validate_geoparquet
+
+        # Empty directory should fail
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+        error = _validate_geoparquet(empty_dir)
+        assert error is not None
+        assert "no parquet files" in error
+
+    @pytest.mark.unit
+    def test_validate_partitioned_geoparquet_with_valid_files(
+        self, sample_geojson: Path, tmp_path: Path
+    ) -> None:
+        """_validate_geoparquet succeeds for valid partitioned directory."""
+        from portolan_cli.conversion_config import VectorSettings
+        from portolan_cli.convert import _convert_vector, _validate_geoparquet
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        # First convert to single file to get valid geoparquet
+        settings = VectorSettings(spatial_index="h3", resolution=6)
+        single_file = _convert_vector(sample_geojson, output_dir, settings)
+
+        # Create mock partitioned directory structure with valid parquet file
+        partition_dir = tmp_path / "partitioned"
+        partition_dir.mkdir()
+        (partition_dir / "h3_cell=123").mkdir()
+        import shutil
+
+        shutil.copy(single_file, partition_dir / "h3_cell=123" / "data.parquet")
+
+        # Validation should succeed on directory with valid parquet files
+        error = _validate_geoparquet(partition_dir)
+        assert error is None

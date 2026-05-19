@@ -55,8 +55,9 @@ This will:
 2. Extract each layer to GeoParquet format
 3. Apply Hilbert spatial sorting for efficient queries
 4. Initialize a Portolan catalog with STAC metadata
-5. Seed `.portolan/metadata.yaml` with values from the service
-6. Generate an extraction report in `.portolan/extraction-report.json`
+5. Add `via` provenance links to each collection (pointing to source layer URL)
+6. Seed `.portolan/metadata.yaml` with values from the service
+7. Generate an extraction report in `.portolan/extraction-report.json`
 
 ### Filtering Layers
 
@@ -97,9 +98,30 @@ output/
     └── census_tracts.parquet
 ```
 
+### Provenance Tracking
+
+Each extracted collection includes a `via` link in its `collection.json` pointing to the original ArcGIS layer URL. This provides data lineage for auditing and reproducibility:
+
+```json
+{
+  "links": [
+    {
+      "rel": "via",
+      "href": "https://services.arcgis.com/.../FeatureServer/0",
+      "type": "text/html",
+      "title": "Source ArcGIS layer: Census Block Groups"
+    }
+  ]
+}
+```
+
+The `via` link uses the layer-specific URL (service URL + layer index), not just the service root.
+
 ### Auto-Seeded Metadata
 
-The extraction process automatically seeds `.portolan/metadata.yaml` with values from the ArcGIS service metadata:
+The extraction process automatically seeds metadata at two levels:
+
+**Catalog-level** (`.portolan/metadata.yaml`): Seeded from ArcGIS service metadata:
 
 | ArcGIS Field | metadata.yaml Field |
 |-------------|---------------------|
@@ -109,6 +131,8 @@ The extraction process automatically seeds `.portolan/metadata.yaml` with values
 | `serviceDescription` | `processing_notes` |
 | `accessInformation` | `known_issues` |
 | Service URL | `source_url` |
+
+**Collection-level** (`<collection>/.portolan/metadata.yaml`): Each extracted layer gets its own metadata file with layer-specific description from the ArcGIS layer details API. For nested extractions (services-root mode), metadata is written to the correct collection directory regardless of nesting depth.
 
 Fields that require human input (like `contact.email` and `license`) are marked with `TODO` placeholders:
 
@@ -320,6 +344,55 @@ Example (FeatureServer):
   }
 }
 ```
+
+---
+
+## Extracting from Services Root
+
+You can point Portolan at an entire ArcGIS services directory to extract all services at once:
+
+```bash
+portolan extract arcgis \
+  https://services.arcgis.com/{org_id}/ArcGIS/rest/services \
+  ./output --services "Census*,Demographics*"
+```
+
+### Filtering Services
+
+```bash
+# Include only services matching patterns
+portolan extract arcgis URL --services "Census*,Transport*"
+
+# Exclude services matching patterns
+portolan extract arcgis URL --exclude-services "*_Archive,*_Test"
+```
+
+### Output Structure
+
+Services root extraction creates a nested catalog structure. **Single-layer services are flattened** to avoid redundant nesting:
+
+**Single-layer service (flattened):**
+
+```
+bag_woonfunctie/              # Collection directly
+├── collection.json
+└── bag_woonfunctie.parquet
+```
+
+**Multi-layer service (nested):**
+
+```
+woontypering/                 # Subcatalog
+├── catalog.json
+├── woontypering_2020/
+│   ├── collection.json
+│   └── woontypering_2020.parquet
+└── woontypering_2021/
+    ├── collection.json
+    └── woontypering_2021.parquet
+```
+
+This keeps directory structures clean while preserving hierarchy where it matters.
 
 ---
 

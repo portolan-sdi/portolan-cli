@@ -580,3 +580,138 @@ class TestReadmeGenerate:
             content = Path("README.md").read_text()
             assert "# STAC Title" in content
             assert "Portolan" in content  # Attribution footer
+
+    @pytest.mark.unit
+    def test_verbose_shows_file_reads(self, runner: CliRunner, tmp_path: Path) -> None:
+        """readme --verbose should show which files are being read."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            Path("demographics").mkdir()
+            Path("demographics/collection.json").write_text(
+                json.dumps({"type": "Collection", "id": "demographics", "title": "Demographics"})
+            )
+            Path("demographics/.portolan").mkdir()
+            Path("demographics/.portolan/metadata.yaml").write_text(
+                "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
+            )
+
+            result = runner.invoke(cli, ["readme", "demographics", "--verbose"])
+
+            assert result.exit_code == 0
+            # Should show reading collection.json
+            assert "collection.json" in result.output
+            # Should show reading metadata.yaml
+            assert "metadata.yaml" in result.output
+            # Should show generating
+            assert "Generating" in result.output or "README.md" in result.output
+
+    @pytest.mark.unit
+    def test_verbose_short_flag(self, runner: CliRunner, tmp_path: Path) -> None:
+        """readme -v should work as shorthand for --verbose."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            Path("catalog.json").write_text(
+                json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
+            )
+            Path(".portolan/metadata.yaml").write_text(
+                "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
+            )
+
+            result = runner.invoke(cli, ["readme", "-v"])
+
+            assert result.exit_code == 0
+            # Should show verbose output
+            assert "catalog.json" in result.output or "metadata.yaml" in result.output
+
+    @pytest.mark.unit
+    def test_verbose_recursive_shows_per_collection_progress(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """readme --recursive --verbose should show progress for each collection."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            Path("catalog.json").write_text(
+                json.dumps({"type": "Catalog", "id": "root", "title": "Root"})
+            )
+            Path(".portolan/metadata.yaml").write_text(
+                "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
+            )
+            # Create two collections
+            for name in ["demographics", "climate"]:
+                Path(name).mkdir()
+                Path(f"{name}/collection.json").write_text(
+                    json.dumps({"type": "Collection", "id": name, "title": name.title()})
+                )
+                Path(f"{name}/.portolan").mkdir()
+                Path(f"{name}/.portolan/metadata.yaml").write_text(
+                    "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
+                )
+
+            result = runner.invoke(cli, ["readme", "--recursive", "--verbose"])
+
+            assert result.exit_code == 0
+            # Should mention both collections in verbose output
+            assert "demographics" in result.output
+            assert "climate" in result.output
+
+    @pytest.mark.unit
+    def test_verbose_check_shows_reads_even_when_fresh(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """readme --check --verbose should show file reads even when README is fresh."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            Path("catalog.json").write_text(
+                json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
+            )
+            Path(".portolan/metadata.yaml").write_text(
+                "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
+            )
+            # Generate README first
+            runner.invoke(cli, ["readme"])
+
+            result = runner.invoke(cli, ["readme", "--check", "--verbose"])
+
+            assert result.exit_code == 0
+            # Should still show what was read
+            assert "catalog.json" in result.output or "metadata.yaml" in result.output
+
+    @pytest.mark.unit
+    def test_verbose_ignored_with_json_output(self, runner: CliRunner, tmp_path: Path) -> None:
+        """readme --verbose --json should not include verbose messages in JSON."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            Path("catalog.json").write_text(
+                json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
+            )
+            Path(".portolan/metadata.yaml").write_text(
+                "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
+            )
+
+            result = runner.invoke(cli, ["--format", "json", "readme", "--verbose"])
+
+            assert result.exit_code == 0
+            output = json.loads(result.output)
+            assert output["success"] is True
+            # JSON output should be valid JSON (verbose text not mixed in)
+            assert "command" in output
+
+    @pytest.mark.unit
+    def test_default_no_verbose_is_minimal(self, runner: CliRunner, tmp_path: Path) -> None:
+        """readme without --verbose should produce minimal output."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+            Path("catalog.json").write_text(
+                json.dumps({"type": "Catalog", "id": "test", "title": "Test"})
+            )
+            Path(".portolan/metadata.yaml").write_text(
+                "contact:\n  name: N\n  email: a@b.c\nlicense: MIT\n"
+            )
+
+            result = runner.invoke(cli, ["readme"])
+
+            assert result.exit_code == 0
+            # Should NOT show reading messages (only success)
+            assert "Reading" not in result.output
+            # Should show success message
+            assert "README.md" in result.output or "Generated" in result.output

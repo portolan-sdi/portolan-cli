@@ -415,6 +415,19 @@ class TestClassifyFileSupportingFormats:
         assert category == FileCategory.STYLE
         assert skip_type == SkipReasonType.METADATA_FILE
 
+    def test_json_in_styles_dir_classified_as_style(self, tmp_path: Path) -> None:
+        """JSON files inside a styles/ directory are classified as STYLE."""
+        styles_dir = tmp_path / "styles"
+        styles_dir.mkdir()
+        test_path = styles_dir / "by-age.json"
+        test_path.write_text('{"version": 8, "layers": []}')
+
+        category, skip_type, skip_msg = classify_file(test_path)
+
+        assert category == FileCategory.STYLE
+        assert skip_type == SkipReasonType.METADATA_FILE
+        assert "styles/ directory" in skip_msg
+
     def test_txt_classified_as_documentation(self, tmp_path: Path) -> None:
         """Text files are classified as DOCUMENTATION."""
         test_path = tmp_path / "notes.txt"

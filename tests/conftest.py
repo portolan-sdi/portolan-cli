@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def fixtures_dir() -> Path:
     """Return the path to the test fixtures directory."""
     return Path(__file__).parent / "fixtures"
@@ -27,37 +27,37 @@ def fixtures_dir() -> Path:
 # =============================================================================
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def valid_points_geojson(fixtures_dir: Path) -> Path:
     """Path to valid points GeoJSON fixture (10 point features)."""
     return fixtures_dir / "vector" / "valid" / "points.geojson"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def valid_polygons_geojson(fixtures_dir: Path) -> Path:
     """Path to valid polygons GeoJSON fixture (5 polygon features)."""
     return fixtures_dir / "vector" / "valid" / "polygons.geojson"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def valid_lines_geojson(fixtures_dir: Path) -> Path:
     """Path to valid lines GeoJSON fixture (5 linestring features)."""
     return fixtures_dir / "vector" / "valid" / "lines.geojson"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def valid_multigeom_geojson(fixtures_dir: Path) -> Path:
     """Path to valid mixed geometry GeoJSON fixture."""
     return fixtures_dir / "vector" / "valid" / "multigeom.geojson"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def valid_large_properties_geojson(fixtures_dir: Path) -> Path:
     """Path to valid GeoJSON with 20+ property columns."""
     return fixtures_dir / "vector" / "valid" / "large_properties.geojson"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def valid_points_parquet(fixtures_dir: Path) -> Path:
     """Path to valid GeoParquet fixture (real-world Open Buildings data).
 
@@ -67,7 +67,7 @@ def valid_points_parquet(fixtures_dir: Path) -> Path:
     return fixtures_dir / "realdata" / "open-buildings.parquet"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def projected_parquet(fixtures_dir: Path) -> Path:
     """Path to GeoParquet with projected CRS (EPSG:32631 UTM Zone 31N)."""
     return fixtures_dir / "vector" / "open-buildings-utm31n.parquet"
@@ -76,25 +76,25 @@ def projected_parquet(fixtures_dir: Path) -> Path:
 # Invalid vector fixtures
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def invalid_no_geometry_json(fixtures_dir: Path) -> Path:
     """Path to JSON file with no geometry field."""
     return fixtures_dir / "vector" / "invalid" / "no_geometry.json"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def invalid_malformed_geojson(fixtures_dir: Path) -> Path:
     """Path to malformed (truncated) GeoJSON file."""
     return fixtures_dir / "vector" / "invalid" / "malformed.geojson"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def invalid_empty_geojson(fixtures_dir: Path) -> Path:
     """Path to empty FeatureCollection GeoJSON file."""
     return fixtures_dir / "vector" / "invalid" / "empty.geojson"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def invalid_null_geometries_geojson(fixtures_dir: Path) -> Path:
     """Path to GeoJSON with null geometry features."""
     return fixtures_dir / "vector" / "invalid" / "null_geometries.geojson"
@@ -105,7 +105,7 @@ def invalid_null_geometries_geojson(fixtures_dir: Path) -> Path:
 # =============================================================================
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def valid_rgb_cog(fixtures_dir: Path) -> Path:
     """Path to valid COG fixture (real-world RapidAI4EO satellite imagery).
 
@@ -115,19 +115,19 @@ def valid_rgb_cog(fixtures_dir: Path) -> Path:
     return fixtures_dir / "realdata" / "rapidai4eo-sample.tif"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def valid_singleband_cog(fixtures_dir: Path) -> Path:
     """Path to valid single-band COG fixture (64x64)."""
     return fixtures_dir / "raster" / "valid" / "singleband.tif"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def valid_float32_cog(fixtures_dir: Path) -> Path:
     """Path to valid float32 COG fixture (elevation-like data)."""
     return fixtures_dir / "raster" / "valid" / "float32.tif"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def valid_nodata_cog(fixtures_dir: Path) -> Path:
     """Path to valid COG with nodata value set."""
     return fixtures_dir / "raster" / "valid" / "nodata.tif"
@@ -136,19 +136,19 @@ def valid_nodata_cog(fixtures_dir: Path) -> Path:
 # Invalid raster fixtures
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def invalid_not_georeferenced_tif(fixtures_dir: Path) -> Path:
     """Path to TIFF without CRS or geotransform."""
     return fixtures_dir / "raster" / "invalid" / "not_georeferenced.tif"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def invalid_truncated_tif(fixtures_dir: Path) -> Path:
     """Path to truncated (corrupted) TIFF file."""
     return fixtures_dir / "raster" / "invalid" / "truncated.tif"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def non_cog_tif(fixtures_dir: Path) -> Path:
     """Path to non-cloud-optimized GeoTIFF (Natural Earth data)."""
     return fixtures_dir / "raster" / "natural-earth-non-cog.tif"
@@ -159,19 +159,19 @@ def non_cog_tif(fixtures_dir: Path) -> Path:
 # =============================================================================
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def edge_unicode_geojson(fixtures_dir: Path) -> Path:
     """Path to GeoJSON with Unicode property values."""
     return fixtures_dir / "edge" / "unicode_properties.geojson"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def edge_special_filename_geojson(fixtures_dir: Path) -> Path:
     """Path to GeoJSON with spaces in filename."""
     return fixtures_dir / "edge" / "special_filename spaces.geojson"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def edge_antimeridian_geojson(fixtures_dir: Path) -> Path:
     """Path to GeoJSON crossing the antimeridian."""
     return fixtures_dir / "edge" / "antimeridian.geojson"
@@ -182,31 +182,31 @@ def edge_antimeridian_geojson(fixtures_dir: Path) -> Path:
 # =============================================================================
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def nwi_wetlands_path(fixtures_dir: Path) -> Path:
     """NWI Wetlands - complex polygons with holes (1,000 features)."""
     return fixtures_dir / "realdata" / "nwi-wetlands.parquet"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def open_buildings_path(fixtures_dir: Path) -> Path:
     """Open Buildings - bulk polygon ingestion (1,000 features)."""
     return fixtures_dir / "realdata" / "open-buildings.parquet"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def road_detections_path(fixtures_dir: Path) -> Path:
     """Road Detections - LineString geometries (1,000 features)."""
     return fixtures_dir / "realdata" / "road-detections.parquet"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def fieldmaps_boundaries_path(fixtures_dir: Path) -> Path:
     """FieldMaps Boundaries - antimeridian crossing (3 features)."""
     return fixtures_dir / "realdata" / "fieldmaps-boundaries.parquet"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def rapidai4eo_path(fixtures_dir: Path) -> Path:
     """RapidAI4EO - Cloud-Optimized GeoTIFF raster."""
     return fixtures_dir / "realdata" / "rapidai4eo-sample.tif"
@@ -327,5 +327,121 @@ def fresh_catalog_no_versions(tmp_path: Path) -> Path:
     # Collection directory exists but NO versions.json
     collection_dir = catalog_dir / "test-collection"
     collection_dir.mkdir()
+
+    return catalog_dir
+
+
+@pytest.fixture
+def catalog_with_multiple_versions(tmp_path: Path) -> Path:
+    """Catalog with 3 versions for divergence and accumulation testing.
+
+    Version history:
+    - v1.0.0: base.parquet (initial)
+    - v1.1.0: base.parquet + second.parquet (add)
+    - v1.2.0: base.parquet + second.parquet + third.parquet (add)
+
+    Useful for testing snapshot model accumulation per ADR-0005.
+    Uses real SHA256 hashes computed from file content.
+    """
+    import hashlib
+    import json
+
+    catalog_dir = tmp_path / "catalog_multi_version"
+    catalog_dir.mkdir()
+
+    # .portolan sentinel
+    portolan_dir = catalog_dir / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("catalog_id: test-catalog\n")
+
+    # catalog.json
+    catalog_data = {
+        "type": "Catalog",
+        "id": "test-catalog",
+        "stac_version": "1.0.0",
+        "description": "Catalog with multiple versions",
+        "links": [],
+    }
+    (catalog_dir / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+    # Collection with 3 versions
+    collection_dir = catalog_dir / "test-collection"
+    collection_dir.mkdir()
+
+    # Create actual asset files first, then compute real hashes
+    base_content = b"x" * 1000
+    second_content = b"y" * 2000
+    third_content = b"z" * 3000
+
+    (collection_dir / "base.parquet").write_bytes(base_content)
+    (collection_dir / "second.parquet").write_bytes(second_content)
+    (collection_dir / "third.parquet").write_bytes(third_content)
+
+    # Compute real SHA256 hashes from content
+    base_hash = hashlib.sha256(base_content).hexdigest()
+    second_hash = hashlib.sha256(second_content).hexdigest()
+    third_hash = hashlib.sha256(third_content).hexdigest()
+
+    versions_data = {
+        "spec_version": "1.0.0",
+        "current_version": "1.2.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-15T10:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "base.parquet": {
+                        "sha256": base_hash,
+                        "size_bytes": 1000,
+                        "href": "base.parquet",
+                    }
+                },
+                "changes": ["base.parquet"],
+            },
+            {
+                "version": "1.1.0",
+                "created": "2026-01-16T10:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "base.parquet": {
+                        "sha256": base_hash,
+                        "size_bytes": 1000,
+                        "href": "base.parquet",
+                    },
+                    "second.parquet": {
+                        "sha256": second_hash,
+                        "size_bytes": 2000,
+                        "href": "second.parquet",
+                    },
+                },
+                "changes": ["second.parquet"],
+            },
+            {
+                "version": "1.2.0",
+                "created": "2026-01-17T10:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "base.parquet": {
+                        "sha256": base_hash,
+                        "size_bytes": 1000,
+                        "href": "base.parquet",
+                    },
+                    "second.parquet": {
+                        "sha256": second_hash,
+                        "size_bytes": 2000,
+                        "href": "second.parquet",
+                    },
+                    "third.parquet": {
+                        "sha256": third_hash,
+                        "size_bytes": 3000,
+                        "href": "third.parquet",
+                    },
+                },
+                "changes": ["third.parquet"],
+            },
+        ],
+    }
+    (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
     return catalog_dir

@@ -734,6 +734,61 @@ def _format_manual_only(result: ScanResult) -> str:
     return "\n".join(lines)
 
 
+def _format_special_formats(result: ScanResult) -> list[str]:
+    """Format detected special formats (Hive partitions, etc.) for display.
+
+    For Hive partitions, uses detect_partitioning() from partitioning.py
+    to get rich metadata (scheme, strategy, file_count).
+
+    Args:
+        result: The scan result containing special_formats.
+
+    Returns:
+        List of formatted lines to display.
+    """
+    if not result.special_formats:
+        return []
+
+    lines: list[str] = []
+    lines.append("")
+    lines.append("Detected special formats:")
+
+    for sf in result.special_formats:
+        if sf.format_type == "hive_partition":
+            # Use scan-time snapshot from sf.details instead of re-scanning filesystem
+            partition_meta = getattr(sf, "details", None) or {}
+
+            # Check for new format (partition:keys) first, then legacy (partition_keys)
+            keys_raw = partition_meta.get("partition:keys", [])
+            if keys_raw and isinstance(keys_raw, list) and isinstance(keys_raw[0], dict):
+                # New format: [{"name": "x", "type": "string"}, ...]
+                key_names = [k.get("name", "unknown") for k in keys_raw]
+                file_count = partition_meta.get("partition:file_count", 0)
+                strategy = partition_meta.get("partition:strategy")
+
+                strategy_str = f" ({strategy})" if strategy else ""
+                keys_str = ", ".join(key_names) if key_names else "unknown"
+                lines.append(f"  ✓ Hive-partitioned{strategy_str}: {sf.relative_path}")
+                lines.append(f"      Keys: {keys_str}, {file_count} partitions")
+            else:
+                # Legacy format: {"partition_keys": ["x", "y"]}
+                legacy_keys = partition_meta.get("partition_keys", [])
+                keys_str = ", ".join(legacy_keys) if legacy_keys else "unknown"
+                lines.append(f"  ✓ Hive-partitioned: {sf.relative_path}")
+                lines.append(f"      Keys: {keys_str}")
+        elif sf.format_type == "filegdb":
+            gdbtable_count = sf.details.get("gdbtable_count", 0)
+            lines.append(f"  ✓ FileGDB: {sf.relative_path} ({gdbtable_count} tables)")
+        elif sf.format_type == "stac_catalog":
+            lines.append(f"  ℹ Existing STAC catalog: {sf.relative_path}")
+        elif sf.format_type == "stac_collection":
+            lines.append(f"  ℹ Existing STAC collection: {sf.relative_path}")
+        else:
+            lines.append(f"  • {sf.format_type}: {sf.relative_path}")
+
+    return lines
+
+
 def format_scan_output(
     result: ScanResult,
     show_tree: bool = False,
@@ -776,6 +831,9 @@ def format_scan_output(
             mark = "\u2713" if check.passed else "\u2717"
             msg = f" ({check.message})" if check.message else ""
             lines.append(f"  [{mark}] {check.description}{msg}")
+
+    # Special formats (Hive partitions, FileGDB, etc.)
+    lines.extend(_format_special_formats(result))
 
     # Issues, skipped, suggestions, next steps
     lines.extend(_format_issues(result))

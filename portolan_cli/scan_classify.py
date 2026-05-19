@@ -260,6 +260,14 @@ def classify_file(
             f"{name} is a map style definition",
         )
 
+    # Check if file is inside a styles/ directory (ADR-0045)
+    if path.parent.name == "styles" and ext == ".json":
+        return (
+            FileCategory.STYLE,
+            SkipReasonType.METADATA_FILE,
+            f"{path.name} is a map style definition in styles/ directory",
+        )
+
     # Check by extension
     if ext in GEO_ASSET_EXTENSIONS:
         return (FileCategory.GEO_ASSET, None, None)

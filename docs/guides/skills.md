@@ -6,7 +6,9 @@ Portolan includes **skills** — markdown guides that help AI assistants guide y
 
 | Skill | Description |
 |-------|-------------|
+| `bootstrap` | End-to-end catalog creation from any data source |
 | `sourcecoop` | Upload data to [Source Cooperative](https://source.coop) |
+| `consume` | Query and explore Portolan catalogs with DuckDB/Python |
 
 ## Using Skills
 
@@ -28,6 +30,18 @@ portolan skills list
 
 # View a specific skill
 portolan skills show sourcecoop
+```
+
+---
+
+## Bootstrap Skill
+
+End-to-end catalog creation from any data source. Checkpoint-based — pauses at key decisions and asks rather than assumes.
+
+Supports remote services (WFS, ArcGIS) and local files (Shapefile, GeoPackage, etc.).
+
+```bash
+portolan skills show bootstrap
 ```
 
 ---
@@ -91,3 +105,86 @@ Source Co-op emphasizes good documentation. The skill ensures you provide:
 **Slow uploads** — Use `--workers 8` for parallel uploads. More than 8 workers doesn't usually help.
 
 **Missing metadata** — Run `portolan metadata validate` to see which required fields are missing.
+
+---
+
+## Consume Skill
+
+The `consume` skill helps you query and explore data from Portolan catalogs. It detects your environment, reads STAC metadata, and generates optimized queries.
+
+### What It Does
+
+1. **Detects your environment** — Checks for DuckDB, GeoPandas, rioxarray
+2. **Reads STAC metadata** — Understands schema, assets, spatial extent
+3. **Generates queries** — DuckDB SQL or Python code with full URLs
+4. **Explains optimizations** — How to leverage Portolan's Hilbert ordering and bbox structs
+5. **Guides exploration** — Dry runs, size checks, spatial filters
+
+### Portolan GeoParquet Optimizations
+
+Portolan produces optimized GeoParquet files that enable fast cloud-native queries:
+
+| Optimization | Benefit |
+|--------------|---------|
+| **Hilbert spatial ordering** | Spatial queries read data sequentially |
+| **Row groups (~100K rows)** | Predicate pushdown skips irrelevant data |
+| **ZSTD compression** | Smaller files, fast decompression |
+| **bbox struct column** | Fast spatial filter without geometry parsing |
+
+### Quick Example (DuckDB)
+
+```sql
+-- Install spatial extension (once)
+INSTALL spatial; LOAD spatial;
+
+-- Query directly from Source Cooperative
+SELECT * FROM read_parquet(
+  'https://data.source.coop/nlebovits/censo-argentino/2022/radios.parquet'
+) LIMIT 10;
+
+-- Fast spatial filter using bbox struct
+SELECT * FROM read_parquet(
+  'https://data.source.coop/nlebovits/censo-argentino/2022/radios.parquet'
+) WHERE bbox.xmin > -58.6 AND bbox.xmax < -58.2
+    AND bbox.ymin > -34.8 AND bbox.ymax < -34.4;
+```
+
+### Quick Example (Python)
+
+```python
+import geopandas as gpd
+
+gdf = gpd.read_parquet(
+    "https://data.source.coop/nlebovits/censo-argentino/2022/radios.parquet"
+)
+print(gdf.head())
+```
+
+### Custom Examples in metadata.yaml
+
+For datasets with unusual structure (required joins, multiple files), add custom examples to `.portolan/metadata.yaml`:
+
+```yaml
+examples:
+  - engine: duckdb
+    description: "Join census data with geographic boundaries"
+    code: |
+      SELECT r.*, c.population
+      FROM read_parquet('https://.../radios.parquet') r
+      JOIN read_parquet('https://.../census-data.parquet') c
+        ON r.cod_2022 = c.id_geo
+  - engine: python
+    description: "Load and merge with GeoPandas"
+    code: |
+      radios = gpd.read_parquet('https://.../radios.parquet')
+      census = pd.read_parquet('https://.../census-data.parquet')
+      merged = radios.merge(census, left_on='cod_2022', right_on='id_geo')
+```
+
+### Troubleshooting
+
+**403 Forbidden** — Source Cooperative uses HTTPS URLs, not S3. Use `https://data.source.coop/...` not `s3://...`.
+
+**Slow queries** — Always `LIMIT` during exploration. Use `bbox` struct for spatial pre-filtering.
+
+**Memory issues** — Use DuckDB (streams data) instead of loading everything into GeoPandas.

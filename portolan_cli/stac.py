@@ -194,8 +194,8 @@ def save_catalog(catalog: pystac.Catalog, dest_dir: Path) -> None:
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # Normalize the catalog before saving (sets up hrefs)
-    catalog.normalize_hrefs(str(dest_dir))
+    # Trailing slash required: pystac treats dotted paths (e.g., tmp.xyz) as files
+    catalog.normalize_hrefs(f"{dest_dir}/")
 
     # Save as self-contained (relative links)
     catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
@@ -232,6 +232,116 @@ def add_item_to_collection(
 
     if update_extent:
         _update_collection_extent(collection, item)
+
+
+def add_asset_to_collection(
+    collection: pystac.Collection,
+    asset_key: str,
+    asset: pystac.Asset,
+    *,
+    update_extent_from_bbox: list[float] | None = None,
+) -> None:
+    """Add an asset directly to a collection (collection-level asset).
+
+    Per ADR-0031: Single vector files (GeoParquet, Shapefile, GeoPackage) are
+    collection-level assets—no item.json, asset directly in collection.json.
+
+    Args:
+        collection: The collection to add the asset to.
+        asset_key: Key for the asset (e.g., "data", "boundaries").
+        asset: The pystac.Asset to add.
+        update_extent_from_bbox: If provided, update collection's spatial extent
+            to encompass this bbox [min_x, min_y, max_x, max_y].
+    """
+    collection.add_asset(asset_key, asset)
+
+    if update_extent_from_bbox:
+        _update_collection_extent_from_bbox(collection, update_extent_from_bbox)
+
+
+def add_collection_properties_from_metadata(
+    collection: pystac.Collection,
+    metadata: object,
+) -> None:
+    """Add STAC properties from metadata to a collection.
+
+    Used for collection-level assets (ADR-0031) where metadata properties
+    should be applied directly to the collection instead of an item.
+
+    Handles:
+    - PMTilesMetadata: proj:epsg=3857, pmtiles:* properties
+    - FlatGeobufMetadata: proj:epsg from CRS, flatgeobuf:* properties
+    - GeoParquetMetadata: proj:epsg from CRS (table extension handled separately)
+
+    Args:
+        collection: The collection to add properties to.
+        metadata: Metadata object with to_stac_properties() method.
+    """
+    if not hasattr(metadata, "to_stac_properties"):
+        return
+
+    props = metadata.to_stac_properties()
+    if not props:
+        return
+
+    # Add properties to collection.extra_fields (STAC collection properties)
+    for key, value in props.items():
+        collection.extra_fields[key] = value
+
+    # Add projection extension declaration if proj:epsg is present
+    if "proj:epsg" in props:
+        proj_ext_url = EXTENSION_URLS["projection"]
+        if collection.stac_extensions is None:
+            collection.stac_extensions = []
+        if proj_ext_url not in collection.stac_extensions:
+            collection.stac_extensions.append(proj_ext_url)
+
+
+def add_partition_metadata_to_collection(
+    collection: pystac.Collection,
+    partition_metadata: dict[str, object],
+) -> None:
+    """Add partition extension fields to a collection.
+
+    Adds partition:* fields from the provided metadata dict and registers
+    the partition extension URL in stac_extensions.
+
+    Args:
+        collection: The collection to add partition metadata to.
+        partition_metadata: Dict with partition:* fields from get_partition_metadata().
+    """
+    # Add partition:* fields to collection extra_fields
+    for key, value in partition_metadata.items():
+        if key.startswith("partition:"):
+            collection.extra_fields[key] = value
+
+    # Register partition extension
+    ext_url = EXTENSION_URLS["partition"]
+    if collection.stac_extensions is None:
+        collection.stac_extensions = []
+    if ext_url not in collection.stac_extensions:
+        collection.stac_extensions.append(ext_url)
+
+
+def _update_collection_extent_from_bbox(
+    collection: pystac.Collection,
+    bbox: list[float],
+) -> None:
+    """Update a collection's spatial extent to include a bounding box.
+
+    Args:
+        collection: The collection to update.
+        bbox: Bounding box [min_x, min_y, max_x, max_y] to include.
+    """
+    current_bbox = collection.extent.spatial.bboxes[0]
+    new_bbox = [
+        min(current_bbox[0], bbox[0]),  # min_x
+        min(current_bbox[1], bbox[1]),  # min_y
+        max(current_bbox[2], bbox[2]),  # max_x
+        max(current_bbox[3], bbox[3]),  # max_y
+    ]
+
+    collection.extent.spatial = pystac.SpatialExtent(bboxes=[new_bbox])
 
 
 def _update_collection_extent(
@@ -306,6 +416,7 @@ EXTENSION_URLS = {
     "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
     "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",  # Reserved for future
     "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",  # Proposal maturity
+    "partition": "https://portolan-sdi.github.io/stac-partition-extension/v1.0.0/schema.json",
 }
 
 
@@ -343,6 +454,10 @@ def build_stac_extensions(properties: dict[str, object]) -> list[str]:
     # Check for vector extension fields
     if any(k.startswith("vector:") for k in properties):
         extensions.append(EXTENSION_URLS["vector"])
+
+    # Check for partition extension fields
+    if any(k.startswith("partition:") for k in properties):
+        extensions.append(EXTENSION_URLS["partition"])
 
     return extensions
 
@@ -800,3 +915,171 @@ def update_collection_summaries(collection: pystac.Collection) -> None:
 
     summarizer = Summarizer(field_strategies)
     collection.summaries = summarizer.summarize(items)
+
+
+def add_via_link(
+    collection_path: Path,
+    source_url: str,
+    *,
+    title: str | None = None,
+) -> None:
+    """Add a `via` provenance link to a collection.json file.
+
+    The `via` link relation points to the original data source from which
+    the collection was extracted. This is useful for provenance tracking
+    and data lineage.
+
+    Per STAC spec, `via` links indicate "the source from which the data
+    was originally obtained."
+
+    Args:
+        collection_path: Path to the collection.json file.
+        source_url: URL of the original data source (e.g., ArcGIS FeatureServer).
+        title: Optional title for the link. Defaults to "Source data service".
+
+    Note:
+        This function is idempotent - adding the same URL twice will not
+        create duplicate links.
+    """
+    import json
+
+    if not collection_path.exists():
+        return
+
+    collection_data = json.loads(collection_path.read_text())
+    links = collection_data.setdefault("links", [])
+
+    # Check if via link already exists with same href
+    for link in links:
+        if link.get("rel") == "via" and link.get("href") == source_url:
+            return  # Already exists, idempotent
+
+    # Add via link
+    via_link = {
+        "rel": "via",
+        "href": source_url,
+        "type": "text/html",
+        "title": title or "Source data service",
+    }
+    links.append(via_link)
+
+    collection_path.write_text(json.dumps(collection_data, indent=2) + "\n")
+
+
+def is_technical_name(text: str | None) -> bool:
+    """Check if text looks like a technical/internal name rather than description.
+
+    Technical names are typically identifiers that aren't useful as metadata:
+    - Pure snake_case names without spaces (e.g., "bu_building_emprise_v2")
+    - Namespace-prefixed (e.g., "ns:LayerName")
+    - Short all-lowercase without spaces (e.g., "layer1")
+
+    Valid titles include:
+    - CamelCase names (e.g., "DenHaagHousing")
+    - Titles with spaces, even if they contain underscores (e.g., "Building - building_emprise")
+
+    Args:
+        text: Text to check.
+
+    Returns:
+        True if text looks like a technical name.
+    """
+    import re
+
+    if not text:
+        return True
+
+    text = text.strip()
+
+    # Has spaces → probably human-readable, even if it contains underscores
+    if " " in text:
+        return False
+
+    # Contains namespace prefix (ns:name pattern) → technical
+    if re.match(r"^[a-z_]+:[A-Za-z]", text):
+        return True
+
+    # No spaces + underscores → snake_case identifier
+    if "_" in text:
+        return True
+
+    # Short all-lowercase without CamelCase → technical (e.g., "layer1", "parcels2024")
+    # CamelCase (has uppercase after first char) is allowed
+    if not re.search(r"[A-Z]", text[1:]) and len(text) < 20:
+        return True
+
+    return False
+
+
+# Alias for internal use (maintains backward compatibility)
+_is_technical_name = is_technical_name
+
+
+def update_stac_metadata(
+    path: Path,
+    title: str | None = None,
+    description: str | None = None,
+) -> bool:
+    """Update title and/or description in a STAC catalog.json or collection.json.
+
+    This function patches existing STAC files with metadata extracted from
+    external sources (WFS GetCapabilities, ArcGIS REST API, ISO 19139).
+    Used by extraction --auto mode to propagate rich metadata to STAC.
+
+    Per Issue #369: Extraction should populate STAC with meaningful metadata,
+    not leave generic placeholders like "Collection: layer_name_abc123".
+
+    Skips technical-looking names (underscore identifiers, namespace prefixes)
+    to avoid replacing human-readable content with machine identifiers.
+
+    Args:
+        path: Path to catalog.json or collection.json file.
+        title: New title (None to skip updating title).
+        description: New description (None to skip updating description).
+
+    Returns:
+        True if file was updated, False if no changes made or file missing.
+
+    Note:
+        This function is idempotent. Calling multiple times with the same
+        values produces the same result.
+    """
+    import json
+
+    if not path.exists():
+        return False
+
+    # Filter out technical names
+    effective_title = title if title and not _is_technical_name(title) else None
+    effective_description = (
+        description if description and not _is_technical_name(description) else None
+    )
+
+    # Nothing to update
+    if effective_title is None and effective_description is None:
+        return False
+
+    try:
+        stac_data = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Failed to parse %s: %s — skipping metadata update", path, e
+        )
+        return False
+
+    updated = False
+
+    if effective_title is not None:
+        stac_data["title"] = effective_title
+        updated = True
+
+    if effective_description is not None:
+        stac_data["description"] = effective_description
+        updated = True
+
+    if updated:
+        path.write_text(json.dumps(stac_data, indent=2, ensure_ascii=False) + "\n")
+
+    return updated

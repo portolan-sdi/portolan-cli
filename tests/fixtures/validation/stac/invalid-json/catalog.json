@@ -1,0 +1,6 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.0.0",
+  "id": "broken-catalog"
+  "description": "Missing comma - invalid JSON"
+}

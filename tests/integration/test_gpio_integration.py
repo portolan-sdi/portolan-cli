@@ -129,19 +129,19 @@ class TestGpioErrorHandling:
         self, invalid_malformed_geojson: Path, tmp_path: Path
     ) -> None:
         """geoparquet-io raises on malformed GeoJSON."""
-        import click
         import geoparquet_io as gpio
+        from geoparquet_io.core.exceptions import GeoParquetError
 
         output = tmp_path / "output.parquet"
-        # geoparquet-io wraps errors in ClickException
-        with pytest.raises(click.ClickException):
+        # geoparquet-io 1.0+ raises GeoParquetError for invalid input
+        with pytest.raises(GeoParquetError):
             gpio.convert(str(invalid_malformed_geojson)).write(str(output))
 
     @pytest.mark.integration
     def test_empty_geojson_behavior(self, invalid_empty_geojson: Path, tmp_path: Path) -> None:
         """Document geoparquet-io behavior with empty FeatureCollection."""
-        import click
         import geoparquet_io as gpio
+        from geoparquet_io.core.exceptions import GeoParquetError
 
         output = tmp_path / "empty.parquet"
         # This may succeed with 0 rows or raise—document actual behavior
@@ -150,6 +150,6 @@ class TestGpioErrorHandling:
             # If it succeeds, verify empty result
             table = pq.read_table(output)
             assert len(table) == 0
-        except (ValueError, click.ClickException):
+        except (ValueError, GeoParquetError):
             # Empty input is rejected—this is also acceptable
             pass

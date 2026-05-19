@@ -1,15 +1,26 @@
 # Configuration
 
-Portolan stores configuration in `.portolan/config.yaml` within your catalog directory.
+Portolan uses two configuration mechanisms:
+
+- **`.portolan/config.yaml`** — Non-sensitive settings (conversion, PMTiles, backend)
+- **`.env` file or environment variables** — Credentials (remote, profile, region)
 
 ## Quick Start
 
-```yaml
-# .portolan/config.yaml
-remote: s3://my-bucket/catalog
-profile: production    # AWS profile (alias: aws_profile)
-region: us-west-2      # AWS region for S3
+```bash
+# Create .env file in catalog root (never pushed to remote)
+cat > .env << 'EOF'
+PORTOLAN_REMOTE=s3://my-bucket/catalog
+PORTOLAN_PROFILE=production
+PORTOLAN_REGION=us-west-2
+EOF
+
+# Verify configuration
+portolan config list
 ```
+
+!!! warning "Security"
+    Credentials (`remote`, `profile`, `region`) cannot be stored in `config.yaml` because that file gets pushed to remote storage. This applies to both catalog-level and collection-level config (e.g., `collections.demo.remote` is also blocked). Use environment variables or a `.env` file in your catalog root instead. The `.env` file is automatically ignored and never uploaded.
 
 ## Backend (Enterprise)
 
@@ -58,16 +69,37 @@ See the [portolake documentation](https://github.com/portolan-sdi/portolake) for
 
 ## Setting Configuration
 
+### Credentials (via .env or environment)
+
+Credentials are **sensitive settings** that cannot be stored in `config.yaml`:
+
 ```bash
-# Set remote storage URL
-portolan config set remote s3://my-bucket/catalog
+# Option 1: .env file (recommended for local development)
+cat > .env << 'EOF'
+PORTOLAN_REMOTE=s3://my-bucket/catalog
+PORTOLAN_PROFILE=production
+PORTOLAN_REGION=us-west-2
+EOF
 
-# Set AWS profile (either name works)
-portolan config set profile production
-# portolan config set aws_profile production  # Also valid
+# Option 2: Environment variables (for CI/CD)
+export PORTOLAN_REMOTE=s3://my-bucket/catalog
+export PORTOLAN_PROFILE=production
+export PORTOLAN_REGION=us-west-2
 
-# Set AWS region
-portolan config set region us-west-2
+# View current settings (reads from env/.env)
+portolan config list
+```
+
+### Other Settings (via config.yaml)
+
+Non-sensitive settings are stored in `.portolan/config.yaml`:
+
+```bash
+# Set backend type
+portolan config set backend iceberg
+
+# Set conversion options
+portolan config set conversion.extensions.preserve "['shp', 'gpkg']"
 
 # View current settings
 portolan config list
@@ -99,7 +131,7 @@ Control how Portolan handles different file formats during `check` and `convert`
 
 ```yaml
 # .portolan/config.yaml
-remote: s3://my-bucket/catalog
+# Note: remote/profile/region go in .env, not here
 
 conversion:
   extensions:
@@ -186,10 +218,59 @@ conversion:
     tile_size: 512         # Internal tile size in pixels
     predictor: 2           # 1=none, 2=horizontal (default), 3=floating point
     resampling: nearest    # Overview resampling: nearest, bilinear, cubic, etc.
+    generate_thumbnail: true   # Auto-generate JPEG thumbnail (default: true)
+    thumbnail_max_size: 512    # Max dimension in pixels (default: 512)
+    thumbnail_quality: 75      # JPEG quality 1-100 (default: 75)
 ```
 
 !!! note "Validation"
     Invalid settings produce warnings but don't block conversion. Quality is clamped to 1-100, and unknown compression/resampling values are passed through to let rio-cogeo handle errors.
+
+!!! tip "Thumbnails"
+    When `generate_thumbnail` is enabled, a JPEG thumbnail is created next to each converted COG (e.g., `data.tif` → `data.thumb.jpg`). The thumbnail is automatically picked up by `portolan scan` with `roles: ["thumbnail"]`, following STAC best practices.
+
+### Vector Settings
+
+Configure spatial optimization for GeoParquet conversion. Uses [geoparquet-io](https://github.com/geoparquet/geoparquet-io)'s fluent Table API for spatial indexing, sorting, and partitioning.
+
+```yaml
+conversion:
+  vector:
+    spatial_index: h3     # h3 | quadkey | s2 | a5 | kdtree | none (default: none)
+    resolution: auto      # auto | explicit int (default: auto)
+    sort: hilbert         # hilbert | quadkey | none (default: none)
+    add_bbox: true        # Add bbox struct column (default: false)
+    partition: false      # Produce hive-partitioned output (default: false)
+```
+
+!!! note "Resolution defaults"
+    When `resolution: auto`, geoparquet-io uses sensible defaults per index type (H3: 9, Quadkey: 13, S2: 13, A5: 15, KD-tree: 9 iterations). Explicit values override these defaults.
+
+#### Spatial Index Types
+
+| Index | Description | Resolution Range |
+|-------|-------------|------------------|
+| `h3` | Uber H3 hexagonal cells | 0-15 (default: 9) |
+| `quadkey` | Bing Maps tile IDs | 0-23 (default: 13) |
+| `s2` | Google S2 spherical cells | 0-30 (default: 13) |
+| `a5` | A5 hierarchical grid | 0-30 (default: 15) |
+| `kdtree` | KD-tree balanced spatial splits | 1-20 iterations (default: 9) |
+
+#### Use Cases
+
+| Scenario | Configuration |
+|----------|---------------|
+| Analytics queries (spatial filtering) | `spatial_index: h3`, `add_bbox: true` |
+| Optimal row group statistics | `sort: hilbert`, `add_bbox: true` |
+| Partitioned output for large files | `spatial_index: kdtree`, `partition: true` |
+| Web map tiling (PMTiles input) | `spatial_index: quadkey`, `sort: quadkey` |
+
+#### Partitioning vs Auto-Partitioning
+
+- **`conversion.vector.partition: true`** — Always produce hive-partitioned output during conversion
+- **`partitioning.enabled: true`** — Auto-partition files exceeding `threshold_gb` (see [Spatial Partitioning](#spatial-partitioning))
+
+These are complementary. Use `conversion.vector` for consistent spatial optimization, `partitioning` for size-based auto-splitting.
 
 #### Use Cases
 
@@ -198,6 +279,8 @@ conversion:
 | RGB imagery (smaller files) | `compression: JPEG`, `quality: 95` |
 | Elevation data (lossless) | `compression: DEFLATE`, `predictor: 3` |
 | Analytics (fast reads) | `compression: LZW`, `tile_size: 256` |
+| Disable thumbnails | `generate_thumbnail: false` |
+| Large thumbnails for preview | `thumbnail_max_size: 1024`, `thumbnail_quality: 90` |
 
 #### Available Compression Methods
 
@@ -208,6 +291,258 @@ conversion:
 | `ZSTD` | High compression ratio | Lossless, requires GDAL 2.3+ |
 | `JPEG` | RGB imagery | Lossy, smallest files for photos |
 | `WEBP` | Web display | Lossy, modern browsers only |
+
+## Thumbnails
+
+Configure automatic thumbnail generation for preview images. Thumbnails are registered as STAC assets with `roles: ["thumbnail"]`.
+
+```yaml
+# .portolan/config.yaml
+thumbnails:
+  enabled: true              # Auto-generate thumbnails (default: true)
+  max_size: 512              # Max dimension in pixels (default: 512)
+  quality: 75                # JPEG quality 1-100 (default: 75)
+  basemap:
+    provider: CartoDB.Positron  # Basemap tile provider (default)
+    opacity: 1.0             # Basemap opacity 0-1 (default: 1.0)
+    zoom_adjust: 0           # Zoom level adjustment (default: 0)
+```
+
+### Vector vs Raster Thumbnails
+
+| Type | Basemap | Source |
+|------|---------|--------|
+| **Vector** | Included (configurable) | PMTiles preferred, GeoParquet fallback |
+| **Raster (COG)** | Not needed | Rasterio overviews |
+
+Vector data (points, lines, sparse polygons) benefits from basemap context. Raster data fills its extent, so basemaps would be hidden underneath.
+
+### Basemap Providers
+
+Uses [contextily](https://contextily.readthedocs.io/) for basemaps. Common providers:
+
+| Provider | Description |
+|----------|-------------|
+| `CartoDB.Positron` | Light gray (default) |
+| `CartoDB.DarkMatter` | Dark theme |
+| `CartoDB.Voyager` | Colorful streets |
+| `OpenStreetMap.Mapnik` | Standard OSM |
+| `none` | Disable basemap |
+
+Set `basemap.provider: none` to disable basemaps entirely.
+
+### Settings Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `thumbnails.enabled` | `true` | Generate thumbnails during conversion |
+| `thumbnails.max_size` | `512` | Maximum pixel dimension |
+| `thumbnails.quality` | `75` | JPEG quality (1-100) |
+| `thumbnails.basemap.provider` | `CartoDB.Positron` | Basemap tile provider |
+| `thumbnails.basemap.opacity` | `1.0` | Basemap opacity (0-1) |
+| `thumbnails.basemap.zoom_adjust` | `0` | Zoom level adjustment |
+
+## Styles
+
+Configure default styling for assets. Styles are stored inline in STAC asset properties.
+
+### Vector Styles (PMTiles)
+
+Vector assets get Mapbox GL style specs stored in `pmtiles:style`:
+
+```yaml
+# .portolan/config.yaml
+styles:
+  vector:
+    point:
+      circle-color: "#3388ff"    # Point fill color
+      circle-radius: 4           # Point radius in pixels
+      circle-opacity: 0.8        # Point opacity
+    line:
+      line-color: "#3388ff"      # Line color
+      line-width: 2              # Line width in pixels
+      line-opacity: 0.8          # Line opacity
+    polygon:
+      fill-color: "#3388ff"      # Polygon fill color
+      fill-opacity: 0.6          # Polygon fill opacity
+      fill-outline-color: "#2266cc"  # Polygon outline color
+```
+
+### Raster Styles (COG)
+
+Raster assets get [STAC render extension](https://github.com/stac-extensions/render) properties:
+
+```yaml
+# .portolan/config.yaml
+styles:
+  raster:
+    colormap: viridis           # Named colormap (default: viridis)
+    rescale: [0, 255]           # Min/max for rescaling (optional)
+```
+
+Common colormaps: `viridis`, `plasma`, `terrain`, `blues`, `reds`, `greens`.
+
+### How Styles Are Used
+
+| Asset Type | Property | Format |
+|------------|----------|--------|
+| PMTiles | `pmtiles:style` | Mapbox GL v8 subset |
+| COG | `render:colormap_name`, `render:rescale` | STAC render extension |
+
+Styles are auto-generated based on geometry type (point/line/polygon) for vectors, or colormap config for rasters. Map renderers (MapLibre GL, etc.) can read these properties directly.
+
+## PMTiles Generation
+
+Generate vector tile overviews from GeoParquet assets for efficient web map rendering.
+
+```yaml
+# .portolan/config.yaml
+pmtiles.enabled: true     # Auto-generate during add (default: false)
+pmtiles.min_zoom: 0       # Minimum zoom level (default: auto-detect)
+pmtiles.max_zoom: 14      # Maximum zoom level (default: auto-detect)
+pmtiles.precision: 6      # Coordinate decimal precision (default: 6)
+pmtiles.layer: boundaries # Layer name in output (default: filename)
+pmtiles.attribution: "© OpenStreetMap contributors"
+```
+
+!!! warning "External dependency"
+    PMTiles generation requires [tippecanoe](https://github.com/felt/tippecanoe) installed and in PATH:
+
+    - **macOS**: `brew install tippecanoe`
+    - **Ubuntu**: `apt install tippecanoe`
+
+    Also requires the optional `pmtiles` extra: `pip install portolan-cli[pmtiles]`
+
+### Commands
+
+```bash
+# Generate PMTiles during add
+portolan add boundaries/ --pmtiles
+
+# Force regeneration even if up-to-date
+portolan add boundaries/ --pmtiles --force-pmtiles
+
+# Check for missing PMTiles (produces warning, not error)
+portolan check
+```
+
+### How It Works
+
+- Uses [gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles) wrapper around tippecanoe
+- PMTiles stored alongside source GeoParquet (e.g., `data.parquet` → `data.pmtiles`)
+- Registered as collection-level asset with role `["overview"]`
+- Tracked in `versions.json` for push
+- Skips regeneration if PMTiles newer than source (mtime check)
+
+### Settings Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `pmtiles.enabled` | `false` | Auto-generate during `add` command |
+| `pmtiles.min_zoom` | auto | Minimum zoom level (tippecanoe default: 0) |
+| `pmtiles.max_zoom` | auto | Maximum zoom level (tippecanoe default: 14) |
+| `pmtiles.layer` | filename | Layer name in PMTiles output |
+| `pmtiles.precision` | `6` | Coordinate decimal precision |
+| `pmtiles.attribution` | gpio default | Attribution HTML for tiles |
+| `pmtiles.bbox` | none | Bounding box filter: `"minx,miny,maxx,maxy"` |
+| `pmtiles.where` | none | SQL WHERE clause for filtering features |
+| `pmtiles.include_cols` | all | Comma-separated columns to include in tiles |
+| `pmtiles.src_crs` | metadata | Override source CRS if metadata is incorrect |
+
+### Filtering Example
+
+```yaml
+# Only include specific columns in tiles (reduces file size)
+pmtiles.include_cols: "name,population,geometry"
+
+# Filter features with SQL WHERE clause
+pmtiles.where: "population > 10000"
+
+# Clip to bounding box (minx,miny,maxx,maxy)
+pmtiles.bbox: "-122.5,37.5,-122.0,38.0"
+```
+
+### When to Use
+
+- Web map applications requiring fast tile rendering
+- Collections with GeoParquet assets intended for visual display
+- When `portolan check` warns about missing PMTiles
+
+!!! note "PMTiles are optional"
+    PMTiles are derivatives for rendering, not the canonical data format. GeoParquet remains the source of truth. Missing PMTiles produce a validation **warning**, not an error.
+
+## Spatial Partitioning
+
+Split large GeoParquet files into spatially-organized partitions for better query performance. Per [OGC best practices](https://github.com/opengeospatial/geoparquet/blob/main/format-specs/distributing-geoparquet.md), files over 2GB should be partitioned.
+
+```yaml
+# .portolan/config.yaml
+partitioning.enabled: true       # Enable auto-partitioning during add (default: true)
+partitioning.prompt: true        # Ask before partitioning in interactive mode (default: true)
+partitioning.threshold_gb: 2     # Size threshold in GB (default: 2.0)
+partitioning.strategy: kdtree    # Partitioning strategy (default: kdtree)
+partitioning.target_rows: 120000 # Target rows per partition (default: 120,000)
+```
+
+With `partitioning.enabled: true`, large files are automatically partitioned during `portolan add`:
+
+```
+$ portolan add large-dataset.parquet
+
+Found 1 file(s) exceeding 2.0 GB threshold:
+  large-dataset.parquet (4.23 GB)
+
+Partition large files into spatial chunks? [Y/n] y
+```
+
+Set `partitioning.prompt: false` to partition without asking.
+
+### Commands
+
+```bash
+# Preview partition strategy without creating files
+portolan partition buildings.parquet --preview
+
+# Partition with default settings (kdtree, 120k rows/partition)
+portolan partition buildings.parquet output/
+
+# Custom target rows
+portolan partition data.parquet output/ --target-rows 50000
+```
+
+### How It Works
+
+- Uses [geoparquet-io](https://github.com/geoparquet/geoparquet-io) KD-tree partitioning
+- Creates Hive-style directory structure per ADR-0031
+- Each partition becomes a STAC Item with its own bbox
+- Collection gets a glob asset for bulk access (e.g., `s3://bucket/collection/*.parquet`)
+
+### Output Structure
+
+```
+collection/
+├── collection.json          # Glob asset for bulk access
+├── kdtree_cell=001/
+│   ├── item.json            # STAC Item with partition bbox
+│   └── data.parquet
+├── kdtree_cell=002/
+│   ├── item.json
+│   └── data.parquet
+└── ...
+```
+
+### Settings Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `partitioning.enabled` | `true` | Enable auto-partitioning during `portolan add` |
+| `partitioning.prompt` | `true` | Ask before partitioning in interactive mode |
+| `partitioning.threshold_gb` | `2.0` | File size threshold in GB |
+| `partitioning.strategy` | `kdtree` | Spatial partitioning strategy |
+| `partitioning.target_rows` | `120000` | Target rows per partition |
+
+!!! tip "Why KD-tree?"
+    KD-tree is **data-driven**: partitions adapt to actual feature density, producing balanced partition sizes. Grid-based strategies (H3, S2, quadkey) are planned but not yet implemented.
 
 ## STAC GeoParquet Settings
 
@@ -255,18 +590,64 @@ portolan add imagery/ --stac-geoparquet
 !!! warning "Known Limitation"
     For existing catalogs with thousands of items, `push` after generating items.parquet may be slow ([#329](https://github.com/portolan-sdi/portolan-cli/issues/329)). This affects incremental updates to large catalogs. New catalogs and small catalogs work normally.
 
+## Push Settings
+
+Control which files are synced to remote storage during `portolan push`.
+
+### Metadata File Sync
+
+By default, `push` syncs **all catalog files** to remote storage, not just versioned assets. This includes:
+
+- `style.json` (map styling)
+- Thumbnails (`*.thumb.png`)
+- Updated `collection.json` and `catalog.json`
+- Any other catalog metadata files
+
+### Exclusion Patterns
+
+Files matching these patterns are **never** synced:
+
+| Pattern | Excluded Files |
+|---------|----------------|
+| `.portolan/` | Internal Portolan state |
+| `.git/` | Git repository data |
+| `.env`, `.env.*` | Environment files with secrets |
+| `*.py`, `*.pyc` | Python source and bytecode |
+| `__pycache__/` | Python cache directories |
+| `.DS_Store`, `Thumbs.db` | OS metadata files |
+| `*.log`, `*.tmp`, `*.bak`, `*~` | Temporary and backup files |
+
+### Custom Exclusions
+
+Add custom patterns to exclude additional files:
+
+```yaml
+# .portolan/config.yaml
+push.exclude:
+  - "*.backup"
+  - "temp/"
+  - "draft-*"
+```
+
+!!! warning "Security Patterns Always Enforced"
+    Patterns for `.env`, `.git/`, and `.portolan/` are **always** enforced regardless of custom configuration. This prevents accidental upload of secrets or internal state.
+
+### Settings Reference
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `push.exclude` | See above | Glob patterns for files to exclude from sync |
+
 ## Collection-Level Configuration
 
 Override settings for specific collections using the `collections:` section:
 
 ```yaml
 # .portolan/config.yaml
-remote: s3://default-bucket/catalog
+# Note: collection-level credential overrides go in .env
+# PORTOLAN_REMOTE and PORTOLAN_PROFILE are catalog-wide
 
 collections:
-  public-data:
-    remote: s3://public-bucket/data
-
   analytics:
     conversion:
       extensions:
@@ -311,13 +692,16 @@ Settings are inherited from parent levels. Child values override parent values:
 
 ```yaml
 # catalog/.portolan/config.yaml
-aws_profile: default
-remote: s3://catalog/
+backend: file
+pmtiles.enabled: true
 
 # catalog/demographics/.portolan/config.yaml
-remote: s3://demographics/  # Overrides parent
-# aws_profile inherited from catalog
+pmtiles.enabled: false  # Overrides parent (no PMTiles for this collection)
+# backend inherited from catalog
 ```
+
+!!! note "Credentials are catalog-wide"
+    Credential settings (`remote`, `profile`, `region`) are set via `.env` at catalog root and apply to all collections. Per-collection credential overrides are not supported.
 
 ### Precedence
 
@@ -339,16 +723,27 @@ Most users should start with `collections:` and only add per-collection `.portol
 
 ## Environment Variables
 
-All settings can be set via environment variables with the `PORTOLAN_` prefix:
+### Credential Settings (required via env/.env)
+
+These sensitive settings **must** use environment variables or `.env` files—they cannot be stored in `config.yaml`:
 
 | Setting | Environment Variable | Notes |
 |---------|---------------------|-------|
-| `remote` | `PORTOLAN_REMOTE` | |
-| `aws_profile` | `PORTOLAN_AWS_PROFILE` | |
+| `remote` | `PORTOLAN_REMOTE` | S3/GCS/Azure URL |
+| `aws_profile` | `PORTOLAN_AWS_PROFILE` | AWS credential profile |
 | `profile` | `PORTOLAN_PROFILE` | Alias for `aws_profile` |
 | `region` | `PORTOLAN_REGION` | AWS region for S3 |
 
-Environment variables override config file settings but are overridden by CLI arguments.
+### Other Settings (optional via env)
+
+Non-sensitive settings can also be set via environment variables, which override `config.yaml`:
+
+| Setting | Environment Variable |
+|---------|---------------------|
+| `backend` | `PORTOLAN_BACKEND` |
+| `pmtiles.enabled` | `PORTOLAN_PMTILES_ENABLED` |
+
+**Precedence:** CLI arguments > Environment variables > config.yaml > Defaults
 
 ### Setting Aliases
 
@@ -358,9 +753,12 @@ Some settings have aliases for convenience:
 |----------------|-------|
 | `aws_profile` | `profile` |
 
-Both names work interchangeably in config files and environment variables.
+Both `PORTOLAN_AWS_PROFILE` and `PORTOLAN_PROFILE` environment variables work interchangeably.
 
-<!-- freshness: last-verified: 2026-04-07 -->
+!!! note
+    Aliases apply to environment variables only. Credential settings (`aws_profile`, `profile`, `remote`, `region`) cannot be stored in config files per the sensitive-settings rule.
+
+<!-- freshness: last-verified: 2026-04-23 -->
 ## Metadata Enrichment
 
 In addition to `config.yaml`, Portolan supports `.portolan/metadata.yaml` for human-enrichable metadata that supplements STAC.
@@ -505,7 +903,7 @@ portolan readme --recursive
 **Catalog-level README:** When run at catalog root, generates an index README with:
 - Aggregated spatial extent (envelope of all collections)
 - Aggregated temporal extent (earliest to latest)
-- List of collections with links
+- List of collections with links (collapsible when ≥10 collections)
 
 ### Data Defaults
 

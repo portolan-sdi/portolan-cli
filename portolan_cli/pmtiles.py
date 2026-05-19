@@ -1,0 +1,671 @@
+"""PMTiles generation from GeoParquet collections.
+
+This module provides functionality to generate PMTiles (vector tiles) from
+GeoParquet files in STAC collections. PMTiles are stored as sibling files
+to the source GeoParquet, registered as collection-level assets with role
+["visual"], and tracked in versions.json for push.
+
+Requires:
+- gpio-pmtiles package (optional dependency: `pip install portolan-cli[pmtiles]`)
+- tippecanoe binary installed and in PATH
+
+Usage:
+    from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+    result = generate_pmtiles_for_collection(
+        collection_path=Path("municipalities"),
+        catalog_root=Path("."),
+        force=False,
+    )
+    print(f"Generated: {len(result.generated)}, Skipped: {len(result.skipped)}")
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import shutil
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from portolan_cli.errors import PortolanError
+from portolan_cli.output import warn
+from portolan_cli.thumbnail import ThumbnailConfig, generate_vector_thumbnail, get_thumbnail_config
+
+logger = logging.getLogger(__name__)
+
+# MIME type for PMTiles (matches dataset.py)
+PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
+
+
+# --- Errors ---
+
+
+class PMTilesError(PortolanError):
+    """Base class for PMTiles-related errors."""
+
+    code = "PRTLN-PMT000"
+
+
+class PMTilesNotAvailableError(PMTilesError):
+    """Raised when gpio-pmtiles package is not installed.
+
+    Error code: PRTLN-PMT001
+    """
+
+    code = "PRTLN-PMT001"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "gpio-pmtiles package not installed. Install with: pip install portolan-cli[pmtiles]"
+        )
+
+
+class TippecanoeNotFoundError(PMTilesError):
+    """Raised when tippecanoe binary is not found in PATH.
+
+    Error code: PRTLN-PMT002
+    """
+
+    code = "PRTLN-PMT002"
+
+    def __init__(self) -> None:
+        super().__init__(
+            "tippecanoe not found in PATH. PMTiles generation requires tippecanoe. "
+            "Install: brew install tippecanoe (macOS) or apt install tippecanoe (Ubuntu)"
+        )
+
+
+class PMTilesGenerationError(PMTilesError):
+    """Raised when PMTiles generation fails.
+
+    Error code: PRTLN-PMT003
+    """
+
+    code = "PRTLN-PMT003"
+
+    def __init__(self, source_path: str, original_error: Exception) -> None:
+        super().__init__(
+            f"PMTiles generation failed for {source_path}: {original_error}",
+            source_path=source_path,
+            original_error_type=type(original_error).__name__,
+            original_error_message=str(original_error),
+        )
+        self.original_exception = original_error
+
+
+# --- Result dataclass ---
+
+
+@dataclass
+class PMTilesResult:
+    """Result of PMTiles generation for a collection.
+
+    Attributes:
+        generated: Paths to successfully generated PMTiles files.
+        skipped: Paths to PMTiles that were skipped (already exist and up-to-date).
+        failed: List of (source_path, error_message) for failed generations.
+    """
+
+    generated: list[Path] = field(default_factory=list)
+    skipped: list[Path] = field(default_factory=list)
+    failed: list[tuple[Path, str]] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        """Total number of files processed."""
+        return len(self.generated) + len(self.skipped) + len(self.failed)
+
+    @property
+    def success(self) -> bool:
+        """True if no failures occurred."""
+        return len(self.failed) == 0
+
+
+# --- Core functions ---
+
+
+def check_pmtiles_available() -> None:
+    """Check that PMTiles generation dependencies are available.
+
+    Raises:
+        PMTilesNotAvailableError: If gpio-pmtiles is not installed.
+        TippecanoeNotFoundError: If tippecanoe is not in PATH.
+    """
+    # Check for gpio-pmtiles
+    try:
+        import gpio_pmtiles  # type: ignore[import-untyped]  # noqa: F401
+    except ImportError as e:
+        raise PMTilesNotAvailableError() from e
+
+    # Check for tippecanoe
+    if shutil.which("tippecanoe") is None:
+        raise TippecanoeNotFoundError()
+
+
+def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
+    """Find all GeoParquet assets in a collection.
+
+    Args:
+        collection_path: Path to collection directory.
+
+    Returns:
+        List of (asset_key, asset_path) tuples for GeoParquet assets.
+    """
+    collection_json_path = collection_path / "collection.json"
+    if not collection_json_path.exists():
+        return []
+
+    data = json.loads(collection_json_path.read_text())
+    assets = data.get("assets", {})
+
+    geoparquet_assets = []
+    for key, asset in assets.items():
+        href = asset.get("href", "")
+        media_type = asset.get("type", "")
+
+        # Check if it's a GeoParquet asset
+        is_geoparquet = (
+            media_type == "application/vnd.apache.parquet"
+            or media_type == "application/x-parquet"
+            or href.endswith(".parquet")
+        )
+
+        # Skip stac-items parquet (that's metadata, not geodata)
+        roles = asset.get("roles", [])
+        if "stac-items" in roles:
+            continue
+
+        if is_geoparquet:
+            # Resolve href relative to collection
+            if href.startswith("./"):
+                href = href[2:]
+            asset_path = collection_path / href
+            if asset_path.exists():
+                geoparquet_assets.append((key, asset_path))
+
+    return geoparquet_assets
+
+
+def _should_generate(parquet_path: Path, pmtiles_path: Path, force: bool) -> bool:
+    """Determine if PMTiles should be generated.
+
+    Args:
+        parquet_path: Path to source GeoParquet file.
+        pmtiles_path: Path to target PMTiles file.
+        force: If True, always regenerate.
+
+    Returns:
+        True if PMTiles should be generated.
+    """
+    if force:
+        return True
+
+    if not pmtiles_path.exists():
+        return True
+
+    # Regenerate if source is newer than target
+    return parquet_path.stat().st_mtime > pmtiles_path.stat().st_mtime
+
+
+def generate_pmtiles(
+    parquet_path: Path,
+    pmtiles_path: Path,
+    *,
+    min_zoom: int | None = None,
+    max_zoom: int | None = None,
+    layer: str | None = None,
+    bbox: str | None = None,
+    where: str | None = None,
+    include_cols: str | None = None,
+    precision: int = 6,
+    attribution: str | None = None,
+    src_crs: str | None = None,
+) -> None:
+    """Generate a single PMTiles file from GeoParquet.
+
+    Args:
+        parquet_path: Path to source GeoParquet file.
+        pmtiles_path: Path to output PMTiles file.
+        min_zoom: Minimum zoom level (None = auto-detect).
+        max_zoom: Maximum zoom level (None = auto-detect).
+        layer: Layer name in PMTiles (None = use filename).
+        bbox: Bounding box filter as "minx,miny,maxx,maxy".
+        where: SQL WHERE clause for filtering features.
+        include_cols: Comma-separated columns to include in tiles.
+        precision: Coordinate decimal precision (default: 6).
+        attribution: Attribution HTML for tiles.
+        src_crs: Override source CRS if metadata is incorrect.
+
+    Raises:
+        PMTilesNotAvailableError: If gpio-pmtiles not installed.
+        TippecanoeNotFoundError: If tippecanoe not in PATH.
+        PMTilesGenerationError: If generation fails.
+    """
+    check_pmtiles_available()
+
+    from gpio_pmtiles import create_pmtiles_from_geoparquet
+
+    try:
+        create_pmtiles_from_geoparquet(
+            input_path=str(parquet_path),
+            output_path=str(pmtiles_path),
+            min_zoom=min_zoom,
+            max_zoom=max_zoom,
+            layer=layer,
+            bbox=bbox,
+            where=where,
+            include_cols=include_cols,
+            precision=precision,
+            attribution=attribution,
+            src_crs=src_crs,
+        )
+    except Exception as e:
+        raise PMTilesGenerationError(str(parquet_path), e) from e
+
+
+def _write_default_style_for_geoparquet(
+    parquet_path: Path,
+    layer_name: str,
+    collection_path: Path,
+    pmtiles_relative_path: str,
+    catalog_path: Path | None = None,
+) -> Path | None:
+    """Write a default style file for a PMTiles asset.
+
+    Args:
+        parquet_path: Path to source GeoParquet (for geometry type detection).
+        layer_name: Layer name in the PMTiles.
+        collection_path: Path to the collection directory.
+        pmtiles_relative_path: PMTiles path relative to collection (e.g., "data.pmtiles").
+        catalog_path: Optional catalog path for loading style config.
+
+    Returns:
+        Path to the written style file, or None if skipped.
+    """
+    # Check existence before expensive metadata extraction
+    default_path = collection_path / "styles" / "default.json"
+    if default_path.exists():
+        return None
+
+    try:
+        from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
+        from portolan_cli.style import (
+            VectorStyleConfig,
+            get_vector_style_config,
+            write_default_style,
+        )
+    except ImportError:
+        logger.debug("Style dependencies not available")
+        return None
+
+    try:
+        metadata = extract_geoparquet_metadata(parquet_path)
+        geometry_type = metadata.geometry_type
+        if not geometry_type:
+            logger.debug("No geometry type found in %s", parquet_path)
+            return None
+
+        config = get_vector_style_config(catalog_path) if catalog_path else VectorStyleConfig()
+
+        return write_default_style(
+            collection_path=collection_path,
+            geometry_type=geometry_type,
+            source_layer=layer_name,
+            pmtiles_relative_path=pmtiles_relative_path,
+            config=config,
+        )
+    except Exception as e:
+        logger.debug("Failed to write default style for %s: %s", parquet_path, e)
+        return None
+
+
+def add_pmtiles_asset_to_collection(
+    collection_path: Path,
+    parquet_key: str,
+    pmtiles_href: str,
+    *,
+    extra_properties: dict[str, Any] | None = None,
+) -> None:
+    """Add PMTiles asset to collection.json.
+
+    Adds a collection-level asset with role ["visual"] for the PMTiles file.
+    The asset key is derived from the source parquet key with "-tiles" suffix.
+
+    Args:
+        collection_path: Path to collection directory.
+        parquet_key: Asset key of the source GeoParquet.
+        pmtiles_href: Relative href to PMTiles file (e.g., "./data.pmtiles").
+        extra_properties: Additional properties to add to the asset.
+
+    Raises:
+        FileNotFoundError: If collection.json doesn't exist.
+    """
+    collection_json_path = collection_path / "collection.json"
+    if not collection_json_path.exists():
+        raise FileNotFoundError(f"collection.json not found in {collection_path}")
+
+    data = json.loads(collection_json_path.read_text())
+    assets = data.get("assets", {})
+
+    # Generate asset key from parquet key
+    pmtiles_key = f"{parquet_key}-tiles"
+
+    # Get title from source asset if available
+    source_asset = assets.get(parquet_key, {})
+    source_title = source_asset.get("title", parquet_key)
+
+    # Check if already exists - update extra properties if changed, otherwise skip
+    if pmtiles_key in assets:
+        existing = assets[pmtiles_key]
+        needs_update = False
+
+        # Update extra properties if provided
+        if extra_properties:
+            for key, value in extra_properties.items():
+                if existing.get(key) != value:
+                    existing[key] = value
+                    needs_update = True
+
+        if needs_update:
+            collection_json_path.write_text(json.dumps(data, indent=2))
+        return
+
+    asset_dict: dict[str, Any] = {
+        "href": pmtiles_href,
+        "type": PMTILES_MEDIA_TYPE,
+        "title": f"{source_title} (vector tiles)",
+        "roles": ["visual"],
+    }
+
+    # Add any extra properties
+    if extra_properties:
+        asset_dict.update(extra_properties)
+
+    assets[pmtiles_key] = asset_dict
+    data["assets"] = assets
+
+    collection_json_path.write_text(json.dumps(data, indent=2))
+
+
+def add_thumbnail_asset_to_collection(
+    collection_path: Path,
+    pmtiles_key: str,
+    thumbnail_path: Path,
+) -> None:
+    """Add thumbnail asset to collection.json.
+
+    Args:
+        collection_path: Path to collection directory.
+        pmtiles_key: Asset key of the PMTiles file (thumbnail key will be pmtiles_key + "-thumbnail").
+        thumbnail_path: Path to thumbnail file.
+    """
+    collection_json_path = collection_path / "collection.json"
+    if not collection_json_path.exists():
+        return
+
+    data = json.loads(collection_json_path.read_text())
+    assets = data.get("assets", {})
+
+    thumb_key = f"{pmtiles_key}-thumbnail"
+    thumb_href = f"./{thumbnail_path.name}"
+
+    # Get title from PMTiles asset if available
+    pmtiles_asset = assets.get(pmtiles_key, {})
+    pmtiles_title = pmtiles_asset.get("title", pmtiles_key)
+
+    assets[thumb_key] = {
+        "href": thumb_href,
+        "type": "image/jpeg",
+        "title": f"{pmtiles_title} (thumbnail)",
+        "roles": ["thumbnail"],
+    }
+    data["assets"] = assets
+
+    collection_json_path.write_text(json.dumps(data, indent=2))
+
+
+def track_pmtiles_in_versions(
+    collection_path: Path,
+    pmtiles_path: Path,
+    catalog_root: Path,
+) -> None:
+    """Track PMTiles file in versions.json.
+
+    Args:
+        collection_path: Path to collection directory.
+        pmtiles_path: Path to PMTiles file.
+        catalog_root: Path to catalog root.
+
+    Raises:
+        FileNotFoundError: If PMTiles file doesn't exist.
+    """
+    from portolan_cli.versions import (
+        Asset,
+        VersionsFile,
+        add_version,
+        parse_version,
+        read_versions,
+        write_versions,
+    )
+
+    if not pmtiles_path.exists():
+        raise FileNotFoundError(f"PMTiles file not found at {pmtiles_path}")
+
+    versions_path = collection_path / "versions.json"
+
+    # If no versions.json, create a minimal one
+    if not versions_path.exists():
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version=None,
+            versions=[],
+        )
+    else:
+        versions_file = read_versions(versions_path)
+
+    # Compute checksum and stats (stream in chunks to avoid OOM on large files)
+    stat = pmtiles_path.stat()
+    hasher = hashlib.sha256()
+    with open(pmtiles_path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
+            hasher.update(chunk)
+    sha256 = hasher.hexdigest()
+
+    # Href is relative to catalog root
+    try:
+        rel_path = pmtiles_path.relative_to(catalog_root)
+    except ValueError:
+        # Fallback if not relative
+        rel_path = pmtiles_path.relative_to(collection_path.parent)
+
+    pmtiles_asset = Asset(
+        sha256=sha256,
+        size_bytes=stat.st_size,
+        href=rel_path.as_posix(),
+        mtime=stat.st_mtime,
+    )
+
+    # Determine next version
+    if versions_file.current_version:
+        major, minor, patch = parse_version(versions_file.current_version)
+        new_version = f"{major}.{minor}.{patch + 1}"
+    else:
+        new_version = "1.0.0"
+
+    # Add version with pmtiles asset
+    updated = add_version(
+        versions_file,
+        version=new_version,
+        assets={pmtiles_path.name: pmtiles_asset},
+        breaking=False,
+        message=f"Generated PMTiles: {pmtiles_path.name}",
+    )
+
+    write_versions(versions_path, updated)
+
+
+def generate_pmtiles_for_collection(
+    collection_path: Path,
+    catalog_root: Path,
+    *,
+    force: bool = False,
+    min_zoom: int | None = None,
+    max_zoom: int | None = None,
+    layer: str | None = None,
+    bbox: str | None = None,
+    where: str | None = None,
+    include_cols: str | None = None,
+    precision: int = 6,
+    attribution: str | None = None,
+    src_crs: str | None = None,
+) -> PMTilesResult:
+    """Generate PMTiles for all GeoParquet assets in a collection.
+
+    For each GeoParquet asset in collection.json, generates a sibling PMTiles
+    file if it doesn't exist or if the source is newer. Updates collection.json
+    with PMTiles assets and tracks them in versions.json.
+
+    Args:
+        collection_path: Path to collection directory.
+        catalog_root: Path to catalog root.
+        force: If True, regenerate even if PMTiles exists and is up-to-date.
+        min_zoom: Minimum zoom level (None = auto-detect via tippecanoe).
+        max_zoom: Maximum zoom level (None = auto-detect via tippecanoe).
+        layer: Layer name in PMTiles (None = use filename).
+        bbox: Bounding box filter as "minx,miny,maxx,maxy".
+        where: SQL WHERE clause for filtering features.
+        include_cols: Comma-separated columns to include in tiles.
+        precision: Coordinate decimal precision (default: 6).
+        attribution: Attribution HTML for tiles.
+        src_crs: Override source CRS if metadata is incorrect.
+
+    Returns:
+        PMTilesResult with generated, skipped, and failed counts.
+
+    Raises:
+        PMTilesNotAvailableError: If gpio-pmtiles not installed.
+        TippecanoeNotFoundError: If tippecanoe not in PATH.
+    """
+    # Check dependencies upfront
+    check_pmtiles_available()
+
+    result = PMTilesResult()
+
+    # Find all GeoParquet assets
+    geoparquet_assets = _find_geoparquet_assets(collection_path)
+
+    for asset_key, parquet_path in geoparquet_assets:
+        pmtiles_path = parquet_path.with_suffix(".pmtiles")
+
+        # Compute href relative to collection (preserves subdirectory structure)
+        # Use as_posix() for STAC-compliant forward slashes on all platforms
+        try:
+            pmtiles_rel = pmtiles_path.relative_to(collection_path)
+            pmtiles_href = f"./{pmtiles_rel.as_posix()}"
+        except ValueError:
+            pmtiles_href = f"./{pmtiles_path.name}"
+
+        # Determine layer name (Issue #13)
+        layer_name = layer if layer else parquet_path.stem
+
+        # Compute collection-relative PMTiles path for style source URLs
+        try:
+            pmtiles_col_rel = pmtiles_path.relative_to(collection_path).as_posix()
+        except ValueError:
+            pmtiles_col_rel = pmtiles_path.name
+
+        if not _should_generate(parquet_path, pmtiles_path, force):
+            # Ensure asset is registered/updated in collection.json even when skipping
+            add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
+            # Ensure default style exists even when PMTiles generation is skipped
+            _write_default_style_for_geoparquet(
+                parquet_path=parquet_path,
+                layer_name=layer_name,
+                collection_path=collection_path,
+                pmtiles_relative_path=pmtiles_col_rel,
+                catalog_path=catalog_root,
+            )
+            result.skipped.append(pmtiles_path)
+            continue
+
+        # Track success to clean up partial files on any failure (Issue #385)
+        # Using finally ensures cleanup even on KeyboardInterrupt/SystemExit
+        generation_succeeded = False
+        try:
+            # Delete existing file if forcing regeneration
+            # (tippecanoe requires this since it doesn't have a --force option)
+            if force and pmtiles_path.exists():
+                pmtiles_path.unlink()
+
+            generate_pmtiles(
+                parquet_path,
+                pmtiles_path,
+                min_zoom=min_zoom,
+                max_zoom=max_zoom,
+                layer=layer,
+                bbox=bbox,
+                where=where,
+                include_cols=include_cols,
+                precision=precision,
+                attribution=attribution,
+                src_crs=src_crs,
+            )
+
+            # Register asset in collection.json (Issue #13)
+            add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
+
+            # Track in versions.json
+            track_pmtiles_in_versions(collection_path, pmtiles_path, catalog_root)
+
+            result.generated.append(pmtiles_path)
+            generation_succeeded = True
+
+            # Generate default style file (ADR-0045)
+            _write_default_style_for_geoparquet(
+                parquet_path=parquet_path,
+                layer_name=layer_name,
+                collection_path=collection_path,
+                pmtiles_relative_path=pmtiles_col_rel,
+                catalog_path=catalog_root,
+            )
+
+        except PMTilesGenerationError as e:
+            result.failed.append((parquet_path, str(e)))
+        except Exception as e:
+            result.failed.append((parquet_path, f"Unexpected error: {e}"))
+        finally:
+            # Clean up partial output to prevent phantom assets (Issue #385)
+            # missing_ok=True avoids TOCTOU race condition
+            if not generation_succeeded and pmtiles_path.exists():
+                pmtiles_path.unlink(missing_ok=True)
+                warn(f"Cleaned up partial file after failure: {pmtiles_path.name}")
+
+        # Generate thumbnail separately - failure shouldn't affect PMTiles success (Issue #13)
+        if generation_succeeded:
+            try:
+                thumb_config = (
+                    get_thumbnail_config(catalog_root) if catalog_root else ThumbnailConfig()
+                )
+                if thumb_config.enabled:
+                    thumb_path = generate_vector_thumbnail(
+                        pmtiles_path=pmtiles_path,
+                        geoparquet_path=parquet_path,  # fallback
+                        config=thumb_config,
+                    )
+                    # Register thumbnail as asset so it's tracked in STAC
+                    if thumb_path:
+                        pmtiles_key = f"{asset_key}-tiles"
+                        add_thumbnail_asset_to_collection(collection_path, pmtiles_key, thumb_path)
+            except Exception as e:
+                logger.warning("Thumbnail generation failed for %s: %s", pmtiles_path.name, e)
+
+    # Discover and register style assets (ADR-0045)
+    from portolan_cli.style import discover_styles, register_style_assets
+
+    styles = discover_styles(collection_path)
+    register_style_assets(collection_path, styles)
+
+    return result

@@ -1,0 +1,24 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.0.0",
+  "id": "recursive-invalid-catalog",
+  "description": "Catalog with invalid nested item for recursive validation testing",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "child",
+      "href": "./bad-collection/collection.json",
+      "type": "application/json",
+      "title": "Bad Collection"
+    }
+  ]
+}

@@ -201,6 +201,7 @@ cython_debug/
 # These are created during testing but should not be committed to the repository
 .portolan/
 catalog.json
+!tests/fixtures/**/catalog.json
 versions.json
 
 # PyPI configuration file
@@ -226,3 +227,5 @@ specs/
 
 # Local Claude context (machine-specific, not for git)
 claude.local.md
+.grepai/
+mutants/

@@ -353,8 +353,14 @@ class TestSyncFlagPassthrough:
             assert call_kwargs.get("profile") == "production"
 
     @pytest.mark.integration
-    def test_sync_reads_aws_profile_from_config(self, managed_catalog: Path) -> None:
-        """Sync should read aws_profile from .portolan/config.yaml when --profile not specified."""
+    def test_sync_reads_aws_profile_from_env(self, managed_catalog: Path) -> None:
+        """Sync should read aws_profile from PORTOLAN_AWS_PROFILE when --profile not specified.
+
+        Note: aws_profile is a sensitive setting and cannot be set in config.yaml (Issue #356).
+        """
+        import os
+        from unittest.mock import patch as mock_patch
+
         from portolan_cli.cli import cli
         from portolan_cli.pull import PullResult
         from portolan_cli.push import PushResult
@@ -362,11 +368,7 @@ class TestSyncFlagPassthrough:
 
         runner = CliRunner()
 
-        # Set aws_profile in config.yaml
-        config_file = managed_catalog / ".portolan" / "config.yaml"
-        config_file.write_text("remote: s3://test-bucket/catalog\naws_profile: config-profile\n")
-
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with mock_patch("portolan_cli.sync.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=True,
                 pull_result=PullResult(
@@ -387,21 +389,29 @@ class TestSyncFlagPassthrough:
                 errors=[],
             )
 
-            runner.invoke(
-                cli,
-                [
-                    "sync",
-                    "--collection",
-                    "demographics",
-                    "--catalog",
-                    str(managed_catalog),
-                ],
-                catch_exceptions=False,
-            )
+            # Set profile via env var (Issue #356: sensitive settings)
+            with mock_patch.dict(
+                os.environ,
+                {
+                    "PORTOLAN_REMOTE": "s3://test-bucket/catalog",
+                    "PORTOLAN_AWS_PROFILE": "env-profile",
+                },
+            ):
+                runner.invoke(
+                    cli,
+                    [
+                        "sync",
+                        "--collection",
+                        "demographics",
+                        "--catalog",
+                        str(managed_catalog),
+                    ],
+                    catch_exceptions=False,
+                )
 
-            # Should read profile from config, not use hardcoded "default"
+            # Should read profile from env var
             call_kwargs = mock_sync.call_args.kwargs
-            assert call_kwargs.get("profile") == "config-profile"
+            assert call_kwargs.get("profile") == "env-profile"
 
 
 # =============================================================================

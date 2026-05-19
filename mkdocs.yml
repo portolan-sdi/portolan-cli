@@ -77,8 +77,10 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Guides:
+    - Version Management: guides/version-management.md
     - AI Skills: guides/skills.md
     - Extracting from ArcGIS: guides/extract-arcgis.md
+    - Extracting from WFS: guides/extract-wfs.md
     - Iceberg Backend: guides/iceberg.md
     - Metadata Defaults: guides/metadata-defaults.md
     - Nested Catalogs: guides/nested-catalogs.md

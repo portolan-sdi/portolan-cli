@@ -218,16 +218,20 @@ def validate_bbox_crs(
     if crs is None:
         return None
 
-    # Check if CRS is WGS84 (no mismatch possible)
+    # Check if CRS is WGS84 or another geographic CRS (no mismatch possible)
     try:
         parsed_crs = CRS.from_user_input(crs)
         if _is_wgs84(parsed_crs):
+            return None
+        # Geographic CRSes like ETRS89 (EPSG:4258) naturally have coordinates
+        # in the same lon/lat range as WGS84 — not a mismatch.
+        if parsed_crs.is_geographic:
             return None
     except (CRSError, TypeError):
         # Invalid CRS, can't validate
         return None
 
-    # CRS is NOT WGS84 - check if coordinates look like WGS84
+    # CRS is projected - check if coordinates look like WGS84
     if is_likely_wgs84_bbox(bbox):
         return CRSMismatchWarning(
             declared_crs=crs,

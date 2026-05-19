@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -110,17 +110,22 @@ class TestAddFilesContinuesOnErrors:
             collection_id: str,
             item_id: str | None = None,
             item_datetime: datetime | None = None,
-        ) -> DatasetInfo:
+            force: bool = False,
+            reconvert: bool = False,
+        ) -> MagicMock:
             nonlocal call_count
             call_count += 1
             if "bad" in path.name:
                 raise ValueError("missing bounding box")
-            return DatasetInfo(
+            # Return a MagicMock simulating PreparedDataset (Issue #383 requires
+            # is_collection_level_asset to be set for source_to_item_dir mapping)
+            return MagicMock(
                 item_id="good",
                 collection_id="collection",
                 format_type=FormatType.VECTOR,
                 bbox=[-122.5, 37.5, -122.0, 38.0],
-                asset_paths=["good.parquet"],
+                asset_files={"good.parquet": (path, "abc123")},
+                is_collection_level_asset=False,
             )
 
         # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
@@ -166,15 +171,19 @@ class TestAddFilesContinuesOnErrors:
             collection_id: str,
             item_id: str | None = None,
             item_datetime: datetime | None = None,
-        ) -> DatasetInfo:
+            force: bool = False,
+            reconvert: bool = False,
+        ) -> MagicMock:
             if "file1" in path.name:
                 raise FileNotFoundError("Source file disappeared")
-            return DatasetInfo(
+            # Return MagicMock simulating PreparedDataset (Issue #383)
+            return MagicMock(
                 item_id="file2",
                 collection_id="collection",
                 format_type=FormatType.VECTOR,
                 bbox=[0, 0, 1, 1],
-                asset_paths=["file2.parquet"],
+                asset_files={"file2.parquet": (path, "abc123")},
+                is_collection_level_asset=False,
             )
 
         # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
@@ -213,6 +222,8 @@ class TestAddFilesContinuesOnErrors:
             collection_id: str,
             item_id: str | None = None,
             item_datetime: datetime | None = None,
+            force: bool = False,
+            reconvert: bool = False,
         ) -> DatasetInfo:
             raise ValueError(f"Error processing {path.name}")
 
@@ -426,15 +437,17 @@ class TestAddFilesReturnContract:
         f.write_text('{"type": "FeatureCollection", "features": []}')
 
         # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Return MagicMock simulating PreparedDataset (Issue #383)
         with (
             patch(
                 "portolan_cli.dataset.prepare_dataset",
-                return_value=DatasetInfo(
+                return_value=MagicMock(
                     item_id="test",
                     collection_id="collection",
                     format_type=FormatType.VECTOR,
                     bbox=[0, 0, 1, 1],
-                    asset_paths=["test.parquet"],
+                    asset_files={"test.parquet": (f, "abc123")},
+                    is_collection_level_asset=False,
                 ),
             ),
             patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,

@@ -142,20 +142,18 @@ class TestRetryWithBackoff:
         operation.assert_called_with("arg1", "arg2", kwarg1="value1")
 
     def test_only_retries_specified_exceptions(self) -> None:
-        """Should only retry on specified exception types."""
+        """Should only retry on specified exception types, re-raise others."""
         operation = MagicMock(side_effect=TypeError("wrong type"))
 
-        with patch("time.sleep"):
-            result = retry_with_backoff(
+        with patch("time.sleep"), pytest.raises(TypeError, match="wrong type"):
+            retry_with_backoff(
                 operation,
                 RetryConfig(max_attempts=3),
                 retry_on=(ValueError,),  # Only retry ValueError
             )
 
-        # Should fail immediately, not retry
-        assert result.success is False
-        assert result.attempts == 1
-        assert isinstance(result.error, TypeError)
+        # Should fail immediately on first attempt, re-raising the exception
+        operation.assert_called_once()
 
     def test_retries_all_exceptions_by_default(self) -> None:
         """Should retry all exceptions by default."""

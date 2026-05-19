@@ -6,6 +6,7 @@ These tests verify the CLI behavior of the --workers flag for parallel push.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,13 +16,19 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 from portolan_cli.push import PushAllResult, PushResult
 
+# Remote URL for tests - set via env var (Issue #356: sensitive settings)
+TEST_REMOTE = "s3://test/catalog"
+
 
 def _setup_catalog_with_collections(path: Path, collections: list[str]) -> None:
-    """Helper to create a catalog with multiple collections."""
-    # Create .portolan/config.yaml
+    """Helper to create a catalog with multiple collections.
+
+    Note: remote must be set via PORTOLAN_REMOTE env var (Issue #356).
+    """
+    # Create .portolan/config.yaml (no sensitive settings)
     portolan_dir = path / ".portolan"
     portolan_dir.mkdir(parents=True, exist_ok=True)
-    (portolan_dir / "config.yaml").write_text("version: '1.0'\nremote: s3://test/catalog\n")
+    (portolan_dir / "config.yaml").write_text("version: '1.0'\n")
 
     # Create collections with versions.json
     for name in collections:
@@ -56,7 +63,8 @@ class TestPushWorkersFlag:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", ".", "--workers", "4"])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", ".", "--workers", "4"])
 
             # Should not fail due to unknown option
             assert result.exit_code == 0, f"Failed: {result.output}"
@@ -79,7 +87,8 @@ class TestPushWorkersFlag:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", ".", "-w", "4"])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", ".", "-w", "4"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
 
@@ -101,7 +110,8 @@ class TestPushWorkersFlag:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", ".", "--workers", "8"])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", ".", "--workers", "8"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             # Verify workers=8 was passed
@@ -127,7 +137,8 @@ class TestPushWorkersFlag:
                 total_versions_pushed=1,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", "."])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", "."])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             # Verify workers=None was passed (auto-detect)
@@ -153,9 +164,10 @@ class TestPushWorkersFlag:
             )
 
             # When --collection is specified, single push is called with concurrency
-            result = runner.invoke(
-                cli, ["push", "--catalog", ".", "--collection", "col1", "--concurrency", "4"]
-            )
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(
+                    cli, ["push", "--catalog", ".", "--collection", "col1", "--concurrency", "4"]
+                )
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             # Single collection push uses --concurrency for file-level parallelism
@@ -201,7 +213,8 @@ class TestPushWorkersFlag:
                 total_versions_pushed=2,
             )
 
-            result = runner.invoke(cli, ["push", "--catalog", ".", "--workers", "1"])
+            with patch.dict(os.environ, {"PORTOLAN_REMOTE": TEST_REMOTE}):
+                result = runner.invoke(cli, ["push", "--catalog", ".", "--workers", "1"])
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             mock_push_all.assert_called_once()
