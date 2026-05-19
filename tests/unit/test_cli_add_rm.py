@@ -219,6 +219,42 @@ class TestAdd:
             assert "no .portolan/config.yaml found" in result.output.lower()
 
     @pytest.mark.unit
+    def test_add_raster_at_collection_root_reports_specific_reason(
+        self, runner: CliRunner
+    ) -> None:
+        """A raster file at <collection>/file.tif (no item subdir) is skipped,
+        and the warning identifies the specific rule — *raster needs item
+        subdirectory* — rather than the misleading generic 'catalog root'
+        message that the warn used to print for all infer-id failures.
+        """
+        with runner.isolated_filesystem() as temp_dir:
+            temp_path = Path(temp_dir)
+            setup_catalog(temp_path)
+
+            collection_dir = temp_path / "elevation"
+            collection_dir.mkdir()
+            # TIF directly under collection/, no item subdirectory
+            (collection_dir / "scene.tif").write_bytes(b"")
+
+            result = runner.invoke(
+                cli,
+                ["add", "elevation/"],
+                catch_exceptions=False,
+            )
+
+            # The file is skipped, but the message must point at the actual
+            # rule (per ADR-0031): raster needs collection/item/ structure.
+            assert "Skipping" in result.output
+            assert "scene.tif" in result.output
+            # Specific reason from infer_nested_collection_id, not the old
+            # generic "files at catalog root" wording.
+            assert (
+                "collection/item" in result.output
+                or "Raster" in result.output
+                or "item-level" in result.output
+            ), f"warning should explain the raster item-subdir rule; got:\n{result.output}"
+
+    @pytest.mark.unit
     def test_add_with_item_id_override(self, runner: CliRunner) -> None:
         """add --item-id overrides automatic item ID derivation."""
         with runner.isolated_filesystem() as temp_dir:

@@ -2766,13 +2766,10 @@ def _collect_files_for_add(
             if coll_id is None:
                 try:
                     coll_id = infer_nested_collection_id(file_path, catalog_root)
-                except ValueError:
+                except ValueError as err:
                     from portolan_cli.output import warn as warn_output
 
-                    warn_output(
-                        f"Skipping {file_path.name}: files at catalog root must be "
-                        "in a collection subdirectory"
-                    )
+                    warn_output(f"Skipping {file_path.name}: {err}")
                     skipped.append(file_path)
                     continue
 
