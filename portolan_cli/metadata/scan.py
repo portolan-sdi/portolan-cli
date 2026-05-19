@@ -18,6 +18,7 @@ items-needing-JSON (issue #345).
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -114,6 +115,11 @@ def _scan_collection(collection_dir: Path, report: MetadataReport) -> None:
         href = _href(asset)
         if not href:
             continue
+        if _is_scheme_qualified(href):
+            # Asset lives outside the local filesystem (e.g. iceberg's
+            # file:///warehouse, or a remote gs://, s3://, https:// asset).
+            # No local existence or freshness check applies.
+            continue
         asset_path = (collection_dir / href).resolve()
         registered.add(asset_path)
         if not asset_path.exists():
@@ -208,6 +214,8 @@ def _scan_item(
     for asset in item.get("assets", {}).values():
         href = _href(asset)
         if not href:
+            continue
+        if _is_scheme_qualified(href):
             continue
         asset_path = (item_dir / href).resolve()
         registered.add(asset_path)
@@ -360,6 +368,20 @@ def _href(asset: Any) -> str | None:
     if not isinstance(href, str):
         return None
     return href[2:] if href.startswith("./") else href
+
+
+_URI_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
+
+
+def _is_scheme_qualified(href: str) -> bool:
+    """True if href is an absolute URI (file://, gs://, s3://, https://).
+
+    Such hrefs reference resources outside the catalog's local filesystem
+    (or, in iceberg's case, a backend-managed warehouse that the scanner
+    has no business validating). They must not be path-joined to a
+    collection/item directory.
+    """
+    return bool(_URI_SCHEME_RE.match(href))
 
 
 def _safe_read_json(path: Path) -> dict[str, Any] | None:

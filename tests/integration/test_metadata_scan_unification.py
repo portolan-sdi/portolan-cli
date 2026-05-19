@@ -396,6 +396,51 @@ class TestVectorCollectionLevelAsset:
         )
         assert report.passed, f"scan should pass cleanly, got: {report.to_dict()}"
 
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "href",
+        [
+            "file:///nonexistent/warehouse/portolake/agriculture",
+            "gs://bucket/warehouse/portolake/agriculture",
+            "s3://bucket/warehouse/portolake/agriculture",
+            "https://example.com/data/airports.parquet",
+        ],
+    )
+    def test_collection_asset_with_scheme_qualified_href_not_missing(
+        self,
+        tmp_path: Path,
+        href: str,
+    ) -> None:
+        """An asset whose href is a scheme-qualified URI (file://, gs://,
+        s3://, https://) must not be path-joined to the collection dir and
+        reported MISSING. The iceberg backend writes ``file:///abs/path``
+        for its table-location asset; remote-hosted STAC assets use other
+        schemes. The scanner only owns the local filesystem — non-local
+        hrefs are out of scope.
+        """
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "agriculture"
+        collection_dir.mkdir()
+        _write_collection_json(
+            collection_dir,
+            collection_id="agriculture",
+            extra_assets={
+                "data": {
+                    "href": href,
+                    "type": "application/x-iceberg",
+                    "roles": ["data"],
+                }
+            },
+        )
+
+        report = scan_catalog_metadata(catalog_dir)
+        assert report.missing_count == 0, (
+            f"scheme-qualified href {href!r} wrongly flagged MISSING: "
+            f"{report.to_dict()}"
+        )
+
 
 # Helpers shared by F1/F3/F4 tests below.
 
