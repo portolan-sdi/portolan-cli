@@ -113,6 +113,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0043](context/shared/adr/0043-style-and-thumbnail-architecture.md) | Style/thumbnail: inline in STAC, Mapbox GL spec, basemaps for vectors only |
 | [0044](context/shared/adr/0044-consumption-guides-architecture.md) | Consumption guides: DuckDB + Python in README, skill for advanced cases |
 | [0045](context/shared/adr/0045-styles-as-stac-assets.md) | Styles as standalone STAC assets (supersedes ADR-0043 style storage) |
+| [0046](context/shared/adr/0046-dual-catalog-stac-iceberg.md) | Dual serialization for the STAC catalog: JSON files and static Iceberg REST (proposed) |
 
 ## Common Commands
 
