@@ -3207,6 +3207,10 @@ def add_cmd(
     # Resolve and validate catalog root (git-style auto-detection)
     catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
 
+    # Load .env so PORTOLAN_REMOTE (and other sensitive settings) reach the
+    # versioning backend's post-add hooks (e.g. iceberg STAC upload).
+    load_dotenv_and_warn_sensitive(catalog_root)
+
     # Validate --item-id usage (only valid with single file, not directory)
     _validate_item_id_usage(item_id, paths, use_json)
 

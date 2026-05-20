@@ -49,8 +49,11 @@ def create_catalog(catalog_root: Path | None = None) -> Catalog:
     """
     external = _get_external_config()
     if external and "type" in external and external["type"] != "sql":
-        # Non-SQLite catalog (e.g., REST/BigLake) — use external config only
-        return load_catalog(CATALOG_NAME)
+        # Force snapshot-loading-mode=all so REST catalogs that advertise
+        # 'refs' (e.g. BigLake) still return historical snapshots — required
+        # by list_versions/rollback/prune to see prior portolake.version
+        # summaries, not just the current ref.
+        return load_catalog(CATALOG_NAME, **{"snapshot-loading-mode": "all"})
 
     # SQLite or no external config — use local defaults
     defaults = _default_properties(catalog_root)
