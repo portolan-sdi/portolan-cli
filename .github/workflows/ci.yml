@@ -78,11 +78,29 @@ jobs:
       - name: Run bandit security scan
         run: uv run bandit -r portolan_cli -c pyproject.toml
 
-      - name: Audit dependencies
-        # CVE-2026-4539: pygments 2.19.x ReDoS in AdlLexer (CVSS 3.3, local only)
-        # No upstream fix available. Track: https://github.com/portolan-sdi/portolan-cli/issues/285
-        # CVE-2026-3219, CVE-2026-6357: pip 26.0.1 vulnerabilities (fix in 26.1, uv-managed)
-        run: uv run pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-6357
+      - name: Audit dependencies (runtime + extras only)
+        # Audit only what we ship: core runtime deps plus the publishable extras
+        # (iceberg, pmtiles, thumbnails). Dev-group deps (moto, pytest, pip-audit
+        # itself...) and doc-build deps (mkdocs, pymdown-extensions...) are excluded
+        # because they never reach users via the wheel.
+        #
+        # Ignored advisories (kept minimal, each with rationale):
+        # - CVE-2026-4539 (pygments): ReDoS in AdlLexer, CVSS 3.3, local input only.
+        #   No upstream fix available. Track:
+        #   https://github.com/portolan-sdi/portolan-cli/issues/285
+        # - PYSEC-2024-277 (joblib / CVE-2024-34997): vendor-disputed. joblib upstream
+        #   considers NumpyArrayWrapper.read_array safe because it only deserializes
+        #   content the same process just cached (see joblib/joblib#1582, #977). No
+        #   fixed version has been or will be released. joblib is transitive via
+        #   contextily[thumbnails]; we do not import it directly.
+        run: |
+          uv export --no-dev --no-emit-project --no-hashes \
+            --extra iceberg --extra pmtiles --extra thumbnails \
+            -o /tmp/runtime-deps.txt
+          uv run pip-audit \
+            --requirement /tmp/runtime-deps.txt \
+            --ignore-vuln CVE-2026-4539 \
+            --ignore-vuln PYSEC-2024-277
 
   test:
     name: Test (Python ${{ matrix.python-version }} / ${{ matrix.os }})
