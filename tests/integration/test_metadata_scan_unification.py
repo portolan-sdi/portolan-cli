@@ -437,8 +437,7 @@ class TestVectorCollectionLevelAsset:
 
         report = scan_catalog_metadata(catalog_dir)
         assert report.missing_count == 0, (
-            f"scheme-qualified href {href!r} wrongly flagged MISSING: "
-            f"{report.to_dict()}"
+            f"scheme-qualified href {href!r} wrongly flagged MISSING: {report.to_dict()}"
         )
 
 

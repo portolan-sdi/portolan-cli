@@ -219,9 +219,7 @@ class TestAdd:
             assert "no .portolan/config.yaml found" in result.output.lower()
 
     @pytest.mark.unit
-    def test_add_raster_at_collection_root_reports_specific_reason(
-        self, runner: CliRunner
-    ) -> None:
+    def test_add_raster_at_collection_root_reports_specific_reason(self, runner: CliRunner) -> None:
         """A raster file at <collection>/file.tif (no item subdir) is skipped,
         and the warning identifies the specific rule — *raster needs item
         subdirectory* — rather than the misleading generic 'catalog root'
