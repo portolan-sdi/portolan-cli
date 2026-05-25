@@ -204,6 +204,11 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.10"
 strict = true  # Enables all strict flags at once
+# pyarrow >=24 ships py.typed but leaves pyarrow.parquet helpers untyped, so
+# strict's disallow_untyped_calls trips on every read_table/write_table/
+# ParquetFile/read_metadata/read_schema call. Scope the suppression to pyarrow
+# instead of relaxing strictness globally.
+untyped_calls_exclude = ["pyarrow"]
 
 [[tool.mypy.overrides]]
 module = ["pyarrow.*", "rasterio.*", "gitingest.*", "matplotlib.*", "pyiceberg.*", "shapely.*", "pygeohash.*"]
