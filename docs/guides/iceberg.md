@@ -25,8 +25,9 @@ pipx install portolan-cli[iceberg]
 # Initialize a catalog with the Iceberg backend
 portolan init my-catalog --backend iceberg
 
-# Add data (automatically versioned in Iceberg)
-portolan add data.parquet --collection boundaries
+# Add data (collection is inferred from the parent directory per ADR-0022;
+# there is no --collection flag — place files under the collection dir first)
+portolan add boundaries/data.parquet
 
 # Check version history
 portolan version list boundaries
@@ -98,9 +99,14 @@ export PYICEBERG_CATALOG__PORTOLAKE__WAREHOUSE=s3://my-bucket/warehouse
 
 ### Configuration Precedence
 
-1. **Environment variables** (`PYICEBERG_CATALOG__PORTOLAKE__*`)
-2. **PyIceberg config file** (`~/.pyiceberg.yaml`)
-3. **Defaults** (SQLite in `.portolan/`)
+1. **External PyIceberg config** — `PYICEBERG_CATALOG__PORTOLAKE__*` environment
+   variables and/or `~/.pyiceberg.yaml`, resolved by PyIceberg itself
+   (see [PyIceberg configuration](https://py.iceberg.apache.org/configuration/)
+   for the env-vs-YAML ordering)
+2. **Defaults** (SQLite in `.portolan/`)
+
+Portolan delegates external-config resolution to PyIceberg; it does not
+separately layer env vars over the YAML file.
 
 ## How It Works
 
@@ -129,8 +135,17 @@ Each collection maps to an Iceberg table under the `portolake` namespace: `porto
 
 For datasets with geometry columns, the backend automatically:
 
-- Adds **geohash columns** for Iceberg partition specs (datasets >= 100K rows)
-- Adds **bbox columns** (xmin, ymin, xmax, ymax) for manifest statistics
+- Adds a **geohash column** to every table with geometry. Precision is
+  auto-selected by row count: `geohash_3` (~150 km cells) for 100K–10M rows,
+  `geohash_4` (~20 km cells) otherwise.
+- Adds **bbox columns** (`bbox_xmin`, `bbox_ymin`, `bbox_xmax`, `bbox_ymax`)
+  for manifest statistics.
+- Configures an **Iceberg partition spec** on the geohash column when the
+  table has ≥100K rows. Smaller tables get the geohash column but no
+  partition spec.
+
+These derived columns are excluded from the STAC `table:columns` field and
+from the static GeoParquet export.
 
 ## Programmatic Usage
 
