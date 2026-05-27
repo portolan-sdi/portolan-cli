@@ -5,6 +5,7 @@ Phase 4: iceberg:* fields (STAC Iceberg Extension) from catalog/table state.
 """
 
 import struct
+from unittest.mock import MagicMock
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -16,7 +17,74 @@ def _make_wkb_point(x: float, y: float) -> bytes:
     return struct.pack("<BIdd", 1, 1, x, y)
 
 
+# --- Row count from snapshot metadata (issue #436) ---
+
+
+@pytest.mark.unit
+def test_row_count_reads_from_snapshot_summary_without_materializing():
+    """row_count should come from the snapshot's total-records, not a table scan.
+
+    Materializing the table (table.scan().to_arrow()) is wasteful for the large
+    datasets Iceberg targets; the count must be read from O(1) snapshot metadata.
+    """
+    from portolan_cli.backends.iceberg.stac_generator import _get_row_count
+
+    table = MagicMock()
+    table.current_snapshot.return_value.summary.additional_properties = {"total-records": "123456"}
+
+    assert _get_row_count(table) == 123456
+    # The whole point of the fix: no full materialization.
+    table.scan.assert_not_called()
+
+
+@pytest.mark.unit
+def test_row_count_zero_for_empty_table():
+    """row_count should be 0 when the table has no current snapshot (empty table)."""
+    from portolan_cli.backends.iceberg.stac_generator import _get_row_count
+
+    table = MagicMock()
+    table.current_snapshot.return_value = None
+
+    assert _get_row_count(table) == 0
+    table.scan.assert_not_called()
+
+
+@pytest.mark.unit
+def test_row_count_falls_back_when_total_records_absent():
+    """row_count should fall back to a metadata count when total-records is missing.
+
+    Not every catalog/writer populates total-records; we must still produce a
+    count rather than crash, while avoiding a full materialization.
+    """
+    from portolan_cli.backends.iceberg.stac_generator import _get_row_count
+
+    table = MagicMock()
+    table.current_snapshot.return_value.summary.additional_properties = {}
+    table.scan.return_value.count.return_value = 42
+
+    assert _get_row_count(table) == 42
+    table.scan.return_value.count.assert_called_once_with()
+
+
 # --- Phase 3: STAC Table Extension fields ---
+
+
+@pytest.mark.integration
+def test_table_row_count_empty_table_returns_zero(iceberg_catalog):
+    """table:row_count should be 0 for a table created without any data (no snapshot)."""
+    from pyiceberg.schema import Schema
+    from pyiceberg.types import LongType, NestedField
+
+    from portolan_cli.backends.iceberg.backend import NAMESPACE
+    from portolan_cli.backends.iceberg.stac_generator import generate_table_metadata
+
+    iceberg_catalog.create_namespace_if_not_exists(NAMESPACE)
+    schema = Schema(NestedField(field_id=1, name="id", field_type=LongType(), required=False))
+    table = iceberg_catalog.create_table(f"{NAMESPACE}.empty", schema=schema)
+
+    metadata = generate_table_metadata(table)
+
+    assert metadata["table:row_count"] == 0
 
 
 @pytest.mark.integration
