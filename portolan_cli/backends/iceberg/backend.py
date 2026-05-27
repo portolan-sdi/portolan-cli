@@ -377,7 +377,11 @@ class IcebergBackend:
             collection.normalize_hrefs(str(collection_dir))
             collection.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
         except Exception:
-            logger.debug("Could not update STAC extensions for collection %s", collection_id)
+            logger.warning(
+                "Could not update STAC extensions for collection %s",
+                collection_id,
+                exc_info=True,
+            )
 
         # Upload STAC metadata to remote (if configured)
         remote: str | None = context.get("remote")

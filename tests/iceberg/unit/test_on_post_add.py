@@ -6,6 +6,7 @@ combines STAC extension metadata update and remote STAC metadata upload.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -96,6 +97,39 @@ def test_on_post_add_updates_stac_extensions(iceberg_backend, parquet_file, cata
     # Extensions should be set via pystac attribute, not extra_fields
     assert STAC_TABLE_EXTENSION in collection.stac_extensions
     assert STAC_ICEBERG_EXTENSION in collection.stac_extensions
+
+
+@pytest.mark.integration
+def test_on_post_add_logs_warning_when_stac_update_fails(
+    iceberg_backend, parquet_file, catalog_with_stac, caplog
+):
+    """STAC enrichment failures must surface as a warning with traceback, not be swallowed."""
+    catalog_root, item_dir, collection = catalog_with_stac
+
+    iceberg_backend.publish(
+        collection="boundaries",
+        assets={"item1/data.parquet": str(parquet_file)},
+        schema={"columns": ["id"], "types": {"id": "int64"}, "hash": "x"},
+        breaking=False,
+        message="test",
+    )
+
+    context = _make_context(catalog_root, item_dir, collection, remote=None)
+
+    with (
+        patch(
+            "portolan_cli.backends.iceberg.stac_generator.generate_collection_metadata",
+            side_effect=RuntimeError("boom"),
+        ),
+        caplog.at_level(logging.WARNING, logger="portolan_cli.backends.iceberg.backend"),
+    ):
+        # Best-effort enrichment: the add must not fail if STAC update fails.
+        iceberg_backend.on_post_add(context)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("boundaries" in r.getMessage() for r in warnings)
+    # exc_info must be attached so the traceback reaches the logs.
+    assert any(r.exc_info is not None for r in warnings)
 
 
 @pytest.mark.integration
