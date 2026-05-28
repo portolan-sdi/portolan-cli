@@ -6,6 +6,7 @@ These tests verify that defaults from metadata.yaml are applied during
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -14,12 +15,13 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 
 
-def _data_asset_bands(item: dict) -> list[dict]:
+def _data_asset_bands(item: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the unified bands array from the item's data asset.
 
     STAC v1.1.0 places ``bands`` on the data asset, not item.properties (#437).
     """
-    return item["assets"]["data"].get("bands", [])
+    bands: list[dict[str, Any]] = item["assets"]["data"].get("bands", [])
+    return bands
 
 
 @pytest.fixture

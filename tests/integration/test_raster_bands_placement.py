@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -74,7 +75,7 @@ def float32_raster(tmp_path: Path) -> Path:
     return path
 
 
-def _add_raster(catalog_root: Path, raster: Path) -> dict:
+def _add_raster(catalog_root: Path, raster: Path) -> dict[str, Any]:
     """Run `portolan add` on a raster and return the parsed item.json."""
     item_dir = catalog_root / "imagery" / "dem-x"
     item_dir.mkdir(parents=True)
@@ -90,7 +91,8 @@ def _add_raster(catalog_root: Path, raster: Path) -> dict:
 
     item_json = item_dir / "dem-x.json"
     assert item_json.exists(), f"Expected {item_json}"
-    return json.loads(item_json.read_text())
+    item: dict[str, Any] = json.loads(item_json.read_text())
+    return item
 
 
 @pytest.mark.integration
