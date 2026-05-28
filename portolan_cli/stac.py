@@ -810,14 +810,43 @@ def _build_bands_from_metadata(metadata: object) -> list[dict[str, object]] | No
     return bands
 
 
+def _set_bands_on_data_assets(
+    item: pystac.Item,
+    bands: list[dict[str, object]],
+) -> None:
+    """Attach the STAC v1.1.0 unified ``bands`` array to the item's data asset.
+
+    Per STAC v1.1.0, ``bands`` is an asset-level field. Targets the conventional
+    primary-data asset (key ``"data"``), falling back to the first asset whose
+    roles include ``"data"``. No-op if the item has no data asset.
+
+    Args:
+        item: The STAC item whose data asset should carry the bands array.
+        bands: The unified bands array (with data_type/nodata/statistics).
+    """
+    data_asset = item.assets.get("data")
+    if data_asset is None:
+        data_asset = next(
+            (asset for asset in item.assets.values() if "data" in (asset.roles or [])),
+            None,
+        )
+    if data_asset is not None:
+        data_asset.extra_fields["bands"] = bands
+
+
 def add_raster_extension(
     item: pystac.Item,
     metadata: object,
 ) -> None:
     """Add Raster extension fields to an item from COG metadata.
 
-    Sets raster:spatial_resolution and unified bands array based on the metadata.
-    Per STAC v1.1.0: uses top-level 'bands' array instead of raster:bands.
+    Sets raster:spatial_resolution on the item and attaches the unified ``bands``
+    array to the item's data asset.
+
+    Per STAC v1.1.0, ``bands`` is an asset-level field — the core item schema
+    forbids it on ``item.properties``. Any item-level bands (carrying statistics
+    and nodata defaults applied earlier in the pipeline) are relocated onto the
+    data asset; otherwise the array is built from metadata.
 
     Args:
         item: The STAC item to add extension fields to.
@@ -832,15 +861,22 @@ def add_raster_extension(
     elif "raster:spatial_resolution" in stac_props:
         item.properties["raster:spatial_resolution"] = stac_props["raster:spatial_resolution"]
 
-    # Set unified bands array (STAC v1.1.0)
-    # Only set bands if not already present (preserve defaults applied earlier in flow)
-    if "bands" not in item.properties:
-        if "bands" in stac_props and isinstance(stac_props["bands"], list):
-            item.properties["bands"] = stac_props["bands"]
+    # STAC v1.1.0 unifies bands as an ASSET-level field; the core item schema
+    # forbids `bands` on item.properties. Relocate any item-level bands (which
+    # carry statistics/nodata applied earlier in the pipeline) onto the data
+    # asset, falling back to building the array from metadata.
+    bands: list[dict[str, object]] | None
+    item_bands = item.properties.pop("bands", None)
+    if isinstance(item_bands, list) and item_bands:
+        bands = item_bands
+    else:
+        stac_bands = stac_props.get("bands")
+        if isinstance(stac_bands, list) and stac_bands:
+            bands = stac_bands
         else:
             bands = _build_bands_from_metadata(metadata)
-            if bands is not None:
-                item.properties["bands"] = bands
+    if bands:
+        _set_bands_on_data_assets(item, bands)
 
     # Update stac_extensions if not already present
     ext_url = EXTENSION_URLS["raster"]

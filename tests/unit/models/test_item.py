@@ -357,22 +357,21 @@ class TestItemProperties:
 
     @pytest.mark.unit
     def test_cog_properties(self) -> None:
-        """Item can have COG-specific properties."""
-        # STAC v1.1.0: unified bands array (not raster:bands)
+        """Item can have COG-specific item-level properties.
+
+        Note: STAC v1.1.0 ``bands`` is an asset-level field (issue #437), so it
+        is not modeled here; raster:spatial_resolution is a valid item property.
+        """
         item = ItemModel(
             id="cog-item",
             geometry={"type": "Polygon", "coordinates": [[]]},
             bbox=[-180.0, -90.0, 180.0, 90.0],
             properties={
                 "datetime": "2024-01-15T12:00:00Z",
-                "bands": [
-                    {"name": "band_1", "data_type": "uint8", "nodata": 0},
-                    {"name": "band_2", "data_type": "uint8", "nodata": 0},
-                    {"name": "band_3", "data_type": "uint8", "nodata": 0},
-                ],
+                "raster:spatial_resolution": 30.0,
             },
             assets={},
             collection="test",
         )
 
-        assert len(item.properties["bands"]) == 3
+        assert item.properties["raster:spatial_resolution"] == 30.0

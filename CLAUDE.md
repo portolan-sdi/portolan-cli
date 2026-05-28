@@ -418,7 +418,6 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 | [geoparquet-io Windows segfault](context/shared/known-issues/geoparquet-io-windows-segfault.md) | Crashes on malformed input; test skipped on Windows |
 | [geoparquet-io macOS abort](context/shared/known-issues/geoparquet-io-macos-abort.md) | Aborts on multilayer conversion; test skipped on macOS |
 | [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
-| [STAC v1.1 bands placement](context/shared/known-issues/stac-v1.1-bands-placement.md) | Raster items put `bands` at `item.properties` instead of on assets; fails pystac validation |
 
 ## Active Technologies
 - Python 3.10+ (per pyproject.toml) + Click (CLI framework per ADR-0002) (004-json-output)

@@ -14,6 +14,14 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 
 
+def _data_asset_bands(item: dict) -> list[dict]:
+    """Return the unified bands array from the item's data asset.
+
+    STAC v1.1.0 places ``bands`` on the data asset, not item.properties (#437).
+    """
+    return item["assets"]["data"].get("bands", [])
+
+
 @pytest.fixture
 def catalog_with_defaults(tmp_path: Path) -> Path:
     """Create a catalog with metadata.yaml defaults configured."""
@@ -216,8 +224,9 @@ class TestAddWithRasterNodataDefaults:
         with open(item_json) as f:
             item = json.load(f)
 
-        # Check bands have nodata from defaults
-        bands = item["properties"].get("bands", [])
+        # Check bands have nodata from defaults (bands live on the data asset, #437)
+        bands = _data_asset_bands(item)
+        assert "bands" not in item["properties"], "bands must not be on item.properties"
         assert len(bands) == 3, f"Expected 3 bands, got {len(bands)}"
 
         for i, band in enumerate(bands):
@@ -292,7 +301,7 @@ class TestSourceNodataPreserved:
         with open(item_json) as f:
             item = json.load(f)
 
-        bands = item["properties"].get("bands", [])
+        bands = _data_asset_bands(item)
         assert len(bands) == 3
 
         # Source nodata (255) should be preserved, NOT replaced by default (0)
@@ -500,6 +509,7 @@ class TestHierarchyOverride:
         assert "2025" in item["properties"]["datetime"]
 
         # Should use catalog nodata (255) since collection didn't override it
-        bands = item["properties"].get("bands", [])
+        bands = _data_asset_bands(item)
+        assert len(bands) == 3
         for band in bands:
             assert band.get("nodata") == 255.0

@@ -1042,11 +1042,27 @@ class TestRasterExtension:
         assert item.properties.get("raster:spatial_resolution") == 10.0
 
     @pytest.mark.unit
-    def test_add_raster_extension_sets_bands_array(self) -> None:
-        """add_raster_extension sets unified bands array from metadata."""
+    def test_add_raster_extension_sets_bands_on_data_asset(self) -> None:
+        """add_raster_extension attaches the unified bands array to the data asset.
+
+        STAC v1.1.0 makes ``bands`` an asset-level field; it must not appear on
+        ``item.properties`` (issue #437).
+        """
+        import pystac
+
         from portolan_cli.stac import add_raster_extension, create_item
 
-        item = create_item(item_id="test-bands", bbox=[0, 0, 1, 1])
+        item = create_item(
+            item_id="test-bands",
+            bbox=[0, 0, 1, 1],
+            assets={
+                "data": pystac.Asset(
+                    href="./test.tif",
+                    media_type="image/tiff; application=geotiff; profile=cloud-optimized",
+                    roles=["data"],
+                )
+            },
+        )
         metadata = COGMetadata(
             bbox=(0, 0, 1, 1),
             crs="EPSG:4326",
@@ -1060,7 +1076,8 @@ class TestRasterExtension:
 
         add_raster_extension(item, metadata)
 
-        bands = item.properties.get("bands")
+        assert "bands" not in item.properties
+        bands = item.assets["data"].extra_fields.get("bands")
         assert bands is not None
         assert len(bands) == 3
 

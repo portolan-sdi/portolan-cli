@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pystac
 import pytest
 
 from portolan_cli.crs import transform_bbox_to_wgs84
@@ -351,8 +352,6 @@ class TestEndToEndWorkflow:
         # Verify raster-specific fields
         assert "proj:shape" in item.properties
         assert "proj:transform" in item.properties
-        # STAC v1.1.0: unified bands array (not raster:bands)
-        assert "bands" in item.properties
 
         # Verify extension URLs
         assert EXTENSION_URLS["projection"] in (item.stac_extensions or [])
@@ -380,11 +379,18 @@ class TestRasterExtensionCompliance:
         # Transform bbox to WGS84
         wgs84_bbox = transform_bbox_to_wgs84(metadata.bbox, metadata.crs)
 
-        # Create item with raster properties
+        # Create item with raster properties and a data asset (bands target it)
         item = create_item(
             item_id="raster-extension-test",
             bbox=list(wgs84_bbox),
             properties=metadata.to_stac_properties(),
+            assets={
+                "data": pystac.Asset(
+                    href="./singleband.tif",
+                    media_type="image/tiff; application=geotiff; profile=cloud-optimized",
+                    roles=["data"],
+                )
+            },
         )
 
         # Add raster extension (this is what PR #337 fixes)
@@ -395,11 +401,13 @@ class TestRasterExtensionCompliance:
             f"Raster extension URL not in stac_extensions: {item.stac_extensions}"
         )
 
-        # Verify raster fields are set
-        assert "bands" in item.properties, "bands array missing from item properties"
+        # raster:spatial_resolution stays on the item; bands live on the data
+        # asset per STAC v1.1.0 (issue #437), never on item.properties.
         assert "raster:spatial_resolution" in item.properties, (
             "raster:spatial_resolution missing from item properties"
         )
+        assert "bands" not in item.properties, "bands must not be on item.properties"
+        assert "bands" in item.assets["data"].extra_fields, "bands array missing from data asset"
 
     @pytest.mark.integration
     def test_collection_inherits_raster_extension_from_summaries(self) -> None:
