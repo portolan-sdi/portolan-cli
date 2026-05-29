@@ -75,6 +75,28 @@ def _detect_primary_geometry(field_names: list[str]) -> str | None:
     return None
 
 
+def _get_row_count(table: Table) -> int:
+    """Return the total row count via O(1) snapshot metadata.
+
+    Iceberg records ``total-records`` (net of deletes) in each snapshot's
+    summary, so we read that instead of materializing the whole table — the
+    datasets the Iceberg backend targets can be 100K+ rows, and this runs on
+    every ``on_post_add``. Returns 0 for an empty table (no current snapshot),
+    and falls back to a metadata-only file count for the rare catalog/writer
+    that doesn't populate ``total-records``.
+    """
+    snapshot = table.current_snapshot()
+    if snapshot is None:
+        return 0
+    if snapshot.summary is not None:
+        total_records = snapshot.summary.additional_properties.get("total-records")
+        if total_records is not None:
+            return int(total_records)
+    # Falls back to file record_count metadata; only materializes data files
+    # that carry unmerged positional deletes (see DataScan.count).
+    return table.scan().count()
+
+
 def generate_table_metadata(table: Table) -> dict[str, Any]:
     # portolan-cli also generates table:* from GeoParquet source metadata.
     # This version reflects the Iceberg table state and takes precedence
@@ -101,7 +123,7 @@ def generate_table_metadata(table: Table) -> dict[str, Any]:
             }
         )
 
-    row_count = len(table.scan().to_arrow())
+    row_count = _get_row_count(table)
     primary_geometry = _detect_primary_geometry(field_names)
 
     return {
