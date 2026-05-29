@@ -4966,12 +4966,10 @@ def metadata() -> None:
     help="Overwrite existing metadata.yaml file.",
 )
 @click.option(
-    "-r",
-    "--recursive",
+    "--no-recursive",
     is_flag=True,
     default=False,
-    help="Create templates at all STAC levels (catalogs, subcatalogs, collections). "
-    "Skips items (item.json directories) and preserves existing files unless --force is used.",
+    help="Only create template at the specified path (skip subdirectories).",
 )
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
@@ -4980,23 +4978,24 @@ def metadata_init(
     json_output: bool,
     path: str | None,
     force: bool,
-    recursive: bool,
+    no_recursive: bool,
 ) -> None:
     """Generate a metadata.yaml template.
 
-    Creates a .portolan/metadata.yaml file with all required and optional
-    fields, including helpful comments explaining each field.
+    Creates .portolan/metadata.yaml files at all STAC levels (catalogs,
+    subcatalogs, collections) by default. Skips items (item.json directories)
+    and preserves existing files unless --force is used.
 
-    If PATH is provided, creates the template at that directory. Otherwise,
-    creates it at the catalog root.
+    If PATH is provided, starts from that directory. Otherwise, starts at the
+    catalog root.
 
     \b
     Examples:
-        portolan metadata init                # Template at catalog root
-        portolan metadata init demographics   # Template for collection
-        portolan metadata init --force        # Overwrite existing
-        portolan metadata init --recursive    # All levels in catalog
-        portolan metadata init climate -r     # All levels under climate/
+        portolan metadata init                    # All levels in catalog
+        portolan metadata init climate            # All levels under climate/
+        portolan metadata init --force            # Overwrite existing
+        portolan metadata init --no-recursive     # Only at catalog root
+        portolan metadata init demographics --no-recursive  # Only for collection
     """
     from portolan_cli.metadata_yaml import generate_metadata_template
 
@@ -5021,8 +5020,8 @@ def metadata_init(
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    # Handle recursive mode
-    if recursive:
+    # Handle recursive mode (default) vs single-path mode
+    if not no_recursive:
         _metadata_init_recursive(catalog_path, path, use_json, force)
         return
 
@@ -5074,17 +5073,25 @@ def metadata_init(
 
 @metadata.command("validate")
 @click.argument("path", required=False, type=click.Path())
+@click.option(
+    "--no-recursive",
+    is_flag=True,
+    default=False,
+    help="Only validate at the specified path (skip subdirectories).",
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def metadata_validate(
     ctx: click.Context,
     json_output: bool,
     path: str | None,
+    no_recursive: bool,
 ) -> None:
     """Validate metadata.yaml against schema.
 
+    Validates all .portolan/metadata.yaml files in the catalog tree by default.
     Checks for:
-    - Required fields: title, description, contact (name + email), license
+    - Required fields: contact (name + email), license
     - Format validation: email, SPDX license identifier, DOI
 
     Uses hierarchical resolution: child metadata.yaml files inherit from
@@ -5092,8 +5099,10 @@ def metadata_validate(
 
     \b
     Examples:
-        portolan metadata validate              # Validate at catalog root
-        portolan metadata validate demographics # Validate for collection
+        portolan metadata validate                    # Validate all levels
+        portolan metadata validate climate            # Validate under climate/
+        portolan metadata validate --no-recursive     # Only at catalog root
+        portolan metadata validate demographics --no-recursive  # Only for collection
     """
     from portolan_cli.errors import ConfigInvalidStructureError
     from portolan_cli.metadata_yaml import load_and_validate_metadata
@@ -5119,11 +5128,13 @@ def metadata_validate(
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    # Determine target directory
-    if path:
-        target_dir = catalog_path / path
-    else:
-        target_dir = catalog_path
+    # Handle recursive mode (default) vs single-path mode
+    if not no_recursive:
+        _metadata_validate_recursive(catalog_path, path, use_json)
+        return
+
+    # Single-path validation (--no-recursive)
+    target_dir = catalog_path / path if path else catalog_path
 
     # Load and validate
     try:
@@ -5414,6 +5425,114 @@ def _metadata_init_recursive(
             warn("No catalogs or collections found")
 
 
+def _validate_metadata_at_path(dirpath: Path, rel_path: str, catalog_path: Path) -> dict[str, Any]:
+    """Validate metadata at a single directory."""
+    from portolan_cli.errors import ConfigInvalidStructureError
+    from portolan_cli.metadata_yaml import load_and_validate_metadata
+
+    metadata_file = dirpath / ".portolan" / "metadata.yaml"
+    if not metadata_file.exists():
+        return {"path": rel_path, "valid": True, "errors": [], "skipped": True}
+
+    try:
+        _metadata, errors = load_and_validate_metadata(dirpath, catalog_path)
+        return {"path": rel_path, "valid": len(errors) == 0, "errors": errors}
+    except ConfigInvalidStructureError as err:
+        return {"path": rel_path, "valid": False, "errors": [f"Invalid YAML: {err}"]}
+
+
+def _output_validate_results_json(
+    results: list[dict[str, Any]], valid_count: int, invalid_count: int
+) -> None:
+    """Output validation results as JSON."""
+    all_valid = invalid_count == 0
+    data = {
+        "mode": "recursive",
+        "results": [
+            {"path": r["path"], "valid": r["valid"], "errors": r["errors"]} for r in results
+        ],
+        "summary": {"total": len(results), "valid": valid_count, "invalid": invalid_count},
+    }
+    if all_valid:
+        envelope = success_envelope("metadata validate", data)
+    else:
+        envelope = error_envelope(
+            "metadata validate",
+            [
+                ErrorDetail(type="ValidationError", message=f"{r['path']}: {e}")
+                for r in results
+                if not r["valid"]
+                for e in r["errors"]
+            ],
+            data=data,
+        )
+    output_json_envelope(envelope)
+    if not all_valid:
+        raise SystemExit(1)
+
+
+def _output_validate_results_text(
+    results: list[dict[str, Any]], valid_count: int, invalid_count: int
+) -> None:
+    """Output validation results as text."""
+    if invalid_count == 0:
+        if len(results) == 0:
+            warn("No metadata.yaml files found to validate")
+        else:
+            success(f"Validated {valid_count} metadata.yaml file(s) - all valid")
+        return
+
+    error(f"Validation failed: {invalid_count}/{len(results)} file(s) invalid")
+    for r in results:
+        if not r["valid"]:
+            detail(f"  {r['path']}:")
+            for e in r["errors"]:
+                detail(f"    - {e}")
+    raise SystemExit(1)
+
+
+def _metadata_validate_recursive(
+    catalog_path: Path,
+    start_path: str | None,
+    use_json: bool,
+) -> None:
+    """Validate metadata.yaml files at all STAC levels recursively."""
+    base_dir = _validate_recursive_start_path(catalog_path, start_path, use_json)
+    results: list[dict[str, Any]] = []
+
+    # Process base directory first (if it's a STAC entity or is catalog root)
+    is_catalog_root = base_dir == catalog_path
+    is_stac = (base_dir / "catalog.json").exists() or (base_dir / "collection.json").exists()
+    if is_catalog_root or is_stac:
+        rel_path = "." if is_catalog_root else str(base_dir.relative_to(catalog_path))
+        result = _validate_metadata_at_path(base_dir, rel_path, catalog_path)
+        if not result.get("skipped"):
+            results.append(result)
+
+    # Walk tree for subdirectories
+    try:
+        dir_iterator = sorted(base_dir.rglob("*"))
+    except PermissionError as e:
+        _recursive_init_error(use_json, "PermissionError", f"Permission denied during scan: {e}")
+
+    for dirpath in dir_iterator:
+        if not _should_process_directory(dirpath, catalog_path):
+            continue
+        rel_path = str(dirpath.relative_to(catalog_path))
+        result = _validate_metadata_at_path(dirpath, rel_path, catalog_path)
+        if not result.get("skipped"):
+            results.append(result)
+
+    # Calculate summary and output
+    valid_count = sum(1 for r in results if r["valid"])
+    invalid_count = len(results) - valid_count
+
+    if use_json:
+        _output_validate_results_json(results, valid_count, invalid_count)
+    else:
+        _output_validate_results_text(results, valid_count, invalid_count)
+
+
 def _process_readme_entry(
     readme_path: Path,
     content: str,
@@ -5538,7 +5657,7 @@ def _readme_recursive(
                 error(f"{len(stale_paths)} README(s) are stale:")
                 for p in stale_paths:
                     detail(f"  {p}")
-                info_output("Run 'portolan readme --recursive' to regenerate")
+                info_output("Run 'portolan readme' to regenerate")
                 raise SystemExit(1)
             else:
                 success(f"All {len(generated_paths)} README(s) are up-to-date")
@@ -5563,11 +5682,10 @@ def _readme_recursive(
     help="Check if README is up-to-date (for CI). Exits 1 if stale.",
 )
 @click.option(
-    "--recursive",
-    "-r",
+    "--no-recursive",
     is_flag=True,
     default=False,
-    help="Generate READMEs for catalog and all collections.",
+    help="Only generate README at the specified path (skip subdirectories).",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed output.")
 @click.pass_context
@@ -5578,24 +5696,26 @@ def readme(
     path: str | None,
     stdout: bool,
     check: bool,
-    recursive: bool,
+    no_recursive: bool,
     verbose: bool,
 ) -> None:
     """Generate README.md from STAC metadata and metadata.yaml.
 
-    The README is a pure output - always generated from STAC (machine-extracted
-    metadata) plus .portolan/metadata.yaml (human enrichment). Never hand-edit
-    the README; edit metadata.yaml instead and regenerate.
+    Generates READMEs for the catalog and all collections by default. The README
+    is a pure output - always generated from STAC (machine-extracted metadata)
+    plus .portolan/metadata.yaml (human enrichment). Never hand-edit the README;
+    edit metadata.yaml instead and regenerate.
 
-    Use --check in CI to verify the README is up-to-date:
+    Use --check in CI to verify READMEs are up-to-date:
 
     \b
     Examples:
-        portolan readme                    # Generate at catalog root
-        portolan readme demographics       # Generate for collection
-        portolan readme --stdout           # Print without writing
-        portolan readme --check            # CI mode: exit 1 if stale
-        portolan readme --recursive        # Generate for catalog and all collections
+        portolan readme                        # Generate for catalog and all collections
+        portolan readme climate                # Generate under climate/
+        portolan readme --check                # CI mode: exit 1 if any stale
+        portolan readme --no-recursive         # Only at catalog root
+        portolan readme demographics --no-recursive  # Only for collection
+        portolan readme --stdout --no-recursive      # Print single README
     """
 
     use_json = should_output_json(ctx, json_output)
@@ -5619,8 +5739,8 @@ def readme(
             info_output("Run 'portolan init' to create one")
         raise SystemExit(1)
 
-    # Handle recursive mode
-    if recursive:
+    # Handle recursive mode (default) vs single-path mode
+    if not no_recursive:
         _readme_recursive(catalog_path, use_json, check, stdout, verbose)
         return
 

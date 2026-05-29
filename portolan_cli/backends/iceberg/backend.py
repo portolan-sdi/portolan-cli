@@ -104,7 +104,8 @@ class IcebergBackend:
         snap = table.current_snapshot()
         if snap is None or snap.summary is None:
             return None
-        return snap.summary.additional_properties.get("portolake.version")
+        version = snap.summary.additional_properties.get("portolake.version")
+        return str(version) if version is not None else None
 
     def get_current_version(self, collection: str) -> Version:
         """Get the current (latest) version of a collection."""

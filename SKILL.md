@@ -147,10 +147,10 @@ portolan push --dry-run  # Uses configured remote
 Generate README.md from STAC metadata and metadata.yaml.
 
 ```bash
-portolan readme                    # Generate at catalog root
-portolan readme demographics       # Generate for collection
-portolan readme --stdout           # Print without writing
-portolan readme --check            # CI mode: exit 1 if stale
+portolan readme                        # Generate for catalog and all collections
+portolan readme climate                # Generate under climate/
+portolan readme --check                # CI mode: exit 1 if any stale
+portolan readme --no-recursive         # Only at catalog root
 ```
 
 ### `portolan rm`

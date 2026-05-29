@@ -1,7 +1,7 @@
-"""Integration tests for portolan readme --recursive flag.
+"""Integration tests for portolan readme recursive behavior.
 
-Tests that --recursive regenerates all collection READMEs along with
-the catalog README.
+Tests that readme (recursive by default) regenerates all collection READMEs
+along with the catalog README. Use --no-recursive to limit scope.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from portolan_cli.cli import cli
 
 
 class TestReadmeRecursive:
-    """Tests for portolan readme --recursive."""
+    """Tests for portolan readme recursive behavior (recursive by default)."""
 
     @pytest.fixture
     def catalog_with_collections(self, tmp_path: Path) -> Path:
@@ -68,11 +68,11 @@ class TestReadmeRecursive:
 
     @pytest.mark.integration
     def test_recursive_generates_all_readmes(self, catalog_with_collections: Path) -> None:
-        """--recursive should generate README for catalog and all collections."""
+        """readme (recursive by default) should generate README for catalog and all collections."""
         runner = CliRunner()
 
         with runner.isolated_filesystem(temp_dir=catalog_with_collections):
-            result = runner.invoke(cli, ["readme", "--recursive"])
+            result = runner.invoke(cli, ["readme"])
 
         assert result.exit_code == 0, result.output
 
@@ -85,40 +85,40 @@ class TestReadmeRecursive:
 
     @pytest.mark.integration
     def test_recursive_reports_count(self, catalog_with_collections: Path) -> None:
-        """--recursive should report how many READMEs were generated."""
-        runner = CliRunner()
-
-        with runner.isolated_filesystem(temp_dir=catalog_with_collections):
-            result = runner.invoke(cli, ["readme", "--recursive"])
-
-        assert result.exit_code == 0
-        # Should mention generating multiple READMEs
-        assert "3" in result.output or "README" in result.output
-
-    @pytest.mark.integration
-    def test_without_recursive_only_generates_target(self, catalog_with_collections: Path) -> None:
-        """Without --recursive, only the target README is generated."""
+        """readme (recursive by default) should report how many READMEs were generated."""
         runner = CliRunner()
 
         with runner.isolated_filesystem(temp_dir=catalog_with_collections):
             result = runner.invoke(cli, ["readme"])
 
         assert result.exit_code == 0
+        # Should mention generating multiple READMEs
+        assert "3" in result.output or "README" in result.output
+
+    @pytest.mark.integration
+    def test_no_recursive_only_generates_target(self, catalog_with_collections: Path) -> None:
+        """With --no-recursive, only the target README is generated."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=catalog_with_collections):
+            result = runner.invoke(cli, ["readme", "--no-recursive"])
+
+        assert result.exit_code == 0
 
         # Only catalog README should exist
         assert (catalog_with_collections / "README.md").exists()
 
-        # Collection READMEs should NOT exist (not generated without --recursive)
+        # Collection READMEs should NOT exist (not generated with --no-recursive)
         assert not (catalog_with_collections / "alpha" / "README.md").exists()
         assert not (catalog_with_collections / "beta" / "README.md").exists()
 
     @pytest.mark.integration
     def test_recursive_json_output(self, catalog_with_collections: Path) -> None:
-        """--recursive with --json should output structured results."""
+        """readme --json (recursive by default) should output structured results."""
         runner = CliRunner()
 
         with runner.isolated_filesystem(temp_dir=catalog_with_collections):
-            result = runner.invoke(cli, ["--format", "json", "readme", "--recursive"])
+            result = runner.invoke(cli, ["--format", "json", "readme"])
 
         assert result.exit_code == 0
 
@@ -129,27 +129,27 @@ class TestReadmeRecursive:
 
     @pytest.mark.integration
     def test_recursive_check_mode(self, catalog_with_collections: Path) -> None:
-        """--recursive --check should check all READMEs."""
+        """readme --check (recursive by default) should check all READMEs."""
         runner = CliRunner()
 
         # First generate all READMEs
         with runner.isolated_filesystem(temp_dir=catalog_with_collections):
-            runner.invoke(cli, ["readme", "--recursive"])
+            runner.invoke(cli, ["readme"])
 
         # Then check - should pass
         with runner.isolated_filesystem(temp_dir=catalog_with_collections):
-            result = runner.invoke(cli, ["readme", "--recursive", "--check"])
+            result = runner.invoke(cli, ["readme", "--check"])
 
         assert result.exit_code == 0
 
     @pytest.mark.integration
     def test_recursive_check_fails_when_stale(self, catalog_with_collections: Path) -> None:
-        """--recursive --check should fail if any README is stale."""
+        """readme --check (recursive by default) should fail if any README is stale."""
         runner = CliRunner()
 
         # Generate all READMEs
         with runner.isolated_filesystem(temp_dir=catalog_with_collections):
-            runner.invoke(cli, ["readme", "--recursive"])
+            runner.invoke(cli, ["readme"])
 
         # Modify a collection to make its README stale
         coll_json = catalog_with_collections / "alpha" / "collection.json"
@@ -159,7 +159,7 @@ class TestReadmeRecursive:
 
         # Check should now fail
         with runner.isolated_filesystem(temp_dir=catalog_with_collections):
-            result = runner.invoke(cli, ["readme", "--recursive", "--check"])
+            result = runner.invoke(cli, ["readme", "--check"])
 
         assert result.exit_code == 1
         assert "stale" in result.output.lower() or "alpha" in result.output
@@ -244,11 +244,11 @@ class TestReadmeVerbose:
 
     @pytest.mark.integration
     def test_verbose_recursive_shows_all_file_reads(self, catalog_with_metadata: Path) -> None:
-        """--recursive --verbose should show file reads for every entity."""
+        """readme --verbose (recursive by default) should show file reads for every entity."""
         runner = CliRunner()
 
         with runner.isolated_filesystem(temp_dir=catalog_with_metadata):
-            result = runner.invoke(cli, ["readme", "--recursive", "--verbose"])
+            result = runner.invoke(cli, ["readme", "--verbose"])
 
         assert result.exit_code == 0
         # Should show processing messages
@@ -277,11 +277,11 @@ class TestReadmeVerbose:
 
     @pytest.mark.integration
     def test_verbose_recursive_json_produces_valid_json(self, catalog_with_metadata: Path) -> None:
-        """--recursive --verbose --json should produce valid JSON."""
+        """readme --verbose --json (recursive by default) should produce valid JSON."""
         runner = CliRunner()
 
         with runner.isolated_filesystem(temp_dir=catalog_with_metadata):
-            result = runner.invoke(cli, ["--format", "json", "readme", "--recursive", "--verbose"])
+            result = runner.invoke(cli, ["--format", "json", "readme", "--verbose"])
 
         assert result.exit_code == 0
         output = json.loads(result.output)

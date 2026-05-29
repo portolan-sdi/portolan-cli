@@ -94,7 +94,7 @@ def _get_row_count(table: Table) -> int:
             return int(total_records)
     # Falls back to file record_count metadata; only materializes data files
     # that carry unmerged positional deletes (see DataScan.count).
-    return table.scan().count()
+    return int(table.scan().count())
 
 
 def generate_table_metadata(table: Table) -> dict[str, Any]:
