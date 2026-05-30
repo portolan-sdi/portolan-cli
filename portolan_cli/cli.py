@@ -68,7 +68,9 @@ from portolan_cli.scan_progress import ScanProgressReporter, count_directories
 from portolan_cli.status import CollectionStatus, get_collection_status
 from portolan_cli.temporal import FLEXIBLE_DATETIME
 from portolan_cli.validation import (
+    InputValidationError,
     Severity,
+    validate_safe_path,
 )
 from portolan_cli.validation import check as validate_catalog
 
@@ -5025,11 +5027,8 @@ def metadata_init(
         _metadata_init_recursive(catalog_path, path, use_json, force)
         return
 
-    # Determine target directory
-    if path:
-        target_dir = catalog_path / path
-    else:
-        target_dir = catalog_path
+    # Determine target directory (rejecting paths that escape the catalog)
+    target_dir = _validate_path_within_catalog(catalog_path, path, use_json, "metadata init")
 
     # Create .portolan directory if needed
     portolan_dir = target_dir / ".portolan"
@@ -5134,7 +5133,7 @@ def metadata_validate(
         return
 
     # Single-path validation (--no-recursive)
-    target_dir = catalog_path / path if path else catalog_path
+    target_dir = _validate_path_within_catalog(catalog_path, path, use_json, "metadata validate")
 
     # Load and validate
     try:
@@ -5292,12 +5291,45 @@ def _recursive_init_error(use_json: bool, error_type: str, message: str) -> None
     raise SystemExit(1)
 
 
+def _validate_path_within_catalog(
+    catalog_path: Path, path: str | None, use_json: bool, command: str
+) -> Path:
+    """Resolve a user-supplied PATH within the catalog, rejecting traversal.
+
+    Returns the target directory (``catalog_path / path``) when safe, or the
+    catalog root when no path is given. Exits with an error envelope if the
+    path escapes the catalog root (ADR-0030 input hardening).
+    """
+    if not path:
+        return catalog_path
+    try:
+        validate_safe_path(Path(path), catalog_path)
+    except InputValidationError as err:
+        if use_json:
+            output_json_envelope(
+                error_envelope(
+                    command,
+                    [ErrorDetail(type="InputValidationError", message=str(err))],
+                )
+            )
+        else:
+            error(str(err))
+        raise SystemExit(1) from err
+    return catalog_path / path
+
+
 def _validate_recursive_start_path(
     catalog_path: Path, start_path: str | None, use_json: bool
 ) -> Path:
     """Validate and return the starting directory for recursive init."""
     if not start_path:
         return catalog_path
+
+    # Reject paths that escape the catalog root (ADR-0030 input hardening).
+    try:
+        validate_safe_path(Path(start_path), catalog_path)
+    except InputValidationError as err:
+        _recursive_init_error(use_json, "InputValidationError", str(err))
 
     base_dir = catalog_path / start_path
     if not base_dir.exists():
@@ -5561,6 +5593,7 @@ def _process_readme_entry(
 
 def _readme_recursive(
     catalog_path: Path,
+    start_path: str | None,
     use_json: bool,
     check: bool,
     stdout: bool,
@@ -5568,12 +5601,15 @@ def _readme_recursive(
 ) -> None:
     """Generate READMEs for catalog and all collections recursively.
 
-    Helper for --recursive flag. Walks the entire catalog tree and generates:
+    Walks the catalog tree (or the subtree under ``start_path`` when given)
+    and generates:
     1. Catalog/subcatalog READMEs (directories with catalog.json)
     2. Collection READMEs (directories with collection.json)
 
     Args:
         catalog_path: Path to catalog root.
+        start_path: Optional subdirectory to scope generation to (relative to
+            the catalog root). When None, the whole catalog is processed.
         use_json: Output JSON format.
         check: CI mode - check freshness only.
         stdout: Print to stdout (not supported in recursive mode).
@@ -5585,22 +5621,20 @@ def _readme_recursive(
     )
 
     if stdout:
-        error("--stdout is not supported with --recursive")
+        error("--stdout is not supported in recursive mode")
         raise SystemExit(1)
+
+    base_dir = _validate_recursive_start_path(catalog_path, start_path, use_json)
 
     generated_paths: list[str] = []
     stale_paths: list[str] = []
 
-    # Walk entire tree to find all catalogs and collections
-    for dirpath in sorted(catalog_path.rglob("*")):
-        if not dirpath.is_dir():
-            continue
-        if any(part.startswith(".") for part in dirpath.relative_to(catalog_path).parts):
-            continue
-
+    def _process_stac_dir(dirpath: Path) -> None:
+        """Generate a README for a single catalog/subcatalog/collection dir."""
+        is_root = dirpath == catalog_path
         rel_dir = dirpath.relative_to(catalog_path)
         readme_path = dirpath / "README.md"
-        rel_path = str(rel_dir / "README.md")
+        rel_path = "README.md" if is_root else str(rel_dir / "README.md")
 
         if (dirpath / "collection.json").exists():
             _verbose_readme(f"Processing collection: {rel_dir}/", verbose, use_json)
@@ -5610,20 +5644,31 @@ def _readme_recursive(
                 readme_path, content, rel_path, check, generated_paths, stale_paths
             )
         elif (dirpath / "catalog.json").exists():
-            _verbose_readme(f"Processing subcatalog: {rel_dir}/", verbose, use_json)
-            _verbose_readme_files(dirpath, str(rel_dir), "catalog.json", verbose, use_json)
+            label = "catalog root" if is_root else f"subcatalog: {rel_dir}/"
+            file_label = "catalog root" if is_root else str(rel_dir)
+            _verbose_readme(f"Processing {label}", verbose, use_json)
+            _verbose_readme_files(dirpath, file_label, "catalog.json", verbose, use_json)
             content = generate_catalog_readme(dirpath)
             _process_readme_entry(
                 readme_path, content, rel_path, check, generated_paths, stale_paths
             )
 
-    # Generate root catalog README
-    _verbose_readme("Processing catalog root", verbose, use_json)
-    _verbose_readme_files(catalog_path, "catalog root", "catalog.json", verbose, use_json)
-    root_content = generate_catalog_readme(catalog_path)
-    _process_readme_entry(
-        catalog_path / "README.md", root_content, "README.md", check, generated_paths, stale_paths
-    )
+    # Process the base directory itself (catalog root or a scoped STAC entity)
+    if (
+        base_dir == catalog_path
+        or (base_dir / "collection.json").exists()
+        or (base_dir / "catalog.json").exists()
+    ):
+        _process_stac_dir(base_dir)
+
+    # Walk the subtree to find nested catalogs and collections
+    for dirpath in sorted(base_dir.rglob("*")):
+        if not dirpath.is_dir():
+            continue
+        if any(part.startswith(".") for part in dirpath.relative_to(catalog_path).parts):
+            continue
+        _process_stac_dir(dirpath)
+
     # Move root to front of list
     if "README.md" in generated_paths:
         generated_paths.remove("README.md")
@@ -5741,14 +5786,11 @@ def readme(
 
     # Handle recursive mode (default) vs single-path mode
     if not no_recursive:
-        _readme_recursive(catalog_path, use_json, check, stdout, verbose)
+        _readme_recursive(catalog_path, path, use_json, check, stdout, verbose)
         return
 
-    # Determine target directory
-    if path:
-        target_dir = catalog_path / path
-    else:
-        target_dir = catalog_path
+    # Determine target directory (rejecting paths that escape the catalog)
+    target_dir = _validate_path_within_catalog(catalog_path, path, use_json, "readme")
 
     # Generate README content
     readme_content, is_catalog_root = _generate_readme_content(

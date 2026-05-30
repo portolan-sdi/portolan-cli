@@ -113,6 +113,23 @@ class TestReadmeRecursive:
         assert not (catalog_with_collections / "beta" / "README.md").exists()
 
     @pytest.mark.integration
+    def test_recursive_scopes_to_path_argument(self, catalog_with_collections: Path) -> None:
+        """readme PATH should scope generation to that subtree, not the whole catalog."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=catalog_with_collections):
+            result = runner.invoke(cli, ["readme", "alpha"])
+
+        assert result.exit_code == 0, result.output
+
+        # Only the targeted collection README should be generated
+        assert (catalog_with_collections / "alpha" / "README.md").exists()
+
+        # Out-of-scope READMEs should NOT be generated
+        assert not (catalog_with_collections / "beta" / "README.md").exists()
+        assert not (catalog_with_collections / "README.md").exists()
+
+    @pytest.mark.integration
     def test_recursive_json_output(self, catalog_with_collections: Path) -> None:
         """readme --json (recursive by default) should output structured results."""
         runner = CliRunner()

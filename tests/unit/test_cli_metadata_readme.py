@@ -888,3 +888,60 @@ class TestReadmeGenerate:
             assert "Reading" not in result.output
             # Should show success message
             assert "README.md" in result.output or "Generated" in result.output
+
+
+class TestPathTraversalHardening:
+    """ADR-0030: user-supplied PATH args must not escape the catalog root."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a Click test runner."""
+        return CliRunner()
+
+    @pytest.mark.unit
+    def test_metadata_init_recursive_rejects_traversal(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """metadata init (recursive default) rejects a PATH escaping the catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(cli, ["metadata", "init", "../escape"])
+
+            assert result.exit_code != 0
+            assert "traversal" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_metadata_init_no_recursive_rejects_traversal(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """metadata init --no-recursive rejects a PATH escaping the catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(cli, ["metadata", "init", "../escape", "--no-recursive"])
+
+            assert result.exit_code != 0
+            assert "traversal" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_metadata_validate_rejects_traversal(self, runner: CliRunner, tmp_path: Path) -> None:
+        """metadata validate rejects a PATH escaping the catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(cli, ["metadata", "validate", "../escape"])
+
+            assert result.exit_code != 0
+            assert "traversal" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_readme_rejects_traversal(self, runner: CliRunner, tmp_path: Path) -> None:
+        """readme rejects a PATH escaping the catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(cli, ["readme", "../escape"])
+
+            assert result.exit_code != 0
+            assert "traversal" in result.output.lower()

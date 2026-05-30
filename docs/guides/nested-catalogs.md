@@ -18,7 +18,7 @@ portolan add . --workers 4
 # Add metadata and generate documentation
 portolan metadata init
 # Edit .portolan/metadata.yaml with your info
-portolan readme --recursive
+portolan readme
 ```
 
 ## How Directory Structure Maps to STAC
@@ -87,7 +87,7 @@ known_issues: "Temporal extent not specified for most datasets."
 ### Generating READMEs
 
 ```bash
-portolan readme --recursive
+portolan readme
 ```
 
 This generates README.md files at every level — root catalog, subcatalogs, and collections. Metadata from the root cascades down, so you only need to edit one `metadata.yaml` for consistent attribution across all READMEs.
@@ -135,7 +135,7 @@ portolan init --auto --title "The Hague Open Data" \
 portolan add . --workers 4
 portolan metadata init
 # Edit .portolan/metadata.yaml
-portolan readme --recursive
+portolan readme
 portolan check
 ```
 

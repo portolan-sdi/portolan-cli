@@ -131,7 +131,7 @@ portolan add inspire_bu_.../*.pmtiles
 Create human-readable documentation from STAC metadata:
 
 ```bash
-portolan readme --recursive
+portolan readme
 ```
 
 This generates README.md files at catalog and collection levels.
@@ -160,7 +160,7 @@ portolan push --verbose
 | Metadata | Edit `.portolan/metadata.yaml` files |
 | PMTiles | `ogr2ogr \| tippecanoe` pipeline |
 | Add tiles | `portolan add *.pmtiles --stac-geoparquet` |
-| READMEs | `portolan readme --recursive` |
+| READMEs | `portolan readme` |
 | Push | `portolan push --verbose` |
 
 ## See Also

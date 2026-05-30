@@ -77,13 +77,13 @@ portolan config set profile source-coop
 
 # Add files and create metadata
 portolan add .
-portolan metadata init --recursive
+portolan metadata init
 
 # Edit .portolan/metadata.yaml with:
 #   title, description, license, contact.email
 
 # Generate READMEs and push
-portolan readme --recursive
+portolan readme
 portolan push --workers 8
 ```
 

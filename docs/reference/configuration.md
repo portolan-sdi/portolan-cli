@@ -897,7 +897,7 @@ portolan readme --stdout
 portolan readme --check
 
 # Generate for catalog and all collections
-portolan readme --recursive
+portolan readme
 ```
 
 **Catalog-level README:** When run at catalog root, generates an index README with:
