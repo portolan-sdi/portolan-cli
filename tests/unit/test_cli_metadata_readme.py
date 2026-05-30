@@ -936,6 +936,19 @@ class TestPathTraversalHardening:
             assert "traversal" in result.output.lower()
 
     @pytest.mark.unit
+    def test_metadata_validate_no_recursive_rejects_traversal(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """metadata validate --no-recursive rejects a PATH escaping the catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(cli, ["metadata", "validate", "../escape", "--no-recursive"])
+
+            assert result.exit_code != 0
+            assert "traversal" in result.output.lower()
+
+    @pytest.mark.unit
     def test_readme_rejects_traversal(self, runner: CliRunner, tmp_path: Path) -> None:
         """readme rejects a PATH escaping the catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
@@ -945,3 +958,42 @@ class TestPathTraversalHardening:
 
             assert result.exit_code != 0
             assert "traversal" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_readme_no_recursive_rejects_traversal(self, runner: CliRunner, tmp_path: Path) -> None:
+        """readme --no-recursive rejects a PATH escaping the catalog."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(cli, ["readme", "../escape", "--no-recursive"])
+
+            assert result.exit_code != 0
+            assert "traversal" in result.output.lower()
+
+    @pytest.mark.unit
+    def test_recursive_readme_traversal_json_uses_correct_command(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """JSON error for a recursive readme traversal must be labeled 'readme'."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(cli, ["--format", "json", "readme", "../escape"])
+
+            assert result.exit_code != 0
+            payload = json.loads(result.output)
+            assert payload["command"] == "readme"
+
+    @pytest.mark.unit
+    def test_recursive_validate_traversal_json_uses_correct_command(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        """JSON error for a recursive validate traversal must be labeled 'metadata validate'."""
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            runner.invoke(cli, ["init", "--auto"])
+
+            result = runner.invoke(cli, ["--format", "json", "metadata", "validate", "../escape"])
+
+            assert result.exit_code != 0
+            payload = json.loads(result.output)
+            assert payload["command"] == "metadata validate"

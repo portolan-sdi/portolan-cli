@@ -130,6 +130,20 @@ class TestReadmeRecursive:
         assert not (catalog_with_collections / "README.md").exists()
 
     @pytest.mark.integration
+    def test_recursive_stdout_rejection_json_is_valid(self, catalog_with_collections: Path) -> None:
+        """readme --stdout in JSON mode should emit a JSON error, not plain text."""
+        runner = CliRunner()
+
+        with runner.isolated_filesystem(temp_dir=catalog_with_collections):
+            result = runner.invoke(cli, ["--format", "json", "readme", "--stdout"])
+
+        assert result.exit_code != 0
+        # Output must be parseable JSON (not a plain-text error line)
+        output = json.loads(result.output)
+        assert output["success"] is False
+        assert "stdout" in result.output.lower()
+
+    @pytest.mark.integration
     def test_recursive_json_output(self, catalog_with_collections: Path) -> None:
         """readme --json (recursive by default) should output structured results."""
         runner = CliRunner()

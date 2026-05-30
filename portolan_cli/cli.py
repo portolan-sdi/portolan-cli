@@ -5278,11 +5278,15 @@ def _generate_readme_content(
     return generate_readme(stac=stac, metadata=metadata_dict), False
 
 
-def _recursive_init_error(use_json: bool, error_type: str, message: str) -> None:
-    """Output error for recursive init and exit."""
+def _recursive_init_error(use_json: bool, command: str, error_type: str, message: str) -> None:
+    """Output error for a recursive command and exit.
+
+    ``command`` is the CLI command label (e.g. "metadata init", "readme") so
+    JSON error envelopes report the command that actually failed.
+    """
     if use_json:
         envelope = error_envelope(
-            "metadata init",
+            command,
             [ErrorDetail(type=error_type, message=message)],
         )
         output_json_envelope(envelope)
@@ -5319,9 +5323,9 @@ def _validate_path_within_catalog(
 
 
 def _validate_recursive_start_path(
-    catalog_path: Path, start_path: str | None, use_json: bool
+    catalog_path: Path, start_path: str | None, use_json: bool, command: str
 ) -> Path:
-    """Validate and return the starting directory for recursive init."""
+    """Validate and return the starting directory for a recursive command."""
     if not start_path:
         return catalog_path
 
@@ -5329,16 +5333,19 @@ def _validate_recursive_start_path(
     try:
         validate_safe_path(Path(start_path), catalog_path)
     except InputValidationError as err:
-        _recursive_init_error(use_json, "InputValidationError", str(err))
+        _recursive_init_error(use_json, command, "InputValidationError", str(err))
 
     base_dir = catalog_path / start_path
     if not base_dir.exists():
         _recursive_init_error(
-            use_json, "PathNotFoundError", f"Path '{start_path}' does not exist in catalog."
+            use_json,
+            command,
+            "PathNotFoundError",
+            f"Path '{start_path}' does not exist in catalog.",
         )
     if not base_dir.is_dir():
         _recursive_init_error(
-            use_json, "NotADirectoryError", f"Path '{start_path}' is not a directory."
+            use_json, command, "NotADirectoryError", f"Path '{start_path}' is not a directory."
         )
     return base_dir
 
@@ -5380,7 +5387,7 @@ def _metadata_init_recursive(
     """
     from portolan_cli.metadata_yaml import generate_metadata_template
 
-    base_dir = _validate_recursive_start_path(catalog_path, start_path, use_json)
+    base_dir = _validate_recursive_start_path(catalog_path, start_path, use_json, "metadata init")
 
     created_paths: list[str] = []
     skipped_paths: list[str] = []
@@ -5421,7 +5428,9 @@ def _metadata_init_recursive(
     try:
         dir_iterator = sorted(base_dir.rglob("*"))
     except PermissionError as e:
-        _recursive_init_error(use_json, "PermissionError", f"Permission denied during scan: {e}")
+        _recursive_init_error(
+            use_json, "metadata init", "PermissionError", f"Permission denied during scan: {e}"
+        )
 
     for dirpath in dir_iterator:
         if not _should_process_directory(dirpath, catalog_path):
@@ -5529,7 +5538,9 @@ def _metadata_validate_recursive(
     use_json: bool,
 ) -> None:
     """Validate metadata.yaml files at all STAC levels recursively."""
-    base_dir = _validate_recursive_start_path(catalog_path, start_path, use_json)
+    base_dir = _validate_recursive_start_path(
+        catalog_path, start_path, use_json, "metadata validate"
+    )
     results: list[dict[str, Any]] = []
 
     # Process base directory first (if it's a STAC entity or is catalog root)
@@ -5545,7 +5556,9 @@ def _metadata_validate_recursive(
     try:
         dir_iterator = sorted(base_dir.rglob("*"))
     except PermissionError as e:
-        _recursive_init_error(use_json, "PermissionError", f"Permission denied during scan: {e}")
+        _recursive_init_error(
+            use_json, "metadata validate", "PermissionError", f"Permission denied during scan: {e}"
+        )
 
     for dirpath in dir_iterator:
         if not _should_process_directory(dirpath, catalog_path):
@@ -5621,10 +5634,16 @@ def _readme_recursive(
     )
 
     if stdout:
-        error("--stdout is not supported in recursive mode")
+        msg = "--stdout is not supported in recursive mode"
+        if use_json:
+            output_json_envelope(
+                error_envelope("readme", [ErrorDetail(type="UnsupportedOptionError", message=msg)])
+            )
+        else:
+            error(msg)
         raise SystemExit(1)
 
-    base_dir = _validate_recursive_start_path(catalog_path, start_path, use_json)
+    base_dir = _validate_recursive_start_path(catalog_path, start_path, use_json, "readme")
 
     generated_paths: list[str] = []
     stale_paths: list[str] = []
