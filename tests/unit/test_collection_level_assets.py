@@ -396,8 +396,6 @@ class TestCollectionLevelNonGeoCompanions:
 
     def test_non_geo_without_any_companion_warns(self, initialized_catalog):
         """Non-geo file without geo companion logs warning (existing behavior)."""
-        from unittest.mock import patch
-
         from portolan_cli.dataset import _process_deferred_non_geo_files
 
         # Source dir with no geo companion
@@ -413,21 +411,20 @@ class TestCollectionLevelNonGeoCompanions:
         skipped: list = []
         failures: list = []
 
-        with patch("portolan_cli.dataset.logger") as mock_logger:
-            _process_deferred_non_geo_files(
-                deferred_non_geo=deferred_non_geo,
-                source_to_item_dir=source_to_item_dir,
-                source_to_collection_dir=source_to_collection_dir,
-                catalog_root=initialized_catalog,
-                skipped=skipped,
-                failures=failures,
-            )
+        _process_deferred_non_geo_files(
+            deferred_non_geo=deferred_non_geo,
+            source_to_item_dir=source_to_item_dir,
+            source_to_collection_dir=source_to_collection_dir,
+            catalog_root=initialized_catalog,
+            skipped=skipped,
+            failures=failures,
+        )
 
-        # Should log warning about no geo companion
-        mock_logger.warning.assert_called_once()
-        warning_msg = mock_logger.warning.call_args[0][0]
-        assert "no geospatial file" in warning_msg.lower()
+        # Issue #432: Now fails with helpful hint when tabular.enabled=false (default)
+        # This provides actionable feedback instead of silent skip
+        assert len(failures) == 1
+        assert "tabular" in failures[0].error.lower()
+        assert "enabled" in failures[0].error.lower() or "config" in failures[0].error.lower()
 
-        # File is skipped (not failed)
-        assert non_geo_file in skipped
-        assert len(failures) == 0
+        # File should NOT be in skipped (it failed)
+        assert non_geo_file not in skipped

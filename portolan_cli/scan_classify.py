@@ -28,13 +28,14 @@ from pathlib import Path
 # =============================================================================
 
 # Primary geospatial formats (GEO_ASSET)
+# Note: .parquet is NOT here — it requires metadata peeking to distinguish
+# GeoParquet from plain Parquet. See is_geoparquet() and classify_file().
 GEO_ASSET_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".geojson",
         ".shp",
         ".gpkg",
         ".fgb",
-        ".parquet",
         ".tif",
         ".tiff",
         ".jp2",
@@ -59,12 +60,15 @@ SIDECAR_EXTENSIONS: frozenset[str] = frozenset(
 )
 
 # Tabular data formats (TABULAR_DATA)
+# Note: .parquet is here because plain Parquet (no geo metadata) is tabular.
+# GeoParquet files are detected by is_geoparquet() which peeks at metadata.
 TABULAR_EXTENSIONS: frozenset[str] = frozenset(
     {
         ".csv",
         ".tsv",
         ".xlsx",
         ".xls",
+        ".parquet",  # Plain Parquet; GeoParquet detected via metadata peeking
     }
 )
 
@@ -149,6 +153,42 @@ STYLE_FILENAMES: frozenset[str] = frozenset(
 THUMBNAIL_MAX_SIZE: int = 1024 * 1024
 
 
+def is_geoparquet(path: Path) -> bool:
+    """Check if a Parquet file is GeoParquet by peeking at metadata.
+
+    This is a fast check that only reads the Parquet footer (O(1) metadata read),
+    not the actual data. It looks for the 'geo' key in the schema metadata which
+    is required by the GeoParquet specification.
+
+    Args:
+        path: Path to the Parquet file.
+
+    Returns:
+        True if the file has GeoParquet metadata, False otherwise.
+        Returns False on any read errors (file not found, invalid format, etc.).
+    """
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        # Only read schema metadata, not data — this is fast (reads footer only)
+        schema = pq.read_schema(path)
+
+        # GeoParquet requires a 'geo' key in schema metadata
+        if schema.metadata is None:
+            return False
+
+        return b"geo" in schema.metadata
+
+    except (OSError, ValueError, pa.lib.ArrowInvalid):
+        # File not found, not valid parquet, corrupted, etc. means not GeoParquet
+        return False
+    except Exception:
+        # Catch-all for unexpected pyarrow errors, but re-raise system-exiting
+        # exceptions (KeyboardInterrupt, SystemExit are BaseException, not Exception)
+        return False
+
+
 class FileCategory(Enum):
     """Classification categories for scanned files."""
 
@@ -210,6 +250,70 @@ def _is_in_junk_dir(path: Path) -> bool:
     return False
 
 
+def _classify_by_extension(
+    ext: str, path: Path
+) -> tuple[FileCategory, SkipReasonType | None, str | None] | None:
+    """Classify a file by its extension alone.
+
+    Args:
+        ext: Lowercase file extension (e.g., '.parquet').
+        path: Path to the file (for parquet metadata peeking).
+
+    Returns:
+        Classification tuple if extension is recognized, None otherwise.
+    """
+    if ext in GEO_ASSET_EXTENSIONS:
+        return (FileCategory.GEO_ASSET, None, None)
+
+    # Special handling for .parquet: peek at metadata to distinguish
+    # GeoParquet (has 'geo' metadata) from plain Parquet (tabular data)
+    if ext == ".parquet":
+        if is_geoparquet(path):
+            return (FileCategory.GEO_ASSET, None, None)
+        return (
+            FileCategory.TABULAR_DATA,
+            SkipReasonType.NOT_GEOSPATIAL,
+            "PARQUET is tabular data without GeoParquet metadata",
+        )
+
+    if ext in SIDECAR_EXTENSIONS:
+        return (
+            FileCategory.KNOWN_SIDECAR,
+            SkipReasonType.SIDECAR_FILE,
+            f"{ext} is a sidecar file for a primary asset",
+        )
+
+    if ext in TABULAR_EXTENSIONS:
+        return (
+            FileCategory.TABULAR_DATA,
+            SkipReasonType.NOT_GEOSPATIAL,
+            f"{ext[1:].upper()} is tabular data, not a geospatial format",
+        )
+
+    if ext in DOC_EXTENSIONS:
+        return (
+            FileCategory.DOCUMENTATION,
+            SkipReasonType.NOT_GEOSPATIAL,
+            f"{ext[1:].upper()} is documentation, not a geospatial format",
+        )
+
+    if ext in VIZ_EXTENSIONS:
+        return (
+            FileCategory.VISUALIZATION,
+            SkipReasonType.VISUALIZATION_ONLY,
+            f"{ext[1:]} files are visualization-only, not primary geospatial data",
+        )
+
+    if ext in JUNK_EXTENSIONS:
+        return (
+            FileCategory.JUNK,
+            SkipReasonType.JUNK_FILE,
+            f"{ext[1:]} files are not geospatial data",
+        )
+
+    return None
+
+
 def classify_file(
     path: Path,
     size_bytes: int | None = None,
@@ -268,44 +372,10 @@ def classify_file(
             f"{path.name} is a map style definition in styles/ directory",
         )
 
-    # Check by extension
-    if ext in GEO_ASSET_EXTENSIONS:
-        return (FileCategory.GEO_ASSET, None, None)
-
-    if ext in SIDECAR_EXTENSIONS:
-        return (
-            FileCategory.KNOWN_SIDECAR,
-            SkipReasonType.SIDECAR_FILE,
-            f"{ext} is a sidecar file for a primary asset",
-        )
-
-    if ext in TABULAR_EXTENSIONS:
-        return (
-            FileCategory.TABULAR_DATA,
-            SkipReasonType.NOT_GEOSPATIAL,
-            f"{ext[1:].upper()} is tabular data, not a geospatial format",
-        )
-
-    if ext in DOC_EXTENSIONS:
-        return (
-            FileCategory.DOCUMENTATION,
-            SkipReasonType.NOT_GEOSPATIAL,
-            f"{ext[1:].upper()} is documentation, not a geospatial format",
-        )
-
-    if ext in VIZ_EXTENSIONS:
-        return (
-            FileCategory.VISUALIZATION,
-            SkipReasonType.VISUALIZATION_ONLY,
-            f"{ext[1:]} files are visualization-only, not primary geospatial data",
-        )
-
-    if ext in JUNK_EXTENSIONS:
-        return (
-            FileCategory.JUNK,
-            SkipReasonType.JUNK_FILE,
-            f"{ext[1:]} files are not geospatial data",
-        )
+    # Check by extension (simple extension-based classification)
+    result = _classify_by_extension(ext, path)
+    if result is not None:
+        return result
 
     # Check images for thumbnail classification
     if ext in IMAGE_EXTENSIONS:

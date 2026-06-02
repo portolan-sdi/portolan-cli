@@ -423,11 +423,16 @@ class TestStatusCommandRemoved:
 
     @pytest.mark.unit
     def test_status_command_not_available(self, runner: CliRunner) -> None:
-        """portolan status command is no longer available."""
-        result = runner.invoke(cli, ["status"])
+        """portolan status command is no longer available.
 
-        # Should either not exist or show error
-        assert result.exit_code != 0 or "no such command" in result.output.lower()
+        Uses isolated_filesystem to avoid false positives from any
+        .portolan directory in the test runner's working directory.
+        """
+        with runner.isolated_filesystem():
+            result = runner.invoke(cli, ["status"])
+
+            # Should either not exist or show error
+            assert result.exit_code != 0 or "no such command" in result.output.lower()
 
 
 # =============================================================================

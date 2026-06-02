@@ -68,6 +68,8 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "pmtiles.attribution",  # Attribution HTML for tiles
         "pmtiles.src_crs",  # Override source CRS if metadata is incorrect
         "push.exclude",  # Glob patterns to exclude from metadata sync (Issue #426)
+        "tabular.enabled",  # Track non-geo tabular data as collection assets (Issue #432)
+        "tabular.convert",  # Convert CSV/TSV/Excel to Parquet (default: true)
     }
 )
 
@@ -118,6 +120,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "*.bak",  # Backup files
         "*~",  # Editor backup files
     ],
+    # Tabular data support (Issue #432)
+    "tabular.enabled": False,  # Disabled by default; opt-in per ADR scope
+    "tabular.convert": True,  # Convert CSV/TSV/Excel to Parquet by default
 }
 
 # Default glob patterns for files to exclude from asset tracking (per ADR-0028).
