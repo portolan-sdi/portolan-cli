@@ -3491,6 +3491,9 @@ def _process_deferred_non_geo_files(
                             file_path,
                             asset_path.name,
                         )
+                        # Track BOTH converted Parquet and source file (consistent with
+                        # vector behavior per ADR-0020: side-by-side, both tracked)
+                        source_tracked = True
                     else:
                         # Already Parquet or conversion disabled - track as-is
                         asset_path = file_path
@@ -3500,16 +3503,29 @@ def _process_deferred_non_geo_files(
                             ext,
                             file_path.name,
                         )
+                        source_tracked = False
 
-                    # Update collection.json with the tabular asset
+                    # Update collection.json with the tabular asset(s)
+                    # Primary asset: the Parquet file (or source if no conversion)
                     _update_collection_with_asset(
                         collection_dir=collection_dir,
                         asset_path=asset_path,
                     )
 
-                    # Update versions.json so is_current() finds the asset
-                    file_checksum = compute_checksum(asset_path)
-                    asset_files = {asset_path.name: (asset_path, file_checksum)}
+                    # If converted, also track source file as companion asset
+                    # (consistent with vector conversion behavior per ADR-0020)
+                    if source_tracked:
+                        _update_collection_with_asset(
+                            collection_dir=collection_dir,
+                            asset_path=file_path,
+                        )
+
+                    # Update versions.json so is_current() finds the asset(s)
+                    asset_checksum = compute_checksum(asset_path)
+                    asset_files = {asset_path.name: (asset_path, asset_checksum)}
+                    if source_tracked:
+                        source_checksum = compute_checksum(file_path)
+                        asset_files[file_path.name] = (file_path, source_checksum)
                     _update_versions(
                         collection_dir=collection_dir,
                         item_id=asset_path.stem,  # Use file stem as item_id
@@ -3659,9 +3675,18 @@ def _update_collection_with_asset(
 
     # Add asset to collection
     assets = collection_data.setdefault("assets", {})
-    asset_key = asset_path.stem  # Use file stem as key (e.g., "stats" for stats.parquet)
     media_type = _get_media_type(asset_path)
     role = _get_asset_role(asset_path)
+
+    # Use stem as key, but fall back to full filename on collision
+    # (consistent with _scan_item_assets behavior for vectors)
+    asset_key = asset_path.stem
+    if asset_key in assets:
+        # Check if it's the same file (idempotent update) or a different file
+        existing_href = assets[asset_key].get("href", "")
+        if existing_href != f"./{asset_path.name}":
+            # Different file with same stem - use full filename to avoid collision
+            asset_key = asset_path.name
 
     assets[asset_key] = {
         "href": f"./{asset_path.name}",

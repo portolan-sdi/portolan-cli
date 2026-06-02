@@ -65,7 +65,7 @@ geoparquet-io v1.2.0+ handles `geometry_column=None` correctly:
 - `gpio.convert()` on a CSV without geometry logs "Reading as plain table"
 - `gpio.Table.write()` produces valid plain Parquet (no `geo` metadata key)
 
-**Note on source files**: When `tabular.convert=true` converts a CSV/TSV/Excel file to Parquet, the original source file remains in the collection directory but is NOT tracked as an asset. The Parquet file becomes the canonical asset. This is by design — users who want to preserve the original should set `tabular.convert: false`.
+**Note on source files**: When `tabular.convert=true` converts a CSV/TSV/Excel file to Parquet, both files are tracked as assets — the Parquet as the primary data asset, and the original source as a companion. This is consistent with vector conversion behavior (ADR-0020: side-by-side, both tracked). Users who want ONLY the Parquet tracked should manually remove the source file after conversion.
 
 ### 5. Spatial extent: AOI inheritance from sibling collections
 
