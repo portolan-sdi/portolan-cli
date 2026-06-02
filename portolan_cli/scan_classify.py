@@ -168,6 +168,7 @@ def is_geoparquet(path: Path) -> bool:
         Returns False on any read errors (file not found, invalid format, etc.).
     """
     try:
+        import pyarrow as pa
         import pyarrow.parquet as pq
 
         # Only read schema metadata, not data — this is fast (reads footer only)
@@ -179,8 +180,12 @@ def is_geoparquet(path: Path) -> bool:
 
         return b"geo" in schema.metadata
 
+    except (OSError, ValueError, pa.lib.ArrowInvalid):
+        # File not found, not valid parquet, corrupted, etc. means not GeoParquet
+        return False
     except Exception:
-        # Any error (file not found, not valid parquet, etc.) means not GeoParquet
+        # Catch-all for unexpected pyarrow errors, but re-raise system-exiting
+        # exceptions (KeyboardInterrupt, SystemExit are BaseException, not Exception)
         return False
 
 

@@ -674,12 +674,21 @@ def _cleanup_orphaned_output(output_path: Path, item_dir: Path, source_path: Pat
     if not output_path.exists() or output_path == source_path:
         return
 
+    # Resolve source_path for comparison (Issue #432: don't delete source file)
+    resolved_source = source_path.resolve()
+
     try:
         output_path.unlink()
         logger.debug("Cleaned up orphaned conversion output: %s", output_path)
         # Also clean up any sidecars that might have been created
         for sidecar in item_dir.glob(f"{output_path.stem}.*"):
-            if sidecar != output_path and sidecar.suffix.lower() != ".json":
+            # Don't delete the output (already deleted), JSON metadata, or the SOURCE file
+            # Issue #432: source file (e.g., records.csv) matches glob (records.*)
+            if (
+                sidecar != output_path
+                and sidecar.suffix.lower() != ".json"
+                and sidecar.resolve() != resolved_source
+            ):
                 sidecar.unlink()
                 logger.debug("Cleaned up orphaned sidecar: %s", sidecar)
     except OSError as cleanup_err:
@@ -2070,8 +2079,16 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
         if not href.endswith("collection.json"):
             continue
 
-        # Resolve the collection path
-        collection_path = (catalog_root / href).resolve()
+        # Security: Validate path is within catalog_root (ADR-0030 path hardening)
+        # Prevents path traversal via malicious hrefs like "../../../etc/passwd"
+        try:
+            collection_path = (catalog_root / href).resolve()
+            # Ensure resolved path is within catalog_root
+            collection_path.relative_to(catalog_root.resolve())
+        except ValueError:
+            # Path is outside catalog_root - skip silently (path traversal attempt)
+            continue
+
         if not collection_path.exists():
             continue
 
@@ -2120,6 +2137,48 @@ def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
     return [west, south, east, north]
 
 
+def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
+    """Check metadata.yaml for explicit bbox (ADR-0047 priority 1).
+
+    Args:
+        collection_dir: Path to the collection directory.
+
+    Returns:
+        Bbox [west, south, east, north] if found in metadata.yaml, None otherwise.
+    """
+    metadata_path = collection_dir / "metadata.yaml"
+    if not metadata_path.exists():
+        return None
+
+    try:
+        import yaml
+
+        with open(metadata_path) as f:
+            metadata = yaml.safe_load(f) or {}
+
+        # Check for explicit bbox in metadata.yaml
+        # Supported formats: extent.bbox or just bbox at top level
+        bbox = metadata.get("bbox")
+        if bbox is None:
+            extent = metadata.get("extent", {})
+            if isinstance(extent, dict):
+                bbox = extent.get("bbox")
+
+        # Validate bbox format
+        if (
+            isinstance(bbox, list)
+            and len(bbox) == 4
+            and all(isinstance(x, (int, float)) for x in bbox)
+        ):
+            return bbox
+
+    except Exception:
+        # Any error reading/parsing metadata.yaml - fall back to inheritance
+        pass
+
+    return None
+
+
 def _ensure_tabular_collection(
     catalog_root: Path,
     collection_id: str,
@@ -2128,8 +2187,10 @@ def _ensure_tabular_collection(
     """Ensure a collection exists for standalone tabular data (Issue #432).
 
     For tabular-only collections (no geometry), creates a collection with
-    a spatial extent inherited from sibling geo collections (AOI inheritance).
-    If no sibling collections exist, falls back to global extent.
+    spatial extent determined by (in priority order per ADR-0047):
+    1. Explicit bbox in metadata.yaml (manual override)
+    2. Inherited from sibling geo collections (AOI inheritance)
+    3. Global fallback [-180, -90, 180, 90]
 
     Per design decision: companion tabular data is almost always about the same
     area as the catalog's geo data, so inheriting the AOI is correct and zero-friction.
@@ -2146,15 +2207,23 @@ def _ensure_tabular_collection(
         # Preserve existing extent
         return
 
-    # AOI inheritance: inherit bbox from sibling geo collections
-    # STAC requires spatial extent; for tabular data, we inherit the catalog AOI
-    sibling_bboxes = _get_sibling_collection_bboxes(catalog_root)
-    inherited_bbox = _compute_union_bbox(sibling_bboxes)
+    # Priority 1: Check metadata.yaml for explicit bbox (ADR-0047)
+    explicit_bbox = _get_metadata_yaml_bbox(collection_dir)
+    if explicit_bbox is not None:
+        bbox_source = "metadata.yaml"
+        final_bbox = explicit_bbox
+        sibling_count = 0
+    else:
+        # Priority 2: AOI inheritance from sibling geo collections
+        sibling_bboxes = _get_sibling_collection_bboxes(catalog_root)
+        final_bbox = _compute_union_bbox(sibling_bboxes)  # Falls back to global if empty
+        sibling_count = len(sibling_bboxes)
+        bbox_source = "sibling" if sibling_count > 0 else "global"
 
     collection = create_collection(
         collection_id=collection_id,
         description=f"Tabular data collection: {collection_id}",
-        bbox=inherited_bbox,
+        bbox=final_bbox,
     )
 
     # Save collection.json
@@ -2165,11 +2234,17 @@ def _ensure_tabular_collection(
     # Update catalog links to include this collection
     _update_catalog_links(catalog_root, collection_id)
 
-    if sibling_bboxes:
+    # Log based on bbox source (ADR-0047 priority order)
+    if bbox_source == "metadata.yaml":
+        logger.info(
+            "Created tabular collection %s with extent from metadata.yaml",
+            collection_id,
+        )
+    elif bbox_source == "sibling":
         logger.info(
             "Created tabular collection %s with extent inherited from %d sibling collection(s)",
             collection_id,
-            len(sibling_bboxes),
+            sibling_count,
         )
     else:
         logger.info(
@@ -3380,41 +3455,63 @@ def _process_deferred_non_geo_files(
                     )
                 else:
                     # tabular.enabled=true: track as standalone collection-level asset
-                    logger.info(
-                        "Tracking %s as standalone tabular %s collection-level asset: %s",
-                        file_path,
-                        ext,
-                        file_path.name,
+                    # Check if conversion is enabled (Issue #432)
+                    tabular_convert = get_setting(
+                        "tabular.convert",
+                        catalog_path=catalog_root,
+                        collection_path=collection_dir,
                     )
 
-                    # Ensure collection exists (Issue #432: tabular collections need creation)
-                    # For tabular-only collections, use global extent as placeholder
-                    # Per design: AOI inheritance will be implemented in future iteration
+                    # Ensure collection exists first (AOI inheritance from siblings)
                     _ensure_tabular_collection(
                         catalog_root=catalog_root,
                         collection_id=coll_id,
                         collection_dir=collection_dir,
                     )
 
+                    # Determine the final asset path (convert if needed)
+                    if tabular_convert and file_path.suffix.lower() != ".parquet":
+                        # Convert CSV/TSV/XLSX to Parquet via gpio (Issue #432)
+                        logger.info(
+                            "Converting %s to Parquet via geoparquet-io: %s",
+                            ext,
+                            file_path.name,
+                        )
+                        asset_path = convert_tabular(file_path, collection_dir)
+                        logger.info(
+                            "Tracking %s as standalone tabular collection-level asset: %s",
+                            file_path,
+                            asset_path.name,
+                        )
+                    else:
+                        # Already Parquet or conversion disabled - track as-is
+                        asset_path = file_path
+                        logger.info(
+                            "Tracking %s as standalone tabular %s collection-level asset: %s",
+                            file_path,
+                            ext,
+                            file_path.name,
+                        )
+
                     # Update collection.json with the tabular asset
                     _update_collection_with_asset(
                         collection_dir=collection_dir,
-                        asset_path=file_path,
+                        asset_path=asset_path,
                     )
 
                     # Update versions.json so is_current() finds the asset
-                    file_checksum = compute_checksum(file_path)
-                    asset_files = {file_path.name: (file_path, file_checksum)}
+                    file_checksum = compute_checksum(asset_path)
+                    asset_files = {asset_path.name: (asset_path, file_checksum)}
                     _update_versions(
                         collection_dir=collection_dir,
-                        item_id=file_path.stem,  # Use file stem as item_id
+                        item_id=asset_path.stem,  # Use file stem as item_id
                         collection_id=coll_id,
                         asset_files=asset_files,
                         is_collection_level_asset=True,
                         catalog_root=catalog_root,
                     )
 
-                    # Add to skipped (tracked but not converted)
+                    # Add to skipped (tracked, possibly converted)
                     skipped.append(file_path)
         except Exception as err:
             # Record failure and continue (Issue #175).
