@@ -1997,6 +1997,53 @@ def _get_or_create_collection(
     )
 
 
+def _ensure_tabular_collection(
+    catalog_root: Path,
+    collection_id: str,
+    collection_dir: Path,
+) -> None:
+    """Ensure a collection exists for standalone tabular data (Issue #432).
+
+    For tabular-only collections (no geometry), creates a collection with
+    a global placeholder extent. Per design decision: AOI inheritance from
+    sibling geo collections will be implemented in future iteration.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        collection_id: Collection identifier.
+        collection_dir: Path to the collection directory.
+    """
+    collection_json_path = collection_dir / "collection.json"
+
+    if collection_json_path.exists():
+        # Collection already exists (maybe from previous geo files)
+        return
+
+    # Create collection with global extent placeholder
+    # STAC requires spatial extent; using global bbox for tabular-only collections
+    # TODO(Issue #432): Implement AOI inheritance from sibling geo collections
+    global_bbox = [-180.0, -90.0, 180.0, 90.0]
+
+    collection = create_collection(
+        collection_id=collection_id,
+        description=f"Tabular data collection: {collection_id}",
+        bbox=global_bbox,
+    )
+
+    # Save collection.json
+    collection_dir.mkdir(parents=True, exist_ok=True)
+    collection.set_self_href(str(collection_json_path))
+    collection.save_object()
+
+    # Update catalog links to include this collection
+    _update_catalog_links(catalog_root, collection_id)
+
+    logger.info(
+        "Created tabular collection %s with global extent placeholder",
+        collection_id,
+    )
+
+
 def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
     """Ensure catalog has link to collection.
 
@@ -3172,17 +3219,69 @@ def _process_deferred_non_geo_files(
                 skipped.append(file_path)
 
             else:
-                # No geo file in same dir - cannot create item without bbox
+                # No geo file in same dir - check if tabular support is enabled
                 ext = file_path.suffix.upper().lstrip(".")
-                logger.warning(
-                    "Cannot track non-geospatial %s file %s: "
-                    "no geospatial file in same directory. "
-                    "Non-geospatial files require a companion "
-                    "geospatial file to create a STAC item.",
-                    ext,
-                    file_path,
+                collection_dir = catalog_root / Path(*coll_id.split("/"))
+
+                # Check tabular.enabled config (Issue #432)
+                tabular_enabled = get_setting(
+                    "tabular.enabled",
+                    catalog_path=catalog_root,
+                    collection_path=collection_dir,
                 )
-                skipped.append(file_path)
+
+                if not tabular_enabled:
+                    # tabular.enabled=false (default): fail with helpful hint
+                    failures.append(
+                        AddFailure(
+                            path=file_path,
+                            error=(
+                                f"Tabular data support is disabled. "
+                                f"File '{file_path.name}' has no geometry and no companion "
+                                f"geospatial file in the same directory. "
+                                f"To track standalone tabular data as collection-level assets, "
+                                f"set 'tabular.enabled: true' in .portolan/config.yaml"
+                            ),
+                        )
+                    )
+                else:
+                    # tabular.enabled=true: track as standalone collection-level asset
+                    logger.info(
+                        "Tracking %s as standalone tabular %s collection-level asset: %s",
+                        file_path,
+                        ext,
+                        file_path.name,
+                    )
+
+                    # Ensure collection exists (Issue #432: tabular collections need creation)
+                    # For tabular-only collections, use global extent as placeholder
+                    # Per design: AOI inheritance will be implemented in future iteration
+                    _ensure_tabular_collection(
+                        catalog_root=catalog_root,
+                        collection_id=coll_id,
+                        collection_dir=collection_dir,
+                    )
+
+                    # Update collection.json with the tabular asset
+                    _update_collection_with_asset(
+                        collection_dir=collection_dir,
+                        asset_path=file_path,
+                    )
+
+                    # Update versions.json so is_current() finds the asset
+                    file_checksum = compute_checksum(file_path)
+                    asset_files = {file_path.name: (file_path, file_checksum)}
+                    _update_versions(
+                        collection_dir=collection_dir,
+                        item_id=file_path.stem,  # Use file stem as item_id
+                        collection_id=coll_id,
+                        asset_files=asset_files,
+                        is_collection_level_asset=True,
+                        catalog_root=catalog_root,
+                    )
+
+                    # Add to skipped (tracked but not converted)
+                    skipped.append(file_path)
         except Exception as err:
             # Record failure and continue (Issue #175).
             failures.append(AddFailure(path=file_path, error=str(err)))

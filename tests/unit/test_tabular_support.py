@@ -223,3 +223,166 @@ class TestIsGeoParquet:
         missing = tmp_path / "missing.parquet"
 
         assert is_geoparquet(missing) is False
+
+
+def _setup_test_catalog(path: Path) -> None:
+    """Create an initialized Portolan catalog for tests."""
+    portolan_dir = path / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("# Portolan configuration\n")
+    catalog_data = {
+        "type": "Catalog",
+        "stac_version": "1.0.0",
+        "id": "test-catalog",
+        "description": "Test Portolan catalog",
+        "links": [],
+    }
+    (path / "catalog.json").write_text(json.dumps(catalog_data, indent=2))
+
+
+@pytest.mark.unit
+class TestTabularEnabledCheck:
+    """Tests for tabular.enabled config enforcement in add workflow."""
+
+    def test_tabular_disabled_standalone_parquet_fails_with_hint(self, tmp_path: Path) -> None:
+        """When tabular.enabled=false, standalone tabular files should fail with hint.
+
+        This tests the core Issue #432 requirement: when a user tries to add a
+        plain Parquet file (no geo metadata) without a companion geo file,
+        and tabular.enabled is false (default), they should get a clear error
+        message telling them how to enable tabular support.
+        """
+        from portolan_cli.dataset import add_files
+
+        # Create catalog structure
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+
+        # Create collection with ONLY a plain parquet file (no geo file)
+        collection_dir = catalog_root / "demographics"
+        collection_dir.mkdir()
+
+        # Create plain Parquet (no geo metadata)
+        parquet_file = collection_dir / "census.parquet"
+        table = pa.table({"tract_id": ["001", "002"], "population": [5000, 7500]})
+        pq.write_table(table, parquet_file)
+
+        # Config: tabular.enabled = false (default)
+        config_file = catalog_root / ".portolan" / "config.yaml"
+        config_file.write_text("tabular:\n  enabled: false\n")
+
+        # Add the file - should fail with hint
+        added, skipped, failures = add_files(
+            paths=[parquet_file],
+            catalog_root=catalog_root,
+        )
+
+        # Should have a failure with helpful message
+        assert len(failures) == 1
+        failure = failures[0]
+        assert "tabular" in failure.error.lower()
+        assert "enabled" in failure.error.lower() or "config" in failure.error.lower()
+
+    def test_tabular_enabled_standalone_parquet_succeeds(self, tmp_path: Path) -> None:
+        """When tabular.enabled=true, standalone tabular files should be tracked.
+
+        This tests that when users opt-in to tabular support, plain Parquet
+        files are tracked as collection-level assets even without a companion
+        geo file.
+        """
+        from portolan_cli.dataset import add_files
+
+        # Create catalog structure
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+
+        # Create collection with ONLY a plain parquet file (no geo file)
+        collection_dir = catalog_root / "demographics"
+        collection_dir.mkdir()
+
+        # Create plain Parquet (no geo metadata)
+        parquet_file = collection_dir / "census.parquet"
+        table = pa.table({"tract_id": ["001", "002"], "population": [5000, 7500]})
+        pq.write_table(table, parquet_file)
+
+        # Config: tabular.enabled = true (opt-in)
+        config_file = catalog_root / ".portolan" / "config.yaml"
+        config_file.write_text("tabular:\n  enabled: true\n")
+
+        # Add the file - should succeed
+        added, skipped, failures = add_files(
+            paths=[parquet_file],
+            catalog_root=catalog_root,
+        )
+
+        # Should have no failures
+        assert len(failures) == 0
+
+        # File should be in skipped (tracked as collection-level tabular asset)
+        # When tabular.enabled=true, standalone tabular files go to skipped
+        # (like other tracked-but-not-converted files per ADR-0028)
+        assert parquet_file in skipped
+
+        # collection.json should exist and have the asset
+        collection_json = collection_dir / "collection.json"
+        assert collection_json.exists(), "collection.json should be created"
+
+        import json as json_mod
+
+        collection_data = json_mod.loads(collection_json.read_text())
+        assert "assets" in collection_data, "collection.json should have assets"
+        assert len(collection_data["assets"]) > 0, "Should have at least one asset"
+
+    def test_tabular_companion_asset_works_regardless_of_config(self, tmp_path: Path) -> None:
+        """Tabular files WITH a companion geo file work regardless of tabular.enabled.
+
+        This tests the ADR-0028 behavior: when a tabular file is in the same
+        directory as a geo file, it's tracked as a companion asset. This should
+        work whether tabular.enabled is true or false.
+
+        Note: This requires geopandas for creating valid GeoParquet test data.
+        """
+        geopandas = pytest.importorskip("geopandas")
+        pytest.importorskip("shapely")
+        from shapely.geometry import Point
+
+        from portolan_cli.dataset import add_files
+
+        # Create catalog structure
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+
+        # Create collection with both geo and tabular files
+        collection_dir = catalog_root / "census"
+        collection_dir.mkdir()
+
+        # Create valid GeoParquet using geopandas
+        geo_file = collection_dir / "boundaries.parquet"
+        gdf = geopandas.GeoDataFrame(
+            {"id": [1, 2], "name": ["A", "B"]},
+            geometry=[Point(0, 0), Point(1, 1)],
+            crs="EPSG:4326",
+        )
+        gdf.to_parquet(geo_file)
+
+        # Create plain Parquet (companion tabular data)
+        tabular_file = collection_dir / "demographics.parquet"
+        tabular_table = pa.table({"tract_id": ["001"], "population": [5000]})
+        pq.write_table(tabular_table, tabular_file)
+
+        # Config: tabular.enabled = false (but companion should still work)
+        config_file = catalog_root / ".portolan" / "config.yaml"
+        config_file.write_text("tabular:\n  enabled: false\n")
+
+        # Add both files - should work for both
+        added, skipped, failures = add_files(
+            paths=[geo_file, tabular_file],
+            catalog_root=catalog_root,
+        )
+
+        # Geo file should be added, tabular should be tracked (as companion)
+        # No failures expected - tabular companion works regardless of config
+        assert len(failures) == 0

@@ -102,27 +102,34 @@ class TestTabularParquetSkip:
     """Tests for skipping tabular parquet files without geometry (Issue #177)."""
 
     @pytest.mark.unit
-    def test_add_files_skips_tabular_parquet_with_warning(
-        self, initialized_catalog: Path, tabular_parquet: Path, caplog: pytest.LogCaptureFixture
+    def test_add_files_fails_tabular_parquet_with_hint(
+        self, initialized_catalog: Path, tabular_parquet: Path
     ) -> None:
-        """add_files should skip parquet without geometry and emit a warning."""
-        with caplog.at_level(logging.WARNING):
-            added, skipped, failures = add_files(
-                paths=[tabular_parquet],
-                catalog_root=initialized_catalog,
-                collection_id="collection",
-            )
+        """add_files should fail tabular parquet with hint when tabular.enabled=false.
 
-        # Should not error - should skip gracefully
+        Issue #432: When tabular.enabled=false (default), standalone tabular files
+        should fail with a helpful message about how to enable tabular support,
+        rather than silently skipping.
+        """
+        added, skipped, failures = add_files(
+            paths=[tabular_parquet],
+            catalog_root=initialized_catalog,
+            collection_id="collection",
+        )
+
+        # Should not be added (no geometry)
         assert len(added) == 0
-        # The file should be in skipped (no geo file in same dir to create item)
 
-        # Should emit a warning about non-geospatial file
-        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert any(
-            "geometry" in msg.lower() or "non-geospatial" in msg.lower() or "parquet" in msg.lower()
-            for msg in warning_messages
-        ), f"Expected warning about parquet/geometry, got: {warning_messages}"
+        # Should have a failure with helpful hint about tabular.enabled
+        assert len(failures) == 1, "Should have exactly one failure for standalone tabular parquet"
+        failure = failures[0]
+        assert "tabular" in failure.error.lower(), (
+            f"Failure message should mention 'tabular', got: {failure.error}"
+        )
+        # Should mention how to enable (either 'enabled' or 'config')
+        assert "enabled" in failure.error.lower() or "config" in failure.error.lower(), (
+            f"Failure message should hint at enabling tabular support, got: {failure.error}"
+        )
 
     @pytest.mark.unit
     def test_add_files_does_not_error_on_tabular_parquet(
@@ -468,28 +475,32 @@ class TestGeoParquetSuccessPath:
 # =============================================================================
 
 
-class TestWarningMessages:
-    """Tests for warning message quality and consistency."""
+class TestFailureMessages:
+    """Tests for failure message quality and consistency (Issue #432)."""
 
     @pytest.mark.unit
-    def test_warning_includes_parquet_info(
-        self, initialized_catalog: Path, tabular_parquet: Path, caplog: pytest.LogCaptureFixture
+    def test_failure_includes_actionable_hint(
+        self, initialized_catalog: Path, tabular_parquet: Path
     ) -> None:
-        """Warning should mention the file for debugging."""
-        with caplog.at_level(logging.WARNING):
-            added, skipped, failures = add_files(
-                paths=[tabular_parquet],
-                catalog_root=initialized_catalog,
-                collection_id="collection",
-            )
+        """Failure message should include actionable hint for enabling tabular support.
 
-        # Check that some identifying info appears in warnings
-        all_messages = " ".join(r.message for r in caplog.records)
-        # Should mention either the filename or parquet format
-        assert (
-            "parquet" in all_messages.lower()
-            or "census-data" in all_messages.lower()
-            or "non-geospatial" in all_messages.lower()
+        Issue #432: When tabular.enabled=false, the failure message should tell
+        users exactly how to enable tabular data support (via config setting).
+        """
+        added, skipped, failures = add_files(
+            paths=[tabular_parquet],
+            catalog_root=initialized_catalog,
+            collection_id="collection",
+        )
+
+        # Should have a failure
+        assert len(failures) == 1, "Should have exactly one failure"
+        error_msg = failures[0].error.lower()
+
+        # Should mention tabular and how to enable it
+        assert "tabular" in error_msg, "Should mention 'tabular' in error"
+        assert "enabled" in error_msg or "config" in error_msg, (
+            f"Should hint at enabling tabular support, got: {failures[0].error}"
         )
 
 
