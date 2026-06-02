@@ -233,27 +233,26 @@ class TestClassifyFile:
         assert skip_type is None
         assert skip_msg is None
 
-    def test_parquet_in_geo_asset_extensions(self) -> None:
-        """.parquet must be listed in GEO_ASSET_EXTENSIONS.
+    def test_parquet_not_in_geo_asset_extensions(self) -> None:
+        """.parquet requires metadata peeking, so not in GEO_ASSET_EXTENSIONS.
 
-        GeoParquet is the primary vector format for Portolan but was
-        missing from the extension set (issue #74), causing scan to
-        silently skip all .parquet files.
+        Per Issue #432, we need to peek at Parquet metadata to distinguish
+        GeoParquet (has geo metadata) from plain Parquet (tabular data).
+        This supersedes issue #74's simple extension-based classification.
         """
-        assert ".parquet" in GEO_ASSET_EXTENSIONS
+        assert ".parquet" not in GEO_ASSET_EXTENSIONS
 
-    def test_parquet_classified_as_geo_asset(self, tmp_path: Path) -> None:
-        """GeoParquet (.parquet) files are classified as GEO_ASSET.
+    def test_parquet_without_geo_metadata_classified_as_tabular(self, tmp_path: Path) -> None:
+        """Plain Parquet (no geo metadata) classified as TABULAR_DATA.
 
-        Regression test for issue #74: .parquet was missing from
-        GEO_ASSET_EXTENSIONS so scan did not recognise GeoParquet files.
+        Per Issue #432: Parquet files without GeoParquet metadata should be
+        classified as tabular data, not geo assets. This supersedes issue #74.
         """
         test_path = tmp_path / "data.parquet"
-        test_path.write_bytes(b"PAR1")  # Minimal Parquet magic bytes
+        test_path.write_bytes(b"PAR1")  # Invalid parquet = no geo metadata
         category, skip_type, skip_msg = classify_file(test_path)
-        assert category == FileCategory.GEO_ASSET
-        assert skip_type is None
-        assert skip_msg is None
+        assert category == FileCategory.TABULAR_DATA
+        assert skip_type is not None
 
     def test_shapefile_sidecar_classified_as_sidecar(self, tmp_path: Path) -> None:
         """Shapefile sidecar (.dbf) classified as KNOWN_SIDECAR."""

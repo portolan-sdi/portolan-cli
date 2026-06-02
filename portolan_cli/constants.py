@@ -30,7 +30,8 @@ GEOSPATIAL_EXTENSIONS: frozenset[str] = frozenset(
 # (per ADR-0028) rather than causing errors.
 # Includes .parquet per Issue #177: tabular parquet files without geometry
 # should be tracked as auxiliary assets when alongside a primary geo-asset.
-TABULAR_EXTENSIONS: frozenset[str] = frozenset({".csv", ".tsv", ".parquet"})
+# Includes .xlsx/.xls per Issue #432: basic Excel support for tabular data.
+TABULAR_EXTENSIONS: frozenset[str] = frozenset({".csv", ".tsv", ".parquet", ".xlsx", ".xls"})
 
 # Cloud-native parquet extension
 PARQUET_EXTENSION: str = ".parquet"

@@ -395,7 +395,7 @@ detail("Processing chunk 3/10...")         # Dimmed text
 
 **Progress UI:** The `add` and `scan` commands have excellent progress printing with real-time updates. Use this pattern (Rich progress bars + batched output) for any long-running operations.
 
-<!-- freshness: last-verified: 2026-05-07 -->
+<!-- freshness: last-verified: 2026-06-02 -->
 ## Design Principles
 
 | Principle | Meaning | ADR |
