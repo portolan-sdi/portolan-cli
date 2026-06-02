@@ -65,6 +65,8 @@ geoparquet-io v1.2.0+ handles `geometry_column=None` correctly:
 - `gpio.convert()` on a CSV without geometry logs "Reading as plain table"
 - `gpio.Table.write()` produces valid plain Parquet (no `geo` metadata key)
 
+**Note on source files**: When `tabular.convert=true` converts a CSV/TSV/Excel file to Parquet, the original source file remains in the collection directory but is NOT tracked as an asset. The Parquet file becomes the canonical asset. This is by design — users who want to preserve the original should set `tabular.convert: false`.
+
 ### 5. Spatial extent: AOI inheritance from sibling collections
 
 STAC requires spatial extent for collections, but tabular data has none intrinsically. Resolution order:
@@ -74,6 +76,8 @@ STAC requires spatial extent for collections, but tabular data has none intrinsi
 3. **Global fallback** `[-180, -90, 180, 90]` when no siblings exist
 
 Rationale for inherit-by-default: companion tabular data is almost always *about* the same area as the catalog's geo data. "Extent" for tabular collections means "the AOI this data pertains to," not "the geometry of the data."
+
+**Limitation**: The union bbox computation uses simple min/max aggregation, which does NOT correctly handle antimeridian-crossing bboxes (where west > east, e.g., Fiji: `[177, -20, -175, -15]`). For catalogs with such collections, use an explicit bbox in `metadata.yaml` to override inheritance.
 
 ### 6. Modeling: Collection-level assets
 

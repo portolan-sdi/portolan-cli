@@ -157,13 +157,13 @@ class TestConstantsUnification:
         assert ".xls" in TABULAR_EXTENSIONS
 
     def test_scan_classify_tabular_matches_constants(self) -> None:
-        """scan_classify.py TABULAR_EXTENSIONS should match constants.py."""
+        """scan_classify.py TABULAR_EXTENSIONS should exactly match constants.py."""
         from portolan_cli.constants import TABULAR_EXTENSIONS as CONST_TABULAR
         from portolan_cli.scan_classify import TABULAR_EXTENSIONS as SCAN_TABULAR
 
-        # scan_classify should have at least the same extensions
-        # (it may have more if needed for classification)
-        assert CONST_TABULAR <= SCAN_TABULAR
+        # Exact equality required — any drift (in either direction) should fail
+        # This prevents constants.py and scan_classify.py from diverging silently
+        assert CONST_TABULAR == SCAN_TABULAR
 
     def test_parquet_not_in_geo_asset_extensions(self) -> None:
         """Parquet should NOT be in GEO_ASSET_EXTENSIONS (peeking required)."""
@@ -1062,3 +1062,255 @@ class TestMalformedInputHandling:
         except Exception:
             # Expected to fail, just verify it doesn't crash Python
             pass
+
+
+@pytest.mark.unit
+class TestComputeUnionBbox:
+    """Direct unit tests for _compute_union_bbox helper function."""
+
+    def test_empty_list_returns_global_fallback(self) -> None:
+        """Empty bbox list should return global fallback."""
+        from portolan_cli.dataset import _compute_union_bbox
+
+        result = _compute_union_bbox([])
+        assert result == [-180.0, -90.0, 180.0, 90.0]
+
+    def test_single_bbox_returns_itself(self) -> None:
+        """Single bbox should be returned as-is."""
+        from portolan_cli.dataset import _compute_union_bbox
+
+        bbox = [-75.5, 39.5, -74.5, 40.5]
+        result = _compute_union_bbox([bbox])
+        assert result == bbox
+
+    def test_multiple_bboxes_computes_union(self) -> None:
+        """Multiple bboxes should compute proper union."""
+        from portolan_cli.dataset import _compute_union_bbox
+
+        bboxes = [
+            [-75.5, 39.5, -75.0, 40.0],
+            [-75.2, 39.8, -74.5, 40.5],
+        ]
+        result = _compute_union_bbox(bboxes)
+        # Union: min(west), min(south), max(east), max(north)
+        assert result == [-75.5, 39.5, -74.5, 40.5]
+
+    def test_handles_negative_coordinates(self) -> None:
+        """Should correctly handle negative coordinates."""
+        from portolan_cli.dataset import _compute_union_bbox
+
+        bboxes = [
+            [-180.0, -90.0, -170.0, -80.0],
+            [-175.0, -85.0, -165.0, -75.0],
+        ]
+        result = _compute_union_bbox(bboxes)
+        assert result == [-180.0, -90.0, -165.0, -75.0]
+
+
+@pytest.mark.unit
+class TestGetSiblingCollectionBboxes:
+    """Direct unit tests for _get_sibling_collection_bboxes helper function."""
+
+    def test_missing_catalog_json_returns_empty(self, tmp_path: Path) -> None:
+        """Missing catalog.json should return empty list."""
+        from portolan_cli.dataset import _get_sibling_collection_bboxes
+
+        result = _get_sibling_collection_bboxes(tmp_path)
+        assert result == []
+
+    def test_malformed_catalog_json_returns_empty(self, tmp_path: Path) -> None:
+        """Malformed catalog.json should return empty list."""
+        from portolan_cli.dataset import _get_sibling_collection_bboxes
+
+        (tmp_path / "catalog.json").write_text("not valid json {{{")
+
+        result = _get_sibling_collection_bboxes(tmp_path)
+        assert result == []
+
+    def test_catalog_with_no_links_returns_empty(self, tmp_path: Path) -> None:
+        """Catalog with no links should return empty list."""
+        from portolan_cli.dataset import _get_sibling_collection_bboxes
+
+        catalog = {"type": "Catalog", "id": "test", "links": []}
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog))
+
+        result = _get_sibling_collection_bboxes(tmp_path)
+        assert result == []
+
+    def test_catalog_with_non_collection_links_returns_empty(self, tmp_path: Path) -> None:
+        """Catalog with only non-collection links should return empty list."""
+        from portolan_cli.dataset import _get_sibling_collection_bboxes
+
+        catalog = {
+            "type": "Catalog",
+            "id": "test",
+            "links": [
+                {"rel": "self", "href": "./catalog.json"},
+                {"rel": "root", "href": "./catalog.json"},
+            ],
+        }
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog))
+
+        result = _get_sibling_collection_bboxes(tmp_path)
+        assert result == []
+
+    def test_collection_with_missing_extent_skipped(self, tmp_path: Path) -> None:
+        """Collection without extent should be skipped."""
+        from portolan_cli.dataset import _get_sibling_collection_bboxes
+
+        # Create collection without extent
+        coll_dir = tmp_path / "no-extent"
+        coll_dir.mkdir()
+        collection = {"type": "Collection", "id": "no-extent", "links": []}
+        (coll_dir / "collection.json").write_text(json.dumps(collection))
+
+        # Catalog links to it
+        catalog = {
+            "type": "Catalog",
+            "id": "test",
+            "links": [{"rel": "child", "href": "./no-extent/collection.json"}],
+        }
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog))
+
+        result = _get_sibling_collection_bboxes(tmp_path)
+        assert result == []
+
+    def test_collection_with_invalid_bbox_skipped(self, tmp_path: Path) -> None:
+        """Collection with invalid bbox format should be skipped."""
+        from portolan_cli.dataset import _get_sibling_collection_bboxes
+
+        # Create collection with invalid bbox (only 2 elements)
+        coll_dir = tmp_path / "bad-bbox"
+        coll_dir.mkdir()
+        collection = {
+            "type": "Collection",
+            "id": "bad-bbox",
+            "extent": {"spatial": {"bbox": [[1.0, 2.0]]}},  # Invalid: only 2 elements
+            "links": [],
+        }
+        (coll_dir / "collection.json").write_text(json.dumps(collection))
+
+        catalog = {
+            "type": "Catalog",
+            "id": "test",
+            "links": [{"rel": "child", "href": "./bad-bbox/collection.json"}],
+        }
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog))
+
+        result = _get_sibling_collection_bboxes(tmp_path)
+        assert result == []
+
+    def test_collection_with_3d_bbox_extracts_2d(self, tmp_path: Path) -> None:
+        """Collection with 6-element 3D bbox should extract 2D components."""
+        from portolan_cli.dataset import _get_sibling_collection_bboxes
+
+        # Create collection with 3D bbox
+        coll_dir = tmp_path / "3d-collection"
+        coll_dir.mkdir()
+        collection = {
+            "type": "Collection",
+            "id": "3d-collection",
+            "extent": {
+                "spatial": {"bbox": [[-75.0, 39.0, 0.0, -74.0, 40.0, 100.0]]},  # 6-element 3D
+            },
+            "links": [],
+        }
+        (coll_dir / "collection.json").write_text(json.dumps(collection))
+
+        catalog = {
+            "type": "Catalog",
+            "id": "test",
+            "links": [{"rel": "child", "href": "./3d-collection/collection.json"}],
+        }
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog))
+
+        result = _get_sibling_collection_bboxes(tmp_path)
+        assert len(result) == 1
+        # Should extract only 2D bbox (first 4 elements)
+        assert result[0] == [
+            -75.0,
+            39.0,
+            0.0,
+            -74.0,
+        ]  # Note: 0.0 is min_z, becomes "east" in 2D slice
+
+
+@pytest.mark.unit
+class TestGetMetadataYamlBbox:
+    """Direct unit tests for _get_metadata_yaml_bbox helper function."""
+
+    def test_missing_metadata_yaml_returns_none(self, tmp_path: Path) -> None:
+        """Missing metadata.yaml should return None."""
+        from portolan_cli.dataset import _get_metadata_yaml_bbox
+
+        result = _get_metadata_yaml_bbox(tmp_path)
+        assert result is None
+
+    def test_empty_metadata_yaml_returns_none(self, tmp_path: Path) -> None:
+        """Empty metadata.yaml should return None."""
+        from portolan_cli.dataset import _get_metadata_yaml_bbox
+
+        (tmp_path / "metadata.yaml").write_text("")
+
+        result = _get_metadata_yaml_bbox(tmp_path)
+        assert result is None
+
+    def test_metadata_yaml_with_top_level_bbox(self, tmp_path: Path) -> None:
+        """metadata.yaml with top-level bbox should be found."""
+        from portolan_cli.dataset import _get_metadata_yaml_bbox
+
+        (tmp_path / "metadata.yaml").write_text("bbox: [-75.0, 39.0, -74.0, 40.0]\n")
+
+        result = _get_metadata_yaml_bbox(tmp_path)
+        assert result == [-75.0, 39.0, -74.0, 40.0]
+
+    def test_metadata_yaml_with_nested_extent_bbox(self, tmp_path: Path) -> None:
+        """metadata.yaml with extent.bbox should be found."""
+        from portolan_cli.dataset import _get_metadata_yaml_bbox
+
+        content = """
+extent:
+  bbox: [-120.0, 30.0, -110.0, 40.0]
+"""
+        (tmp_path / "metadata.yaml").write_text(content)
+
+        result = _get_metadata_yaml_bbox(tmp_path)
+        assert result == [-120.0, 30.0, -110.0, 40.0]
+
+    def test_metadata_yaml_with_3d_bbox_extracts_2d(self, tmp_path: Path) -> None:
+        """metadata.yaml with 6-element bbox should extract 2D."""
+        from portolan_cli.dataset import _get_metadata_yaml_bbox
+
+        # 6-element 3D bbox
+        (tmp_path / "metadata.yaml").write_text("bbox: [-75.0, 39.0, 0.0, -74.0, 40.0, 100.0]\n")
+
+        result = _get_metadata_yaml_bbox(tmp_path)
+        # Should extract only first 4 elements
+        assert result == [-75.0, 39.0, 0.0, -74.0]
+
+    def test_metadata_yaml_with_invalid_bbox_returns_none(self, tmp_path: Path) -> None:
+        """metadata.yaml with invalid bbox should return None."""
+        from portolan_cli.dataset import _get_metadata_yaml_bbox
+
+        (tmp_path / "metadata.yaml").write_text("bbox: [1.0, 2.0]\n")  # Only 2 elements
+
+        result = _get_metadata_yaml_bbox(tmp_path)
+        assert result is None
+
+    def test_metadata_yaml_with_non_numeric_bbox_returns_none(self, tmp_path: Path) -> None:
+        """metadata.yaml with non-numeric bbox values should return None."""
+        from portolan_cli.dataset import _get_metadata_yaml_bbox
+
+        (tmp_path / "metadata.yaml").write_text("bbox: ['a', 'b', 'c', 'd']\n")
+
+        result = _get_metadata_yaml_bbox(tmp_path)
+        assert result is None
+
+    def test_malformed_yaml_returns_none(self, tmp_path: Path) -> None:
+        """Malformed YAML should return None (not crash)."""
+        from portolan_cli.dataset import _get_metadata_yaml_bbox
+
+        (tmp_path / "metadata.yaml").write_text("bbox: [unclosed bracket\n")
+
+        result = _get_metadata_yaml_bbox(tmp_path)
+        assert result is None

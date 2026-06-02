@@ -2103,13 +2103,16 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
 
             if bbox_list and len(bbox_list) > 0:
                 bbox = bbox_list[0]
-                # Validate bbox format: [west, south, east, north]
+                # Validate bbox format: [west, south, east, north] or 3D variant
+                # STAC allows 6-element bboxes for 3D: [west, south, min_z, east, north, max_z]
+                # We use only the 2D components (first 4 elements) for union computation
                 if (
                     isinstance(bbox, list)
-                    and len(bbox) == 4
+                    and len(bbox) in (4, 6)
                     and all(isinstance(x, (int, float)) for x in bbox)
                 ):
-                    bboxes.append(bbox)
+                    # Extract 2D bbox (first 4 elements) regardless of 3D or 2D
+                    bboxes.append(bbox[:4])
 
         except (json.JSONDecodeError, OSError, KeyError):
             continue
@@ -2119,6 +2122,10 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
 
 def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
     """Compute the union (enclosing) bounding box from multiple bboxes.
+
+    Note: This uses simple min/max aggregation which does NOT correctly handle
+    antimeridian-crossing bboxes (where west > east, e.g., Fiji: [177, -20, -175, -15]).
+    For catalogs with such collections, use explicit bbox in metadata.yaml.
 
     Args:
         bboxes: List of bboxes, each [west, south, east, north].
@@ -2164,17 +2171,18 @@ def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
             if isinstance(extent, dict):
                 bbox = extent.get("bbox")
 
-        # Validate bbox format
+        # Validate bbox format (4-element 2D or 6-element 3D)
         if (
             isinstance(bbox, list)
-            and len(bbox) == 4
+            and len(bbox) in (4, 6)
             and all(isinstance(x, (int, float)) for x in bbox)
         ):
-            return bbox
+            # Return 2D bbox (first 4 elements) for consistency
+            return bbox[:4]
 
-    except Exception:
+    except Exception as e:
         # Any error reading/parsing metadata.yaml - fall back to inheritance
-        pass
+        logger.debug("Error reading bbox from %s: %s", metadata_path, e)
 
     return None
 
