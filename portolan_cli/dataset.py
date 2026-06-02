@@ -1836,6 +1836,45 @@ def convert_vector(source: Path, dest_dir: Path) -> Path:
     return output_path
 
 
+def convert_tabular(source: Path, dest_dir: Path) -> Path:
+    """Convert tabular file to Parquet using geoparquet-io (Issue #432).
+
+    Routes CSV/TSV/XLSX through gpio.convert().write() — the same pipeline
+    as geo files but with geometry_column=None. This ensures consistent
+    compression and row-group sizing across all Parquet outputs.
+
+    For plain Parquet files, copies them directly (no re-conversion needed).
+
+    Args:
+        source: Source tabular file (CSV, TSV, XLSX, or plain Parquet).
+        dest_dir: Destination directory.
+
+    Returns:
+        Path to the output Parquet file.
+    """
+    import geoparquet_io as gpio
+
+    output_path = dest_dir / f"{source.stem}.parquet"
+
+    # If already Parquet, just copy (no conversion needed)
+    if source.suffix.lower() == ".parquet":
+        if source.resolve() == output_path.resolve():
+            return output_path
+        shutil.copy2(source, output_path)
+        return output_path
+
+    # Convert CSV/TSV/XLSX using geoparquet-io
+    # gpio.convert() auto-detects format and handles non-geo files correctly
+    # (logs "Reading as plain table" and returns Table with geometry_column=None)
+    table = gpio.convert(str(source))
+
+    # Write with standard Parquet settings (compression, row groups)
+    # gpio v1.2.0+ handles geometry_column=None correctly in all write strategies
+    table.write(str(output_path))
+
+    return output_path
+
+
 def convert_raster(source: Path, dest_dir: Path) -> Path:
     """Convert raster file to COG.
 
@@ -1997,6 +2036,90 @@ def _get_or_create_collection(
     )
 
 
+def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
+    """Get bounding boxes from all sibling collections in the catalog (Issue #432).
+
+    Scans the catalog for child collection links and extracts their spatial extents.
+    Used for AOI inheritance when creating tabular-only collections.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        List of bboxes [west, south, east, north] from sibling collections.
+        Empty list if no collections with valid extents found.
+    """
+    catalog_path = catalog_root / "catalog.json"
+    if not catalog_path.exists():
+        return []
+
+    try:
+        with open(catalog_path) as f:
+            catalog_data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+    bboxes: list[list[float]] = []
+
+    # Find child links to collections
+    for link in catalog_data.get("links", []):
+        if link.get("rel") != "child":
+            continue
+
+        href = link.get("href", "")
+        if not href.endswith("collection.json"):
+            continue
+
+        # Resolve the collection path
+        collection_path = (catalog_root / href).resolve()
+        if not collection_path.exists():
+            continue
+
+        try:
+            with open(collection_path) as f:
+                collection_data = json.load(f)
+
+            # Extract bbox from extent
+            extent = collection_data.get("extent", {})
+            spatial = extent.get("spatial", {})
+            bbox_list = spatial.get("bbox", [])
+
+            if bbox_list and len(bbox_list) > 0:
+                bbox = bbox_list[0]
+                # Validate bbox format: [west, south, east, north]
+                if (
+                    isinstance(bbox, list)
+                    and len(bbox) == 4
+                    and all(isinstance(x, (int, float)) for x in bbox)
+                ):
+                    bboxes.append(bbox)
+
+        except (json.JSONDecodeError, OSError, KeyError):
+            continue
+
+    return bboxes
+
+
+def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
+    """Compute the union (enclosing) bounding box from multiple bboxes.
+
+    Args:
+        bboxes: List of bboxes, each [west, south, east, north].
+
+    Returns:
+        Union bbox [min_west, min_south, max_east, max_north].
+    """
+    if not bboxes:
+        return [-180.0, -90.0, 180.0, 90.0]  # Global fallback
+
+    west = min(bbox[0] for bbox in bboxes)
+    south = min(bbox[1] for bbox in bboxes)
+    east = max(bbox[2] for bbox in bboxes)
+    north = max(bbox[3] for bbox in bboxes)
+
+    return [west, south, east, north]
+
+
 def _ensure_tabular_collection(
     catalog_root: Path,
     collection_id: str,
@@ -2005,8 +2128,11 @@ def _ensure_tabular_collection(
     """Ensure a collection exists for standalone tabular data (Issue #432).
 
     For tabular-only collections (no geometry), creates a collection with
-    a global placeholder extent. Per design decision: AOI inheritance from
-    sibling geo collections will be implemented in future iteration.
+    a spatial extent inherited from sibling geo collections (AOI inheritance).
+    If no sibling collections exist, falls back to global extent.
+
+    Per design decision: companion tabular data is almost always about the same
+    area as the catalog's geo data, so inheriting the AOI is correct and zero-friction.
 
     Args:
         catalog_root: Root directory of the catalog.
@@ -2017,17 +2143,18 @@ def _ensure_tabular_collection(
 
     if collection_json_path.exists():
         # Collection already exists (maybe from previous geo files)
+        # Preserve existing extent
         return
 
-    # Create collection with global extent placeholder
-    # STAC requires spatial extent; using global bbox for tabular-only collections
-    # TODO(Issue #432): Implement AOI inheritance from sibling geo collections
-    global_bbox = [-180.0, -90.0, 180.0, 90.0]
+    # AOI inheritance: inherit bbox from sibling geo collections
+    # STAC requires spatial extent; for tabular data, we inherit the catalog AOI
+    sibling_bboxes = _get_sibling_collection_bboxes(catalog_root)
+    inherited_bbox = _compute_union_bbox(sibling_bboxes)
 
     collection = create_collection(
         collection_id=collection_id,
         description=f"Tabular data collection: {collection_id}",
-        bbox=global_bbox,
+        bbox=inherited_bbox,
     )
 
     # Save collection.json
@@ -2038,10 +2165,17 @@ def _ensure_tabular_collection(
     # Update catalog links to include this collection
     _update_catalog_links(catalog_root, collection_id)
 
-    logger.info(
-        "Created tabular collection %s with global extent placeholder",
-        collection_id,
-    )
+    if sibling_bboxes:
+        logger.info(
+            "Created tabular collection %s with extent inherited from %d sibling collection(s)",
+            collection_id,
+            len(sibling_bboxes),
+        )
+    else:
+        logger.info(
+            "Created tabular collection %s with global extent (no sibling collections)",
+            collection_id,
+        )
 
 
 def _update_catalog_links(catalog_root: Path, collection_id: str) -> None:
