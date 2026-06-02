@@ -6131,6 +6131,7 @@ def _output_extract_result(
                 "succeeded": report.summary.succeeded,
                 "failed": report.summary.failed,
                 "skipped": report.summary.skipped,
+                "empty": report.summary.empty,
                 "total_features": report.summary.total_features,
                 "total_size_bytes": report.summary.total_size_bytes,
             },
@@ -6176,10 +6177,19 @@ def _output_extract_result(
         return
 
     click.echo()
+    # Build status summary parts for display
+    status_parts: list[str] = []
     if report.summary.failed > 0:
+        status_parts.append(f"{report.summary.failed} failed")
+    if report.summary.empty > 0:
+        status_parts.append(f"{report.summary.empty} empty")
+
+    if report.summary.failed > 0:
+        # Partial failure: warn and list failed layers
+        status_suffix = f" ({', '.join(status_parts)})" if status_parts else ""
         warn(
             f"Extracted {report.summary.succeeded}/{report.summary.total_layers} "
-            f"layers ({report.summary.failed} failed)"
+            f"layers{status_suffix}"
         )
         for layer in report.layers:
             if layer.status == "failed":
@@ -6188,7 +6198,11 @@ def _output_extract_result(
         info_output(f"Report: {output_dir}/.portolan/extraction-report.json")
         raise SystemExit(1)
 
-    success(f"Extracted {report.summary.succeeded}/{report.summary.total_layers} layers")
+    # Success case (may still have empty layers)
+    status_suffix = f" ({', '.join(status_parts)})" if status_parts else ""
+    success(
+        f"Extracted {report.summary.succeeded}/{report.summary.total_layers} layers{status_suffix}"
+    )
     info_output(f"Output: {output_dir}")
     info_output(f"Report: {output_dir}/.portolan/extraction-report.json")
 

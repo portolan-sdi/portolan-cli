@@ -51,8 +51,10 @@ def get_resume_state(report: ExtractionReport) -> ResumeState:
     layers should be skipped (already succeeded) and which should
     be retried (previously failed).
 
-    Note: "skipped" status layers are treated as succeeded because
-    they were already successfully extracted in a prior run.
+    Note: "skipped" and "empty" status layers are treated as succeeded
+    because they don't need re-extraction. "skipped" layers were already
+    successfully extracted in a prior run; "empty" layers have no features
+    and will remain empty on retry.
 
     Args:
         report: The extraction report from a previous run.
@@ -66,7 +68,9 @@ def get_resume_state(report: ExtractionReport) -> ResumeState:
     failed_names: set[str] = set()
 
     for layer in report.layers:
-        if layer.status in ("success", "skipped"):
+        if layer.status in ("success", "skipped", "empty"):
+            # "empty" layers are treated as succeeded: they have no features
+            # and will remain empty on retry (no point re-extracting)
             succeeded_layers.add(layer.id)
             succeeded_names.add(layer.name)
         elif layer.status == "failed":

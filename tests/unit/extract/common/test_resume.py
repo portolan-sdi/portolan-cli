@@ -21,6 +21,20 @@ pytestmark = pytest.mark.unit
 
 def _make_layer_result(id: int, name: str, status: str) -> LayerResult:
     """Helper to create a LayerResult."""
+    # Empty layers have 0 features but no output file
+    if status == "empty":
+        return LayerResult(
+            id=id,
+            name=name,
+            status=status,
+            features=0,
+            size_bytes=0,
+            duration_seconds=0.0,
+            output_path=None,
+            warnings=["Layer has no features"],
+            error="No features returned from WFS service for layer 'test'.",
+            attempts=1,
+        )
     return LayerResult(
         id=id,
         name=name,
@@ -113,6 +127,27 @@ class TestGetResumeState:
         assert state.succeeded_names == {"layer_a"}
         assert state.failed_names == set()
 
+    def test_empty_treated_as_success(self) -> None:
+        """Empty layers (0 features) are treated as succeeded.
+
+        Issue #450: Empty layers should not be re-extracted on resume
+        because they will remain empty - no point retrying.
+        """
+        layers = [
+            _make_layer_result(0, "layer_a", "success"),
+            _make_layer_result(1, "layer_b", "empty"),
+            _make_layer_result(2, "layer_c", "failed"),
+        ]
+        report = _make_report(layers)
+
+        state = get_resume_state(report)
+
+        # Empty layers go into succeeded set, not failed
+        assert state.succeeded_layers == {0, 1}
+        assert state.failed_layers == {2}
+        assert state.succeeded_names == {"layer_a", "layer_b"}
+        assert state.failed_names == {"layer_c"}
+
 
 class TestShouldProcessLayer:
     """Tests for should_process_layer."""
@@ -169,3 +204,22 @@ class TestShouldProcessLayer:
         assert not should_process_layer(99, state, layer_name="layer_a")
         # By name - should process (new name)
         assert should_process_layer(0, state, layer_name="layer_b")
+
+    def test_empty_layer_skipped_on_resume(self) -> None:
+        """Empty layers should be skipped on resume.
+
+        Issue #450: Previously empty layers were treated as "new" and
+        re-extracted on every resume. Now they're in succeeded_names
+        and get skipped.
+        """
+        state = ResumeState(
+            succeeded_layers={0, 1},  # includes empty layer
+            failed_layers={2},
+            succeeded_names={"layer_a", "empty_layer"},  # empty_layer is here
+            failed_names={"failed_layer"},
+        )
+
+        # Empty layer should be skipped (not retried)
+        assert not should_process_layer(1, state, layer_name="empty_layer")
+        # Failed layer should be retried
+        assert should_process_layer(2, state, layer_name="failed_layer")

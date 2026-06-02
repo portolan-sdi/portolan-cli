@@ -561,10 +561,10 @@ def _extract_layer_task(
             id=layer.id,
             name=layer.name,
             status="failed",
-            features=0,
-            size_bytes=0,
-            duration_seconds=0.0,
-            output_path="",
+            features=None,
+            size_bytes=None,
+            duration_seconds=None,
+            output_path=None,
             warnings=[],
             error=error_msg,
             attempts=result.attempts,
@@ -689,8 +689,8 @@ def extract_wfs_catalog(
             )
             extracted_results.append(result)
 
-            status = "success" if result.status == "success" else "failed"
-            _emit_progress(on_progress, i, total, layer.name, status)
+            # Emit actual status (success, failed, or empty) - same as parallel path
+            _emit_progress(on_progress, i, total, layer.name, result.status)
 
     # Combine results in original order
     all_results = skipped_results + extracted_results
