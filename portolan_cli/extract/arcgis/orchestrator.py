@@ -1117,12 +1117,14 @@ def _build_report(
     succeeded = sum(1 for r in layer_results if r.status == "success")
     failed = sum(1 for r in layer_results if r.status == "failed")
     skipped = sum(1 for r in layer_results if r.status == "skipped")
+    empty = sum(1 for r in layer_results if r.status == "empty")
 
     summary = ExtractionSummary(
         total_layers=len(layer_results),
         succeeded=succeeded,
         failed=failed,
         skipped=skipped,
+        empty=empty,
         total_features=sum(r.features or 0 for r in layer_results),
         total_size_bytes=sum(r.size_bytes or 0 for r in layer_results),
         total_duration_seconds=sum(r.duration_seconds or 0.0 for r in layer_results),

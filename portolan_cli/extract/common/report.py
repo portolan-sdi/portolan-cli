@@ -24,13 +24,13 @@ class LayerResult:
     Attributes:
         id: Layer ID (integer from service).
         name: Layer name from service metadata.
-        status: Extraction status ("success", "failed", "skipped", "pending").
-        features: Number of features extracted (None if failed).
-        size_bytes: Output file size in bytes (None if failed).
+        status: Extraction status ("success", "failed", "skipped", "pending", "empty").
+        features: Number of features extracted (None if failed, 0 if empty).
+        size_bytes: Output file size in bytes (None if failed, 0 if empty).
         duration_seconds: Extraction duration (None if failed).
-        output_path: Relative path to output parquet file (None if failed).
+        output_path: Relative path to output parquet file (None if failed/empty).
         warnings: List of non-fatal warnings during extraction.
-        error: Error message if status is "failed" (None otherwise).
+        error: Error message if status is "failed" or "empty" (None otherwise).
         attempts: Number of extraction attempts (including retries).
     """
 
@@ -94,6 +94,7 @@ class ExtractionSummary:
         succeeded: Number of successfully extracted layers.
         failed: Number of failed layer extractions.
         skipped: Number of skipped layers (e.g., from resume).
+        empty: Number of empty layers (0 features, skipped with warning).
         total_features: Total features across all succeeded layers.
         total_size_bytes: Total output size in bytes.
         total_duration_seconds: Total extraction time.
@@ -103,6 +104,7 @@ class ExtractionSummary:
     succeeded: int
     failed: int
     skipped: int
+    empty: int
     total_features: int
     total_size_bytes: int
     total_duration_seconds: float
@@ -114,6 +116,7 @@ class ExtractionSummary:
             "succeeded": self.succeeded,
             "failed": self.failed,
             "skipped": self.skipped,
+            "empty": self.empty,
             "total_features": self.total_features,
             "total_size_bytes": self.total_size_bytes,
             "total_duration_seconds": self.total_duration_seconds,
@@ -121,12 +124,17 @@ class ExtractionSummary:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExtractionSummary:
-        """Create ExtractionSummary from dict."""
+        """Create ExtractionSummary from dict.
+
+        Note: empty field defaults to 0 for backward compatibility with
+        reports created before Issue #450 (graceful empty layer handling).
+        """
         return cls(
             total_layers=data["total_layers"],
             succeeded=data["succeeded"],
             failed=data["failed"],
             skipped=data["skipped"],
+            empty=data.get("empty", 0),  # Backward compatible default
             total_features=data["total_features"],
             total_size_bytes=data["total_size_bytes"],
             total_duration_seconds=data["total_duration_seconds"],

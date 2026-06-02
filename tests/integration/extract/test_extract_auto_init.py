@@ -61,6 +61,7 @@ def make_report(
     succeeded = sum(1 for layer in layers if layer.status == "success")
     failed = sum(1 for layer in layers if layer.status == "failed")
     skipped = sum(1 for layer in layers if layer.status == "skipped")
+    empty = sum(1 for layer in layers if layer.status == "empty")
     total_features = sum(layer.features or 0 for layer in layers)
     total_bytes = sum(layer.size_bytes or 0 for layer in layers)
 
@@ -85,6 +86,7 @@ def make_report(
             succeeded=succeeded,
             failed=failed,
             skipped=skipped,
+            empty=empty,
             total_features=total_features,
             total_size_bytes=total_bytes,
             total_duration_seconds=float(len(layers)),
