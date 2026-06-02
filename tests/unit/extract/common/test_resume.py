@@ -58,6 +58,7 @@ def _make_report(layers: list[LayerResult]) -> ExtractionReport:
             succeeded=sum(1 for lyr in layers if lyr.status == "success"),
             failed=sum(1 for lyr in layers if lyr.status == "failed"),
             skipped=sum(1 for lyr in layers if lyr.status == "skipped"),
+            empty=sum(1 for lyr in layers if lyr.status == "empty"),
             total_features=sum(lyr.features or 0 for lyr in layers),
             total_size_bytes=sum(lyr.size_bytes or 0 for lyr in layers),
             total_duration_seconds=sum(lyr.duration_seconds or 0.0 for lyr in layers),

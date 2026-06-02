@@ -260,6 +260,7 @@ def _create_report_with_layers(layer_specs: list[tuple[str, int]]) -> Extraction
         succeeded=succeeded,
         failed=failed,
         skipped=0,
+        empty=0,
         total_features=100 * succeeded,
         total_size_bytes=50000 * succeeded,
         total_duration_seconds=5.0 * succeeded,

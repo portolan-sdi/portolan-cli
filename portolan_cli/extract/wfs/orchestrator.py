@@ -337,6 +337,30 @@ def _build_metadata(url: str, discovery_result: WFSDiscoveryResult | None) -> Me
     )
 
 
+def _is_empty_layer_error(error_msg: str | None) -> bool:
+    """Check if an error message indicates an empty WFS layer.
+
+    gpio raises WFSError with specific messages when a layer has 0 features:
+    - "No features returned from WFS service for layer '{typename}'."
+    - "No features returned from any spatial tile."
+
+    This detection is string-based and coupled to gpio's error messages.
+    See: https://github.com/portolan-sdi/portolan-cli/issues/450
+
+    Upstream: https://github.com/geoparquet/geoparquet-io/issues/448
+    (EmptyLayerError subclass requested)
+
+    Args:
+        error_msg: The error message from a failed extraction.
+
+    Returns:
+        True if the error indicates an empty layer (0 features).
+    """
+    if not error_msg:
+        return False
+    return "No features returned" in error_msg
+
+
 def _build_summary(layer_results: list[LayerResult]) -> ExtractionSummary:
     """Compute extraction summary from layer results."""
     return ExtractionSummary(
@@ -344,6 +368,7 @@ def _build_summary(layer_results: list[LayerResult]) -> ExtractionSummary:
         succeeded=sum(1 for r in layer_results if r.status == "success"),
         failed=sum(1 for r in layer_results if r.status == "failed"),
         skipped=sum(1 for r in layer_results if r.status == "skipped"),
+        empty=sum(1 for r in layer_results if r.status == "empty"),
         total_features=sum(r.features or 0 for r in layer_results),
         total_size_bytes=sum(r.size_bytes or 0 for r in layer_results),
         total_duration_seconds=sum(r.duration_seconds or 0.0 for r in layer_results),
@@ -429,8 +454,8 @@ def _extract_layers_parallel(
             try:
                 result = future.result(timeout=options.timeout)
                 results.append(result)
-                status = "success" if result.status == "success" else "failed"
-                _emit_progress(on_progress, i, total, layer.name, status)
+                # Emit actual status (success, failed, or empty)
+                _emit_progress(on_progress, i, total, layer.name, result.status)
             except TimeoutError:
                 logger.error("Layer %s timed out after %ds", layer.name, options.timeout)
                 _emit_progress(on_progress, i, total, layer.name, "failed")
@@ -515,6 +540,23 @@ def _extract_layer_task(
             attempts=result.attempts,
         )
     else:
+        error_msg = str(result.error) if result.error else "Unknown error"
+        # Detect empty layers (0 features) and mark as "empty" instead of "failed"
+        # See Issue #450: Graceful handling of empty WFS layers
+        if _is_empty_layer_error(error_msg):
+            logger.warning("Layer %s is empty (0 features), skipping", layer.name)
+            return LayerResult(
+                id=layer.id,
+                name=layer.name,
+                status="empty",
+                features=0,
+                size_bytes=0,
+                duration_seconds=0.0,
+                output_path=None,
+                warnings=["Layer has no features"],
+                error=error_msg,
+                attempts=result.attempts,
+            )
         return LayerResult(
             id=layer.id,
             name=layer.name,
@@ -524,7 +566,7 @@ def _extract_layer_task(
             duration_seconds=0.0,
             output_path="",
             warnings=[],
-            error=str(result.error) if result.error else "Unknown error",
+            error=error_msg,
             attempts=result.attempts,
         )
 
