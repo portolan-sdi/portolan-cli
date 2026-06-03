@@ -267,6 +267,7 @@ def add_item_to_collection(
     item: pystac.Item,
     *,
     update_extent: bool = False,
+    merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Add an item to a collection.
 
@@ -275,11 +276,12 @@ def add_item_to_collection(
         item: The item to add.
         update_extent: If True, update collection's spatial extent to
                       encompass the item's bbox.
+        merge_strategy: How to handle conflicts with existing extent.
     """
     collection.add_item(item)
 
     if update_extent:
-        _update_collection_extent(collection, item)
+        _update_collection_extent(collection, item, merge_strategy)
 
 
 def _is_machine_derivable_extra_field(field_name: str) -> bool:
@@ -358,6 +360,10 @@ def add_asset_to_collection(
     Per ADR-0031: Single vector files (GeoParquet, Shapefile, GeoPackage) are
     collection-level assets—no item.json, asset directly in collection.json.
 
+    Issue #447 FIX: Before adding, check if ANY existing asset points to the same
+    href. If so, use that key (preserving human-authored keys) instead of creating
+    a duplicate entry.
+
     When an asset with the same key already exists, the merge_strategy controls
     how fields are combined (Issue #446):
     - SMART (default): Preserve human-enrichable fields (title, description),
@@ -374,15 +380,26 @@ def add_asset_to_collection(
             to encompass this bbox [min_x, min_y, max_x, max_y].
         merge_strategy: How to handle conflicts with existing assets.
     """
-    existing_asset = collection.assets.get(asset_key)
+    # Issue #447: Check if any existing asset already points to the same href
+    # This prevents duplicate entries when human-authored key differs from auto-key
+    existing_key_by_href = None
+    for key, existing in collection.assets.items():
+        if existing.href == asset.href:
+            existing_key_by_href = key
+            break
+
+    # Use the existing key if found (preserves human-authored keys like "census_2020")
+    # Otherwise use the provided key (e.g., stem-based "data")
+    final_key = existing_key_by_href if existing_key_by_href is not None else asset_key
+    existing_asset = collection.assets.get(final_key)
 
     if existing_asset is not None:
         asset = _merge_asset(existing_asset, asset, merge_strategy)
 
-    collection.add_asset(asset_key, asset)
+    collection.add_asset(final_key, asset)
 
     if update_extent_from_bbox:
-        _update_collection_extent_from_bbox(collection, update_extent_from_bbox)
+        _update_collection_extent_from_bbox(collection, update_extent_from_bbox, merge_strategy)
 
 
 def add_collection_properties_from_metadata(
@@ -449,17 +466,49 @@ def add_partition_metadata_to_collection(
         collection.stac_extensions.append(ext_url)
 
 
+def _is_placeholder_extent(bbox: list[float]) -> bool:
+    """Check if a bbox is the whole-world placeholder extent.
+
+    Issue #447: Placeholder extents like [-180, -90, 180, 90] should be
+    replaced with actual data extent, not expanded.
+    """
+    # Allow small tolerance for floating point comparison
+    return (
+        abs(bbox[0] - (-180)) < 0.001
+        and abs(bbox[1] - (-90)) < 0.001
+        and abs(bbox[2] - 180) < 0.001
+        and abs(bbox[3] - 90) < 0.001
+    )
+
+
 def _update_collection_extent_from_bbox(
     collection: pystac.Collection,
     bbox: list[float],
+    merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Update a collection's spatial extent to include a bounding box.
+
+    Issue #447 FIX: Respects merge strategy and handles placeholder extents:
+    - KEEP: Don't modify extent at all (preserve manual settings)
+    - SMART/OVERWRITE: Replace placeholder extent, expand otherwise
 
     Args:
         collection: The collection to update.
         bbox: Bounding box [min_x, min_y, max_x, max_y] to include.
+        merge_strategy: How to handle conflicts with existing extent.
     """
+    # KEEP strategy: preserve existing extent entirely
+    if merge_strategy == MergeStrategy.KEEP:
+        return
+
     current_bbox = collection.extent.spatial.bboxes[0]
+
+    # If current extent is placeholder, replace entirely with actual data
+    if _is_placeholder_extent(current_bbox):
+        collection.extent.spatial = pystac.SpatialExtent(bboxes=[list(bbox)])
+        return
+
+    # Otherwise expand to include new bbox
     new_bbox = [
         min(current_bbox[0], bbox[0]),  # min_x
         min(current_bbox[1], bbox[1]),  # min_y
@@ -473,17 +522,33 @@ def _update_collection_extent_from_bbox(
 def _update_collection_extent(
     collection: pystac.Collection,
     item: pystac.Item,
+    merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Update a collection's spatial extent to include an item's bbox.
+
+    Issue #447 FIX: Respects merge strategy and handles placeholder extents
+    (consistent with _update_collection_extent_from_bbox for collection-level assets).
 
     Args:
         collection: The collection to update.
         item: The item whose bbox should be included.
+        merge_strategy: How to handle conflicts with existing extent.
     """
     if item.bbox is None:
         return
 
+    # KEEP strategy: preserve existing extent entirely
+    if merge_strategy == MergeStrategy.KEEP:
+        return
+
     current_bbox = collection.extent.spatial.bboxes[0]
+
+    # If current extent is placeholder, replace entirely with actual data
+    if _is_placeholder_extent(current_bbox):
+        collection.extent.spatial = pystac.SpatialExtent(bboxes=[list(item.bbox)])
+        return
+
+    # Otherwise expand to include item bbox
     new_bbox = [
         min(current_bbox[0], item.bbox[0]),  # min_x
         min(current_bbox[1], item.bbox[1]),  # min_y

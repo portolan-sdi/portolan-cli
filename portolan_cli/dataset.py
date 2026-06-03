@@ -80,7 +80,6 @@ from portolan_cli.stac import (
     aggregate_table_metadata,
     create_collection,
     create_item,
-    get_existing_table_metadata,
     load_catalog,
     update_collection_summaries,
 )
@@ -1457,7 +1456,101 @@ def _add_prepared_items_to_collection(
                 add_collection_properties_from_metadata(collection, p.metadata)
         elif p.stac_item is not None:
             # Item-level: add item link to collection
-            add_item_to_collection(collection, p.stac_item, update_extent=True)
+            add_item_to_collection(
+                collection, p.stac_item, update_extent=True, merge_strategy=merge_strategy
+            )
+
+
+def _collect_parquet_metadata_from_disk(
+    collection_dir: Path,
+    collection: pystac.Collection,
+) -> list[GeoParquetMetadata]:
+    """Scan collection directory and extract metadata from tracked parquet assets.
+
+    Issue #447: Used to recompute row counts from disk instead of carrying forward
+    potentially stale aggregated counts. This ensures correctness when:
+    - Re-adding the same file (no double-count)
+    - Files are replaced on disk with different content
+    - Files are deleted and re-added
+
+    IMPORTANT: Only counts files that are tracked as assets in collection.json.
+    Untracked parquet files (temp files, work-in-progress) are ignored to prevent
+    inflating row counts.
+
+    Args:
+        collection_dir: Path to the collection directory.
+        collection: The collection to check tracked assets against.
+
+    Returns:
+        List of GeoParquetMetadata for tracked parquet assets found on disk.
+    """
+    # Build set of tracked asset hrefs (normalized without ./ prefix)
+    tracked_hrefs: set[str] = set()
+    for asset in collection.assets.values():
+        if asset.href:
+            # Normalize: strip ./ prefix for comparison
+            href = asset.href.lstrip("./")
+            tracked_hrefs.add(href)
+
+    metadata_list: list[GeoParquetMetadata] = []
+
+    for parquet_file in collection_dir.glob("**/*.parquet"):
+        # Skip files in .portolan directory (internal state)
+        if ".portolan" in parquet_file.parts:
+            continue
+
+        # Only include files that are tracked as assets
+        # Use as_posix() for cross-platform consistency (Windows uses backslashes,
+        # but STAC asset hrefs always use forward slashes)
+        relative_path = parquet_file.relative_to(collection_dir).as_posix()
+        if relative_path not in tracked_hrefs:
+            logger.debug(f"Skipping untracked parquet file: {relative_path}")
+            continue
+
+        try:
+            meta = extract_geoparquet_metadata(parquet_file)
+            metadata_list.append(meta)
+        except Exception as e:
+            # Log but don't fail - file might be corrupted or not a valid parquet
+            logger.warning(f"Could not read metadata from {parquet_file}: {e}")
+
+    return metadata_list
+
+
+def _warn_about_stale_assets(
+    collection: pystac.Collection,
+    collection_dir: Path,
+) -> list[str]:
+    """Check for assets that reference missing files and return warnings.
+
+    Issue #447: Emits warnings for assets pointing to files that no longer exist.
+    Does NOT remove them - that's the job of `check --fix`.
+
+    Args:
+        collection: The collection to check.
+        collection_dir: Path to the collection directory.
+
+    Returns:
+        List of warning messages for stale assets.
+    """
+    warnings: list[str] = []
+
+    for key, asset in collection.assets.items():
+        if not asset.href:
+            continue
+
+        # Resolve href relative to collection directory
+        if asset.href.startswith("./"):
+            asset_path = collection_dir / asset.href[2:]
+        elif asset.href.startswith("/"):
+            asset_path = Path(asset.href)
+        else:
+            asset_path = collection_dir / asset.href
+
+        if not asset_path.exists():
+            warnings.append(f"Asset '{key}' references missing file: {asset.href}")
+
+    return warnings
 
 
 def finalize_datasets(
@@ -1504,9 +1597,24 @@ def finalize_datasets(
         # Add items or collection-level assets to collection (in memory)
         _add_prepared_items_to_collection(collection, items, merge_strategy)
 
+        # Issue #447: Check for stale assets (reference missing files)
+        # Warn but don't remove - removal is handled by `check --fix`
+        stale_warnings = _warn_about_stale_assets(collection, collection_dir)
+        if stale_warnings:
+            from portolan_cli.output import warn as warn_output
+
+            warn_output(
+                f"{len(stale_warnings)} asset(s) reference missing files "
+                "(run `portolan check --fix` to clean up)"
+            )
+            for warning_msg in stale_warnings:
+                logger.debug(warning_msg)
+
         # Add table extension if any items are GeoParquet format (Issue #304)
-        # Aggregate metadata from all GeoParquet items and apply to collection
-        # Include existing table metadata to handle incremental adds correctly
+        # Issue #447 FIX: Recompute metadata from ALL parquet files on disk
+        # instead of carrying forward stale aggregated counts. This prevents:
+        # - Double-counting when re-adding the same file
+        # - Stale counts when files are replaced with different content
         #
         # Important: Only run aggregation if there's at least one NEW GeoParquet item
         # in this batch. PMTiles/FlatGeobuf are collection-level assets without
@@ -1517,13 +1625,12 @@ def finalize_datasets(
             if p.format_type == FormatType.VECTOR and isinstance(p.metadata, GeoParquetMetadata)
         ]
         if new_geoparquet_metadata:
-            # We have new GeoParquet items - include existing metadata for aggregation
-            existing_meta = get_existing_table_metadata(collection)
-            vector_metadata: list[object] = list(new_geoparquet_metadata)
-            if existing_meta is not None:
-                vector_metadata.insert(0, existing_meta)
-            aggregated = aggregate_table_metadata(vector_metadata)
-            add_table_extension(collection, aggregated, merge_strategy=merge_strategy)
+            # Recompute from disk: scan tracked parquet assets in collection
+            # This is O(n) file metadata reads but always correct
+            all_parquet_metadata = _collect_parquet_metadata_from_disk(collection_dir, collection)
+            if all_parquet_metadata:
+                aggregated = aggregate_table_metadata(all_parquet_metadata)
+                add_table_extension(collection, aggregated, merge_strategy=merge_strategy)
 
         # Add partition extension if any items have partition metadata (Issue #232)
         for p in items:
