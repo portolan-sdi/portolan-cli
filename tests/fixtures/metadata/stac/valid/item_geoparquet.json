@@ -22,7 +22,7 @@
   "assets": {
     "data": {
       "href": "./parcels-2026q1.parquet",
-      "type": "application/x-parquet",
+      "type": "application/vnd.apache.parquet",
       "title": "Parcel Data",
       "roles": ["data"]
     }
