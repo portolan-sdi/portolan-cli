@@ -48,7 +48,7 @@ def sample_item_json() -> dict[str, Any]:
         "assets": {
             "data": {
                 "href": "parcels.parquet",
-                "type": "application/x-parquet",
+                "type": "application/vnd.apache.parquet",
                 "roles": ["data"],
             }
         },

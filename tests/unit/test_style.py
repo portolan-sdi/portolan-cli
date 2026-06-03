@@ -850,7 +850,9 @@ class TestRegisterStyleAssets:
         collection_data = {
             "type": "Collection",
             "id": "test",
-            "assets": {"data": {"href": "./data.parquet", "type": "application/x-parquet"}},
+            "assets": {
+                "data": {"href": "./data.parquet", "type": "application/vnd.apache.parquet"}
+            },
         }
         (tmp_path / "collection.json").write_text(json.dumps(collection_data))
 

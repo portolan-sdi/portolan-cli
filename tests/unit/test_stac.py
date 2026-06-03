@@ -175,7 +175,7 @@ class TestCreateItem:
             assets={
                 "data": pystac.Asset(
                     href="data.parquet",
-                    media_type="application/x-parquet",
+                    media_type="application/vnd.apache.parquet",
                     roles=["data"],
                 )
             },
@@ -183,7 +183,7 @@ class TestCreateItem:
 
         assert "data" in item.assets
         assert item.assets["data"].href == "data.parquet"
-        assert item.assets["data"].media_type == "application/x-parquet"
+        assert item.assets["data"].media_type == "application/vnd.apache.parquet"
 
 
 class TestCatalogOperations:

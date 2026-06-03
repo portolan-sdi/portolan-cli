@@ -98,7 +98,7 @@ def catalog_with_tracked_file(tmp_path: Path, valid_points_parquet: Path) -> Pat
         "assets": {
             "data": {
                 "href": "./census.parquet",
-                "type": "application/x-parquet",
+                "type": "application/vnd.apache.parquet",
                 "roles": ["data"],
             }
         },

@@ -350,7 +350,9 @@ class TestCollectionLinkManagement:
         # Verify link was added
         collection_json = json.loads((collection_with_items / "collection.json").read_text())
         parquet_links = [
-            link for link in collection_json["links"] if link.get("type") == "application/x-parquet"
+            link
+            for link in collection_json["links"]
+            if link.get("type") == "application/vnd.apache.parquet"
         ]
 
         assert len(parquet_links) == 1
@@ -374,7 +376,9 @@ class TestCollectionLinkManagement:
         # Verify only one link
         collection_json = json.loads((collection_with_items / "collection.json").read_text())
         parquet_links = [
-            link for link in collection_json["links"] if link.get("type") == "application/x-parquet"
+            link
+            for link in collection_json["links"]
+            if link.get("type") == "application/vnd.apache.parquet"
         ]
 
         assert len(parquet_links) == 1
@@ -544,7 +548,7 @@ class TestCollectionLevelAsset:
 
         asset = collection_json["assets"]["geoparquet-items"]
         assert asset["href"] == "./items.parquet"
-        assert asset["type"] == "application/x-parquet"
+        assert asset["type"] == "application/vnd.apache.parquet"
         assert "stac-items" in asset["roles"]
 
     @pytest.mark.unit

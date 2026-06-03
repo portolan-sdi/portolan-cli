@@ -142,7 +142,7 @@ class TestAssetModel:
         """AssetModel should serialize correctly."""
         asset = AssetModel(
             href="data/file.parquet",
-            type="application/x-parquet",
+            type="application/vnd.apache.parquet",
             roles=["data"],
             title="Data file",
         )
@@ -150,7 +150,7 @@ class TestAssetModel:
         data = asset.to_dict()
 
         assert data["href"] == "data/file.parquet"
-        assert data["type"] == "application/x-parquet"
+        assert data["type"] == "application/vnd.apache.parquet"
         assert data["roles"] == ["data"]
         assert data["title"] == "Data file"
 
@@ -159,14 +159,14 @@ class TestAssetModel:
         """AssetModel should deserialize correctly."""
         data = {
             "href": "data/file.parquet",
-            "type": "application/x-parquet",
+            "type": "application/vnd.apache.parquet",
             "roles": ["data"],
         }
 
         asset = AssetModel.from_dict(data)
 
         assert asset.href == "data/file.parquet"
-        assert asset.type == "application/x-parquet"
+        assert asset.type == "application/vnd.apache.parquet"
         assert asset.roles == ["data"]
 
 
@@ -186,7 +186,7 @@ class TestItemSerialization:
             },
             bbox=[-122.5, 37.5, -122.0, 38.0],
             properties={"datetime": "2024-01-01T00:00:00Z"},
-            assets={"data": AssetModel(href="data.parquet", type="application/x-parquet")},
+            assets={"data": AssetModel(href="data.parquet", type="application/vnd.apache.parquet")},
             collection="test-collection",
         )
 

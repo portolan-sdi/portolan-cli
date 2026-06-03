@@ -170,7 +170,7 @@ class TestFindGeoparquetAssets:
             "assets": {
                 "geoparquet-items": {
                     "href": "./items.parquet",
-                    "type": "application/x-parquet",
+                    "type": "application/vnd.apache.parquet",
                     "roles": ["stac-items"],
                 }
             },

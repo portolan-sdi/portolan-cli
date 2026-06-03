@@ -19,7 +19,7 @@ class AssetModel:
 
     Attributes:
         href: Asset URL or relative path.
-        type: Media type (e.g., "application/x-parquet").
+        type: Media type (e.g., "application/vnd.apache.parquet").
         roles: Asset roles (e.g., ["data"], ["thumbnail"]).
         title: Human-readable title.
     """

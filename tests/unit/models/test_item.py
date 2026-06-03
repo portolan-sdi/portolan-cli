@@ -35,12 +35,12 @@ class TestAssetModel:
         """AssetModel can be created with all fields."""
         asset = AssetModel(
             href="./data.parquet",
-            type="application/x-parquet",
+            type="application/vnd.apache.parquet",
             roles=["data"],
             title="GeoParquet data file",
         )
 
-        assert asset.type == "application/x-parquet"
+        assert asset.type == "application/vnd.apache.parquet"
         assert asset.roles == ["data"]
         assert asset.title == "GeoParquet data file"
 
@@ -59,13 +59,13 @@ class TestAssetModel:
         """AssetModel.to_dict() returns correct dict."""
         asset = AssetModel(
             href="./data.parquet",
-            type="application/x-parquet",
+            type="application/vnd.apache.parquet",
             roles=["data"],
         )
         data = asset.to_dict()
 
         assert data["href"] == "./data.parquet"
-        assert data["type"] == "application/x-parquet"
+        assert data["type"] == "application/vnd.apache.parquet"
         assert data["roles"] == ["data"]
 
     @pytest.mark.unit
@@ -138,7 +138,7 @@ class TestItemModel:
             assets={
                 "data": AssetModel(
                     href="./data.parquet",
-                    type="application/x-parquet",
+                    type="application/vnd.apache.parquet",
                     roles=["data"],
                 ),
             },
@@ -263,7 +263,7 @@ class TestItemSerialization:
             assets={
                 "data": AssetModel(
                     href="./data.parquet",
-                    type="application/x-parquet",
+                    type="application/vnd.apache.parquet",
                     roles=["data"],
                 ),
             },
@@ -295,7 +295,7 @@ class TestItemSerialization:
 
         assert "data" in data["assets"]
         assert data["assets"]["data"]["href"] == "./data.parquet"
-        assert data["assets"]["data"]["type"] == "application/x-parquet"
+        assert data["assets"]["data"]["type"] == "application/vnd.apache.parquet"
 
     @pytest.mark.unit
     def test_from_dict_creates_item(self) -> None:

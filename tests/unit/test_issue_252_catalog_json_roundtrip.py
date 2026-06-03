@@ -160,7 +160,7 @@ def full_catalog(tmp_path: Path) -> Path:
         "assets": {
             "data": {
                 "href": "./data.parquet",
-                "type": "application/x-parquet",
+                "type": "application/vnd.apache.parquet",
             }
         },
     }

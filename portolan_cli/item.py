@@ -152,8 +152,8 @@ def _get_media_type(path: Path) -> str:
     suffix = path.suffix.lower()
 
     media_types = {
-        ".parquet": "application/x-parquet",
-        ".geoparquet": "application/x-parquet",
+        ".parquet": "application/vnd.apache.parquet",
+        ".geoparquet": "application/vnd.apache.parquet",
         ".tif": "image/tiff; application=geotiff",
         ".tiff": "image/tiff; application=geotiff",
         ".json": "application/json",

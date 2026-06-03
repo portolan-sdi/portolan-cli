@@ -645,7 +645,7 @@ class TestPMTilesRecommendedRule:
             "assets": {
                 "geoparquet-items": {
                     "href": "./items.parquet",
-                    "type": "application/x-parquet",
+                    "type": "application/vnd.apache.parquet",
                     "roles": ["stac-items"],
                 }
             },
@@ -949,7 +949,7 @@ class TestMetadataFreshRule:
             "assets": {
                 "data": {
                     "href": "./test.parquet",
-                    "type": "application/x-parquet",
+                    "type": "application/vnd.apache.parquet",
                 }
             },
             "links": [],
@@ -1035,7 +1035,7 @@ class TestMetadataFreshRule:
             "assets": {
                 "data": {
                     "href": "./test.parquet",
-                    "type": "application/x-parquet",
+                    "type": "application/vnd.apache.parquet",
                 }
             },
             "links": [],

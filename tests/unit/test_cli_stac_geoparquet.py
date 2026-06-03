@@ -163,7 +163,9 @@ class TestStacGeoparquetCommand:
             (catalog_with_collection / "imagery" / "collection.json").read_text()
         )
         parquet_links = [
-            link for link in collection_json["links"] if link.get("type") == "application/x-parquet"
+            link
+            for link in collection_json["links"]
+            if link.get("type") == "application/vnd.apache.parquet"
         ]
         assert len(parquet_links) == 1
         assert parquet_links[0]["rel"] == "items"

@@ -126,7 +126,7 @@ def async_catalog(tmp_path: Path) -> Path:
         "properties": {"datetime": "2024-01-01T00:00:00Z"},
         "links": [],
         "assets": {
-            f"file{i}": {"href": f"./file{i}.parquet", "type": "application/x-parquet"}
+            f"file{i}": {"href": f"./file{i}.parquet", "type": "application/vnd.apache.parquet"}
             for i in range(10)
         },
     }
@@ -216,7 +216,7 @@ def many_files_catalog(tmp_path: Path) -> Path:
         "properties": {"datetime": "2024-01-01T00:00:00Z"},
         "links": [],
         "assets": {
-            f"file{i}": {"href": f"./file{i}.parquet", "type": "application/x-parquet"}
+            f"file{i}": {"href": f"./file{i}.parquet", "type": "application/vnd.apache.parquet"}
             for i in range(num_files)
         },
     }

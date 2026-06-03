@@ -117,7 +117,7 @@ def local_catalog(tmp_path: Path) -> Path:
         "bbox": None,
         "properties": {"datetime": "2024-01-01T00:00:00Z"},
         "links": [],
-        "assets": {"data": {"href": "./data.parquet", "type": "application/x-parquet"}},
+        "assets": {"data": {"href": "./data.parquet", "type": "application/vnd.apache.parquet"}},
     }
     (item_dir / "data.json").write_text(json.dumps(item_data, indent=2))
 

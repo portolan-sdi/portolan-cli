@@ -586,7 +586,7 @@ class TestGetDatasetInfo:
             "bbox": [-122.5, 37.5, -122.0, 38.0],
             "properties": {"datetime": "2024-01-01T00:00:00Z", "title": "My Item"},
             "links": [],
-            "assets": {"data": {"href": "data.parquet", "type": "application/x-parquet"}},
+            "assets": {"data": {"href": "data.parquet", "type": "application/vnd.apache.parquet"}},
         }
         (item_dir / "my-item.json").write_text(json.dumps(item_data))
 
@@ -1086,7 +1086,7 @@ class TestGetMediaType:
         """_get_media_type returns correct type for .parquet files."""
         p = tmp_path / "data.parquet"
         p.write_bytes(b"fake")
-        assert _get_media_type(p) == "application/x-parquet"
+        assert _get_media_type(p) == "application/vnd.apache.parquet"
 
     @pytest.mark.unit
     def test_tif_media_type(self, tmp_path: Path) -> None:
@@ -1170,7 +1170,7 @@ class TestGetMediaType:
         """_get_media_type handles uppercase extensions."""
         p = tmp_path / "data.PARQUET"
         p.write_bytes(b"fake")
-        assert _get_media_type(p) == "application/x-parquet"
+        assert _get_media_type(p) == "application/vnd.apache.parquet"
 
 
 class TestGetAssetRole:
@@ -1575,7 +1575,7 @@ class TestMultiAssetListAndInfo:
             "properties": {"datetime": "2024-01-01T00:00:00Z"},
             "links": [],
             "assets": {
-                "data": {"href": "data.parquet", "type": "application/x-parquet"},
+                "data": {"href": "data.parquet", "type": "application/vnd.apache.parquet"},
                 "thumbnail": {"href": "thumb.png", "type": "image/png"},
                 "metadata": {"href": "extra.xml", "type": "application/xml"},
             },

@@ -67,6 +67,7 @@ from portolan_cli.metadata_yaml import (
 )
 from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
+    MergeStrategy,
     add_asset_to_collection,
     add_collection_extensions_from_summaries,
     add_collection_properties_from_metadata,
@@ -142,7 +143,7 @@ IGNORED_FILES: frozenset[str] = frozenset(
 
 # Extension-to-MIME-type mapping for asset files.
 _MEDIA_TYPE_MAP: dict[str, str] = {
-    ".parquet": "application/x-parquet",
+    ".parquet": "application/vnd.apache.parquet",
     ".tif": "image/tiff; application=geotiff; profile=cloud-optimized",
     ".tiff": "image/tiff; application=geotiff; profile=cloud-optimized",
     ".geojson": "application/geo+json",
@@ -1428,6 +1429,7 @@ def prepare_dataset(
 def _add_prepared_items_to_collection(
     collection: pystac.Collection,
     items: list[PreparedDataset],
+    merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Add prepared items or collection-level assets to a collection.
 
@@ -1437,13 +1439,18 @@ def _add_prepared_items_to_collection(
     Args:
         collection: The pystac Collection to add to.
         items: List of PreparedDataset objects.
+        merge_strategy: How to merge auto-detected metadata with existing values.
     """
     for p in items:
         if p.is_collection_level_asset and p.stac_assets is not None:
             # Collection-level asset: add directly to collection.assets
             for asset_key, asset in p.stac_assets.items():
                 add_asset_to_collection(
-                    collection, asset_key, asset, update_extent_from_bbox=p.bbox
+                    collection,
+                    asset_key,
+                    asset,
+                    update_extent_from_bbox=p.bbox,
+                    merge_strategy=merge_strategy,
                 )
             # Add format-specific properties (proj:epsg, pmtiles:*, flatgeobuf:*)
             if p.metadata is not None:
@@ -1456,6 +1463,7 @@ def _add_prepared_items_to_collection(
 def finalize_datasets(
     catalog_root: Path,
     prepared: list[PreparedDataset],
+    merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> list[DatasetInfo]:
     """Finalize prepared datasets by writing versions.json and collection.json.
 
@@ -1465,6 +1473,7 @@ def finalize_datasets(
     Args:
         catalog_root: Root directory of the catalog.
         prepared: List of PreparedDataset objects from prepare_dataset().
+        merge_strategy: How to merge auto-detected metadata with existing values.
 
     Returns:
         List of DatasetInfo for each finalized dataset.
@@ -1493,7 +1502,7 @@ def finalize_datasets(
         )
 
         # Add items or collection-level assets to collection (in memory)
-        _add_prepared_items_to_collection(collection, items)
+        _add_prepared_items_to_collection(collection, items, merge_strategy)
 
         # Add table extension if any items are GeoParquet format (Issue #304)
         # Aggregate metadata from all GeoParquet items and apply to collection
@@ -1514,7 +1523,7 @@ def finalize_datasets(
             if existing_meta is not None:
                 vector_metadata.insert(0, existing_meta)
             aggregated = aggregate_table_metadata(vector_metadata)
-            add_table_extension(collection, aggregated)
+            add_table_extension(collection, aggregated, merge_strategy=merge_strategy)
 
         # Add partition extension if any items have partition metadata (Issue #232)
         for p in items:
@@ -3066,6 +3075,7 @@ def add_files(
     force: bool = False,
     reconvert: bool = False,
     skip_partitioning: bool = False,
+    merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
     """Add files to a Portolan catalog.
 
@@ -3331,7 +3341,7 @@ def add_files(
     # ========================================================================
     # This is the key optimization: ONE write per collection instead of O(n)
     if prepared_datasets:
-        added.extend(finalize_datasets(catalog_root, prepared_datasets))
+        added.extend(finalize_datasets(catalog_root, prepared_datasets, merge_strategy))
 
     # ========================================================================
     # PHASE 3: Process deferred non-geo files (sequential)
