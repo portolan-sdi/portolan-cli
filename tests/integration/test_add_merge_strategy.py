@@ -67,14 +67,14 @@ def collection_with_metadata(initialized_catalog: Path, valid_points_parquet: Pa
         },
         "table:columns": [
             {
-                "name": "id",
+                "name": "boundary_id",
                 "type": "int64",
-                "description": "Unique identifier for each census tract.",
+                "description": "Unique building boundary identifier.",
             },
             {
                 "name": "geometry",
                 "type": "binary",
-                "description": "Tract boundary polygon in WGS84.",
+                "description": "Building footprint polygon in WGS84.",
             },
         ],
     }
@@ -165,12 +165,11 @@ class TestMergeStrategySmartIntegration:
 
         collection_json = json.loads((collection_with_metadata / "collection.json").read_text())
 
-        # Find the id column and check description preserved
+        # Find the boundary_id column and check description preserved
         columns = collection_json.get("table:columns", [])
-        id_col = next((c for c in columns if c["name"] == "id"), None)
-        if id_col:
-            # Description should be preserved if column still exists
-            assert id_col.get("description") == "Unique identifier for each census tract."
+        boundary_col = next((c for c in columns if c["name"] == "boundary_id"), None)
+        assert boundary_col is not None, "boundary_id column should exist in table:columns"
+        assert boundary_col.get("description") == "Unique building boundary identifier."
 
 
 class TestMergeStrategyKeepIntegration:
