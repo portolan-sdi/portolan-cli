@@ -1,3 +1,45 @@
+## v1.0.0a0 (2026-06-03)
+
+### BREAKING CHANGE
+
+- `metadata init`, `metadata validate`, and `readme`
+are now recursive by default, matching `scan` behavior.
+
+### Feat
+
+- **add**: merge strategy for preserving human-authored metadata (#452)
+- **add**: non-geo tabular data support (#432) (#449)
+- **cli**: make metadata and readme commands recursive by default (#442)
+- **backends**: merge portolake into portolan-cli as [iceberg] extra (#342)
+- **readme**: make collections list collapsible for large catalogs (#424) (#429)
+- **skills**: add bootstrap skill for end-to-end catalog creation (#425)
+- **skills**: add consume skill for querying Portolan catalogs (closes #121) (#421)
+- **style**: register style assets in collection.json
+- **style**: add discover_styles and build_styles_manifest
+- **style**: add build_full_style, write_style_file, and write_default_style functions
+- **check**: add STAC schema and lint validation rules (#397) (#419)
+
+### Fix
+
+- **add**: correct incremental add asset accounting bugs (#454)
+- **scan**: strip Hive partition dirs from collection ID inference (#453)
+- **extract**: gracefully handle empty WFS layers (#450) (#451)
+- **stac**: place raster bands on data asset per STAC v1.1.0 (#441)
+- renumber styles ADR to 0045 to resolve conflict with consumption guides, increase test coverage
+- **push**: sync all catalog files to remote (closes #426) (#430)
+- **thumbnail**: resolve CRS mismatch and improve large file performance (#427)
+- **style**: address review findings for styles-as-stac-assets
+- **scan**: classify files in styles/ directories as style metadata
+- **deps**: remove git dependency from optional-deps for PyPI compatibility (#418)
+
+### Refactor
+
+- **style**: remove pmtiles:style inline approach
+
+### Perf
+
+- **iceberg**: read table:row_count from snapshot metadata (#440)
+
 ## v0.7.0 (2026-05-07)
 
 ### Feat
