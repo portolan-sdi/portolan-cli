@@ -1500,7 +1500,9 @@ def _collect_parquet_metadata_from_disk(
             continue
 
         # Only include files that are tracked as assets
-        relative_path = str(parquet_file.relative_to(collection_dir))
+        # Use as_posix() for cross-platform consistency (Windows uses backslashes,
+        # but STAC asset hrefs always use forward slashes)
+        relative_path = parquet_file.relative_to(collection_dir).as_posix()
         if relative_path not in tracked_hrefs:
             logger.debug(f"Skipping untracked parquet file: {relative_path}")
             continue
