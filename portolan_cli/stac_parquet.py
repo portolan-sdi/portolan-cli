@@ -6,7 +6,7 @@ many items, enabling efficient spatial/temporal queries without N HTTP requests.
 Per issue #319:
 - Optional but recommended for collections exceeding threshold (default: 100 items)
 - Uses stac-geoparquet library for STAC → GeoParquet conversion
-- Adds items.parquet link to collection.json with rel=items, type=application/x-parquet
+- Adds items.parquet link to collection.json with rel=items, type=application/vnd.apache.parquet
 - Tracks items.parquet in versions.json so push detects changes
 
 Usage:
@@ -32,7 +32,7 @@ from typing import Any
 
 # Constants
 PARQUET_FILENAME = "items.parquet"
-PARQUET_MEDIA_TYPE = "application/x-parquet"
+PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
 
 
 def count_items(collection_path: Path) -> int:
@@ -205,7 +205,7 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
     """Add items.parquet link and asset to collection.json.
 
     Per ADR-0031 (collection-level assets), adds:
-    1. A link with rel="items" and type="application/x-parquet"
+    1. A link with rel="items" and type="application/vnd.apache.parquet"
     2. A collection-level asset for the GeoParquet file
 
     Idempotent - won't duplicate if already present.

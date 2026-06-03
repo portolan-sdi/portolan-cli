@@ -983,7 +983,7 @@ class TestUpdateItemWithAsset:
             "assets": {
                 "data": {
                     "href": "./data.parquet",
-                    "type": "application/x-parquet",
+                    "type": "application/vnd.apache.parquet",
                     "roles": ["data"],
                 }
             },

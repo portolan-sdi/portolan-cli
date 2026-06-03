@@ -383,7 +383,7 @@ class TestCheckDirectoryMetadata:
             assets={
                 "data": AssetModel(
                     href="./parcel1.parquet",
-                    type="application/x-parquet",
+                    type="application/vnd.apache.parquet",
                     roles=["data"],
                 )
             },

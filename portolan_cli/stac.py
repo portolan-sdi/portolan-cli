@@ -13,10 +13,58 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 
 import pystac
 from pystac.summaries import Summarizer, SummaryStrategy
+
+
+class MergeStrategy(Enum):
+    """Strategy for merging existing metadata with auto-detected values.
+
+    Issue #446: Controls how `portolan add` handles conflicts between
+    human-authored metadata and auto-detected values.
+
+    Strategies:
+        SMART: Preserve human-enrichable fields (title, description),
+               update machine-derivable fields (href, type, row_count).
+               This is the default and recommended for most use cases.
+        KEEP: Preserve all existing fields, only add missing ones.
+              Use for legacy catalog imports where existing metadata is trusted.
+        OVERWRITE: Replace everything with auto-detected values.
+                   Use for regenerating metadata from scratch.
+        INTERACTIVE: Prompt per-conflict (not yet implemented).
+    """
+
+    SMART = "smart"
+    KEEP = "keep"
+    OVERWRITE = "overwrite"
+    INTERACTIVE = "interactive"
+
+
+# Fields that are human-enrichable (preserve existing by default in SMART mode)
+HUMAN_ENRICHABLE_ASSET_FIELDS = frozenset({"title", "description"})
+
+# Extra fields that are machine-derivable (update in SMART mode)
+# All extension prefixes that are auto-detected from file metadata
+MACHINE_DERIVABLE_EXTRA_FIELD_PREFIXES = frozenset(
+    {
+        "file:",  # file:size, file:checksum
+        "proj:",  # proj:epsg, proj:wkt2
+        "pmtiles:",  # pmtiles:min_zoom, pmtiles:max_zoom, etc.
+        "flatgeobuf:",  # flatgeobuf:feature_count, etc.
+        "raster:",  # raster:spatial_resolution, etc.
+        "portolan:",  # portolan:glob (auto-generated on push)
+    }
+)
+
+# Specific extra fields that are machine-derivable (not prefix-based)
+MACHINE_DERIVABLE_EXTRA_FIELDS = frozenset(
+    {
+        "bands",  # Unified bands array (STAC v1.1.0)
+    }
+)
 
 # STAC version we generate (v1.1.0 has unified bands array, superseding eo:bands/raster:bands)
 STAC_VERSION = "1.1.0"
@@ -234,17 +282,89 @@ def add_item_to_collection(
         _update_collection_extent(collection, item)
 
 
+def _is_machine_derivable_extra_field(field_name: str) -> bool:
+    """Check if an extra_field key is machine-derivable.
+
+    Machine-derivable fields are updated in SMART merge mode.
+    Human-authored custom fields are preserved.
+    """
+    if field_name in MACHINE_DERIVABLE_EXTRA_FIELDS:
+        return True
+    return any(field_name.startswith(prefix) for prefix in MACHINE_DERIVABLE_EXTRA_FIELD_PREFIXES)
+
+
+def _merge_asset(
+    existing: pystac.Asset,
+    new: pystac.Asset,
+    strategy: MergeStrategy,
+) -> pystac.Asset:
+    """Merge an existing asset with a new asset based on strategy.
+
+    Args:
+        existing: The existing asset in the collection.
+        new: The new asset from auto-detection.
+        strategy: The merge strategy to apply.
+
+    Returns:
+        The merged asset.
+    """
+    if strategy == MergeStrategy.OVERWRITE:
+        return new
+
+    if strategy == MergeStrategy.KEEP:
+        return existing
+
+    # SMART strategy: preserve human-enrichable, update machine-derivable
+    merged = pystac.Asset(
+        href=new.href,  # Machine-derivable: always update
+        media_type=new.media_type,  # Machine-derivable: always update
+        roles=new.roles,  # Machine-derivable: always update
+        title=existing.title if existing.title else new.title,
+        description=existing.description if existing.description else new.description,
+    )
+
+    # Merge extra_fields
+    merged_extra: dict[str, object] = {}
+
+    # Start with existing extra_fields (preserve custom fields)
+    if existing.extra_fields:
+        merged_extra.update(existing.extra_fields)
+
+    # Update machine-derivable extra_fields from new asset
+    if new.extra_fields:
+        for key, value in new.extra_fields.items():
+            if _is_machine_derivable_extra_field(key):
+                merged_extra[key] = value
+            elif key not in merged_extra:
+                # Add new fields that don't exist
+                merged_extra[key] = value
+
+    if merged_extra:
+        merged.extra_fields = merged_extra
+
+    return merged
+
+
 def add_asset_to_collection(
     collection: pystac.Collection,
     asset_key: str,
     asset: pystac.Asset,
     *,
     update_extent_from_bbox: list[float] | None = None,
+    merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Add an asset directly to a collection (collection-level asset).
 
     Per ADR-0031: Single vector files (GeoParquet, Shapefile, GeoPackage) are
     collection-level assets—no item.json, asset directly in collection.json.
+
+    When an asset with the same key already exists, the merge_strategy controls
+    how fields are combined (Issue #446):
+    - SMART (default): Preserve human-enrichable fields (title, description),
+                       update machine-derivable fields (href, media_type, roles).
+    - KEEP: Preserve all existing fields, only add the asset if missing.
+    - OVERWRITE: Replace the existing asset entirely.
+    - INTERACTIVE: Not yet implemented.
 
     Args:
         collection: The collection to add the asset to.
@@ -252,7 +372,13 @@ def add_asset_to_collection(
         asset: The pystac.Asset to add.
         update_extent_from_bbox: If provided, update collection's spatial extent
             to encompass this bbox [min_x, min_y, max_x, max_y].
+        merge_strategy: How to handle conflicts with existing assets.
     """
+    existing_asset = collection.assets.get(asset_key)
+
+    if existing_asset is not None:
+        asset = _merge_asset(existing_asset, asset, merge_strategy)
+
     collection.add_asset(asset_key, asset)
 
     if update_extent_from_bbox:
@@ -462,31 +588,95 @@ def build_stac_extensions(properties: dict[str, object]) -> list[str]:
     return extensions
 
 
+def _merge_table_columns(
+    existing_columns: list[dict[str, object]],
+    new_schema: dict[str, str],
+    strategy: MergeStrategy,
+) -> list[dict[str, object]]:
+    """Merge existing table:columns with new schema based on strategy.
+
+    Args:
+        existing_columns: Existing table:columns array from collection.
+        new_schema: New schema dict mapping column name to type.
+        strategy: The merge strategy to apply.
+
+    Returns:
+        Merged columns array.
+    """
+    if strategy == MergeStrategy.OVERWRITE:
+        return [{"name": name, "type": dtype} for name, dtype in new_schema.items()]
+
+    if strategy == MergeStrategy.KEEP:
+        return existing_columns
+
+    # SMART strategy: preserve descriptions, update types, handle adds/removes
+    # Build lookup of existing columns by name
+    existing_by_name = {col["name"]: col for col in existing_columns}
+
+    merged_columns = []
+    for name, dtype in new_schema.items():
+        if name in existing_by_name:
+            # Column exists: preserve description, update type
+            existing = existing_by_name[name]
+            merged_col: dict[str, object] = {"name": name, "type": dtype}
+            if "description" in existing:
+                merged_col["description"] = existing["description"]
+            # Preserve any other human-authored fields
+            for key, value in existing.items():
+                if key not in ("name", "type", "statistics"):
+                    merged_col.setdefault(key, value)
+            merged_columns.append(merged_col)
+        else:
+            # New column: just name and type
+            merged_columns.append({"name": name, "type": dtype})
+
+    return merged_columns
+
+
 def add_table_extension(
     collection: pystac.Collection,
     metadata: object,
+    *,
+    merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Add Table extension fields to a collection from GeoParquet metadata.
 
     Sets table:row_count, table:primary_geometry, and table:columns based on
     the provided GeoParquet metadata object.
 
+    When the collection already has table:columns, the merge_strategy controls
+    how column metadata is combined (Issue #446):
+    - SMART (default): Preserve column descriptions, update types.
+    - KEEP: Preserve all existing table extension fields.
+    - OVERWRITE: Replace everything with auto-detected values.
+
     Args:
         collection: The collection to add extension fields to.
         metadata: A GeoParquetMetadata-like object with feature_count,
                  geometry_column, and schema attributes.
+        merge_strategy: How to handle conflicts with existing metadata.
     """
-    # Set row count
+    # KEEP strategy: don't modify existing table extension fields
+    if merge_strategy == MergeStrategy.KEEP:
+        if "table:row_count" in collection.extra_fields:
+            # Already has table extension, don't overwrite
+            return
+
+    # Set row count (machine-derivable: always update in SMART/OVERWRITE)
     if hasattr(metadata, "feature_count") and metadata.feature_count is not None:
         collection.extra_fields["table:row_count"] = metadata.feature_count
 
-    # Set primary geometry column
+    # Set primary geometry column (machine-derivable: always update)
     if hasattr(metadata, "geometry_column") and metadata.geometry_column is not None:
         collection.extra_fields["table:primary_geometry"] = metadata.geometry_column
 
-    # Set columns from schema
+    # Set columns from schema with merge logic
     if hasattr(metadata, "schema") and metadata.schema:
-        columns = [{"name": name, "type": dtype} for name, dtype in metadata.schema.items()]
+        existing_columns = collection.extra_fields.get("table:columns", [])
+        if existing_columns and merge_strategy != MergeStrategy.OVERWRITE:
+            columns = _merge_table_columns(existing_columns, metadata.schema, merge_strategy)
+        else:
+            columns = [{"name": name, "type": dtype} for name, dtype in metadata.schema.items()]
         collection.extra_fields["table:columns"] = columns
 
     # Update stac_extensions if not already present

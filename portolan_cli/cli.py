@@ -65,6 +65,7 @@ from portolan_cli.scan_output import (
     render_tree_view,
 )
 from portolan_cli.scan_progress import ScanProgressReporter, count_directories
+from portolan_cli.stac import MergeStrategy
 from portolan_cli.status import CollectionStatus, get_collection_status
 from portolan_cli.temporal import FLEXIBLE_DATETIME
 from portolan_cli.validation import (
@@ -3125,6 +3126,19 @@ def _coerce_int(value: Any, *, default: int) -> int:
     is_flag=True,
     help="Re-convert from source files (requires --force).",
 )
+@click.option(
+    "--merge-strategy",
+    "merge_strategy",
+    type=click.Choice(["smart", "keep", "overwrite"], case_sensitive=False),
+    default="smart",
+    help=(
+        "How to merge auto-detected metadata with existing values. "
+        "'smart' (default): preserve human-authored fields (title, description), "
+        "update machine-derivable fields (href, type, row_count). "
+        "'keep': preserve all existing fields. "
+        "'overwrite': replace everything with auto-detected values."
+    ),
+)
 @click.pass_context
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 def add_cmd(
@@ -3141,6 +3155,7 @@ def add_cmd(
     force_pmtiles: bool,
     force: bool,
     reconvert: bool,
+    merge_strategy: str,
 ) -> None:
     """Track files in the catalog.
 
@@ -3284,6 +3299,7 @@ def add_cmd(
                 force=force,
                 reconvert=reconvert,
                 skip_partitioning=skip_partitioning,
+                merge_strategy=MergeStrategy(merge_strategy),
             )
     except (ValueError, FileNotFoundError) as err:
         err_type = type(err).__name__
