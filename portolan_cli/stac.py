@@ -267,6 +267,7 @@ def add_item_to_collection(
     item: pystac.Item,
     *,
     update_extent: bool = False,
+    merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Add an item to a collection.
 
@@ -275,11 +276,12 @@ def add_item_to_collection(
         item: The item to add.
         update_extent: If True, update collection's spatial extent to
                       encompass the item's bbox.
+        merge_strategy: How to handle conflicts with existing extent.
     """
     collection.add_item(item)
 
     if update_extent:
-        _update_collection_extent(collection, item)
+        _update_collection_extent(collection, item, merge_strategy)
 
 
 def _is_machine_derivable_extra_field(field_name: str) -> bool:
@@ -520,17 +522,33 @@ def _update_collection_extent_from_bbox(
 def _update_collection_extent(
     collection: pystac.Collection,
     item: pystac.Item,
+    merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Update a collection's spatial extent to include an item's bbox.
+
+    Issue #447 FIX: Respects merge strategy and handles placeholder extents
+    (consistent with _update_collection_extent_from_bbox for collection-level assets).
 
     Args:
         collection: The collection to update.
         item: The item whose bbox should be included.
+        merge_strategy: How to handle conflicts with existing extent.
     """
     if item.bbox is None:
         return
 
+    # KEEP strategy: preserve existing extent entirely
+    if merge_strategy == MergeStrategy.KEEP:
+        return
+
     current_bbox = collection.extent.spatial.bboxes[0]
+
+    # If current extent is placeholder, replace entirely with actual data
+    if _is_placeholder_extent(current_bbox):
+        collection.extent.spatial = pystac.SpatialExtent(bboxes=[list(item.bbox)])
+        return
+
+    # Otherwise expand to include item bbox
     new_bbox = [
         min(current_bbox[0], item.bbox[0]),  # min_x
         min(current_bbox[1], item.bbox[1]),  # min_y

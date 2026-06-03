@@ -1456,13 +1456,16 @@ def _add_prepared_items_to_collection(
                 add_collection_properties_from_metadata(collection, p.metadata)
         elif p.stac_item is not None:
             # Item-level: add item link to collection
-            add_item_to_collection(collection, p.stac_item, update_extent=True)
+            add_item_to_collection(
+                collection, p.stac_item, update_extent=True, merge_strategy=merge_strategy
+            )
 
 
 def _collect_parquet_metadata_from_disk(
     collection_dir: Path,
+    collection: pystac.Collection,
 ) -> list[GeoParquetMetadata]:
-    """Scan collection directory and extract metadata from all parquet files.
+    """Scan collection directory and extract metadata from tracked parquet assets.
 
     Issue #447: Used to recompute row counts from disk instead of carrying forward
     potentially stale aggregated counts. This ensures correctness when:
@@ -1470,18 +1473,38 @@ def _collect_parquet_metadata_from_disk(
     - Files are replaced on disk with different content
     - Files are deleted and re-added
 
+    IMPORTANT: Only counts files that are tracked as assets in collection.json.
+    Untracked parquet files (temp files, work-in-progress) are ignored to prevent
+    inflating row counts.
+
     Args:
         collection_dir: Path to the collection directory.
+        collection: The collection to check tracked assets against.
 
     Returns:
-        List of GeoParquetMetadata for all parquet files found.
+        List of GeoParquetMetadata for tracked parquet assets found on disk.
     """
+    # Build set of tracked asset hrefs (normalized without ./ prefix)
+    tracked_hrefs: set[str] = set()
+    for asset in collection.assets.values():
+        if asset.href:
+            # Normalize: strip ./ prefix for comparison
+            href = asset.href.lstrip("./")
+            tracked_hrefs.add(href)
+
     metadata_list: list[GeoParquetMetadata] = []
 
     for parquet_file in collection_dir.glob("**/*.parquet"):
         # Skip files in .portolan directory (internal state)
         if ".portolan" in parquet_file.parts:
             continue
+
+        # Only include files that are tracked as assets
+        relative_path = str(parquet_file.relative_to(collection_dir))
+        if relative_path not in tracked_hrefs:
+            logger.debug(f"Skipping untracked parquet file: {relative_path}")
+            continue
+
         try:
             meta = extract_geoparquet_metadata(parquet_file)
             metadata_list.append(meta)
@@ -1490,28 +1513,6 @@ def _collect_parquet_metadata_from_disk(
             logger.warning(f"Could not read metadata from {parquet_file}: {e}")
 
     return metadata_list
-
-
-def _find_asset_by_href(
-    collection: pystac.Collection,
-    href: str,
-) -> tuple[str, pystac.Asset] | None:
-    """Find an existing asset by its resolved href.
-
-    Issue #447: Used for asset deduplication - when adding a file, check if any
-    existing asset already points to the same href (regardless of key name).
-
-    Args:
-        collection: The collection to search.
-        href: The href to find (e.g., "./data.parquet").
-
-    Returns:
-        Tuple of (asset_key, asset) if found, None otherwise.
-    """
-    for key, asset in collection.assets.items():
-        if asset.href == href:
-            return (key, asset)
-    return None
 
 
 def _warn_about_stale_assets(
@@ -1622,9 +1623,9 @@ def finalize_datasets(
             if p.format_type == FormatType.VECTOR and isinstance(p.metadata, GeoParquetMetadata)
         ]
         if new_geoparquet_metadata:
-            # Recompute from disk: scan ALL parquet files in collection
+            # Recompute from disk: scan tracked parquet assets in collection
             # This is O(n) file metadata reads but always correct
-            all_parquet_metadata = _collect_parquet_metadata_from_disk(collection_dir)
+            all_parquet_metadata = _collect_parquet_metadata_from_disk(collection_dir, collection)
             if all_parquet_metadata:
                 aggregated = aggregate_table_metadata(all_parquet_metadata)
                 add_table_extension(collection, aggregated, merge_strategy=merge_strategy)
