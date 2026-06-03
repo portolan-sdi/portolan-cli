@@ -67,6 +67,7 @@ from portolan_cli.scan_detect import (
     DualFormatPair,
     SpecialFormat,
     is_filegdb,
+    is_hive_partition_dir,
 )
 from portolan_cli.scan_fix import ProposedFix
 from portolan_cli.scan_infer import CollectionSuggestion
@@ -463,25 +464,39 @@ def _infer_collection_id_from_relative_path(relative_path: str) -> str:
 
     The collection ID is the directory portion of the relative path,
     representing the leaf collection in a nested catalog structure.
+    Hive-style partition directories (key=value) are stripped from the
+    collection ID since they represent Items, not Collections (ADR-0031).
 
     Examples:
         "data.parquet" -> ""
         "collection/data.parquet" -> "collection"
         "climate/hittekaart/data.parquet" -> "climate/hittekaart"
         "env/air/quality/pm25.parquet" -> "env/air/quality"
+        "sites/contours/gms_feature_id=abc/data.parquet" -> "sites/contours"
+        "data/year=2024/month=01/file.parquet" -> "data"
 
     Args:
         relative_path: Path relative to scan root, using forward slashes.
 
     Returns:
-        Collection ID (parent directory path). Empty string for root-level files.
+        Collection ID (parent directory path, excluding Hive partitions).
+        Empty string for root-level files or files only under partition dirs.
     """
-    # Find the last slash - everything before it is the collection ID
+    # Find the last slash - everything before it is the directory path
     last_slash_idx = relative_path.rfind("/")
     if last_slash_idx == -1:
         # File is at root level (no directory component)
         return ""
-    return relative_path[:last_slash_idx]
+
+    # Get directory portion and split into segments
+    dir_path = relative_path[:last_slash_idx]
+    segments = dir_path.split("/")
+
+    # Filter out Hive partition directories (key=value pattern)
+    # Per issue #448: any directory matching key=value is a partition, not collection
+    non_partition_segments = [seg for seg in segments if is_hive_partition_dir(seg) is None]
+
+    return "/".join(non_partition_segments)
 
 
 def _get_format_info(path: Path, ext: str) -> FormatInfo:
