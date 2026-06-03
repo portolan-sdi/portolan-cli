@@ -144,6 +144,47 @@ class TestInferCollectionIdFromRelativePath:
         )
         assert result == "env/air/quality"
 
+    def test_empty_segments_from_double_slash(self) -> None:
+        """Double slashes create empty segments that are filtered out.
+
+        This is an edge case where malformed paths with // could produce
+        empty segments. We filter them to normalize collection IDs.
+        """
+        # foo//bar/data.parquet → split gives ["foo", "", "bar"]
+        # Empty segments are filtered out to produce clean collection IDs
+        result = _infer_collection_id_from_relative_path("foo//bar/data.parquet")
+        assert result == "foo/bar"  # Empty segment filtered out
+
+    def test_false_positive_legitimate_equals_directory(self) -> None:
+        """Directories with = that aren't Hive partitions ARE stripped.
+
+        IMPORTANT: This documents intentional behavior that may surprise users.
+        Any directory matching key=value format is treated as a Hive partition,
+        even if it's just a naming convention unrelated to partitioning.
+
+        Examples that WILL be stripped (potentially surprising):
+        - version=2.0/  → stripped (looks like partition)
+        - config=prod/  → stripped (looks like partition)
+        - type=residential/ → stripped (looks like partition)
+
+        Users who use = in directory names without intending Hive partitioning
+        should rename their directories or use a different separator (-, _).
+        """
+        # This IS stripped because it matches key=value pattern
+        result = _infer_collection_id_from_relative_path("project/version=2.0/data.parquet")
+        assert result == "project"  # version=2.0 stripped!
+
+        # More examples of "false positive" stripping
+        assert (
+            _infer_collection_id_from_relative_path("data/config=production/settings.json")
+            == "data"
+        )
+
+        assert (
+            _infer_collection_id_from_relative_path("buildings/type=residential/parcels.parquet")
+            == "buildings"
+        )
+
 
 class TestCollectionIdValidationIntegration:
     """Integration tests ensuring Hive partitions don't trigger validation errors."""

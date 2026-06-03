@@ -467,6 +467,13 @@ def _infer_collection_id_from_relative_path(relative_path: str) -> str:
     Hive-style partition directories (key=value) are stripped from the
     collection ID since they represent Items, not Collections (ADR-0031).
 
+    Warning:
+        ANY directory matching the pattern `key=value` (where key is a valid
+        identifier starting with letter/underscore) is treated as a Hive
+        partition and stripped. This includes directories that may not be
+        intended as partitions, e.g., "version=2.0/" or "config=prod/".
+        Users should avoid = in directory names unless intending partitioning.
+
     Examples:
         "data.parquet" -> ""
         "collection/data.parquet" -> "collection"
@@ -474,6 +481,7 @@ def _infer_collection_id_from_relative_path(relative_path: str) -> str:
         "env/air/quality/pm25.parquet" -> "env/air/quality"
         "sites/contours/gms_feature_id=abc/data.parquet" -> "sites/contours"
         "data/year=2024/month=01/file.parquet" -> "data"
+        "project/version=2.0/data.parquet" -> "project"  (version=2.0 stripped!)
 
     Args:
         relative_path: Path relative to scan root, using forward slashes.
@@ -492,9 +500,10 @@ def _infer_collection_id_from_relative_path(relative_path: str) -> str:
     dir_path = relative_path[:last_slash_idx]
     segments = dir_path.split("/")
 
-    # Filter out Hive partition directories (key=value pattern)
+    # Filter out Hive partition directories (key=value pattern) and empty segments
     # Per issue #448: any directory matching key=value is a partition, not collection
-    non_partition_segments = [seg for seg in segments if is_hive_partition_dir(seg) is None]
+    # Empty segments (from double slashes like "foo//bar") are also filtered
+    non_partition_segments = [seg for seg in segments if seg and is_hive_partition_dir(seg) is None]
 
     return "/".join(non_partition_segments)
 
