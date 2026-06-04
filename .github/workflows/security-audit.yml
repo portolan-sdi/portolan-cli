@@ -128,7 +128,7 @@ jobs:
     steps:
       - name: Download audit report
         if: needs.audit.outputs.has_vulnerabilities == 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: security-audit-reports
           path: /tmp/audit
