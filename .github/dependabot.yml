@@ -43,8 +43,7 @@ updates:
       - "dependencies"
       - "python"
       - "security"
-    open-pull-requests-limit: 5
-    # Only security updates, no version bumps
+    # Disable regular version PRs - only security advisories trigger PRs
+    open-pull-requests-limit: 0
+    # Only lockfile changes allowed
     versioning-strategy: "lockfile-only"
-    # Only open PRs for security advisories
-    # Note: Dependabot automatically prioritizes security updates

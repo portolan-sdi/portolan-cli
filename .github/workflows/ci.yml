@@ -84,10 +84,12 @@ jobs:
         # itself...) and doc-build deps (mkdocs, pymdown-extensions...) are excluded
         # because they never reach users via the wheel.
         #
-        # Ignored advisories (kept minimal, each with rationale):
+        # Canonical ignore list (sync with nightly.yml and security-audit.yml):
         # - CVE-2026-4539 (pygments): ReDoS in AdlLexer, CVSS 3.3, local input only.
         #   No upstream fix available. Track:
         #   https://github.com/portolan-sdi/portolan-cli/issues/285
+        # - CVE-2026-3219, CVE-2026-6357 (pip): pip 26.0.1 vulnerabilities,
+        #   fix available in 26.1, uv-managed (not user-facing).
         # - PYSEC-2024-277 (joblib / CVE-2024-34997): vendor-disputed. joblib upstream
         #   considers NumpyArrayWrapper.read_array safe because it only deserializes
         #   content the same process just cached (see joblib/joblib#1582, #977). No
@@ -100,6 +102,8 @@ jobs:
           uv run pip-audit \
             --requirement /tmp/runtime-deps.txt \
             --ignore-vuln CVE-2026-4539 \
+            --ignore-vuln CVE-2026-3219 \
+            --ignore-vuln CVE-2026-6357 \
             --ignore-vuln PYSEC-2024-277
 
   test:
