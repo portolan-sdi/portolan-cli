@@ -449,14 +449,45 @@ def add_partition_metadata_to_collection(
     Adds partition:* fields from the provided metadata dict and registers
     the partition extension URL in stac_extensions.
 
+    Per Issue #443: Preserves existing hand-authored descriptions on partition:keys
+    when merging new partition metadata.
+
     Args:
         collection: The collection to add partition metadata to.
         partition_metadata: Dict with partition:* fields from get_partition_metadata().
     """
+    # Get existing partition keys descriptions to preserve
+    existing_descriptions: dict[str, str] = {}
+    existing_keys = collection.extra_fields.get("partition:keys", [])
+    if isinstance(existing_keys, list):
+        for key in existing_keys:
+            if isinstance(key, dict) and "name" in key and "description" in key:
+                existing_descriptions[key["name"]] = key["description"]
+
     # Add partition:* fields to collection extra_fields
     for key, value in partition_metadata.items():
         if key.startswith("partition:"):
-            collection.extra_fields[key] = value
+            # Special handling for partition:keys to preserve descriptions
+            if key == "partition:keys" and isinstance(value, list):
+                merged_keys: list[dict[str, str]] = []
+                for new_key in value:
+                    if isinstance(new_key, dict) and "name" in new_key:
+                        key_name = new_key["name"]
+                        merged_key = dict(new_key)
+                        # Preserve existing hand-authored description if:
+                        # 1. New key has no description at all
+                        # 2. New key has empty/whitespace description
+                        # 3. New key has auto-generated generic description (ends with "identifier")
+                        new_desc = merged_key.get("description", "").strip()
+                        is_generic_desc = new_desc.endswith("identifier") or new_desc == ""
+                        if key_name in existing_descriptions and (
+                            "description" not in merged_key or is_generic_desc
+                        ):
+                            merged_key["description"] = existing_descriptions[key_name]
+                        merged_keys.append(merged_key)
+                collection.extra_fields[key] = merged_keys
+            else:
+                collection.extra_fields[key] = value
 
     # Register partition extension
     ext_url = EXTENSION_URLS["partition"]

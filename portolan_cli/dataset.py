@@ -774,6 +774,7 @@ def _derive_item_id_and_asset_level(
     path: Path,
     collection_dir: Path,
     item_id: str | None,
+    format_type: FormatType | None = None,
 ) -> tuple[str, bool]:
     """Derive item ID and detect if asset is collection-level.
 
@@ -781,6 +782,9 @@ def _derive_item_id_and_asset_level(
         path: Path to the asset file.
         collection_dir: Collection directory path.
         item_id: Optional explicit item ID.
+        format_type: Optional format type for Hive partition handling.
+            Vector formats in Hive partitions become collection-level assets
+            per ADR-0031.
 
     Returns:
         Tuple of (item_id, is_collection_level_asset).
@@ -793,7 +797,15 @@ def _derive_item_id_and_asset_level(
         catalog_root/a/file.parquet will NOT be detected as collection-level
         for collection "a/b" (since path.parent != catalog_root/a/b).
         This is intentional - the file would belong to parent collection "a".
+
+    Note:
+        Per Issue #443: Files in Hive partition directories (key=value) are
+        handled specially to avoid duplicate item IDs. Vector formats become
+        collection-level assets; other formats derive unique IDs from the
+        partition values.
     """
+    from portolan_cli.scan_detect import is_hive_partition_dir
+
     # If item_id is explicitly provided, treat as item-level (not collection-level)
     # This ensures --item-id creates a subdirectory structure
     if item_id is not None:
@@ -805,11 +817,44 @@ def _derive_item_id_and_asset_level(
     # Auto-detect: collection-level if file is directly in collection directory
     is_collection_level_asset = path.parent.resolve() == collection_dir.resolve()
 
-    # Generate item ID from PARENT DIRECTORY name (Issue #163)
-    # Item boundaries are directories, not filenames.
-    # Example: collection/item_dir/file.parquet -> item_id = "item_dir"
-    # For collection-level assets, use file stem to avoid duplicate directory name
-    if is_collection_level_asset:
+    # Check for Hive partition directories in path relative to collection
+    # Per Issue #443: Handle Hive partitions consistently with collection_id filtering
+    try:
+        relative_parts = list(path.parent.resolve().relative_to(collection_dir.resolve()).parts)
+    except ValueError:
+        relative_parts = []
+
+    # Separate Hive partitions from regular directories
+    hive_partitions: list[tuple[str, str]] = []  # (key, value) pairs
+    non_hive_parts: list[str] = []
+    for part in relative_parts:
+        partition = is_hive_partition_dir(part)
+        if partition is not None:
+            hive_partitions.append(partition)
+        else:
+            non_hive_parts.append(part)
+
+    # If path contains Hive partitions, apply special handling
+    if hive_partitions:
+        # Issue #443: For multi-level Hive partitions (e.g., year=2023/month=01/),
+        # using path.parent.name would give "month=01" for ALL year branches,
+        # causing duplicate item IDs. Instead, use the full relative path as item_id.
+        #
+        # For single-level partitions (e.g., kdtree_cell=XXX/), path.parent.name
+        # is unique, so no special handling needed - fall through to normal logic.
+        if len(hive_partitions) > 1 or non_hive_parts:
+            # Multi-level partitions or mixed structure: use full relative path
+            # e.g., year=2023/month=01/data.parquet -> item_id = "year=2023_month=01"
+            item_id = "_".join(relative_parts)
+        else:
+            # Single-level Hive partition (most common case, e.g., kdtree):
+            # Use parent directory name as item_id (existing behavior)
+            item_id = path.parent.name
+    elif is_collection_level_asset:
+        # Generate item ID from PARENT DIRECTORY name (Issue #163)
+        # Item boundaries are directories, not filenames.
+        # Example: collection/item_dir/file.parquet -> item_id = "item_dir"
+        # For collection-level assets, use file stem to avoid duplicate directory name
         # Use file stem for collection-level assets to avoid collection/collection/ nesting
         item_id = path.stem
     else:
@@ -1298,6 +1343,7 @@ def prepare_dataset(
         path=path,
         collection_dir=collection_dir,
         item_id=item_id,
+        format_type=format_type,  # Issue #443: Handle Hive partitions
     )
     item_dir = path.parent
 
@@ -1553,6 +1599,102 @@ def _warn_about_stale_assets(
     return warnings
 
 
+def _ensure_partition_metadata(
+    collection: pystac.Collection,
+    collection_dir: Path,
+    items: list[PreparedDataset],
+) -> list[str]:
+    """Add partition metadata to collection from items or auto-detection.
+
+    Issue #232: Adds partition extension if any items have partition metadata.
+    Issue #443: Auto-detects pre-existing Hive partitions if no metadata was set
+    from items. This handles the case where users add pre-partitioned data not
+    created by Portolan. Also creates glob assets for bulk access.
+
+    Args:
+        collection: The STAC collection to update.
+        collection_dir: Directory containing the collection.
+        items: List of prepared datasets for this collection.
+
+    Returns:
+        List of warning messages (e.g., schema inconsistency warnings).
+    """
+    from portolan_cli.partitioning import (
+        build_glob_pattern,
+        detect_partitioning,
+        validate_partition_schemas,
+    )
+
+    warnings: list[str] = []
+
+    # First, check if any items have explicit partition metadata
+    for p in items:
+        if p.partition_metadata is not None:
+            add_partition_metadata_to_collection(collection, p.partition_metadata)
+            # Validate schema consistency for partitioned data
+            validation = validate_partition_schemas(collection_dir)
+            if not validation.is_consistent and validation.partition_count > 0:
+                warnings.append(
+                    f"Schema inconsistency in partitioned data: {validation.error_message}"
+                )
+            return warnings  # Only one partition metadata per collection
+
+    # No explicit metadata - try auto-detection for pre-existing Hive partitions
+    detected = detect_partitioning(collection_dir)
+    if detected:
+        add_partition_metadata_to_collection(collection, detected)
+        partition_keys = detected.get("partition:keys", [])
+        partition_columns = [k["name"] for k in partition_keys]
+        file_count = detected.get("partition:file_count", 0)
+
+        logger.debug(f"Auto-detected Hive partitions in {collection_dir}: {partition_columns}")
+
+        # Create glob asset for bulk access (Issue #443)
+        # Only add if not already present (avoid duplicates on re-add)
+        glob_pattern = build_glob_pattern(partition_columns=partition_columns)
+        glob_asset_key = "partitioned_data"
+
+        # Check if glob asset already exists (any asset with * in href)
+        existing_glob = None
+        for key, asset in collection.assets.items():
+            if asset.href and "*" in asset.href:
+                existing_glob = key
+                break
+
+        if existing_glob is None:
+            # Check if target key is occupied by a non-glob asset (avoid clobbering)
+            # Per Issue #443: Don't overwrite user-defined assets at this key
+            existing_at_key = collection.assets.get(glob_asset_key)
+            if existing_at_key is not None and (
+                not existing_at_key.href or "*" not in existing_at_key.href
+            ):
+                # Key is occupied by non-glob asset - use alternate key
+                glob_asset_key = "partitioned_data_glob"
+                logger.debug(
+                    f"Key 'partitioned_data' occupied by non-glob asset, "
+                    f"using '{glob_asset_key}' instead"
+                )
+
+            import pystac
+
+            glob_asset = pystac.Asset(
+                href=glob_pattern,
+                media_type="application/vnd.apache.parquet",
+                roles=["data"],
+                title="Partitioned GeoParquet",
+                description=f"Glob pattern for {file_count} partitioned files",
+            )
+            collection.assets[glob_asset_key] = glob_asset
+            logger.debug(f"Added glob asset with pattern: {glob_pattern}")
+
+        # Validate schema consistency for auto-detected partitions
+        validation = validate_partition_schemas(collection_dir)
+        if not validation.is_consistent and validation.partition_count > 0:
+            warnings.append(f"Schema inconsistency in partitioned data: {validation.error_message}")
+
+    return warnings
+
+
 def finalize_datasets(
     catalog_root: Path,
     prepared: list[PreparedDataset],
@@ -1633,10 +1775,13 @@ def finalize_datasets(
                 add_table_extension(collection, aggregated, merge_strategy=merge_strategy)
 
         # Add partition extension if any items have partition metadata (Issue #232)
-        for p in items:
-            if p.partition_metadata is not None:
-                add_partition_metadata_to_collection(collection, p.partition_metadata)
-                break  # Only one partition metadata per collection
+        # Issue #443: Also auto-detect pre-existing Hive partitions and validate schemas
+        partition_warnings = _ensure_partition_metadata(collection, collection_dir, items)
+        if partition_warnings:
+            from portolan_cli.output import warn as warn_output
+
+            for warning_msg in partition_warnings:
+                warn_output(warning_msg)
 
         # Compute collection summaries from items (per ADR-0036)
         # Moved here from push.py for separation of concerns - summaries are now
@@ -2863,6 +3008,10 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     - **Raster data**: Grandparent directory = collection, parent = item
       Example: 2025/tile1/scene.tif -> collection = "2025", item = "tile1"
 
+    Per Issue #443, Hive partition directories (key=value format) are filtered
+    out and NOT included in the collection ID:
+      Example: sites/contours/gms_feature_id=abc/data.parquet -> "sites/contours"
+
     Directory-based formats like FileGDB (*.gdb) are treated as vector data
     (collection-level assets).
 
@@ -2876,17 +3025,23 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
         imagery/2025/tile1/scene.tif -> "imagery/2025"
         satellite/scene-001/B04.tif -> "satellite"
 
+        # Hive partitions (filtered out)
+        sites/contours/gms_feature_id=abc/data.parquet -> "sites/contours"
+        data/year=2024/month=01/file.parquet -> "data"
+
     Args:
         path: Path to the file or directory-based data asset (e.g., FileGDB).
         catalog_root: Root directory of the catalog.
 
     Returns:
-        Collection ID (nested path relative to catalog root).
+        Collection ID (nested path relative to catalog root, excluding Hive partitions).
 
     Raises:
         ValueError: If path is not inside catalog root, at root level, or
             if raster data lacks required item subdirectory structure.
     """
+    from portolan_cli.scan_detect import is_hive_partition_dir
+
     # Get path relative to catalog root
     try:
         relative = path.resolve().relative_to(catalog_root.resolve())
@@ -2932,6 +3087,12 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
         # Vector files: parent directory = collection
         # Return parent as collection (all but last component)
         collection_parts = parts[:-1] if is_asset else parts
+
+    # Filter out Hive partition directories (key=value pattern)
+    # Per Issue #443: partitions should not be part of collection ID
+    collection_parts = tuple(
+        part for part in collection_parts if is_hive_partition_dir(part) is None
+    )
 
     if not collection_parts:
         raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")

@@ -57,6 +57,8 @@ KNOWN_SETTINGS: frozenset[str] = frozenset(
         "partitioning.threshold_gb",  # Size threshold in GB (default: 2.0)
         "partitioning.strategy",  # Spatial partitioning strategy (default: kdtree)
         "partitioning.target_rows",  # Target rows per partition (default: 120000)
+        "partitioning.columns",  # Custom partition column names (Issue #443, auto-detect if None)
+        "partitioning.description",  # Free-text description for partition key semantics
         "pmtiles.enabled",  # Generate PMTiles for GeoParquet collections
         "pmtiles.min_zoom",  # Minimum zoom level (None = auto-detect)
         "pmtiles.max_zoom",  # Maximum zoom level (None = auto-detect)
@@ -90,6 +92,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "partitioning.threshold_gb": 2.0,  # 2GB per OGC best practices
     "partitioning.strategy": "kdtree",  # KD-tree: data-driven, auto-balancing
     "partitioning.target_rows": 120_000,  # geoparquet-io default
+    "partitioning.columns": None,  # Auto-detect from Hive directory structure
+    "partitioning.description": None,  # No semantic description by default
     "pmtiles.enabled": False,  # Disabled by default (requires tippecanoe)
     "pmtiles.min_zoom": None,  # None = tippecanoe auto-detection
     "pmtiles.max_zoom": None,  # None = tippecanoe auto-detection
