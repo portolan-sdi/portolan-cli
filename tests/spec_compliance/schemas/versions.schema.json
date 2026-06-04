@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://portolan.dev/schema/versions.schema.json",
+  "title": "Portolan Versions Manifest",
+  "description": "Schema for versions.json - tracks version history, asset checksums, and sync state per collection. See https://github.com/portolan-sdi/portolan-spec/blob/main/versions.md",
+  "type": "object",
+  "required": ["spec_version", "current_version", "versions"],
+  "additionalProperties": false,
+  "properties": {
+    "spec_version": {
+      "type": "string",
+      "description": "Schema version for the versions.json format",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+      "examples": ["1.0.0"]
+    },
+    "current_version": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "The latest version string (semantic versioning)",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+        },
+        {
+          "type": "null",
+          "description": "Null if no versions exist yet"
+        }
+      ]
+    },
+    "versions": {
+      "type": "array",
+      "description": "List of version entries, oldest first",
+      "items": {
+        "$ref": "#/$defs/VersionEntry"
+      }
+    }
+  },
+  "$defs": {
+    "VersionEntry": {
+      "type": "object",
+      "description": "A single version entry in the version history",
+      "required": ["version", "created", "breaking", "assets", "changes"],
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Semantic version string (e.g., '1.0.0', '1.0.0-beta', '1.0.0+build.123')",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+        },
+        "created": {
+          "type": "string",
+          "description": "ISO 8601 timestamp in UTC (must end with 'Z')",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+          "examples": ["2024-01-15T10:30:00Z", "2024-01-15T10:30:00.123Z"]
+        },
+        "breaking": {
+          "type": "boolean",
+          "description": "True if this version has breaking changes (schema changes, column removals, CRS changes)"
+        },
+        "assets": {
+          "type": "object",
+          "description": "Map of asset keys to asset metadata. Keys are collection-relative paths.",
+          "additionalProperties": {
+            "$ref": "#/$defs/AssetEntry"
+          }
+        },
+        "changes": {
+          "type": "array",
+          "description": "List of asset keys that changed in this version (new or modified)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "schema": {
+          "$ref": "#/$defs/SchemaInfo",
+          "description": "Optional schema fingerprint for breaking change detection (ADR-0005)"
+        },
+        "message": {
+          "type": "string",
+          "description": "Optional human-readable description of the change"
+        }
+      }
+    },
+    "AssetEntry": {
+      "type": "object",
+      "description": "Metadata for a single asset (file) within a version",
+      "required": ["sha256", "size_bytes", "href"],
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "description": "SHA-256 checksum of the file content",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "description": "File size in bytes",
+          "minimum": 0
+        },
+        "href": {
+          "type": "string",
+          "description": "Catalog-root-relative path to the asset (e.g., 'boundaries/districts/districts.parquet')",
+          "minLength": 1
+        },
+        "source_path": {
+          "type": "string",
+          "description": "Optional relative path to the original source file (e.g., the GeoJSON that was converted to this GeoParquet)"
+        },
+        "source_mtime": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Optional Unix timestamp of the source file when conversion occurred. Used to detect when source has changed. NOTE: Accepts number (not just integer) because Python's os.stat().st_mtime returns floats."
+        },
+        "mtime": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Optional Unix timestamp of the asset file itself. Used for fast-path change detection (ADR-0017). NOTE: Accepts number (not just integer) because Python's os.stat().st_mtime returns floats. This relaxation should be upstreamed to portolan-spec."
+        }
+      }
+    },
+    "SchemaInfo": {
+      "type": "object",
+      "description": "Schema information for breaking change detection (ADR-0005)",
+      "required": ["type", "fingerprint"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Schema type identifier (e.g., 'geoparquet', 'cog')",
+          "examples": ["geoparquet", "cog"]
+        },
+        "fingerprint": {
+          "type": "object",
+          "description": "Type-specific schema fingerprint for change detection",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}
