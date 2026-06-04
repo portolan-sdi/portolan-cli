@@ -104,7 +104,8 @@ class TestCollectionRequiredFields:
     ) -> None:
         """collection.json MUST have type, stac_version, id, description, license, extent, links."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
@@ -138,12 +139,14 @@ class TestCollectionRequiredFields:
     ) -> None:
         """collection.json type field MUST be 'Collection'."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
             shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             collection_path = collection_dir / "collection.json"
             data = json.loads(collection_path.read_text())
@@ -163,12 +166,14 @@ class TestCollectionRequiredFields:
         import re
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
             shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             collection_path = collection_dir / "collection.json"
             data = json.loads(collection_path.read_text())
@@ -194,12 +199,14 @@ class TestCollectionExtent:
     ) -> None:
         """extent MUST have spatial and temporal sub-objects."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
             shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             collection_path = collection_dir / "collection.json"
             data = json.loads(collection_path.read_text())
@@ -217,12 +224,14 @@ class TestCollectionExtent:
     ) -> None:
         """extent.spatial MUST have bbox array."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
             shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             collection_path = collection_dir / "collection.json"
             data = json.loads(collection_path.read_text())
@@ -241,12 +250,14 @@ class TestCollectionExtent:
     ) -> None:
         """extent.temporal MUST have interval array."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
             shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             collection_path = collection_dir / "collection.json"
             data = json.loads(collection_path.read_text())
@@ -268,12 +279,14 @@ class TestCollectionLinks:
     ) -> None:
         """Each link MUST have rel and href."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
             shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             collection_path = collection_dir / "collection.json"
             data = json.loads(collection_path.read_text())
@@ -292,12 +305,14 @@ class TestCollectionLinks:
     ) -> None:
         """Collection MUST have a root link to the catalog."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
             shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             collection_path = collection_dir / "collection.json"
             data = json.loads(collection_path.read_text())
@@ -318,12 +333,14 @@ class TestCollectionLinks:
         import re
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
             shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             collection_path = collection_dir / "collection.json"
             data = json.loads(collection_path.read_text())
@@ -358,12 +375,14 @@ class TestCollectionAssets:
     ) -> None:
         """Each asset MUST have an href field."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
             shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             collection_path = collection_dir / "collection.json"
             data = json.loads(collection_path.read_text())
@@ -382,12 +401,14 @@ class TestCollectionAssets:
     ) -> None:
         """GeoParquet assets SHOULD have media type application/vnd.apache.parquet."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("buildings")
             collection_dir.mkdir()
             shutil.copy(valid_points_parquet, collection_dir / "buildings.parquet")
-            runner.invoke(cli, ["add", str(collection_dir / "buildings.parquet")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "buildings.parquet")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             collection_path = collection_dir / "collection.json"
             data = json.loads(collection_path.read_text())

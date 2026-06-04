@@ -137,7 +137,8 @@ class TestVersionsSemanticRules:
     ) -> None:
         """RULE-0012: current_version MUST match last entry in versions array."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
@@ -162,7 +163,8 @@ class TestVersionsSemanticRules:
     ) -> None:
         """RULE-0013: changes array MUST only reference keys that exist in assets."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
@@ -187,7 +189,8 @@ class TestVersionsSemanticRules:
     ) -> None:
         """RULE-0014: Version strings MUST be unique within versions array."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
@@ -217,7 +220,8 @@ class TestVersionsTimestampFormat:
         import re
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
@@ -257,7 +261,8 @@ class TestVersionsChecksumFormat:
         import re
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()

@@ -57,7 +57,8 @@ class TestCatalogSchemaCompliance:
     ) -> None:
         """catalog.json remains valid after adding a collection."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             # Copy to subdirectory (required by portolan add)
             collection_dir = Path("points")
@@ -104,7 +105,8 @@ class TestCatalogRequiredFields:
     ) -> None:
         """catalog.json type field MUST be 'Catalog'."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             catalog_path = Path("catalog.json")
             data = json.loads(catalog_path.read_text())
@@ -123,7 +125,8 @@ class TestCatalogRequiredFields:
         import re
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             catalog_path = Path("catalog.json")
             data = json.loads(catalog_path.read_text())
@@ -148,7 +151,8 @@ class TestCatalogLinks:
     ) -> None:
         """Each link MUST have rel and href."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             catalog_path = Path("catalog.json")
             data = json.loads(catalog_path.read_text())
@@ -166,7 +170,8 @@ class TestCatalogLinks:
     ) -> None:
         """Catalog MUST have root and self links."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             catalog_path = Path("catalog.json")
             data = json.loads(catalog_path.read_text())
@@ -187,7 +192,8 @@ class TestCatalogLinks:
     ) -> None:
         """RULE-0040: Structural links MUST be relative (SELF_CONTAINED)."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             catalog_path = Path("catalog.json")
             data = json.loads(catalog_path.read_text())
@@ -204,7 +210,8 @@ class TestCatalogLinks:
     ) -> None:
         """After adding a collection, catalog MUST have child link to collection.json."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
@@ -238,12 +245,14 @@ class TestCatalogLinks:
     ) -> None:
         """RULE-0040: No absolute paths should leak into catalog.json after add."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             collection_dir = Path("points")
             collection_dir.mkdir()
             shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
 
             catalog_path = Path("catalog.json")
             data = json.loads(catalog_path.read_text())
@@ -283,7 +292,8 @@ class TestCatalogIdExtraction:
     ) -> None:
         """Catalog ID MUST be non-empty."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             catalog_path = Path("catalog.json")
             data = json.loads(catalog_path.read_text())
@@ -304,7 +314,8 @@ class TestCatalogDescription:
     ) -> None:
         """Catalog MUST have a description."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             catalog_path = Path("catalog.json")
             data = json.loads(catalog_path.read_text())
@@ -348,19 +359,22 @@ class TestCatalogMultipleCollections:
     ) -> None:
         """Catalog with multiple collections should have multiple child links."""
         with runner.isolated_filesystem(temp_dir=tmp_path):
-            runner.invoke(cli, ["init", "--auto"])
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
 
             # Add first collection
             points_dir = Path("points")
             points_dir.mkdir()
             shutil.copy(valid_points_geojson, points_dir / "points.geojson")
-            runner.invoke(cli, ["add", str(points_dir / "points.geojson")])
+            result = runner.invoke(cli, ["add", str(points_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add points failed: {result.output}"
 
             # Add second collection
             polygons_dir = Path("polygons")
             polygons_dir.mkdir()
             shutil.copy(valid_polygons_geojson, polygons_dir / "polygons.geojson")
-            runner.invoke(cli, ["add", str(polygons_dir / "polygons.geojson")])
+            result = runner.invoke(cli, ["add", str(polygons_dir / "polygons.geojson")])
+            assert result.exit_code == 0, f"add polygons failed: {result.output}"
 
             catalog_path = Path("catalog.json")
             data = json.loads(catalog_path.read_text())
