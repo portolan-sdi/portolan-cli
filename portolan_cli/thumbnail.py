@@ -513,17 +513,7 @@ def _render_geometries(
     ax.set_aspect("equal")
     ax.axis("off")
 
-    # Add basemap first (behind data) if bounds available
-    if bounds is not None and config.basemap_provider != "none":
-        add_basemap(
-            ax,
-            bounds,
-            config.basemap_provider,
-            config.basemap_opacity,
-            config.basemap_zoom_adjust,
-            crs="EPSG:4326",  # PMTiles are always WGS84
-        )
-
+    # Plot data FIRST (establishes axes extent for basemap zoom calculation)
     patches: list[Any] = []
     for geom in geometries:
         geom_type, coords = geom["type"], geom["coordinates"]
@@ -541,7 +531,24 @@ def _render_geometries(
             patches, facecolor="#3388ff", edgecolor="#2266cc", alpha=0.6, linewidth=0.5
         )
         ax.add_collection(pc)
+
+    # Set axis limits from bounds (required before adding basemap)
+    if bounds is not None:
+        ax.set_xlim(bounds[0], bounds[2])
+        ax.set_ylim(bounds[1], bounds[3])
+    else:
         ax.autoscale()
+
+    # Add basemap AFTER data (contextily needs axes extent for zoom calculation)
+    if bounds is not None and config.basemap_provider != "none":
+        add_basemap(
+            ax,
+            bounds,
+            config.basemap_provider,
+            config.basemap_opacity,
+            config.basemap_zoom_adjust,
+            crs="EPSG:4326",  # PMTiles are always WGS84
+        )
 
     plt.savefig(
         output_path,
