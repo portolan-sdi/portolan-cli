@@ -1,0 +1,350 @@
+# Portolan Validation Rules
+#
+# Rules that cannot be expressed in JSON Schema but are normative requirements.
+# These rules are intended for programmatic validation in the CLI and registry.
+#
+# Rule structure:
+#   id: Unique identifier (RULE-XXXX)
+#   level: error | warning
+#   scope: Where the rule applies (catalog, collection, item, asset, versions)
+#   description: Human-readable description
+#   rationale: Why this rule exists
+#   validation: How to validate (pseudo-code or description)
+#   references: Links to spec documentation
+
+rules:
+  # =============================================================================
+  # Asset URL Rules
+  # =============================================================================
+
+  - id: RULE-0001
+    level: error
+    scope: asset
+    description: Asset hrefs in published catalogs MUST be absolute HTTPS URLs to S3-compatible storage
+    rationale: |
+      Portolan catalogs are designed for S3-compatible object storage.
+      Absolute URLs ensure assets can be fetched without ambiguity.
+    validation: |
+      For each asset.href in collection.json or item.json:
+        if catalog.is_published:
+          assert href.startswith("https://")
+          # Accepted providers (non-exhaustive):
+          # - AWS S3: *.s3.amazonaws.com, *.s3.*.amazonaws.com
+          # - DigitalOcean Spaces: *.digitaloceanspaces.com
+          # - Cloudflare R2: *.r2.cloudflarestorage.com
+          # - Backblaze B2: *.backblazeb2.com
+          # - Wasabi: *.wasabisys.com
+          # - MinIO: any hostname (custom deployments)
+    references:
+      - core.md#asset-urls
+
+  - id: RULE-0002
+    level: warning
+    scope: asset
+    description: Asset hrefs in local catalogs SHOULD be relative paths
+    rationale: |
+      Relative paths keep local catalogs portable before publishing.
+    validation: |
+      For each asset.href in collection.json or item.json:
+        if not catalog.is_published:
+          warn if href.startswith("https://")
+    references:
+      - core.md#asset-urls
+
+  # =============================================================================
+  # versions.json Path Rules
+  # =============================================================================
+
+  - id: RULE-0010
+    level: error
+    scope: versions
+    description: Asset keys in versions.json MUST be collection-relative
+    rationale: |
+      Asset keys are scoped relative to the collection directory.
+      The collection directory name MUST NOT appear in the asset key.
+    validation: |
+      For each asset_key in version.assets:
+        assert not asset_key.startswith(collection_id + "/")
+    references:
+      - versions.md#path-resolution
+    examples:
+      valid:
+        - "tunnels.parquet"  # Single-file collection
+        - "districts/districts.parquet"  # Item within collection
+      invalid:
+        - "tunnels/tunnels.parquet"  # Duplicates collection directory
+
+  - id: RULE-0011
+    level: error
+    scope: versions
+    description: Asset hrefs in versions.json MUST be catalog-root-relative
+    rationale: |
+      hrefs enable tools to resolve files via `catalog_root / href`.
+      They must include the collection directory.
+    validation: |
+      For each asset in version.assets:
+        assert asset.href.startswith(collection_id + "/")
+    references:
+      - versions.md#path-resolution
+    examples:
+      valid:
+        - "tunnels/tunnels.parquet"
+        - "boundaries/districts/districts.parquet"
+
+  - id: RULE-0012
+    level: error
+    scope: versions
+    description: current_version MUST match the last entry in versions array
+    rationale: |
+      current_version is a convenience field that MUST be consistent with
+      the versions array. Inconsistency causes sync failures and confuses tooling.
+    validation: |
+      if current_version is not null:
+        assert versions is not empty
+        assert current_version == versions[-1].version
+      else:
+        assert versions is empty
+    references:
+      - versions.md#current-version
+
+  - id: RULE-0013
+    level: error
+    scope: versions
+    description: changes array MUST only reference keys that exist in assets
+    rationale: |
+      The changes array documents which assets changed in a version.
+      Referencing non-existent keys indicates data corruption or typos.
+    validation: |
+      For each version in versions:
+        for change_key in version.changes:
+          assert change_key in version.assets
+
+  - id: RULE-0014
+    level: error
+    scope: versions
+    description: Version strings MUST be unique within versions array
+    rationale: |
+      Each version represents a distinct point in time. Duplicate version
+      strings make history ambiguous and break rollback functionality.
+    validation: |
+      version_strings = [v.version for v in versions]
+      assert len(version_strings) == len(set(version_strings))
+
+  - id: RULE-0015
+    level: warning
+    scope: versions
+    description: Versions SHOULD be ordered chronologically (oldest first)
+    rationale: |
+      The spec defines versions array as "oldest first" for consistent tooling.
+      Out-of-order versions may cause incorrect diff calculations.
+    validation: |
+      timestamps = [parse_iso8601(v.created) for v in versions]
+      assert timestamps == sorted(timestamps)
+
+  # =============================================================================
+  # Collection ID Rules
+  # =============================================================================
+
+  - id: RULE-0020
+    level: warning
+    scope: collection
+    description: Collection IDs SHOULD follow naming conventions
+    rationale: |
+      Consistent naming improves discoverability and avoids filesystem issues.
+    validation: |
+      assert collection_id matches /^[a-z][a-z0-9_-]*$/
+    references:
+      - structure.md#collection-level
+    note: |
+      The CLI does not currently enforce these naming conventions.
+      Validation may be added in a future release.
+
+  # =============================================================================
+  # Content Inspection Rules
+  # =============================================================================
+
+  - id: RULE-0030
+    level: error
+    scope: asset
+    description: GeoParquet files MUST contain geo metadata
+    rationale: |
+      A .parquet file without GeoParquet metadata is just a Parquet file.
+      Content inspection ensures we don't import non-geospatial data.
+    validation: |
+      For each .parquet file:
+        metadata = read_parquet_metadata(file)
+        assert "geo" in metadata.schema.metadata
+    references:
+      - extensions.md#content-inspection
+
+  - id: RULE-0031
+    level: error
+    scope: asset
+    description: COG files MUST have internal tiling and overviews
+    rationale: |
+      Cloud-Optimized GeoTIFF requires internal structure for range-request access.
+    validation: |
+      For each .tif/.tiff file:
+        assert is_valid_cog(file)  # Use rio-cogeo or similar
+    references:
+      - extensions.md#content-inspection
+      - formats/raster.md
+
+  - id: RULE-0032
+    level: warning
+    scope: asset
+    description: Non-cloud-native formats SHOULD be converted
+    rationale: |
+      GeoJSON, Shapefile, GeoPackage work but cloud-native formats
+      (GeoParquet, COG) are preferred for performance.
+    validation: |
+      For each file with extension in [.geojson, .shp, .gpkg, .json]:
+        warn "Consider converting to GeoParquet"
+    references:
+      - extensions.md#non-cloud-native-format-handling
+
+  # =============================================================================
+  # Structural Rules
+  # =============================================================================
+
+  - id: RULE-0040
+    level: error
+    scope: catalog
+    description: Catalog MUST use SELF_CONTAINED type (relative links)
+    rationale: |
+      SELF_CONTAINED catalogs are portable across hosting locations.
+      No absolute filesystem paths should leak into metadata.
+    validation: |
+      For each link in catalog.json with rel in [root, self, parent, child]:
+        # Unix absolute paths
+        assert not link.href.startswith("/")
+        # file:// URLs
+        assert not link.href.startswith("file://")
+        # Windows absolute paths (C:\, D:\, etc.)
+        assert not re.match(r'^[A-Za-z]:', link.href)
+        # Windows UNC paths (\\server\share)
+        assert not link.href.startswith("\\\\")
+        # Any URI scheme (http://, ftp://, s3://, etc.)
+        assert not re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*://', link.href)
+    references:
+      - structure.md#stac-conventions
+      - core.md#link-paths
+
+  - id: RULE-0041
+    level: error
+    scope: catalog
+    description: Catalog MUST have flat hierarchy (no nested sub-collections)
+    rationale: |
+      Flat hierarchy simplifies tooling and versioning boundaries.
+    validation: |
+      For each collection in catalog:
+        assert collection has no child collections
+        # Collections contain items directly
+    references:
+      - structure.md#flat-hierarchy
+
+  - id: RULE-0042
+    level: error
+    scope: collection
+    description: Single-file datasets MUST be collection-level assets
+    rationale: |
+      Item indirection adds no value for single-file datasets.
+    validation: |
+      If collection contains exactly one data file:
+        assert file is in collection.assets, not wrapped in item
+    references:
+      - structure.md#single-file-collections
+      - formats/vector.md#collection-level-assets
+
+  # =============================================================================
+  # Required Files Rules
+  # =============================================================================
+
+  - id: RULE-0050
+    level: error
+    scope: catalog
+    description: Catalog root MUST contain required files
+    rationale: |
+      Standard structure enables tooling interoperability.
+    validation: |
+      assert exists(catalog_root / ".portolan/config.yaml")
+      assert exists(catalog_root / "catalog.json")
+      assert exists(catalog_root / "versions.json")
+    references:
+      - structure.md#root-level
+
+  - id: RULE-0051
+    level: error
+    scope: collection
+    description: Each collection MUST contain required files
+    rationale: |
+      Collections need metadata and version tracking.
+    validation: |
+      For each collection directory:
+        assert exists(collection_dir / "collection.json")
+        assert exists(collection_dir / "versions.json")
+    references:
+      - structure.md#collection-level
+
+  - id: RULE-0052
+    level: warning
+    scope: catalog
+    description: Catalog root SHOULD contain README.md
+    rationale: |
+      Documentation helps users understand the catalog contents.
+    validation: |
+      warn if not exists(catalog_root / "README.md")
+    references:
+      - core.md#root-documentation
+
+  # =============================================================================
+  # PMTiles Rules
+  # =============================================================================
+
+  - id: RULE-0060
+    level: error
+    scope: collection
+    description: PMTiles MUST be collection-level assets when provided
+    rationale: |
+      Visualization derivatives should be discoverable at collection level
+      without navigating into items.
+    validation: |
+      If any .pmtiles file exists:
+        assert "pmtiles" in collection.assets or
+               any asset has role "visual" with .pmtiles href
+    references:
+      - formats/vector.md#recommended-formats
+
+  - id: RULE-0061
+    level: error
+    scope: collection
+    description: PMTiles MUST have rel="pmtiles" link when provided
+    rationale: |
+      Follows web-map-links STAC extension for discoverability.
+    validation: |
+      If collection has PMTiles asset:
+        assert any link has rel="pmtiles"
+    references:
+      - formats/vector.md#recommended-formats
+
+  # =============================================================================
+  # Version History Rules
+  # =============================================================================
+
+  - id: RULE-0070
+    level: warning
+    scope: collection
+    description: Collections SHOULD include a version-history link
+    rationale: |
+      The version-history link (rel="version-history") enables discovery of
+      the versions.json manifest. While not strictly required, it improves
+      STAC client compatibility and enables version-aware browsing.
+    validation: |
+      For each collection.json:
+        warn if no link has rel="version-history"
+        if link with rel="version-history" exists:
+          assert link.href ends with "versions.json"
+          assert link.type == "application/json"
+    references:
+      - core.md#version-history-link
+      - versions.md
