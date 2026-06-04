@@ -1185,6 +1185,7 @@ class TestCatalogVersionsEdgeCases:
 
 @pytest.mark.slow
 @pytest.mark.integration
+@pytest.mark.timeout(600)  # Issue #465: 1000-file add takes ~5 minutes
 class TestScaleAt1000Files:
     """Test at scale matching original issue #339 (1900 files).
 

@@ -14,6 +14,7 @@ Per ADR-0007, all logic lives here; the CLI is a thin wrapper.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import logging
@@ -2913,16 +2914,25 @@ def add_directory(
     files = iter_geospatial_files(path, recursive=recursive)
 
     # Phase 1: Prepare all datasets (GDAL work, parallelizable)
+    # Issue #465: Disable GC during batch conversion to avoid 1000× gc.collect()
+    # calls from geoparquet-io (see gpio issue #401). Single GC at end is safe.
     prepared: list[PreparedDataset] = []
-    for file_path in files:
-        result = prepare_dataset(
-            path=file_path,
-            catalog_root=catalog_root,
-            collection_id=collection_id,
-            force=force,
-            reconvert=reconvert,
-        )
-        prepared.append(result)
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for file_path in files:
+            result = prepare_dataset(
+                path=file_path,
+                catalog_root=catalog_root,
+                collection_id=collection_id,
+                force=force,
+                reconvert=reconvert,
+            )
+            prepared.append(result)
+    finally:
+        if gc_was_enabled:
+            gc.enable()
+        gc.collect()
 
     # Phase 2: Finalize (batch write versions.json + collection.json)
     return finalize_datasets(catalog_root=catalog_root, prepared=prepared)
@@ -3541,54 +3551,18 @@ def add_files(
 
     total_files = len(files_to_process)
 
-    if workers == 1:
-        # Sequential execution (original behavior)
-        for file_path, coll_id in files_to_process:
-            if on_progress is not None:
-                on_progress(file_path)
-
-            prepared_list, failure_list, deferred = prepare_single_file(file_path, coll_id)
-            for prepared in prepared_list:
-                prepared_datasets.append(prepared)
-                source_dir = file_path.parent
-                collection_dir = catalog_root / Path(*coll_id.split("/"))
-                if prepared.is_collection_level_asset:
-                    # Collection-level: map source to collection dir (Issue #383)
-                    source_to_collection_dir[source_dir] = (collection_dir, coll_id)
-                else:
-                    # Item-level: map source to item dir
-                    item_dir = collection_dir / prepared.item_id
-                    source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
-            failures.extend(failure_list)
-            if deferred is not None:
-                deferred_non_geo.append(deferred)
-    else:
-        # Parallel execution with ThreadPoolExecutor
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        from portolan_cli.output import info
-
-        # Show worker count
-        if not json_mode:
-            info(f"Using {workers} parallel workers for {total_files} files")
-
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            # Submit all tasks
-            future_to_file = {
-                executor.submit(prepare_single_file, fp, cid): (fp, cid)
-                for fp, cid in files_to_process
-            }
-
-            # Process results as they complete (main thread)
-            for future in as_completed(future_to_file):
-                file_path, coll_id = future_to_file[future]
-                prepared_list, failure_list, deferred = future.result()
-
-                # Call progress callback from main thread (thread-safe)
-                # This ensures CLI's AddProgressReporter works in parallel mode
+    # Issue #465: Disable GC during batch conversion to avoid 1000× gc.collect()
+    # calls from geoparquet-io (see gpio issue #401). Single GC at end is safe.
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        if workers == 1:
+            # Sequential execution (original behavior)
+            for file_path, coll_id in files_to_process:
                 if on_progress is not None:
                     on_progress(file_path)
 
+                prepared_list, failure_list, deferred = prepare_single_file(file_path, coll_id)
                 for prepared in prepared_list:
                     prepared_datasets.append(prepared)
                     source_dir = file_path.parent
@@ -3603,6 +3577,51 @@ def add_files(
                 failures.extend(failure_list)
                 if deferred is not None:
                     deferred_non_geo.append(deferred)
+        else:
+            # Parallel execution with ThreadPoolExecutor
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            from portolan_cli.output import info
+
+            # Show worker count
+            if not json_mode:
+                info(f"Using {workers} parallel workers for {total_files} files")
+
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                # Submit all tasks
+                future_to_file = {
+                    executor.submit(prepare_single_file, fp, cid): (fp, cid)
+                    for fp, cid in files_to_process
+                }
+
+                # Process results as they complete (main thread)
+                for future in as_completed(future_to_file):
+                    file_path, coll_id = future_to_file[future]
+                    prepared_list, failure_list, deferred = future.result()
+
+                    # Call progress callback from main thread (thread-safe)
+                    # This ensures CLI's AddProgressReporter works in parallel mode
+                    if on_progress is not None:
+                        on_progress(file_path)
+
+                    for prepared in prepared_list:
+                        prepared_datasets.append(prepared)
+                        source_dir = file_path.parent
+                        collection_dir = catalog_root / Path(*coll_id.split("/"))
+                        if prepared.is_collection_level_asset:
+                            # Collection-level: map source to collection dir (Issue #383)
+                            source_to_collection_dir[source_dir] = (collection_dir, coll_id)
+                        else:
+                            # Item-level: map source to item dir
+                            item_dir = collection_dir / prepared.item_id
+                            source_to_item_dir[source_dir] = (item_dir, coll_id, prepared.item_id)
+                    failures.extend(failure_list)
+                    if deferred is not None:
+                        deferred_non_geo.append(deferred)
+    finally:
+        if gc_was_enabled:
+            gc.enable()
+        gc.collect()
 
     # ========================================================================
     # PHASE 2.5: Batch finalize all prepared datasets (Issue #281)
