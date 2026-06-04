@@ -3345,6 +3345,140 @@ def add_cmd(
         raise SystemExit(1)
 
 
+@cli.command("add-external")
+@click.argument("url")
+@click.option(
+    "--collection",
+    "collection_id",
+    default=None,
+    help="Collection ID for the external dataset (default: derived from the URL).",
+)
+@click.option("--title", default=None, help="Human-readable title for the collection/asset.")
+@click.option("--description", default=None, help="Collection description.")
+@click.option(
+    "--media-type",
+    default=None,
+    help="Asset media type (default: inferred from the URL extension).",
+)
+@click.option(
+    "--license",
+    "license_id",
+    default="proprietary",
+    help="SPDX license identifier (default: proprietary).",
+)
+@click.option(
+    "--via",
+    "via_url",
+    default=None,
+    help="Provenance URL for the rel:via link (default: the data URL itself).",
+)
+@click.option(
+    "--bbox",
+    default=None,
+    help="WGS84 bounding box as 'min_x,min_y,max_x,max_y' (default: global extent).",
+)
+@click.option(
+    "--portolan-dir",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def add_external_cmd(
+    ctx: click.Context,
+    json_output: bool,
+    url: str,
+    collection_id: str | None,
+    title: str | None,
+    description: str | None,
+    media_type: str | None,
+    license_id: str,
+    via_url: str | None,
+    bbox: str | None,
+    catalog_path: Path | None,
+) -> None:
+    """Register a remote dataset as a collection WITHOUT downloading or converting it.
+
+    The external counterpart to 'portolan add'. Some valuable datasets are
+    already published cloud-natively at a remote location and should be
+    *referenced in place* rather than copied. This creates a collection.json
+    whose collection-level 'data' asset href is the remote URL (kept as-is,
+    marked external / not-managed) plus a rel:via provenance link.
+
+    The remote asset is never fetched, and 'portolan check' will not try to
+    convert it (the metadata scanner skips scheme-qualified hrefs).
+
+    \b
+    Examples:
+        # Overture Maps places — planet-scale GeoParquet on Overture's S3
+        portolan add-external \\
+            "s3://overturemaps-us-west-2/release/2024-09-18.0/theme=places/type=place/*" \\
+            --collection overture-places \\
+            --title "Overture Maps — Places" \\
+            --via "https://docs.overturemaps.org/guides/places/"
+
+        portolan add-external "https://example.org/data/buildings.parquet"
+    """
+    from portolan_cli.external import add_external_dataset
+
+    use_json = should_output_json(ctx, json_output)
+    catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
+
+    parsed_bbox: list[float] | None = None
+    if bbox is not None:
+        try:
+            parsed_bbox = [float(v) for v in bbox.split(",")]
+        except ValueError as err:
+            _handle_cmd_error("add-external", "UsageError", f"Invalid --bbox: {err}", use_json)
+            raise SystemExit(1) from err
+        if len(parsed_bbox) != 4:
+            _handle_cmd_error(
+                "add-external",
+                "UsageError",
+                "--bbox must have 4 comma-separated values: min_x,min_y,max_x,max_y",
+                use_json,
+            )
+            raise SystemExit(1)
+
+    try:
+        result = add_external_dataset(
+            catalog_root=catalog_root,
+            url=url,
+            collection_id=collection_id,
+            title=title,
+            description=description,
+            media_type=media_type,
+            license=license_id,
+            via_url=via_url,
+            bbox=parsed_bbox,
+        )
+    except (ValueError, FileNotFoundError) as err:
+        _handle_cmd_error("add-external", type(err).__name__, str(err), use_json)
+        raise SystemExit(1) from err
+
+    if use_json:
+        envelope = success_envelope(
+            "add-external",
+            {
+                "collection_id": result.collection_id,
+                "collection_path": str(result.collection_path),
+                "href": result.href,
+                "media_type": result.media_type,
+                "via": result.via_url,
+                "managed": False,
+            },
+        )
+        output_json_envelope(envelope)
+    else:
+        success(f"Registered external collection '{result.collection_id}'")
+        info_output(f"  href: {result.href}")
+        info_output(f"  type: {result.media_type} (external, not managed)")
+        if result.via_url:
+            info_output(f"  via:  {result.via_url}")
+
+
 @cli.command("rm")
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
 @click.option(

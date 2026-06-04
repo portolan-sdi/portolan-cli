@@ -50,6 +50,7 @@ portolan sync s3://my-bucket/catalog -c demographics
 portolan init                               # Initialize catalog
 portolan scan <path>                        # Scan for issues (--fix for filenames)
 portolan add <path>                         # Track files
+portolan add-external <url>                 # Reference a remote dataset in place (no download/convert)
 portolan rm <path>                          # Untrack files (--keep to preserve data)
 portolan check                              # Validate catalog (metadata + geo-assets)
 portolan check --fix                        # Convert to cloud-native + update metadata
