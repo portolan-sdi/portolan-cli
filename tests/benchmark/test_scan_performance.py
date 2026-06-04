@@ -9,16 +9,85 @@ Benchmarks use pytest-benchmark when available, or simple timing otherwise.
 
 from __future__ import annotations
 
+import io
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
+import rasterio
+from rasterio.transform import from_bounds
 
 from portolan_cli.scan import ScanOptions, scan_directory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+# =============================================================================
+# Minimal Valid File Content (Issue #464)
+# =============================================================================
+# Fake file content (b"dummy content") causes rasterio/pyarrow to throw
+# exceptions during format validation. Exception handling is slower than
+# the happy path, causing flaky timing on CI. These minimal valid bytes
+# ensure format detection succeeds without triggering error paths.
+
+
+def _create_minimal_tiff() -> bytes:
+    """Create minimal valid TIFF (1x1 pixel, ~370 bytes).
+
+    Not a COG, but valid enough for rasterio to open without error.
+    Will be classified as CONVERTIBLE (non-COG TIFF) quickly.
+    """
+    buf = io.BytesIO()
+    profile = {
+        "driver": "GTiff",
+        "dtype": "uint8",
+        "width": 1,
+        "height": 1,
+        "count": 1,
+        "crs": "EPSG:4326",
+        "transform": from_bounds(-180, -90, 180, 90, 1, 1),
+    }
+    with rasterio.open(buf, "w", **profile) as dst:
+        dst.write(np.array([[[0]]], dtype=np.uint8))
+    return buf.getvalue()
+
+
+def _create_minimal_parquet() -> bytes:
+    """Create minimal valid Parquet (1 row, 1 column, ~490 bytes).
+
+    Plain Parquet without geo metadata. Will be classified as
+    CLOUD_NATIVE (plain Parquet) quickly by is_geoparquet() check.
+    """
+    buf = io.BytesIO()
+    table = pa.table({"id": pa.array([1], type=pa.int32())})
+    pq.write_table(table, buf)
+    return buf.getvalue()
+
+
+# Cache the bytes at module level (created once per test session)
+_MINIMAL_TIFF: bytes | None = None
+_MINIMAL_PARQUET: bytes | None = None
+
+
+def _get_minimal_tiff() -> bytes:
+    """Get cached minimal TIFF bytes."""
+    global _MINIMAL_TIFF
+    if _MINIMAL_TIFF is None:
+        _MINIMAL_TIFF = _create_minimal_tiff()
+    return _MINIMAL_TIFF
+
+
+def _get_minimal_parquet() -> bytes:
+    """Get cached minimal Parquet bytes."""
+    global _MINIMAL_PARQUET
+    if _MINIMAL_PARQUET is None:
+        _MINIMAL_PARQUET = _create_minimal_parquet()
+    return _MINIMAL_PARQUET
 
 
 # =============================================================================
@@ -67,8 +136,15 @@ def _create_benchmark_structure(base: Path, dirs: int, files_per_dir: int) -> No
     Note: Every 4th file adds 3 sidecar files (.shp, .dbf, .shx), so actual
     file count = dirs × files_per_dir + dirs × (files_per_dir // 4) × 3.
     For default 1K target (100 dirs × 10 files): ~1900 files total.
+
+    Uses minimal valid file content for formats requiring content inspection
+    (.tif, .parquet) to avoid slow exception handling paths. See issue #464.
     """
     extensions = [".parquet", ".geojson", ".tif", ".gpkg"]
+
+    # Get valid bytes for content-inspected formats (cached)
+    tiff_bytes = _get_minimal_tiff()
+    parquet_bytes = _get_minimal_parquet()
 
     for i in range(dirs):
         subdir = base / f"dir_{i:04d}"
@@ -77,7 +153,16 @@ def _create_benchmark_structure(base: Path, dirs: int, files_per_dir: int) -> No
         for j in range(files_per_dir):
             ext = extensions[j % len(extensions)]
             filename = f"file_{j:04d}{ext}"
-            (subdir / filename).write_bytes(b"dummy content")
+
+            # Use valid bytes for formats that trigger content inspection
+            if ext == ".tif":
+                content = tiff_bytes
+            elif ext == ".parquet":
+                content = parquet_bytes
+            else:
+                content = b"dummy content"
+
+            (subdir / filename).write_bytes(content)
 
             # Add shapefile sidecars every 4th file
             if j % 4 == 0:
@@ -90,6 +175,7 @@ def _create_benchmark_structure(base: Path, dirs: int, files_per_dir: int) -> No
 def _create_deep_structure(base: Path, depth: int, files_per_level: int) -> None:
     """Create deeply nested directory structure."""
     current = base
+    parquet_bytes = _get_minimal_parquet()
 
     for level in range(depth):
         current = current / f"level_{level}"
@@ -97,7 +183,7 @@ def _create_deep_structure(base: Path, depth: int, files_per_level: int) -> None
 
         for j in range(files_per_level):
             filename = f"file_{j:04d}.parquet"
-            (current / filename).write_bytes(b"dummy content")
+            (current / filename).write_bytes(parquet_bytes)
 
 
 # =============================================================================
@@ -286,7 +372,6 @@ class TestScanPerformanceSimple:
 
     def test_scan_fixture_dirs_are_fast(self, fixtures_dir: Path) -> None:
         """Verify scanning test fixtures is fast (<100ms each)."""
-
         # Get the scan fixtures directory
         scan_fixtures = Path(__file__).parent.parent / "fixtures" / "scan"
 
