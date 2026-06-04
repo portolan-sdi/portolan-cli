@@ -10,7 +10,7 @@ updates:
       - "github-actions"
     open-pull-requests-limit: 5
 
-  # Python dependencies
+  # Python dependencies - weekly updates (features + patches)
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
@@ -31,3 +31,20 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  # Python security updates - daily, lockfile-only
+  # This catches CVEs quickly without waiting for weekly run.
+  # The security-audit.yml workflow creates issues; Dependabot creates PRs.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    labels:
+      - "dependencies"
+      - "python"
+      - "security"
+    open-pull-requests-limit: 5
+    # Only security updates, no version bumps
+    versioning-strategy: "lockfile-only"
+    # Only open PRs for security advisories
+    # Note: Dependabot automatically prioritizes security updates

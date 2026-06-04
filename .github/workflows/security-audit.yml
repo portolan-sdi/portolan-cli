@@ -1,0 +1,246 @@
+# Daily security audit workflow
+# Creates/updates GitHub issues instead of failing CI.
+#
+# Philosophy: Separate GATE (block PRs) from NOTIFICATION (alert on CVEs).
+# This workflow is the notification layer - it runs daily and manages
+# a tracking issue for any vulnerabilities found.
+name: Security Audit
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # 6 AM UTC daily (after nightly at 4 AM)
+  workflow_dispatch:  # Allow manual triggering
+
+permissions:
+  contents: read
+  issues: write  # Required to create/update/close issues
+
+env:
+  ISSUE_TITLE: "Security: Dependency vulnerabilities detected"
+  ISSUE_LABEL: "security"
+
+jobs:
+  audit:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    outputs:
+      has_vulnerabilities: ${{ steps.audit.outputs.has_vulnerabilities }}
+      vulnerability_report: ${{ steps.audit.outputs.report }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.6.14"
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run pip-audit
+        id: audit
+        continue-on-error: true
+        run: |
+          # Export runtime deps (what we ship)
+          uv export --no-dev --no-emit-project --no-hashes \
+            --extra iceberg --extra pmtiles --extra thumbnails \
+            -o /tmp/runtime-deps.txt
+
+          # Run audit and capture output
+          # Known ignored vulns (documented in ci.yml):
+          # - CVE-2026-4539: pygments ReDoS (CVSS 3.3, local only, no fix)
+          # - PYSEC-2024-277: joblib (vendor-disputed, no fix planned)
+          AUDIT_OUTPUT=$(uv run pip-audit \
+            --requirement /tmp/runtime-deps.txt \
+            --ignore-vuln CVE-2026-4539 \
+            --ignore-vuln PYSEC-2024-277 \
+            --format json 2>&1) || true
+
+          # Check if we got valid JSON with vulnerabilities
+          if echo "$AUDIT_OUTPUT" | jq -e '.dependencies | length > 0' > /dev/null 2>&1; then
+            # Count vulnerabilities
+            VULN_COUNT=$(echo "$AUDIT_OUTPUT" | jq '[.dependencies[].vulns[]] | length')
+            if [ "$VULN_COUNT" -gt 0 ]; then
+              echo "has_vulnerabilities=true" >> $GITHUB_OUTPUT
+              # Store report for issue creation (escape for JSON)
+              REPORT=$(echo "$AUDIT_OUTPUT" | jq -c '.')
+              echo "report=$REPORT" >> $GITHUB_OUTPUT
+              echo "::warning::Found $VULN_COUNT vulnerabilities"
+            else
+              echo "has_vulnerabilities=false" >> $GITHUB_OUTPUT
+              echo "No vulnerabilities found"
+            fi
+          else
+            # pip-audit failed or returned invalid JSON - treat as error
+            echo "has_vulnerabilities=error" >> $GITHUB_OUTPUT
+            echo "::error::pip-audit failed or returned invalid output"
+            echo "$AUDIT_OUTPUT"
+          fi
+
+      - name: Also run bandit for code security
+        id: bandit
+        continue-on-error: true
+        run: |
+          # Bandit checks our code, not dependencies
+          uv run bandit -r portolan_cli -c pyproject.toml -f json -o bandit-report.json || true
+          if [ -f bandit-report.json ]; then
+            ISSUE_COUNT=$(jq '.results | length' bandit-report.json)
+            if [ "$ISSUE_COUNT" -gt 0 ]; then
+              echo "::warning::Bandit found $ISSUE_COUNT issues"
+            fi
+          fi
+
+      - name: Upload audit artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: security-audit-reports
+          path: |
+            /tmp/runtime-deps.txt
+            bandit-report.json
+          retention-days: 30
+        if: always()
+
+  manage-issue:
+    name: Manage Security Issue
+    needs: audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find existing security issue
+        id: find-issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: '${{ env.ISSUE_LABEL }}',
+              state: 'open',
+              per_page: 100
+            });
+
+            const securityIssue = issues.data.find(
+              issue => issue.title === '${{ env.ISSUE_TITLE }}'
+            );
+
+            if (securityIssue) {
+              core.setOutput('issue_number', securityIssue.number);
+              core.setOutput('issue_exists', 'true');
+              console.log(`Found existing issue #${securityIssue.number}`);
+            } else {
+              core.setOutput('issue_exists', 'false');
+              console.log('No existing security issue found');
+            }
+
+      - name: Create or update issue (vulnerabilities found)
+        if: needs.audit.outputs.has_vulnerabilities == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const report = JSON.parse('${{ needs.audit.outputs.vulnerability_report }}');
+            const now = new Date().toISOString();
+
+            // Format vulnerabilities for the issue body
+            let vulnList = '';
+            for (const dep of report.dependencies || []) {
+              for (const vuln of dep.vulns || []) {
+                vulnList += `\n### ${dep.name} (${dep.version})\n`;
+                vulnList += `- **ID:** ${vuln.id}\n`;
+                vulnList += `- **Fix versions:** ${vuln.fix_versions?.join(', ') || 'None available'}\n`;
+                if (vuln.description) {
+                  vulnList += `- **Description:** ${vuln.description.substring(0, 200)}...\n`;
+                }
+              }
+            }
+
+            const body = `## Dependency Vulnerabilities Detected
+
+            **Last scanned:** ${now}
+            **Workflow run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            The following vulnerabilities were detected in runtime dependencies:
+
+            ${vulnList}
+
+            ---
+
+            ### How to resolve
+
+            1. Check if Dependabot has already opened a PR for these dependencies
+            2. If not, try updating the affected packages: \`uv lock --upgrade-package <name>\`
+            3. If no fix is available, evaluate the risk and consider adding to ignore list in \`ci.yml\`
+
+            ### Ignored vulnerabilities
+
+            The following are intentionally ignored (documented in \`ci.yml\`):
+            - **CVE-2026-4539** (pygments): ReDoS in AdlLexer, CVSS 3.3, local input only, no fix
+            - **PYSEC-2024-277** (joblib): Vendor-disputed, no fix planned
+
+            ---
+
+            *This issue is automatically managed by the [Security Audit workflow](${{ github.server_url }}/${{ github.repository }}/actions/workflows/security-audit.yml). It will be auto-closed when all vulnerabilities are resolved.*
+            `.split('\n').map(line => line.trim()).join('\n');
+
+            const issueExists = '${{ steps.find-issue.outputs.issue_exists }}' === 'true';
+            const issueNumber = parseInt('${{ steps.find-issue.outputs.issue_number }}') || 0;
+
+            if (issueExists) {
+              // Update existing issue
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: body
+              });
+              console.log(`Updated issue #${issueNumber}`);
+            } else {
+              // Create new issue
+              const newIssue = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '${{ env.ISSUE_TITLE }}',
+                body: body,
+                labels: ['${{ env.ISSUE_LABEL }}']
+              });
+              console.log(`Created issue #${newIssue.data.number}`);
+            }
+
+      - name: Close issue (no vulnerabilities)
+        if: needs.audit.outputs.has_vulnerabilities == 'false' && steps.find-issue.outputs.issue_exists == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = parseInt('${{ steps.find-issue.outputs.issue_number }}');
+            const now = new Date().toISOString();
+
+            // Add comment before closing
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: `All vulnerabilities have been resolved as of ${now}.
+
+            **Workflow run:** [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            This issue is being automatically closed.`
+            });
+
+            // Close the issue
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              state: 'closed',
+              state_reason: 'completed'
+            });
+
+            console.log(`Closed issue #${issueNumber}`);
+
+      - name: Log audit error
+        if: needs.audit.outputs.has_vulnerabilities == 'error'
+        run: |
+          echo "::error::Security audit failed - check the audit job logs"
+          echo "This could indicate a pip-audit bug or network issue."
+          echo "The audit will be retried on the next scheduled run."
