@@ -836,21 +836,20 @@ def _derive_item_id_and_asset_level(
 
     # If path contains Hive partitions, apply special handling
     if hive_partitions:
-        # Per ADR-0031: Vector formats in Hive partitions are collection-level assets
-        # All partitioned files are one logical dataset accessed via glob pattern
-        if format_type == FormatType.VECTOR:
-            is_collection_level_asset = True
-            item_id = path.stem  # Use file stem for collection-level
+        # Issue #443: For multi-level Hive partitions (e.g., year=2023/month=01/),
+        # using path.parent.name would give "month=01" for ALL year branches,
+        # causing duplicate item IDs. Instead, use the full relative path as item_id.
+        #
+        # For single-level partitions (e.g., kdtree_cell=XXX/), path.parent.name
+        # is unique, so no special handling needed - fall through to normal logic.
+        if len(hive_partitions) > 1 or non_hive_parts:
+            # Multi-level partitions or mixed structure: use full relative path
+            # e.g., year=2023/month=01/data.parquet -> item_id = "year=2023_month=01"
+            item_id = "_".join(relative_parts)
         else:
-            # For raster or other formats: derive unique item_id from partition values
-            # e.g., year=2023/month=01/file.tif -> item_id = "2023_01" or "2023_01_file"
-            partition_values = [v for _, v in hive_partitions]
-            if non_hive_parts:
-                # Include non-Hive directory names if present
-                item_id = "_".join(non_hive_parts + partition_values)
-            else:
-                # All intermediate dirs are Hive partitions - use values + file stem
-                item_id = "_".join(partition_values + [path.stem])
+            # Single-level Hive partition (most common case, e.g., kdtree):
+            # Use parent directory name as item_id (existing behavior)
+            item_id = path.parent.name
     elif is_collection_level_asset:
         # Generate item ID from PARENT DIRECTORY name (Issue #163)
         # Item boundaries are directories, not filenames.

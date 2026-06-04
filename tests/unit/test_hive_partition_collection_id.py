@@ -213,23 +213,24 @@ class TestCollectionIdValidationIntegration:
 class TestDeriveItemIdHivePartitions:
     """Tests for _derive_item_id_and_asset_level with Hive partitions.
 
-    Issue #443: Files in Hive partition directories must produce unique item IDs
-    and vector formats should become collection-level assets per ADR-0031.
+    Issue #443: Files in Hive partition directories must produce unique item IDs.
+    Single-level partitions (e.g., kdtree_cell=XXX/) use parent dir name (existing behavior).
+    Multi-level partitions (e.g., year=2023/month=01/) use full relative path to avoid collisions.
     """
 
-    def test_vector_in_hive_partition_is_collection_level(self, tmp_path: Path) -> None:
-        """Vector formats in Hive partitions become collection-level assets.
+    def test_single_level_hive_partition_uses_parent_name(self, tmp_path: Path) -> None:
+        """Single-level Hive partitions use parent directory name as item_id.
 
-        Per ADR-0031: partitioned vector data is one logical dataset.
+        This is the common case for kdtree partitioning and should work as before.
         """
         from portolan_cli.dataset import _derive_item_id_and_asset_level
         from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
-        partition_dir = collection_dir / "year=2023" / "month=01"
+        partition_dir = collection_dir / "kdtree_cell=0000000001"
         partition_dir.mkdir(parents=True)
-        parquet_file = partition_dir / "data.parquet"
+        parquet_file = partition_dir / "0000000001.parquet"
         parquet_file.write_bytes(b"x")
 
         item_id, is_collection_level = _derive_item_id_and_asset_level(
@@ -239,14 +240,14 @@ class TestDeriveItemIdHivePartitions:
             format_type=FormatType.VECTOR,
         )
 
-        # Vector format in Hive partition should be collection-level
-        assert is_collection_level is True
-        assert item_id == "data"  # file stem used for collection-level
+        # Single-level partition: use parent dir name, NOT collection-level
+        assert is_collection_level is False
+        assert item_id == "kdtree_cell=0000000001"
 
-    def test_raster_in_hive_partition_has_unique_item_id(self, tmp_path: Path) -> None:
-        """Raster formats in Hive partitions get unique item IDs from partition values.
+    def test_multi_level_hive_partition_has_unique_item_id(self, tmp_path: Path) -> None:
+        """Multi-level Hive partitions get unique item IDs from full relative path.
 
-        Files at year=2023/month=01/file.tif and year=2024/month=01/file.tif
+        Files at year=2023/month=01/file.parquet and year=2024/month=01/file.parquet
         must NOT both get item_id="month=01" (that would be a duplicate).
         """
         from portolan_cli.dataset import _derive_item_id_and_asset_level
@@ -261,8 +262,8 @@ class TestDeriveItemIdHivePartitions:
         partition1.mkdir(parents=True)
         partition2.mkdir(parents=True)
 
-        file1 = partition1 / "data.tif"
-        file2 = partition2 / "data.tif"
+        file1 = partition1 / "data.parquet"
+        file2 = partition2 / "data.parquet"
         file1.write_bytes(b"x")
         file2.write_bytes(b"x")
 
@@ -270,14 +271,14 @@ class TestDeriveItemIdHivePartitions:
             path=file1,
             collection_dir=collection_dir,
             item_id=None,
-            format_type=FormatType.RASTER,
+            format_type=FormatType.VECTOR,
         )
 
         item_id_2, is_coll_2 = _derive_item_id_and_asset_level(
             path=file2,
             collection_dir=collection_dir,
             item_id=None,
-            format_type=FormatType.RASTER,
+            format_type=FormatType.VECTOR,
         )
 
         # Both should be item-level (not collection-level)
@@ -287,14 +288,41 @@ class TestDeriveItemIdHivePartitions:
         # Item IDs MUST be different (this was the bug)
         assert item_id_1 != item_id_2
 
-        # Item IDs should include partition values to be unique
-        assert "2023" in item_id_1
-        assert "01" in item_id_1
-        assert "2024" in item_id_2
-        assert "01" in item_id_2
+        # Item IDs should be full relative paths joined with underscore
+        assert item_id_1 == "year=2023_month=01"
+        assert item_id_2 == "year=2024_month=01"
 
-    def test_no_format_type_falls_back_to_unique_item_id(self, tmp_path: Path) -> None:
-        """When format_type is None, Hive partitions still produce unique IDs."""
+    def test_single_level_partition_unique_per_cell(self, tmp_path: Path) -> None:
+        """Single-level partitions have unique item_ids per partition cell."""
+        from portolan_cli.dataset import _derive_item_id_and_asset_level
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+
+        partition1 = collection_dir / "kdtree_cell=001"
+        partition2 = collection_dir / "kdtree_cell=002"
+        partition1.mkdir(parents=True)
+        partition2.mkdir(parents=True)
+
+        file1 = partition1 / "data.parquet"
+        file2 = partition2 / "data.parquet"
+        file1.write_bytes(b"x")
+        file2.write_bytes(b"x")
+
+        item_id_1, _ = _derive_item_id_and_asset_level(
+            path=file1, collection_dir=collection_dir, item_id=None
+        )
+        item_id_2, _ = _derive_item_id_and_asset_level(
+            path=file2, collection_dir=collection_dir, item_id=None
+        )
+
+        # Each partition cell has unique item_id
+        assert item_id_1 == "kdtree_cell=001"
+        assert item_id_2 == "kdtree_cell=002"
+        assert item_id_1 != item_id_2
+
+    def test_no_format_type_single_level(self, tmp_path: Path) -> None:
+        """Single-level Hive partition without format_type uses parent dir name."""
         from portolan_cli.dataset import _derive_item_id_and_asset_level
 
         collection_dir = tmp_path / "collection"
@@ -310,9 +338,9 @@ class TestDeriveItemIdHivePartitions:
             format_type=None,  # Unknown format
         )
 
-        # Without format_type, treated as non-vector (unique ID path)
+        # Single-level partition: uses parent dir name
         assert is_collection_level is False
-        assert "north" in item_id  # partition value included
+        assert item_id == "region=north"  # parent dir name for single-level
 
     def test_explicit_item_id_overrides_hive_logic(self, tmp_path: Path) -> None:
         """Explicit item_id takes precedence over Hive partition detection."""
