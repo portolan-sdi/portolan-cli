@@ -9,6 +9,8 @@ The fix: strip any `key=value/` path segments when inferring collection ID.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from portolan_cli.scan import _infer_collection_id_from_relative_path
 from portolan_cli.scan_detect import is_hive_partition_dir
 
@@ -206,3 +208,152 @@ class TestCollectionIdValidationIntegration:
         is_valid, error = validate_collection_id(collection_id)
         assert is_valid, f"Collection ID '{collection_id}' should be valid: {error}"
         assert "=" not in collection_id
+
+
+class TestDeriveItemIdHivePartitions:
+    """Tests for _derive_item_id_and_asset_level with Hive partitions.
+
+    Issue #443: Files in Hive partition directories must produce unique item IDs
+    and vector formats should become collection-level assets per ADR-0031.
+    """
+
+    def test_vector_in_hive_partition_is_collection_level(self, tmp_path: Path) -> None:
+        """Vector formats in Hive partitions become collection-level assets.
+
+        Per ADR-0031: partitioned vector data is one logical dataset.
+        """
+        from portolan_cli.dataset import _derive_item_id_and_asset_level
+        from portolan_cli.formats import FormatType
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+        partition_dir = collection_dir / "year=2023" / "month=01"
+        partition_dir.mkdir(parents=True)
+        parquet_file = partition_dir / "data.parquet"
+        parquet_file.write_bytes(b"x")
+
+        item_id, is_collection_level = _derive_item_id_and_asset_level(
+            path=parquet_file,
+            collection_dir=collection_dir,
+            item_id=None,
+            format_type=FormatType.VECTOR,
+        )
+
+        # Vector format in Hive partition should be collection-level
+        assert is_collection_level is True
+        assert item_id == "data"  # file stem used for collection-level
+
+    def test_raster_in_hive_partition_has_unique_item_id(self, tmp_path: Path) -> None:
+        """Raster formats in Hive partitions get unique item IDs from partition values.
+
+        Files at year=2023/month=01/file.tif and year=2024/month=01/file.tif
+        must NOT both get item_id="month=01" (that would be a duplicate).
+        """
+        from portolan_cli.dataset import _derive_item_id_and_asset_level
+        from portolan_cli.formats import FormatType
+
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+
+        # Create two files in different partition branches with same leaf dir name
+        partition1 = collection_dir / "year=2023" / "month=01"
+        partition2 = collection_dir / "year=2024" / "month=01"
+        partition1.mkdir(parents=True)
+        partition2.mkdir(parents=True)
+
+        file1 = partition1 / "data.tif"
+        file2 = partition2 / "data.tif"
+        file1.write_bytes(b"x")
+        file2.write_bytes(b"x")
+
+        item_id_1, is_coll_1 = _derive_item_id_and_asset_level(
+            path=file1,
+            collection_dir=collection_dir,
+            item_id=None,
+            format_type=FormatType.RASTER,
+        )
+
+        item_id_2, is_coll_2 = _derive_item_id_and_asset_level(
+            path=file2,
+            collection_dir=collection_dir,
+            item_id=None,
+            format_type=FormatType.RASTER,
+        )
+
+        # Both should be item-level (not collection-level)
+        assert is_coll_1 is False
+        assert is_coll_2 is False
+
+        # Item IDs MUST be different (this was the bug)
+        assert item_id_1 != item_id_2
+
+        # Item IDs should include partition values to be unique
+        assert "2023" in item_id_1
+        assert "01" in item_id_1
+        assert "2024" in item_id_2
+        assert "01" in item_id_2
+
+    def test_no_format_type_falls_back_to_unique_item_id(self, tmp_path: Path) -> None:
+        """When format_type is None, Hive partitions still produce unique IDs."""
+        from portolan_cli.dataset import _derive_item_id_and_asset_level
+
+        collection_dir = tmp_path / "collection"
+        partition_dir = collection_dir / "region=north"
+        partition_dir.mkdir(parents=True)
+        data_file = partition_dir / "measurements.csv"
+        data_file.write_bytes(b"x")
+
+        item_id, is_collection_level = _derive_item_id_and_asset_level(
+            path=data_file,
+            collection_dir=collection_dir,
+            item_id=None,
+            format_type=None,  # Unknown format
+        )
+
+        # Without format_type, treated as non-vector (unique ID path)
+        assert is_collection_level is False
+        assert "north" in item_id  # partition value included
+
+    def test_explicit_item_id_overrides_hive_logic(self, tmp_path: Path) -> None:
+        """Explicit item_id takes precedence over Hive partition detection."""
+        from portolan_cli.dataset import _derive_item_id_and_asset_level
+        from portolan_cli.formats import FormatType
+
+        collection_dir = tmp_path / "collection"
+        partition_dir = collection_dir / "year=2023"
+        partition_dir.mkdir(parents=True)
+        data_file = partition_dir / "data.parquet"
+        data_file.write_bytes(b"x")
+
+        item_id, is_collection_level = _derive_item_id_and_asset_level(
+            path=data_file,
+            collection_dir=collection_dir,
+            item_id="explicit-id",  # User-provided
+            format_type=FormatType.VECTOR,
+        )
+
+        # Explicit ID used regardless of Hive detection
+        assert item_id == "explicit-id"
+        assert is_collection_level is False  # Explicit = item-level
+
+    def test_non_hive_path_unchanged(self, tmp_path: Path) -> None:
+        """Paths without Hive partitions work as before."""
+        from portolan_cli.dataset import _derive_item_id_and_asset_level
+        from portolan_cli.formats import FormatType
+
+        collection_dir = tmp_path / "collection"
+        item_dir = collection_dir / "my_item"
+        item_dir.mkdir(parents=True)
+        data_file = item_dir / "data.parquet"
+        data_file.write_bytes(b"x")
+
+        item_id, is_collection_level = _derive_item_id_and_asset_level(
+            path=data_file,
+            collection_dir=collection_dir,
+            item_id=None,
+            format_type=FormatType.VECTOR,
+        )
+
+        # Regular directory structure unchanged
+        assert item_id == "my_item"  # parent dir name
+        assert is_collection_level is False

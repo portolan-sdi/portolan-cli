@@ -774,6 +774,7 @@ def _derive_item_id_and_asset_level(
     path: Path,
     collection_dir: Path,
     item_id: str | None,
+    format_type: FormatType | None = None,
 ) -> tuple[str, bool]:
     """Derive item ID and detect if asset is collection-level.
 
@@ -781,6 +782,9 @@ def _derive_item_id_and_asset_level(
         path: Path to the asset file.
         collection_dir: Collection directory path.
         item_id: Optional explicit item ID.
+        format_type: Optional format type for Hive partition handling.
+            Vector formats in Hive partitions become collection-level assets
+            per ADR-0031.
 
     Returns:
         Tuple of (item_id, is_collection_level_asset).
@@ -793,7 +797,15 @@ def _derive_item_id_and_asset_level(
         catalog_root/a/file.parquet will NOT be detected as collection-level
         for collection "a/b" (since path.parent != catalog_root/a/b).
         This is intentional - the file would belong to parent collection "a".
+
+    Note:
+        Per Issue #443: Files in Hive partition directories (key=value) are
+        handled specially to avoid duplicate item IDs. Vector formats become
+        collection-level assets; other formats derive unique IDs from the
+        partition values.
     """
+    from portolan_cli.scan_detect import is_hive_partition_dir
+
     # If item_id is explicitly provided, treat as item-level (not collection-level)
     # This ensures --item-id creates a subdirectory structure
     if item_id is not None:
@@ -805,11 +817,45 @@ def _derive_item_id_and_asset_level(
     # Auto-detect: collection-level if file is directly in collection directory
     is_collection_level_asset = path.parent.resolve() == collection_dir.resolve()
 
-    # Generate item ID from PARENT DIRECTORY name (Issue #163)
-    # Item boundaries are directories, not filenames.
-    # Example: collection/item_dir/file.parquet -> item_id = "item_dir"
-    # For collection-level assets, use file stem to avoid duplicate directory name
-    if is_collection_level_asset:
+    # Check for Hive partition directories in path relative to collection
+    # Per Issue #443: Handle Hive partitions consistently with collection_id filtering
+    try:
+        relative_parts = list(path.parent.resolve().relative_to(collection_dir.resolve()).parts)
+    except ValueError:
+        relative_parts = []
+
+    # Separate Hive partitions from regular directories
+    hive_partitions: list[tuple[str, str]] = []  # (key, value) pairs
+    non_hive_parts: list[str] = []
+    for part in relative_parts:
+        partition = is_hive_partition_dir(part)
+        if partition is not None:
+            hive_partitions.append(partition)
+        else:
+            non_hive_parts.append(part)
+
+    # If path contains Hive partitions, apply special handling
+    if hive_partitions:
+        # Per ADR-0031: Vector formats in Hive partitions are collection-level assets
+        # All partitioned files are one logical dataset accessed via glob pattern
+        if format_type == FormatType.VECTOR:
+            is_collection_level_asset = True
+            item_id = path.stem  # Use file stem for collection-level
+        else:
+            # For raster or other formats: derive unique item_id from partition values
+            # e.g., year=2023/month=01/file.tif -> item_id = "2023_01" or "2023_01_file"
+            partition_values = [v for _, v in hive_partitions]
+            if non_hive_parts:
+                # Include non-Hive directory names if present
+                item_id = "_".join(non_hive_parts + partition_values)
+            else:
+                # All intermediate dirs are Hive partitions - use values + file stem
+                item_id = "_".join(partition_values + [path.stem])
+    elif is_collection_level_asset:
+        # Generate item ID from PARENT DIRECTORY name (Issue #163)
+        # Item boundaries are directories, not filenames.
+        # Example: collection/item_dir/file.parquet -> item_id = "item_dir"
+        # For collection-level assets, use file stem to avoid duplicate directory name
         # Use file stem for collection-level assets to avoid collection/collection/ nesting
         item_id = path.stem
     else:
@@ -1298,6 +1344,7 @@ def prepare_dataset(
         path=path,
         collection_dir=collection_dir,
         item_id=item_id,
+        format_type=format_type,  # Issue #443: Handle Hive partitions
     )
     item_dir = path.parent
 
@@ -1608,7 +1655,7 @@ def _ensure_partition_metadata(
         glob_pattern = build_glob_pattern(partition_columns=partition_columns)
         glob_asset_key = "partitioned_data"
 
-        # Check if glob asset already exists
+        # Check if glob asset already exists (any asset with * in href)
         existing_glob = None
         for key, asset in collection.assets.items():
             if asset.href and "*" in asset.href:
@@ -1616,6 +1663,19 @@ def _ensure_partition_metadata(
                 break
 
         if existing_glob is None:
+            # Check if target key is occupied by a non-glob asset (avoid clobbering)
+            # Per Issue #443: Don't overwrite user-defined assets at this key
+            existing_at_key = collection.assets.get(glob_asset_key)
+            if existing_at_key is not None and (
+                not existing_at_key.href or "*" not in existing_at_key.href
+            ):
+                # Key is occupied by non-glob asset - use alternate key
+                glob_asset_key = "partitioned_data_glob"
+                logger.debug(
+                    f"Key 'partitioned_data' occupied by non-glob asset, "
+                    f"using '{glob_asset_key}' instead"
+                )
+
             import pystac
 
             glob_asset = pystac.Asset(
