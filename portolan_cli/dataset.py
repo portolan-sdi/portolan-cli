@@ -1553,6 +1553,41 @@ def _warn_about_stale_assets(
     return warnings
 
 
+def _ensure_partition_metadata(
+    collection: pystac.Collection,
+    collection_dir: Path,
+    items: list[PreparedDataset],
+) -> None:
+    """Add partition metadata to collection from items or auto-detection.
+
+    Issue #232: Adds partition extension if any items have partition metadata.
+    Issue #443: Auto-detects pre-existing Hive partitions if no metadata was set
+    from items. This handles the case where users add pre-partitioned data not
+    created by Portolan.
+
+    Args:
+        collection: The STAC collection to update.
+        collection_dir: Directory containing the collection.
+        items: List of prepared datasets for this collection.
+    """
+    # First, check if any items have explicit partition metadata
+    for p in items:
+        if p.partition_metadata is not None:
+            add_partition_metadata_to_collection(collection, p.partition_metadata)
+            return  # Only one partition metadata per collection
+
+    # No explicit metadata - try auto-detection for pre-existing Hive partitions
+    from portolan_cli.partitioning import detect_partitioning
+
+    detected = detect_partitioning(collection_dir)
+    if detected:
+        add_partition_metadata_to_collection(collection, detected)
+        logger.debug(
+            f"Auto-detected Hive partitions in {collection_dir}: "
+            f"{detected.get('partition:keys', [])}"
+        )
+
+
 def finalize_datasets(
     catalog_root: Path,
     prepared: list[PreparedDataset],
@@ -1633,10 +1668,8 @@ def finalize_datasets(
                 add_table_extension(collection, aggregated, merge_strategy=merge_strategy)
 
         # Add partition extension if any items have partition metadata (Issue #232)
-        for p in items:
-            if p.partition_metadata is not None:
-                add_partition_metadata_to_collection(collection, p.partition_metadata)
-                break  # Only one partition metadata per collection
+        # Issue #443: Also auto-detect pre-existing Hive partitions
+        _ensure_partition_metadata(collection, collection_dir, items)
 
         # Compute collection summaries from items (per ADR-0036)
         # Moved here from push.py for separation of concerns - summaries are now
@@ -2863,6 +2896,10 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
     - **Raster data**: Grandparent directory = collection, parent = item
       Example: 2025/tile1/scene.tif -> collection = "2025", item = "tile1"
 
+    Per Issue #443, Hive partition directories (key=value format) are filtered
+    out and NOT included in the collection ID:
+      Example: sites/contours/gms_feature_id=abc/data.parquet -> "sites/contours"
+
     Directory-based formats like FileGDB (*.gdb) are treated as vector data
     (collection-level assets).
 
@@ -2876,17 +2913,23 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
         imagery/2025/tile1/scene.tif -> "imagery/2025"
         satellite/scene-001/B04.tif -> "satellite"
 
+        # Hive partitions (filtered out)
+        sites/contours/gms_feature_id=abc/data.parquet -> "sites/contours"
+        data/year=2024/month=01/file.parquet -> "data"
+
     Args:
         path: Path to the file or directory-based data asset (e.g., FileGDB).
         catalog_root: Root directory of the catalog.
 
     Returns:
-        Collection ID (nested path relative to catalog root).
+        Collection ID (nested path relative to catalog root, excluding Hive partitions).
 
     Raises:
         ValueError: If path is not inside catalog root, at root level, or
             if raster data lacks required item subdirectory structure.
     """
+    from portolan_cli.scan_detect import is_hive_partition_dir
+
     # Get path relative to catalog root
     try:
         relative = path.resolve().relative_to(catalog_root.resolve())
@@ -2932,6 +2975,12 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
         # Vector files: parent directory = collection
         # Return parent as collection (all but last component)
         collection_parts = parts[:-1] if is_asset else parts
+
+    # Filter out Hive partition directories (key=value pattern)
+    # Per Issue #443: partitions should not be part of collection ID
+    collection_parts = tuple(
+        part for part in collection_parts if is_hive_partition_dir(part) is None
+    )
 
     if not collection_parts:
         raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")

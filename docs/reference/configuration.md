@@ -531,6 +531,42 @@ collection/
 └── ...
 ```
 
+### Pre-existing Hive Partitions
+
+Portolan automatically detects pre-existing Hive-partitioned data with arbitrary column names (not just kdtree/h3/s2/quadkey/a5). This supports datasets partitioned outside Portolan:
+
+```
+# Pre-existing structure (auto-detected):
+sites/
+├── gms_feature_id=abc-123/
+│   └── contours.parquet
+├── gms_feature_id=def-456/
+│   └── contours.parquet
+└── ...
+
+# Multi-level partitions are also supported:
+timeseries/
+├── year=2023/
+│   ├── month=01/
+│   │   └── data.parquet
+│   └── month=02/
+│       └── data.parquet
+└── year=2024/
+    └── month=01/
+        └── data.parquet
+```
+
+When you run `portolan add sites/`, Portolan detects the Hive structure and adds the appropriate `partition:scheme` and `partition:keys` metadata to `collection.json`.
+
+For explicit control over partition metadata, use the config settings:
+
+```yaml
+# .portolan/config.yaml
+partitioning.columns:
+  - gms_feature_id
+partitioning.description: "Site UUID — matches gms_site_feature_id in aois.parquet"
+```
+
 ### Settings Reference
 
 | Setting | Default | Description |
@@ -540,6 +576,8 @@ collection/
 | `partitioning.threshold_gb` | `2.0` | File size threshold in GB |
 | `partitioning.strategy` | `kdtree` | Spatial partitioning strategy |
 | `partitioning.target_rows` | `120000` | Target rows per partition |
+| `partitioning.columns` | `null` | Explicit partition column names (auto-detect if null) |
+| `partitioning.description` | `null` | Free-text description for partition semantics |
 
 !!! tip "Why KD-tree?"
     KD-tree is **data-driven**: partitions adapt to actual feature density, producing balanced partition sizes. Grid-based strategies (H3, S2, quadkey) are planned but not yet implemented.
