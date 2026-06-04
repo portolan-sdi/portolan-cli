@@ -25,11 +25,6 @@ if TYPE_CHECKING:
 class TestCatalogSchemaCompliance:
     """Test that catalog.json output complies with the spec schema."""
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
     @pytest.mark.integration
     def test_init_creates_valid_catalog_json(
         self,
@@ -81,11 +76,6 @@ class TestCatalogSchemaCompliance:
 
 class TestCatalogRequiredFields:
     """Test that catalog.json contains all required STAC fields."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
 
     @pytest.mark.integration
     def test_catalog_has_required_stac_fields(
@@ -149,11 +139,6 @@ class TestCatalogRequiredFields:
 
 class TestCatalogLinks:
     """Test that catalog links comply with SELF_CONTAINED requirements."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
 
     @pytest.mark.integration
     def test_links_have_required_fields(
@@ -270,11 +255,6 @@ class TestCatalogLinks:
 class TestCatalogIdExtraction:
     """Test that catalog ID is properly extracted from directory name."""
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
     @pytest.mark.integration
     def test_catalog_id_from_directory_name(
         self,
@@ -316,11 +296,6 @@ class TestCatalogIdExtraction:
 class TestCatalogDescription:
     """Test that catalog description is properly set."""
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
     @pytest.mark.integration
     def test_catalog_has_description(
         self,
@@ -360,11 +335,6 @@ class TestCatalogDescription:
 
 class TestCatalogMultipleCollections:
     """Test catalog behavior with multiple collections."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
 
     @pytest.mark.integration
     def test_multiple_child_links(

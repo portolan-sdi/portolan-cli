@@ -14,9 +14,21 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import yaml
+from click.testing import CliRunner
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+# =============================================================================
+# Shared Test Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def runner() -> CliRunner:
+    """Create a Click test runner (shared across all spec compliance tests)."""
+    return CliRunner()
 
 
 # =============================================================================
@@ -38,7 +50,8 @@ def versions_schema(schemas_dir: Path) -> dict[str, Any]:
     It is self-contained and doesn't require external references.
     """
     schema_path = schemas_dir / "versions.schema.json"
-    return json.loads(schema_path.read_text())
+    result: dict[str, Any] = json.loads(schema_path.read_text())
+    return result
 
 
 @pytest.fixture(scope="session")
@@ -49,29 +62,8 @@ def catalog_versions_schema(schemas_dir: Path) -> dict[str, Any]:
     Different structure from collection-level versions.json.
     """
     schema_path = schemas_dir / "catalog-versions.schema.json"
-    return json.loads(schema_path.read_text())
-
-
-@pytest.fixture(scope="session")
-def collection_schema(schemas_dir: Path) -> dict[str, Any]:
-    """Load the collection.json schema.
-
-    Note: This schema references the external STAC collection schema.
-    For compliance testing, we validate against the Portolan extensions only.
-    """
-    schema_path = schemas_dir / "collection.schema.json"
-    return json.loads(schema_path.read_text())
-
-
-@pytest.fixture(scope="session")
-def catalog_schema(schemas_dir: Path) -> dict[str, Any]:
-    """Load the catalog.json schema.
-
-    Note: This schema references the external STAC catalog schema.
-    For compliance testing, we validate against the Portolan extensions only.
-    """
-    schema_path = schemas_dir / "catalog.schema.json"
-    return json.loads(schema_path.read_text())
+    result: dict[str, Any] = json.loads(schema_path.read_text())
+    return result
 
 
 @pytest.fixture(scope="session")
@@ -82,8 +74,9 @@ def validation_rules(schemas_dir: Path) -> list[dict[str, Any]]:
     programmatic validation (e.g., path consistency, uniqueness).
     """
     rules_path = schemas_dir / "rules.yaml"
-    data = yaml.safe_load(rules_path.read_text())
-    return data.get("rules", [])
+    data: dict[str, Any] = yaml.safe_load(rules_path.read_text())
+    result: list[dict[str, Any]] = data.get("rules", [])
+    return result
 
 
 # =============================================================================

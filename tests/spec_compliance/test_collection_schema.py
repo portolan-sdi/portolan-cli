@@ -25,11 +25,6 @@ if TYPE_CHECKING:
 class TestCollectionSchemaCompliance:
     """Test that collection.json output complies with the spec schema."""
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
     @pytest.mark.integration
     def test_add_geojson_creates_valid_collection_json(
         self,
@@ -99,11 +94,6 @@ class TestCollectionSchemaCompliance:
 
 class TestCollectionRequiredFields:
     """Test that collection.json contains all required STAC fields."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
 
     @pytest.mark.integration
     def test_collection_has_required_stac_fields(
@@ -195,11 +185,6 @@ class TestCollectionRequiredFields:
 class TestCollectionExtent:
     """Test that collection extent is properly formatted."""
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
     @pytest.mark.integration
     def test_extent_has_spatial_and_temporal(
         self,
@@ -273,11 +258,6 @@ class TestCollectionExtent:
 
 class TestCollectionLinks:
     """Test that collection links are properly formatted."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
 
     @pytest.mark.integration
     def test_links_have_required_fields(
@@ -368,11 +348,6 @@ class TestCollectionLinks:
 
 class TestCollectionAssets:
     """Test that collection assets are properly formatted."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
 
     @pytest.mark.integration
     def test_assets_have_required_href(

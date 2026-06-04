@@ -32,11 +32,6 @@ if TYPE_CHECKING:
 class TestCatalogVersionsSchemaCompliance:
     """Test that catalog-level versions.json complies with the schema."""
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
     @pytest.mark.integration
     def test_init_creates_valid_catalog_versions_json(
         self,
@@ -61,11 +56,6 @@ class TestCatalogVersionsSchemaCompliance:
 
 class TestCollectionVersionsSchemaCompliance:
     """Test that collection-level versions.json complies with the spec schema."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
 
     @pytest.mark.integration
     def test_add_creates_valid_versions_json(
@@ -136,11 +126,6 @@ class TestCollectionVersionsSchemaCompliance:
 
 class TestVersionsSemanticRules:
     """Test semantic rules from rules.yaml that can't be expressed in JSON Schema."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
 
     @pytest.mark.integration
     def test_rule_0012_current_version_consistency(
@@ -221,11 +206,6 @@ class TestVersionsSemanticRules:
 class TestVersionsTimestampFormat:
     """Test that timestamps comply with the ISO 8601 UTC format (ending in 'Z')."""
 
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
-
     @pytest.mark.integration
     def test_created_timestamp_format(
         self,
@@ -265,11 +245,6 @@ class TestVersionsTimestampFormat:
 
 class TestVersionsChecksumFormat:
     """Test that checksums comply with the SHA-256 hex format."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a Click test runner."""
-        return CliRunner()
 
     @pytest.mark.integration
     def test_sha256_checksum_format(
