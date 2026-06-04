@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 
 if TYPE_CHECKING:
     pass
@@ -389,6 +390,10 @@ def detect_partitioning(directory: Path) -> dict[str, Any] | None:
     Returns:
         Partition metadata dict if partitioning detected, None otherwise.
     """
+    # Guard: directory must exist
+    if not directory.exists() or not directory.is_dir():
+        return None
+
     # Look for Hive-style directories: column=value
     hive_pattern = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)=.+$")
 
@@ -396,8 +401,14 @@ def detect_partitioning(directory: Path) -> dict[str, Any] | None:
     partition_keys: list[str] = []
     all_partition_dirs: list[Path] = []
 
+    # Max depth to prevent unbounded recursion (symlink loops, deeply nested structures)
+    MAX_PARTITION_DEPTH = 20
+
     def _scan_level(current_dir: Path, depth: int = 0) -> None:
         """Recursively scan for Hive partition directories."""
+        if depth >= MAX_PARTITION_DEPTH:
+            return  # Prevent unbounded recursion
+
         for item in current_dir.iterdir():
             if item.is_dir():
                 match = hive_pattern.match(item.name)
@@ -454,8 +465,6 @@ def validate_partition_schemas(directory: Path) -> SchemaValidationResult:
         - error_message: Description of mismatch if inconsistent
         - partition_count: Number of partitions validated
     """
-    import pyarrow.parquet as pq
-
     # First detect the partition structure
     partition_info = detect_partitioning(directory)
     if partition_info is None:
@@ -526,18 +535,18 @@ def validate_partition_schemas(directory: Path) -> SchemaValidationResult:
 def _schemas_equal(schema1: pa.Schema, schema2: pa.Schema) -> bool:
     """Check if two PyArrow schemas are equal.
 
-    Compares field names and types.
+    Compares field names and types in an order-independent way.
+    Two schemas are equal if they have the same fields with the same types,
+    regardless of column order.
     """
     if len(schema1) != len(schema2):
         return False
 
-    for i in range(len(schema1)):
-        field1 = schema1.field(i)
-        field2 = schema2.field(i)
-        if field1.name != field2.name or field1.type != field2.type:
-            return False
+    # Build name->type maps for order-independent comparison
+    fields1 = {f.name: f.type for f in schema1}
+    fields2 = {f.name: f.type for f in schema2}
 
-    return True
+    return fields1 == fields2
 
 
 def _describe_schema_diff(

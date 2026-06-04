@@ -474,13 +474,14 @@ def add_partition_metadata_to_collection(
                     if isinstance(new_key, dict) and "name" in new_key:
                         key_name = new_key["name"]
                         merged_key = dict(new_key)
-                        # Preserve existing description if not in new key
-                        if key_name in existing_descriptions and "description" not in merged_key:
-                            merged_key["description"] = existing_descriptions[key_name]
-                        # Also preserve if new key has empty/generic description
-                        elif (
-                            key_name in existing_descriptions
-                            and merged_key.get("description", "").strip() == ""
+                        # Preserve existing hand-authored description if:
+                        # 1. New key has no description at all
+                        # 2. New key has empty/whitespace description
+                        # 3. New key has auto-generated generic description (ends with "identifier")
+                        new_desc = merged_key.get("description", "").strip()
+                        is_generic_desc = new_desc.endswith("identifier") or new_desc == ""
+                        if key_name in existing_descriptions and (
+                            "description" not in merged_key or is_generic_desc
                         ):
                             merged_key["description"] = existing_descriptions[key_name]
                         merged_keys.append(merged_key)

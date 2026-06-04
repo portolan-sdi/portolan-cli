@@ -1557,35 +1557,83 @@ def _ensure_partition_metadata(
     collection: pystac.Collection,
     collection_dir: Path,
     items: list[PreparedDataset],
-) -> None:
+) -> list[str]:
     """Add partition metadata to collection from items or auto-detection.
 
     Issue #232: Adds partition extension if any items have partition metadata.
     Issue #443: Auto-detects pre-existing Hive partitions if no metadata was set
     from items. This handles the case where users add pre-partitioned data not
-    created by Portolan.
+    created by Portolan. Also creates glob assets for bulk access.
 
     Args:
         collection: The STAC collection to update.
         collection_dir: Directory containing the collection.
         items: List of prepared datasets for this collection.
+
+    Returns:
+        List of warning messages (e.g., schema inconsistency warnings).
     """
+    from portolan_cli.partitioning import (
+        build_glob_pattern,
+        detect_partitioning,
+        validate_partition_schemas,
+    )
+
+    warnings: list[str] = []
+
     # First, check if any items have explicit partition metadata
     for p in items:
         if p.partition_metadata is not None:
             add_partition_metadata_to_collection(collection, p.partition_metadata)
-            return  # Only one partition metadata per collection
+            # Validate schema consistency for partitioned data
+            validation = validate_partition_schemas(collection_dir)
+            if not validation.is_consistent and validation.partition_count > 0:
+                warnings.append(
+                    f"Schema inconsistency in partitioned data: {validation.error_message}"
+                )
+            return warnings  # Only one partition metadata per collection
 
     # No explicit metadata - try auto-detection for pre-existing Hive partitions
-    from portolan_cli.partitioning import detect_partitioning
-
     detected = detect_partitioning(collection_dir)
     if detected:
         add_partition_metadata_to_collection(collection, detected)
-        logger.debug(
-            f"Auto-detected Hive partitions in {collection_dir}: "
-            f"{detected.get('partition:keys', [])}"
-        )
+        partition_keys = detected.get("partition:keys", [])
+        partition_columns = [k["name"] for k in partition_keys]
+        file_count = detected.get("partition:file_count", 0)
+
+        logger.debug(f"Auto-detected Hive partitions in {collection_dir}: {partition_columns}")
+
+        # Create glob asset for bulk access (Issue #443)
+        # Only add if not already present (avoid duplicates on re-add)
+        glob_pattern = build_glob_pattern(partition_columns=partition_columns)
+        glob_asset_key = "partitioned_data"
+
+        # Check if glob asset already exists
+        existing_glob = None
+        for key, asset in collection.assets.items():
+            if asset.href and "*" in asset.href:
+                existing_glob = key
+                break
+
+        if existing_glob is None:
+            import pystac
+
+            glob_asset = pystac.Asset(
+                href=glob_pattern,
+                media_type="application/vnd.apache.parquet",
+                roles=["data"],
+                title="Partitioned GeoParquet",
+                description=f"Glob pattern for {file_count} partitioned files",
+            )
+            collection.assets[glob_asset_key] = glob_asset
+            logger.debug(f"Added glob asset with pattern: {glob_pattern}")
+
+        # Validate schema consistency for auto-detected partitions
+        validation = validate_partition_schemas(collection_dir)
+        if not validation.is_consistent and validation.partition_count > 0:
+            warnings.append(f"Schema inconsistency in partitioned data: {validation.error_message}")
+
+    return warnings
 
 
 def finalize_datasets(
@@ -1668,8 +1716,13 @@ def finalize_datasets(
                 add_table_extension(collection, aggregated, merge_strategy=merge_strategy)
 
         # Add partition extension if any items have partition metadata (Issue #232)
-        # Issue #443: Also auto-detect pre-existing Hive partitions
-        _ensure_partition_metadata(collection, collection_dir, items)
+        # Issue #443: Also auto-detect pre-existing Hive partitions and validate schemas
+        partition_warnings = _ensure_partition_metadata(collection, collection_dir, items)
+        if partition_warnings:
+            from portolan_cli.output import warn as warn_output
+
+            for warning_msg in partition_warnings:
+                warn_output(warning_msg)
 
         # Compute collection summaries from items (per ADR-0036)
         # Moved here from push.py for separation of concerns - summaries are now

@@ -140,19 +140,12 @@ class TestAddArbitraryHivePartitions:
         assert "gms_feature_id" in key_names
 
     @pytest.mark.integration
-    @pytest.mark.xfail(
-        reason="Automatic glob asset generation not yet implemented - Issue #443 future work"
-    )
     def test_add_generates_glob_for_arbitrary_column(
         self,
         runner: CliRunner,
         initialized_catalog: Path,
     ) -> None:
-        """portolan add generates correct glob pattern for arbitrary partition columns.
-
-        NOTE: This test is xfail because automatic glob asset generation is future work.
-        Currently users need to manually add glob assets to collection.json.
-        """
+        """portolan add generates correct glob pattern for arbitrary partition columns."""
         collection_dir = initialized_catalog / "observations"
         collection_dir.mkdir()
 
@@ -270,18 +263,12 @@ class TestAddMultilevelHivePartitions:
         assert "sensor_type" in key_names
 
     @pytest.mark.integration
-    @pytest.mark.xfail(
-        reason="Automatic glob asset generation not yet implemented - Issue #443 future work"
-    )
     def test_add_generates_multilevel_glob(
         self,
         runner: CliRunner,
         initialized_catalog: Path,
     ) -> None:
-        """portolan add generates correct glob for multi-level partitions.
-
-        NOTE: This test is xfail because automatic glob asset generation is future work.
-        """
+        """portolan add generates correct glob for multi-level partitions."""
         collection_dir = initialized_catalog / "sensors"
         collection_dir.mkdir()
 
@@ -388,20 +375,12 @@ class TestMergePreservesPartitionMetadata:
         assert "Site UUID" in site_key.get("description", "")
 
     @pytest.mark.integration
-    @pytest.mark.xfail(
-        reason="Automatic glob asset generation not yet implemented - Issue #443 future work"
-    )
     def test_smart_merge_preserves_glob_asset_metadata(
         self,
         runner: CliRunner,
         initialized_catalog: Path,
     ) -> None:
-        """Smart merge preserves hand-authored glob asset title and description.
-
-        NOTE: This test is xfail because automatic glob asset generation is future work.
-        Once implemented, users will be able to add custom title/description to glob
-        assets and have them preserved across re-adds.
-        """
+        """Smart merge preserves hand-authored glob asset title and description."""
         collection_dir = initialized_catalog / "contours"
         collection_dir.mkdir()
 
@@ -507,10 +486,9 @@ class TestSchemaConsistencyValidation:
         # Should succeed but with warning about schema inconsistency
         assert result.exit_code == 0
         # Check for warning in output (schema mismatch warning)
-        assert (
-            "schema" in result.output.lower()
-            or "inconsistent" in result.output.lower()
-            or result.exit_code == 0
+        # The warning should mention schema inconsistency
+        assert "schema" in result.output.lower() or "inconsistent" in result.output.lower(), (
+            f"Expected schema inconsistency warning in output, got: {result.output}"
         )
 
     @pytest.mark.integration
