@@ -440,6 +440,55 @@ class TestVectorCollectionLevelAsset:
             f"scheme-qualified href {href!r} wrongly flagged MISSING: {report.to_dict()}"
         )
 
+    @pytest.mark.parametrize(
+        "href",
+        [
+            # Relative, scheme-less warehouse paths — the case the scheme
+            # check alone misses. Must be recognized as non-local via the
+            # application/x-iceberg media type, not path-joined to disk.
+            "data/v3/statfi_paavo",
+            "./warehouse/portolake/agriculture",
+            "../shared/warehouse/agriculture",
+        ],
+    )
+    def test_collection_iceberg_asset_with_relative_href_not_missing(
+        self,
+        tmp_path: Path,
+        href: str,
+    ) -> None:
+        """An Iceberg asset (``application/x-iceberg``) whose href is a
+        relative, scheme-less warehouse path must NOT be treated as a local
+        file and reported MISSING.
+
+        The scheme check (``_is_scheme_qualified``) only catches absolute
+        URIs; an Iceberg table location can serialize to a relative path, so
+        the scanner relies on the extension media type to know the asset is
+        backend-managed and out of the local-filesystem scope. Without this
+        guard, ``check --fix`` tries to open the assembled local path and
+        errors with "Data file not found".
+        """
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "agriculture"
+        collection_dir.mkdir()
+        _write_collection_json(
+            collection_dir,
+            collection_id="agriculture",
+            extra_assets={
+                "data": {
+                    "href": href,
+                    "type": "application/x-iceberg",
+                    "roles": ["data"],
+                }
+            },
+        )
+
+        report = scan_catalog_metadata(catalog_dir)
+        assert report.missing_count == 0, (
+            f"relative iceberg href {href!r} wrongly flagged MISSING: {report.to_dict()}"
+        )
+
 
 # Helpers shared by F1/F3/F4 tests below.
 

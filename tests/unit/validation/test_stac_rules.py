@@ -136,6 +136,104 @@ class TestStacSchemaRule:
 
 
 @pytest.mark.unit
+class TestUnresolvableExtensionTolerance:
+    """An unresolvable extension schema must not fail document validation.
+
+    STAC extensions are referenced by URL in `stac_extensions` and fetched
+    over the network during schema validation. Extensions that are
+    unpublished, proposed, or simply unreachable (e.g. the STAC Iceberg
+    extension and the proposed git-backed-catalog extension) must NOT make
+    `check` fail an otherwise well-formed catalog — except under --strict.
+    """
+
+    _RESOLUTION_ERROR = (
+        "Could not resolve schema: "
+        "https://stac-extensions.github.io/iceberg/v1.0.0/schema.json. "
+        "Reason: HTTP Error 404: Not Found"
+    )
+
+    def test_schema_rule_tolerates_constructor_resolution_error(
+        self, minimal_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Linter raising 'Could not resolve schema' on construction passes."""
+        from portolan_cli.validation import stac_rules
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError(self._RESOLUTION_ERROR)
+
+        monkeypatch.setattr(stac_rules, "Linter", _raise)
+        result = StacSchemaRule().check(minimal_catalog)
+        assert result.passed
+
+    def test_schema_rule_tolerates_invalid_stac_resolution_error(
+        self, minimal_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """valid_stac=False due to a resolution error passes (non-strict)."""
+        from portolan_cli.validation import stac_rules
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        msg = (
+            "Could not resolve schema: "
+            "https://portolan-sdi.github.io/portolan-spec/git/v1.0.0/schema.json"
+        )
+
+        class _FakeLinter:
+            def __init__(self, *_a: object, **_k: object) -> None:
+                self.valid_stac = False
+                self.error_msg = msg
+
+        monkeypatch.setattr(stac_rules, "Linter", _FakeLinter)
+        result = StacSchemaRule().check(minimal_catalog)
+        assert result.passed
+
+    def test_schema_rule_strict_still_fails_resolution_error(
+        self, minimal_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under --strict the user opts into full validation: still fails."""
+        from portolan_cli.validation import stac_rules
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError(self._RESOLUTION_ERROR)
+
+        monkeypatch.setattr(stac_rules, "Linter", _raise)
+        result = StacSchemaRule(strict=True).check(minimal_catalog)
+        assert not result.passed
+
+    def test_schema_rule_real_validation_error_still_fails(
+        self, minimal_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A genuine schema error (not a resolution failure) still fails."""
+        from portolan_cli.validation import stac_rules
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        class _FakeLinter:
+            def __init__(self, *_a: object, **_k: object) -> None:
+                self.valid_stac = False
+                self.error_msg = "'id' is a required property"
+                self.recommendation = None
+
+        monkeypatch.setattr(stac_rules, "Linter", _FakeLinter)
+        result = StacSchemaRule().check(minimal_catalog)
+        assert not result.passed
+
+    def test_lint_rule_tolerates_constructor_resolution_error(
+        self, minimal_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Lint cannot run if a schema can't resolve, but that's not a fail."""
+        from portolan_cli.validation import stac_rules
+        from portolan_cli.validation.stac_rules import StacLintRule
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError(self._RESOLUTION_ERROR)
+
+        monkeypatch.setattr(stac_rules, "Linter", _raise)
+        result = StacLintRule().check(minimal_catalog)
+        assert result.passed
+
+
+@pytest.mark.unit
 class TestStacLintRule:
     """Tests for StacLintRule."""
 

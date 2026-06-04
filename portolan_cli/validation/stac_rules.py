@@ -15,6 +15,31 @@ from stac_check.lint import Linter  # type: ignore[import-untyped]
 from portolan_cli.validation.results import Severity, ValidationResult
 from portolan_cli.validation.rules import ValidationRule
 
+# Substrings that mark a validation failure as "an extension schema could not
+# be resolved" rather than "the document is invalid". STAC extensions are
+# referenced by URL in `stac_extensions`; the validator fetches each schema
+# over the network. An extension that is unpublished, proposed, or simply
+# unreachable (offline runs) must NOT fail validation of the document itself.
+#
+# This covers the STAC Iceberg extension and the proposed git-backed-catalog
+# extension (portolan-sdi/portolan-spec#20), whose schemas may 404. It is the
+# extension analogue of StacSchemaRule.ACCEPTABLE_ERRORS' relative-href IRI
+# tolerance — the document is well-formed, we just can't fetch a remote schema.
+_SCHEMA_RESOLUTION_ERROR_MARKERS: frozenset[str] = frozenset(
+    {
+        "could not resolve schema",  # stac-validator FastValidator message
+        "failed to resolve",
+    }
+)
+
+
+def _is_schema_resolution_error(message: str | None) -> bool:
+    """True if `message` indicates an extension schema could not be fetched."""
+    if not message:
+        return False
+    lowered = message.lower()
+    return any(marker in lowered for marker in _SCHEMA_RESOLUTION_ERROR_MARKERS)
+
 
 class StacSchemaRule(ValidationRule):
     """Validate STAC objects against JSON Schema spec.
@@ -69,6 +94,12 @@ class StacSchemaRule(ValidationRule):
                 fast=not self.strict,
             )
         except Exception as e:
+            # An unresolvable extension schema (e.g. the STAC Iceberg or
+            # proposed git extension) surfaces here as a RuntimeError during
+            # construction. Don't fail the document for a schema we can't
+            # fetch — unless --strict, where the user opts into full checks.
+            if not self.strict and _is_schema_resolution_error(str(e)):
+                return self._pass("Schema valid (unresolved extension schema accepted)")
             return self._fail(
                 f"STAC validation failed: {e}",
                 fix_hint="Check that all STAC files have valid JSON syntax",
@@ -79,6 +110,8 @@ class StacSchemaRule(ValidationRule):
             error_msg = linter.error_msg or "STAC schema validation failed"
             if self._is_acceptable_error(error_msg):
                 return self._pass("Schema valid (relative hrefs accepted)")
+            if not self.strict and _is_schema_resolution_error(error_msg):
+                return self._pass("Schema valid (unresolved extension schema accepted)")
             recommendation = getattr(linter, "recommendation", None)
             return self._fail(error_msg, fix_hint=recommendation)
 
@@ -90,8 +123,11 @@ class StacSchemaRule(ValidationRule):
         real_failures = []
         for f in failed:
             msg = f.get("error_message", "")
-            if not self._is_acceptable_error(msg):
-                real_failures.append(f)
+            if self._is_acceptable_error(msg):
+                continue
+            if not self.strict and _is_schema_resolution_error(msg):
+                continue
+            real_failures.append(f)
 
         if real_failures:
             first_error = real_failures[0]
@@ -160,6 +196,11 @@ class StacLintRule(ValidationRule):
                 fast_linting=True,  # Always run BP checks
             )
         except Exception as e:
+            # Best-practice linting can't run if an extension schema can't be
+            # fetched, but that is not a lint violation — pass rather than
+            # block the catalog on an unreachable/unpublished extension.
+            if not self.strict and _is_schema_resolution_error(str(e)):
+                return self._pass("Lint skipped (unresolved extension schema)")
             return self._fail(f"STAC lint failed: {e}")
 
         # Get best practices dict (not an attribute, must call method)
