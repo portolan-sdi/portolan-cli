@@ -65,6 +65,8 @@ When a collection contains a single data file (e.g., one GeoParquet file), the d
   {filename}.parquet
   {filename}.pmtiles          (recommended)
   thumbnail.png               (recommended)
+  styles/                     (recommended for PMTiles collections)
+    default.json
 ```
 
 ## Item Level
@@ -78,7 +80,6 @@ Each item is a subdirectory of the collection named with the item ID.
 | Primary data asset | **MUST** | One of: `.parquet` (vector), `.tif` (raster), `.copc.laz` (point cloud) |
 | `{item_id}.pmtiles` | **SHOULD** | Vector tile derivative for web display (vector only) |
 | `thumbnail.png` | **SHOULD** | Preview image (any format: `.png`, `.jpg`, `.webp`) |
-| `style.json` | **MAY** | MapLibre-compatible styling |
 
 Item IDs are derived from the item directory name. By convention, item directories **SHOULD** be named after the primary data file's stem (e.g., source file `census.shp` goes into item directory `census/`).
 

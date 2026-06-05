@@ -78,6 +78,7 @@ Each partition file also has a corresponding STAC item linked from the collectio
 
 ## Styling
 
-- **MAY** include `style.json` for default visualization
-  - Compatible with MapLibre GL JS and deck.gl
-  - See [best practices](../best-practices.md) for styling recommendations
+- **SHOULD** include visualization styles as standalone STAC assets when PMTiles are provided
+  - Complete Mapbox GL v8 JSON files stored in `{collection}/styles/`
+  - Registered in STAC with `portolan:styles` manifest and `["style"]` role
+  - See [best practices](../best-practices.md#visualization-styles) for format details and conventions

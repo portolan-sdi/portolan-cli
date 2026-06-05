@@ -75,7 +75,7 @@ These are **derivatives**, not primary data. PMTiles **SHOULD** be generated fro
 | `catalog.json` | STAC Catalog (root) |
 | `collection.json` | STAC Collection |
 | `versions.json` | Portolan version manifest |
-| `style.json` | MapLibre/deck.gl style definition |
+| `styles/*.json` | Mapbox GL / MapLibre style definitions (see [best-practices.md#visualization-styles](best-practices.md#visualization-styles)) |
 
 These files have semantic meaning and are not imported as datasets.
 
