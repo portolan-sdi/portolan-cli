@@ -1,0 +1,26 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "invalid-tabular-collection",
+  "title": "Invalid Tabular Collection",
+  "description": "A tabular collection missing portolan:geospatial flag - should fail validation",
+  "license": "CC-BY-4.0",
+  "extent": {
+    "temporal": {
+      "interval": [["2020-01-01T00:00:00Z", "2024-12-31T23:59:59Z"]]
+    }
+  },
+  "assets": {
+    "data": {
+      "href": "./data.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": ["data"],
+      "description": "Plain Parquet file (no geo metadata) - but collection lacks portolan:geospatial: false"
+    }
+  },
+  "links": [
+    {"rel": "root", "href": "../catalog.json", "type": "application/json"},
+    {"rel": "parent", "href": "../catalog.json", "type": "application/json"},
+    {"rel": "self", "href": "./collection.json", "type": "application/json"}
+  ]
+}

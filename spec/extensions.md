@@ -14,7 +14,7 @@ These extensions are recognized as importable geospatial data:
 | `.shp` | Shapefile | Vector | No | Converts to GeoParquet |
 | `.gpkg` | GeoPackage | Vector | No | Converts to GeoParquet |
 | `.fgb` | FlatGeobuf | Vector | Yes | Cloud-native, passed through |
-| `.csv` | CSV with geometry | Vector | No | Converts to GeoParquet (requires lat/lon or WKT column) |
+| `.csv` | CSV | Vector/Tabular | No | Content inspected: geometry columns → GeoParquet; no geometry → tabular (if enabled) |
 | `.tif`, `.tiff` | GeoTIFF/COG | Raster | Depends | Content inspected for COG compliance |
 | `.jp2` | JPEG2000 | Raster | No | Converts to COG |
 
@@ -35,13 +35,18 @@ See [ADR-0014: Accept non-cloud-native formats](https://github.com/portolan-sdi/
 
 ### Content Inspection
 
-Some formats require content inspection to determine cloud-native status:
+Some formats require content inspection to determine type and cloud-native status:
 
-- **`.parquet`**: Checked for GeoParquet metadata (geo column info)
+- **`.parquet`**: Checked for GeoParquet metadata (`geo` key in schema metadata)
+  - If `geo` key present → GeoParquet (geospatial pipeline)
+  - If `geo` key absent → Plain Parquet (tabular pipeline, requires `tabular.enabled: true`)
+- **`.csv`**: Checked for geometry columns (lat/lon, WKT, WKB)
+  - If geometry columns found → GeoParquet conversion
+  - If no geometry columns → tabular (requires `tabular.enabled: true`)
 - **`.json`**: Checked for GeoJSON structure (FeatureCollection, Feature, or geometry)
 - **`.tif`/`.tiff`**: Validated against COG spec (internal tiling, overviews)
 
-Files that fail content inspection are treated as convertible (vector) or rejected (raster without geo info).
+Files that fail content inspection are treated as convertible (vector), tabular (if enabled), or rejected (raster without geo info).
 
 ## Sidecar Files
 
@@ -97,6 +102,23 @@ These formats are explicitly rejected with informative error messages:
 | `.h5`, `.hdf5` | HDF5 | Not yet supported |
 | `.las`, `.laz` | LAS/LAZ | Use COPC format instead |
 
+## Tabular Formats
+
+These extensions are recognized as tabular data when `tabular.enabled: true` in `.portolan/config.yaml`:
+
+| Extension | Format | Handling |
+|-----------|--------|----------|
+| `.parquet` | Plain Parquet | Content inspection — no `geo` metadata key |
+| `.csv` | CSV | Content inspection — no geometry columns |
+| `.tsv` | TSV | Converts to Parquet |
+| `.xlsx`, `.xls` | Excel | Converts to Parquet |
+
+When `tabular.enabled` is `false` (default):
+- Tabular files with a companion geo file → tracked as companion assets
+- Standalone tabular files → rejected with helpful error message
+
+See [formats/tabular.md](formats/tabular.md) for full requirements.
+
 ## Ignored Files
 
 The following are skipped during directory scans:
@@ -107,10 +129,7 @@ The following are skipped during directory scans:
 | `.pyc`, `.pyo`, `.class`, `.o`, `.obj` | Compiled files |
 | `__pycache__/`, `.git/`, `.svn/`, `.hg/` | Build/VCS directories |
 | `.idea/`, `.vscode/`, `node_modules/`, `.tox/`, `.pytest_cache/` | IDE/tooling directories |
-| `.tsv`, `.xlsx`, `.xls` | Tabular data (not geospatial) |
 | `.md`, `.txt`, `.rst`, `.html`, `.htm` | Documentation |
-
-Note: `.csv` files are listed as importable above (with geometry columns) but are also commonly non-geospatial. The scan command classifies them as tabular data; the import command performs content inspection.
 
 ## Extension vs. Role
 

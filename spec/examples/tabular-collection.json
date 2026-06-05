@@ -1,0 +1,83 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "eurostat-electricity-prices",
+  "title": "Industrial electricity prices by country",
+  "description": "Half-yearly industrial electricity prices (EUR/kWh, including taxes) by European country. Non-geospatial tabular dataset. Source: Eurostat nrg_pc_205.",
+  "license": "CC-BY-4.0",
+  "portolan:geospatial": false,
+  "stac_extensions": [
+    "https://stac-extensions.github.io/table/v1.2.0/schema.json"
+  ],
+  "extent": {
+    "temporal": {
+      "interval": [["2007-01-01T00:00:00Z", "2024-12-31T23:59:59Z"]]
+    }
+  },
+  "providers": [
+    {
+      "name": "Eurostat",
+      "roles": ["producer", "licensor"],
+      "url": "https://ec.europa.eu/eurostat"
+    }
+  ],
+  "table:columns": [
+    {
+      "name": "geo",
+      "type": "string",
+      "description": "Country code (Eurostat / ISO-3166-1 alpha-2)"
+    },
+    {
+      "name": "period",
+      "type": "string",
+      "description": "Reporting half-year, e.g. 2024-S1"
+    },
+    {
+      "name": "price_eur_kwh",
+      "type": "double",
+      "description": "Industrial electricity price, EUR/kWh, including taxes"
+    }
+  ],
+  "assets": {
+    "data": {
+      "href": "https://example-bucket.s3.eu-north-1.amazonaws.com/eurostat-electricity-prices/electricity-prices.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": ["data"],
+      "title": "Electricity prices data"
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./collection.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "version-history",
+      "href": "./versions.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "llms",
+      "href": "./llms.txt",
+      "type": "text/markdown",
+      "title": "Agent/LLM usage guide"
+    },
+    {
+      "rel": "via",
+      "href": "https://ec.europa.eu/eurostat/databrowser/view/nrg_pc_205/default/table",
+      "type": "text/html",
+      "title": "Source: Eurostat — Electricity prices for non-household consumers"
+    }
+  ]
+}

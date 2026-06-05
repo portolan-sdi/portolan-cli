@@ -18,6 +18,11 @@
         "type": {
           "const": "Collection"
         },
+        "portolan:geospatial": {
+          "type": "boolean",
+          "default": true,
+          "description": "False for tabular (non-geospatial) collections. When false, extent.spatial is optional. See formats/tabular.md"
+        },
         "portolan:styles": {
           "type": "array",
           "description": "Ordered list of style asset keys. First entry is the default style. See best-practices.md#visualization-styles",

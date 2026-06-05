@@ -28,6 +28,16 @@ project/
 - **MUST** follow STAC specification version 1.0.0 or later
 - **MUST** use `SELF_CONTAINED` catalog type (relative links, portable)
 
+### Spatial Extent Relaxation for Tabular Collections
+
+STAC requires `extent.spatial.bbox` for Collections. Portolan relaxes this requirement for **tabular (non-geospatial) collections**:
+
+- Collections with `portolan:geospatial: false` **MAY** omit `extent.spatial`
+- Validators **MUST NOT** reject a tabular collection for lacking spatial extent
+- If `extent.spatial` is present, it represents the **area of interest** the data pertains to, not a geometric footprint
+
+See [formats/tabular.md](formats/tabular.md) for full tabular collection requirements.
+
 ## Data Storage
 
 Portolan catalogs assume data is hosted in S3-compatible object storage. This is the ground truth for all assets.
@@ -132,5 +142,6 @@ Additional requirements apply based on data type. See format addenda:
 - [Vector data](formats/vector.md)
 - [Raster data](formats/raster.md)
 - [Point cloud data](formats/pointcloud.md)
+- [Tabular (non-geospatial) data](formats/tabular.md)
 
 Format addenda are normative and define **MUST** requirements, not suggestions.
