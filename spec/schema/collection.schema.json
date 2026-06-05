@@ -18,6 +18,15 @@
         "type": {
           "const": "Collection"
         },
+        "portolan:styles": {
+          "type": "array",
+          "description": "Ordered list of style asset keys. First entry is the default style. See best-practices.md#visualization-styles",
+          "items": {
+            "type": "string",
+            "pattern": "^styles/[a-z0-9_-]+$"
+          },
+          "minItems": 1
+        },
         "stac_version": {
           "type": "string",
           "pattern": "^1\\.[0-9]+\\.[0-9]+$",
@@ -153,7 +162,7 @@
           "items": {
             "type": "string"
           },
-          "examples": [["data"], ["visual"], ["thumbnail"]]
+          "examples": [["data"], ["visual"], ["thumbnail"], ["style"]]
         },
         "title": {
           "type": "string",
