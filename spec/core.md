@@ -90,7 +90,7 @@ This is standard STAC practice for provenance and enables consumers to trace dat
 ## Root Documentation
 
 - **MUST** include a `README.md` at the catalog root
-- README content requirements: TBD (see [QUESTIONS.md](QUESTIONS.md))
+- README content requirements: Title, description, license, and data provenance at minimum
 
 ## Versioning
 
