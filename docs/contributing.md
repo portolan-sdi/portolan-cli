@@ -142,7 +142,7 @@ To propose spec changes:
 2. The PR itself is the proposal — discuss in the PR comments
 3. On merge, CI automatically syncs changes to portolan-spec
 
-See [ADR-0048](../context/shared/adr/0048-cli-as-spec-source.md) for rationale.
+See [ADR-0048](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0048-cli-as-spec-source.md) for rationale.
 
 ## Questions?
 
