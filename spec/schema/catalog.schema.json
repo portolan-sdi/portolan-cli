@@ -45,7 +45,7 @@
         "rel": {
           "type": "string",
           "description": "Link relation type",
-          "examples": ["root", "self", "child", "parent", "item"]
+          "examples": ["root", "self", "child", "parent", "item", "llms"]
         },
         "href": {
           "type": "string",
@@ -79,6 +79,28 @@
                 "not": {
                   "pattern": "^[a-zA-Z][a-zA-Z0-9+.-]*://"
                 }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "rel": { "const": "llms" }
+            },
+            "required": ["rel"]
+          },
+          "then": {
+            "description": "LLM integration link - MUST point to llms.txt with text/markdown type",
+            "required": ["type"],
+            "properties": {
+              "href": {
+                "type": "string",
+                "pattern": "(^|/)llms\\.txt$",
+                "description": "Must point to llms.txt file"
+              },
+              "type": {
+                "const": "text/markdown"
               }
             }
           }

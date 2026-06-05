@@ -12,9 +12,11 @@ project/
 │   ├── config.yaml
 │   └── state.json
 ├── catalog.json
+├── llms.txt
 ├── versions.json
 └── {collection_id}/
     ├── collection.json
+    ├── llms.txt
     ├── versions.json
     └── {item_id}/
         └── data.parquet
@@ -91,6 +93,13 @@ This is standard STAC practice for provenance and enables consumers to trace dat
 
 - **MUST** include a `README.md` at the catalog root
 - README content requirements: Title, description, license, and data provenance at minimum
+
+## AI & LLM Integration
+
+- **MUST** include an `llms.txt` file at both the catalog root and each collection directory
+- **MUST** link `llms.txt` in the STAC JSON `links` array with `rel: "llms"`
+
+See [ai-integration.md](ai-integration.md) for full requirements and content recommendations.
 
 ## Versioning
 

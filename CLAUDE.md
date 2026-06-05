@@ -119,6 +119,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0049](context/shared/adr/0049-stac-geoparquet-scalability.md) | STAC-GeoParquet required for collections >1000 items |
 | [0050](context/shared/adr/0050-pmtiles-visualization-requirement.md) | PMTiles required for vector datasets >100 MB |
 | [0051](context/shared/adr/0051-self-contained-catalog-type.md) | SELF_CONTAINED catalog type (relative links, portable) |
+| [0052](context/shared/adr/0052-llms-txt-requirement.md) | Require llms.txt for AI/LLM integration at catalog and collection levels |
 
 ## Common Commands
 
