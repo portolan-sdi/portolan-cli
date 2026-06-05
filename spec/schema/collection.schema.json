@@ -116,6 +116,17 @@
           "then": {
             "$ref": "#/$defs/VersionHistoryLink"
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "rel": { "const": "llms" }
+            },
+            "required": ["rel"]
+          },
+          "then": {
+            "$ref": "#/$defs/LlmsLink"
+          }
         }
       ]
     },
@@ -135,6 +146,28 @@
         }
       },
       "required": ["rel", "href"]
+    },
+    "LlmsLink": {
+      "type": "object",
+      "description": "Link to llms.txt for AI/LLM integration - MUST be present",
+      "properties": {
+        "rel": {
+          "const": "llms"
+        },
+        "href": {
+          "type": "string",
+          "pattern": "(^|/)llms\\.txt$",
+          "description": "Must point to llms.txt file"
+        },
+        "type": {
+          "const": "text/markdown"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title, e.g., 'Agent/LLM usage guide'"
+        }
+      },
+      "required": ["rel", "href", "type"]
     },
     "PortolanAsset": {
       "type": "object",
