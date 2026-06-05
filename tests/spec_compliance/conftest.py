@@ -1,9 +1,10 @@
 """Fixtures for spec compliance tests.
 
 These tests validate CLI output against the machine-readable schemas from
-portolan-spec (https://github.com/portolan-sdi/portolan-spec/issues/23).
+the Portolan specification (see spec/schema/ in this repository).
 
-The schemas are vendored in tests/spec_compliance/schemas/ for reproducibility.
+The CLI repository is the source of truth for the spec; portolan-spec is
+a read-only mirror synced via CI (see ADR-0048).
 """
 
 from __future__ import annotations
@@ -38,8 +39,9 @@ def runner() -> CliRunner:
 
 @pytest.fixture(scope="session")
 def schemas_dir() -> Path:
-    """Return path to vendored schemas directory."""
-    return Path(__file__).parent / "schemas"
+    """Return path to spec schemas directory (source of truth)."""
+    # Navigate from tests/spec_compliance/ to repo root, then to spec/schema/
+    return Path(__file__).parent.parent.parent / "spec" / "schema"
 
 
 @pytest.fixture(scope="session")
