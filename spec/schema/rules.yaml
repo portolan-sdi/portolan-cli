@@ -480,3 +480,96 @@ rules:
         warn if no data access URLs present
     references:
       - ai-integration.md#collection-level-llmstxt
+
+  # =============================================================================
+  # Tabular (Non-Geospatial) Data Rules
+  # =============================================================================
+
+  - id: RULE-0090
+    level: error
+    scope: collection
+    description: Tabular collections MUST have portolan:geospatial set to false
+    rationale: |
+      The portolan:geospatial flag distinguishes intentionally non-spatial
+      collections from spatial collections with missing extent. This enables
+      validators and federation agents to route queries correctly.
+    validation: |
+      If collection has no GeoParquet assets (no geo metadata in .parquet files):
+        assert collection["portolan:geospatial"] == false
+    references:
+      - formats/tabular.md#marking-collections-non-spatial
+
+  - id: RULE-0091
+    level: warning
+    scope: collection
+    description: Tabular collections SHOULD use the STAC Table extension
+    rationale: |
+      Because tabular data has no geometry to hint at its meaning, the schema
+      is the primary semantic handle for consumers and agents. The table:columns
+      property surfaces schema information in STAC without opening the Parquet file.
+    validation: |
+      If collection["portolan:geospatial"] == false:
+        warn if "table:columns" not in collection
+        warn if "https://stac-extensions.github.io/table" not in stac_extensions
+    references:
+      - formats/tabular.md#schema-documentation
+      - https://github.com/stac-extensions/table
+
+  - id: RULE-0092
+    level: info
+    scope: collection
+    description: Tabular collection extent.spatial represents AOI, not geometry
+    rationale: |
+      STAC requires extent.spatial.bbox for collections. For tabular data with
+      no intrinsic spatial footprint, the bbox represents the area-of-interest
+      (AOI) the data pertains to. Portolan CLI always provides extent.spatial
+      via automatic AOI inheritance from sibling collections or global fallback.
+    validation: |
+      If collection["portolan:geospatial"] == false:
+        extent.spatial.bbox is treated as informational AOI, not a constraint
+        Portolan CLI auto-populates via AOI inheritance
+      If collection["portolan:geospatial"] == true or absent:
+        extent.spatial.bbox represents actual spatial footprint
+    references:
+      - formats/tabular.md#spatial-extent-handling
+      - core.md#spatial-extent-for-tabular-collections
+
+  - id: RULE-0093
+    level: warning
+    scope: collection
+    description: Tabular collections SHOULD have temporal extent when time-dimensioned
+    rationale: |
+      Most tabular data has a time dimension (time-series, reporting periods).
+      Temporal extent enables time-based queries and browsing.
+    validation: |
+      If collection["portolan:geospatial"] == false:
+        warn if extent.temporal is not set and data appears to have time dimension
+    references:
+      - formats/tabular.md#temporal-extent
+
+  - id: RULE-0094
+    level: error
+    scope: collection
+    description: Tabular collections MUST use collection-level assets
+    rationale: |
+      Single-file tabular datasets should not be wrapped in STAC items.
+      Collection-level assets are simpler and match the vector data pattern.
+    validation: |
+      If collection["portolan:geospatial"] == false:
+        assert primary data is in collection.assets, not wrapped in items
+    references:
+      - formats/tabular.md#collection-level-assets
+
+  - id: RULE-0095
+    level: warning
+    scope: config
+    description: Standalone tabular files require tabular.enabled config
+    rationale: |
+      Tabular support is opt-in to prevent accidentally sweeping in stray
+      CSV/Excel files. Users must explicitly enable it.
+    validation: |
+      If scan finds tabular files without companion geo files:
+        if not config["tabular"]["enabled"]:
+          reject with message explaining how to enable
+    references:
+      - formats/tabular.md#enabling-tabular-support

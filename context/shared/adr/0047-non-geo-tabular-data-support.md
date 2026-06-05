@@ -85,6 +85,29 @@ Tabular files become collection-level assets (per ADR-0031), not items. This avo
 
 Exception: **Partitioned tabular data** (e.g., temporally partitioned) will use items, where the partition key becomes the item's temporal interval and `geometry: null`. This follows the existing partition extension (ADR-0042).
 
+### 7. Collection property: `portolan:geospatial`
+
+Tabular collections are marked with `portolan:geospatial: false` to distinguish *intentionally non-spatial* from *spatial but unmeasured*:
+
+```json
+{
+  "type": "Collection",
+  "id": "demographics",
+  "portolan:geospatial": false,
+  ...
+}
+```
+
+- **`portolan:geospatial: false`** — tabular collection; `extent.spatial.bbox` represents AOI, not geometry
+- **`portolan:geospatial: true` or absent** — geospatial collection; all spatial requirements apply
+
+This explicit flag enables:
+- Validators to apply different rules for tabular vs geo collections (RULE-0090)
+- Federation agents to route spatial queries correctly
+- Consumers to understand bbox semantics (AOI vs footprint)
+
+The CLI sets this flag automatically in `_ensure_tabular_collection()` when creating new tabular-only collections.
+
 ## Consequences
 
 ### What becomes easier
