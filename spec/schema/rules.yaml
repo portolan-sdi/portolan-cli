@@ -328,6 +328,67 @@ rules:
       - formats/vector.md#recommended-formats
 
   # =============================================================================
+  # Visualization Styles Rules
+  # =============================================================================
+
+  - id: RULE-0065
+    level: warning
+    scope: collection
+    description: Collections with PMTiles SHOULD include visualization styles
+    rationale: |
+      Styles enable immediate visualization without custom configuration.
+      When PMTiles are provided, styles make the data instantly usable in map viewers.
+    validation: |
+      If collection has PMTiles asset:
+        warn if no "portolan:styles" property exists
+        warn if styles/ directory is empty
+    references:
+      - best-practices.md#visualization-styles
+      - formats/vector.md#styling
+
+  - id: RULE-0066
+    level: error
+    scope: collection
+    description: Style assets MUST use correct type and role
+    rationale: |
+      Consistent asset metadata enables style discovery and validation.
+    validation: |
+      For each asset key matching "styles/*":
+        assert asset.type == "application/json"
+        assert "style" in asset.roles
+    references:
+      - best-practices.md#stac-registration
+
+  - id: RULE-0067
+    level: error
+    scope: collection
+    description: portolan:styles entries MUST reference existing assets
+    rationale: |
+      The manifest array must be consistent with actual assets.
+      Missing assets break style pickers.
+    validation: |
+      If "portolan:styles" property exists:
+        for style_key in collection["portolan:styles"]:
+          assert style_key in collection.assets
+    references:
+      - best-practices.md#portolan-styles-manifest
+
+  - id: RULE-0068
+    level: error
+    scope: asset
+    description: Style files MUST be valid Mapbox GL v8 JSON
+    rationale: |
+      Invalid style JSON breaks map viewers at runtime.
+    validation: |
+      For each style asset (roles contains "style"):
+        style_json = load_json(asset.href)
+        assert style_json.version == 8
+        assert "sources" in style_json
+        assert "layers" in style_json
+    references:
+      - best-practices.md#style-file-format
+
+  # =============================================================================
   # Version History Rules
   # =============================================================================
 

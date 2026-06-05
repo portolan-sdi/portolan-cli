@@ -46,9 +46,96 @@ PMTiles enable efficient web map rendering without server-side tile generation.
 ## Visualization
 
 - **SHOULD** include a thumbnail image generated from default styling
-- **SHOULD** provide default styling via `style.json`
-  - Compatible with MapLibre GL JS and deck.gl
-  - Enables immediate visualization without custom configuration
+- **SHOULD** provide visualization styles as standalone STAC assets (see [Visualization Styles](#visualization-styles))
+
+### Visualization Styles
+
+Collections with PMTiles assets **SHOULD** include one or more Mapbox GL v8 style files in a `styles/` subdirectory. Each style is a complete, self-contained JSON file that can be loaded directly by MapLibre GL JS.
+
+#### Style File Format
+
+```json
+{
+  "version": 8,
+  "name": "Buildings by Construction Year",
+  "sources": {
+    "data": {
+      "type": "vector",
+      "url": "../data.pmtiles"
+    }
+  },
+  "layers": [
+    {
+      "id": "buildings-fill",
+      "type": "fill",
+      "source": "data",
+      "source-layer": "buildings",
+      "paint": {
+        "fill-color": ["interpolate", ["linear"], ["get", "year"],
+          1900, "#8B4513", 1960, "#DAA520", 2020, "#FFFF00"
+        ],
+        "fill-opacity": 0.7
+      }
+    }
+  ]
+}
+```
+
+Key conventions:
+- `version`: Always `8` (Mapbox GL spec version)
+- `name`: Human-readable label (used in style pickers)
+- `sources.data.url`: Relative path from `styles/` to the PMTiles file (typically `../filename.pmtiles`)
+- `layers[].source`: Always `"data"` (matches the source key)
+
+#### STAC Registration
+
+Each style file is registered as a STAC asset on the collection:
+
+```json
+{
+  "portolan:styles": ["styles/default", "styles/by-age"],
+  "assets": {
+    "styles/default": {
+      "href": "./styles/default.json",
+      "type": "application/json",
+      "title": "Default",
+      "description": "Blue building footprints with semi-transparent fill.",
+      "roles": ["style"]
+    },
+    "styles/by-age": {
+      "href": "./styles/by-age.json",
+      "type": "application/json",
+      "title": "Buildings by Age",
+      "description": "Color ramp from brown (pre-1900) to yellow (post-2010).",
+      "roles": ["style"]
+    }
+  }
+}
+```
+
+- **Asset key**: `styles/{name}` (matches the filename stem)
+- **Type**: `application/json`
+- **Roles**: `["style"]`
+- **Title**: Short label for style pickers
+- **Description**: What the style shows and what the colors represent
+
+#### `portolan:styles` Manifest
+
+The `portolan:styles` property on the collection is a JSON array of asset keys in display order. The first entry is the default style.
+
+- If only one style exists, it is the default
+- Consumers **SHOULD** render the first style by default
+- Consumers with multiple styles **SHOULD** offer a style picker
+
+#### Best Practices
+
+1. **Create multiple styles for rich datasets.** If a collection has interesting categorical or numeric attributes, create data-driven styles for each (e.g., buildings by age, by use, by height).
+
+2. **Vary default styles across a catalog.** Each collection should have a visually distinct default color so the catalog is not monotone. Use subject matter to inform color choices — water in blues, vegetation in greens, built environment in warm tones.
+
+3. **Use data-driven styling.** Leverage Mapbox GL expressions (`interpolate`, `match`, `case`, `step`) to reveal patterns. Include a description explaining what the colors represent.
+
+4. **Consider label layers.** For datasets with names (roads, monuments, admin areas), include a label layer or a dedicated "with labels" style variant.
 
 ## Documentation
 
