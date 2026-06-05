@@ -3,9 +3,12 @@
   "stac_version": "1.0.0",
   "id": "invalid-tabular-collection",
   "title": "Invalid Tabular Collection",
-  "description": "A tabular collection missing portolan:geospatial flag - should fail validation",
+  "description": "A tabular collection missing portolan:geospatial flag. This collection has plain Parquet assets (no geo metadata) but lacks the required portolan:geospatial: false flag. Should fail RULE-0090 validation.",
   "license": "CC-BY-4.0",
   "extent": {
+    "spatial": {
+      "bbox": [[-180, -90, 180, 90]]
+    },
     "temporal": {
       "interval": [["2020-01-01T00:00:00Z", "2024-12-31T23:59:59Z"]]
     }

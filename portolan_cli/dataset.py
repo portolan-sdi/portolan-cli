@@ -2495,6 +2495,9 @@ def _ensure_tabular_collection(
         bbox=final_bbox,
     )
 
+    # Mark as non-geospatial tabular collection (RULE-0090, ADR-0047)
+    collection.extra_fields["portolan:geospatial"] = False
+
     # Save collection.json
     collection_dir.mkdir(parents=True, exist_ok=True)
     collection.set_self_href(str(collection_json_path))

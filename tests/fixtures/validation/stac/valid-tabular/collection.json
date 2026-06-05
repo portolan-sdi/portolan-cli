@@ -10,6 +10,9 @@
     "https://stac-extensions.github.io/table/v1.2.0/schema.json"
   ],
   "extent": {
+    "spatial": {
+      "bbox": [[-180, -90, 180, 90]]
+    },
     "temporal": {
       "interval": [["2020-01-01T00:00:00Z", "2024-12-31T23:59:59Z"]]
     }

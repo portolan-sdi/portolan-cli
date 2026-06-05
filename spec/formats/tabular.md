@@ -70,13 +70,15 @@ This explicit flag distinguishes *intentionally non-spatial* from *spatial but u
 
 For tabular collections (`portolan:geospatial: false`):
 
-- `extent.spatial` **MAY** be omitted entirely
-- If present, `extent.spatial.bbox` represents the **area of interest** the data pertains to, not the geometry of the data itself
-- Validators **MUST NOT** reject a tabular collection for missing spatial extent
+- `extent.spatial.bbox` represents the **area of interest** (AOI) the data pertains to, not a geometric footprint
+- Portolan CLI **always provides** `extent.spatial` via automatic AOI inheritance (see below)
+- Portolan validators treat the bbox as informational for tabular collections
+
+> **Note on STAC compliance**: The STAC Collection schema requires `extent.spatial`. While Portolan's semantic model considers spatial extent optional for tabular data, the CLI always provides it to maintain STAC schema compatibility. The `portolan:geospatial: false` flag signals that the bbox is an AOI, not a geometry footprint.
 
 ### AOI Inheritance
 
-When `extent.spatial` is not explicitly set, Portolan tools compute it automatically:
+Portolan CLI computes `extent.spatial` automatically for tabular collections:
 
 1. **Explicit bbox** in `metadata.yaml` (manual override)
 2. **Inherit from sibling geo collections** — compute union bbox
@@ -181,6 +183,9 @@ No item directory or item JSON is needed.
     "https://stac-extensions.github.io/table/v1.2.0/schema.json"
   ],
   "extent": {
+    "spatial": {
+      "bbox": [[-25, 34, 45, 72]]
+    },
     "temporal": {
       "interval": [["2007-01-01T00:00:00Z", "2024-12-31T23:59:59Z"]]
     }
@@ -220,7 +225,7 @@ No item directory or item JSON is needed.
 }
 ```
 
-Note: No `extent.spatial`, no geometry, no PMTiles — none apply to a tabular collection.
+Note: The `extent.spatial.bbox` represents the European AOI (inherited or explicit), not geometry. No PMTiles or geometry validation apply to tabular collections.
 
 ## What Does NOT Apply
 

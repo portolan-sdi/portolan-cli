@@ -21,7 +21,7 @@
         "portolan:geospatial": {
           "type": "boolean",
           "default": true,
-          "description": "False for tabular (non-geospatial) collections. When false, extent.spatial is optional. See formats/tabular.md"
+          "description": "False for tabular (non-geospatial) collections. When false, extent.spatial.bbox represents the area-of-interest (AOI) the data pertains to, not a geometric footprint. Note: STAC schema (via allOf) still requires extent.spatial; Portolan CLI provides this via AOI inheritance from sibling collections. See formats/tabular.md"
         },
         "portolan:styles": {
           "type": "array",

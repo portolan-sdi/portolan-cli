@@ -516,22 +516,23 @@ rules:
       - https://github.com/stac-extensions/table
 
   - id: RULE-0092
-    level: error
+    level: info
     scope: collection
-    description: Tabular collections MAY omit extent.spatial
+    description: Tabular collection extent.spatial represents AOI, not geometry
     rationale: |
-      STAC requires extent.spatial.bbox for collections, but tabular data has
-      no intrinsic spatial footprint. Portolan relaxes this requirement for
-      collections with portolan:geospatial: false.
+      STAC requires extent.spatial.bbox for collections. For tabular data with
+      no intrinsic spatial footprint, the bbox represents the area-of-interest
+      (AOI) the data pertains to. Portolan CLI always provides extent.spatial
+      via automatic AOI inheritance from sibling collections or global fallback.
     validation: |
       If collection["portolan:geospatial"] == false:
-        extent.spatial is optional
-        validators MUST NOT reject for missing spatial extent
+        extent.spatial.bbox is treated as informational AOI, not a constraint
+        Portolan CLI auto-populates via AOI inheritance
       If collection["portolan:geospatial"] == true or absent:
-        extent.spatial.bbox is required (STAC default)
+        extent.spatial.bbox represents actual spatial footprint
     references:
       - formats/tabular.md#spatial-extent-handling
-      - core.md#spatial-extent-relaxation-for-tabular-collections
+      - core.md#spatial-extent-for-tabular-collections
 
   - id: RULE-0093
     level: warning

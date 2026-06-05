@@ -28,13 +28,13 @@ project/
 - **MUST** follow STAC specification version 1.0.0 or later
 - **MUST** use `SELF_CONTAINED` catalog type (relative links, portable)
 
-### Spatial Extent Relaxation for Tabular Collections
+### Spatial Extent for Tabular Collections
 
-STAC requires `extent.spatial.bbox` for Collections. Portolan relaxes this requirement for **tabular (non-geospatial) collections**:
+STAC requires `extent.spatial.bbox` for Collections. For **tabular (non-geospatial) collections** (`portolan:geospatial: false`):
 
-- Collections with `portolan:geospatial: false` **MAY** omit `extent.spatial`
-- Validators **MUST NOT** reject a tabular collection for lacking spatial extent
-- If `extent.spatial` is present, it represents the **area of interest** the data pertains to, not a geometric footprint
+- `extent.spatial.bbox` represents the **area of interest** (AOI) the data pertains to, not a geometric footprint
+- Portolan CLI **always provides** `extent.spatial` via automatic AOI inheritance from sibling collections (or global fallback)
+- Portolan validators treat the bbox as informational metadata, not a constraint
 
 See [formats/tabular.md](formats/tabular.md) for full tabular collection requirements.
 
