@@ -626,6 +626,17 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
         catalog_root=output_dir,
     )
 
+    # Register extracted styles as STAC assets (Issue #490)
+    from portolan_cli.style import discover_styles, register_style_assets
+
+    for result in report.layers:
+        if result.status == "success" and result.output_path:
+            collection_dir = output_dir / Path(result.output_path).parent
+            styles = discover_styles(collection_dir)
+            if styles:
+                register_style_assets(collection_dir, styles)
+                logger.debug("Registered %d style(s) for %s", len(styles), result.name)
+
     # Seed metadata.yaml from extracted service metadata
     _seed_metadata_from_extraction(output_dir, report)
 

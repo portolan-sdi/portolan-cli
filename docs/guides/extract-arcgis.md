@@ -54,7 +54,7 @@ This will:
 1. Discover all layers in the service
 2. Extract each layer to GeoParquet format
 3. Apply Hilbert spatial sorting for efficient queries
-4. Extract layer styles as Mapbox GL JSON (from `drawingInfo.renderer`)
+4. Extract layer styles as Mapbox GL JSON and register as STAC assets
 5. Initialize a Portolan catalog with STAC metadata
 6. Add `via` provenance links to each collection (pointing to source layer URL)
 7. Seed `.portolan/metadata.yaml` with values from the service

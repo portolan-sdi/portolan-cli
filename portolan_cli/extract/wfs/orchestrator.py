@@ -776,6 +776,17 @@ def _auto_init_catalog(
         catalog_root=output_dir,
     )
 
+    # Register extracted styles as STAC assets (Issue #490)
+    from portolan_cli.style import discover_styles, register_style_assets
+
+    for result in report.layers:
+        if result.status == "success" and result.output_path:
+            collection_dir = output_dir / Path(result.output_path).parent
+            styles = discover_styles(collection_dir)
+            if styles:
+                register_style_assets(collection_dir, styles)
+                logger.debug("Registered %d style(s) for %s", len(styles), result.name)
+
     # Add via links for provenance tracking
     _add_via_links_to_collections(output_dir, report)
 
