@@ -14,6 +14,8 @@ To add a new source format (e.g., QGIS QML):
 """
 
 from portolan_cli.extract.common.converters.base import (
+    esri_color_to_hex,
+    esri_color_to_opacity,
     make_circle_layer,
     make_fill_layer,
     make_line_layer,
@@ -38,6 +40,9 @@ __all__ = [
     "make_line_layer",
     "make_match_expression",
     "make_step_expression",
+    # Color utilities
+    "esri_color_to_hex",
+    "esri_color_to_opacity",
     # ESRI converter
     "convert_esri_renderer",
     "ESRIConverterError",

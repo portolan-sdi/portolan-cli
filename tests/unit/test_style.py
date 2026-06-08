@@ -874,7 +874,7 @@ class TestRegisterStyleAssets:
         assert "styles/by-age" in updated["assets"]
 
         default_asset = updated["assets"]["styles/default"]
-        assert default_asset["type"] == "application/json"
+        assert default_asset["type"] == "application/vnd.mapbox.style+json"
         assert default_asset["roles"] == ["style"]
         assert default_asset["title"] == "Default"
 
@@ -931,12 +931,12 @@ class TestRegisterStyleAssets:
             "assets": {
                 "styles/default": {
                     "href": "./styles/default.json",
-                    "type": "application/json",
+                    "type": "application/vnd.mapbox.style+json",
                     "roles": ["style"],
                 },
                 "styles/old": {
                     "href": "./styles/old.json",
-                    "type": "application/json",
+                    "type": "application/vnd.mapbox.style+json",
                     "roles": ["style"],
                 },
             },

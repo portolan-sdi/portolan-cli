@@ -66,6 +66,7 @@ class ExtractionOptions:
         resume: Whether to resume from existing extraction report.
         raw: If True, skip auto-init (only create extraction files, no STAC catalog).
         dry_run: If True, list layers without extracting.
+        no_styles: If True, skip style extraction from WMS GetStyles.
         wfs_version: WFS version ("1.0.0", "1.1.0", "2.0.0", or "auto").
             When "auto", the version is negotiated with the server once and
             used consistently for both discovery and extraction.
@@ -82,6 +83,7 @@ class ExtractionOptions:
     resume: bool = False
     raw: bool = False
     dry_run: bool = False
+    no_styles: bool = False
     wfs_version: str = "auto"
     output_crs: str | None = None
     bbox: tuple[float, float, float, float] | None = None
@@ -530,15 +532,15 @@ def _extract_layer_task(
         features, size_bytes, duration = result.value  # type: ignore[misc]
 
         # Extract style from WMS GetStyles (Issue #490)
-        try:
-            extract_wms_style(
+        if not options.no_styles:
+            style_result = extract_wms_style(
                 wfs_url=url,
                 layer_name=layer.name,
                 collection_path=collection_dir,
                 source_layer=layer_slug,
             )
-        except Exception as e:
-            logger.debug("Style extraction failed for %s: %s", layer.name, e)
+            if style_result:
+                logger.debug("Extracted style for %s: %s", layer.name, style_result.path)
 
         return LayerResult(
             id=layer.id,

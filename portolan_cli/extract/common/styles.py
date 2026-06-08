@@ -322,39 +322,3 @@ def extract_esri_style(
         source_format="esri",
         warnings=warnings,
     )
-
-
-def download_icon(
-    url: str,
-    collection_path: Path,
-    filename: str,
-    *,
-    timeout: float = 30.0,
-) -> Path | None:
-    """Download icon image for ESRI picture marker symbols.
-
-    Args:
-        url: Icon URL.
-        collection_path: Path to collection directory.
-        filename: Output filename (with extension).
-        timeout: Request timeout in seconds.
-
-    Returns:
-        Path to downloaded file, or None on failure.
-    """
-    icons_dir = collection_path / "styles" / "icons"
-    icons_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            response = client.get(url)
-            response.raise_for_status()
-
-            icon_path = icons_dir / filename
-            icon_path.write_bytes(response.content)
-            logger.debug("Downloaded icon to %s", icon_path)
-            return icon_path
-
-    except (httpx.HTTPStatusError, httpx.RequestError) as e:
-        logger.warning("Could not download icon from %s: %s", url, e)
-        return None

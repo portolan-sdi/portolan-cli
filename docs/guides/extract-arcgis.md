@@ -281,6 +281,9 @@ portolan extract arcgis URL --timeout 120
 
 # Retry failed requests (default: 3 attempts)
 portolan extract arcgis URL --retries 5
+
+# Skip style extraction (default: styles are extracted)
+portolan extract arcgis URL --no-styles
 ```
 
 ### Resume Failed Extractions

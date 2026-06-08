@@ -204,6 +204,7 @@ class ExtractionOptions:
         dry_run: If True, list layers without extracting
         sort_hilbert: Whether to apply Hilbert spatial sorting
         raw: If True, skip auto-init (only create extraction files, no STAC catalog)
+        no_styles: If True, skip style extraction from ESRI drawingInfo
     """
 
     workers: int = 3
@@ -213,6 +214,7 @@ class ExtractionOptions:
     raw: bool = False
     dry_run: bool = False
     sort_hilbert: bool = True
+    no_styles: bool = False
 
 
 @dataclass
@@ -427,15 +429,15 @@ def _extract_one_layer(
         _emit_progress(on_progress, index, total, layer.name, "success")
 
         # Extract style from ESRI layer (Issue #490)
-        layer_url = f"{url.rstrip('/')}/{layer.id}"
-        try:
-            extract_esri_style(
+        if not options.no_styles:
+            layer_url = f"{url.rstrip('/')}/{layer.id}"
+            style_result = extract_esri_style(
                 layer_url=layer_url,
                 collection_path=collection_dir,
                 source_layer=layer_slug,
             )
-        except Exception as e:
-            logger.debug("Style extraction failed for %s: %s", layer.name, e)
+            if style_result:
+                logger.debug("Extracted style for %s: %s", layer.name, style_result.path)
 
         return LayerResult(
             id=layer.id,
@@ -1027,6 +1029,20 @@ def _extract_services_root(
 
         if result.success:
             features, size_bytes, duration = result.value  # type: ignore[misc]
+
+            # Extract style from ESRI layer (Issue #490)
+            if not options.no_styles:
+                layer_url = f"{service_url}/{layer.id}"
+                # collection_dir is service_dir for single-layer, or nested dir for multi
+                coll_dir = service_dir if is_single_layer else service_dir / layer_slug
+                style_result = extract_esri_style(
+                    layer_url=layer_url,
+                    collection_path=coll_dir,
+                    source_layer=layer_slug,
+                )
+                if style_result:
+                    logger.debug("Extracted style for %s: %s", layer.name, style_result.path)
+
             layer_results.append(
                 LayerResult(
                     id=layer.id,

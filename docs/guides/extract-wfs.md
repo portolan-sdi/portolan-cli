@@ -58,6 +58,9 @@ Portolan automatically:
     Since v0.6.0, `portolan extract wfs` automatically fetches ISO 19139 metadata records
     from the WFS service, populating license, description, keywords, and contact info.
 
+!!! tip "Skipping Style Extraction"
+    To skip WMS style extraction (e.g., for faster runs or when styles aren't needed), use `--no-styles`.
+
 ## Step 3: Enrich Metadata
 
 The extraction creates two metadata files:

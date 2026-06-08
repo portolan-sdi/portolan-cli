@@ -462,7 +462,7 @@ def register_style_assets(
     for style_info in styles:
         asset_dict: dict[str, Any] = {
             "href": style_info.href,
-            "type": "application/json",
+            "type": "application/vnd.mapbox.style+json",
             "title": style_info.title,
             "roles": ["style"],
         }

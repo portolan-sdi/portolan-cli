@@ -110,7 +110,7 @@ def make_step_expression(
         Mapbox GL step expression.
     """
     if not breaks:
-        return ["literal", 0]
+        raise ValueError("make_step_expression requires at least one break point")
 
     expr: list[Any] = ["step", ["get", field]]
 

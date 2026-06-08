@@ -123,6 +123,13 @@ class TestStepExpression:
         )
         assert expr == ["step", ["get", "value"], 10, 100, 20]
 
+    def test_step_expression_empty_raises(self) -> None:
+        """Empty breaks raises ValueError."""
+        import pytest
+
+        with pytest.raises(ValueError, match="at least one break point"):
+            make_step_expression(field="value", breaks=[])
+
 
 class TestLayerBuilders:
     """Tests for Mapbox GL layer type builders."""

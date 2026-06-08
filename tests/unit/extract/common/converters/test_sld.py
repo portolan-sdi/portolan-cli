@@ -266,3 +266,33 @@ class TestWarningsAndPartialConversion:
         """
         with pytest.raises(SLDConverterError, match="No.*rules"):
             convert_sld(sld, source_layer="data")
+
+    def test_sld_1_1_se_namespace(self) -> None:
+        """SLD 1.1 with SE namespace is parsed correctly."""
+        sld = """<?xml version="1.0" encoding="UTF-8"?>
+        <StyledLayerDescriptor xmlns="http://www.opengis.net/sld"
+                               xmlns:se="http://www.opengis.net/se"
+                               xmlns:ogc="http://www.opengis.net/ogc"
+                               version="1.1.0">
+            <NamedLayer>
+                <se:Name>test</se:Name>
+                <UserStyle>
+                    <se:Name>test</se:Name>
+                    <se:FeatureTypeStyle>
+                        <se:Rule>
+                            <se:PolygonSymbolizer>
+                                <se:Fill>
+                                    <se:SvgParameter name="fill">#00ff00</se:SvgParameter>
+                                </se:Fill>
+                            </se:PolygonSymbolizer>
+                        </se:Rule>
+                    </se:FeatureTypeStyle>
+                </UserStyle>
+            </NamedLayer>
+        </StyledLayerDescriptor>
+        """
+        style = convert_sld(sld, source_layer="data")
+
+        # Should produce a valid Mapbox GL style
+        assert style["version"] == 8
+        assert len(style["layers"]) >= 1

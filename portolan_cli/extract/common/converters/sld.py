@@ -61,9 +61,53 @@ def _findall_with_ns(element: ET.Element, path: str) -> list[ET.Element]:
     return element.findall(path, NAMESPACES)
 
 
+def _find_symbolizer(element: ET.Element, symbolizer_type: str) -> ET.Element | None:
+    """Find symbolizer with SLD or SE namespace fallback.
+
+    Args:
+        element: Parent element to search within.
+        symbolizer_type: One of "Polygon", "Point", "Line".
+
+    Returns:
+        Found symbolizer element or None.
+    """
+    # Try SLD namespace first
+    result = _find_with_ns(element, f".//sld:{symbolizer_type}Symbolizer")
+    if result is not None:
+        return result
+    # Fallback to SE namespace (SLD 1.1)
+    return _find_with_ns(element, f".//se:{symbolizer_type}Symbolizer")
+
+
+def _findall_symbolizers(element: ET.Element, symbolizer_type: str) -> list[ET.Element]:
+    """Find all symbolizers with SLD or SE namespace fallback.
+
+    Args:
+        element: Parent element to search within.
+        symbolizer_type: One of "Polygon", "Point", "Line".
+
+    Returns:
+        List of found symbolizer elements.
+    """
+    # Try SLD namespace first
+    results = _findall_with_ns(element, f".//sld:{symbolizer_type}Symbolizer")
+    if results:
+        return results
+    # Fallback to SE namespace (SLD 1.1)
+    return _findall_with_ns(element, f".//se:{symbolizer_type}Symbolizer")
+
+
 def _get_css_parameter(element: ET.Element, name: str) -> str | None:
-    """Extract CssParameter value by name attribute."""
+    """Extract CssParameter/SvgParameter value by name attribute.
+
+    Handles both SLD 1.0 (CssParameter) and SLD 1.1 (SvgParameter).
+    """
+    # Try SLD 1.0 CssParameter
     for param in _findall_with_ns(element, ".//sld:CssParameter"):
+        if param.get("name") == name:
+            return param.text
+    # Try SLD 1.1 SvgParameter
+    for param in _findall_with_ns(element, ".//se:SvgParameter"):
         if param.get("name") == name:
             return param.text
     return None
@@ -144,8 +188,10 @@ def parse_polygon_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]
         "stroke_width": None,
     }
 
-    # Extract Fill
+    # Extract Fill (SLD 1.0 or SE)
     fill = _find_with_ns(root, ".//sld:Fill")
+    if fill is None:
+        fill = _find_with_ns(root, ".//se:Fill")
     if fill is not None:
         fill_color = _get_css_parameter(fill, "fill")
         if fill_color:
@@ -158,8 +204,10 @@ def parse_polygon_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]
             except ValueError:
                 pass
 
-    # Extract Stroke
+    # Extract Stroke (SLD 1.0 or SE)
     stroke = _find_with_ns(root, ".//sld:Stroke")
+    if stroke is None:
+        stroke = _find_with_ns(root, ".//se:Stroke")
     if stroke is not None:
         stroke_color = _get_css_parameter(stroke, "stroke")
         if stroke_color:
@@ -198,8 +246,10 @@ def parse_point_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]:
         "size": 10,
     }
 
-    # Get WellKnownName
+    # Get WellKnownName (SLD 1.0 or SE)
     wkn = _find_with_ns(root, ".//sld:WellKnownName")
+    if wkn is None:
+        wkn = _find_with_ns(root, ".//se:WellKnownName")
     if wkn is not None and wkn.text:
         wkn_text = wkn.text.lower()
         if wkn_text.startswith("ttf://"):
@@ -207,17 +257,23 @@ def parse_point_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]:
         elif wkn_text not in ("circle", "square"):
             result["warning"] = f"WellKnownName '{wkn.text}' mapped to circle"
 
-    # Get fill color from Mark
+    # Get fill color from Mark (SLD 1.0 or SE)
     mark = _find_with_ns(root, ".//sld:Mark")
+    if mark is None:
+        mark = _find_with_ns(root, ".//se:Mark")
     if mark is not None:
         fill = _find_with_ns(mark, "sld:Fill")
+        if fill is None:
+            fill = _find_with_ns(mark, "se:Fill")
         if fill is not None:
             fill_color = _get_css_parameter(fill, "fill")
             if fill_color:
                 result["fill_color"] = fill_color
 
-    # Get size
+    # Get size (SLD 1.0 or SE)
     size_elem = _find_with_ns(root, ".//sld:Size")
+    if size_elem is None:
+        size_elem = _find_with_ns(root, ".//se:Size")
     if size_elem is not None and size_elem.text:
         try:
             result["size"] = float(size_elem.text)
@@ -251,6 +307,8 @@ def parse_line_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]:
     }
 
     stroke = _find_with_ns(root, ".//sld:Stroke")
+    if stroke is None:
+        stroke = _find_with_ns(root, ".//se:Stroke")
     if stroke is not None:
         color = _get_css_parameter(stroke, "stroke")
         if color:
@@ -294,11 +352,11 @@ def _determine_style_type(rules: list[ET.Element]) -> str:
 def _determine_geometry_type(rules: list[ET.Element]) -> str:
     """Determine geometry type from symbolizer types."""
     for rule in rules:
-        if _find_with_ns(rule, ".//sld:PolygonSymbolizer") is not None:
+        if _find_symbolizer(rule, "Polygon") is not None:
             return "polygon"
-        if _find_with_ns(rule, ".//sld:PointSymbolizer") is not None:
+        if _find_symbolizer(rule, "Point") is not None:
             return "point"
-        if _find_with_ns(rule, ".//sld:LineSymbolizer") is not None:
+        if _find_symbolizer(rule, "Line") is not None:
             return "line"
     return "polygon"  # Default
 
@@ -346,20 +404,20 @@ def _build_categorical_layers(
             continue
 
         if geom_type == "polygon":
-            symbolizer = _find_with_ns(rule, ".//sld:PolygonSymbolizer")
+            symbolizer = _find_symbolizer(rule, "Polygon")
             if symbolizer is not None:
                 props = parse_polygon_symbolizer(symbolizer)
                 cases.append((value, props["fill_color"]))
                 opacity = props["fill_opacity"]
         elif geom_type == "point":
-            symbolizer = _find_with_ns(rule, ".//sld:PointSymbolizer")
+            symbolizer = _find_symbolizer(rule, "Point")
             if symbolizer is not None:
                 props = parse_point_symbolizer(symbolizer)
                 cases.append((value, props["fill_color"]))
                 if props.get("warning"):
                     warnings.append(props["warning"])
         elif geom_type == "line":
-            symbolizer = _find_with_ns(rule, ".//sld:LineSymbolizer")
+            symbolizer = _find_symbolizer(rule, "Line")
             if symbolizer is not None:
                 props = parse_line_symbolizer(symbolizer)
                 cases.append((value, props["line_color"]))
@@ -389,7 +447,7 @@ def _build_simple_layers(
 
     for rule in rules:
         if geom_type == "polygon":
-            symbolizer = _find_with_ns(rule, ".//sld:PolygonSymbolizer")
+            symbolizer = _find_symbolizer(rule, "Polygon")
             if symbolizer is not None:
                 props = parse_polygon_symbolizer(symbolizer)
                 layers.append(
@@ -402,7 +460,7 @@ def _build_simple_layers(
                     )
                 )
         elif geom_type == "point":
-            for symbolizer in _findall_with_ns(rule, ".//sld:PointSymbolizer"):
+            for symbolizer in _findall_symbolizers(rule, "Point"):
                 props = parse_point_symbolizer(symbolizer)
                 layers.append(
                     make_circle_layer(
@@ -415,7 +473,7 @@ def _build_simple_layers(
                 if props.get("warning"):
                     warnings.append(props["warning"])
         elif geom_type == "line":
-            symbolizer = _find_with_ns(rule, ".//sld:LineSymbolizer")
+            symbolizer = _find_symbolizer(rule, "Line")
             if symbolizer is not None:
                 props = parse_line_symbolizer(symbolizer)
                 layers.append(
@@ -485,7 +543,7 @@ def convert_sld(
     style_name = _extract_style_name(root)
 
     for rule in rules:
-        if _find_with_ns(rule, ".//sld:TextSymbolizer") is not None:
+        if _find_symbolizer(rule, "Text") is not None:
             warnings.append("TextSymbolizer not supported; labels will be omitted")
             break
 
