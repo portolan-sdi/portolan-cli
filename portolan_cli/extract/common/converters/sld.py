@@ -23,12 +23,11 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any, Literal, overload
-from xml.etree.ElementTree import Element
 
 import defusedxml.ElementTree as ET
 
 if TYPE_CHECKING:
-    pass  # Element imported above for runtime use and type hints
+    from xml.etree.ElementTree import Element  # nosec B405 - type annotation only
 
 from portolan_cli.extract.common.converters.base import (
     make_circle_layer,
