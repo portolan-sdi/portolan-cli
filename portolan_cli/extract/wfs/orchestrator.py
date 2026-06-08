@@ -39,6 +39,7 @@ from portolan_cli.extract.common.report import (
 )
 from portolan_cli.extract.common.resume import ResumeState, get_resume_state, should_process_layer
 from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
+from portolan_cli.extract.common.styles import extract_wms_style
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, discover_layers
 
 if TYPE_CHECKING:
@@ -527,6 +528,18 @@ def _extract_layer_task(
 
     if result.success:
         features, size_bytes, duration = result.value  # type: ignore[misc]
+
+        # Extract style from WMS GetStyles (Issue #490)
+        try:
+            extract_wms_style(
+                wfs_url=url,
+                layer_name=layer.name,
+                collection_path=collection_dir,
+                source_layer=layer_slug,
+            )
+        except Exception as e:
+            logger.debug("Style extraction failed for %s: %s", layer.name, e)
+
         return LayerResult(
             id=layer.id,
             name=layer.name,

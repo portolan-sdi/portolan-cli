@@ -53,6 +53,7 @@ from portolan_cli.extract.common.report import (
 )
 from portolan_cli.extract.common.resume import ResumeState, get_resume_state, should_process_layer
 from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
+from portolan_cli.extract.common.styles import extract_esri_style
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -424,6 +425,18 @@ def _extract_one_layer(
     if result.success:
         features, size_bytes, duration = result.value  # type: ignore[misc]
         _emit_progress(on_progress, index, total, layer.name, "success")
+
+        # Extract style from ESRI layer (Issue #490)
+        layer_url = f"{url.rstrip('/')}/{layer.id}"
+        try:
+            extract_esri_style(
+                layer_url=layer_url,
+                collection_path=collection_dir,
+                source_layer=layer_slug,
+            )
+        except Exception as e:
+            logger.debug("Style extraction failed for %s: %s", layer.name, e)
+
         return LayerResult(
             id=layer.id,
             name=layer.name,

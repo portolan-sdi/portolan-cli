@@ -50,8 +50,9 @@ Portolan automatically:
 
 1. **Downloads features** via WFS with pagination
 2. **Converts to GeoParquet** with Hilbert spatial ordering
-3. **Generates STAC catalog** with proper metadata
-4. **Seeds metadata.yaml** from ISO 19139 records (if available)
+3. **Extracts styles** from companion WMS (via GetStyles) as Mapbox GL JSON
+4. **Generates STAC catalog** with proper metadata
+5. **Seeds metadata.yaml** from ISO 19139 records (if available)
 
 !!! tip "Metadata Auto-Extraction"
     Since v0.6.0, `portolan extract wfs` automatically fetches ISO 19139 metadata records

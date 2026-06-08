@@ -1,0 +1,399 @@
+{
+  "renderer": {
+    "type": "uniqueValue",
+    "field1": "Pub_Access",
+    "uniqueValueGroups": [
+      {
+        "heading": "Public Access",
+        "classes": [
+          {
+            "label": "Restricted Access",
+            "description": "Restricted Access",
+            "symbol": {
+              "type": "esriSFS",
+              "style": "esriSFSSolid",
+              "color": [
+                100,
+                179,
+                131,
+                255
+              ],
+              "outline": {
+                "type": "esriSLS",
+                "style": "esriSLSNull",
+                "color": [
+                  110,
+                  110,
+                  110,
+                  0
+                ],
+                "width": 0
+              }
+            },
+            "values": [
+              [
+                "RA"
+              ]
+            ]
+          },
+          {
+            "label": "Open Access",
+            "description": "Open Access",
+            "symbol": {
+              "type": "esriSFS",
+              "style": "esriSFSSolid",
+              "color": [
+                129,
+                196,
+                53,
+                255
+              ],
+              "outline": {
+                "type": "esriSLS",
+                "style": "esriSLSNull",
+                "color": [
+                  110,
+                  110,
+                  110,
+                  0
+                ],
+                "width": 0
+              }
+            },
+            "values": [
+              [
+                "OA"
+              ]
+            ]
+          },
+          {
+            "label": "Closed Access",
+            "description": "Closed Access",
+            "symbol": {
+              "type": "esriSFS",
+              "style": "esriSFSSolid",
+              "color": [
+                255,
+                240,
+                201,
+                255
+              ],
+              "outline": {
+                "type": "esriSLS",
+                "style": "esriSLSNull",
+                "color": [
+                  110,
+                  110,
+                  110,
+                  0
+                ],
+                "width": 0
+              }
+            },
+            "values": [
+              [
+                "XA"
+              ]
+            ]
+          }
+        ]
+      }
+    ],
+    "uniqueValueInfos": [
+      {
+        "symbol": {
+          "type": "esriSFS",
+          "style": "esriSFSSolid",
+          "color": [
+            100,
+            179,
+            131,
+            255
+          ],
+          "outline": {
+            "type": "esriSLS",
+            "style": "esriSLSNull",
+            "color": [
+              110,
+              110,
+              110,
+              0
+            ],
+            "width": 0
+          }
+        },
+        "value": "RA",
+        "label": "Restricted Access"
+      },
+      {
+        "symbol": {
+          "type": "esriSFS",
+          "style": "esriSFSSolid",
+          "color": [
+            129,
+            196,
+            53,
+            255
+          ],
+          "outline": {
+            "type": "esriSLS",
+            "style": "esriSLSNull",
+            "color": [
+              110,
+              110,
+              110,
+              0
+            ],
+            "width": 0
+          }
+        },
+        "value": "OA",
+        "label": "Open Access"
+      },
+      {
+        "symbol": {
+          "type": "esriSFS",
+          "style": "esriSFSSolid",
+          "color": [
+            255,
+            240,
+            201,
+            255
+          ],
+          "outline": {
+            "type": "esriSLS",
+            "style": "esriSLSNull",
+            "color": [
+              110,
+              110,
+              110,
+              0
+            ],
+            "width": 0
+          }
+        },
+        "value": "XA",
+        "label": "Closed Access"
+      }
+    ],
+    "fieldDelimiter": ",",
+    "authoringInfo": {
+      "colorRamp": {
+        "type": "multipart",
+        "colorRamps": [
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              191,
+              40,
+              45,
+              255
+            ],
+            "toColor": [
+              191,
+              40,
+              45,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              57,
+              50,
+              199,
+              255
+            ],
+            "toColor": [
+              57,
+              50,
+              199,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              56,
+              199,
+              84,
+              255
+            ],
+            "toColor": [
+              56,
+              199,
+              84,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              56,
+              144,
+              181,
+              255
+            ],
+            "toColor": [
+              56,
+              144,
+              181,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              191,
+              69,
+              155,
+              255
+            ],
+            "toColor": [
+              191,
+              69,
+              155,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              184,
+              156,
+              48,
+              255
+            ],
+            "toColor": [
+              184,
+              156,
+              48,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              64,
+              199,
+              172,
+              255
+            ],
+            "toColor": [
+              64,
+              199,
+              172,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              72,
+              99,
+              189,
+              255
+            ],
+            "toColor": [
+              72,
+              99,
+              189,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              153,
+              44,
+              72,
+              255
+            ],
+            "toColor": [
+              153,
+              44,
+              72,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              140,
+              39,
+              168,
+              255
+            ],
+            "toColor": [
+              140,
+              39,
+              168,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              171,
+              99,
+              41,
+              255
+            ],
+            "toColor": [
+              171,
+              99,
+              41,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              117,
+              158,
+              35,
+              255
+            ],
+            "toColor": [
+              117,
+              158,
+              35,
+              255
+            ]
+          },
+          {
+            "type": "algorithmic",
+            "algorithm": "esriCIELabAlgorithm",
+            "fromColor": [
+              63,
+              161,
+              102,
+              255
+            ],
+            "toColor": [
+              63,
+              161,
+              102,
+              255
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "scaleSymbols": true,
+  "transparency": 0,
+  "labelingInfo": null
+}
