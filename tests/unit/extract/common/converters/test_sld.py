@@ -19,6 +19,8 @@ from portolan_cli.extract.common.converters.sld import (
     parse_polygon_symbolizer,
 )
 
+pytestmark = pytest.mark.unit
+
 FIXTURES_DIR = Path(__file__).parent.parent.parent.parent.parent / "fixtures" / "styles"
 
 

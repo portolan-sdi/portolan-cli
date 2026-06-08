@@ -67,25 +67,25 @@ def hex_to_rgba(hex_color: str, opacity: float) -> str:
 
 def make_match_expression(
     field: str,
-    cases: list[tuple[Any, str]],
-    default: str,
+    cases: list[tuple[Any, Any]],
+    default: Any,
 ) -> Expression:
     """Build a Mapbox GL match expression for categorical styling.
 
-    Creates: ["match", ["get", field], val1, color1, val2, color2, ..., default]
+    Creates: ["match", ["get", field], val1, output1, val2, output2, ..., default]
 
     Args:
         field: Property name to match on.
-        cases: List of (value, color) tuples.
-        default: Fallback color when no match.
+        cases: List of (value, output) tuples. Output can be colors (str) or numbers.
+        default: Fallback value when no match.
 
     Returns:
         Mapbox GL match expression.
     """
     expr: list[Any] = ["match", ["get", field]]
-    for value, color in cases:
+    for value, output in cases:
         expr.append(value)
-        expr.append(color)
+        expr.append(output)
     expr.append(default)
     return expr
 

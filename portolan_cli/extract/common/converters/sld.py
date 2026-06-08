@@ -380,6 +380,37 @@ def _extract_style_name(root: ET.Element) -> str:
     return "Converted Style"
 
 
+def _get_uniform_opacity(opacity_cases: list[tuple[Any, float]]) -> float:
+    """Get uniform opacity if all cases have same value, else return 1.0."""
+    if not opacity_cases:
+        return 1.0
+    unique = {op for _, op in opacity_cases}
+    return next(iter(unique)) if len(unique) == 1 else 1.0
+
+
+def _build_categorical_fill(
+    field: str,
+    color_cases: list[tuple[Any, str]],
+    opacity_cases: list[tuple[Any, float]],
+    source_layer: str,
+) -> list[dict[str, Any]]:
+    """Build categorical fill layer with per-rule opacity support."""
+    color_expr = make_match_expression(field, color_cases, default="#cccccc")
+    unique_opacities = {op for _, op in opacity_cases}
+
+    if len(unique_opacities) == 1:
+        return [
+            make_fill_layer(
+                "categorical-fill", source_layer, color_expr, next(iter(unique_opacities))
+            )
+        ]
+
+    opacity_expr = make_match_expression(field, opacity_cases, default=1.0)
+    layer = make_fill_layer("categorical-fill", source_layer, color_expr, 1.0)
+    layer["paint"]["fill-opacity"] = opacity_expr
+    return [layer]
+
+
 def _build_categorical_layers(
     rules: list[ET.Element],
     geom_type: str,
@@ -388,8 +419,8 @@ def _build_categorical_layers(
 ) -> list[dict[str, Any]]:
     """Build layers for categorical (filtered) SLD rules."""
     field: str | None = None
-    cases: list[tuple[Any, str]] = []
-    opacity: float = 1.0
+    color_cases: list[tuple[Any, str]] = []
+    opacity_cases: list[tuple[Any, float]] = []
 
     for rule in rules:
         filter_elem = _find_with_ns(rule, "ogc:Filter")
@@ -403,36 +434,37 @@ def _build_categorical_layers(
         except SLDConverterError:
             continue
 
-        if geom_type == "polygon":
-            symbolizer = _find_symbolizer(rule, "Polygon")
-            if symbolizer is not None:
-                props = parse_polygon_symbolizer(symbolizer)
-                cases.append((value, props["fill_color"]))
-                opacity = props["fill_opacity"]
-        elif geom_type == "point":
-            symbolizer = _find_symbolizer(rule, "Point")
-            if symbolizer is not None:
-                props = parse_point_symbolizer(symbolizer)
-                cases.append((value, props["fill_color"]))
-                if props.get("warning"):
-                    warnings.append(props["warning"])
-        elif geom_type == "line":
-            symbolizer = _find_symbolizer(rule, "Line")
-            if symbolizer is not None:
-                props = parse_line_symbolizer(symbolizer)
-                cases.append((value, props["line_color"]))
+        symbolizer_type = {"polygon": "Polygon", "point": "Point", "line": "Line"}.get(geom_type)
+        symbolizer = _find_symbolizer(rule, symbolizer_type) if symbolizer_type else None
+        if symbolizer is None:
+            continue
 
-    if not field or not cases:
+        if geom_type == "polygon":
+            props = parse_polygon_symbolizer(symbolizer)
+            color_cases.append((value, props["fill_color"]))
+            opacity_cases.append((value, props["fill_opacity"]))
+        elif geom_type == "point":
+            props = parse_point_symbolizer(symbolizer)
+            color_cases.append((value, props["fill_color"]))
+            if props.get("warning"):
+                warnings.append(props["warning"])
+        elif geom_type == "line":
+            props = parse_line_symbolizer(symbolizer)
+            color_cases.append((value, props["line_color"]))
+            opacity_cases.append((value, props["line_opacity"]))
+
+    if not field or not color_cases:
         return []
 
-    color_expr = make_match_expression(field, cases, default="#cccccc")
+    color_expr = make_match_expression(field, color_cases, default="#cccccc")
 
     if geom_type == "polygon":
-        return [make_fill_layer("categorical-fill", source_layer, color_expr, opacity)]
+        return _build_categorical_fill(field, color_cases, opacity_cases, source_layer)
     if geom_type == "point":
         return [make_circle_layer("categorical-circle", source_layer, color_expr)]
     if geom_type == "line":
-        return [make_line_layer("categorical-line", source_layer, color_expr)]
+        opacity = _get_uniform_opacity(opacity_cases)
+        return [make_line_layer("categorical-line", source_layer, color_expr, line_opacity=opacity)]
     return []
 
 

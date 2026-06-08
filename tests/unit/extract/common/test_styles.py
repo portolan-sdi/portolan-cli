@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -17,6 +18,8 @@ from portolan_cli.extract.common.styles import (
     extract_esri_style,
     extract_wms_style,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class TestBuildWMSGetStylesURL:
@@ -138,7 +141,7 @@ class TestExtractESRIStyle:
     """Tests for ESRI style extraction."""
 
     @pytest.fixture
-    def sample_layer_json(self) -> dict:
+    def sample_layer_json(self) -> dict[str, Any]:
         """Simple ESRI layer JSON with renderer."""
         return {
             "name": "TestLayer",
@@ -154,7 +157,9 @@ class TestExtractESRIStyle:
             },
         }
 
-    def test_extracts_and_writes_style(self, tmp_path: Path, sample_layer_json: dict) -> None:
+    def test_extracts_and_writes_style(
+        self, tmp_path: Path, sample_layer_json: dict[str, Any]
+    ) -> None:
         """Successfully extracts renderer and writes Mapbox GL JSON."""
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()
@@ -207,7 +212,9 @@ class TestExtractESRIStyle:
 
         assert result is None
 
-    def test_uses_layer_name_as_source_layer(self, tmp_path: Path, sample_layer_json: dict) -> None:
+    def test_uses_layer_name_as_source_layer(
+        self, tmp_path: Path, sample_layer_json: dict[str, Any]
+    ) -> None:
         """Layer name from JSON is used as source-layer."""
         collection_path = tmp_path / "test-collection"
         collection_path.mkdir()

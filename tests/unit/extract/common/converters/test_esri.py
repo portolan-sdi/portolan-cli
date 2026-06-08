@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -20,21 +21,25 @@ from portolan_cli.extract.common.converters.esri import (
     parse_uniquevalue_renderer,
 )
 
+pytestmark = pytest.mark.unit
+
 FIXTURES_DIR = Path(__file__).parent.parent.parent.parent.parent / "fixtures" / "styles"
 
 
 @pytest.fixture
-def classbreaks_renderer() -> dict:
+def classbreaks_renderer() -> dict[str, Any]:
     """Load Census ClassBreaks renderer fixture."""
     data = json.loads((FIXTURES_DIR / "esri_classbreaks.json").read_text())
-    return data["renderer"]
+    renderer: dict[str, Any] = data["renderer"]
+    return renderer
 
 
 @pytest.fixture
-def uniquevalue_renderer() -> dict:
+def uniquevalue_renderer() -> dict[str, Any]:
     """Load PAD-US UniqueValue renderer fixture."""
     data = json.loads((FIXTURES_DIR / "esri_uniquevalue.json").read_text())
-    return data["renderer"]
+    renderer: dict[str, Any] = data["renderer"]
+    return renderer
 
 
 class TestSimpleRenderer:
@@ -90,7 +95,7 @@ class TestSimpleRenderer:
 class TestUniqueValueRenderer:
     """Tests for unique value (categorical) renderer conversion."""
 
-    def test_uniquevalue_fill_renderer(self, uniquevalue_renderer: dict) -> None:
+    def test_uniquevalue_fill_renderer(self, uniquevalue_renderer: dict[str, Any]) -> None:
         """PAD-US categorical fill converts to match expression."""
         style = parse_uniquevalue_renderer(uniquevalue_renderer, source_layer="padus")
 
@@ -112,7 +117,9 @@ class TestUniqueValueRenderer:
         assert "OA" in fill_color  # Open Access
         assert "XA" in fill_color  # Closed Access
 
-    def test_uniquevalue_extracts_correct_colors(self, uniquevalue_renderer: dict) -> None:
+    def test_uniquevalue_extracts_correct_colors(
+        self, uniquevalue_renderer: dict[str, Any]
+    ) -> None:
         """Verify exact color values from PAD-US fixture."""
         style = parse_uniquevalue_renderer(uniquevalue_renderer, source_layer="data")
         fill_color = style["layers"][0]["paint"]["fill-color"]
@@ -132,7 +139,7 @@ class TestUniqueValueRenderer:
 class TestClassBreaksRenderer:
     """Tests for class breaks (graduated) renderer conversion."""
 
-    def test_classbreaks_circle_renderer(self, classbreaks_renderer: dict) -> None:
+    def test_classbreaks_circle_renderer(self, classbreaks_renderer: dict[str, Any]) -> None:
         """Census graduated circles convert to step expression."""
         style = parse_classbreaks_renderer(classbreaks_renderer, source_layer="census")
 
@@ -148,7 +155,7 @@ class TestClassBreaksRenderer:
         assert radius[0] == "step"
         assert radius[1] == ["get", "POP2000"]
 
-    def test_classbreaks_extracts_break_values(self, classbreaks_renderer: dict) -> None:
+    def test_classbreaks_extracts_break_values(self, classbreaks_renderer: dict[str, Any]) -> None:
         """Verify break values from Census fixture."""
         style = parse_classbreaks_renderer(classbreaks_renderer, source_layer="data")
         radius = style["layers"][0]["paint"]["circle-radius"]
@@ -160,7 +167,7 @@ class TestClassBreaksRenderer:
         assert 264 in radius
         assert 759 in radius
 
-    def test_classbreaks_preserves_color(self, classbreaks_renderer: dict) -> None:
+    def test_classbreaks_preserves_color(self, classbreaks_renderer: dict[str, Any]) -> None:
         """All break classes have same fill color in this fixture."""
         style = parse_classbreaks_renderer(classbreaks_renderer, source_layer="data")
         circle_layer = style["layers"][0]
@@ -185,13 +192,13 @@ class TestConvertESRIRenderer:
         style = convert_esri_renderer(renderer, source_layer="data")
         assert style["version"] == 8
 
-    def test_convert_detects_uniquevalue_type(self, uniquevalue_renderer: dict) -> None:
+    def test_convert_detects_uniquevalue_type(self, uniquevalue_renderer: dict[str, Any]) -> None:
         """Dispatcher routes uniqueValue renderer correctly."""
         style = convert_esri_renderer(uniquevalue_renderer, source_layer="data")
         fill_color = style["layers"][0]["paint"]["fill-color"]
         assert fill_color[0] == "match"
 
-    def test_convert_detects_classbreaks_type(self, classbreaks_renderer: dict) -> None:
+    def test_convert_detects_classbreaks_type(self, classbreaks_renderer: dict[str, Any]) -> None:
         """Dispatcher routes classBreaks renderer correctly."""
         style = convert_esri_renderer(classbreaks_renderer, source_layer="data")
         radius = style["layers"][0]["paint"]["circle-radius"]

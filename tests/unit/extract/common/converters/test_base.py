@@ -5,6 +5,8 @@ These are the DRY building blocks used by all style converters.
 
 from __future__ import annotations
 
+import pytest
+
 from portolan_cli.extract.common.converters.base import (
     esri_color_to_hex,
     hex_to_rgba,
@@ -15,6 +17,8 @@ from portolan_cli.extract.common.converters.base import (
     make_match_expression,
     make_step_expression,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class TestColorConversion:
