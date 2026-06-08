@@ -12,6 +12,14 @@ Portolan is a CLI for publishing and managing **cloud-native geospatial data cat
 
 Portolan doesn't do the heavy lifting—it orchestrates libraries like `geoparquet-io` and `rio-cogeo`.
 
+## Path-scoped rules
+
+Detailed, context-specific guidance lives in `.claude/rules/*.md`. Each file
+declares `paths:` globs and Claude Code loads it automatically when you open a
+matching file, so this root keeps only always-relevant global facts. Update or
+add a rule when a convention changes, the code moves, or a new subsystem needs
+its own guidance.
+
 ## Terminology (ENFORCED)
 
 **Use STAC terminology exclusively.** Do NOT use "dataset" — it's ambiguous and not part of the STAC spec.
@@ -25,24 +33,6 @@ Portolan doesn't do the heavy lifting—it orchestrates libraries like `geoparqu
 
 **Correct:** "Add files to a collection", "Track items", "Push a collection"
 **Wrong:** "Add a dataset", "Import datasets", "Dataset management"
-
-
-## Documentation Accuracy (CRITICAL)
-
-**GitHub Issues + Milestones are the source of truth for planned vs implemented features.**
-
-When documenting CLI commands:
-1. **Run `portolan <command> --help`** to verify actual behavior
-2. **Check [GitHub Issues](https://github.com/portolan-sdi/portolan-cli/issues?q=label%3Aroadmap%3Amvp)** for planned features
-3. **Do NOT deprecate planned features** — if it's in GitHub Issues as planned, it's intended
-4. **Do NOT simplify orchestration commands** — document the FULL workflow
-
-**Example:** `portolan sync` orchestrates `pull → init → scan → check → push`. Do NOT describe it as just "pull + push" — that misrepresents the command's purpose.
-
-**Key dependencies (check these repos for API docs):**
-- [geoparquet-io](https://github.com/geoparquet/geoparquet-io) — Vector format conversion
-- [gpio-pmtiles](https://github.com/geoparquet-io/gpio-pmtiles) — PMTiles generation from GeoParquet
-- [rio-cogeo](https://github.com/cogeotiff/rio-cogeo) — Raster conversion to COG
 
 ## Guiding Principle
 
@@ -182,11 +172,8 @@ portolan-cli/
 └── .github/workflows/     # CI/CD pipelines
 ```
 
-**IMPORTANT: docs/ vs context/ distinction:**
-- **`docs/`** — Public-facing, human-readable documentation (tutorials, visual guides, user-oriented). Built with mkdocs and published.
-- **`context/`** — Internal, AI-oriented context (architectural plans, design docs, ADRs, research). Dense, structured, co-located with development. NOT published.
-
-Do NOT put architectural plans or design documents in `docs/`. Those belong in `context/shared/plans/`.
+`docs/` is public (mkdocs); `context/` is internal AI-oriented context. See
+`.claude/rules/documentation.md` for the full distinction and where to file things.
 
 ## Before Writing Code
 
@@ -198,15 +185,10 @@ Always research before implementing:
 4. **Review existing tests** — Look at tests for the area you're modifying
 5. **Check ADRs** — Read `context/shared/adr/` to understand past decisions
 
-## Test-Driven Development (MANDATORY)
+## Testing
 
-**YOU MUST USE TDD. NO EXCEPTIONS.** Unless the user explicitly says "skip tests":
-
-1. **WRITE TESTS FIRST** — Before ANY implementation code
-2. **RUN TESTS** — Verify they fail with `uv run pytest`
-3. **IMPLEMENT** — Minimal code to pass tests
-4. **RUN TESTS AGAIN** — Verify they pass
-5. **ADD EDGE CASES** — Test error conditions
+**TDD is MANDATORY** (write tests first). Full workflow and fixture rules:
+`.claude/rules/testing.md`.
 
 ### Test Markers
 
@@ -222,184 +204,12 @@ Always research before implementing:
 @pytest.mark.e2e_slow    # Extended E2E tests (concurrency stress, large datasets) - nightly only
 ```
 
-**Real-world fixtures:** See `context/shared/documentation/test-fixtures.md` for details.
-These test Portolan's **orchestration** with production data — they do NOT test geometry conversion (that's upstream's job per [ADR-0010](context/shared/adr/0010-delegate-conversion-validation.md)).
-
-### Defending Against Tautological Tests
-
-Three layers of defense (see `context/shared/documentation/ci.md` for details):
-
-1. **Mutation testing** — Nightly `mutmut` runs verify tests catch real bugs
-2. **Property-based testing** — Use `hypothesis` for invariant verification
-3. **Human test specs** — `tests/specs/` defines what matters; AI implements
-
-### Test Fixtures
-
-Store small, representative data files in `tests/fixtures/`. Fixtures should be:
-
-- **Small** — a few rows/pixels, enough to test behavior
-- **Committed to git** — they're small enough, and reproducibility matters
-- **Paired with invalid variants** — every valid fixture should have a corresponding invalid one
-- **Documented** — each subdirectory gets a README.md
-
-## CI Pipeline
-
-**Source of truth:** `context/shared/documentation/ci.md`
-
-| Tier | When | What |
-|------|------|------|
-| Tier 1 | Pre-commit | ruff, vulture, xenon, mypy, fast tests |
-| Tier 2 | Every PR | lint, mypy, security, full tests, docs build |
-| Tier 3 | Nightly | mutation testing, benchmarks, live network tests |
-
-**All checks are strict** — no `continue-on-error`. Fix issues or they block.
-
-### prek Hooks
-
-Install: `uv tool install prek && prek install`. All hooks block—no `--no-verify`. See `prek.toml` for full list.
-
-## Code Quality
-
-- **ruff** — Linting and formatting
-- **mypy** — Type checking (`strict = true`)
-- **vulture** — Dead code detection
-- **xenon** — Complexity monitoring (max C function, B module, A average)
-- **pylint** — Duplicate code detection (R0801 only, `--fail-under=9.5`)
-- **bandit** — Security scanning
-- **pip-audit** — Dependency vulnerabilities
-
-## Git Workflow
-
-### Branch Naming
-
-```
-feature/description    # New features
-fix/description        # Bug fixes
-docs/description       # Documentation
-refactor/description   # Code restructuring
-```
-
-### Conventional Commits
-
-Use `uv run cz commit` for interactive commit creation:
-
-```
-feat(scope): add new feature      # Minor version bump
-fix(scope): fix bug               # Patch version bump
-docs(scope): update documentation
-refactor(scope): restructure code
-test(scope): add tests
-BREAKING CHANGE: ...              # Major version bump
-```
-
-### Merge Policy
-
-**Squash-merge** all PRs to main. This ensures:
-- Clean history (one commit per PR)
-- PR title becomes the commit message (enforce conventional format)
-- Commitizen can analyze commits cleanly for versioning
-
-### Release Automation
-
-Portolan uses a **tag-based release workflow**. See `.github/workflows/release.yml`.
-
-**To release:**
-1. Create a PR that runs `uv run cz bump --changelog`
-2. Merge the bump PR
-3. Release workflow detects the bump commit and creates tag + publishes
-
-**What happens automatically:**
-1. Version extracted from `pyproject.toml`
-2. Git tag created (e.g., `v0.3.0`)
-3. Package built and published to PyPI
-4. GitHub Release created
-
-See `docs/contributing.md` for the full release process.
-
 ## Development Rules
 
 - **ALL** code must have type annotations (`mypy --strict`)
 - **ALL** new features require tests FIRST (TDD)
 - **ALL** non-obvious decisions require an ADR in `context/shared/adr/`
 - **NO** new dependencies without discussion (document in ADR)
-
-## Documentation Bias
-
-**Bias toward documenting everything.** AI agents work best with rich context.
-
-### What to Document
-
-| What | Where | When |
-|------|-------|------|
-| Architectural decisions | `context/shared/adr/` | Any non-obvious design choice |
-| Known bugs/issues | `context/shared/known-issues/` | When a bug is identified but not yet fixed |
-| Non-obvious code | Inline comments | Code that would confuse a future reader |
-| API contracts | Docstrings | All public functions/classes |
-| Gotchas/quirks | CLAUDE.md or inline | Anything that surprised you |
-
-### ADR Guidelines
-
-Create an ADR (`context/shared/adr/NNNN-title.md`) when:
-
-- Choosing between multiple valid approaches
-- Adopting a new dependency
-- Establishing a pattern that others should follow
-- Making a trade-off that isn't obvious
-
-Use the template at `context/shared/adr/0000-template.md`.
-
-### Two Documentation Audiences
-
-| Audience | Location | Purpose |
-|----------|----------|---------|
-| **Humans** | `docs/` (mkdocs) | *How to use* — tutorials, visual guides |
-| **AI agents** | Docstrings, CLAUDE.md, ADRs | *How to modify* — dense, structured, co-located with code |
-
-### Validating AI Guidance
-
-**When possible, back AI guidance with automated validation.** Documentation drifts; code doesn't lie.
-
-If CLAUDE.md says "all ADRs must be listed in the index," enforce it with a script. If it says "use `output.py` for terminal messages," add a lint rule. The goal: make it impossible for guidance to become stale.
-
-**Pattern:**
-1. Write guidance in CLAUDE.md
-2. Ask: "Can I validate this automatically?"
-3. If yes, write a script in `scripts/` and add a pre-commit hook
-
-**Example:** The ADR index in this file is validated by `scripts/validate_claude_md.py`:
-
-```python
-# Checks that all ADRs in context/shared/adr/ are listed in CLAUDE.md
-missing = actual_adrs - linked_adrs
-if missing:
-    fail(f"ADRs not in CLAUDE.md index: {missing}")
-```
-
-This runs as a pre-commit hook—commits that add ADRs without updating CLAUDE.md are blocked.
-
-**Validation scripts:**
-
-| Script | Validates |
-|--------|-----------|
-| `scripts/validate_claude_md.py` | ADR index, known issues table, link validity |
-
-When adding new guidance to CLAUDE.md, consider: can this be validated? If so, add a check.
-
-## Standardized Terminal Output
-
-Use `portolan_cli/output.py` for all user-facing messages:
-
-```python
-from portolan_cli.output import success, info, warn, error, detail
-
-success("Wrote output.parquet (1.2 MB)")  # ✓ Green checkmark
-info("Reading data.shp (4,231 features)")  # → Blue arrow
-warn("Missing thumbnail (recommended)")    # ⚠ Yellow warning
-error("No geometry column (required)")     # ✗ Red X
-detail("Processing chunk 3/10...")         # Dimmed text
-```
-
-**Progress UI:** The `add` and `scan` commands have excellent progress printing with real-time updates. Use this pattern (Rich progress bars + batched output) for any long-running operations.
 
 <!-- freshness: last-verified: 2026-06-02 -->
 ## Design Principles
@@ -424,10 +234,3 @@ See `context/shared/known-issues/` for tracked issues. Key ones:
 | [geoparquet-io Windows segfault](context/shared/known-issues/geoparquet-io-windows-segfault.md) | Crashes on malformed input; test skipped on Windows |
 | [geoparquet-io macOS abort](context/shared/known-issues/geoparquet-io-macos-abort.md) | Aborts on multilayer conversion; test skipped on macOS |
 | [PySTAC absolute paths](context/shared/known-issues/pystac-absolute-paths.md) | Leaks local paths in output; use manual JSON construction |
-
-## Active Technologies
-- Python 3.10+ (per pyproject.toml) + Click (CLI framework per ADR-0002) (004-json-output)
-- N/A (no persistent storage changes) (004-json-output)
-
-## Recent Changes
-- 004-json-output: Added Python 3.10+ (per pyproject.toml) + Click (CLI framework per ADR-0002)
