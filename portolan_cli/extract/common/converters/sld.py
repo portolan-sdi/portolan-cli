@@ -22,8 +22,13 @@ Usage:
 from __future__ import annotations
 
 import logging
-import xml.etree.ElementTree as ET
-from typing import Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
+from xml.etree.ElementTree import Element
+
+import defusedxml.ElementTree as ET
+
+if TYPE_CHECKING:
+    pass  # Element imported above for runtime use and type hints
 
 from portolan_cli.extract.common.converters.base import (
     make_circle_layer,
@@ -51,17 +56,17 @@ NAMESPACES = {
 }
 
 
-def _find_with_ns(element: ET.Element, path: str) -> ET.Element | None:
+def _find_with_ns(element: Element, path: str) -> Element | None:
     """Find element with namespace-aware path."""
     return element.find(path, NAMESPACES)
 
 
-def _findall_with_ns(element: ET.Element, path: str) -> list[ET.Element]:
+def _findall_with_ns(element: Element, path: str) -> list[Element]:
     """Find all elements with namespace-aware path."""
     return element.findall(path, NAMESPACES)
 
 
-def _find_symbolizer(element: ET.Element, symbolizer_type: str) -> ET.Element | None:
+def _find_symbolizer(element: Element, symbolizer_type: str) -> Element | None:
     """Find symbolizer with SLD or SE namespace fallback.
 
     Args:
@@ -79,7 +84,7 @@ def _find_symbolizer(element: ET.Element, symbolizer_type: str) -> ET.Element | 
     return _find_with_ns(element, f".//se:{symbolizer_type}Symbolizer")
 
 
-def _findall_symbolizers(element: ET.Element, symbolizer_type: str) -> list[ET.Element]:
+def _findall_symbolizers(element: Element, symbolizer_type: str) -> list[Element]:
     """Find all symbolizers with SLD or SE namespace fallback.
 
     Args:
@@ -97,7 +102,7 @@ def _findall_symbolizers(element: ET.Element, symbolizer_type: str) -> list[ET.E
     return _findall_with_ns(element, f".//se:{symbolizer_type}Symbolizer")
 
 
-def _get_css_parameter(element: ET.Element, name: str) -> str | None:
+def _get_css_parameter(element: Element, name: str) -> str | None:
     """Extract CssParameter/SvgParameter value by name attribute.
 
     Handles both SLD 1.0 (CssParameter) and SLD 1.1 (SvgParameter).
@@ -113,7 +118,7 @@ def _get_css_parameter(element: ET.Element, name: str) -> str | None:
     return None
 
 
-def parse_filter_to_value(filter_xml: str | ET.Element) -> tuple[str, Any]:
+def parse_filter_to_value(filter_xml: str | Element) -> tuple[str, Any]:
     """Extract field name and value from OGC Filter.
 
     Currently supports PropertyIsEqualTo for categorical classification.
@@ -164,7 +169,7 @@ def parse_filter_to_value(filter_xml: str | ET.Element) -> tuple[str, Any]:
     raise SLDConverterError("Could not extract field/value from filter")
 
 
-def parse_polygon_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]:
+def parse_polygon_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
     """Extract fill and stroke properties from PolygonSymbolizer.
 
     Args:
@@ -223,7 +228,7 @@ def parse_polygon_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]
     return result
 
 
-def parse_point_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]:
+def parse_point_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
     """Extract point marker properties from PointSymbolizer.
 
     Args:
@@ -283,7 +288,7 @@ def parse_point_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]:
     return result
 
 
-def parse_line_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]:
+def parse_line_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
     """Extract line properties from LineSymbolizer.
 
     Args:
@@ -331,7 +336,7 @@ def parse_line_symbolizer(symbolizer_xml: str | ET.Element) -> dict[str, Any]:
     return result
 
 
-def _extract_rules(root: ET.Element) -> list[ET.Element]:
+def _extract_rules(root: Element) -> list[Element]:
     """Extract all Rule elements from SLD document."""
     rules = _findall_with_ns(root, ".//sld:Rule")
     if not rules:
@@ -340,7 +345,7 @@ def _extract_rules(root: ET.Element) -> list[ET.Element]:
     return rules
 
 
-def _determine_style_type(rules: list[ET.Element]) -> str:
+def _determine_style_type(rules: list[Element]) -> str:
     """Determine if style is categorical (has filters) or simple."""
     for rule in rules:
         filter_elem = _find_with_ns(rule, "ogc:Filter")
@@ -349,7 +354,7 @@ def _determine_style_type(rules: list[ET.Element]) -> str:
     return "simple"
 
 
-def _determine_geometry_type(rules: list[ET.Element]) -> str:
+def _determine_geometry_type(rules: list[Element]) -> str:
     """Determine geometry type from symbolizer types."""
     for rule in rules:
         if _find_symbolizer(rule, "Polygon") is not None:
@@ -361,7 +366,7 @@ def _determine_geometry_type(rules: list[ET.Element]) -> str:
     return "polygon"  # Default
 
 
-def _extract_style_name(root: ET.Element) -> str:
+def _extract_style_name(root: Element) -> str:
     """Extract style name from SLD document."""
     # Try UserStyle Name
     name_elem = _find_with_ns(root, ".//sld:UserStyle/sld:Name")
@@ -412,7 +417,7 @@ def _build_categorical_fill(
 
 
 def _build_categorical_layers(
-    rules: list[ET.Element],
+    rules: list[Element],
     geom_type: str,
     source_layer: str,
     warnings: list[str],
@@ -469,7 +474,7 @@ def _build_categorical_layers(
 
 
 def _build_simple_layers(
-    rules: list[ET.Element],
+    rules: list[Element],
     geom_type: str,
     source_layer: str,
     warnings: list[str],
