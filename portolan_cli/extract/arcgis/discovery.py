@@ -287,18 +287,7 @@ def discover_services(
     """
     data = _fetch_json(url, timeout=timeout)
 
-    # Extract services
-    services: list[ServiceInfo] = []
-
-    for service_data in data.get("services", []):
-        service = ServiceInfo(
-            name=service_data["name"],
-            service_type=service_data["type"],
-        )
-
-        # Filter by type if specified
-        if service_types is None or service.service_type in service_types:
-            services.append(service)
+    services = _build_service_list(data, service_types)
 
     if return_folders:
         folders = data.get("folders", [])
@@ -307,7 +296,7 @@ def discover_services(
     return services
 
 
-@dataclass
+@dataclass(frozen=True)
 class FolderTraversal:
     """Record of a recursive services-root traversal.
 
@@ -349,7 +338,9 @@ def discover_services_recursive(
     "NationalDatasets/Property"), so ServiceInfo.get_url(root) stays correct.
     Folders that error (secured, non-200, embedded error) are recorded and
     skipped, never raised. max_depth guards against pathological nesting;
-    standard ArcGIS folders are single-level.
+    standard ArcGIS folders are single-level. Defaults to 2 because standard
+    ArcGIS servers nest folders at most one level; the extra level guards against
+    non-standard but valid configurations.
 
     Returns:
         (services, traversal) where traversal records visited/skipped folders.
@@ -377,7 +368,7 @@ def discover_services_recursive(
         visited.append(folder)
         services.extend(_build_service_list(folder_data, service_types))
         for sub in folder_data.get("folders", []):
-            queue.append((sub, depth + 1))
+            queue.append((f"{folder}/{sub}", depth + 1))
 
     traversal = FolderTraversal(
         visited=visited, skipped=skipped, service_count=len(services)

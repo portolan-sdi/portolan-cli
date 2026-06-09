@@ -15,12 +15,15 @@ import pytest
 
 from portolan_cli.extract.arcgis.discovery import (
     ArcGISDiscoveryError,
+    FolderTraversal,
     LayerInfo,
     ServiceDiscoveryResult,
     ServiceInfo,
     _ensure_json_format,
+    _fetch_json,
     discover_layers,
     discover_services,
+    discover_services_recursive,
 )
 
 pytestmark = pytest.mark.unit
@@ -340,9 +343,6 @@ class TestServiceDiscoveryResult:
 # =============================================================================
 
 
-from portolan_cli.extract.arcgis.discovery import _fetch_json  # noqa: E402
-
-
 @pytest.mark.unit
 def test_fetch_json_raises_on_embedded_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """Should raise ArcGISDiscoveryError when ArcGIS returns an embedded error body."""
@@ -386,12 +386,6 @@ def test_fetch_json_raises_on_http_error_status(monkeypatch: pytest.MonkeyPatch)
 # =============================================================================
 
 
-from portolan_cli.extract.arcgis.discovery import (  # noqa: E402
-    FolderTraversal,  # noqa: F401 — used in isinstance assertion below
-    discover_services_recursive,
-)
-
-
 def _mock_endpoints(monkeypatch: pytest.MonkeyPatch, responses: dict[str, dict]) -> None:  # type: ignore[type-arg]
     """Map base URL (without query) -> JSON body."""
 
@@ -430,6 +424,7 @@ def test_recursive_merges_folder_services(monkeypatch: pytest.MonkeyPatch) -> No
     assert traversal.visited == ["NationalDatasets"]
     assert traversal.skipped == []
     assert traversal.service_count == 3
+    assert isinstance(traversal, FolderTraversal)
 
 
 @pytest.mark.unit
@@ -494,3 +489,20 @@ def test_recursive_filters_by_service_type(monkeypatch: pytest.MonkeyPatch) -> N
     )
     services, _ = discover_services_recursive(root, service_types=["FeatureServer", "MapServer"])
     assert [s.name for s in services] == ["Map"]
+
+
+@pytest.mark.unit
+def test_recursive_builds_full_path_for_nested_folders(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Should build full root-relative paths for sub-folders, not bare names."""
+    root = "https://x/rest/services"
+    _mock_endpoints(
+        monkeypatch,
+        {
+            root: {"services": [], "folders": ["L1"]},
+            f"{root}/L1": {"services": [{"name": "L1/A", "type": "MapServer"}], "folders": ["L2"]},
+            f"{root}/L1/L2": {"services": [{"name": "L1/L2/B", "type": "MapServer"}], "folders": []},
+        },
+    )
+    services, traversal = discover_services_recursive(root, max_depth=2)
+    assert sorted(s.name for s in services) == ["L1/A", "L1/L2/B"]
+    assert traversal.visited == ["L1", "L1/L2"]
