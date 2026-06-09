@@ -371,6 +371,8 @@ portolan extract arcgis URL --services "Census*,Transport*"
 portolan extract arcgis URL --exclude-services "*_Archive,*_Test"
 ```
 
+Patterns use fnmatch, and `*` spans `/`, so they work naturally with folder-qualified service names produced when extracting from a services root that contains ArcGIS folders. For example, `--services "ecml/*"` selects every service inside the `ecml` folder, and `--services "*faults*"` matches `ecml/active_faults` too.
+
 ### Output Structure
 
 Services root extraction creates a nested catalog structure. **Single-layer services are flattened** to avoid redundant nesting:
