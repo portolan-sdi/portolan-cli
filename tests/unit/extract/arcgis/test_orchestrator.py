@@ -6,6 +6,8 @@ URL parsing → Discovery → Filtering → Extraction → Report generation.
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -22,6 +24,7 @@ from portolan_cli.extract.arcgis.orchestrator import (
     ExtractionProgress,
     ServicesRootDiscoveryResult,
     _discover_and_filter_services,
+    _extract_single_layer,
     _service_output_dir,
     _slugify,
     extract_arcgis_catalog,
@@ -1242,3 +1245,39 @@ def test_discover_and_filter_no_recurse_uses_flat_discovery(monkeypatch) -> None
     )
     assert [s.name for s in services] == ["Top"]
     assert coverage is None
+
+
+# =============================================================================
+# _extract_single_layer token-forwarding test
+# =============================================================================
+
+
+@pytest.mark.unit
+def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Token must be forwarded to gpio.extract_arcgis when the param is supported."""
+    captured: dict[str, object] = {}
+
+    def fake_extract_arcgis(url: str, max_workers: int | None = None, token: str | None = None) -> object:  # noqa: ANN001
+        captured["token"] = token
+
+        class _T:
+            num_rows = 1
+
+            def write(self, path: str) -> None:
+                Path(path).parent.mkdir(parents=True, exist_ok=True)
+                Path(path).write_bytes(b"PAR1")
+
+        return _T()
+
+    fake_gpio = types.ModuleType("geoparquet_io")
+    fake_gpio.extract_arcgis = fake_extract_arcgis  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "geoparquet_io", fake_gpio)
+
+    layer = LayerInfo(id=0, name="L", layer_type="Feature Layer")
+    _extract_single_layer(
+        "https://x/rest/services/F/FeatureServer",
+        layer,
+        tmp_path / "out.parquet",
+        ExtractionOptions(token="TKN", sort_hilbert=False),
+    )
+    assert captured["token"] == "TKN"

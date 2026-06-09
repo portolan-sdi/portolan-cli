@@ -312,13 +312,15 @@ def _extract_single_layer(
     layer_url = f"{service_url.rstrip('/')}/{layer.id}"
     start_time = time.monotonic()
 
-    # Check if gpio.extract_arcgis supports max_workers (added in gpio 0.10.0+)
+    # Check which optional parameters gpio.extract_arcgis supports (feature-detected
+    # so older gpio versions continue to work without modification).
     sig = inspect.signature(gpio.extract_arcgis)
+    kwargs: dict[str, object] = {}
     if "max_workers" in sig.parameters:
-        table = gpio.extract_arcgis(layer_url, max_workers=options.workers)
-    else:
-        # Fallback for gpio < 0.10.0
-        table = gpio.extract_arcgis(layer_url)
+        kwargs["max_workers"] = options.workers
+    if options.token and "token" in sig.parameters:
+        kwargs["token"] = options.token
+    table = gpio.extract_arcgis(layer_url, **kwargs)
 
     # Apply Hilbert sorting if requested
     if options.sort_hilbert:
