@@ -20,6 +20,7 @@ from portolan_cli.extract.arcgis.orchestrator import (
     ExtractionOptions,
     ExtractionProgress,
     ServicesRootDiscoveryResult,
+    _service_output_dir,
     _slugify,
     extract_arcgis_catalog,
     list_services,
@@ -1160,3 +1161,21 @@ def test_list_services_no_recurse_skips_coverage(monkeypatch) -> None:  # type: 
     assert [s.name for s in result.services] == ["Top"]
     assert result.coverage is None
     assert "folder_coverage" not in result.to_dict()
+
+
+# =============================================================================
+# Task 9: nested-by-folder output paths
+# =============================================================================
+
+
+@pytest.mark.unit
+def test_service_output_dir_nests_folders(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    assert _service_output_dir(tmp_path, "ecml/active_faults") == tmp_path / "ecml" / "active_faults"
+    assert _service_output_dir(tmp_path, "Top") == tmp_path / "top"
+    assert (
+        _service_output_dir(tmp_path, "RDH_hazard/Flood Risk")
+        == tmp_path / "rdh_hazard" / "flood_risk"
+    )
+
+
+# TASKS_8_10_PLACEHOLDER

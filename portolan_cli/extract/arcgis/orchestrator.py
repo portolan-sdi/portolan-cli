@@ -222,6 +222,21 @@ def _slugify(name: str) -> str:
     return slug or "unnamed"
 
 
+def _service_output_dir(output_dir: Path, service_name: str) -> Path:
+    """Map a (possibly folder-qualified) service name to a nested directory.
+
+    "ecml/active_faults" -> output_dir/ecml/active_faults
+    "Top"                -> output_dir/top
+    Each path segment is slugified independently so the folder hierarchy is
+    preserved as nested subcatalogs (ADR-0032, ADR-0053).
+    """
+    parts = [_slugify(p) for p in service_name.split("/") if p]
+    result = output_dir
+    for part in parts:
+        result = result / part
+    return result
+
+
 @dataclass
 class ExtractionOptions:
     """Options for the extraction process.
@@ -1024,18 +1039,18 @@ def _extract_services_root(
     for progress_idx, (layer_idx, layer) in enumerate(filtered_layers):
         service = service_for_layer[layer_idx]
         service_url = service.get_url(parsed.base_url)
-        service_slug = _slugify(service.name)
         layer_slug = _slugify(layer.name)
+        service_dir = _service_output_dir(output_dir, service.name)
+        service_leaf_slug = service_dir.name
 
         # Determine output path based on layer count:
         # - Single-layer service: service_name/service_name.parquet (flattened - no subcatalog)
         # - Multi-layer service: service_name/layer_name/layer_name.parquet (nested)
         is_single_layer = layer_count_per_service.get(service.name, 0) == 1
-        service_dir = output_dir / service_slug
 
         if is_single_layer:
             # Flatten: service becomes collection directly
-            output_path = service_dir / f"{service_slug}.parquet"
+            output_path = service_dir / f"{service_leaf_slug}.parquet"
         else:
             # Nested: service is subcatalog, layer is collection
             collection_dir = service_dir / layer_slug
