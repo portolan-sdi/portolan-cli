@@ -45,3 +45,28 @@ def test_list_services_accepts_folder_url(monkeypatch) -> None:  # noqa: ANN001
     assert result.exit_code == 0
     assert "ecml/active_faults" in result.output
     assert "skipped" in result.output.lower()
+
+
+@pytest.mark.unit
+def test_list_services_threads_no_recurse_and_token(monkeypatch) -> None:  # noqa: ANN001
+    from portolan_cli.extract.arcgis.discovery import ServiceInfo
+    from portolan_cli.extract.arcgis.orchestrator import ServicesRootDiscoveryResult
+
+    captured: dict[str, object] = {}
+
+    def fake_list_services(url, *, service_filter=None, token=None, recurse=True, timeout=60.0):  # noqa: ANN001, ANN202
+        captured["token"] = token
+        captured["recurse"] = recurse
+        return ServicesRootDiscoveryResult(
+            services=[ServiceInfo("Top", "MapServer")], folders=[], base_url=url, coverage=None
+        )
+
+    monkeypatch.setattr("portolan_cli.extract.arcgis.orchestrator.list_services", fake_list_services)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["extract", "arcgis", "https://x/server/rest/services", "--list-services", "--no-recurse", "--token", "TKN"],
+    )
+    assert result.exit_code == 0
+    assert captured["token"] == "TKN"
+    assert captured["recurse"] is False
