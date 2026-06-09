@@ -235,6 +235,67 @@ def make_line_layer(
     }
 
 
+def make_symbol_layer(
+    layer_id: str,
+    source_layer: str,
+    text_field: str | Expression,
+    text_color: ColorValue = "#000000",
+    text_size: NumericValue = 12,
+    text_font: list[str] | None = None,
+    text_halo_color: ColorValue | None = None,
+    text_halo_width: NumericValue = 1.0,
+    text_anchor: str = "center",
+    text_offset: tuple[float, float] | None = None,
+) -> dict[str, Any]:
+    """Build a Mapbox GL symbol layer for text labels.
+
+    Args:
+        layer_id: Unique layer identifier.
+        source_layer: Name of source layer in vector tiles.
+        text_field: Text content (string or ["get", "fieldname"] expression).
+        text_color: Text color (hex string or expression).
+        text_size: Font size in pixels (number or expression).
+        text_font: List of font names (falls back to ["Noto Sans Regular"]).
+        text_halo_color: Optional halo (outline) color.
+        text_halo_width: Halo width in pixels.
+        text_anchor: Text anchor position (center, left, right, top, bottom, etc.).
+        text_offset: Optional (x, y) offset in ems.
+
+    Returns:
+        Mapbox GL symbol layer dict.
+    """
+    layout: dict[str, Any] = {
+        "text-field": text_field,
+        "text-size": text_size,
+        "text-anchor": text_anchor,
+    }
+
+    if text_font:
+        layout["text-font"] = text_font
+    else:
+        layout["text-font"] = ["Noto Sans Regular"]
+
+    if text_offset:
+        layout["text-offset"] = list(text_offset)
+
+    paint: dict[str, Any] = {
+        "text-color": text_color,
+    }
+
+    if text_halo_color is not None:
+        paint["text-halo-color"] = text_halo_color
+        paint["text-halo-width"] = text_halo_width
+
+    return {
+        "id": layer_id,
+        "type": "symbol",
+        "source": "data",
+        "source-layer": source_layer,
+        "layout": layout,
+        "paint": paint,
+    }
+
+
 def make_mapbox_style(
     name: str,
     source_layer: str,

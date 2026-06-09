@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from portolan_cli.style import StyleInfo
+    from portolan_cli.style import LegendInfo, StyleInfo
 
 # =============================================================================
 # Phase 1: VectorStyleConfig Tests
@@ -959,3 +959,295 @@ class TestRegisterStyleAssets:
         updated = json.loads((tmp_path / "collection.json").read_text())
         assert "styles/old" not in updated["assets"]
         assert updated["portolan:styles"] == ["styles/default"]
+
+
+# =============================================================================
+# Phase 11: Legend Discovery Tests (Issue #498)
+# =============================================================================
+
+
+class TestLegendInfo:
+    """Tests for LegendInfo dataclass."""
+
+    @pytest.mark.unit
+    def test_legend_info_creation(self) -> None:
+        """LegendInfo can be created with all fields."""
+        from portolan_cli.style import LegendInfo
+
+        legend = LegendInfo(
+            key="legends/source",
+            href="./legends/source.png",
+            title="Source Legend",
+            media_type="image/png",
+            path=Path("/tmp/test/legends/source.png"),
+        )
+
+        assert legend.key == "legends/source"
+        assert legend.href == "./legends/source.png"
+        assert legend.title == "Source Legend"
+        assert legend.media_type == "image/png"
+        assert legend.path == Path("/tmp/test/legends/source.png")
+
+
+class TestDiscoverLegends:
+    """Tests for discover_legends function."""
+
+    @pytest.mark.unit
+    def test_discovers_legend_files(self, tmp_path: Path) -> None:
+        """Creates 2 legend files and verifies both found with correct keys."""
+        from portolan_cli.style import discover_legends
+
+        legends_dir = tmp_path / "legends"
+        legends_dir.mkdir()
+
+        # Create two PNG files (minimal valid PNG header)
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+        (legends_dir / "source.png").write_bytes(png_bytes)
+        (legends_dir / "custom.png").write_bytes(png_bytes)
+
+        legends = discover_legends(tmp_path)
+
+        assert len(legends) == 2
+        keys = {lg.key for lg in legends}
+        assert keys == {"legends/source", "legends/custom"}
+
+    @pytest.mark.unit
+    def test_returns_empty_when_no_legends_dir(self, tmp_path: Path) -> None:
+        """No legends/ directory returns empty list."""
+        from portolan_cli.style import discover_legends
+
+        legends = discover_legends(tmp_path)
+
+        assert legends == []
+
+    @pytest.mark.unit
+    def test_skips_non_png_files(self, tmp_path: Path) -> None:
+        """Non-PNG files in legends/ directory are ignored."""
+        from portolan_cli.style import discover_legends
+
+        legends_dir = tmp_path / "legends"
+        legends_dir.mkdir()
+
+        # Create a PNG file and a non-PNG file
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+        (legends_dir / "source.png").write_bytes(png_bytes)
+        (legends_dir / "README.md").write_text("# Legends\n")
+        (legends_dir / "data.json").write_text("{}")
+
+        legends = discover_legends(tmp_path)
+
+        assert len(legends) == 1
+        assert legends[0].key == "legends/source"
+
+    @pytest.mark.unit
+    def test_legend_title_from_filename(self, tmp_path: Path) -> None:
+        """Legend title is derived from filename."""
+        from portolan_cli.style import discover_legends
+
+        legends_dir = tmp_path / "legends"
+        legends_dir.mkdir()
+
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+        (legends_dir / "land-use.png").write_bytes(png_bytes)
+
+        legends = discover_legends(tmp_path)
+
+        assert len(legends) == 1
+        assert legends[0].title == "land-use Legend"
+
+    @pytest.mark.unit
+    def test_legend_media_type_is_png(self, tmp_path: Path) -> None:
+        """Legend media type is always image/png."""
+        from portolan_cli.style import discover_legends
+
+        legends_dir = tmp_path / "legends"
+        legends_dir.mkdir()
+
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+        (legends_dir / "source.png").write_bytes(png_bytes)
+
+        legends = discover_legends(tmp_path)
+
+        assert len(legends) == 1
+        assert legends[0].media_type == "image/png"
+
+
+class TestBuildLegendsManifest:
+    """Tests for build_legends_manifest function."""
+
+    @staticmethod
+    def _legend_info(key: str) -> LegendInfo:
+        from portolan_cli.style import LegendInfo
+
+        return LegendInfo(key=key, href="", title="", media_type="image/png", path=Path())
+
+    @pytest.mark.unit
+    def test_source_first(self) -> None:
+        """Source legend always first regardless of input order."""
+        from portolan_cli.style import build_legends_manifest
+
+        legends = [
+            self._legend_info("legends/zebra"),
+            self._legend_info("legends/source"),
+            self._legend_info("legends/alpha"),
+        ]
+
+        manifest = build_legends_manifest(legends)
+
+        assert manifest[0] == "legends/source"
+        assert len(manifest) == 3
+
+    @pytest.mark.unit
+    def test_alphabetical_after_source(self) -> None:
+        """Non-source legends sorted alphabetically."""
+        from portolan_cli.style import build_legends_manifest
+
+        legends = [
+            self._legend_info("legends/zebra"),
+            self._legend_info("legends/source"),
+            self._legend_info("legends/alpha"),
+            self._legend_info("legends/beta"),
+        ]
+
+        manifest = build_legends_manifest(legends)
+
+        assert manifest == ["legends/source", "legends/alpha", "legends/beta", "legends/zebra"]
+
+    @pytest.mark.unit
+    def test_no_source(self) -> None:
+        """Works without a legend named 'source'."""
+        from portolan_cli.style import build_legends_manifest
+
+        legends = [
+            self._legend_info("legends/zebra"),
+            self._legend_info("legends/alpha"),
+        ]
+
+        manifest = build_legends_manifest(legends)
+
+        assert manifest == ["legends/alpha", "legends/zebra"]
+
+    @pytest.mark.unit
+    def test_empty_list(self) -> None:
+        """Empty input returns empty output."""
+        from portolan_cli.style import build_legends_manifest
+
+        manifest = build_legends_manifest([])
+
+        assert manifest == []
+
+
+class TestRegisterLegendAssets:
+    """Tests for registering discovered legends as STAC assets."""
+
+    @pytest.mark.unit
+    def test_registers_legend_assets_in_collection(self, tmp_path: Path) -> None:
+        """Discovered legends are added as assets in collection.json."""
+        import json
+
+        from portolan_cli.style import discover_legends, register_legend_assets
+
+        collection_data = {
+            "type": "Collection",
+            "id": "test",
+            "assets": {
+                "data": {"href": "./data.parquet", "type": "application/vnd.apache.parquet"}
+            },
+        }
+        (tmp_path / "collection.json").write_text(json.dumps(collection_data))
+
+        legends_dir = tmp_path / "legends"
+        legends_dir.mkdir()
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+        (legends_dir / "source.png").write_bytes(png_bytes)
+        (legends_dir / "alternate.png").write_bytes(png_bytes)
+
+        legends = discover_legends(tmp_path)
+        register_legend_assets(tmp_path, legends)
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+
+        assert "legends/source" in updated["assets"]
+        assert "legends/alternate" in updated["assets"]
+
+        source_asset = updated["assets"]["legends/source"]
+        assert source_asset["type"] == "image/png"
+        assert source_asset["roles"] == ["legend"]
+        assert source_asset["title"] == "source Legend"
+        assert source_asset["href"] == "./legends/source.png"
+
+        assert updated["portolan:legends"] == ["legends/source", "legends/alternate"]
+
+    @pytest.mark.unit
+    def test_no_legends_no_manifest(self, tmp_path: Path) -> None:
+        """No portolan:legends property when no legends exist."""
+        import json
+
+        from portolan_cli.style import register_legend_assets
+
+        collection_data = {"type": "Collection", "id": "test", "assets": {}}
+        (tmp_path / "collection.json").write_text(json.dumps(collection_data))
+
+        register_legend_assets(tmp_path, [])
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+        assert "portolan:legends" not in updated
+
+    @pytest.mark.unit
+    def test_no_op_without_collection_json(self, tmp_path: Path) -> None:
+        """Does nothing when collection.json doesn't exist."""
+        from portolan_cli.style import LegendInfo, register_legend_assets
+
+        legends = [
+            LegendInfo(
+                key="legends/source",
+                href="./legends/source.png",
+                title="Source Legend",
+                media_type="image/png",
+                path=tmp_path / "legends" / "source.png",
+            )
+        ]
+        register_legend_assets(tmp_path, legends)
+
+        assert not (tmp_path / "collection.json").exists()
+
+    @pytest.mark.unit
+    def test_removes_stale_legend_assets(self, tmp_path: Path) -> None:
+        """Removes legend assets that no longer have files on disk."""
+        import json
+
+        from portolan_cli.style import LegendInfo, register_legend_assets
+
+        collection_data = {
+            "type": "Collection",
+            "id": "test",
+            "portolan:legends": ["legends/source", "legends/old"],
+            "assets": {
+                "legends/source": {
+                    "href": "./legends/source.png",
+                    "type": "image/png",
+                    "roles": ["legend"],
+                },
+                "legends/old": {
+                    "href": "./legends/old.png",
+                    "type": "image/png",
+                    "roles": ["legend"],
+                },
+            },
+        }
+        (tmp_path / "collection.json").write_text(json.dumps(collection_data))
+
+        current_legends = [
+            LegendInfo(
+                key="legends/source",
+                href="./legends/source.png",
+                title="Source Legend",
+                media_type="image/png",
+                path=tmp_path / "legends" / "source.png",
+            )
+        ]
+        register_legend_assets(tmp_path, current_legends)
+
+        updated = json.loads((tmp_path / "collection.json").read_text())
+        assert "legends/old" not in updated["assets"]
+        assert updated["portolan:legends"] == ["legends/source"]

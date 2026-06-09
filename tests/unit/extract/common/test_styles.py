@@ -260,7 +260,7 @@ class TestStyleFileOutput:
 
         assert result is not None
         assert (collection_path / "styles").is_dir()
-        assert result.path == collection_path / "styles" / "source.json"
+        assert result.path == collection_path / "styles" / "default.json"
 
     def test_custom_style_name(self, tmp_path: Path) -> None:
         """Custom style name is used for output file."""
@@ -288,3 +288,208 @@ class TestStyleFileOutput:
 
         assert result is not None
         assert result.path.name == "original.json"
+
+
+# =============================================================================
+# Legend Extraction Tests (Issue #498)
+# =============================================================================
+
+
+class TestBuildWMSGetLegendGraphicURL:
+    """Tests for WMS GetLegendGraphic URL construction."""
+
+    def test_geoserver_wfs_to_wms_legend(self) -> None:
+        """GeoServer WFS URL converts to WMS GetLegendGraphic."""
+        from portolan_cli.extract.common.styles import _build_wms_getlegendgraphic_url
+
+        wfs_url = "https://geonode.example.com/geoserver/wfs"
+        result = _build_wms_getlegendgraphic_url(wfs_url, "geonode:layer")
+
+        assert "/wms?" in result
+        assert "service=WMS" in result
+        assert "request=GetLegendGraphic" in result
+        assert "layer=geonode%3Alayer" in result or "layer=geonode:layer" in result
+        assert "format=image%2Fpng" in result or "format=image/png" in result
+
+    def test_geoserver_ows_to_wms_legend(self) -> None:
+        """GeoServer OWS URL converts to WMS GetLegendGraphic."""
+        from portolan_cli.extract.common.styles import _build_wms_getlegendgraphic_url
+
+        wfs_url = "https://example.com/geoserver/ows?service=WFS"
+        result = _build_wms_getlegendgraphic_url(wfs_url, "layer")
+
+        assert "/wms?" in result
+        assert "request=GetLegendGraphic" in result
+
+    def test_preserves_host_and_path(self) -> None:
+        """Host and base path are preserved."""
+        from portolan_cli.extract.common.styles import _build_wms_getlegendgraphic_url
+
+        wfs_url = "https://geonode.pergamino.gob.ar/geoserver/wfs"
+        result = _build_wms_getlegendgraphic_url(wfs_url, "test")
+
+        assert "geonode.pergamino.gob.ar" in result
+        assert "/geoserver/wms" in result
+
+
+class TestFetchWMSLegend:
+    """Tests for WMS legend fetching."""
+
+    def test_returns_bytes_on_success(self) -> None:
+        """Returns PNG bytes when request succeeds."""
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.extract.common.styles import _fetch_wms_legend
+
+        # Create a mock response with PNG content
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "image/png"}
+        mock_response.content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+
+        with patch("portolan_cli.extract.common.styles.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+
+            result = _fetch_wms_legend("https://example.com/wms?request=GetLegendGraphic")
+
+        assert result is not None
+        assert result.startswith(b"\x89PNG")
+
+    def test_returns_none_on_http_error(self) -> None:
+        """Returns None on HTTP errors."""
+        from unittest.mock import MagicMock, patch
+
+        import httpx
+
+        from portolan_cli.extract.common.styles import _fetch_wms_legend
+
+        # Create proper mock request and response for HTTPStatusError
+        mock_request = MagicMock()
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+
+        with patch("portolan_cli.extract.common.styles.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.get.side_effect = httpx.HTTPStatusError(
+                "Not found", request=mock_request, response=mock_response
+            )
+
+            result = _fetch_wms_legend("https://example.com/wms")
+
+        assert result is None
+
+    def test_returns_none_on_non_image_content(self) -> None:
+        """Returns None when response is not an image."""
+        from unittest.mock import MagicMock, patch
+
+        from portolan_cli.extract.common.styles import _fetch_wms_legend
+
+        mock_response = MagicMock()
+        mock_response.headers = {"content-type": "text/xml"}
+        mock_response.content = b"<ServiceException>Error</ServiceException>"
+
+        with patch("portolan_cli.extract.common.styles.httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.get.return_value = mock_response
+
+            result = _fetch_wms_legend("https://example.com/wms")
+
+        assert result is None
+
+
+class TestExtractWMSLegend:
+    """Tests for WMS legend extraction."""
+
+    def test_extracts_and_writes_legend(self, tmp_path: Path) -> None:
+        """Successfully extracts legend PNG and writes to legends/ directory."""
+        from unittest.mock import patch
+
+        from portolan_cli.extract.common.styles import extract_wms_legend
+
+        collection_path = tmp_path / "test-collection"
+        collection_path.mkdir()
+
+        # Valid PNG bytes (minimal valid PNG header)
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+
+        with patch("portolan_cli.extract.common.styles._fetch_wms_legend") as mock_fetch:
+            mock_fetch.return_value = png_bytes
+
+            result = extract_wms_legend(
+                wfs_url="https://example.com/geoserver/wfs",
+                layer_name="test",
+                collection_path=collection_path,
+            )
+
+        assert result is not None
+        assert result.path.exists()
+        assert result.path.suffix == ".png"
+        assert result.media_type == "image/png"
+        assert result.name == "source"
+        assert (collection_path / "legends").is_dir()
+
+    def test_returns_none_on_fetch_failure(self, tmp_path: Path) -> None:
+        """Returns None when legend fetch fails."""
+        from unittest.mock import patch
+
+        from portolan_cli.extract.common.styles import extract_wms_legend
+
+        collection_path = tmp_path / "test-collection"
+        collection_path.mkdir()
+
+        with patch("portolan_cli.extract.common.styles._fetch_wms_legend") as mock_fetch:
+            mock_fetch.return_value = None
+
+            result = extract_wms_legend(
+                wfs_url="https://example.com/geoserver/wfs",
+                layer_name="test",
+                collection_path=collection_path,
+            )
+
+        assert result is None
+
+    def test_custom_legend_name(self, tmp_path: Path) -> None:
+        """Custom legend name is used for output file."""
+        from unittest.mock import patch
+
+        from portolan_cli.extract.common.styles import extract_wms_legend
+
+        collection_path = tmp_path / "test-collection"
+        collection_path.mkdir()
+
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+
+        with patch("portolan_cli.extract.common.styles._fetch_wms_legend") as mock_fetch:
+            mock_fetch.return_value = png_bytes
+
+            result = extract_wms_legend(
+                wfs_url="https://example.com/geoserver/wfs",
+                layer_name="test",
+                collection_path=collection_path,
+                legend_name="original",
+            )
+
+        assert result is not None
+        assert result.path.name == "original.png"
+        assert result.name == "original"
+
+    def test_creates_legends_directory(self, tmp_path: Path) -> None:
+        """legends/ directory is created if it doesn't exist."""
+        from unittest.mock import patch
+
+        from portolan_cli.extract.common.styles import extract_wms_legend
+
+        collection_path = tmp_path / "test-collection"
+        collection_path.mkdir()
+
+        assert not (collection_path / "legends").exists()
+
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+
+        with patch("portolan_cli.extract.common.styles._fetch_wms_legend") as mock_fetch:
+            mock_fetch.return_value = png_bytes
+
+            extract_wms_legend(
+                wfs_url="https://example.com/geoserver/wfs",
+                layer_name="test",
+                collection_path=collection_path,
+            )
+
+        assert (collection_path / "legends").is_dir()

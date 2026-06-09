@@ -16,6 +16,7 @@ from portolan_cli.extract.common.converters.base import (
     make_mapbox_style,
     make_match_expression,
     make_step_expression,
+    make_symbol_layer,
 )
 
 pytestmark = pytest.mark.unit
@@ -223,6 +224,82 @@ class TestLayerBuilders:
         assert layer["type"] == "line"
         assert layer["paint"]["line-color"] == "#333333"
         assert layer["paint"]["line-width"] == 2
+
+    def test_make_symbol_layer_basic(self) -> None:
+        """Symbol layer for text labels."""
+        layer = make_symbol_layer(
+            layer_id="labels",
+            source_layer="data",
+            text_field=["get", "name"],
+        )
+        assert layer["id"] == "labels"
+        assert layer["type"] == "symbol"
+        assert layer["source"] == "data"
+        assert layer["source-layer"] == "data"
+        assert layer["layout"]["text-field"] == ["get", "name"]
+        assert layer["paint"]["text-color"] == "#000000"  # default
+
+    def test_make_symbol_layer_with_font(self) -> None:
+        """Symbol layer with custom font."""
+        layer = make_symbol_layer(
+            layer_id="labels",
+            source_layer="data",
+            text_field=["get", "name"],
+            text_font=["Open Sans Regular", "Noto Sans Regular"],
+        )
+        assert layer["layout"]["text-font"] == [
+            "Open Sans Regular",
+            "Noto Sans Regular",
+        ]
+
+    def test_make_symbol_layer_with_halo(self) -> None:
+        """Symbol layer with text halo (outline)."""
+        layer = make_symbol_layer(
+            layer_id="labels",
+            source_layer="data",
+            text_field=["get", "name"],
+            text_halo_color="#ffffff",
+            text_halo_width=2.0,
+        )
+        assert layer["paint"]["text-halo-color"] == "#ffffff"
+        assert layer["paint"]["text-halo-width"] == 2.0
+
+    def test_make_symbol_layer_with_anchor_and_offset(self) -> None:
+        """Symbol layer with anchor and offset."""
+        layer = make_symbol_layer(
+            layer_id="labels",
+            source_layer="data",
+            text_field=["get", "name"],
+            text_anchor="left",
+            text_offset=(1.0, 0.0),
+        )
+        assert layer["layout"]["text-anchor"] == "left"
+        assert layer["layout"]["text-offset"] == [1.0, 0.0]
+
+    def test_make_symbol_layer_full(self) -> None:
+        """Symbol layer with all properties."""
+        layer = make_symbol_layer(
+            layer_id="categorical-fill-labels",
+            source_layer="barrios",
+            text_field=["get", "nombre"],
+            text_color="#333333",
+            text_size=14,
+            text_font=["Noto Sans Regular"],
+            text_halo_color="#ffffff",
+            text_halo_width=1.5,
+            text_anchor="bottom-left",
+            text_offset=(0.5, -0.5),
+        )
+        assert layer["id"] == "categorical-fill-labels"
+        assert layer["type"] == "symbol"
+        assert layer["layout"]["text-field"] == ["get", "nombre"]
+        assert layer["layout"]["text-size"] == 14
+        assert layer["layout"]["text-font"] == ["Noto Sans Regular"]
+        assert layer["layout"]["text-anchor"] == "bottom-left"
+        assert layer["layout"]["text-offset"] == [0.5, -0.5]
+        assert layer["paint"]["text-color"] == "#333333"
+        assert layer["paint"]["text-halo-color"] == "#ffffff"
+        assert layer["paint"]["text-halo-width"] == 1.5
 
 
 class TestMapboxStyleBuilder:

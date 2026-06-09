@@ -1,17 +1,24 @@
-"""Style extraction orchestration for remote services.
+"""Style and legend extraction orchestration for remote services.
 
 This module provides the high-level API for extracting styles from
 WMS and ESRI REST endpoints and writing them as Mapbox GL JSON files.
+Also extracts legend images from WMS GetLegendGraphic endpoint.
 
-The flow is:
+Style extraction flow:
 1. Fetch style from source (WMS GetStyles or ESRI layer JSON)
 2. Convert to Mapbox GL using format-specific converter
 3. Write to {collection}/styles/{name}.json
-4. Return StyleInfo for STAC asset registration
+4. Return ExtractedStyle for STAC asset registration
+
+Legend extraction flow (Issue #498):
+1. Fetch legend image from WMS GetLegendGraphic endpoint
+2. Write to {collection}/legends/{name}.png
+3. Return ExtractedLegend for STAC asset registration
 
 Usage:
     # During WFS extraction
     style_info = extract_wms_style(wms_url, layer_name, collection_path)
+    legend_info = extract_wms_legend(wms_url, layer_name, collection_path)
 
     # During ArcGIS extraction
     style_info = extract_esri_style(layer_url, collection_path)
@@ -63,6 +70,50 @@ class ExtractedStyle:
     warnings: list[str]
 
 
+@dataclass
+class ExtractedLegend:
+    """Result of legend extraction.
+
+    Attributes:
+        path: Path to written legend PNG file.
+        name: Legend name (used as asset key).
+        media_type: MIME type (always "image/png").
+        width: Image width in pixels (None if not determined).
+        height: Image height in pixels (None if not determined).
+    """
+
+    path: Path
+    name: str
+    media_type: str
+    width: int | None = None
+    height: int | None = None
+
+
+def _wfs_url_to_wms_path(wfs_url: str) -> tuple[str, str]:
+    """Convert WFS URL to WMS path.
+
+    GeoServer/GeoNode typically expose WMS at the same base URL as WFS.
+    We replace the service parameter and adjust the path.
+
+    Args:
+        wfs_url: WFS service endpoint URL.
+
+    Returns:
+        Tuple of (scheme://netloc, wms_path).
+    """
+    parsed = urlparse(wfs_url)
+
+    # Try to detect if this is a GeoServer URL and adjust path
+    # GeoServer pattern: .../geoserver/wfs -> .../geoserver/wms
+    path = parsed.path
+    if "/wfs" in path.lower():
+        path = path.replace("/wfs", "/wms").replace("/WFS", "/wms")
+    elif "/ows" in path.lower():
+        path = path.replace("/ows", "/wms").replace("/OWS", "/wms")
+
+    return f"{parsed.scheme}://{parsed.netloc}", path
+
+
 def _build_wms_getstyles_url(wfs_url: str, layer_name: str) -> str:
     """Build WMS GetStyles URL from WFS endpoint.
 
@@ -77,14 +128,7 @@ def _build_wms_getstyles_url(wfs_url: str, layer_name: str) -> str:
         WMS GetStyles URL.
     """
     parsed = urlparse(wfs_url)
-
-    # Try to detect if this is a GeoServer URL and adjust path
-    # GeoServer pattern: .../geoserver/wfs -> .../geoserver/wms
-    path = parsed.path
-    if "/wfs" in path.lower():
-        path = path.replace("/wfs", "/wms").replace("/WFS", "/wms")
-    elif "/ows" in path.lower():
-        path = path.replace("/ows", "/wms").replace("/OWS", "/wms")
+    _, path = _wfs_url_to_wms_path(wfs_url)
 
     # Build GetStyles parameters
     params = {
@@ -92,6 +136,35 @@ def _build_wms_getstyles_url(wfs_url: str, layer_name: str) -> str:
         "version": "1.1.1",
         "request": "GetStyles",
         "layers": layer_name,
+    }
+
+    new_parsed = parsed._replace(path=path, query=urlencode(params))
+    return urlunparse(new_parsed)
+
+
+def _build_wms_getlegendgraphic_url(wfs_url: str, layer_name: str) -> str:
+    """Build WMS GetLegendGraphic URL from WFS endpoint.
+
+    GeoServer/GeoNode typically expose WMS at the same base URL as WFS.
+    We replace the service parameter and add GetLegendGraphic request.
+
+    Args:
+        wfs_url: WFS service endpoint URL.
+        layer_name: Layer name (may include workspace prefix like "geonode:layer").
+
+    Returns:
+        WMS GetLegendGraphic URL.
+    """
+    parsed = urlparse(wfs_url)
+    _, path = _wfs_url_to_wms_path(wfs_url)
+
+    # Build GetLegendGraphic parameters
+    params = {
+        "service": "WMS",
+        "version": "1.1.1",
+        "request": "GetLegendGraphic",
+        "layer": layer_name,
+        "format": "image/png",
     }
 
     new_parsed = parsed._replace(path=path, query=urlencode(params))
@@ -205,7 +278,7 @@ def extract_wms_style(
     collection_path: Path,
     *,
     source_layer: str | None = None,
-    style_name: str = "source",
+    style_name: str = "default",
     timeout: float = 30.0,
 ) -> ExtractedStyle | None:
     """Extract style from WMS GetStyles and write as Mapbox GL JSON.
@@ -218,7 +291,7 @@ def extract_wms_style(
         layer_name: Layer name (may include workspace prefix).
         collection_path: Path to collection directory.
         source_layer: Source layer name for Mapbox GL (defaults to layer_name stem).
-        style_name: Output filename (default "source").
+        style_name: Output filename (default "default").
         timeout: Request timeout in seconds.
 
     Returns:
@@ -266,7 +339,7 @@ def extract_esri_style(
     collection_path: Path,
     *,
     source_layer: str | None = None,
-    style_name: str = "source",
+    style_name: str = "default",
     timeout: float = 30.0,
 ) -> ExtractedStyle | None:
     """Extract style from ESRI REST layer and write as Mapbox GL JSON.
@@ -278,7 +351,7 @@ def extract_esri_style(
         layer_url: ESRI layer URL (e.g., .../FeatureServer/0).
         collection_path: Path to collection directory.
         source_layer: Source layer name for Mapbox GL (defaults to layer name).
-        style_name: Output filename (default "source").
+        style_name: Output filename (default "default").
         timeout: Request timeout in seconds.
 
     Returns:
@@ -321,4 +394,114 @@ def extract_esri_style(
         name=style_name,
         source_format="esri",
         warnings=warnings,
+    )
+
+
+# =============================================================================
+# Legend Extraction (Issue #498)
+# =============================================================================
+
+
+def _fetch_wms_legend(url: str, timeout: float = 30.0) -> bytes | None:
+    """Fetch legend image bytes from WMS GetLegendGraphic request.
+
+    Args:
+        url: WMS GetLegendGraphic URL.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        PNG image bytes if successful, None on errors.
+    """
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            response = client.get(url)
+            response.raise_for_status()
+
+            content_type = response.headers.get("content-type", "")
+
+            # Check for image/png response
+            if "image/png" in content_type:
+                return response.content
+
+            # Some servers return image without proper content-type
+            # Check for PNG magic bytes
+            if response.content.startswith(b"\x89PNG"):
+                return response.content
+
+            logger.warning("Unexpected content type from WMS GetLegendGraphic: %s", content_type)
+            return None
+
+    except httpx.HTTPStatusError as e:
+        logger.warning("WMS GetLegendGraphic request failed: HTTP %s", e.response.status_code)
+        return None
+    except httpx.RequestError as e:
+        logger.warning("WMS GetLegendGraphic request failed: %s", e)
+        return None
+
+
+def _write_legend_file(
+    legend_bytes: bytes,
+    collection_path: Path,
+    name: str,
+) -> Path:
+    """Write legend PNG to collection's legends directory.
+
+    Args:
+        legend_bytes: PNG image bytes.
+        collection_path: Path to collection directory.
+        name: Legend filename (without .png extension).
+
+    Returns:
+        Path to written file.
+    """
+    legends_dir = collection_path / "legends"
+    legends_dir.mkdir(parents=True, exist_ok=True)
+
+    legend_path = legends_dir / f"{name}.png"
+    legend_path.write_bytes(legend_bytes)
+
+    return legend_path
+
+
+def extract_wms_legend(
+    wfs_url: str,
+    layer_name: str,
+    collection_path: Path,
+    *,
+    legend_name: str = "source",
+    timeout: float = 30.0,
+) -> ExtractedLegend | None:
+    """Extract legend from WMS GetLegendGraphic and save to legends/ directory.
+
+    Attempts to fetch legend image from companion WMS endpoint.
+    Returns None if legend cannot be extracted.
+
+    Args:
+        wfs_url: WFS service endpoint URL.
+        layer_name: Layer name (may include workspace prefix).
+        collection_path: Path to collection directory.
+        legend_name: Output filename (default "source").
+        timeout: Request timeout in seconds.
+
+    Returns:
+        ExtractedLegend if successful, None if legend unavailable.
+    """
+    # Build WMS GetLegendGraphic URL
+    legend_url = _build_wms_getlegendgraphic_url(wfs_url, layer_name)
+    logger.debug("Fetching WMS legend from: %s", legend_url)
+
+    # Fetch legend image
+    legend_bytes = _fetch_wms_legend(legend_url, timeout=timeout)
+    if legend_bytes is None:
+        logger.warning("Could not fetch WMS legend for %s", layer_name)
+        return None
+
+    # Write legend file
+    legend_path = _write_legend_file(legend_bytes, collection_path, legend_name)
+    logger.info("Wrote legend to %s", legend_path)
+
+    return ExtractedLegend(
+        path=legend_path,
+        name=legend_name,
+        media_type="image/png",
     )

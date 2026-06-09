@@ -1,11 +1,13 @@
-"""Style generation for vector and raster assets (Issue #13).
+"""Style and legend generation for vector and raster assets (Issue #13, #498).
 
 Generates Mapbox GL style specs for PMTiles and render extension properties for COGs.
+Also provides legend discovery and registration for WMS-extracted legend images.
 
 Public API:
 - VectorStyleConfig: Configuration for vector styling
 - RasterStyleConfig: Configuration for raster styling
 - StyleInfo: Discovered style file metadata
+- LegendInfo: Discovered legend file metadata
 - build_full_style: Generate complete Mapbox GL style with sources
 - write_style_file: Write style dict to JSON file
 - write_default_style: Convenience function to write default.json
@@ -15,6 +17,9 @@ Public API:
 - discover_styles: Discover style JSON files in styles/ directory
 - build_styles_manifest: Build portolan:styles manifest array
 - register_style_assets: Register styles as STAC assets in collection.json
+- discover_legends: Discover legend PNG files in legends/ directory
+- build_legends_manifest: Build portolan:legends manifest array
+- register_legend_assets: Register legends as STAC assets in collection.json
 """
 
 from __future__ import annotations
@@ -87,6 +92,25 @@ class StyleInfo:
     href: str
     title: str
     description: str
+    path: Path
+
+
+@dataclass(frozen=True)
+class LegendInfo:
+    """Metadata for a discovered legend file.
+
+    Attributes:
+        key: STAC asset key (e.g., "legends/source").
+        href: Relative href for STAC asset (e.g., "./legends/source.png").
+        title: Human-readable title derived from filename.
+        media_type: MIME type (always "image/png").
+        path: Absolute path to the legend file on disk.
+    """
+
+    key: str
+    href: str
+    title: str
+    media_type: str
     path: Path
 
 
@@ -477,6 +501,113 @@ def register_style_assets(
         data["portolan:styles"] = build_styles_manifest(styles)
     else:
         data.pop("portolan:styles", None)
+
+    collection_json_path.write_text(json.dumps(data, indent=2))
+
+
+# =============================================================================
+# Legend Discovery (Issue #498)
+# =============================================================================
+
+
+def discover_legends(collection_path: Path) -> list[LegendInfo]:
+    """Discover legend PNG files in {collection_path}/legends/ directory.
+
+    Args:
+        collection_path: Path to the collection directory.
+
+    Returns:
+        List of LegendInfo objects. Empty list if no legends/ directory exists.
+    """
+    legends_dir = collection_path / "legends"
+
+    if not legends_dir.exists():
+        return []
+
+    legends: list[LegendInfo] = []
+
+    for path in sorted(legends_dir.glob("*.png")):
+        name = path.stem
+        title = f"{name} Legend"
+
+        legends.append(
+            LegendInfo(
+                key=f"legends/{name}",
+                href=f"./legends/{path.name}",
+                title=title,
+                media_type="image/png",
+                path=path,
+            )
+        )
+
+    return legends
+
+
+def build_legends_manifest(legends: list[LegendInfo]) -> list[str]:
+    """Build the portolan:legends manifest array.
+
+    Returns ordered list of asset keys with legends/source first if present,
+    then remaining legends sorted alphabetically.
+
+    Args:
+        legends: List of LegendInfo objects (from discover_legends).
+
+    Returns:
+        List of legend asset keys.
+    """
+    keys = [lg.key for lg in legends]
+
+    if "legends/source" in keys:
+        # Put source first, sort the rest
+        remaining = [k for k in keys if k != "legends/source"]
+        return ["legends/source"] + sorted(remaining)
+
+    # No source, just sort all
+    return sorted(keys)
+
+
+def register_legend_assets(
+    collection_path: Path,
+    legends: list[LegendInfo],
+) -> None:
+    """Register discovered legends as STAC assets and set portolan:legends manifest.
+
+    Updates collection.json to add/update legend assets and remove stale ones.
+
+    Args:
+        collection_path: Path to the collection directory.
+        legends: List of LegendInfo objects from discover_legends().
+    """
+    collection_json_path = collection_path / "collection.json"
+    if not collection_json_path.exists():
+        return
+
+    data = json.loads(collection_json_path.read_text())
+    assets = data.get("assets", {})
+
+    # Remove stale legend assets (assets with "legends/" prefix that no longer have files)
+    current_keys = {lg.key for lg in legends}
+    stale_keys = [k for k in assets if k.startswith("legends/") and k not in current_keys]
+    for key in stale_keys:
+        del assets[key]
+
+    # Add/update legend assets
+    for legend_info in legends:
+        asset_dict: dict[str, Any] = {
+            "href": legend_info.href,
+            "type": legend_info.media_type,
+            "title": legend_info.title,
+            "roles": ["legend"],
+        }
+        assets[legend_info.key] = asset_dict
+
+    data["assets"] = assets
+
+    # Set or remove portolan:legends manifest
+    if legends:
+        data["portolan:legends"] = build_legends_manifest(legends)
+    else:
+        data.pop("portolan:legends", None)
 
     collection_json_path.write_text(json.dumps(data, indent=2))
 

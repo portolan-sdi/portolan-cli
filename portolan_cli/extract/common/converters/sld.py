@@ -6,10 +6,11 @@ Supported symbolizers:
 - PolygonSymbolizer: Fill and stroke for polygons
 - PointSymbolizer: Circle markers for points
 - LineSymbolizer: Line styling for linestrings
+- TextSymbolizer: Symbol layers for text labels
 
 Partially supported (warn and continue):
-- TextSymbolizer: Skipped with warning (labels not supported)
 - TTF glyphs in PointSymbolizer: Falls back to circle
+- Unknown fonts in TextSymbolizer: Falls back to Noto Sans Regular
 
 OGC Filter support:
 - PropertyIsEqualTo: Extracts field/value for categorical styling
@@ -35,6 +36,7 @@ from portolan_cli.extract.common.converters.base import (
     make_line_layer,
     make_mapbox_style,
     make_match_expression,
+    make_symbol_layer,
 )
 
 logger = logging.getLogger(__name__)
@@ -335,6 +337,184 @@ def parse_line_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
     return result
 
 
+def _sld_anchor_to_mapbox(anchor_x: float, anchor_y: float) -> str:
+    """Convert SLD anchor point coordinates to Mapbox GL text-anchor.
+
+    SLD anchor: (0, 0) = top-left, (1, 1) = bottom-right, (0.5, 0.5) = center
+    Mapbox anchor: named positions like "center", "left", "bottom-right"
+
+    Args:
+        anchor_x: Horizontal anchor 0.0 (left) to 1.0 (right).
+        anchor_y: Vertical anchor 0.0 (top) to 1.0 (bottom).
+
+    Returns:
+        Mapbox GL text-anchor value.
+    """
+    # Map to horizontal position
+    if anchor_x < 0.33:
+        h = "left"
+    elif anchor_x > 0.66:
+        h = "right"
+    else:
+        h = ""
+
+    # Map to vertical position
+    if anchor_y < 0.33:
+        v = "top"
+    elif anchor_y > 0.66:
+        v = "bottom"
+    else:
+        v = ""
+
+    # Combine into Mapbox anchor name
+    if h and v:
+        return f"{v}-{h}"
+    elif h:
+        return h
+    elif v:
+        return v
+    else:
+        return "center"
+
+
+def _parse_text_label(root: Element) -> list[str]:
+    """Extract Label/PropertyName from TextSymbolizer."""
+    label = _find_with_ns(root, ".//sld:Label")
+    if label is None:
+        label = _find_with_ns(root, ".//se:Label")
+    if label is not None:
+        prop_name = _find_with_ns(label, "ogc:PropertyName")
+        if prop_name is not None and prop_name.text:
+            return ["get", prop_name.text]
+    return ["get", ""]
+
+
+def _parse_text_font(root: Element) -> tuple[float, list[str]]:
+    """Extract Font properties from TextSymbolizer."""
+    text_size = 12.0
+    text_font = ["Noto Sans Regular"]
+
+    font = _find_with_ns(root, ".//sld:Font")
+    if font is None:
+        font = _find_with_ns(root, ".//se:Font")
+    if font is None:
+        return text_size, text_font
+
+    font_size = _get_css_parameter(font, "font-size")
+    if font_size:
+        try:
+            text_size = float(font_size)
+        except ValueError:
+            pass
+
+    font_family = _get_css_parameter(font, "font-family")
+    if font_family:
+        logger.debug(f"Font '{font_family}' mapped to Noto Sans Regular")
+
+    return text_size, text_font
+
+
+def _parse_text_fill(root: Element) -> str:
+    """Extract direct Fill color from TextSymbolizer (not Halo fill)."""
+    for fill in _findall_with_ns(root, "sld:Fill"):
+        fill_color = _get_css_parameter(fill, "fill")
+        if fill_color:
+            return fill_color
+    for fill in _findall_with_ns(root, "se:Fill"):
+        fill_color = _get_css_parameter(fill, "fill")
+        if fill_color:
+            return fill_color
+    return "#000000"
+
+
+def _parse_text_halo(root: Element) -> tuple[str | None, float | None]:
+    """Extract Halo properties from TextSymbolizer."""
+    halo = _find_with_ns(root, ".//sld:Halo")
+    if halo is None:
+        halo = _find_with_ns(root, ".//se:Halo")
+    if halo is None:
+        return None, None
+
+    halo_width: float | None = None
+    radius = _find_with_ns(halo, "sld:Radius") or _find_with_ns(halo, "se:Radius")
+    if radius is not None and radius.text:
+        try:
+            halo_width = float(radius.text)
+        except ValueError:
+            pass
+
+    halo_color: str | None = None
+    halo_fill = _find_with_ns(halo, "sld:Fill") or _find_with_ns(halo, "se:Fill")
+    if halo_fill is not None:
+        color = _get_css_parameter(halo_fill, "fill")
+        if color:
+            halo_color = color
+
+    return halo_color, halo_width
+
+
+def _parse_text_anchor(root: Element) -> str:
+    """Extract LabelPlacement/AnchorPoint from TextSymbolizer."""
+    anchor_point = _find_with_ns(root, ".//sld:AnchorPoint")
+    if anchor_point is None:
+        anchor_point = _find_with_ns(root, ".//se:AnchorPoint")
+    if anchor_point is None:
+        return "center"
+
+    anchor_x_elem = _find_with_ns(anchor_point, "sld:AnchorPointX") or _find_with_ns(
+        anchor_point, "se:AnchorPointX"
+    )
+    anchor_y_elem = _find_with_ns(anchor_point, "sld:AnchorPointY") or _find_with_ns(
+        anchor_point, "se:AnchorPointY"
+    )
+
+    anchor_x, anchor_y = 0.5, 0.5
+    if anchor_x_elem is not None and anchor_x_elem.text:
+        try:
+            anchor_x = float(anchor_x_elem.text)
+        except ValueError:
+            pass
+    if anchor_y_elem is not None and anchor_y_elem.text:
+        try:
+            anchor_y = float(anchor_y_elem.text)
+        except ValueError:
+            pass
+
+    return _sld_anchor_to_mapbox(anchor_x, anchor_y)
+
+
+def parse_text_symbolizer(symbolizer_xml: str | Element) -> dict[str, Any]:
+    """Extract text label properties from TextSymbolizer.
+
+    Args:
+        symbolizer_xml: TextSymbolizer XML string or Element.
+
+    Returns:
+        Dict with text_field, text_color, text_size, text_font,
+        text_halo_color, text_halo_width, text_anchor.
+    """
+    if isinstance(symbolizer_xml, str):
+        try:
+            root = ET.fromstring(symbolizer_xml)
+        except ET.ParseError as e:
+            raise SLDConverterError(f"Invalid symbolizer XML: {e}") from e
+    else:
+        root = symbolizer_xml
+
+    text_size, text_font = _parse_text_font(root)
+    halo_color, halo_width = _parse_text_halo(root)
+
+    return {
+        "text_field": _parse_text_label(root),
+        "text_color": _parse_text_fill(root),
+        "text_size": text_size,
+        "text_font": text_font,
+        "text_anchor": _parse_text_anchor(root),
+        "text_halo_color": halo_color,
+        "text_halo_width": halo_width,
+    }
+
+
 def _extract_rules(root: Element) -> list[Element]:
     """Extract all Rule elements from SLD document."""
     rules = _findall_with_ns(root, ".//sld:Rule")
@@ -537,8 +717,17 @@ def _build_categorical_layers(
     size_cases: list[tuple[Any, float]] = []
     line_width_cases: list[tuple[Any, float]] = []
 
+    # Track TextSymbolizer from rules (may be in filtered or unfiltered rules)
+    text_symbolizer: Element | None = None
+
     for rule in rules:
         filter_elem = _find_with_ns(rule, "ogc:Filter")
+
+        # Check for TextSymbolizer in any rule (filtered or not)
+        rule_text_sym = _find_symbolizer(rule, "Text")
+        if rule_text_sym is not None:
+            text_symbolizer = rule_text_sym
+
         if filter_elem is None:
             continue
         try:
@@ -574,8 +763,12 @@ def _build_categorical_layers(
     if not field or not color_cases:
         return []
 
+    layers: list[dict[str, Any]] = []
+    geom_layer_id: str = ""
+
     if geom_type == "polygon":
-        return _build_categorical_fill(
+        geom_layer_id = "categorical-fill"
+        layers = _build_categorical_fill(
             field,
             color_cases,
             opacity_cases,
@@ -584,13 +777,34 @@ def _build_categorical_layers(
             source_layer,
             warnings,
         )
-    if geom_type == "point":
-        return _build_categorical_circle(field, color_cases, size_cases, source_layer)
-    if geom_type == "line":
-        return _build_categorical_line(
+    elif geom_type == "point":
+        geom_layer_id = "categorical-circle"
+        layers = _build_categorical_circle(field, color_cases, size_cases, source_layer)
+    elif geom_type == "line":
+        geom_layer_id = "categorical-line"
+        layers = _build_categorical_line(
             field, color_cases, opacity_cases, line_width_cases, source_layer
         )
-    return []
+
+    # Add label layer if TextSymbolizer was found
+    if text_symbolizer is not None and layers:
+        text_props = parse_text_symbolizer(text_symbolizer)
+        label_layer_id = f"{geom_layer_id}-labels"
+        layers.append(
+            make_symbol_layer(
+                label_layer_id,
+                source_layer,
+                text_field=text_props["text_field"],
+                text_color=text_props["text_color"],
+                text_size=text_props["text_size"],
+                text_font=text_props["text_font"],
+                text_halo_color=text_props.get("text_halo_color"),
+                text_halo_width=text_props.get("text_halo_width") or 1.0,
+                text_anchor=text_props["text_anchor"],
+            )
+        )
+
+    return layers
 
 
 def _build_simple_layers(
@@ -603,13 +817,16 @@ def _build_simple_layers(
     layers: list[dict[str, Any]] = []
 
     for rule in rules:
+        geom_layer_id: str | None = None
+
         if geom_type == "polygon":
             symbolizer = _find_symbolizer(rule, "Polygon")
             if symbolizer is not None:
                 props = parse_polygon_symbolizer(symbolizer)
+                geom_layer_id = f"fill-{len(layers)}"
                 layers.append(
                     make_fill_layer(
-                        f"fill-{len(layers)}",
+                        geom_layer_id,
                         source_layer,
                         props["fill_color"],
                         props["fill_opacity"],
@@ -619,9 +836,10 @@ def _build_simple_layers(
         elif geom_type == "point":
             for symbolizer in _findall_symbolizers(rule, "Point"):
                 props = parse_point_symbolizer(symbolizer)
+                geom_layer_id = f"circle-{len(layers)}"
                 layers.append(
                     make_circle_layer(
-                        f"circle-{len(layers)}",
+                        geom_layer_id,
                         source_layer,
                         props["fill_color"],
                         props["size"] / 2,
@@ -633,14 +851,34 @@ def _build_simple_layers(
             symbolizer = _find_symbolizer(rule, "Line")
             if symbolizer is not None:
                 props = parse_line_symbolizer(symbolizer)
+                geom_layer_id = f"line-{len(layers)}"
                 layers.append(
                     make_line_layer(
-                        f"line-{len(layers)}",
+                        geom_layer_id,
                         source_layer,
                         props["line_color"],
                         props["line_width"],
                     )
                 )
+
+        # Check for TextSymbolizer and add label layer
+        text_symbolizer = _find_symbolizer(rule, "Text")
+        if text_symbolizer is not None and geom_layer_id is not None:
+            text_props = parse_text_symbolizer(text_symbolizer)
+            label_layer_id = f"{geom_layer_id}-labels"
+            layers.append(
+                make_symbol_layer(
+                    label_layer_id,
+                    source_layer,
+                    text_field=text_props["text_field"],
+                    text_color=text_props["text_color"],
+                    text_size=text_props["text_size"],
+                    text_font=text_props["text_font"],
+                    text_halo_color=text_props.get("text_halo_color"),
+                    text_halo_width=text_props.get("text_halo_width") or 1.0,
+                    text_anchor=text_props["text_anchor"],
+                )
+            )
 
     return layers
 
@@ -698,11 +936,6 @@ def convert_sld(
     style_type = _determine_style_type(rules)
     geom_type = _determine_geometry_type(rules)
     style_name = _extract_style_name(root)
-
-    for rule in rules:
-        if _find_symbolizer(rule, "Text") is not None:
-            warnings.append("TextSymbolizer not supported; labels will be omitted")
-            break
 
     if style_type == "categorical":
         layers = _build_categorical_layers(rules, geom_type, source_layer, warnings)

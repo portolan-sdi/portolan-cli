@@ -22,6 +22,7 @@ from portolan_cli.extract.common.converters.base import (
     make_mapbox_style,
     make_match_expression,
     make_step_expression,
+    make_symbol_layer,
 )
 from portolan_cli.extract.common.converters.esri import (
     ESRIConverterError,
@@ -38,6 +39,7 @@ __all__ = [
     "make_fill_layer",
     "make_circle_layer",
     "make_line_layer",
+    "make_symbol_layer",
     "make_match_expression",
     "make_step_expression",
     # Color utilities

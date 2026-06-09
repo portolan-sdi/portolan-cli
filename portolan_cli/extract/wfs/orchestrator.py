@@ -39,7 +39,7 @@ from portolan_cli.extract.common.report import (
 )
 from portolan_cli.extract.common.resume import ResumeState, get_resume_state, should_process_layer
 from portolan_cli.extract.common.retry import RetryConfig, retry_with_backoff
-from portolan_cli.extract.common.styles import extract_wms_style
+from portolan_cli.extract.common.styles import extract_wms_legend, extract_wms_style
 from portolan_cli.extract.wfs.discovery import LayerInfo, WFSDiscoveryResult, discover_layers
 
 if TYPE_CHECKING:
@@ -542,6 +542,15 @@ def _extract_layer_task(
             if style_result:
                 logger.debug("Extracted style for %s: %s", layer.name, style_result.path)
 
+            # Extract legend from WMS GetLegendGraphic (Issue #498)
+            legend_result = extract_wms_legend(
+                wfs_url=url,
+                layer_name=layer.name,
+                collection_path=collection_dir,
+            )
+            if legend_result:
+                logger.debug("Extracted legend for %s: %s", layer.name, legend_result.path)
+
         return LayerResult(
             id=layer.id,
             name=layer.name,
@@ -776,8 +785,13 @@ def _auto_init_catalog(
         catalog_root=output_dir,
     )
 
-    # Register extracted styles as STAC assets (Issue #490)
-    from portolan_cli.style import discover_styles, register_style_assets
+    # Register extracted styles and legends as STAC assets (Issue #490, #498)
+    from portolan_cli.style import (
+        discover_legends,
+        discover_styles,
+        register_legend_assets,
+        register_style_assets,
+    )
 
     for result in report.layers:
         if result.status == "success" and result.output_path:
@@ -786,6 +800,11 @@ def _auto_init_catalog(
             if styles:
                 register_style_assets(collection_dir, styles)
                 logger.debug("Registered %d style(s) for %s", len(styles), result.name)
+
+            legends = discover_legends(collection_dir)
+            if legends:
+                register_legend_assets(collection_dir, legends)
+                logger.debug("Registered %d legend(s) for %s", len(legends), result.name)
 
     # Add via links for provenance tracking
     _add_via_links_to_collections(output_dir, report)

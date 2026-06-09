@@ -17,6 +17,7 @@ from portolan_cli.extract.common.converters.sld import (
     parse_filter_to_value,
     parse_point_symbolizer,
     parse_polygon_symbolizer,
+    parse_text_symbolizer,
 )
 
 pytestmark = pytest.mark.unit
@@ -214,11 +215,171 @@ class TestConvertSLD:
         assert fill_layer["paint"]["fill-opacity"] == 0.4
 
 
+class TestParseTextSymbolizer:
+    """Tests for TextSymbolizer extraction."""
+
+    def test_basic_label_extraction(self) -> None:
+        """Extract text field from Label/PropertyName."""
+        symbolizer_xml = """
+        <sld:TextSymbolizer xmlns:sld="http://www.opengis.net/sld"
+                            xmlns:ogc="http://www.opengis.net/ogc">
+            <sld:Label>
+                <ogc:PropertyName>name</ogc:PropertyName>
+            </sld:Label>
+        </sld:TextSymbolizer>
+        """
+        result = parse_text_symbolizer(symbolizer_xml)
+
+        assert result["text_field"] == ["get", "name"]
+
+    def test_font_extraction(self) -> None:
+        """Extract font family and size from Font element."""
+        symbolizer_xml = """
+        <sld:TextSymbolizer xmlns:sld="http://www.opengis.net/sld"
+                            xmlns:ogc="http://www.opengis.net/ogc">
+            <sld:Label>
+                <ogc:PropertyName>label</ogc:PropertyName>
+            </sld:Label>
+            <sld:Font>
+                <sld:CssParameter name="font-family">DejaVu Sans</sld:CssParameter>
+                <sld:CssParameter name="font-size">14</sld:CssParameter>
+            </sld:Font>
+        </sld:TextSymbolizer>
+        """
+        result = parse_text_symbolizer(symbolizer_xml)
+
+        assert result["text_size"] == 14
+        # Font mapped to Noto Sans (fallback for unknown fonts)
+        assert result["text_font"] == ["Noto Sans Regular"]
+
+    def test_fill_color_extraction(self) -> None:
+        """Extract text color from Fill element."""
+        symbolizer_xml = """
+        <sld:TextSymbolizer xmlns:sld="http://www.opengis.net/sld"
+                            xmlns:ogc="http://www.opengis.net/ogc">
+            <sld:Label>
+                <ogc:PropertyName>label</ogc:PropertyName>
+            </sld:Label>
+            <sld:Fill>
+                <sld:CssParameter name="fill">#333333</sld:CssParameter>
+            </sld:Fill>
+        </sld:TextSymbolizer>
+        """
+        result = parse_text_symbolizer(symbolizer_xml)
+
+        assert result["text_color"] == "#333333"
+
+    def test_halo_extraction(self) -> None:
+        """Extract halo (text outline) properties."""
+        symbolizer_xml = """
+        <sld:TextSymbolizer xmlns:sld="http://www.opengis.net/sld"
+                            xmlns:ogc="http://www.opengis.net/ogc">
+            <sld:Label>
+                <ogc:PropertyName>label</ogc:PropertyName>
+            </sld:Label>
+            <sld:Halo>
+                <sld:Radius>2</sld:Radius>
+                <sld:Fill>
+                    <sld:CssParameter name="fill">#ffffff</sld:CssParameter>
+                </sld:Fill>
+            </sld:Halo>
+        </sld:TextSymbolizer>
+        """
+        result = parse_text_symbolizer(symbolizer_xml)
+
+        assert result["text_halo_color"] == "#ffffff"
+        assert result["text_halo_width"] == 2.0
+
+    def test_anchor_point_extraction(self) -> None:
+        """Extract anchor point from LabelPlacement."""
+        symbolizer_xml = """
+        <sld:TextSymbolizer xmlns:sld="http://www.opengis.net/sld"
+                            xmlns:ogc="http://www.opengis.net/ogc">
+            <sld:Label>
+                <ogc:PropertyName>label</ogc:PropertyName>
+            </sld:Label>
+            <sld:LabelPlacement>
+                <sld:PointPlacement>
+                    <sld:AnchorPoint>
+                        <sld:AnchorPointX>0</sld:AnchorPointX>
+                        <sld:AnchorPointY>0.5</sld:AnchorPointY>
+                    </sld:AnchorPoint>
+                </sld:PointPlacement>
+            </sld:LabelPlacement>
+        </sld:TextSymbolizer>
+        """
+        result = parse_text_symbolizer(symbolizer_xml)
+
+        # SLD anchor (0, 0.5) maps to Mapbox "left" (left edge, vertical center)
+        assert result["text_anchor"] == "left"
+
+    def test_complete_text_symbolizer(self) -> None:
+        """Parse complete TextSymbolizer with all properties."""
+        symbolizer_xml = """
+        <sld:TextSymbolizer xmlns:sld="http://www.opengis.net/sld"
+                            xmlns:ogc="http://www.opengis.net/ogc">
+            <sld:Label>
+                <ogc:PropertyName>nombre</ogc:PropertyName>
+            </sld:Label>
+            <sld:Font>
+                <sld:CssParameter name="font-family">DejaVu Sans</sld:CssParameter>
+                <sld:CssParameter name="font-size">10</sld:CssParameter>
+                <sld:CssParameter name="font-style">normal</sld:CssParameter>
+                <sld:CssParameter name="font-weight">normal</sld:CssParameter>
+            </sld:Font>
+            <sld:LabelPlacement>
+                <sld:PointPlacement>
+                    <sld:AnchorPoint>
+                        <sld:AnchorPointX>0</sld:AnchorPointX>
+                        <sld:AnchorPointY>0.5</sld:AnchorPointY>
+                    </sld:AnchorPoint>
+                </sld:PointPlacement>
+            </sld:LabelPlacement>
+            <sld:Halo>
+                <sld:Radius>2</sld:Radius>
+                <sld:Fill>
+                    <sld:CssParameter name="fill">#ffffff</sld:CssParameter>
+                </sld:Fill>
+            </sld:Halo>
+            <sld:Fill>
+                <sld:CssParameter name="fill">#000000</sld:CssParameter>
+            </sld:Fill>
+        </sld:TextSymbolizer>
+        """
+        result = parse_text_symbolizer(symbolizer_xml)
+
+        assert result["text_field"] == ["get", "nombre"]
+        assert result["text_color"] == "#000000"
+        assert result["text_size"] == 10
+        assert result["text_halo_color"] == "#ffffff"
+        assert result["text_halo_width"] == 2.0
+        assert result["text_anchor"] == "left"
+
+    def test_defaults_for_missing_properties(self) -> None:
+        """Missing optional properties get sensible defaults."""
+        symbolizer_xml = """
+        <sld:TextSymbolizer xmlns:sld="http://www.opengis.net/sld"
+                            xmlns:ogc="http://www.opengis.net/ogc">
+            <sld:Label>
+                <ogc:PropertyName>name</ogc:PropertyName>
+            </sld:Label>
+        </sld:TextSymbolizer>
+        """
+        result = parse_text_symbolizer(symbolizer_xml)
+
+        assert result["text_field"] == ["get", "name"]
+        assert result["text_color"] == "#000000"  # Default black
+        assert result["text_size"] == 12  # Default size
+        assert result["text_anchor"] == "center"  # Default center
+        assert result.get("text_halo_color") is None
+        assert result.get("text_halo_width") is None
+
+
 class TestWarningsAndPartialConversion:
     """Tests for warn-and-continue behavior on unsupported SLD features."""
 
-    def test_text_symbolizer_warns_but_continues(self) -> None:
-        """TextSymbolizer emits warning but still produces style."""
+    def test_text_symbolizer_creates_label_layer(self) -> None:
+        """TextSymbolizer creates a symbol layer for labels."""
         sld = """<?xml version="1.0" encoding="UTF-8"?>
         <sld:StyledLayerDescriptor xmlns:sld="http://www.opengis.net/sld"
                                    xmlns:ogc="http://www.opengis.net/ogc">
@@ -244,16 +405,83 @@ class TestWarningsAndPartialConversion:
             </sld:NamedLayer>
         </sld:StyledLayerDescriptor>
         """
-        style, warnings = convert_sld(sld, source_layer="data", return_warnings=True)
+        style = convert_sld(sld, source_layer="data")
 
-        # Should still produce the fill layer
+        # Should have fill layer AND symbol layer for labels
         assert style["version"] == 8
-        assert len(style["layers"]) >= 1
-        assert style["layers"][0]["type"] == "fill"
+        assert len(style["layers"]) == 2
 
-        # Should warn about TextSymbolizer
-        assert len(warnings) > 0
-        assert any("TextSymbolizer" in w for w in warnings)
+        fill_layer = style["layers"][0]
+        assert fill_layer["type"] == "fill"
+
+        label_layer = style["layers"][1]
+        assert label_layer["type"] == "symbol"
+        assert label_layer["id"] == "fill-0-labels"
+        assert label_layer["layout"]["text-field"] == ["get", "name"]
+
+    def test_text_symbolizer_with_halo(self) -> None:
+        """TextSymbolizer with halo extracts halo properties."""
+        sld = """<?xml version="1.0" encoding="UTF-8"?>
+        <sld:StyledLayerDescriptor xmlns:sld="http://www.opengis.net/sld"
+                                   xmlns:ogc="http://www.opengis.net/ogc">
+            <sld:NamedLayer>
+                <sld:Name>test</sld:Name>
+                <sld:UserStyle>
+                    <sld:Name>test</sld:Name>
+                    <sld:FeatureTypeStyle>
+                        <sld:Rule>
+                            <sld:PolygonSymbolizer>
+                                <sld:Fill>
+                                    <sld:CssParameter name="fill">#ff0000</sld:CssParameter>
+                                </sld:Fill>
+                            </sld:PolygonSymbolizer>
+                            <sld:TextSymbolizer>
+                                <sld:Label>
+                                    <ogc:PropertyName>label</ogc:PropertyName>
+                                </sld:Label>
+                                <sld:Font>
+                                    <sld:CssParameter name="font-size">12</sld:CssParameter>
+                                </sld:Font>
+                                <sld:Halo>
+                                    <sld:Radius>2</sld:Radius>
+                                    <sld:Fill>
+                                        <sld:CssParameter name="fill">#ffffff</sld:CssParameter>
+                                    </sld:Fill>
+                                </sld:Halo>
+                                <sld:Fill>
+                                    <sld:CssParameter name="fill">#333333</sld:CssParameter>
+                                </sld:Fill>
+                            </sld:TextSymbolizer>
+                        </sld:Rule>
+                    </sld:FeatureTypeStyle>
+                </sld:UserStyle>
+            </sld:NamedLayer>
+        </sld:StyledLayerDescriptor>
+        """
+        style = convert_sld(sld, source_layer="data")
+
+        label_layer = style["layers"][1]
+        assert label_layer["type"] == "symbol"
+        assert label_layer["paint"]["text-color"] == "#333333"
+        assert label_layer["paint"]["text-halo-color"] == "#ffffff"
+        assert label_layer["paint"]["text-halo-width"] == 2.0
+        assert label_layer["layout"]["text-size"] == 12
+
+    def test_categorical_sld_with_labels(self, categorical_sld: str) -> None:
+        """Categorical SLD with TextSymbolizer produces label layer."""
+        style = convert_sld(categorical_sld, source_layer="barrios")
+
+        # Should have fill layer + label layer
+        assert len(style["layers"]) == 2
+
+        fill_layer = style["layers"][0]
+        assert fill_layer["type"] == "fill"
+        assert fill_layer["id"] == "categorical-fill"
+
+        label_layer = style["layers"][1]
+        assert label_layer["type"] == "symbol"
+        assert label_layer["id"] == "categorical-fill-labels"
+        assert label_layer["layout"]["text-field"] == ["get", "nombre"]
 
     def test_invalid_sld_raises(self) -> None:
         """Invalid XML raises SLDConverterError."""
