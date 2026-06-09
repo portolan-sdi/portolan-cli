@@ -61,11 +61,21 @@ def test_list_services_threads_no_recurse_and_token(monkeypatch) -> None:  # noq
             services=[ServiceInfo("Top", "MapServer")], folders=[], base_url=url, coverage=None
         )
 
-    monkeypatch.setattr("portolan_cli.extract.arcgis.orchestrator.list_services", fake_list_services)
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.orchestrator.list_services", fake_list_services
+    )
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["extract", "arcgis", "https://x/server/rest/services", "--list-services", "--no-recurse", "--token", "TKN"],
+        [
+            "extract",
+            "arcgis",
+            "https://x/server/rest/services",
+            "--list-services",
+            "--no-recurse",
+            "--token",
+            "TKN",
+        ],
     )
     assert result.exit_code == 0
     assert captured["token"] == "TKN"
