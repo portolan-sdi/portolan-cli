@@ -379,3 +379,118 @@ def test_fetch_json_raises_on_http_error_status(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(httpx.Client, "get", fake_get)
     with pytest.raises(ArcGISDiscoveryError, match="HTTP 404"):
         _fetch_json("https://x/rest/services/Missing")
+
+
+# =============================================================================
+# discover_services_recursive tests
+# =============================================================================
+
+
+from portolan_cli.extract.arcgis.discovery import (  # noqa: E402
+    FolderTraversal,  # noqa: F401 — used in isinstance assertion below
+    discover_services_recursive,
+)
+
+
+def _mock_endpoints(monkeypatch: pytest.MonkeyPatch, responses: dict[str, dict]) -> None:  # type: ignore[type-arg]
+    """Map base URL (without query) -> JSON body."""
+
+    def fake_fetch(url: str, timeout: float = 60.0, token: str | None = None) -> dict[str, Any]:
+        base = url.split("?")[0]
+        if base not in responses:
+            raise ArcGISDiscoveryError(f"ArcGIS error from {url}: 499 Token Required")
+        return responses[base]
+
+    monkeypatch.setattr("portolan_cli.extract.arcgis.discovery._fetch_json", fake_fetch)
+
+
+@pytest.mark.unit
+def test_recursive_merges_folder_services(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Should merge root services with services from all folders."""
+    root = "https://x/rest/services"
+    _mock_endpoints(
+        monkeypatch,
+        {
+            root: {
+                "services": [{"name": "Top", "type": "MapServer"}],
+                "folders": ["NationalDatasets"],
+            },
+            f"{root}/NationalDatasets": {
+                "services": [
+                    {"name": "NationalDatasets/Property", "type": "MapServer"},
+                    {"name": "NationalDatasets/Agriculture", "type": "MapServer"},
+                ],
+                "folders": [],
+            },
+        },
+    )
+    services, traversal = discover_services_recursive(root)
+    names = sorted(s.name for s in services)
+    assert names == ["NationalDatasets/Agriculture", "NationalDatasets/Property", "Top"]
+    assert traversal.visited == ["NationalDatasets"]
+    assert traversal.skipped == []
+    assert traversal.service_count == 3
+
+
+@pytest.mark.unit
+def test_recursive_skips_secured_folder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Should skip secured (erroring) folders and record them in skipped."""
+    root = "https://x/rest/services"
+    _mock_endpoints(
+        monkeypatch,
+        {
+            root: {"services": [], "folders": ["Open", "Locked"]},
+            f"{root}/Open": {
+                "services": [{"name": "Open/A", "type": "MapServer"}],
+                "folders": [],
+            },
+            # Locked intentionally absent -> fake_fetch raises -> skipped
+        },
+    )
+    services, traversal = discover_services_recursive(root)
+    assert [s.name for s in services] == ["Open/A"]
+    assert traversal.visited == ["Open"]
+    assert [f for f, _ in traversal.skipped] == ["Locked"]
+
+
+@pytest.mark.unit
+def test_recursive_respects_max_depth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Should not fetch folders beyond max_depth."""
+    root = "https://x/rest/services"
+    _mock_endpoints(
+        monkeypatch,
+        {
+            root: {"services": [], "folders": ["L1"]},
+            f"{root}/L1": {
+                "services": [{"name": "L1/A", "type": "MapServer"}],
+                "folders": ["L2"],
+            },
+            f"{root}/L2": {
+                "services": [{"name": "L2/B", "type": "MapServer"}],
+                "folders": [],
+            },
+        },
+    )
+    services, _ = discover_services_recursive(root, max_depth=1)
+    # depth 1 fetches root (depth 0) + L1 (depth 1), not L2
+    assert [s.name for s in services] == ["L1/A"]
+
+
+@pytest.mark.unit
+def test_recursive_filters_by_service_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Should only return services matching the given service_types."""
+    root = "https://x/rest/services"
+    _mock_endpoints(
+        monkeypatch,
+        {
+            root: {
+                "services": [
+                    {"name": "Tool", "type": "GPServer"},
+                    {"name": "Map", "type": "MapServer"},
+                ],
+                "folders": [],
+            },
+        },
+    )
+    services, _ = discover_services_recursive(root, service_types=["FeatureServer", "MapServer"])
+    assert [s.name for s in services] == ["Map"]

@@ -21,6 +21,7 @@ Typical usage:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -29,6 +30,8 @@ import httpx
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+logger = logging.getLogger(__name__)
 
 
 class ArcGISDiscoveryError(Exception):
@@ -302,6 +305,84 @@ def discover_services(
         return services, folders
 
     return services
+
+
+@dataclass
+class FolderTraversal:
+    """Record of a recursive services-root traversal.
+
+    Attributes:
+        visited: Folder names successfully fetched.
+        skipped: (folder_name, reason) pairs for folders that errored.
+        service_count: Total services discovered (root plus all folders).
+    """
+
+    visited: list[str]
+    skipped: list[tuple[str, str]]
+    service_count: int
+
+
+def _build_service_list(
+    data: dict[str, Any],
+    service_types: Sequence[str] | None,
+) -> list[ServiceInfo]:
+    """Build a filtered ServiceInfo list from a services-root JSON payload."""
+    services: list[ServiceInfo] = []
+    for service_data in data.get("services", []):
+        service = ServiceInfo(name=service_data["name"], service_type=service_data["type"])
+        if service_types is None or service.service_type in service_types:
+            services.append(service)
+    return services
+
+
+def discover_services_recursive(
+    url: str,
+    *,
+    service_types: Sequence[str] | None = None,
+    token: str | None = None,
+    timeout: float = 60.0,
+    max_depth: int = 2,
+) -> tuple[list[ServiceInfo], FolderTraversal]:
+    """Discover services from a services root, recursing into folders.
+
+    ArcGIS returns service names already qualified by folder (e.g.
+    "NationalDatasets/Property"), so ServiceInfo.get_url(root) stays correct.
+    Folders that error (secured, non-200, embedded error) are recorded and
+    skipped, never raised. max_depth guards against pathological nesting;
+    standard ArcGIS folders are single-level.
+
+    Returns:
+        (services, traversal) where traversal records visited/skipped folders.
+    """
+    root_base = url.split("?")[0].rstrip("/")
+    root_data = _fetch_json(root_base, timeout=timeout, token=token)
+
+    services = _build_service_list(root_data, service_types)
+    visited: list[str] = []
+    skipped: list[tuple[str, str]] = []
+
+    # Queue of (folder_name, depth). Folder names are paths relative to root.
+    queue: list[tuple[str, int]] = [(f, 1) for f in root_data.get("folders", [])]
+    while queue:
+        folder, depth = queue.pop(0)
+        if depth > max_depth:
+            continue
+        folder_url = f"{root_base}/{folder}"
+        try:
+            folder_data = _fetch_json(folder_url, timeout=timeout, token=token)
+        except ArcGISDiscoveryError as e:
+            skipped.append((folder, str(e)))
+            logger.warning("Skipping folder '%s': %s", folder, e)
+            continue
+        visited.append(folder)
+        services.extend(_build_service_list(folder_data, service_types))
+        for sub in folder_data.get("folders", []):
+            queue.append((sub, depth + 1))
+
+    traversal = FolderTraversal(
+        visited=visited, skipped=skipped, service_count=len(services)
+    )
+    return services, traversal
 
 
 def fetch_layer_details(
