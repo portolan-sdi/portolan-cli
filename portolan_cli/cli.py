@@ -7,6 +7,7 @@ All business logic lives in the library; the CLI handles user interaction.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -6110,7 +6111,7 @@ def _handle_list_services_mode(
             f"Folders traversed: {len(cov.folders_visited)}, skipped: {len(cov.folders_skipped)}"
         )
         for folder, reason in cov.folders_skipped:
-            click.echo(f"  ⚠ skipped {folder}: {reason}")
+            warn(f"Skipped folder {folder}: {reason}")
     elif result.folders:
         click.echo(f"Folders: {', '.join(result.folders)}")
 
@@ -6328,7 +6329,7 @@ def _output_extract_result(
             ],
         }
 
-        coverage = getattr(report, "folder_coverage", None)
+        coverage = report.folder_coverage
         if coverage is not None:
             data["folder_coverage"] = coverage.to_dict()
 
@@ -6390,7 +6391,7 @@ def _output_extract_result(
     info_output(f"Output: {output_dir}")
     info_output(f"Report: {output_dir}/.portolan/extraction-report.json")
 
-    coverage = getattr(report, "folder_coverage", None)
+    coverage = report.folder_coverage
     if coverage is not None:
         info_output(
             f"Folders traversed: {len(coverage.folders_visited)}, "
@@ -6651,8 +6652,6 @@ def extract_arcgis_cmd(
         raise SystemExit(1) from None
 
     # Resolve credentials and token (token > username/password > ARCGIS_TOKEN env).
-    import os
-
     from portolan_cli.extract.arcgis.auth import ArcGISCredentials, resolve_token
 
     creds = ArcGISCredentials(
