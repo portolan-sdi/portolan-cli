@@ -96,6 +96,15 @@ class ServiceDiscoveryResult:
     access_information: str | None = None
 
 
+def _append_query_param(url: str, key: str, value: str) -> str:
+    """Append a single query parameter to a URL."""
+    parsed = urlparse(url)
+    query_params = parse_qs(parsed.query)
+    query_params[key] = [value]
+    new_query = urlencode(query_params, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
+
+
 def _ensure_json_format(url: str) -> str:
     """Ensure URL has f=json parameter for ArcGIS REST API.
 
@@ -119,26 +128,37 @@ def _ensure_json_format(url: str) -> str:
     return urlunparse(new_parsed)
 
 
-def _fetch_json(url: str, timeout: float = 60.0) -> dict[str, Any]:
+def _fetch_json(url: str, timeout: float = 60.0, token: str | None = None) -> dict[str, Any]:
     """Fetch JSON from URL with standard error handling.
+
+    Appends f=json and, when provided, token=<token>. ArcGIS returns HTTP 200
+    with an embedded {"error": {...}} body for secured or invalid endpoints;
+    that case is raised as ArcGISDiscoveryError.
 
     Args:
         url: URL to fetch (will have f=json added if needed)
         timeout: Request timeout in seconds
+        token: Optional ArcGIS token appended as token=<token> query param
 
     Returns:
         Parsed JSON response
 
     Raises:
-        ArcGISDiscoveryError: On HTTP or parsing errors
+        ArcGISDiscoveryError: On HTTP errors, parsing errors, or embedded ArcGIS errors
     """
     request_url = _ensure_json_format(url)
+    if token:
+        request_url = _append_query_param(request_url, "token", token)
 
     try:
         with httpx.Client(timeout=timeout) as client:
             response = client.get(request_url)
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+            if response.status_code >= 400:
+                msg = f"Failed to fetch from {url}: HTTP {response.status_code}"
+                raise ArcGISDiscoveryError(msg)
+            data = cast("dict[str, Any]", response.json())
+    except ArcGISDiscoveryError:
+        raise
     except httpx.HTTPStatusError as e:
         msg = f"Failed to fetch from {url}: HTTP {e.response.status_code}"
         raise ArcGISDiscoveryError(msg) from e
@@ -148,6 +168,14 @@ def _fetch_json(url: str, timeout: float = 60.0) -> dict[str, Any]:
     except ValueError as e:
         msg = f"Invalid JSON response from {url}: {e}"
         raise ArcGISDiscoveryError(msg) from e
+
+    error = data.get("error")
+    if isinstance(error, dict):
+        code = error.get("code", "unknown")
+        message = error.get("message", "ArcGIS error")
+        raise ArcGISDiscoveryError(f"ArcGIS error from {url}: {code} {message}")
+
+    return data
 
 
 def discover_layers(

@@ -72,6 +72,7 @@ def _mock_httpx_response(data: dict[str, Any]) -> MagicMock:
     mock_response = MagicMock()
     mock_response.json.return_value = data
     mock_response.raise_for_status = MagicMock()
+    mock_response.status_code = 200
     return mock_response
 
 
@@ -195,6 +196,7 @@ class TestDiscoverLayers:
             mock_response = MagicMock()
             mock_response.json.side_effect = ValueError("Invalid JSON")
             mock_response.raise_for_status = MagicMock()
+            mock_response.status_code = 200
             mock_client.return_value.__enter__.return_value.get.return_value = mock_response
 
             with pytest.raises(ArcGISDiscoveryError, match="Invalid JSON"):
@@ -259,7 +261,7 @@ class TestDiscoverServices:
 
     def test_handles_empty_services_list(self) -> None:
         """Should handle empty services list."""
-        empty_response = {"services": [], "folders": []}
+        empty_response: dict[str, Any] = {"services": [], "folders": []}
 
         with patch("portolan_cli.extract.arcgis.discovery.httpx.Client") as mock_client:
             mock_client.return_value.__enter__.return_value.get.return_value = _mock_httpx_response(
@@ -343,3 +345,37 @@ class TestServiceDiscoveryResult:
         assert len(result.layers) == 1
         assert result.service_description == "Test service"
         assert result.author == "Author"
+
+
+# =============================================================================
+# _fetch_json token and embedded-error tests
+# =============================================================================
+
+
+from portolan_cli.extract.arcgis.discovery import _fetch_json  # noqa: E402
+
+
+@pytest.mark.unit
+def test_fetch_json_raises_on_embedded_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Should raise ArcGISDiscoveryError when ArcGIS returns an embedded error body."""
+
+    def fake_get(self: object, url: str) -> httpx.Response:  # noqa: ANN001
+        return httpx.Response(200, json={"error": {"code": 499, "message": "Token Required"}})
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    with pytest.raises(ArcGISDiscoveryError, match="499"):
+        _fetch_json("https://x/rest/services/Secret")
+
+
+@pytest.mark.unit
+def test_fetch_json_appends_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Should append token=<token> to the request URL when token is provided."""
+    seen: dict[str, str] = {}
+
+    def fake_get(self: object, url: str) -> httpx.Response:  # noqa: ANN001
+        seen["url"] = url
+        return httpx.Response(200, json={"services": [], "folders": []})
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    _fetch_json("https://x/rest/services", token="ABC123")
+    assert "token=ABC123" in seen["url"]
