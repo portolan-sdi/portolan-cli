@@ -69,4 +69,6 @@ def test_resolve_token_raises_on_mint_error(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(httpx.Client, "get", fake_get)
     monkeypatch.setattr(httpx.Client, "post", fake_post)
     with pytest.raises(ArcGISAuthError, match="Invalid credentials"):
-        resolve_token(ArcGISCredentials(username="u", password="p"), "https://x/server/rest/services")
+        resolve_token(
+            ArcGISCredentials(username="u", password="p"), "https://x/server/rest/services"
+        )

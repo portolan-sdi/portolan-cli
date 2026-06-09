@@ -239,5 +239,7 @@ def test_filter_matches_folder_qualified_names() -> None:
     names = ["ecml/active_faults", "ecml/airports_v2", "water/rivers", "Top"]
     assert filter_services(names, include=["ecml/*"]) == ["ecml/active_faults", "ecml/airports_v2"]
     assert filter_services(names, exclude=["water/*"]) == [
-        "ecml/active_faults", "ecml/airports_v2", "Top",
+        "ecml/active_faults",
+        "ecml/airports_v2",
+        "Top",
     ]

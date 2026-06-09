@@ -77,9 +77,7 @@ def _token_services_url(base_url: str, timeout: float) -> str:
 
     token_url = data.get("authInfo", {}).get("tokenServicesUrl")
     if not token_url:
-        raise ArcGISAuthError(
-            f"Server does not advertise a token endpoint at {root}", url=root
-        )
+        raise ArcGISAuthError(f"Server does not advertise a token endpoint at {root}", url=root)
     return cast("str", token_url)
 
 
@@ -113,9 +111,7 @@ def resolve_token(
         with httpx.Client(timeout=timeout) as client:
             resp = client.post(token_url, data=payload)
     except (httpx.HTTPError, ValueError) as exc:
-        raise ArcGISAuthError(
-            f"Token request failed at {token_url}: {exc}", url=token_url
-        ) from exc
+        raise ArcGISAuthError(f"Token request failed at {token_url}: {exc}", url=token_url) from exc
 
     if resp.status_code >= 400:
         raise ArcGISAuthError(
@@ -125,9 +121,7 @@ def resolve_token(
     try:
         data = cast("dict[str, Any]", resp.json())
     except ValueError as exc:
-        raise ArcGISAuthError(
-            f"Token request failed at {token_url}: {exc}", url=token_url
-        ) from exc
+        raise ArcGISAuthError(f"Token request failed at {token_url}: {exc}", url=token_url) from exc
 
     error = data.get("error")
     if isinstance(error, dict):

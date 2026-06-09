@@ -500,7 +500,10 @@ def test_recursive_builds_full_path_for_nested_folders(monkeypatch: pytest.Monke
         {
             root: {"services": [], "folders": ["L1"]},
             f"{root}/L1": {"services": [{"name": "L1/A", "type": "MapServer"}], "folders": ["L2"]},
-            f"{root}/L1/L2": {"services": [{"name": "L1/L2/B", "type": "MapServer"}], "folders": []},
+            f"{root}/L1/L2": {
+                "services": [{"name": "L1/L2/B", "type": "MapServer"}],
+                "folders": [],
+            },
         },
     )
     services, traversal = discover_services_recursive(root, max_depth=2)

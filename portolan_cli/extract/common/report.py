@@ -223,9 +223,7 @@ class FolderCoverage:
         """Create FolderCoverage from dict."""
         return cls(
             folders_visited=data.get("folders_visited", []),
-            folders_skipped=[
-                (s["folder"], s["reason"]) for s in data.get("folders_skipped", [])
-            ],
+            folders_skipped=[(s["folder"], s["reason"]) for s in data.get("folders_skipped", [])],
             services_found=data.get("services_found", 0),
         )
 

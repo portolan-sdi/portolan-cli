@@ -370,9 +370,7 @@ def discover_services_recursive(
         for sub in folder_data.get("folders", []):
             queue.append((f"{folder}/{sub}", depth + 1))
 
-    traversal = FolderTraversal(
-        visited=visited, skipped=skipped, service_count=len(services)
-    )
+    traversal = FolderTraversal(visited=visited, skipped=skipped, service_count=len(services))
     return services, traversal
 
 

@@ -1155,13 +1155,12 @@ def test_list_services_recurses_and_reports_coverage(monkeypatch) -> None:  # ty
 @pytest.mark.unit
 def test_list_services_no_recurse_skips_coverage(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """recurse=False calls discover_services (not recursive), returns coverage=None."""
+
     def fake_discover(url, *, service_types=None, return_folders=False, timeout=60.0):  # type: ignore[no-untyped-def]  # noqa: ANN001
         assert return_folders is True
         return [ServiceInfo("Top", "MapServer")], ["SomeFolder"]
 
-    monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.orchestrator.discover_services", fake_discover
-    )
+    monkeypatch.setattr("portolan_cli.extract.arcgis.orchestrator.discover_services", fake_discover)
     result = list_services("https://x/rest/services", recurse=False)
     assert [s.name for s in result.services] == ["Top"]
     assert result.coverage is None
@@ -1175,7 +1174,9 @@ def test_list_services_no_recurse_skips_coverage(monkeypatch) -> None:  # type: 
 
 @pytest.mark.unit
 def test_service_output_dir_nests_folders(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    assert _service_output_dir(tmp_path, "ecml/active_faults") == tmp_path / "ecml" / "active_faults"
+    assert (
+        _service_output_dir(tmp_path, "ecml/active_faults") == tmp_path / "ecml" / "active_faults"
+    )
     assert _service_output_dir(tmp_path, "Top") == tmp_path / "top"
     assert (
         _service_output_dir(tmp_path, "RDH_hazard/Flood Risk")
@@ -1237,9 +1238,7 @@ def test_discover_and_filter_no_recurse_uses_flat_discovery(monkeypatch) -> None
         assert return_folders is True
         return [ServiceInfo("Top", "MapServer")], ["SomeFolder"]
 
-    monkeypatch.setattr(
-        "portolan_cli.extract.arcgis.orchestrator.discover_services", fake_flat
-    )
+    monkeypatch.setattr("portolan_cli.extract.arcgis.orchestrator.discover_services", fake_flat)
     services, coverage = _discover_and_filter_services(
         "https://x/rest/services", None, None, 60.0, recurse=False
     )
@@ -1257,7 +1256,9 @@ def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_
     """Token must be forwarded to gpio.extract_arcgis when the param is supported."""
     captured: dict[str, object] = {}
 
-    def fake_extract_arcgis(url: str, max_workers: int | None = None, token: str | None = None) -> object:  # noqa: ANN001
+    def fake_extract_arcgis(
+        url: str, max_workers: int | None = None, token: str | None = None
+    ) -> object:  # noqa: ANN001
         captured["token"] = token
 
         class _T:
