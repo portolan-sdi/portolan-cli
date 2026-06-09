@@ -1036,7 +1036,6 @@ class TestArcGISCollectionMetadataSeeding:
             mock_fetch.assert_not_called()
 
     def test_seed_collection_metadata_arcgis_nested_output_path(self, tmp_path: Path) -> None:
-
         """Collection seeding handles nested output paths correctly."""
         from portolan_cli.extract.arcgis.orchestrator import _seed_collection_metadata_arcgis
         from portolan_cli.extract.common.report import (
@@ -1117,7 +1116,10 @@ def test_list_services_recurses_and_reports_coverage(monkeypatch) -> None:  # ty
     from portolan_cli.extract.arcgis.discovery import FolderTraversal, ServiceInfo
     from portolan_cli.extract.arcgis.orchestrator import list_services
 
+    captured: dict[str, object] = {}
+
     def fake_recursive(url, *, service_types=None, token=None, timeout=60.0, max_depth=2):  # type: ignore[no-untyped-def]  # noqa: ANN001
+        captured["token"] = token
         services = [
             ServiceInfo("Top", "MapServer"),
             ServiceInfo("NationalDatasets/Property", "MapServer"),
@@ -1130,7 +1132,8 @@ def test_list_services_recurses_and_reports_coverage(monkeypatch) -> None:  # ty
     monkeypatch.setattr(
         "portolan_cli.extract.arcgis.orchestrator.discover_services_recursive", fake_recursive
     )
-    result = list_services("https://x/rest/services")
+    result = list_services("https://x/rest/services", token="TKN")
+    assert captured["token"] == "TKN"
     names = [s.name for s in result.services]
     assert "NationalDatasets/Property" in names
     assert result.coverage is not None
@@ -1138,3 +1141,22 @@ def test_list_services_recurses_and_reports_coverage(monkeypatch) -> None:  # ty
     assert result.coverage.folders_skipped == [("Locked", "499")]
     d = result.to_dict()
     assert d["folder_coverage"]["folders_skipped"] == [{"folder": "Locked", "reason": "499"}]
+
+
+@pytest.mark.unit
+def test_list_services_no_recurse_skips_coverage(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """recurse=False calls discover_services (not recursive), returns coverage=None."""
+    from portolan_cli.extract.arcgis.discovery import ServiceInfo
+    from portolan_cli.extract.arcgis.orchestrator import list_services
+
+    def fake_discover(url, *, service_types=None, return_folders=False, timeout=60.0):  # type: ignore[no-untyped-def]  # noqa: ANN001
+        assert return_folders is True
+        return [ServiceInfo("Top", "MapServer")], ["SomeFolder"]
+
+    monkeypatch.setattr(
+        "portolan_cli.extract.arcgis.orchestrator.discover_services", fake_discover
+    )
+    result = list_services("https://x/rest/services", recurse=False)
+    assert [s.name for s in result.services] == ["Top"]
+    assert result.coverage is None
+    assert "folder_coverage" not in result.to_dict()
