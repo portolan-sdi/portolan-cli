@@ -356,7 +356,14 @@ def _process_tile_data(
             geom = feature.get("geometry", {})
             if geom.get("type") and geom.get("coordinates"):
                 transformed = _transform_coords(geom["coordinates"], tile_bounds)
-                geometries.append({"type": geom["type"], "coordinates": transformed})
+                props = feature.get("properties", {})
+                geometries.append(
+                    {
+                        "type": geom["type"],
+                        "coordinates": transformed,
+                        "properties": props,
+                    }
+                )
                 # Extract actual geometry bounds (not tile bounds) for accurate basemap extent
                 _extract_coord_bounds(transformed, all_lons, all_lats)
 
@@ -464,24 +471,24 @@ def _add_multipolygon_patches(coords: list[Any], patches: list[Any], mpl_polygon
             patches.append(mpl_polygon_cls(polygon[0], closed=True))
 
 
-def _plot_points(ax: Any, coords: list[Any], geom_type: str) -> None:
+def _plot_points(ax: Any, coords: list[Any], geom_type: str, color: str = "#3388ff") -> None:
     """Plot point or multipoint geometries."""
     if geom_type == "Point":
-        ax.plot(coords[0], coords[1], "o", markersize=2, color="#3388ff")
+        ax.plot(coords[0], coords[1], "o", markersize=2, color=color)
     else:
         for pt in coords:
-            ax.plot(pt[0], pt[1], "o", markersize=2, color="#3388ff")
+            ax.plot(pt[0], pt[1], "o", markersize=2, color=color)
 
 
-def _plot_lines(ax: Any, coords: list[Any], geom_type: str) -> None:
+def _plot_lines(ax: Any, coords: list[Any], geom_type: str, color: str = "#3388ff") -> None:
     """Plot linestring or multilinestring geometries."""
     if geom_type == "LineString":
         xs, ys = [c[0] for c in coords], [c[1] for c in coords]
-        ax.plot(xs, ys, linewidth=1, color="#3388ff")
+        ax.plot(xs, ys, linewidth=1, color=color)
     else:
         for line in coords:
             xs, ys = [c[0] for c in line], [c[1] for c in line]
-            ax.plot(xs, ys, linewidth=1, color="#3388ff")
+            ax.plot(xs, ys, linewidth=1, color=color)
 
 
 def _render_geometries(
@@ -489,14 +496,16 @@ def _render_geometries(
     output_path: Path,
     config: ThumbnailConfig,
     bounds: tuple[float, float, float, float] | None = None,
+    style_path: Path | None = None,
 ) -> bool:
     """Render geometries to JPEG thumbnail with optional basemap.
 
     Args:
-        geometries: List of geometry dicts with 'type' and 'coordinates'.
+        geometries: List of geometry dicts with 'type', 'coordinates', and 'properties'.
         output_path: Where to write the JPEG.
         config: Thumbnail configuration.
         bounds: Geographic bounds (minx, miny, maxx, maxy) for basemap.
+        style_path: Optional path to Mapbox GL style for categorical coloring.
 
     Returns:
         True if successful, False otherwise.
@@ -509,27 +518,64 @@ def _render_geometries(
         logger.debug("matplotlib not available")
         return False
 
+    # Load style if provided
+    style = None
+    if style_path:
+        from portolan_cli.thumbnail_style import load_thumbnail_style
+
+        style = load_thumbnail_style(style_path)
+
+    # Default colors
+    default_fill = "#3388ff"
+    default_edge = "#2266cc"
+    default_opacity = 0.6
+
+    if style:
+        default_fill = style.fill_color
+        default_edge = style.edge_color or default_edge
+        default_opacity = style.fill_opacity
+
     fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
     ax.set_aspect("equal")
     ax.axis("off")
 
     # Plot data FIRST (establishes axes extent for basemap zoom calculation)
     patches: list[Any] = []
+    patch_colors: list[str] = []
+
     for geom in geometries:
         geom_type, coords = geom["type"], geom["coordinates"]
+        props = geom.get("properties", {})
+
+        # Resolve color for this geometry
+        if style and style.color_map and style.color_field:
+            from portolan_cli.thumbnail_style import resolve_color_for_properties
+
+            fill_color = resolve_color_for_properties(props, style)
+        else:
+            fill_color = default_fill
+
         if geom_type == "Polygon":
+            n_before = len(patches)
             _add_polygon_patches(coords, patches, MplPolygon)
+            patch_colors.extend([fill_color] * (len(patches) - n_before))
         elif geom_type == "MultiPolygon":
+            n_before = len(patches)
             _add_multipolygon_patches(coords, patches, MplPolygon)
+            patch_colors.extend([fill_color] * (len(patches) - n_before))
         elif geom_type in ("Point", "MultiPoint"):
-            _plot_points(ax, coords, geom_type)
+            _plot_points(ax, coords, geom_type, color=fill_color)
         elif geom_type in ("LineString", "MultiLineString"):
-            _plot_lines(ax, coords, geom_type)
+            _plot_lines(ax, coords, geom_type, color=fill_color)
 
     if patches:
-        pc = PatchCollection(
-            patches, facecolor="#3388ff", edgecolor="#2266cc", alpha=0.6, linewidth=0.5
-        )
+        # Apply individual colors to patches
+        for patch, color in zip(patches, patch_colors, strict=True):
+            patch.set_facecolor(color)
+            patch.set_edgecolor(default_edge)
+            patch.set_alpha(default_opacity)
+            patch.set_linewidth(0.5)
+        pc = PatchCollection(patches, match_original=True)
         ax.add_collection(pc)
 
     # Set axis limits from bounds (required before adding basemap)
@@ -679,6 +725,7 @@ def _render_geoparquet(
     gpq_path: Path,
     output_path: Path,
     config: ThumbnailConfig,
+    style_path: Path | None = None,
 ) -> bool:
     """Render GeoParquet to JPEG thumbnail.
 
@@ -690,6 +737,7 @@ def _render_geoparquet(
         gpq_path: Path to GeoParquet file.
         output_path: Where to write the JPEG.
         config: Thumbnail configuration.
+        style_path: Optional path to Mapbox GL style for categorical coloring.
 
     Returns:
         True if successful, False otherwise.
@@ -706,6 +754,23 @@ def _render_geoparquet(
         if gdf is None or full_bounds is None:
             return False
 
+        # Load style if provided
+        fill_color: str | Any = "#3388ff"  # Any allows pd.Series
+        edge_color = "#2266cc"
+        fill_opacity = 0.6
+
+        if style_path:
+            from portolan_cli.thumbnail_style import (
+                load_thumbnail_style,
+                resolve_colors_for_gdf,
+            )
+
+            style = load_thumbnail_style(style_path)
+            if style:
+                fill_color = resolve_colors_for_gdf(gdf, style)
+                edge_color = style.edge_color or edge_color
+                fill_opacity = style.fill_opacity
+
         fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
         ax.set_aspect("equal")
         ax.axis("off")
@@ -713,9 +778,9 @@ def _render_geoparquet(
         # Plot data first (establishes axes extent for basemap zoom calculation)
         gdf.plot(
             ax=ax,
-            facecolor="#3388ff",
-            edgecolor="#2266cc",
-            alpha=0.6,
+            facecolor=fill_color,
+            edgecolor=edge_color,
+            alpha=fill_opacity,
             linewidth=0.5,
         )
 
@@ -810,6 +875,7 @@ def add_basemap(
 def generate_thumbnail_from_pmtiles(
     pmtiles_path: Path,
     config: ThumbnailConfig,
+    style_path: Path | None = None,
 ) -> Path | None:
     """Generate JPEG thumbnail from PMTiles file.
 
@@ -818,6 +884,7 @@ def generate_thumbnail_from_pmtiles(
     Args:
         pmtiles_path: Path to source PMTiles file.
         config: Thumbnail configuration.
+        style_path: Optional path to Mapbox GL style for categorical coloring.
 
     Returns:
         Path to generated thumbnail, or None if generation failed.
@@ -830,7 +897,7 @@ def generate_thumbnail_from_pmtiles(
             logger.debug("No geometries found in PMTiles: %s", pmtiles_path)
             return None
 
-        if _render_geometries(geometries, thumb_path, config, bounds=bounds):
+        if _render_geometries(geometries, thumb_path, config, bounds=bounds, style_path=style_path):
             logger.debug("Generated PMTiles thumbnail: %s", thumb_path)
             return thumb_path
         return None
@@ -842,6 +909,7 @@ def generate_thumbnail_from_pmtiles(
 def generate_thumbnail_from_geoparquet(
     gpq_path: Path,
     config: ThumbnailConfig,
+    style_path: Path | None = None,
 ) -> Path | None:
     """Generate JPEG thumbnail from GeoParquet file.
 
@@ -850,6 +918,7 @@ def generate_thumbnail_from_geoparquet(
     Args:
         gpq_path: Path to source GeoParquet file.
         config: Thumbnail configuration.
+        style_path: Optional path to Mapbox GL style for categorical coloring.
 
     Returns:
         Path to generated thumbnail, or None if generation failed.
@@ -861,7 +930,7 @@ def generate_thumbnail_from_geoparquet(
         logger.debug("No bounds found in GeoParquet: %s", gpq_path)
         return None
 
-    if _render_geoparquet(gpq_path, thumb_path, config):
+    if _render_geoparquet(gpq_path, thumb_path, config, style_path=style_path):
         logger.debug("Generated GeoParquet thumbnail: %s", thumb_path)
         return thumb_path
     return None
@@ -872,6 +941,7 @@ def generate_vector_thumbnail(
     pmtiles_path: Path | None,
     geoparquet_path: Path | None,
     config: ThumbnailConfig,
+    style_path: Path | None = None,
 ) -> Path | None:
     """Generate thumbnail for vector data, preferring PMTiles.
 
@@ -882,6 +952,7 @@ def generate_vector_thumbnail(
         pmtiles_path: Path to PMTiles file (optional).
         geoparquet_path: Path to GeoParquet file (optional, used as fallback).
         config: Thumbnail configuration.
+        style_path: Optional path to Mapbox GL style for categorical coloring.
 
     Returns:
         Path to generated thumbnail, or None if generation failed or disabled.
@@ -896,13 +967,13 @@ def generate_vector_thumbnail(
 
     # Try PMTiles first
     if pmtiles_path is not None:
-        result = generate_thumbnail_from_pmtiles(pmtiles_path, config)
+        result = generate_thumbnail_from_pmtiles(pmtiles_path, config, style_path)
         if result is not None:
             return result
         logger.debug("PMTiles thumbnail failed, falling back to GeoParquet")
 
     # Fall back to GeoParquet
     if geoparquet_path is not None:
-        return generate_thumbnail_from_geoparquet(geoparquet_path, config)
+        return generate_thumbnail_from_geoparquet(geoparquet_path, config, style_path)
 
     return None

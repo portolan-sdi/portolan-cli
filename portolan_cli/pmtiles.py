@@ -210,6 +210,31 @@ def _should_generate(parquet_path: Path, pmtiles_path: Path, force: bool) -> boo
     return parquet_path.stat().st_mtime > pmtiles_path.stat().st_mtime
 
 
+def _discover_style_for_thumbnail(collection_dir: Path) -> Path | None:
+    """Find a style file for thumbnail generation.
+
+    Searches for styles/default.json or styles/source.json in the collection
+    directory, preferring default.json (the extracted style, per Issue #497).
+
+    Args:
+        collection_dir: Path to collection directory.
+
+    Returns:
+        Path to style file if found, None otherwise.
+    """
+    styles_dir = collection_dir / "styles"
+    if not styles_dir.exists():
+        return None
+
+    # Prefer default.json (extracted style), then source.json
+    for name in ("default.json", "source.json"):
+        style_path = styles_dir / name
+        if style_path.exists():
+            return style_path
+
+    return None
+
+
 def generate_pmtiles(
     parquet_path: Path,
     pmtiles_path: Path,
@@ -650,10 +675,13 @@ def generate_pmtiles_for_collection(
                     get_thumbnail_config(catalog_root) if catalog_root else ThumbnailConfig()
                 )
                 if thumb_config.enabled:
+                    # Discover style for thumbnail (Issue #495)
+                    style_path = _discover_style_for_thumbnail(collection_path)
                     thumb_path = generate_vector_thumbnail(
                         pmtiles_path=pmtiles_path,
                         geoparquet_path=parquet_path,  # fallback
                         config=thumb_config,
+                        style_path=style_path,
                     )
                     # Register thumbnail as asset so it's tracked in STAC
                     if thumb_path:

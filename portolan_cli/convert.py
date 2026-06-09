@@ -296,6 +296,31 @@ def generate_cog_thumbnail(
     return thumb_path
 
 
+def _discover_style_for_thumbnail(collection_dir: Path) -> Path | None:
+    """Find a style file for thumbnail generation.
+
+    Searches for styles/default.json or styles/source.json in the collection
+    directory, preferring default.json (the extracted style, per Issue #497).
+
+    Args:
+        collection_dir: Path to collection directory.
+
+    Returns:
+        Path to style file if found, None otherwise.
+    """
+    styles_dir = collection_dir / "styles"
+    if not styles_dir.exists():
+        return None
+
+    # Prefer default.json (extracted style), then source.json
+    for name in ("default.json", "source.json"):
+        style_path = styles_dir / name
+        if style_path.exists():
+            return style_path
+
+    return None
+
+
 def convert_file(
     source: Path,
     output_dir: Path | None = None,
@@ -394,10 +419,13 @@ def convert_file(
                         get_thumbnail_config(catalog_path) if catalog_path else ThumbnailConfig()
                     )
                     if thumb_config.enabled and isinstance(output_path, Path):
+                        # Discover style for thumbnail (Issue #495)
+                        style_path = _discover_style_for_thumbnail(output_path.parent)
                         generate_vector_thumbnail(
                             pmtiles_path=None,  # PMTiles generated separately if enabled
                             geoparquet_path=output_path,
                             config=thumb_config,
+                            style_path=style_path,
                         )
                 except Exception as e:
                     logger.warning("Thumbnail generation failed for %s: %s", source.name, e)
