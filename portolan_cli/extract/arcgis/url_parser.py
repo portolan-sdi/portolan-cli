@@ -1,7 +1,7 @@
 """ArcGIS REST URL parser.
 
 Parses ArcGIS REST URLs to determine:
-- URL type (FeatureServer, MapServer, ImageServer, or services root)
+- URL type (FeatureServer, MapServer, ImageServer, services root, or services folder)
 - Service name (for default output directory naming)
 - Layer ID (if a specific layer is targeted)
 
@@ -9,6 +9,7 @@ Per design doc (context/shared/plans/extract-arcgis-design.md):
 - `*/FeatureServer` or `*/MapServer` -> single service extraction (vector)
 - `*/ImageServer` -> single service extraction (raster)
 - `*/rest/services` -> multi-service discovery and extraction
+- `*/rest/services/<folder>` -> folder-scoped multi-service discovery
 """
 
 from __future__ import annotations
@@ -117,10 +118,10 @@ def parse_arcgis_url(url: str) -> ParsedArcGISURL:
     """Parse an ArcGIS REST URL to determine type and extract metadata.
 
     Args:
-        url: ArcGIS REST URL (FeatureServer, MapServer, ImageServer, or services root)
+        url: ArcGIS REST URL (FeatureServer, MapServer, ImageServer, services root, or services folder)
 
     Returns:
-        ParsedArcGISURL with type, base URL, service name, and optional layer ID
+        ParsedArcGISURL with type, base URL, service name, optional layer ID, and optional folder
 
     Raises:
         InvalidArcGISURLError: If URL is not a recognized ArcGIS REST endpoint

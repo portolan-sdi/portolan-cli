@@ -4,6 +4,7 @@ The URL parser detects the type of ArcGIS REST endpoint:
 - FeatureServer: `*/FeatureServer` or `*/FeatureServer/0` (layer endpoint)
 - MapServer: `*/MapServer` or `*/MapServer/0`
 - Services Root: `*/rest/services` (lists all available services)
+- Services Folder: `*/rest/services/<folder>` (folder-scoped service discovery)
 
 It also extracts the service name for default output directory naming.
 """
@@ -314,9 +315,9 @@ def test_parse_folder_url() -> None:
 
 @pytest.mark.unit
 def test_parse_folder_url_unicode() -> None:
-    r = parse_arcgis_url("https://x/server/rest/services/ecml")
+    r = parse_arcgis_url("https://x/server/rest/services/Données")
     assert r.url_type == ArcGISURLType.SERVICES_FOLDER
-    assert r.folder == "ecml"
+    assert r.folder == "Données"
 
 
 @pytest.mark.unit
