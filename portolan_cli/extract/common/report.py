@@ -197,6 +197,40 @@ class MetadataExtracted:
 
 
 @dataclass
+class FolderCoverage:
+    """Coverage of a recursive services-root traversal.
+
+    Attributes:
+        folders_visited: Folder names successfully traversed.
+        folders_skipped: (folder, reason) pairs for folders that errored.
+        services_found: Total services discovered.
+    """
+
+    folders_visited: list[str]
+    folders_skipped: list[tuple[str, str]]
+    services_found: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dict."""
+        return {
+            "folders_visited": self.folders_visited,
+            "folders_skipped": [{"folder": f, "reason": r} for f, r in self.folders_skipped],
+            "services_found": self.services_found,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FolderCoverage:
+        """Create FolderCoverage from dict."""
+        return cls(
+            folders_visited=data.get("folders_visited", []),
+            folders_skipped=[
+                (s["folder"], s["reason"]) for s in data.get("folders_skipped", [])
+            ],
+            services_found=data.get("services_found", 0),
+        )
+
+
+@dataclass
 class ExtractionReport:
     """Complete extraction report for a service.
 
@@ -211,6 +245,7 @@ class ExtractionReport:
         metadata_extracted: Harvested service metadata.
         layers: Results for each layer extraction attempt.
         summary: Aggregate statistics.
+        folder_coverage: Optional coverage data from recursive folder traversal.
     """
 
     extraction_date: str
@@ -220,10 +255,11 @@ class ExtractionReport:
     metadata_extracted: MetadataExtracted
     layers: list[LayerResult]
     summary: ExtractionSummary
+    folder_coverage: FolderCoverage | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
-        return {
+        result: dict[str, Any] = {
             "extraction_date": self.extraction_date,
             "source_url": self.source_url,
             "portolan_version": self.portolan_version,
@@ -232,6 +268,9 @@ class ExtractionReport:
             "layers": [layer.to_dict() for layer in self.layers],
             "summary": self.summary.to_dict(),
         }
+        if self.folder_coverage is not None:
+            result["folder_coverage"] = self.folder_coverage.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ExtractionReport:
@@ -244,6 +283,11 @@ class ExtractionReport:
             metadata_extracted=MetadataExtracted.from_dict(data["metadata_extracted"]),
             layers=[LayerResult.from_dict(layer) for layer in data["layers"]],
             summary=ExtractionSummary.from_dict(data["summary"]),
+            folder_coverage=(
+                FolderCoverage.from_dict(data["folder_coverage"])
+                if data.get("folder_coverage")
+                else None
+            ),
         )
 
 
