@@ -111,6 +111,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0051](context/shared/adr/0051-self-contained-catalog-type.md) | SELF_CONTAINED catalog type (relative links, portable) |
 | [0052](context/shared/adr/0052-llms-txt-requirement.md) | Require llms.txt for AI/LLM integration at catalog and collection levels |
 | [0053](context/shared/adr/0053-mandatory-human-readable-titles.md) | Mandatory human-readable titles/descriptions; auto-humanize slugs; title on child/item links |
+| [0054](context/shared/adr/0054-arcgis-folder-recursion-and-structure.md) | ArcGIS folder recursion (default-on), folder URLs, token auth pass-through, nested-folder subcatalogs |
 
 ## Common Commands
 
