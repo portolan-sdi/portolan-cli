@@ -367,7 +367,9 @@ def discover_services_recursive(
         visited.append(folder)
         services.extend(_build_service_list(folder_data, service_types))
         for sub in folder_data.get("folders", []):
-            queue.append((sub, depth + 1))
+            # Enqueue the full folder path so nested fetch URLs stay correct
+            # (<root>/<parent>/<sub>, not <root>/<sub>).
+            queue.append((f"{folder}/{sub}", depth + 1))
 
     traversal = FolderTraversal(
         visited=visited, skipped=skipped, service_count=len(services)

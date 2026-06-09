@@ -1124,10 +1124,17 @@ class TestArcGISCollectionMetadataSeeding:
 
 
 @pytest.mark.unit
-def test_list_services_recurses_and_reports_coverage(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_list_services_recurses_and_reports_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_recursive(url, *, service_types=None, token=None, timeout=60.0, max_depth=2):  # type: ignore[no-untyped-def]  # noqa: ANN001
+    def fake_recursive(
+        url: str,
+        *,
+        service_types: list[str] | None = None,
+        token: str | None = None,
+        timeout: float = 60.0,
+        max_depth: int = 2,
+    ) -> tuple[list[ServiceInfo], FolderTraversal]:
         captured["token"] = token
         services = [
             ServiceInfo("Top", "MapServer"),
@@ -1149,14 +1156,23 @@ def test_list_services_recurses_and_reports_coverage(monkeypatch) -> None:  # ty
     assert result.coverage.folders_visited == ["NationalDatasets"]
     assert result.coverage.folders_skipped == [("Locked", "499")]
     d = result.to_dict()
-    assert d["folder_coverage"]["folders_skipped"] == [{"folder": "Locked", "reason": "499"}]
+    folder_coverage = d["folder_coverage"]
+    assert isinstance(folder_coverage, dict)
+    assert folder_coverage["folders_skipped"] == [{"folder": "Locked", "reason": "499"}]
 
 
 @pytest.mark.unit
-def test_list_services_no_recurse_skips_coverage(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_list_services_no_recurse_skips_coverage(monkeypatch: pytest.MonkeyPatch) -> None:
     """recurse=False calls discover_services (not recursive), returns coverage=None."""
 
-    def fake_discover(url, *, service_types=None, return_folders=False, timeout=60.0):  # type: ignore[no-untyped-def]  # noqa: ANN001
+    def fake_discover(
+        url: str,
+        *,
+        service_types: list[str] | None = None,
+        return_folders: bool = False,
+        timeout: float = 60.0,
+        token: str | None = None,
+    ) -> tuple[list[ServiceInfo], list[str]]:
         assert return_folders is True
         return [ServiceInfo("Top", "MapServer")], ["SomeFolder"]
 
@@ -1173,7 +1189,7 @@ def test_list_services_no_recurse_skips_coverage(monkeypatch) -> None:  # type: 
 
 
 @pytest.mark.unit
-def test_service_output_dir_nests_folders(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_service_output_dir_nests_folders(tmp_path: Path) -> None:
     assert (
         _service_output_dir(tmp_path, "ecml/active_faults") == tmp_path / "ecml" / "active_faults"
     )
@@ -1190,8 +1206,15 @@ def test_service_output_dir_nests_folders(tmp_path) -> None:  # type: ignore[no-
 
 
 @pytest.mark.unit
-def test_discover_and_filter_scopes_to_folder(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    def fake_recursive(url, *, service_types=None, token=None, timeout=60.0, max_depth=2):  # type: ignore[no-untyped-def]  # noqa: ANN001
+def test_discover_and_filter_scopes_to_folder(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_recursive(
+        url: str,
+        *,
+        service_types: list[str] | None = None,
+        token: str | None = None,
+        timeout: float = 60.0,
+        max_depth: int = 2,
+    ) -> tuple[list[ServiceInfo], FolderTraversal]:
         services = [
             ServiceInfo("ecml/active_faults", "MapServer"),
             ServiceInfo("water/rivers", "MapServer"),
@@ -1209,8 +1232,17 @@ def test_discover_and_filter_scopes_to_folder(monkeypatch) -> None:  # type: ign
 
 
 @pytest.mark.unit
-def test_extract_routes_folder_url_and_attaches_coverage(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
-    def fake_recursive(url, *, service_types=None, token=None, timeout=60.0, max_depth=2):  # type: ignore[no-untyped-def]  # noqa: ANN001
+def test_extract_routes_folder_url_and_attaches_coverage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fake_recursive(
+        url: str,
+        *,
+        service_types: list[str] | None = None,
+        token: str | None = None,
+        timeout: float = 60.0,
+        max_depth: int = 2,
+    ) -> tuple[list[ServiceInfo], FolderTraversal]:
         return (
             [ServiceInfo("ecml/active_faults", "MapServer")],
             FolderTraversal(visited=["ecml"], skipped=[], service_count=1),
@@ -1233,17 +1265,30 @@ def test_extract_routes_folder_url_and_attaches_coverage(monkeypatch, tmp_path) 
 
 
 @pytest.mark.unit
-def test_discover_and_filter_no_recurse_uses_flat_discovery(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    def fake_flat(url, *, service_types=None, return_folders=False, timeout=60.0):  # noqa: ANN001
+def test_discover_and_filter_no_recurse_uses_flat_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_flat(
+        url: str,
+        *,
+        service_types: list[str] | None = None,
+        return_folders: bool = False,
+        timeout: float = 60.0,
+        token: str | None = None,
+    ) -> tuple[list[ServiceInfo], list[str]]:
         assert return_folders is True
+        captured["token"] = token
         return [ServiceInfo("Top", "MapServer")], ["SomeFolder"]
 
     monkeypatch.setattr("portolan_cli.extract.arcgis.orchestrator.discover_services", fake_flat)
     services, coverage = _discover_and_filter_services(
-        "https://x/rest/services", None, None, 60.0, recurse=False
+        "https://x/rest/services", None, None, 60.0, token="TKN", recurse=False
     )
     assert [s.name for s in services] == ["Top"]
     assert coverage is None
+    assert captured["token"] == "TKN"
 
 
 # =============================================================================
@@ -1258,7 +1303,7 @@ def test_extract_single_layer_passes_token(monkeypatch: pytest.MonkeyPatch, tmp_
 
     def fake_extract_arcgis(
         url: str, max_workers: int | None = None, token: str | None = None
-    ) -> object:  # noqa: ANN001
+    ) -> object:
         captured["token"] = token
 
         class _T:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from portolan_cli.extract.common.report import (
@@ -29,7 +31,7 @@ def test_folder_coverage_roundtrip() -> None:
 
 
 @pytest.mark.unit
-def test_extraction_report_folder_coverage_save_load_roundtrip(tmp_path) -> None:  # noqa: ANN001
+def test_extraction_report_folder_coverage_save_load_roundtrip(tmp_path: Path) -> None:
     """ExtractionReport with folder_coverage serialises and deserialises exactly."""
     coverage = FolderCoverage(
         folders_visited=["NationalDatasets", "Boundaries"],

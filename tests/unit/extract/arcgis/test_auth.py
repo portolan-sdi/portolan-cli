@@ -72,3 +72,61 @@ def test_resolve_token_raises_on_mint_error(monkeypatch: pytest.MonkeyPatch) -> 
         resolve_token(
             ArcGISCredentials(username="u", password="p"), "https://x/server/rest/services"
         )
+
+
+@pytest.mark.unit
+def test_resolve_token_handles_uppercase_rest_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A /REST/ URL must derive the same server root as /rest/ for token minting."""
+    seen: dict[str, str] = {}
+
+    def fake_get(self: object, url: str) -> httpx.Response:
+        seen["info_url"] = url
+        return httpx.Response(
+            200,
+            json={"authInfo": {"tokenServicesUrl": "https://x/generateToken"}},
+        )
+
+    def fake_post(self: object, url: str, data: dict[str, str] | None = None) -> httpx.Response:
+        assert data is not None
+        seen["referer"] = data["referer"]
+        return httpx.Response(200, json={"token": "MINTED"})
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    monkeypatch.setattr(httpx.Client, "post", fake_post)
+    creds = ArcGISCredentials(username="u", password="p")
+    assert resolve_token(creds, "https://x/server/REST/services") == "MINTED"
+    assert seen["info_url"].startswith("https://x/server/rest/info")
+    assert seen["referer"] == "https://x/server"
+
+
+@pytest.mark.unit
+def test_resolve_token_raises_on_non_object_info_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-object JSON body from /rest/info must raise ArcGISAuthError, not AttributeError."""
+
+    def fake_get(self: object, url: str) -> httpx.Response:
+        return httpx.Response(200, json=["not", "an", "object"])
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    creds = ArcGISCredentials(username="u", password="p")
+    with pytest.raises(ArcGISAuthError):
+        resolve_token(creds, "https://x/server/rest/services")
+
+
+@pytest.mark.unit
+def test_resolve_token_raises_on_non_object_token_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-object JSON body from generateToken must raise ArcGISAuthError."""
+
+    def fake_get(self: object, url: str) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"authInfo": {"tokenServicesUrl": "https://x/generateToken"}},
+        )
+
+    def fake_post(self: object, url: str, data: dict[str, str] | None = None) -> httpx.Response:
+        return httpx.Response(200, json="just a string")
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    monkeypatch.setattr(httpx.Client, "post", fake_post)
+    creds = ArcGISCredentials(username="u", password="p")
+    with pytest.raises(ArcGISAuthError):
+        resolve_token(creds, "https://x/server/rest/services")

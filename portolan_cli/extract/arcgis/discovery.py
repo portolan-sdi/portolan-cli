@@ -247,6 +247,7 @@ def discover_services(
     service_types: Sequence[str] | None = ...,
     return_folders: Literal[False] = ...,
     timeout: float = ...,
+    token: str | None = ...,
 ) -> list[ServiceInfo]: ...
 
 
@@ -257,6 +258,7 @@ def discover_services(
     service_types: Sequence[str] | None = ...,
     return_folders: Literal[True],
     timeout: float = ...,
+    token: str | None = ...,
 ) -> tuple[list[ServiceInfo], list[str]]: ...
 
 
@@ -266,6 +268,7 @@ def discover_services(
     service_types: Sequence[str] | None = None,
     return_folders: bool = False,
     timeout: float = 60.0,
+    token: str | None = None,
 ) -> list[ServiceInfo] | tuple[list[ServiceInfo], list[str]]:
     """Discover services from an ArcGIS REST services root.
 
@@ -278,6 +281,7 @@ def discover_services(
             (e.g., ["FeatureServer", "MapServer"])
         return_folders: If True, also return list of folder names
         timeout: Request timeout in seconds
+        token: Optional ArcGIS token for authenticated discovery
 
     Returns:
         List of ServiceInfo objects (or tuple with folders if return_folders=True)
@@ -285,7 +289,7 @@ def discover_services(
     Raises:
         ArcGISDiscoveryError: If the request fails or response is invalid
     """
-    data = _fetch_json(url, timeout=timeout)
+    data = _fetch_json(url, timeout=timeout, token=token)
 
     services = _build_service_list(data, service_types)
 

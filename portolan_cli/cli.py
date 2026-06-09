@@ -6469,7 +6469,8 @@ def extract() -> None:
 @click.option(
     "--password",
     default=None,
-    help="ArcGIS password (used with --username).",
+    help="ArcGIS password (used with --username, or set ARCGIS_PASSWORD). "
+    "Prompted interactively when omitted.",
 )
 @click.option(
     "--no-recurse",
@@ -6651,13 +6652,19 @@ def extract_arcgis_cmd(
         _output_extract_error(use_json, "InvalidURLError", str(e), url)
         raise SystemExit(1) from None
 
-    # Resolve credentials and token (token > username/password > ARCGIS_TOKEN env).
+    # Resolve credentials and token (token > username/password > env).
+    # Never require the password on argv (it leaks via shell history and process
+    # listings). Take it from ARCGIS_PASSWORD, or prompt when running interactively.
     from portolan_cli.extract.arcgis.auth import ArcGISCredentials, resolve_token
+
+    resolved_password = password or os.environ.get("ARCGIS_PASSWORD")
+    if username and not resolved_password and not auto and not use_json:
+        resolved_password = click.prompt("ArcGIS password", hide_input=True)
 
     creds = ArcGISCredentials(
         token=token or os.environ.get("ARCGIS_TOKEN"),
         username=username,
-        password=password,
+        password=resolved_password,
     )
     try:
         resolved_token = resolve_token(creds, url, timeout=timeout) if not creds.is_empty else None

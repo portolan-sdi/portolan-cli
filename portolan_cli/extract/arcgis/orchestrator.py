@@ -163,6 +163,7 @@ def list_services(
             service_types=list(service_types) if service_types else None,
             return_folders=True,
             timeout=timeout,
+            token=token,
         )
         coverage = None
 
@@ -883,6 +884,7 @@ def _discover_and_filter_services(
             service_types=["FeatureServer", "MapServer"],
             return_folders=True,
             timeout=timeout,
+            token=token,
         )
         coverage = None
 

@@ -381,6 +381,20 @@ def test_fetch_json_raises_on_http_error_status(monkeypatch: pytest.MonkeyPatch)
         _fetch_json("https://x/rest/services/Missing")
 
 
+@pytest.mark.unit
+def test_discover_services_forwards_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Should forward token to the request so --no-recurse discovery stays authenticated."""
+    seen: dict[str, str] = {}
+
+    def fake_get(self: object, url: str) -> httpx.Response:
+        seen["url"] = url
+        return httpx.Response(200, json={"services": [], "folders": []})
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    discover_services("https://x/rest/services", token="TKN789")
+    assert "token=TKN789" in seen["url"]
+
+
 # =============================================================================
 # discover_services_recursive tests
 # =============================================================================
