@@ -396,23 +396,130 @@ def _build_categorical_fill(
     field: str,
     color_cases: list[tuple[Any, str]],
     opacity_cases: list[tuple[Any, float]],
+    stroke_color_cases: list[tuple[Any, str | None]],
+    stroke_width_cases: list[tuple[Any, float | None]],
+    source_layer: str,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    """Build categorical fill layer with per-rule property support.
+
+    Builds match expressions for fill color, opacity, stroke color, and stroke width
+    when values vary across rules. Uses uniform values when all rules share the same
+    value to keep the style simpler.
+    """
+    color_expr = make_match_expression(field, color_cases, default="#cccccc")
+
+    # Opacity: use expression if values vary, else uniform
+    unique_opacities = {op for _, op in opacity_cases}
+    opacity_value: float | list[Any]
+    if len(unique_opacities) == 1:
+        opacity_value = next(iter(unique_opacities))
+    else:
+        opacity_value = make_match_expression(field, opacity_cases, default=1.0)
+
+    # Stroke color: filter out None values, build expression if non-empty and varying
+    stroke_color_defined = [(v, c) for v, c in stroke_color_cases if c is not None]
+    stroke_color_value: str | list[Any] | None = None
+    if stroke_color_defined:
+        unique_stroke_colors = {c for _, c in stroke_color_defined}
+        if len(unique_stroke_colors) == 1:
+            stroke_color_value = next(iter(unique_stroke_colors))
+        elif len(stroke_color_defined) < len(stroke_color_cases):
+            warnings.append("Some rules missing stroke-color; using default for unspecified")
+            stroke_color_value = make_match_expression(
+                field, stroke_color_defined, default="#000000"
+            )
+        else:
+            stroke_color_value = make_match_expression(
+                field, stroke_color_defined, default="#000000"
+            )
+
+    # Stroke width: filter out None values, build expression if non-empty and varying
+    stroke_width_defined = [(v, w) for v, w in stroke_width_cases if w is not None]
+    stroke_width_value: float | list[Any] | None = None
+    if stroke_width_defined:
+        unique_stroke_widths = {w for _, w in stroke_width_defined}
+        if len(unique_stroke_widths) == 1:
+            stroke_width_value = next(iter(unique_stroke_widths))
+        elif len(stroke_width_defined) < len(stroke_width_cases):
+            warnings.append("Some rules missing stroke-width; using default for unspecified")
+            stroke_width_value = make_match_expression(field, stroke_width_defined, default=1.0)
+        else:
+            stroke_width_value = make_match_expression(field, stroke_width_defined, default=1.0)
+
+    # Build base layer with computed expressions
+    layer = make_fill_layer(
+        "categorical-fill",
+        source_layer,
+        color_expr,
+        opacity_value,
+        stroke_color_value,
+    )
+
+    # Add stroke-width if we have one (not a standard fill property, use line layer)
+    # Note: fill-outline only supports color, not width. For stroke width, we'd need
+    # a separate line layer. Log this limitation.
+    if stroke_width_value is not None:
+        warnings.append(
+            "Mapbox fill layers only support outline color, not width; "
+            "stroke-width ignored for categorical fills"
+        )
+
+    return [layer]
+
+
+def _build_categorical_circle(
+    field: str,
+    color_cases: list[tuple[Any, str]],
+    size_cases: list[tuple[Any, float]],
     source_layer: str,
 ) -> list[dict[str, Any]]:
-    """Build categorical fill layer with per-rule opacity support."""
+    """Build categorical circle layer for point data."""
     color_expr = make_match_expression(field, color_cases, default="#cccccc")
+    unique_sizes = {s for _, s in size_cases}
+    size_value: float | list[Any]
+    if len(unique_sizes) == 1:
+        size_value = next(iter(unique_sizes))
+    else:
+        size_value = make_match_expression(field, size_cases, default=5.0)
+    return [
+        make_circle_layer("categorical-circle", source_layer, color_expr, circle_radius=size_value)
+    ]
+
+
+def _build_categorical_line(
+    field: str,
+    color_cases: list[tuple[Any, str]],
+    opacity_cases: list[tuple[Any, float]],
+    width_cases: list[tuple[Any, float]],
+    source_layer: str,
+) -> list[dict[str, Any]]:
+    """Build categorical line layer with per-rule width and opacity."""
+    color_expr = make_match_expression(field, color_cases, default="#cccccc")
+
+    unique_widths = {w for _, w in width_cases}
+    width_value: float | list[Any]
+    if len(unique_widths) == 1:
+        width_value = next(iter(unique_widths))
+    else:
+        width_value = make_match_expression(field, width_cases, default=1.0)
+
     unique_opacities = {op for _, op in opacity_cases}
-
+    opacity_value: float | list[Any]
     if len(unique_opacities) == 1:
-        return [
-            make_fill_layer(
-                "categorical-fill", source_layer, color_expr, next(iter(unique_opacities))
-            )
-        ]
+        opacity_value = next(iter(unique_opacities))
+    else:
+        opacity_value = make_match_expression(field, opacity_cases, default=1.0)
 
-    opacity_expr = make_match_expression(field, opacity_cases, default=1.0)
-    layer = make_fill_layer("categorical-fill", source_layer, color_expr, 1.0)
-    layer["paint"]["fill-opacity"] = opacity_expr
-    return [layer]
+    return [
+        make_line_layer(
+            "categorical-line",
+            source_layer,
+            color_expr,
+            line_width=width_value,
+            line_opacity=opacity_value,
+        )
+    ]
 
 
 def _build_categorical_layers(
@@ -425,12 +532,15 @@ def _build_categorical_layers(
     field: str | None = None
     color_cases: list[tuple[Any, str]] = []
     opacity_cases: list[tuple[Any, float]] = []
+    stroke_color_cases: list[tuple[Any, str | None]] = []
+    stroke_width_cases: list[tuple[Any, float | None]] = []
+    size_cases: list[tuple[Any, float]] = []
+    line_width_cases: list[tuple[Any, float]] = []
 
     for rule in rules:
         filter_elem = _find_with_ns(rule, "ogc:Filter")
         if filter_elem is None:
             continue
-
         try:
             rule_field, value = parse_filter_to_value(filter_elem)
             if field is None:
@@ -447,28 +557,39 @@ def _build_categorical_layers(
             props = parse_polygon_symbolizer(symbolizer)
             color_cases.append((value, props["fill_color"]))
             opacity_cases.append((value, props["fill_opacity"]))
+            stroke_color_cases.append((value, props.get("stroke_color")))
+            stroke_width_cases.append((value, props.get("stroke_width")))
         elif geom_type == "point":
             props = parse_point_symbolizer(symbolizer)
             color_cases.append((value, props["fill_color"]))
+            size_cases.append((value, props["size"]))
             if props.get("warning"):
                 warnings.append(props["warning"])
         elif geom_type == "line":
             props = parse_line_symbolizer(symbolizer)
             color_cases.append((value, props["line_color"]))
             opacity_cases.append((value, props["line_opacity"]))
+            line_width_cases.append((value, props["line_width"]))
 
     if not field or not color_cases:
         return []
 
-    color_expr = make_match_expression(field, color_cases, default="#cccccc")
-
     if geom_type == "polygon":
-        return _build_categorical_fill(field, color_cases, opacity_cases, source_layer)
+        return _build_categorical_fill(
+            field,
+            color_cases,
+            opacity_cases,
+            stroke_color_cases,
+            stroke_width_cases,
+            source_layer,
+            warnings,
+        )
     if geom_type == "point":
-        return [make_circle_layer("categorical-circle", source_layer, color_expr)]
+        return _build_categorical_circle(field, color_cases, size_cases, source_layer)
     if geom_type == "line":
-        opacity = _get_uniform_opacity(opacity_cases)
-        return [make_line_layer("categorical-line", source_layer, color_expr, line_opacity=opacity)]
+        return _build_categorical_line(
+            field, color_cases, opacity_cases, line_width_cases, source_layer
+        )
     return []
 
 

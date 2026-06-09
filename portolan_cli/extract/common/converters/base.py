@@ -130,8 +130,8 @@ def make_fill_layer(
     layer_id: str,
     source_layer: str,
     fill_color: ColorValue,
-    fill_opacity: float = 1.0,
-    outline_color: str | None = None,
+    fill_opacity: NumericValue = 1.0,
+    outline_color: ColorValue | None = None,
 ) -> dict[str, Any]:
     """Build a Mapbox GL fill layer for polygon data.
 
@@ -166,9 +166,9 @@ def make_circle_layer(
     source_layer: str,
     circle_color: ColorValue,
     circle_radius: NumericValue = 5,
-    circle_opacity: float = 1.0,
-    stroke_color: str | None = None,
-    stroke_width: float | None = None,
+    circle_opacity: NumericValue = 1.0,
+    stroke_color: ColorValue | None = None,
+    stroke_width: NumericValue | None = None,
 ) -> dict[str, Any]:
     """Build a Mapbox GL circle layer for point data.
 
@@ -208,7 +208,7 @@ def make_line_layer(
     source_layer: str,
     line_color: ColorValue,
     line_width: NumericValue = 1,
-    line_opacity: float = 1.0,
+    line_opacity: NumericValue = 1.0,
 ) -> dict[str, Any]:
     """Build a Mapbox GL line layer for linestring data.
 
