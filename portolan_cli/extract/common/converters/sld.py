@@ -103,6 +103,26 @@ def _findall_symbolizers(element: Element, symbolizer_type: str) -> list[Element
     return _findall_with_ns(element, f".//se:{symbolizer_type}Symbolizer")
 
 
+def _find_sld_or_se(element: Element, local_name: str) -> Element | None:
+    """Find element with SLD namespace, falling back to SE namespace.
+
+    Args:
+        element: Parent element to search within.
+        local_name: Element local name (e.g., "Radius", "Fill").
+
+    Returns:
+        Found element or None.
+
+    Note:
+        Uses explicit `is not None` checks because Element objects with no
+        children are falsy in Python, making `elem or fallback` unreliable.
+    """
+    result = _find_with_ns(element, f"sld:{local_name}")
+    if result is not None:
+        return result
+    return _find_with_ns(element, f"se:{local_name}")
+
+
 def _get_css_parameter(element: Element, name: str) -> str | None:
     """Extract CssParameter/SvgParameter value by name attribute.
 
@@ -436,7 +456,7 @@ def _parse_text_halo(root: Element) -> tuple[str | None, float | None]:
         return None, None
 
     halo_width: float | None = None
-    radius = _find_with_ns(halo, "sld:Radius") or _find_with_ns(halo, "se:Radius")
+    radius = _find_sld_or_se(halo, "Radius")
     if radius is not None and radius.text:
         try:
             halo_width = float(radius.text)
@@ -444,7 +464,7 @@ def _parse_text_halo(root: Element) -> tuple[str | None, float | None]:
             pass
 
     halo_color: str | None = None
-    halo_fill = _find_with_ns(halo, "sld:Fill") or _find_with_ns(halo, "se:Fill")
+    halo_fill = _find_sld_or_se(halo, "Fill")
     if halo_fill is not None:
         color = _get_css_parameter(halo_fill, "fill")
         if color:
@@ -461,12 +481,8 @@ def _parse_text_anchor(root: Element) -> str:
     if anchor_point is None:
         return "center"
 
-    anchor_x_elem = _find_with_ns(anchor_point, "sld:AnchorPointX") or _find_with_ns(
-        anchor_point, "se:AnchorPointX"
-    )
-    anchor_y_elem = _find_with_ns(anchor_point, "sld:AnchorPointY") or _find_with_ns(
-        anchor_point, "se:AnchorPointY"
-    )
+    anchor_x_elem = _find_sld_or_se(anchor_point, "AnchorPointX")
+    anchor_y_elem = _find_sld_or_se(anchor_point, "AnchorPointY")
 
     anchor_x, anchor_y = 0.5, 0.5
     if anchor_x_elem is not None and anchor_x_elem.text:
