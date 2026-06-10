@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+# Set matplotlib backend to Agg BEFORE any matplotlib imports.
+# Required for headless CI environments (Windows/Linux without display).
+import matplotlib
+
+matplotlib.use("Agg")
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 
