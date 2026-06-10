@@ -1314,3 +1314,56 @@ extent:
 
         result = _get_metadata_yaml_bbox(tmp_path)
         assert result is None
+
+
+@pytest.mark.unit
+class TestPortolanGeospatialFlag:
+    """Tests for portolan:geospatial flag on tabular collections (RULE-0090).
+
+    Tabular collections MUST have portolan:geospatial set to false to distinguish
+    intentionally non-spatial from spatial-but-unmeasured collections.
+    """
+
+    def test_tabular_collection_has_geospatial_false(self, tmp_path: Path) -> None:
+        """Tabular collections should have portolan:geospatial: false set."""
+        from portolan_cli.dataset import add_files
+
+        # Create catalog structure
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+
+        # Create tabular collection directory
+        tabular_dir = catalog_root / "demographics"
+        tabular_dir.mkdir()
+
+        # Create plain Parquet (no geo metadata)
+        parquet_file = tabular_dir / "census.parquet"
+        table = pa.table({"tract_id": ["001", "002"], "population": [5000, 7500]})
+        pq.write_table(table, parquet_file)
+
+        # Enable tabular support
+        config_file = catalog_root / ".portolan" / "config.yaml"
+        config_file.write_text("tabular:\n  enabled: true\n")
+
+        # Add the file
+        added, skipped, failures = add_files(
+            paths=[parquet_file],
+            catalog_root=catalog_root,
+        )
+
+        # Tabular files go to skipped (tracked as collection-level assets)
+        assert len(failures) == 0
+        assert parquet_file in skipped, "Tabular file should be in skipped list"
+
+        # Check collection.json has portolan:geospatial: false
+        collection_json = tabular_dir / "collection.json"
+        assert collection_json.exists(), "collection.json should be created"
+
+        collection_data = json.loads(collection_json.read_text())
+        assert "portolan:geospatial" in collection_data, (
+            "Tabular collection should have portolan:geospatial property (RULE-0090)"
+        )
+        assert collection_data["portolan:geospatial"] is False, (
+            "Tabular collection should have portolan:geospatial: false"
+        )

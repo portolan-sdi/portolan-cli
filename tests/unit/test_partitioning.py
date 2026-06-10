@@ -727,3 +727,86 @@ class TestGlobTransformationPartitionExtension:
         expected_glob = "s3://bucket/catalog/buildings/kdtree_cell=*/*.parquet"
         assert asset["partition:glob"] == expected_glob
         assert asset["portolan:glob"] == expected_glob
+
+
+class TestGlobAssetKeyCollision:
+    """Tests for glob asset insertion avoiding key collision (Issue #443)."""
+
+    @pytest.mark.unit
+    def test_glob_asset_uses_alternate_key_when_target_occupied(self, tmp_path: Path) -> None:
+        """When 'partitioned_data' key has non-glob asset, use alternate key.
+
+        Per Issue #443: Don't overwrite user-defined assets when auto-adding
+        glob assets for Hive partitions.
+        """
+        import pystac
+
+        from portolan_cli.dataset import _ensure_partition_metadata
+
+        # Create Hive partition structure
+        collection_dir = tmp_path / "collection"
+        (collection_dir / "year=2023").mkdir(parents=True)
+        (collection_dir / "year=2023" / "data.parquet").write_bytes(b"x")
+
+        # Create collection with existing non-glob asset at target key
+        collection = pystac.Collection(
+            id="test",
+            description="Test collection",
+            extent=pystac.Extent(
+                spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
+                temporal=pystac.TemporalExtent(intervals=[[None, None]]),
+            ),
+        )
+        # Add a non-glob asset at the target key "partitioned_data"
+        collection.assets["partitioned_data"] = pystac.Asset(
+            href="./existing_data.csv",  # Non-glob href
+            media_type="text/csv",
+            roles=["data"],
+            title="User-defined asset",
+        )
+
+        # Run _ensure_partition_metadata with empty items (auto-detection path)
+        _ensure_partition_metadata(collection, collection_dir, items=[])
+
+        # Original asset should NOT be clobbered
+        assert collection.assets["partitioned_data"].href == "./existing_data.csv"
+        assert collection.assets["partitioned_data"].title == "User-defined asset"
+
+        # Glob asset should be added at alternate key
+        assert "partitioned_data_glob" in collection.assets
+        assert "*" in collection.assets["partitioned_data_glob"].href
+
+    @pytest.mark.unit
+    def test_glob_asset_reuses_key_when_already_glob(self, tmp_path: Path) -> None:
+        """When 'partitioned_data' key already has glob asset, skip adding."""
+        import pystac
+
+        from portolan_cli.dataset import _ensure_partition_metadata
+
+        # Create Hive partition structure
+        collection_dir = tmp_path / "collection"
+        (collection_dir / "year=2023").mkdir(parents=True)
+        (collection_dir / "year=2023" / "data.parquet").write_bytes(b"x")
+
+        # Create collection with existing glob asset
+        collection = pystac.Collection(
+            id="test",
+            description="Test collection",
+            extent=pystac.Extent(
+                spatial=pystac.SpatialExtent(bboxes=[[-180, -90, 180, 90]]),
+                temporal=pystac.TemporalExtent(intervals=[[None, None]]),
+            ),
+        )
+        collection.assets["existing_glob"] = pystac.Asset(
+            href="./year=*/*.parquet",  # Already a glob
+            media_type="application/vnd.apache.parquet",
+            roles=["data"],
+        )
+
+        # Run _ensure_partition_metadata with empty items (auto-detection path)
+        _ensure_partition_metadata(collection, collection_dir, items=[])
+
+        # No new glob asset should be added (one already exists)
+        assert "partitioned_data" not in collection.assets
+        assert "partitioned_data_glob" not in collection.assets
+        assert "existing_glob" in collection.assets

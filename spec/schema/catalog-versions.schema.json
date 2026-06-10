@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://portolan.dev/schema/catalog-versions.schema.json",
+  "title": "Portolan Catalog Versions Index",
+  "description": "Schema for the root-level versions.json that indexes collection sync state. Different from collection-level versions.json.",
+  "type": "object",
+  "required": ["schema_version", "catalog_id", "created", "collections"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version for this format",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$",
+      "examples": ["1.0.0"]
+    },
+    "catalog_id": {
+      "type": "string",
+      "description": "Catalog identifier (matches catalog.json id)",
+      "minLength": 1
+    },
+    "created": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when catalog was initialized",
+      "format": "date-time"
+    },
+    "collections": {
+      "type": "object",
+      "description": "Map of collection IDs to their sync state",
+      "additionalProperties": {
+        "type": "object",
+        "description": "Collection sync state",
+        "properties": {
+          "current_version": {
+            "type": ["string", "null"],
+            "description": "Current version of this collection"
+          },
+          "synced_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this collection was last synced"
+          }
+        }
+      }
+    }
+  }
+}

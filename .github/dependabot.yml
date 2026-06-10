@@ -10,7 +10,10 @@ updates:
       - "github-actions"
     open-pull-requests-limit: 5
 
-  # Python dependencies
+  # Python dependencies - weekly updates (features + patches)
+  # Note: Dependabot automatically prioritizes security updates regardless of
+  # schedule. The security-audit.yml workflow handles daily notification via
+  # GitHub issues. No separate daily entry needed (would conflict with this one).
   - package-ecosystem: "pip"
     directory: "/"
     schedule:

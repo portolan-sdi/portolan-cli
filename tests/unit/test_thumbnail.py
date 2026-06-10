@@ -164,6 +164,88 @@ class TestGenerateThumbnailFromPmtiles:
 
 
 # =============================================================================
+# Regression Tests: Basemap Ordering (PR #468)
+# =============================================================================
+
+
+class TestBasemapOrdering:
+    """Regression tests for basemap rendering order.
+
+    Issue: contextily computes zoom level from current axis extent. If basemap
+    is added BEFORE axis limits are set, it uses wrong bounds and renders the
+    map in the wrong location.
+
+    Fix (PR #468): Plot data first, set axis limits, THEN add basemap.
+    """
+
+    @pytest.mark.unit
+    def test_render_geometries_sets_limits_before_basemap(self, tmp_path: Path) -> None:
+        """_render_geometries sets axis limits BEFORE calling add_basemap.
+
+        This is critical: contextily needs the axis extent to compute the
+        correct zoom level. If we add the basemap first, it uses default
+        limits and renders in the wrong location.
+        """
+        pytest.importorskip("matplotlib")
+
+        from portolan_cli.thumbnail import ThumbnailConfig, _render_geometries
+
+        output_path = tmp_path / "test.jpg"
+        bounds = (-122.5, 37.5, -122.0, 38.0)  # San Francisco area
+        geometries = [
+            {
+                "type": "Polygon",
+                "coordinates": [[[-122.4, 37.7], [-122.1, 37.7], [-122.1, 37.9], [-122.4, 37.7]]],
+            }
+        ]
+        config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
+
+        # Track axis state when add_basemap is called
+        captured_xlim: tuple[float, float] | None = None
+        captured_ylim: tuple[float, float] | None = None
+
+        def capture_axis_state(
+            ax: MagicMock,
+            bounds: tuple[float, float, float, float],
+            *args: object,
+            **kwargs: object,
+        ) -> None:
+            nonlocal captured_xlim, captured_ylim
+            captured_xlim = ax.get_xlim()
+            captured_ylim = ax.get_ylim()
+
+        with patch("portolan_cli.thumbnail.add_basemap", side_effect=capture_axis_state):
+            _render_geometries(geometries, output_path, config, bounds=bounds)
+
+        # Verify axis limits were set BEFORE add_basemap was called
+        assert captured_xlim is not None, "add_basemap was never called"
+        assert captured_ylim is not None, "add_basemap was never called"
+
+        # Limits should match the bounds we passed
+        assert captured_xlim[0] == pytest.approx(bounds[0], abs=0.01)  # minx
+        assert captured_xlim[1] == pytest.approx(bounds[2], abs=0.01)  # maxx
+        assert captured_ylim[0] == pytest.approx(bounds[1], abs=0.01)  # miny
+        assert captured_ylim[1] == pytest.approx(bounds[3], abs=0.01)  # maxy
+
+    @pytest.mark.unit
+    def test_render_geometries_no_basemap_when_no_bounds(self, tmp_path: Path) -> None:
+        """_render_geometries skips basemap when bounds is None."""
+        pytest.importorskip("matplotlib")
+
+        from portolan_cli.thumbnail import ThumbnailConfig, _render_geometries
+
+        output_path = tmp_path / "test.jpg"
+        geometries = [{"type": "Point", "coordinates": [0, 0]}]
+        config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
+
+        with patch("portolan_cli.thumbnail.add_basemap") as mock_basemap:
+            _render_geometries(geometries, output_path, config, bounds=None)
+
+            # add_basemap should NOT be called when bounds is None
+            mock_basemap.assert_not_called()
+
+
+# =============================================================================
 # Phase 3: GeoParquet Thumbnail Generation Tests
 # =============================================================================
 

@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://portolan.dev/schema/catalog.schema.json",
+  "title": "Portolan STAC Catalog",
+  "description": "Schema for Portolan-compliant STAC Catalogs. Extends the STAC Catalog schema with Portolan-specific requirements. See https://github.com/portolan-sdi/portolan-spec",
+  "allOf": [
+    {
+      "$ref": "https://schemas.stacspec.org/v1.0.0/catalog-spec/json-schema/catalog.json"
+    },
+    {
+      "$ref": "#/$defs/PortolanCatalogExtensions"
+    }
+  ],
+  "$defs": {
+    "PortolanCatalogExtensions": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "Catalog"
+        },
+        "stac_version": {
+          "type": "string",
+          "pattern": "^1\\.[0-9]+\\.[0-9]+$",
+          "description": "STAC version MUST be 1.x.x format (e.g., 1.0.0, 1.1.0)"
+        },
+        "id": {
+          "type": "string",
+          "description": "Catalog identifier. Defaults to 'portolan-catalog' if not specified.",
+          "default": "portolan-catalog"
+        },
+        "links": {
+          "type": "array",
+          "description": "Catalog links. MUST use relative paths (SELF_CONTAINED catalog type).",
+          "items": {
+            "$ref": "#/$defs/CatalogLink"
+          }
+        }
+      }
+    },
+    "CatalogLink": {
+      "type": "object",
+      "description": "STAC Link with Portolan requirements for SELF_CONTAINED catalogs",
+      "required": ["rel", "href"],
+      "properties": {
+        "rel": {
+          "type": "string",
+          "description": "Link relation type",
+          "examples": ["root", "self", "child", "parent", "item", "llms"]
+        },
+        "href": {
+          "type": "string",
+          "description": "Link target. SHOULD be relative path for portability (SELF_CONTAINED requirement).",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "description": "Media type of the linked resource",
+          "examples": ["application/json", "application/geo+json"]
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "rel": {
+                "enum": ["root", "self", "parent", "child"]
+              }
+            },
+            "required": ["rel"]
+          },
+          "then": {
+            "properties": {
+              "href": {
+                "description": "For structural links (root, self, parent, child), href MUST be a relative path for portability",
+                "not": {
+                  "pattern": "^[a-zA-Z][a-zA-Z0-9+.-]*://"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "rel": { "const": "llms" }
+            },
+            "required": ["rel"]
+          },
+          "then": {
+            "description": "LLM integration link - MUST point to llms.txt with text/markdown type",
+            "required": ["type"],
+            "properties": {
+              "href": {
+                "type": "string",
+                "pattern": "(^|/)llms\\.txt$",
+                "description": "Must point to llms.txt file"
+              },
+              "type": {
+                "const": "text/markdown"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://portolan.dev/schema/collection.schema.json",
+  "title": "Portolan STAC Collection",
+  "description": "Schema for Portolan-compliant STAC Collections. Extends the STAC Collection schema with Portolan-specific requirements. See https://github.com/portolan-sdi/portolan-spec",
+  "allOf": [
+    {
+      "$ref": "https://schemas.stacspec.org/v1.0.0/collection-spec/json-schema/collection.json"
+    },
+    {
+      "$ref": "#/$defs/PortolanCollectionExtensions"
+    }
+  ],
+  "$defs": {
+    "PortolanCollectionExtensions": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "Collection"
+        },
+        "portolan:geospatial": {
+          "type": "boolean",
+          "default": true,
+          "description": "False for tabular (non-geospatial) collections. When false, extent.spatial.bbox represents the area-of-interest (AOI) the data pertains to, not a geometric footprint. Note: STAC schema (via allOf) still requires extent.spatial; Portolan CLI provides this via AOI inheritance from sibling collections. See formats/tabular.md"
+        },
+        "portolan:styles": {
+          "type": "array",
+          "description": "Ordered list of style asset keys. First entry is the default style. See best-practices.md#visualization-styles",
+          "items": {
+            "type": "string",
+            "pattern": "^styles/[a-z0-9_-]+$"
+          },
+          "minItems": 1
+        },
+        "stac_version": {
+          "type": "string",
+          "pattern": "^1\\.[0-9]+\\.[0-9]+$",
+          "description": "STAC version MUST be 1.x.x format (e.g., 1.0.0, 1.1.0)"
+        },
+        "links": {
+          "type": "array",
+          "description": "Collection links with Portolan requirements. SHOULD include version-history link (see RULE-0070 in rules.yaml).",
+          "items": {
+            "$ref": "#/$defs/CollectionLink"
+          }
+        },
+        "assets": {
+          "type": "object",
+          "description": "Collection-level assets. Required for single-file collections.",
+          "additionalProperties": {
+            "$ref": "#/$defs/PortolanAsset"
+          }
+        },
+        "providers": {
+          "type": "array",
+          "description": "STAC-standard providers array (SHOULD be present)",
+          "items": {
+            "$ref": "#/$defs/Provider"
+          }
+        }
+      }
+    },
+    "CollectionLink": {
+      "type": "object",
+      "required": ["rel", "href"],
+      "properties": {
+        "rel": {
+          "type": "string",
+          "description": "Link relation type"
+        },
+        "href": {
+          "type": "string",
+          "description": "Link target. SHOULD be relative for root/self/child/parent relations."
+        },
+        "type": {
+          "type": "string",
+          "description": "Media type of the linked resource"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "rel": { "const": "via" }
+            },
+            "required": ["rel"]
+          },
+          "then": {
+            "description": "Source provenance link - MUST be present when data is extracted from an external canonical source",
+            "required": ["rel", "href"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "rel": { "const": "pmtiles" }
+            },
+            "required": ["rel"]
+          },
+          "then": {
+            "description": "PMTiles link per web-map-links STAC extension - MUST be present when PMTiles are provided",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "const": "application/vnd.pmtiles"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "rel": { "const": "version-history" }
+            },
+            "required": ["rel"]
+          },
+          "then": {
+            "$ref": "#/$defs/VersionHistoryLink"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "rel": { "const": "llms" }
+            },
+            "required": ["rel"]
+          },
+          "then": {
+            "$ref": "#/$defs/LlmsLink"
+          }
+        }
+      ]
+    },
+    "VersionHistoryLink": {
+      "type": "object",
+      "description": "Link to versions.json - SHOULD be present",
+      "properties": {
+        "rel": {
+          "const": "version-history"
+        },
+        "href": {
+          "type": "string",
+          "pattern": "(^|/)versions\\.json$"
+        },
+        "type": {
+          "const": "application/json"
+        }
+      },
+      "required": ["rel", "href"]
+    },
+    "LlmsLink": {
+      "type": "object",
+      "description": "Link to llms.txt for AI/LLM integration - MUST be present",
+      "properties": {
+        "rel": {
+          "const": "llms"
+        },
+        "href": {
+          "type": "string",
+          "pattern": "(^|/)llms\\.txt$",
+          "description": "Must point to llms.txt file"
+        },
+        "type": {
+          "const": "text/markdown"
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title, e.g., 'Agent/LLM usage guide'"
+        }
+      },
+      "required": ["rel", "href", "type"]
+    },
+    "PortolanAsset": {
+      "type": "object",
+      "description": "STAC Asset with Portolan requirements",
+      "required": ["href"],
+      "properties": {
+        "href": {
+          "type": "string",
+          "description": "Asset URL. In published catalogs, MUST be an absolute S3 URL. In local catalogs, may be relative.",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "description": "Media type of the asset",
+          "examples": [
+            "application/vnd.apache.parquet",
+            "application/vnd.pmtiles",
+            "image/tiff; application=geotiff; profile=cloud-optimized",
+            "application/geo+json"
+          ]
+        },
+        "roles": {
+          "type": "array",
+          "description": "Asset roles",
+          "items": {
+            "type": "string"
+          },
+          "examples": [["data"], ["visual"], ["thumbnail"], ["style"]]
+        },
+        "title": {
+          "type": "string",
+          "description": "Human-readable title"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of the asset"
+        }
+      }
+    },
+    "Provider": {
+      "type": "object",
+      "description": "STAC Provider information",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Organization name"
+        },
+        "roles": {
+          "type": "array",
+          "description": "Provider roles",
+          "items": {
+            "type": "string",
+            "enum": ["licensor", "producer", "processor", "host"]
+          }
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Organization URL"
+        },
+        "description": {
+          "type": "string",
+          "description": "Provider description"
+        }
+      }
+    }
+  }
+}
