@@ -57,6 +57,23 @@ _SYSTEM_FILES = frozenset(
     {"catalog.json", "collection.json", "versions.json", "config.yaml", "metadata.yaml"}
 )
 
+# Media types whose assets are not local files on disk. The STAC Iceberg
+# extension publishes the table itself as an `application/x-iceberg` asset
+# whose href points at a backend-managed warehouse (often a relative,
+# scheme-less path) — there is no single local file to existence- or
+# freshness-check, so the scanner must skip it just like a scheme-qualified
+# href. Without this guard a relative iceberg href is path-joined to the
+# collection dir and reported as a (false) MISSING data file.
+#
+# Trade-off: skipping means `check` no longer detects a genuinely missing
+# Iceberg warehouse — integrity of the table is owned by the Iceberg backend
+# (ADR-0046), not this scanner.
+_NON_LOCAL_MEDIA_TYPES = frozenset(
+    {
+        "application/x-iceberg",
+    }
+)
+
 
 def scan_catalog_metadata(catalog_path: Path) -> MetadataReport:
     """Scan a catalog using STAC manifests as ground truth.
@@ -115,10 +132,12 @@ def _scan_collection(collection_dir: Path, report: MetadataReport) -> None:
         href = _href(asset)
         if not href:
             continue
-        if _is_scheme_qualified(href):
-            # Asset lives outside the local filesystem (e.g. iceberg's
-            # file:///warehouse, or a remote gs://, s3://, https:// asset).
-            # No local existence or freshness check applies.
+        if _is_non_local_asset(asset):
+            # Asset lives outside the local filesystem: a scheme-qualified
+            # href (file:///warehouse, gs://, s3://, https://) or an
+            # extension/backend-managed media type such as
+            # application/x-iceberg (whose href may be a relative warehouse
+            # path). No local existence or freshness check applies.
             continue
         asset_path = (collection_dir / href).resolve()
         registered.add(asset_path)
@@ -215,7 +234,9 @@ def _scan_item(
         href = _href(asset)
         if not href:
             continue
-        if _is_scheme_qualified(href):
+        if _is_non_local_asset(asset):
+            # Scheme-qualified or extension/backend-managed (e.g.
+            # application/x-iceberg) asset: not a local file on disk.
             continue
         asset_path = (item_dir / href).resolve()
         registered.add(asset_path)
@@ -382,6 +403,38 @@ def _is_scheme_qualified(href: str) -> bool:
     collection/item directory.
     """
     return bool(_URI_SCHEME_RE.match(href))
+
+
+def _is_non_local_asset(asset: Any) -> bool:
+    """True if the asset should not be treated as a local file on disk.
+
+    Two independent signals mark an asset as non-local, either of which is
+    sufficient:
+
+    - A scheme-qualified href (``s3://``, ``gs://``, ``https://``, …) — the
+      data lives outside the catalog's filesystem.
+    - A media type that denotes an extension/backend-managed asset, e.g.
+      ``application/x-iceberg`` (STAC Iceberg extension). The href there may
+      be a relative, scheme-less warehouse path, so the scheme check alone
+      misses it.
+
+    Such assets are skipped by the local-data-file logic (no existence or
+    freshness check), so a remote/extension href is never mistaken for a
+    missing local file.
+    """
+    if not isinstance(asset, dict):
+        return False
+    media_type = asset.get("type")
+    if isinstance(media_type, str):
+        # Media types are case-insensitive and may carry parameters
+        # (RFC 9110), e.g. ``application/x-iceberg; version=2`` or differing
+        # case from a hand-authored catalog. Normalize before matching so the
+        # guard isn't defeated by harmless variation.
+        normalized = media_type.split(";", 1)[0].strip().lower()
+        if normalized in _NON_LOCAL_MEDIA_TYPES:
+            return True
+    href = _href(asset)
+    return href is not None and _is_scheme_qualified(href)
 
 
 def _safe_read_json(path: Path) -> dict[str, Any] | None:
