@@ -489,6 +489,47 @@ class TestVectorCollectionLevelAsset:
             f"relative iceberg href {href!r} wrongly flagged MISSING: {report.to_dict()}"
         )
 
+    def test_iceberg_warehouse_files_inside_collection_not_orphaned(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Data files inside an in-collection Iceberg warehouse aren't ORPHANED.
+
+        When the warehouse href resolves under the collection dir, the table's
+        own ``.parquet`` data files sit on disk but belong to the Iceberg
+        backend, not the STAC manifest. They must not be reported as orphans.
+        This pins the (non-obvious) invariant that the scanner does not sweep
+        nested warehouse contents.
+        """
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "agriculture"
+        collection_dir.mkdir()
+        _write_collection_json(
+            collection_dir,
+            collection_id="agriculture",
+            extra_assets={
+                "data": {
+                    "href": "data/v3/statfi_paavo",
+                    "type": "application/x-iceberg",
+                    "roles": ["data"],
+                }
+            },
+        )
+        # Materialize the warehouse with real Iceberg-style data + metadata.
+        warehouse = collection_dir / "data" / "v3" / "statfi_paavo"
+        (warehouse / "data").mkdir(parents=True)
+        (warehouse / "metadata").mkdir(parents=True)
+        (warehouse / "data" / "00000-0-abc.parquet").write_bytes(b"PAR1")
+        (warehouse / "metadata" / "v1.metadata.json").write_text("{}")
+
+        report = scan_catalog_metadata(catalog_dir)
+        assert report.missing_count == 0, report.to_dict()
+        assert report.orphaned_count == 0, (
+            f"Iceberg warehouse files wrongly flagged ORPHANED: {report.to_dict()}"
+        )
+
 
 # Helpers shared by F1/F3/F4 tests below.
 

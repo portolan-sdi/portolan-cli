@@ -64,6 +64,10 @@ _SYSTEM_FILES = frozenset(
 # freshness-check, so the scanner must skip it just like a scheme-qualified
 # href. Without this guard a relative iceberg href is path-joined to the
 # collection dir and reported as a (false) MISSING data file.
+#
+# Trade-off: skipping means `check` no longer detects a genuinely missing
+# Iceberg warehouse — integrity of the table is owned by the Iceberg backend
+# (ADR-0046), not this scanner.
 _NON_LOCAL_MEDIA_TYPES = frozenset(
     {
         "application/x-iceberg",
@@ -421,8 +425,14 @@ def _is_non_local_asset(asset: Any) -> bool:
     if not isinstance(asset, dict):
         return False
     media_type = asset.get("type")
-    if isinstance(media_type, str) and media_type in _NON_LOCAL_MEDIA_TYPES:
-        return True
+    if isinstance(media_type, str):
+        # Media types are case-insensitive and may carry parameters
+        # (RFC 9110), e.g. ``application/x-iceberg; version=2`` or differing
+        # case from a hand-authored catalog. Normalize before matching so the
+        # guard isn't defeated by harmless variation.
+        normalized = media_type.split(";", 1)[0].strip().lower()
+        if normalized in _NON_LOCAL_MEDIA_TYPES:
+            return True
     href = _href(asset)
     return href is not None and _is_scheme_qualified(href)
 

@@ -232,6 +232,152 @@ class TestUnresolvableExtensionTolerance:
         result = StacLintRule().check(minimal_catalog)
         assert result.passed
 
+    # --- Core-schema failures must NOT be tolerated (regression guard) ------
+    #
+    # stac-validator raises the SAME "Could not resolve schema: <uri>" message
+    # for an unfetchable CORE spec schema (schemas.stacspec.org) as for an
+    # extension schema. Tolerating the core case would turn `check` into a
+    # silent no-op whenever schemas.stacspec.org is unreachable — passing every
+    # catalog, valid or not. Only the extension case is acceptable.
+    _CORE_RESOLUTION_ERROR = (
+        "Could not resolve schema: "
+        "https://schemas.stacspec.org/v1.0.0/catalog-spec/json-schema/catalog.json. "
+        "Reason: HTTP Error 404: Not Found"
+    )
+
+    def test_schema_rule_core_schema_resolution_error_still_fails(
+        self, minimal_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A CORE schema fetch failure fails even in non-strict mode."""
+        from portolan_cli.validation import stac_rules
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError(self._CORE_RESOLUTION_ERROR)
+
+        monkeypatch.setattr(stac_rules, "Linter", _raise)
+        result = StacSchemaRule().check(minimal_catalog)
+        assert not result.passed
+
+    def test_lint_rule_core_schema_resolution_error_still_fails(
+        self, minimal_catalog: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Lint also fails on a core-schema fetch failure (non-strict)."""
+        from portolan_cli.validation import stac_rules
+        from portolan_cli.validation.stac_rules import StacLintRule
+
+        def _raise(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError(self._CORE_RESOLUTION_ERROR)
+
+        monkeypatch.setattr(stac_rules, "Linter", _raise)
+        result = StacLintRule().check(minimal_catalog)
+        assert not result.passed
+
+
+@pytest.mark.unit
+class TestIsSchemaResolutionError:
+    """Unit tests for the `_is_schema_resolution_error` classifier.
+
+    These pin the classifier against the REAL message format stac-validator
+    emits (``Could not resolve schema: <uri>. Reason: <err>``,
+    stac_validator/fast_validator.py) so the tolerance logic is verified
+    independently of the monkeypatched-Linter tests above.
+    """
+
+    def test_extension_schema_url_is_tolerable(self) -> None:
+        from portolan_cli.validation.stac_rules import _is_schema_resolution_error
+
+        msg = (
+            "Could not resolve schema: "
+            "https://stac-extensions.github.io/iceberg/v1.0.0/schema.json. "
+            "Reason: HTTP Error 404: Not Found"
+        )
+        assert _is_schema_resolution_error(msg) is True
+
+    def test_proposed_extension_url_without_reason_is_tolerable(self) -> None:
+        from portolan_cli.validation.stac_rules import _is_schema_resolution_error
+
+        msg = (
+            "Could not resolve schema: "
+            "https://portolan-sdi.github.io/portolan-spec/git/v1.0.0/schema.json"
+        )
+        assert _is_schema_resolution_error(msg) is True
+
+    def test_core_spec_schema_url_is_not_tolerable(self) -> None:
+        from portolan_cli.validation.stac_rules import _is_schema_resolution_error
+
+        msg = (
+            "Could not resolve schema: "
+            "https://schemas.stacspec.org/v1.0.0/catalog-spec/json-schema/catalog.json. "
+            "Reason: HTTP Error 404: Not Found"
+        )
+        assert _is_schema_resolution_error(msg) is False
+
+    def test_unrelated_resolve_message_is_not_tolerable(self) -> None:
+        """The old broad 'failed to resolve' net must no longer match."""
+        from portolan_cli.validation.stac_rules import _is_schema_resolution_error
+
+        assert _is_schema_resolution_error("internal $ref failed to resolve") is False
+
+    def test_marker_without_uri_is_not_tolerable(self) -> None:
+        from portolan_cli.validation.stac_rules import _is_schema_resolution_error
+
+        assert _is_schema_resolution_error("could not resolve schema") is False
+
+    def test_none_and_empty_are_not_tolerable(self) -> None:
+        from portolan_cli.validation.stac_rules import _is_schema_resolution_error
+
+        assert _is_schema_resolution_error(None) is False
+        assert _is_schema_resolution_error("") is False
+
+
+@pytest.mark.network
+class TestUnresolvableExtensionToleranceRealLinter:
+    """End-to-end tolerance behavior through the REAL stac-check Linter.
+
+    The monkeypatched tests above verify the tolerance branch in isolation but
+    pin the error string by hand. These drive the real validator so the fix is
+    exercised against stac-check's actual output (and would catch a wording
+    change). Marked `network`: stac-validator fetches schemas over HTTP.
+    """
+
+    def test_unresolvable_extension_passes_non_strict(self, tmp_path: Path) -> None:
+        """A real 404 extension schema does not fail an otherwise valid catalog."""
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        catalog = {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": "tmp-catalog",
+            "description": "Temporary test catalog",
+            "stac_extensions": ["https://stac-extensions.github.io/iceberg/v1.0.0/schema.json"],
+            "links": [],
+        }
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog))
+        result = StacSchemaRule().check(tmp_path)
+        assert result.passed, result.message
+
+    def test_unfetchable_core_schema_fails_non_strict(self, tmp_path: Path) -> None:
+        """A bogus stac_version makes the CORE schema 404 — must still fail.
+
+        Regression guard for the offline-no-op hazard: if the core schema
+        can't be fetched the document was never validated, so non-strict
+        `check` must NOT report it as valid.
+        """
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        catalog = {
+            "type": "Catalog",
+            "stac_version": "9.9.9",  # no such core schema published
+            "id": "tmp-catalog",
+            "description": "Temporary test catalog",
+            "stac_extensions": [],
+            "links": [],
+        }
+        (tmp_path / "catalog.json").write_text(json.dumps(catalog))
+        result = StacSchemaRule().check(tmp_path)
+        assert not result.passed, result.message
+
 
 @pytest.mark.unit
 class TestStacLintRule:

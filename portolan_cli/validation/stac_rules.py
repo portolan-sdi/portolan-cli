@@ -7,38 +7,62 @@ Uses stac-check as the validation engine. Two rules:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from stac_check.lint import Linter  # type: ignore[import-untyped]
 
 from portolan_cli.validation.results import Severity, ValidationResult
 from portolan_cli.validation.rules import ValidationRule
 
-# Substrings that mark a validation failure as "an extension schema could not
-# be resolved" rather than "the document is invalid". STAC extensions are
-# referenced by URL in `stac_extensions`; the validator fetches each schema
-# over the network. An extension that is unpublished, proposed, or simply
-# unreachable (offline runs) must NOT fail validation of the document itself.
-#
-# This covers the STAC Iceberg extension and the proposed git-backed-catalog
-# extension (portolan-sdi/portolan-spec#20), whose schemas may 404. It is the
-# extension analogue of StacSchemaRule.ACCEPTABLE_ERRORS' relative-href IRI
-# tolerance — the document is well-formed, we just can't fetch a remote schema.
-_SCHEMA_RESOLUTION_ERROR_MARKERS: frozenset[str] = frozenset(
-    {
-        "could not resolve schema",  # stac-validator FastValidator message
-        "failed to resolve",
-    }
+# Phrase the schema validator emits when it cannot fetch a JSON Schema over the
+# network. stac-validator raises ``Could not resolve schema: <uri>. Reason:
+# <err>`` (stac_validator/fast_validator.py) for BOTH core spec schemas and
+# extension schemas, so the phrase ALONE cannot tell the two apart — the URI
+# must be classified (see `_CORE_SCHEMA_HOSTS`). This replaces the earlier
+# broad ``failed to resolve`` substring, which matched no real validator output
+# and would have tolerated unrelated ``$ref``-resolution document defects.
+_SCHEMA_RESOLUTION_ERROR_MARKER = "could not resolve schema"
+
+# Hosts that serve the CORE STAC spec schemas (catalog/collection/item). When
+# one of THESE cannot be fetched the document was never validated at all, so we
+# must NOT treat it as acceptable — doing so turns `check` into a silent no-op
+# whenever schemas.stacspec.org is unreachable (offline CI, outage, or a bogus
+# `stac_version`). Only NON-core (extension) schema failures are tolerable: an
+# unpublished/proposed extension (STAC Iceberg, the git-backed-catalog
+# extension) that 404s leaves the document itself well-formed.
+_CORE_SCHEMA_HOSTS: frozenset[str] = frozenset({"schemas.stacspec.org"})
+
+# Pull the failing schema URI out of the marker message so it can be classified
+# as a core vs extension schema. The URI runs to the next whitespace; the
+# trailing ``.`` before `` Reason:`` is stripped by the caller.
+_RESOLUTION_URI_RE = re.compile(
+    rf"{_SCHEMA_RESOLUTION_ERROR_MARKER}:\s*(?P<uri>\S+)",
+    re.IGNORECASE,
 )
 
 
 def _is_schema_resolution_error(message: str | None) -> bool:
-    """True if `message` indicates an extension schema could not be fetched."""
+    """True if `message` is a *tolerable* extension-schema fetch failure.
+
+    Tolerable means the schema that could not be fetched is a STAC *extension*
+    schema. A failure to fetch a CORE spec schema (``schemas.stacspec.org``)
+    means the document was never validated, so it is NOT tolerable — otherwise
+    an offline run would pass every catalog, valid or not. If the marker is
+    present but the URI cannot be isolated, we are conservative and do not
+    tolerate (we can't prove it was only an extension schema).
+    """
     if not message:
         return False
-    lowered = message.lower()
-    return any(marker in lowered for marker in _SCHEMA_RESOLUTION_ERROR_MARKERS)
+    if _SCHEMA_RESOLUTION_ERROR_MARKER not in message.lower():
+        return False
+    match = _RESOLUTION_URI_RE.search(message)
+    if match is None:
+        return False
+    host = (urlsplit(match.group("uri").rstrip(".")).hostname or "").lower()
+    return host not in _CORE_SCHEMA_HOSTS
 
 
 class StacSchemaRule(ValidationRule):
