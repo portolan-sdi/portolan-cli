@@ -18,7 +18,7 @@ jobs:
     outputs:
       iceberg: ${{ steps.filter.outputs.iceberg }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - uses: dorny/paths-filter@v4
         id: filter
@@ -33,7 +33,7 @@ jobs:
     name: Lint & Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -62,7 +62,7 @@ jobs:
     name: Security Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -125,7 +125,7 @@ jobs:
       # GitHub Actions runners aren't EC2 instances, so IMDS requests fail
       AWS_EC2_METADATA_DISABLED: "true"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -174,7 +174,7 @@ jobs:
     env:
       AWS_EC2_METADATA_DISABLED: "true"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -213,7 +213,7 @@ jobs:
       matrix:
         python-version: ['3.11', '3.12', '3.13']
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -255,7 +255,7 @@ jobs:
     name: Dead Code, Complexity & Duplication
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -281,7 +281,7 @@ jobs:
     name: Documentation Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -304,7 +304,7 @@ jobs:
     name: Build Package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7

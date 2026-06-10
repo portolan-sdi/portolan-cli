@@ -14,7 +14,7 @@ jobs:
     name: Mutation Testing
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -106,7 +106,7 @@ jobs:
     name: Performance Benchmarks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
         with:
           fetch-depth: 0  # Full history to compare with previous runs
 
@@ -159,7 +159,7 @@ jobs:
     name: Live Network Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -186,7 +186,7 @@ jobs:
     name: Slow Tests (Stress/Scale)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -215,7 +215,7 @@ jobs:
     # Note: Job-level continue-on-error removed. Only audit steps soft-fail.
     # Setup steps (checkout, uv, python) fail fast on errors.
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -257,7 +257,7 @@ jobs:
     name: Iceberg E2E Tests (Full Suite)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.3
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
