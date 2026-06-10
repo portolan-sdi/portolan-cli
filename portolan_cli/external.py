@@ -34,6 +34,7 @@ from portolan_cli.dataset import (
     _validate_collection_id,
 )
 from portolan_cli.stac import add_asset_to_collection, add_via_link, create_collection
+from portolan_cli.validation import InputValidationError, validate_remote_url
 
 # Marks an asset as referenced in place rather than managed (downloaded/
 # converted) by Portolan. Consumers can use this to distinguish in-place
@@ -43,9 +44,9 @@ MANAGED_FIELD = "portolan:managed"
 # Role applied to external assets in addition to "data".
 EXTERNAL_ROLE = "external"
 
-# URI scheme matcher: an external href must be an absolute URI so the scanner
-# treats it as living outside the local filesystem (mirrors
-# ``portolan_cli.metadata.scan._is_scheme_qualified``).
+# URI scheme matcher for is_external_href (used by scanner/check to skip
+# remote assets). Note: validate_remote_url() is stricter and should be
+# used for input validation; this is for classification only.
 _URI_SCHEME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*://")
 
 # Media type inference from the URL's apparent extension. Glob patterns and
@@ -133,6 +134,32 @@ def derive_collection_id_from_url(url: str) -> str:
     )
 
 
+def _validate_bbox(bbox: list[float]) -> None:
+    """Validate WGS84 bounding box coordinates.
+
+    Args:
+        bbox: [min_x, min_y, max_x, max_y] in WGS84.
+
+    Raises:
+        ValueError: If coordinates are out of range or min > max.
+    """
+    if len(bbox) != 4:
+        raise ValueError("bbox must have exactly 4 values: min_x, min_y, max_x, max_y")
+
+    min_x, min_y, max_x, max_y = bbox
+
+    if not (-180 <= min_x <= 180 and -180 <= max_x <= 180):
+        raise ValueError(
+            f"Longitude must be between -180 and 180, got min_x={min_x}, max_x={max_x}"
+        )
+    if not (-90 <= min_y <= 90 and -90 <= max_y <= 90):
+        raise ValueError(f"Latitude must be between -90 and 90, got min_y={min_y}, max_y={max_y}")
+    if min_x > max_x:
+        raise ValueError(f"min_x ({min_x}) must be <= max_x ({max_x})")
+    if min_y > max_y:
+        raise ValueError(f"min_y ({min_y}) must be <= max_y ({max_y})")
+
+
 def add_external_dataset(
     *,
     catalog_root: Path,
@@ -145,6 +172,7 @@ def add_external_dataset(
     via_url: str | None = None,
     bbox: list[float] | None = None,
     asset_key: str = "data",
+    force: bool = False,
 ) -> ExternalAddResult:
     """Register a remote dataset as an external catalog collection.
 
@@ -164,20 +192,23 @@ def add_external_dataset(
         via_url: Provenance URL for the ``rel:"via"`` link. Defaults to ``url``.
         bbox: Optional WGS84 bbox [min_x, min_y, max_x, max_y]. Global if omitted.
         asset_key: Key for the asset entry in collection.json (default "data").
+        force: If True, overwrite existing collection. Default False.
 
     Returns:
         ExternalAddResult describing what was written.
 
     Raises:
-        ValueError: If the URL is not an absolute remote URI, or the
-            collection ID is missing/invalid.
+        InputValidationError: If the URL fails validation (unsupported scheme,
+            path traversal, control characters, etc.).
+        ValueError: If the collection ID is missing/invalid, or bbox is invalid.
         FileNotFoundError: If ``catalog_root`` is not an initialised catalog.
+        FileExistsError: If collection already exists and force=False.
     """
-    if not is_external_href(url):
-        raise ValueError(
-            f"External URL must be an absolute URI (e.g. s3://… or https://…), got '{url}'. "
-            "Use 'portolan add' for local files."
-        )
+    # ADR-0030: validate remote URL (rejects file://, path traversals, etc.)
+    try:
+        validate_remote_url(url)
+    except InputValidationError as e:
+        raise InputValidationError(f"{e}. Use 'portolan add' for local files.") from e
 
     if not (catalog_root / "catalog.json").exists():
         raise FileNotFoundError(
@@ -186,6 +217,19 @@ def add_external_dataset(
 
     resolved_id = collection_id or derive_collection_id_from_url(url)
     _validate_collection_id(resolved_id)
+
+    # Check for existing collection (overwrite protection)
+    collection_dir = catalog_root / resolved_id
+    collection_json = collection_dir / "collection.json"
+    if collection_json.exists() and not force:
+        raise FileExistsError(
+            f"Collection '{resolved_id}' already exists at {collection_json}. "
+            "Use --force to overwrite."
+        )
+
+    # Validate bbox if provided
+    if bbox is not None:
+        _validate_bbox(bbox)
 
     resolved_media_type = media_type or infer_media_type(url)
     resolved_description = description or f"External dataset referenced in place from {url}"
@@ -208,7 +252,6 @@ def add_external_dataset(
     add_asset_to_collection(collection, asset_key, asset)
 
     # Collection dir mirrors the layout 'add' produces: <root>/<collection_id>/.
-    collection_dir = catalog_root / resolved_id
     collection_dir.mkdir(parents=True, exist_ok=True)
     _save_collection_with_links(collection, collection_dir, catalog_root, resolved_id)
 

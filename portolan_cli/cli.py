@@ -3384,6 +3384,12 @@ def add_cmd(
     default=None,
     help="Path to Portolan catalog root (default: auto-detect by walking up from cwd).",
 )
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Overwrite existing collection if it exists.",
+)
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
 @click.pass_context
 def add_external_cmd(
@@ -3398,6 +3404,7 @@ def add_external_cmd(
     via_url: str | None,
     bbox: str | None,
     catalog_path: Path | None,
+    force: bool,
 ) -> None:
     """Register a remote dataset as a collection WITHOUT downloading or converting it.
 
@@ -3453,8 +3460,9 @@ def add_external_cmd(
             license=license_id,
             via_url=via_url,
             bbox=parsed_bbox,
+            force=force,
         )
-    except (ValueError, FileNotFoundError) as err:
+    except (ValueError, FileNotFoundError, FileExistsError, InputValidationError) as err:
         _handle_cmd_error("add-external", type(err).__name__, str(err), use_json)
         raise SystemExit(1) from err
 

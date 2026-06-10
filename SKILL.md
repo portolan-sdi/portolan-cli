@@ -29,6 +29,14 @@ portolan add imagery/                      # Add all files in directory
 portolan add .                             # Add all files in catalog
 ```
 
+### `portolan add-external`
+Register a remote dataset as a collection WITHOUT downloading or converting it.
+
+```bash
+portolan add-external \
+portolan add-external "https://example.org/data/buildings.parquet"
+```
+
 ### `portolan check`
 Validate a Portolan catalog or check files for cloud-native status.
 
