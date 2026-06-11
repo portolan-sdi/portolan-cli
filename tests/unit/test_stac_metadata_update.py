@@ -33,7 +33,8 @@ class TestUpdateStacMetadata:
                     "stac_version": "1.1.0",
                     "links": [],
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         result = update_stac_metadata(
@@ -43,7 +44,7 @@ class TestUpdateStacMetadata:
         )
 
         assert result is True
-        data = json.loads(catalog_path.read_text())
+        data = json.loads(catalog_path.read_text(encoding="utf-8"))
         assert data["title"] == "Bâtiments INSPIRE"
         assert data["description"] == "Couches de données spatiales des bâtiments"
 
@@ -67,7 +68,8 @@ class TestUpdateStacMetadata:
                     "links": [],
                     "license": "proprietary",
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         result = update_stac_metadata(
@@ -77,7 +79,7 @@ class TestUpdateStacMetadata:
         )
 
         assert result is True
-        data = json.loads(collection_path.read_text())
+        data = json.loads(collection_path.read_text(encoding="utf-8"))
         assert data["title"] == "Building - building_emprise"
         assert (
             data["description"]
@@ -99,13 +101,14 @@ class TestUpdateStacMetadata:
                     "stac_version": "1.1.0",
                     "links": [],
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         result = update_stac_metadata(catalog_path, title="New Title")
 
         assert result is True
-        data = json.loads(catalog_path.read_text())
+        data = json.loads(catalog_path.read_text(encoding="utf-8"))
         assert data["title"] == "New Title"
         assert data["description"] == "Original description"
 
@@ -130,7 +133,8 @@ class TestUpdateStacMetadata:
                     "links": [],
                     "license": "proprietary",
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         result = update_stac_metadata(
@@ -138,7 +142,7 @@ class TestUpdateStacMetadata:
         )
 
         assert result is True
-        data = json.loads(collection_path.read_text())
+        data = json.loads(collection_path.read_text(encoding="utf-8"))
         assert data["title"] == "Original Title"
         assert data["description"] == "Rich description from ISO 19139"
 
@@ -155,13 +159,13 @@ class TestUpdateStacMetadata:
             "stac_version": "1.1.0",
             "links": [],
         }
-        catalog_path.write_text(json.dumps(original))
+        catalog_path.write_text(json.dumps(original), encoding="utf-8")
 
         result = update_stac_metadata(catalog_path, title=None, description=None)
 
         assert result is False
         # File should be unchanged
-        data = json.loads(catalog_path.read_text())
+        data = json.loads(catalog_path.read_text(encoding="utf-8"))
         assert data == original
 
     @pytest.mark.unit
@@ -197,12 +201,13 @@ class TestUpdateStacMetadata:
                     "summaries": {"proj:code": ["EPSG:4326"]},
                     "keywords": ["buildings", "inspire"],
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         update_stac_metadata(collection_path, title="New Title", description="New Description")
 
-        data = json.loads(collection_path.read_text())
+        data = json.loads(collection_path.read_text(encoding="utf-8"))
         # Updated fields
         assert data["title"] == "New Title"
         assert data["description"] == "New Description"
@@ -231,14 +236,15 @@ class TestUpdateStacMetadata:
                     "stac_version": "1.1.0",
                     "links": [],
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         # Technical name should be skipped
         result = update_stac_metadata(catalog_path, title="bu_building_emprise")
 
         assert result is False
-        data = json.loads(catalog_path.read_text())
+        data = json.loads(catalog_path.read_text(encoding="utf-8"))
         assert data["title"] == "Human Readable Title"
 
     @pytest.mark.unit
@@ -261,14 +267,15 @@ class TestUpdateStacMetadata:
                     "links": [],
                     "license": "proprietary",
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         # Technical name should be skipped
         result = update_stac_metadata(collection_path, description="ns:layer_name_v2")
 
         assert result is False
-        data = json.loads(collection_path.read_text())
+        data = json.loads(collection_path.read_text(encoding="utf-8"))
         assert data["description"] == "Good existing description"
 
     @pytest.mark.unit
@@ -286,7 +293,8 @@ class TestUpdateStacMetadata:
                     "stac_version": "1.1.0",
                     "links": [],
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         # Good title, technical description (description skipped, title applied)
@@ -297,7 +305,7 @@ class TestUpdateStacMetadata:
         )
 
         assert result is True
-        data = json.loads(catalog_path.read_text())
+        data = json.loads(catalog_path.read_text(encoding="utf-8"))
         assert data["title"] == "Buildings Dataset"
         assert data["description"] == "Original"  # Technical description skipped
 
@@ -316,7 +324,8 @@ class TestUpdateStacMetadata:
                     "stac_version": "1.1.0",
                     "links": [],
                 }
-            )
+            ),
+            encoding="utf-8",
         )
 
         result = update_stac_metadata(
@@ -326,6 +335,6 @@ class TestUpdateStacMetadata:
         )
 
         assert result is True
-        data = json.loads(catalog_path.read_text())
+        data = json.loads(catalog_path.read_text(encoding="utf-8"))
         assert data["title"] == "Données géographiques françaises"
         assert "caractères spéciaux: éàüö" in data["description"]
