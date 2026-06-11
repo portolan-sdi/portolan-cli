@@ -143,10 +143,14 @@ class TestCliInitInteractive:
             assert data.get("description") == "Interactive Description"
 
     @pytest.mark.unit
-    def test_interactive_skips_title_on_empty_input(
+    def test_interactive_derives_title_on_empty_input(
         self, runner: CliRunner, tmp_path: Path
     ) -> None:
-        """Empty title input should leave title as None."""
+        """Empty title input derives a human-readable title (Issue #502).
+
+        Titles are mandatory, so an empty prompt falls back to a title
+        humanized from the catalog directory name rather than None.
+        """
         import json
 
         with runner.isolated_filesystem(temp_dir=tmp_path):
@@ -159,8 +163,10 @@ class TestCliInitInteractive:
 
             assert result.exit_code == 0, f"Failed: {result.output}"
             data = json.loads(Path("catalog.json").read_text())
-            # Title should not be present or be None
-            assert data.get("title") is None
+            # Title is mandatory and must be present + human-readable.
+            title = data.get("title")
+            assert title, "Expected a derived title, got falsy value"
+            assert "_" not in title  # humanized, not a raw slug
             assert data.get("description") == "Custom Description"
 
     @pytest.mark.unit

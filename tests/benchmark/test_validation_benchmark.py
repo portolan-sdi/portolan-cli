@@ -42,6 +42,7 @@ def valid_catalog(tmp_path: Path) -> Path:
                 "type": "Catalog",
                 "stac_version": "1.0.0",
                 "id": "benchmark-catalog",
+                "title": "Benchmark Catalog",
                 "description": "A catalog for benchmarking",
                 "links": [],
             }

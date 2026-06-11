@@ -255,6 +255,11 @@ def add_external_dataset(
     collection_dir.mkdir(parents=True, exist_ok=True)
     _save_collection_with_links(collection, collection_dir, catalog_root, resolved_id)
 
+    # Issue #502: backfill the human-readable title onto the new child link.
+    from portolan_cli.catalog import ensure_link_titles
+
+    ensure_link_titles(catalog_root)
+
     collection_path = collection_dir / "collection.json"
 
     resolved_via = via_url or url

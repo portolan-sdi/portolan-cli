@@ -1535,6 +1535,15 @@ def _run_fix_workflow(
         else:
             metadata_check_report = scan_catalog_metadata(catalog_root)
             metadata_fix_report = fix_metadata(catalog_root, metadata_check_report, dry_run=dry_run)
+
+            # Issue #502: populate human-readable titles/descriptions and
+            # backfill child/item link titles as part of the metadata fix.
+            from portolan_cli.metadata.fix import repair_titles_and_links
+
+            metadata_fix_report.results.extend(
+                repair_titles_and_links(catalog_root, dry_run=dry_run)
+            )
+
             if metadata_fix_report.failure_count > 0:
                 has_failures = True
 

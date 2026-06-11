@@ -390,12 +390,16 @@ def init_catalog(
     # Auto-extract id from directory name
     catalog_id = _sanitize_id(path.resolve().name)
 
-    # Set defaults
+    # Set defaults. Issue #502: title is mandatory and must be human-readable,
+    # so derive one from the directory name instead of leaving it empty.
+    if not title:
+        from portolan_cli.humanize import humanize_slug
+
+        title = humanize_slug(catalog_id)
+        warnings.append(f"Derived catalog title '{title}' from directory name")
+
     if description is None:
         description = "A Portolan-managed STAC catalog"
-
-    if title is None:
-        warnings.append("Missing title (recommended for discoverability)")
 
     # ─────────────────────────────────────────────────────────────────────────
     # WRITE ORDER: config.yaml LAST for atomicity (per issue #290)
@@ -680,6 +684,99 @@ def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
     links.append({"rel": "child", "href": child_href, "type": "application/json"})
     content["links"] = links
     catalog_file.write_text(json.dumps(content, indent=2))
+
+
+def _link_title_from_target(stac_file: Path, link: dict[str, object]) -> str | None:
+    """Read the human-readable title of a child/item link's target.
+
+    Child links target a ``collection.json``/``catalog.json`` (title at the top
+    level); item links target an ``item.json`` (title under ``properties``).
+
+    Args:
+        stac_file: The STAC file the link lives in (for relative resolution).
+        link: The link mapping (must have an ``href``).
+
+    Returns:
+        The target's title, or None if it can't be read.
+    """
+    href = link.get("href")
+    if not isinstance(href, str) or not href:
+        return None
+
+    target = (stac_file.parent / href).resolve()
+    if not target.exists():
+        return None
+
+    try:
+        data = json.loads(target.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if link.get("rel") == "item":
+        properties = data.get("properties", {})
+        title = properties.get("title") if isinstance(properties, dict) else None
+    else:
+        title = data.get("title")
+
+    return title if isinstance(title, str) and title.strip() else None
+
+
+def ensure_link_titles(catalog_root: Path) -> bool:
+    """Backfill ``title`` (and ``type``) on all child/item links (Issue #502).
+
+    Walks every ``catalog.json``/``collection.json`` under ``catalog_root`` and,
+    for each ``child``/``item`` link, copies the target's human-readable title
+    onto the link so STAC Browser can render names without fetching every child.
+    Also fills a missing ``type`` (``application/json`` for child links,
+    ``application/geo+json`` for item links).
+
+    Idempotent: only rewrites a file when a link actually changed. Reused by the
+    ``check --fix`` repair path.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        True if any file was modified.
+    """
+    changed_any = False
+
+    stac_files = sorted(catalog_root.rglob("catalog.json")) + sorted(
+        catalog_root.rglob("collection.json")
+    )
+
+    for stac_file in stac_files:
+        try:
+            content = json.loads(stac_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        links = content.get("links")
+        if not isinstance(links, list):
+            continue
+
+        file_changed = False
+        for link in links:
+            if not isinstance(link, dict) or link.get("rel") not in ("child", "item"):
+                continue
+
+            # Fill a missing media type (STAC best practice).
+            if not link.get("type"):
+                link["type"] = (
+                    "application/geo+json" if link.get("rel") == "item" else "application/json"
+                )
+                file_changed = True
+
+            title = _link_title_from_target(stac_file, link)
+            if title and link.get("title") != title:
+                link["title"] = title
+                file_changed = True
+
+        if file_changed:
+            stac_file.write_text(json.dumps(content, indent=2))
+            changed_any = True
+
+    return changed_any
 
 
 def update_catalog_versions(

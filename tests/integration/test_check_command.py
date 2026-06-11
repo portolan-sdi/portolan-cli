@@ -725,6 +725,9 @@ class TestCheckMetadataFixFlag:
                     "type": "Catalog",
                     "stac_version": "1.0.0",
                     "id": "test-catalog",
+                    # Title present so the Issue #502 title-repair is a no-op and
+                    # this test stays focused on the scanner's empty report.
+                    "title": "Test Catalog",
                     "description": "Test",
                     "links": [],
                 }

@@ -7,6 +7,7 @@ Uses stac-check as the validation engine. Two rules:
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -301,3 +302,98 @@ class StacLintRule(ValidationRule):
                         pass  # Invalid severity, keep default
 
         return result
+
+
+# Namespace-prefixed technical names like "ns:LayerName" (a GeoServer/WFS habit).
+_NAMESPACE_PREFIX_RE = re.compile(r"^[a-z0-9_]+:[A-Za-z]")
+
+
+def _is_raw_slug_title(title: str) -> bool:
+    """True if a title is an un-humanized raw slug (Issue #502).
+
+    Intentionally narrow: a title is only "raw" when it still carries the
+    markers that :func:`portolan_cli.humanize.humanize_slug` strips —
+    underscores (``publico_arbolado``) or a namespace prefix (``ns:Layer``).
+    This keeps the rule consistent with the auto-fix: a humanized title never
+    contains those markers, so ``check --fix`` always converges (no looping on
+    short ids like ``T502`` that cannot be humanized further).
+    """
+    stripped = title.strip()
+    return "_" in stripped or bool(_NAMESPACE_PREFIX_RE.match(stripped))
+
+
+class MandatoryTitlesRule(ValidationRule):
+    """Require human-readable titles + descriptions across the catalog (Issue #502).
+
+    STAC Browser renders ``child``/``item`` link titles directly; without them
+    it must fetch every child just to show its name. Portolan therefore makes
+    titles mandatory and human-readable. This rule fails (ERROR) when:
+
+    - a catalog or collection is missing a title, has a technical-looking title
+      (e.g. a raw ``snake_case`` slug), or is missing a description, or
+    - any ``child``/``item`` link is missing a ``title``.
+
+    ``portolan check --fix`` repairs all of these (see
+    :func:`portolan_cli.metadata.fix.repair_titles_and_links`).
+    """
+
+    name = "mandatory_titles"
+    severity = Severity.ERROR
+    description = "Verify catalogs/collections and child/item links have human-readable titles"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Walk the catalog and flag missing/raw-slug titles + untitled links."""
+        problems: list[str] = []
+
+        stac_files = sorted(catalog_path.rglob("catalog.json")) + sorted(
+            catalog_path.rglob("collection.json")
+        )
+        for stac_file in stac_files:
+            try:
+                data = json.loads(stac_file.read_text())
+            except (OSError, json.JSONDecodeError):
+                # Malformed JSON is reported by other rules; skip here.
+                continue
+            rel = stac_file.relative_to(catalog_path)
+            problems.extend(self._check_object(data, rel))
+            problems.extend(self._check_links(data, rel))
+
+        if problems:
+            preview = "; ".join(problems[:5])
+            if len(problems) > 5:
+                preview += f" (+{len(problems) - 5} more)"
+            return self._fail(
+                f"{len(problems)} title/description issue(s): {preview}",
+                fix_hint="Run 'portolan check --fix' to populate human-readable titles",
+            )
+        return self._pass("All catalogs, collections, and links have human-readable titles")
+
+    @staticmethod
+    def _check_object(data: dict[str, Any], rel: Path) -> list[str]:
+        """Check a catalog/collection object's own title + description."""
+        problems: list[str] = []
+        title = data.get("title")
+        if not isinstance(title, str) or not title.strip():
+            problems.append(f"{rel}: missing title")
+        elif _is_raw_slug_title(title):
+            problems.append(f"{rel}: title is a raw slug, not human-readable ('{title}')")
+        description = data.get("description")
+        if not isinstance(description, str) or not description.strip():
+            problems.append(f"{rel}: missing description")
+        return problems
+
+    @staticmethod
+    def _check_links(data: dict[str, Any], rel: Path) -> list[str]:
+        """Check that every child/item link carries a title."""
+        problems: list[str] = []
+        links = data.get("links", [])
+        if not isinstance(links, list):
+            return problems
+        for link in links:
+            if not isinstance(link, dict) or link.get("rel") not in ("child", "item"):
+                continue
+            link_title = link.get("title")
+            if not isinstance(link_title, str) or not link_title.strip():
+                href = link.get("href", "?")
+                problems.append(f"{rel}: {link.get('rel')} link '{href}' missing title")
+        return problems

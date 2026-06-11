@@ -374,6 +374,28 @@ def _validate_doi(metadata: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _validate_title_description(metadata: dict[str, Any]) -> list[str]:
+    """Validate optional title/description overrides (Issue #502).
+
+    Both are optional human overrides for the auto-derived values. When
+    present they must be non-empty strings.
+
+    Args:
+        metadata: The full metadata dictionary.
+
+    Returns:
+        List of validation error messages.
+    """
+    errors: list[str] = []
+    for field in ("title", "description"):
+        value = metadata.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"Field '{field}' must be a non-empty string when provided")
+    return errors
+
+
 def validate_metadata(metadata: dict[str, Any]) -> list[str]:
     """Validate a metadata dictionary against the schema.
 
@@ -398,6 +420,7 @@ def validate_metadata(metadata: dict[str, Any]) -> list[str]:
 
     # Optional fields with format validation
     errors.extend(_validate_doi(metadata))
+    errors.extend(_validate_title_description(metadata))
 
     # Validate defaults section if present (optional)
     defaults = metadata.get("defaults")
@@ -566,8 +589,8 @@ def generate_metadata_template() -> str:
     Returns a YAML string with required and optional fields,
     with comments explaining each field's purpose.
 
-    Note: title and description are NOT included - they come from STAC
-    (set during catalog/collection init).
+    Note: title and description are auto-derived from the collection id
+    (humanized, per Issue #502); the optional keys below override them.
 
     Returns:
         YAML template string ready to write to file.
@@ -575,10 +598,19 @@ def generate_metadata_template() -> str:
     return """# .portolan/metadata.yaml
 #
 # Human-enrichable metadata that supplements STAC.
-# Title and description come from your catalog/collection STAC metadata.
 # Columns and bands are auto-extracted from data files.
 #
 # Only contact and license are REQUIRED here.
+
+# -----------------------------------------------------------------------------
+# OPTIONAL: Human-readable title / description override (Issue #502)
+# Portolan auto-derives a human-readable title from the collection id
+# (e.g. "publico_arbolado" -> "Publico Arbolado"). Set these to override it
+# with a better name/description; leave blank to keep the auto-derived value.
+# -----------------------------------------------------------------------------
+
+# title: ""                         # optional - overrides the auto-derived title
+# description: ""                    # optional - overrides the auto-derived description
 
 # -----------------------------------------------------------------------------
 # REQUIRED: Accountability

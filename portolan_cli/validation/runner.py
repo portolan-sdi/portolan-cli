@@ -18,7 +18,11 @@ from portolan_cli.validation.rules import (
     StacFieldsRule,
     ValidationRule,
 )
-from portolan_cli.validation.stac_rules import StacLintRule, StacSchemaRule
+from portolan_cli.validation.stac_rules import (
+    MandatoryTitlesRule,
+    StacLintRule,
+    StacSchemaRule,
+)
 
 # Default rules (no configuration options)
 # Immutable tuple to prevent accidental mutation
@@ -28,6 +32,7 @@ DEFAULT_RULES: tuple[ValidationRule, ...] = (
     StacFieldsRule(),
     StacSchemaRule(),
     StacLintRule(),
+    MandatoryTitlesRule(),
     PMTilesRecommendedRule(),
     MetadataFreshRule(),
     ProvisionalDatetimeRule(),
@@ -56,6 +61,7 @@ def _build_rules(
         StacFieldsRule(),
         StacSchemaRule(strict=strict),
         StacLintRule(strict=strict, config=config),
+        MandatoryTitlesRule(),
         PMTilesRecommendedRule(),
         MetadataFreshRule(),
         ProvisionalDatetimeRule(),

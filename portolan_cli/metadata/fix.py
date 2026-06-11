@@ -9,6 +9,7 @@ fixes for all issues in a MetadataReport:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -137,6 +138,127 @@ def fix_metadata(
         fix_results.append(result)
 
     return FixReport(results=fix_results, skipped_count=skipped_count)
+
+
+def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
+    """Populate human-readable titles/descriptions and link titles (Issue #502).
+
+    Repairs what :class:`~portolan_cli.validation.stac_rules.MandatoryTitlesRule`
+    flags:
+
+    - every catalog/collection gets a human-readable title (derived from its id
+      when missing or technical) and a description (defaulting to the title);
+    - every item referenced by an item link gets a title in its properties;
+    - every ``child``/``item`` link gets its target's title backfilled.
+
+    Existing human-authored titles/descriptions are preserved.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        dry_run: If True, report what would change without writing.
+
+    Returns:
+        FixResults for each file that was (or would be) modified.
+    """
+    from portolan_cli.catalog import ensure_link_titles
+    from portolan_cli.humanize import derive_title
+
+    results: list[FixResult] = []
+
+    stac_files = sorted(catalog_root.rglob("catalog.json")) + sorted(
+        catalog_root.rglob("collection.json")
+    )
+    for stac_file in stac_files:
+        try:
+            data = json.loads(stac_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        obj_id = str(data.get("id") or stac_file.parent.name)
+        new_title = derive_title(data.get("title"), obj_id)
+
+        changed = False
+        if data.get("title") != new_title:
+            if not dry_run:
+                data["title"] = new_title
+            changed = True
+
+        description = data.get("description")
+        if not isinstance(description, str) or not description.strip():
+            if not dry_run:
+                data["description"] = new_title
+            changed = True
+
+        if changed:
+            if not dry_run:
+                stac_file.write_text(json.dumps(data, indent=2))
+            results.append(
+                FixResult(
+                    file_path=stac_file,
+                    action=FixAction.UPDATED,
+                    success=True,
+                    message="Set human-readable title/description",
+                )
+            )
+
+        # Repair item titles referenced by this collection's item links so the
+        # link-title backfill below has a title to copy.
+        results.extend(_repair_item_titles(stac_file, data, dry_run=dry_run))
+
+    # Backfill child/item link titles from their (now-titled) targets.
+    if not dry_run:
+        ensure_link_titles(catalog_root)
+
+    return results
+
+
+def _repair_item_titles(
+    stac_file: Path,
+    data: dict[str, Any],
+    *,
+    dry_run: bool,
+) -> list[FixResult]:
+    """Ensure items referenced by ``item`` links have a human-readable title."""
+    from portolan_cli.humanize import derive_title
+
+    results: list[FixResult] = []
+    links = data.get("links", [])
+    if not isinstance(links, list):
+        return results
+
+    for link in links:
+        if not isinstance(link, dict) or link.get("rel") != "item":
+            continue
+        href = link.get("href")
+        if not isinstance(href, str) or not href:
+            continue
+        item_file = (stac_file.parent / href).resolve()
+        if not item_file.exists():
+            continue
+        try:
+            item_data = json.loads(item_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        properties = item_data.setdefault("properties", {})
+        if not isinstance(properties, dict):
+            continue
+        item_id = str(item_data.get("id") or item_file.stem)
+        new_title = derive_title(properties.get("title"), item_id)
+        if properties.get("title") != new_title:
+            if not dry_run:
+                properties["title"] = new_title
+                item_file.write_text(json.dumps(item_data, indent=2))
+            results.append(
+                FixResult(
+                    file_path=item_file,
+                    action=FixAction.UPDATED,
+                    success=True,
+                    message="Set human-readable item title",
+                )
+            )
+
+    return results
 
 
 def _fix_single_file(

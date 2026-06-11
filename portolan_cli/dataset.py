@@ -47,6 +47,7 @@ from portolan_cli.formats import (
     is_cloud_optimized_geotiff,
     is_multilayer,
 )
+from portolan_cli.humanize import humanize_slug
 from portolan_cli.metadata import (
     extract_band_statistics,
     extract_cog_metadata,
@@ -78,6 +79,7 @@ from portolan_cli.stac import (
     add_table_extension,
     add_vector_extension,
     aggregate_table_metadata,
+    apply_human_titles,
     create_collection,
     create_item,
     load_catalog,
@@ -1736,6 +1738,10 @@ def finalize_datasets(
             initial_bbox=first_item.bbox,
         )
 
+        # Issue #502: apply human title/description overrides from
+        # metadata.yaml (highest precedence over the auto-derived defaults).
+        apply_human_titles(collection, load_merged_metadata(collection_dir, catalog_root))
+
         # Add items or collection-level assets to collection (in memory)
         _add_prepared_items_to_collection(collection, items, merge_strategy)
 
@@ -1854,6 +1860,13 @@ def finalize_datasets(
                     asset_paths=[str(path) for _name, (path, _checksum) in p.asset_files.items()],
                 )
             )
+
+    # Issue #502: backfill human-readable titles onto child/item links so STAC
+    # Browser renders names without fetching every child. Done once per batch
+    # (O(catalog), not per-collection) after all collections are written.
+    from portolan_cli.catalog import ensure_link_titles
+
+    ensure_link_titles(catalog_root)
 
     return results
 
@@ -2298,10 +2311,14 @@ def _get_or_create_collection(
     if collection_path.exists():
         return pystac.Collection.from_file(str(collection_path))
 
-    # Create new collection
+    # Create new collection. Issue #502: derive a human-readable title from
+    # the collection id and default the description to it (no "Collection:
+    # <slug>" placeholder). create_collection fills both in when omitted.
+    title = humanize_slug(collection_id)
     return create_collection(
         collection_id=collection_id,
-        description=f"Collection: {collection_id}",
+        description=title,
+        title=title,
         bbox=initial_bbox,
     )
 
@@ -2489,9 +2506,12 @@ def _ensure_tabular_collection(
         sibling_count = len(sibling_bboxes)
         bbox_source = "sibling" if sibling_count > 0 else "global"
 
+    # Issue #502: human-readable title; description defaults to it.
+    tabular_title = humanize_slug(collection_id)
     collection = create_collection(
         collection_id=collection_id,
-        description=f"Tabular data collection: {collection_id}",
+        description=tabular_title,
+        title=tabular_title,
         bbox=final_bbox,
     )
 
@@ -2505,6 +2525,11 @@ def _ensure_tabular_collection(
 
     # Update catalog links to include this collection
     _update_catalog_links(catalog_root, collection_id)
+
+    # Issue #502: backfill the human-readable title onto the new child link.
+    from portolan_cli.catalog import ensure_link_titles
+
+    ensure_link_titles(catalog_root)
 
     # Log based on bbox source (ADR-0047 priority order)
     if bbox_source == "metadata.yaml":

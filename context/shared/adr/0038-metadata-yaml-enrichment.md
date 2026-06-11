@@ -46,7 +46,10 @@ The metadata.yaml template itself defines best practices:
 
 - **Required fields**: `contact` (name + email) and `license` (SPDX identifier)
 - **Optional fields**: citation, DOI, known_issues, etc.
-- Title and description come from STAC (set during `portolan init`)
+- Title and description are auto-derived (humanized from the collection id) and
+  are **mandatory** in the generated STAC ([ADR-0053](0053-mandatory-human-readable-titles.md)).
+  `metadata.yaml` may carry optional `title`/`description` keys to **override**
+  the auto-derived values — the human override has highest precedence.
 - No separate natural language specification document
 
 ### Separation from config.yaml
@@ -92,7 +95,7 @@ README includes a footer indicating it's generated—users know not to edit it.
 
 | Field | Location | Rationale |
 |-------|----------|-----------|
-| title, description | STAC catalog/collection | Set during `portolan init` |
+| title, description | STAC catalog/collection | Auto-derived (humanized from id), mandatory ([ADR-0053](0053-mandatory-human-readable-titles.md)); optionally overridden in metadata.yaml |
 | bbox, CRS, schema | STAC | Auto-extracted from data |
 | columns (table:columns) | STAC summaries | Auto-extracted by scan |
 | bands (eo:bands, raster:bands) | STAC summaries | Auto-extracted by scan |

@@ -24,6 +24,7 @@ class TestCheck:
                     "type": "Catalog",
                     "stac_version": "1.0.0",
                     "id": "test-catalog",
+                    "title": "Test Catalog",
                     "description": "A test catalog",
                     "links": [],
                 }
@@ -88,7 +89,7 @@ class TestCheck:
         # No .portolan dir = first rule fails
         report = check(tmp_path)
 
-        # Should have run all 10 default rules even though the first one failed
-        # (6 original + 2 partition rules + 2 STAC rules: StacSchemaRule, StacLintRule)
-        # This verifies the runner doesn't short-circuit on failure
-        assert len(report.results) == 10
+        # Should have run all 11 default rules even though the first one failed
+        # (6 original + 2 partition rules + 3 STAC rules: StacSchemaRule,
+        # StacLintRule, MandatoryTitlesRule). Verifies no short-circuit on failure.
+        assert len(report.results) == 11
