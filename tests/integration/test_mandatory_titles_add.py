@@ -48,7 +48,7 @@ def _add_slug_collection(root: Path, *, metadata_yaml: dict | None = None) -> Pa
     if metadata_yaml is not None:
         portolan = collection_dir / ".portolan"
         portolan.mkdir()
-        (portolan / "metadata.yaml").write_text(yaml.dump(metadata_yaml))
+        (portolan / "metadata.yaml").write_text(yaml.dump(metadata_yaml), encoding="utf-8")
     dest = collection_dir / "data.parquet"
     shutil.copy(FIXTURE, dest)
 
@@ -99,11 +99,11 @@ class TestAddProducesHumanReadableTitles:
             },
         )
 
-        coll = json.loads((collection_dir / "collection.json").read_text())
+        coll = json.loads((collection_dir / "collection.json").read_text(encoding="utf-8"))
         assert coll["title"] == "Áreas Programáticas de Desarrollo Social"
         assert coll["description"] == "Polígonos de áreas programáticas."
 
         # And the override propagates to the parent child link.
-        catalog = json.loads((root / "catalog.json").read_text())
+        catalog = json.loads((root / "catalog.json").read_text(encoding="utf-8"))
         child = next(link for link in catalog["links"] if link.get("rel") == "child")
         assert child["title"] == "Áreas Programáticas de Desarrollo Social"

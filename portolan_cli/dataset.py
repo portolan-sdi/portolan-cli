@@ -736,7 +736,7 @@ def _fix_collection_links(
     if not collection_json_path.exists():
         return
 
-    collection_data = json.loads(collection_json_path.read_text())
+    collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     relative_root = os.path.relpath(catalog_root / "catalog.json", collection_dir)
 
     # Update root link to point to catalog
@@ -769,7 +769,7 @@ def _fix_collection_links(
         deduped_links.append(link)
     collection_data["links"] = deduped_links
 
-    collection_json_path.write_text(json.dumps(collection_data, indent=2))
+    collection_json_path.write_text(json.dumps(collection_data, indent=2), encoding="utf-8")
 
 
 def _derive_item_id_and_asset_level(
@@ -2698,7 +2698,7 @@ def list_datasets(
             continue
 
         # Load collection to get items
-        collection_data = json.loads(collection_path.read_text())
+        collection_data = json.loads(collection_path.read_text(encoding="utf-8"))
 
         for link in collection_data.get("links", []):
             if link.get("rel") != "item":
@@ -2714,7 +2714,7 @@ def list_datasets(
             if not item_path.exists():
                 continue
 
-            item_data = json.loads(item_path.read_text())
+            item_data = json.loads(item_path.read_text(encoding="utf-8"))
 
             # Determine format from assets
             format_type = FormatType.UNKNOWN
@@ -2769,7 +2769,7 @@ def get_dataset_info(
     if not item_path.exists():
         raise KeyError(f"Dataset not found: {dataset_id}")
 
-    item_data = json.loads(item_path.read_text())
+    item_data = json.loads(item_path.read_text(encoding="utf-8"))
 
     # Determine format from assets
     format_type = FormatType.UNKNOWN
@@ -2824,13 +2824,13 @@ def remove_dataset(
         # Update catalog links
         catalog_path = catalog_root / "catalog.json"
         if catalog_path.exists():
-            catalog_data = json.loads(catalog_path.read_text())
+            catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
             catalog_data["links"] = [
                 link
                 for link in catalog_data.get("links", [])
                 if not link.get("href", "").endswith(f"/{collection_id}/collection.json")
             ]
-            catalog_path.write_text(json.dumps(catalog_data, indent=2))
+            catalog_path.write_text(json.dumps(catalog_data, indent=2), encoding="utf-8")
     else:
         # Remove single item
         collection_id, item_id = dataset_id.split("/", 1)
@@ -2845,13 +2845,13 @@ def remove_dataset(
         # Update collection links
         collection_path = catalog_root / collection_id / "collection.json"
         if collection_path.exists():
-            collection_data = json.loads(collection_path.read_text())
+            collection_data = json.loads(collection_path.read_text(encoding="utf-8"))
             collection_data["links"] = [
                 link
                 for link in collection_data.get("links", [])
                 if not link.get("href", "").startswith(f"./{item_id}/")
             ]
-            collection_path.write_text(json.dumps(collection_data, indent=2))
+            collection_path.write_text(json.dumps(collection_data, indent=2), encoding="utf-8")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

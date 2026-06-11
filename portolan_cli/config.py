@@ -177,7 +177,7 @@ def load_config(catalog_path: Path) -> dict[str, Any]:
     if not config_file.exists():
         return {}
 
-    content = config_file.read_text()
+    content = config_file.read_text(encoding="utf-8")
     if not content.strip():
         return {}
 
@@ -672,7 +672,7 @@ def _load_validated_mapping(file_path: Path) -> dict[str, Any] | None:
     """
     from portolan_cli.errors import ConfigInvalidStructureError
 
-    content = file_path.read_text()
+    content = file_path.read_text(encoding="utf-8")
     if not content.strip():
         return None
 

@@ -1311,7 +1311,7 @@ def add_via_link(
     if not collection_path.exists():
         return
 
-    collection_data = json.loads(collection_path.read_text())
+    collection_data = json.loads(collection_path.read_text(encoding="utf-8"))
     links = collection_data.setdefault("links", [])
 
     # Check if via link already exists with same href
@@ -1328,7 +1328,7 @@ def add_via_link(
     }
     links.append(via_link)
 
-    collection_path.write_text(json.dumps(collection_data, indent=2) + "\n")
+    collection_path.write_text(json.dumps(collection_data, indent=2) + "\n", encoding="utf-8")
 
 
 def is_technical_name(text: str | None) -> bool:
@@ -1425,7 +1425,7 @@ def update_stac_metadata(
         return False
 
     try:
-        stac_data = json.loads(path.read_text())
+        stac_data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         import logging
 
@@ -1445,6 +1445,8 @@ def update_stac_metadata(
         updated = True
 
     if updated:
-        path.write_text(json.dumps(stac_data, indent=2, ensure_ascii=False) + "\n")
+        path.write_text(
+            json.dumps(stac_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
 
     return updated
