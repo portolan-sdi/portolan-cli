@@ -377,8 +377,11 @@ def _validate_doi(metadata: dict[str, Any]) -> list[str]:
 def _validate_title_description(metadata: dict[str, Any]) -> list[str]:
     """Validate optional title/description overrides (Issue #502).
 
-    Both are optional human overrides for the auto-derived values. When
-    present they must be non-empty strings.
+    Both are optional human overrides for the auto-derived values. A blank
+    string (``""`` or whitespace) is treated as "not provided" — same as an
+    omitted key and consistent with the template's ``# title: ""`` guidance and
+    the other optional fields — so the auto-derived value is used. Only a
+    non-string value is invalid.
 
     Args:
         metadata: The full metadata dictionary.
@@ -389,10 +392,10 @@ def _validate_title_description(metadata: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     for field in ("title", "description"):
         value = metadata.get(field)
-        if value is None:
+        # None or any string (including blank) is acceptable; blank == absent.
+        if value is None or isinstance(value, str):
             continue
-        if not isinstance(value, str) or not value.strip():
-            errors.append(f"Field '{field}' must be a non-empty string when provided")
+        errors.append(f"Field '{field}' must be a string when provided")
     return errors
 
 

@@ -686,7 +686,9 @@ def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
     catalog_file.write_text(json.dumps(content, indent=2))
 
 
-def _link_title_from_target(stac_file: Path, link: dict[str, object]) -> str | None:
+def _link_title_from_target(
+    stac_file: Path, link: dict[str, object], catalog_root: Path
+) -> str | None:
     """Read the human-readable title of a child/item link's target.
 
     Child links target a ``collection.json``/``catalog.json`` (title at the top
@@ -695,6 +697,7 @@ def _link_title_from_target(stac_file: Path, link: dict[str, object]) -> str | N
     Args:
         stac_file: The STAC file the link lives in (for relative resolution).
         link: The link mapping (must have an ``href``).
+        catalog_root: Root the resolved target must stay within.
 
     Returns:
         The target's title, or None if it can't be read.
@@ -704,6 +707,13 @@ def _link_title_from_target(stac_file: Path, link: dict[str, object]) -> str | N
         return None
 
     target = (stac_file.parent / href).resolve()
+
+    # ADR-0030 input hardening: ignore ``../`` hrefs that resolve outside the
+    # catalog so a crafted link can't read files elsewhere on disk.
+    root = catalog_root.resolve()
+    if target != root and root not in target.parents:
+        return None
+
     if not target.exists():
         return None
 
@@ -767,7 +777,7 @@ def ensure_link_titles(catalog_root: Path) -> bool:
                 )
                 file_changed = True
 
-            title = _link_title_from_target(stac_file, link)
+            title = _link_title_from_target(stac_file, link, catalog_root)
             if title and link.get("title") != title:
                 link["title"] = title
                 file_changed = True
