@@ -653,7 +653,7 @@ def _ensure_root_links_to_child(catalog_root: Path, child_href: str) -> None:
     if not catalog_file.exists():
         return
 
-    content = json.loads(catalog_file.read_text())
+    content = json.loads(catalog_file.read_text(encoding="utf-8"))
     links = content.get("links", [])
 
     # Check if link already exists
@@ -664,7 +664,7 @@ def _ensure_root_links_to_child(catalog_root: Path, child_href: str) -> None:
     # Add the child link
     links.append({"rel": "child", "href": child_href, "type": "application/json"})
     content["links"] = links
-    catalog_file.write_text(json.dumps(content, indent=2))
+    catalog_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
 
 
 def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
@@ -672,7 +672,7 @@ def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
     if not catalog_file.exists():
         return
 
-    content = json.loads(catalog_file.read_text())
+    content = json.loads(catalog_file.read_text(encoding="utf-8"))
     links = content.get("links", [])
 
     # Check if link already exists
@@ -683,7 +683,7 @@ def _ensure_catalog_links_to_child(catalog_file: Path, child_href: str) -> None:
     # Add the child link
     links.append({"rel": "child", "href": child_href, "type": "application/json"})
     content["links"] = links
-    catalog_file.write_text(json.dumps(content, indent=2))
+    catalog_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
 
 
 def _link_title_from_target(
@@ -718,8 +718,8 @@ def _link_title_from_target(
         return None
 
     try:
-        data = json.loads(target.read_text())
-    except (OSError, json.JSONDecodeError):
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
 
     if link.get("rel") == "item":
@@ -757,8 +757,8 @@ def ensure_link_titles(catalog_root: Path) -> bool:
 
     for stac_file in stac_files:
         try:
-            content = json.loads(stac_file.read_text())
-        except (OSError, json.JSONDecodeError):
+            content = json.loads(stac_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
 
         links = content.get("links")
@@ -783,7 +783,7 @@ def ensure_link_titles(catalog_root: Path) -> bool:
                 file_changed = True
 
         if file_changed:
-            stac_file.write_text(json.dumps(content, indent=2))
+            stac_file.write_text(json.dumps(content, indent=2), encoding="utf-8")
             changed_any = True
 
     return changed_any

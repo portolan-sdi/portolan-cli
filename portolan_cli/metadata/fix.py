@@ -170,8 +170,8 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
     )
     for stac_file in stac_files:
         try:
-            data = json.loads(stac_file.read_text())
-        except (OSError, json.JSONDecodeError):
+            data = json.loads(stac_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
 
         obj_id = str(data.get("id") or stac_file.parent.name)
@@ -191,7 +191,7 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
 
         if changed:
             if not dry_run:
-                stac_file.write_text(json.dumps(data, indent=2))
+                stac_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
             results.append(
                 FixResult(
                     file_path=stac_file,
@@ -236,8 +236,8 @@ def _repair_item_titles(
         if not item_file.exists():
             continue
         try:
-            item_data = json.loads(item_file.read_text())
-        except (OSError, json.JSONDecodeError):
+            item_data = json.loads(item_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
 
         properties = item_data.setdefault("properties", {})
@@ -248,7 +248,7 @@ def _repair_item_titles(
         if properties.get("title") != new_title:
             if not dry_run:
                 properties["title"] = new_title
-                item_file.write_text(json.dumps(item_data, indent=2))
+                item_file.write_text(json.dumps(item_data, indent=2), encoding="utf-8")
             results.append(
                 FixResult(
                     file_path=item_file,

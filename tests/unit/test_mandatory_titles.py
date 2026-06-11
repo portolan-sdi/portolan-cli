@@ -182,6 +182,48 @@ class TestEnsureLinkTitlesTraversal:
 
 
 @pytest.mark.unit
+class TestEnsureLinkTitlesUnicode:
+    def test_accented_title_roundtrips(self, tmp_path: Path) -> None:
+        """Accented (UTF-8) titles backfill correctly regardless of OS locale.
+
+        Regression: STAC files are UTF-8; a bare read_text() uses the platform
+        locale (cp1252 on Windows) and chokes on byte 0x81 of e.g. 'Á'.
+        """
+        # Write collection.json as UTF-8 with an accented Spanish title.
+        coll_path = tmp_path / "areas" / "collection.json"
+        coll_path.parent.mkdir(parents=True)
+        coll_path.write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "stac_version": "1.0.0",
+                    "id": "areas",
+                    "title": "Áreas Programáticas",
+                    "description": "d",
+                    "links": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        _write(
+            tmp_path / "catalog.json",
+            {
+                "type": "Catalog",
+                "stac_version": "1.0.0",
+                "id": "demo",
+                "title": "Demo",
+                "description": "d",
+                "links": [{"rel": "child", "href": "./areas/collection.json"}],
+            },
+        )
+
+        ensure_link_titles(tmp_path)
+
+        catalog = json.loads((tmp_path / "catalog.json").read_text(encoding="utf-8"))
+        assert catalog["links"][0]["title"] == "Áreas Programáticas"
+
+
+@pytest.mark.unit
 class TestValidateTitleDescription:
     def test_blank_string_is_accepted_as_absent(self) -> None:
         assert _validate_title_description({"title": "", "description": "   "}) == []
