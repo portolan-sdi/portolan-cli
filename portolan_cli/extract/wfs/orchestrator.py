@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,12 +97,14 @@ class ExtractionProgress:
         total_layers: Total number of layers to extract.
         layer_name: Name of current layer.
         status: Current status ("starting", "extracting", "success", "failed", "skipped").
+        error: Error message when status is "failed" (Issue #504).
     """
 
     layer_index: int
     total_layers: int
     layer_name: str
     status: str
+    error: str | None = None
 
 
 def _slugify(name: str, disambiguate: bool = False, unique_id: int | None = None) -> str:
@@ -183,6 +185,7 @@ def _emit_progress(
     total_layers: int,
     layer_name: str,
     status: str,
+    error: str | None = None,
 ) -> None:
     """Emit a progress event if callback is provided."""
     if on_progress:
@@ -192,6 +195,7 @@ def _emit_progress(
                 total_layers=total_layers,
                 layer_name=layer_name,
                 status=status,
+                error=error,
             )
         )
 
@@ -428,14 +432,23 @@ def _extract_layers_parallel(
     layer_slugs: dict[int, str],
     on_progress: Callable[[ExtractionProgress], None] | None,
 ) -> list[LayerResult]:
-    """Extract multiple layers in parallel using ThreadPoolExecutor."""
+    """Extract multiple layers in parallel using ThreadPoolExecutor.
+
+    Issue #508: Enforces per-layer timeout using wait() with deadline tracking.
+    The old as_completed() + future.result(timeout) was dead code because
+    as_completed() only yields already-completed futures.
+    """
     actual_workers = min(options.workers, len(layers_to_extract))
     logger.info("Extracting %d layers with %d workers", len(layers_to_extract), actual_workers)
     results: list[LayerResult] = []
 
     with ThreadPoolExecutor(max_workers=actual_workers) as executor:
-        future_to_layer = {
-            executor.submit(
+        # Track futures with their metadata and deadlines
+        future_to_layer: dict[Future[LayerResult], tuple[int, LayerInfo]] = {}
+        future_deadlines: dict[Future[LayerResult], float] = {}
+
+        for i, layer in layers_to_extract:
+            future = executor.submit(
                 _extract_layer_task,
                 url,
                 layer,
@@ -445,20 +458,59 @@ def _extract_layers_parallel(
                 i,
                 total,
                 layer_slugs[layer.id],
-            ): (i, layer)
-            for i, layer in layers_to_extract
-        }
+            )
+            future_to_layer[future] = (i, layer)
+            future_deadlines[future] = time.monotonic() + options.timeout
 
-        for future in as_completed(future_to_layer):
-            i, layer = future_to_layer[future]
-            try:
-                result = future.result(timeout=options.timeout)
-                results.append(result)
-                # Emit actual status (success, failed, or empty)
-                _emit_progress(on_progress, i, total, layer.name, result.status)
-            except TimeoutError:
+        pending: set[Future[LayerResult]] = set(future_to_layer.keys())
+
+        while pending:
+            # Calculate the minimum wait time until the next deadline
+            now = time.monotonic()
+            min_timeout = max(
+                0.1, min(future_deadlines[f] - now for f in pending if f in future_deadlines)
+            )
+
+            done, pending = wait(pending, timeout=min_timeout, return_when=FIRST_COMPLETED)
+
+            # Process completed futures
+            for future in done:
+                i, layer = future_to_layer[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    # Issue #504: Pass error to progress callback for failed layers
+                    error_msg = result.error if result.status == "failed" else None
+                    _emit_progress(
+                        on_progress, i, total, layer.name, result.status, error=error_msg
+                    )
+                except Exception as e:
+                    error_msg = str(e)
+                    logger.error("Layer %s failed: %s", layer.name, error_msg)
+                    _emit_progress(on_progress, i, total, layer.name, "failed", error=error_msg)
+                    results.append(
+                        LayerResult(
+                            id=layer.id,
+                            name=layer.name,
+                            status="failed",
+                            features=0,
+                            size_bytes=0,
+                            duration_seconds=0.0,
+                            output_path="",
+                            warnings=[],
+                            error=error_msg,
+                            attempts=1,
+                        )
+                    )
+
+            # Check for timed-out futures (still pending past deadline)
+            now = time.monotonic()
+            timed_out = {f for f in pending if future_deadlines[f] <= now}
+            for future in timed_out:
+                i, layer = future_to_layer[future]
+                error_msg = f"Timeout after {options.timeout}s"
                 logger.error("Layer %s timed out after %ds", layer.name, options.timeout)
-                _emit_progress(on_progress, i, total, layer.name, "failed")
+                _emit_progress(on_progress, i, total, layer.name, "failed", error=error_msg)
                 results.append(
                     LayerResult(
                         id=layer.id,
@@ -469,27 +521,14 @@ def _extract_layers_parallel(
                         duration_seconds=options.timeout,
                         output_path="",
                         warnings=[],
-                        error=f"Timeout after {options.timeout}s",
+                        error=error_msg,
                         attempts=1,
                     )
                 )
-            except Exception as e:
-                logger.error("Layer %s failed: %s", layer.name, e)
-                _emit_progress(on_progress, i, total, layer.name, "failed")
-                results.append(
-                    LayerResult(
-                        id=layer.id,
-                        name=layer.name,
-                        status="failed",
-                        features=0,
-                        size_bytes=0,
-                        duration_seconds=0.0,
-                        output_path="",
-                        warnings=[],
-                        error=str(e),
-                        attempts=1,
-                    )
-                )
+                # Cancel the future (won't stop the thread, but marks it done)
+                future.cancel()
+                pending.discard(future)
+
     return results
 
 
@@ -689,8 +728,9 @@ def extract_wfs_catalog(
             )
             extracted_results.append(result)
 
-            # Emit actual status (success, failed, or empty) - same as parallel path
-            _emit_progress(on_progress, i, total, layer.name, result.status)
+            # Issue #504: Pass error to progress callback for failed layers
+            error_msg = result.error if result.status == "failed" else None
+            _emit_progress(on_progress, i, total, layer.name, result.status, error=error_msg)
 
     # Combine results in original order
     all_results = skipped_results + extracted_results

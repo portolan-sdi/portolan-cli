@@ -223,12 +223,14 @@ class ExtractionProgress:
         total_layers: Total number of layers to extract
         layer_name: Name of current layer
         status: Current status ("starting", "extracting", "success", "failed", "skipped")
+        error: Error message when status is "failed" (Issue #504).
     """
 
     layer_index: int
     total_layers: int
     layer_name: str
     status: str
+    error: str | None = None
 
 
 def _extract_single_layer(
