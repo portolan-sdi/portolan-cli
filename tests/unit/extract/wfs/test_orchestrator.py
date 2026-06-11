@@ -714,3 +714,180 @@ class TestAssignSlugs:
         assert len(slugs[1].split("_")[-1]) == 6
         # Critical: they must be DIFFERENT despite identical names
         assert slugs[0] != slugs[1]
+
+
+class TestExtractionProgressError:
+    """Tests for error field in ExtractionProgress (Issue #504)."""
+
+    def test_progress_has_optional_error_field(self) -> None:
+        """ExtractionProgress can carry an optional error message."""
+        from portolan_cli.extract.wfs.orchestrator import ExtractionProgress
+
+        # Without error
+        progress_ok = ExtractionProgress(
+            layer_index=0,
+            total_layers=1,
+            layer_name="test_layer",
+            status="success",
+        )
+        assert progress_ok.error is None
+
+        # With error
+        progress_fail = ExtractionProgress(
+            layer_index=0,
+            total_layers=1,
+            layer_name="test_layer",
+            status="failed",
+            error="Connection refused",
+        )
+        assert progress_fail.error == "Connection refused"
+
+    def test_on_progress_receives_error_on_failure(self, tmp_path: Path) -> None:
+        """Progress callback receives error message when layer fails."""
+        from portolan_cli.extract.wfs.orchestrator import ExtractionProgress
+
+        layers = [make_layer_info("fail_layer", 0)]
+        discovery = make_discovery_result(layers)
+
+        progress_events: list[ExtractionProgress] = []
+
+        def capture_progress(progress: ExtractionProgress) -> None:
+            progress_events.append(progress)
+
+        error_msg = "Unable to merge: Field has incompatible types"
+
+        with (
+            patch("portolan_cli.extract.wfs.orchestrator.discover_layers") as mock_discover,
+            patch("portolan_cli.extract.wfs.orchestrator._extract_layer_task") as mock_extract,
+            patch("portolan_cli.extract.wfs.orchestrator._negotiate_version") as mock_version,
+        ):
+            mock_discover.return_value = discovery
+            mock_version.return_value = "1.1.0"
+
+            # Simulate a failed extraction with error message
+            from portolan_cli.extract.common.report import LayerResult
+
+            mock_extract.return_value = LayerResult(
+                id=0,
+                name="fail_layer",
+                status="failed",
+                features=None,
+                size_bytes=None,
+                duration_seconds=None,
+                output_path=None,
+                warnings=[],
+                error=error_msg,
+                attempts=3,
+            )
+
+            options = ExtractionOptions(workers=1, retries=1)
+            extract_wfs_catalog(
+                url="https://example.com/wfs",
+                output_dir=tmp_path,
+                options=options,
+                on_progress=capture_progress,
+            )
+
+        # Find the "failed" progress event
+        failed_events = [p for p in progress_events if p.status == "failed"]
+        assert len(failed_events) == 1
+        assert failed_events[0].error == error_msg
+
+
+class TestTimeoutEnforcement:
+    """Tests for per-layer timeout enforcement (Issue #508)."""
+
+    def test_slow_layer_times_out(self, tmp_path: Path) -> None:
+        """A layer that exceeds the timeout is marked as timed out."""
+        import time
+
+        from portolan_cli.extract.wfs.orchestrator import (
+            ExtractionProgress,
+            _extract_layers_parallel,
+        )
+
+        # Create a layer that will be slow
+        slow_layer = make_layer_info("slow_layer", 0)
+
+        progress_events: list[ExtractionProgress] = []
+
+        def capture_progress(progress: ExtractionProgress) -> None:
+            progress_events.append(progress)
+
+        # Patch the extraction task to simulate a slow layer
+        def slow_extraction(*args, **kwargs):
+            time.sleep(5)  # Longer than the 1s timeout we'll set
+            from portolan_cli.extract.common.report import LayerResult
+
+            return LayerResult(
+                id=0,
+                name="slow_layer",
+                status="success",
+                features=100,
+                size_bytes=1000,
+                duration_seconds=5.0,
+                output_path="slow_layer/slow_layer.parquet",
+                warnings=[],
+                error=None,
+                attempts=1,
+            )
+
+        with patch(
+            "portolan_cli.extract.wfs.orchestrator._extract_layer_task", side_effect=slow_extraction
+        ):
+            options = ExtractionOptions(workers=2, timeout=1.0)  # 1 second timeout
+            results = _extract_layers_parallel(
+                url="https://example.com/wfs",
+                layers_to_extract=[(0, slow_layer)],
+                output_dir=tmp_path,
+                options=options,
+                negotiated_version="1.1.0",
+                total=1,
+                layer_slugs={0: "slow_layer"},
+                on_progress=capture_progress,
+            )
+
+        # The layer should be marked as failed due to timeout
+        assert len(results) == 1
+        assert results[0].status == "failed"
+        assert "timeout" in results[0].error.lower()
+
+    def test_fast_layers_complete_normally(self, tmp_path: Path) -> None:
+        """Layers that complete within timeout succeed normally."""
+        from portolan_cli.extract.wfs.orchestrator import _extract_layers_parallel
+
+        fast_layer = make_layer_info("fast_layer", 0)
+
+        def fast_extraction(*args, **kwargs):
+            from portolan_cli.extract.common.report import LayerResult
+
+            return LayerResult(
+                id=0,
+                name="fast_layer",
+                status="success",
+                features=100,
+                size_bytes=1000,
+                duration_seconds=0.1,
+                output_path="fast_layer/fast_layer.parquet",
+                warnings=[],
+                error=None,
+                attempts=1,
+            )
+
+        with patch(
+            "portolan_cli.extract.wfs.orchestrator._extract_layer_task", side_effect=fast_extraction
+        ):
+            options = ExtractionOptions(workers=2, timeout=60.0)
+            results = _extract_layers_parallel(
+                url="https://example.com/wfs",
+                layers_to_extract=[(0, fast_layer)],
+                output_dir=tmp_path,
+                options=options,
+                negotiated_version="1.1.0",
+                total=1,
+                layer_slugs={0: "fast_layer"},
+                on_progress=None,
+            )
+
+        assert len(results) == 1
+        assert results[0].status == "success"

@@ -50,6 +50,7 @@ docs = ["docs/guides/nested-catalogs.md#Restoring Missing Files"]
 [[link]]
 code = "portolan_cli/extract/arcgis/orchestrator.py"
 docs = ["docs/guides/extract-arcgis.md"]
+ignore = true  # Internal dataclass changes don't need doc updates
 
 [[link]]
 code = "portolan_cli/extract/arcgis/imageserver/extractor.py"

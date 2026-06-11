@@ -6514,7 +6514,11 @@ def extract_arcgis_cmd(
         elif progress.status == "success":
             detail("  ✓ Success")
         elif progress.status == "failed":
-            warn("  ✗ Failed")
+            # Issue #504: Show error details inline instead of just "Failed"
+            if progress.error:
+                warn(f"  ✗ Failed: {progress.error}")
+            else:
+                warn("  ✗ Failed")
         elif progress.status == "skipped":
             detail("  ↪ Skipped (already extracted)")
 
@@ -6755,7 +6759,11 @@ def extract_wfs_cmd(
         elif progress.status == "success":
             detail("  ✓ Success")
         elif progress.status == "failed":
-            warn("  ✗ Failed")
+            # Issue #504: Show error details inline instead of just "Failed"
+            if progress.error:
+                warn(f"  ✗ Failed: {progress.error}")
+            else:
+                warn("  ✗ Failed")
         elif progress.status == "skipped":
             detail("  ↪ Skipped (already extracted)")
 
