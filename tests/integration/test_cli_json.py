@@ -38,6 +38,7 @@ def valid_catalog(tmp_path: Path) -> Path:
                 "type": "Catalog",
                 "stac_version": "1.0.0",
                 "id": "test-catalog",
+                "title": "Test Catalog",
                 "description": "A test catalog",
                 "links": [],
             }

@@ -45,6 +45,7 @@ def _write_catalog_json(catalog_dir: Path) -> None:
                 "type": "Catalog",
                 "id": "test-catalog",
                 "stac_version": "1.1.0",
+                "title": "Test Catalog",
                 "description": "Test catalog",
                 "links": [{"rel": "self", "href": "./catalog.json"}],
             },
@@ -64,6 +65,7 @@ def _write_collection_json(
         "type": "Collection",
         "id": collection_id,
         "stac_version": "1.1.0",
+        "title": f"Test collection {collection_id}",
         "description": f"Test collection {collection_id}",
         "license": "CC0-1.0",
         "extent": {
