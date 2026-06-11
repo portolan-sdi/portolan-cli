@@ -4,77 +4,32 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_cli.skills import get_skill, iter_skills, list_skills
+from portolan_cli.skills import SKILLS_REPO, get_install_instructions, get_skill, list_skills
 
 
 class TestSkillsModule:
     """Tests for skills module functions."""
 
     @pytest.mark.unit
-    def test_list_skills_returns_sourcecoop(self) -> None:
-        """list_skills should return at least the sourcecoop skill."""
-        skills = list_skills()
-        assert "sourcecoop" in skills
+    def test_skills_repo_is_github_url(self) -> None:
+        """SKILLS_REPO points to the external skills repository."""
+        assert SKILLS_REPO == "https://github.com/portolan-sdi/portolan-skills"
 
     @pytest.mark.unit
-    def test_list_skills_returns_sorted(self) -> None:
-        """list_skills should return skills in sorted order."""
-        skills = list_skills()
-        assert skills == sorted(skills)
+    def test_list_skills_returns_empty(self) -> None:
+        """list_skills returns empty list (skills are external)."""
+        assert list_skills() == []
 
     @pytest.mark.unit
-    def test_get_skill_returns_content(self) -> None:
-        """get_skill should return the skill content."""
-        content = get_skill("sourcecoop")
-        assert content is not None
-        assert "Source Cooperative" in content
-        assert "portolan" in content.lower()
+    def test_get_skill_returns_none(self) -> None:
+        """get_skill returns None (skills are external)."""
+        assert get_skill("sourcecoop") is None
 
     @pytest.mark.unit
-    def test_get_skill_with_md_extension(self) -> None:
-        """get_skill should work with .md extension."""
-        content = get_skill("sourcecoop.md")
-        assert content is not None
-        assert "Source Cooperative" in content
-
-    @pytest.mark.unit
-    def test_get_skill_not_found(self) -> None:
-        """get_skill should return None for non-existent skills."""
-        content = get_skill("nonexistent-skill")
-        assert content is None
-
-    @pytest.mark.unit
-    def test_iter_skills_yields_tuples(self) -> None:
-        """iter_skills should yield (name, content) tuples."""
-        skills_list = list(iter_skills())
-        assert len(skills_list) > 0
-
-        for name, content in skills_list:
-            assert isinstance(name, str)
-            assert isinstance(content, str)
-            assert len(content) > 0
-
-    @pytest.mark.unit
-    def test_sourcecoop_skill_has_required_sections(self) -> None:
-        """The sourcecoop skill should have all required workflow sections."""
-        content = get_skill("sourcecoop")
-        assert content is not None
-
-        # Check for key sections
-        assert "Prerequisites" in content
-        assert "Workflow Overview" in content
-        assert "Credential Setup" in content
-        assert "Initialize" in content
-        assert "Configure" in content
-        assert "Add Files" in content
-        assert "Metadata" in content
-        assert "README" in content
-        assert "Push" in content
-        assert "Troubleshooting" in content
-
-    @pytest.mark.unit
-    def test_sourcecoop_skill_has_collection_subdirectory_note(self) -> None:
-        """The sourcecoop skill should mention collection subdirectories."""
-        content = get_skill("sourcecoop")
-        assert content is not None
-        assert "collection subdirector" in content.lower()
+    def test_get_install_instructions_returns_content(self) -> None:
+        """get_install_instructions returns content from INSTALL.md."""
+        instructions = get_install_instructions()
+        assert isinstance(instructions, str)
+        assert len(instructions) > 0
+        # Should contain Claude Code instructions (synced from upstream)
+        assert "claude plugin" in instructions.lower() or SKILLS_REPO in instructions

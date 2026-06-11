@@ -109,28 +109,12 @@ hooks = [
     pass_filenames = false,
   },
   {
-    id = "update-skill-md",
-    name = "auto-update SKILL.md sections",
-    entry = "uv run python scripts/generate_skill_md.py --write",
-    language = "system",
-    files = { glob = ["SKILL.md", "portolan_cli/__init__.py", "portolan_cli/cli.py"] },
-    pass_filenames = false,
-  },
-  {
     id = "update-freshness",
     name = "auto-update freshness markers",
     entry = "uv run python scripts/update_freshness.py",
     language = "system",
     files = { glob = ["portolan_cli/output.py", "portolan_cli/errors.py", "portolan_cli/constants.py", "portolan_cli/json_output.py", "portolan_cli/cli.py"] },
     pass_filenames = true,
-  },
-  {
-    id = "sync-sourcecoop-skill",
-    name = "sync Source Co-op skill CLI reference",
-    entry = "uv run python scripts/sync_sourcecoop_skill.py --update",
-    language = "system",
-    files = { glob = ["portolan_cli/cli.py", "portolan_cli/push.py", "portolan_cli/config.py", "portolan_cli/metadata_yaml.py", "portolan_cli/readme.py", "scripts/sync_sourcecoop_skill.py", "portolan_cli/skills/sourcecoop.md"] },
-    pass_filenames = false,
   },
 
   # === VALIDATION HOOKS ===
@@ -140,14 +124,6 @@ hooks = [
     entry = "uv run python scripts/validate_claude_md.py",
     language = "system",
     files = { glob = ["CLAUDE.md", "context/shared/adr/*.md", "context/shared/known-issues/*.md"] },
-    pass_filenames = false,
-  },
-  {
-    id = "validate-skill-md",
-    name = "validate SKILL.md structure",
-    entry = "uv run python scripts/validate_skill_md.py",
-    language = "system",
-    files = { glob = ["SKILL.md", "portolan_cli/__init__.py", "portolan_cli/cli.py"] },
     pass_filenames = false,
   },
   {
