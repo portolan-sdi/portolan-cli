@@ -641,11 +641,17 @@ def _read_geoparquet_bounds(gpq_path: Path) -> tuple[float, float, float, float]
         geo_meta = json.loads(geo_meta_bytes.decode("utf-8"))
 
         # GeoParquet spec: columns.<geom_col>.bbox = [minx, miny, maxx, maxy]
+        # Validate for inf/nan values (issue #516) - CRS may not be WGS84
+        from portolan_cli.bbox import is_finite_bbox
+
         columns = geo_meta.get("columns", {})
         for col_meta in columns.values():
             bbox = col_meta.get("bbox")
             if bbox and len(bbox) >= 4:
-                return (bbox[0], bbox[1], bbox[2], bbox[3])
+                bbox_list = [bbox[0], bbox[1], bbox[2], bbox[3]]
+                if is_finite_bbox(bbox_list):
+                    return (bbox[0], bbox[1], bbox[2], bbox[3])
+                logger.warning("Invalid bbox in GeoParquet metadata (inf/nan): %s", bbox_list)
 
         # No bbox in metadata — fall back to reading data
         logger.debug("No bbox in GeoParquet metadata, falling back to data read")
@@ -657,18 +663,27 @@ def _read_geoparquet_bounds(gpq_path: Path) -> tuple[float, float, float, float]
 
 
 def _read_geoparquet_bounds_from_data(gpq_path: Path) -> tuple[float, float, float, float] | None:
-    """Fallback: compute bounds by reading GeoParquet data."""
+    """Fallback: compute bounds by reading GeoParquet data.
+
+    Validates bounds for inf/nan values (issue #516). CRS may not be WGS84.
+    """
     try:
         import geopandas as gpd  # type: ignore[import-untyped]
     except ImportError:
         return None
 
     try:
+        from portolan_cli.bbox import is_finite_bbox
+
         gdf = gpd.read_parquet(gpq_path)
         if gdf.empty:
             return None
         bounds = gdf.total_bounds
-        return (bounds[0], bounds[1], bounds[2], bounds[3])
+        bbox_list = [bounds[0], bounds[1], bounds[2], bounds[3]]
+        if is_finite_bbox(bbox_list):
+            return (bounds[0], bounds[1], bounds[2], bounds[3])
+        logger.warning("Invalid bounds from GeoParquet data (inf/nan): %s", bbox_list)
+        return None
     except Exception as e:
         logger.debug("Failed to read GeoParquet bounds from data: %s", e)
         return None
@@ -711,7 +726,15 @@ def _read_geoparquet_for_thumbnail(
 
         # If no bbox from metadata, compute from data
         if full_bbox is None:
+            from portolan_cli.bbox import is_finite_bbox
+
             bounds = gdf.total_bounds
+            bbox_list = [bounds[0], bounds[1], bounds[2], bounds[3]]
+            if not is_finite_bbox(bbox_list):
+                # Invalid bounds (inf/nan) would poison set_xlim/set_ylim — fail
+                # fast rather than render with a garbage extent (issue #516).
+                logger.warning("Invalid bounds from GeoParquet data (inf/nan): %s", bbox_list)
+                return None, None, None
             full_bbox = (bounds[0], bounds[1], bounds[2], bounds[3])
 
         return gdf, full_bbox, source_crs

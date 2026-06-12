@@ -83,7 +83,14 @@ def transform_bbox_to_wgs84(
 
     Raises:
         CRSMismatchError: When a CRS mismatch is detected and allow_guess=False.
+        ValueError: When input bbox contains inf/nan values (issue #516).
     """
+    # Validate input bbox for inf/nan (issue #516)
+    import math
+
+    if not all(math.isfinite(c) for c in bbox):
+        raise ValueError(f"Input bbox contains non-finite values (inf/nan): {bbox}")
+
     if source_crs is None:
         return bbox
 

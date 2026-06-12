@@ -939,7 +939,8 @@ portolan readme
 ```
 
 **Catalog-level README:** When run at catalog root, generates an index README with:
-- Aggregated spatial extent (envelope of all collections)
+
+- Aggregated spatial extent (envelope of all collections, invalid coordinates like inf/NaN are filtered)
 - Aggregated temporal extent (earliest to latest)
 - List of collections with links (collapsible when ≥10 collections)
 

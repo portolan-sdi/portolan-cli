@@ -575,6 +575,20 @@ def _update_collection_extent_from_bbox(
     if merge_strategy == MergeStrategy.KEEP:
         return
 
+    # Never let an invalid bbox (inf/nan/effectively-infinite sentinel) poison the
+    # collection extent. Use finiteness + sane-magnitude only, since this bbox may
+    # be in a projected source CRS (issue #516).
+    import logging
+
+    from portolan_cli.bbox import get_bbox_validation_reason
+
+    reason = get_bbox_validation_reason(list(bbox), wgs84_only=False)
+    if reason is not None:
+        logging.getLogger(__name__).warning(
+            "Skipping invalid bbox for collection '%s' extent: %s", collection.id, reason
+        )
+        return
+
     current_bbox = collection.extent.spatial.bboxes[0]
 
     # If current extent is placeholder, replace entirely with actual data
@@ -613,6 +627,19 @@ def _update_collection_extent(
 
     # KEEP strategy: preserve existing extent entirely
     if merge_strategy == MergeStrategy.KEEP:
+        return
+
+    # Never let an invalid item bbox (inf/nan/effectively-infinite sentinel)
+    # poison the collection extent (issue #516).
+    import logging
+
+    from portolan_cli.bbox import get_bbox_validation_reason
+
+    reason = get_bbox_validation_reason(list(item.bbox), wgs84_only=False)
+    if reason is not None:
+        logging.getLogger(__name__).warning(
+            "Skipping invalid bbox for collection '%s' extent: %s", collection.id, reason
+        )
         return
 
     current_bbox = collection.extent.spatial.bboxes[0]
@@ -879,20 +906,31 @@ def _merge_schemas(metadata_list: Sequence[object]) -> tuple[dict[str, str], lis
 def _compute_bbox_union(
     metadata_list: Sequence[object],
 ) -> tuple[float, float, float, float]:
-    """Compute bounding box union from multiple metadata objects."""
-    all_bboxes: list[tuple[float, float, float, float]] = []
+    """Compute bounding box union from multiple metadata objects.
+
+    These bboxes are in the source CRS (reprojection to WGS84 happens later in
+    the add flow), and geoparquet-io does not preserve the CRS in the converted
+    file's metadata, so WGS84 range validation cannot be applied here. Bboxes are
+    filtered for finiteness and a sane coordinate magnitude only, which still
+    rejects inf/nan and "effectively infinite" sentinel poison values such as
+    ±1.79e308 while accepting legitimate projected coordinates (issue #516).
+    """
+    from portolan_cli.bbox import compute_bbox_union
+
+    all_bboxes: list[list[float]] = []
     for m in metadata_list:
         bbox = getattr(m, "bbox", None)
         if bbox is not None:
-            all_bboxes.append(bbox)
+            all_bboxes.append(list(bbox))
+
     if not all_bboxes:
         raise ValueError("Cannot aggregate metadata: no items have valid bboxes")
-    return (
-        min(b[0] for b in all_bboxes),
-        min(b[1] for b in all_bboxes),
-        max(b[2] for b in all_bboxes),
-        max(b[3] for b in all_bboxes),
-    )
+
+    result = compute_bbox_union(all_bboxes, wgs84_only=False)
+    if result.bbox is None:
+        raise ValueError("Cannot aggregate metadata: all bboxes are invalid (inf/nan/out of range)")
+
+    return (result.bbox[0], result.bbox[1], result.bbox[2], result.bbox[3])
 
 
 def _canonicalize_crs(crs: object) -> str | None:

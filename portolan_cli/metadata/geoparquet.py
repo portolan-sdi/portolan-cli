@@ -133,10 +133,30 @@ def _parse_geo_metadata(metadata: dict[bytes, bytes]) -> dict[str, Any]:
 
 
 def _extract_bbox(column_meta: dict[str, Any]) -> tuple[float, float, float, float] | None:
-    """Extract bbox from column metadata."""
+    """Extract bbox from column metadata.
+
+    Validates bbox for finite values (issue #516). Does NOT check WGS84 range
+    since source data may be in projected CRS.
+    Returns None if bbox is missing, malformed, or contains inf/nan values.
+    """
+    import logging
+
+    from portolan_cli.bbox import is_finite_bbox
+
+    logger = logging.getLogger(__name__)
+
     bbox = column_meta.get("bbox")
     if bbox and len(bbox) >= 4:
-        return (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+        try:
+            bbox_list = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+        except (ValueError, TypeError):
+            # Non-numeric/malformed bbox entries - log and treat as missing
+            logger.warning("Malformed bbox in GeoParquet metadata (non-numeric): %s", bbox)
+            return None
+        if is_finite_bbox(bbox_list):
+            return (bbox_list[0], bbox_list[1], bbox_list[2], bbox_list[3])
+        # Invalid bbox (inf/nan) - log and return None
+        logger.warning("Invalid bbox in GeoParquet metadata (inf/nan): %s", bbox_list)
     return None
 
 

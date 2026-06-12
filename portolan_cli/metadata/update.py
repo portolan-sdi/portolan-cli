@@ -12,6 +12,7 @@ Part of Phase 2c: Update Functions (check-metadata-handling feature).
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,8 @@ from portolan_cli.versions import (
     read_versions,
     write_versions,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def update_item_metadata(item_path: Path, file_path: Path) -> ItemModel:
@@ -194,6 +197,14 @@ def update_collection_extent(collection_path: Path) -> CollectionModel:
 
     # Compute union bbox
     union_bbox = _compute_union_bbox(bboxes)
+    if union_bbox is None:
+        # No valid child bboxes; keep the existing extent rather than persisting
+        # a synthetic global [-180, -90, 180, 90] that would mask the failure.
+        logger.warning(
+            "Collection '%s': all item bboxes invalid; keeping existing extent",
+            collection.id,
+        )
+        return collection
 
     # Update collection extent
     updated_extent = ExtentModel(
@@ -222,24 +233,26 @@ def update_collection_extent(collection_path: Path) -> CollectionModel:
     return updated_collection
 
 
-def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
+def _compute_union_bbox(bboxes: list[list[float]]) -> list[float] | None:
     """Compute the union bounding box from multiple bboxes.
+
+    Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
 
     Args:
         bboxes: List of bounding boxes, each as [west, south, east, north].
 
     Returns:
-        Union bounding box [west, south, east, north].
+        Union bounding box [west, south, east, north], or None when there are no
+        valid bboxes. Callers must not substitute a synthetic global extent, as
+        that would mask the failure (issue #516).
     """
+    from portolan_cli.bbox import compute_bbox_union
+
     if not bboxes:
-        return [-180.0, -90.0, 180.0, 90.0]  # Global default
+        return None
 
-    min_west = min(bbox[0] for bbox in bboxes)
-    min_south = min(bbox[1] for bbox in bboxes)
-    max_east = max(bbox[2] for bbox in bboxes)
-    max_north = max(bbox[3] for bbox in bboxes)
-
-    return [min_west, min_south, max_east, max_north]
+    result = compute_bbox_union(bboxes)
+    return result.bbox  # None when all bboxes are invalid
 
 
 def update_versions_tracking(file_path: Path, versions_path: Path) -> None:
