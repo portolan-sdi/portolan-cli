@@ -1040,7 +1040,7 @@ class TestUpdateVersionsHref:
             item_id="census-2020",
             collection_id="agriculture",
             asset_files={
-                "census-2020.parquet": (output_file, "abc123"),
+                "census-2020.parquet": (output_file, "abc123", 17),
             },
         )
 
@@ -1066,7 +1066,7 @@ class TestUpdateVersionsHref:
             item_id="pop-data",
             collection_id="demographics",
             asset_files={
-                "pop-data.parquet": (output_file, "def456"),
+                "pop-data.parquet": (output_file, "def456", 17),
             },
         )
 
@@ -1487,9 +1487,9 @@ class TestMultiAssetUpdateVersions:
             item_id="my-item",
             collection_id="my-collection",
             asset_files={
-                "my-item.parquet": (parquet_file, "hash1"),
-                "thumbnail.png": (thumbnail, "hash2"),
-                "metadata.xml": (metadata, "hash3"),
+                "my-item.parquet": (parquet_file, "hash1", 100),
+                "thumbnail.png": (thumbnail, "hash2", 200),
+                "metadata.xml": (metadata, "hash3", 50),
             },
         )
 
@@ -1528,7 +1528,7 @@ class TestMultiAssetUpdateVersions:
             item_id="census-2020",
             collection_id="agriculture",
             asset_files={
-                "census-2020.parquet": (output_file, "abc123"),
+                "census-2020.parquet": (output_file, "abc123", 17),
             },
         )
 

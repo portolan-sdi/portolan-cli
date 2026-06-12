@@ -1301,9 +1301,25 @@ def update_collection_file_statistics(collection: pystac.Collection) -> None:
     asset_count = 0
     has_file_extension = False
 
+    def _validate_file_size(size: object) -> int | None:
+        """Validate and coerce file:size to int, rejecting invalid types."""
+        if size is None:
+            return None
+        if isinstance(size, bool):
+            return None
+        if isinstance(size, int):
+            return size
+        if isinstance(size, str):
+            try:
+                return int(size)
+            except ValueError:
+                return None
+        return None
+
     # Count collection-level assets
     for asset in collection.assets.values():
-        size = asset.extra_fields.get("file:size") if asset.extra_fields else None
+        raw_size = asset.extra_fields.get("file:size") if asset.extra_fields else None
+        size = _validate_file_size(raw_size)
         if size is not None:
             total_size += size
             asset_count += 1
@@ -1312,7 +1328,8 @@ def update_collection_file_statistics(collection: pystac.Collection) -> None:
     # Count item-level assets
     for item in collection.get_items(recursive=True):
         for asset in item.assets.values():
-            size = asset.extra_fields.get("file:size") if asset.extra_fields else None
+            raw_size = asset.extra_fields.get("file:size") if asset.extra_fields else None
+            size = _validate_file_size(raw_size)
             if size is not None:
                 total_size += size
                 asset_count += 1
@@ -1324,6 +1341,8 @@ def update_collection_file_statistics(collection: pystac.Collection) -> None:
     # Declare file extension if any asset has file:size
     if has_file_extension:
         file_ext_url = EXTENSION_URLS["file"]
+        if collection.stac_extensions is None:
+            collection.stac_extensions = []
         if file_ext_url not in collection.stac_extensions:
             collection.stac_extensions.append(file_ext_url)
 

@@ -929,7 +929,8 @@ async def _populate_missing_file_sizes(
             continue
         rel_path = item_json.parent.relative_to(local_root).as_posix()
         item_base = f"{remote_url}/{rel_path}"
-        populated += await _process_stac_file_sizes(item_json, item_base, rel_path, verbose)
+        # item_base already includes rel_path, so pass "" to avoid URL duplication
+        populated += await _process_stac_file_sizes(item_json, item_base, "", verbose)
 
     return populated
 
@@ -961,8 +962,7 @@ async def _enrich_file_sizes_safe(
         )
         if sizes_populated > 0 and verbose:
             detail(f"Populated file:size for {sizes_populated} asset(s)")
-    except Exception:
-        # Non-fatal: file sizes are nice-to-have, don't fail the pull
+    except Exception:  # noqa: BLE001  # nosec B110 - Non-fatal: file sizes are nice-to-have
         pass
 
 
