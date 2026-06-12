@@ -8,6 +8,7 @@ from typing import Any
 
 from portolan_cli.validation.results import ValidationReport, ValidationResult
 from portolan_cli.validation.rules import (
+    BboxValidRule,
     CatalogExistsRule,
     CatalogJsonValidRule,
     MetadataFreshRule,
@@ -33,6 +34,7 @@ DEFAULT_RULES: tuple[ValidationRule, ...] = (
     StacSchemaRule(),
     StacLintRule(),
     MandatoryTitlesRule(),
+    BboxValidRule(),
     PMTilesRecommendedRule(),
     MetadataFreshRule(),
     ProvisionalDatetimeRule(),
@@ -62,6 +64,7 @@ def _build_rules(
         StacSchemaRule(strict=strict),
         StacLintRule(strict=strict, config=config),
         MandatoryTitlesRule(),
+        BboxValidRule(),
         PMTilesRecommendedRule(),
         MetadataFreshRule(),
         ProvisionalDatetimeRule(),

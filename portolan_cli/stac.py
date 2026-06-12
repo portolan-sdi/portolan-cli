@@ -879,20 +879,26 @@ def _merge_schemas(metadata_list: Sequence[object]) -> tuple[dict[str, str], lis
 def _compute_bbox_union(
     metadata_list: Sequence[object],
 ) -> tuple[float, float, float, float]:
-    """Compute bounding box union from multiple metadata objects."""
-    all_bboxes: list[tuple[float, float, float, float]] = []
+    """Compute bounding box union from multiple metadata objects.
+
+    Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
+    """
+    from portolan_cli.bbox import compute_bbox_union
+
+    all_bboxes: list[list[float]] = []
     for m in metadata_list:
         bbox = getattr(m, "bbox", None)
         if bbox is not None:
-            all_bboxes.append(bbox)
+            all_bboxes.append(list(bbox))
+
     if not all_bboxes:
         raise ValueError("Cannot aggregate metadata: no items have valid bboxes")
-    return (
-        min(b[0] for b in all_bboxes),
-        min(b[1] for b in all_bboxes),
-        max(b[2] for b in all_bboxes),
-        max(b[3] for b in all_bboxes),
-    )
+
+    result = compute_bbox_union(all_bboxes)
+    if result.bbox is None:
+        raise ValueError("Cannot aggregate metadata: all bboxes are invalid (inf/nan/out of range)")
+
+    return (result.bbox[0], result.bbox[1], result.bbox[2], result.bbox[3])
 
 
 def _canonicalize_crs(crs: object) -> str | None:

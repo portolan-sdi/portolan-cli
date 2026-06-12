@@ -1473,6 +1473,71 @@ def prepare_dataset(
     )
 
 
+def _recompute_collection_extent_with_multibbox(collection: pystac.Collection) -> None:
+    """Recompute collection spatial extent with anti-meridian handling (issue #516).
+
+    Collects all item and asset bboxes from the collection and recomputes the
+    spatial extent using proper multi-bbox support for anti-meridian crossing.
+
+    If anti-meridian crossing is detected, the extent will use multiple bboxes
+    per the STAC spec (one for the western portion, one for the eastern portion).
+
+    Args:
+        collection: The pystac Collection to update.
+    """
+    from portolan_cli.bbox import compute_bbox_union
+
+    # Collect all bboxes from items
+    all_bboxes: list[list[float]] = []
+
+    # Get bboxes from linked items
+    for link in collection.links:
+        if link.rel == "item" and hasattr(link, "target") and link.target is not None:
+            item = link.target
+            if hasattr(item, "bbox") and item.bbox is not None:
+                all_bboxes.append(list(item.bbox))
+
+    # Get bboxes from collection-level assets (if they have proj:bbox)
+    if collection.assets:
+        for asset in collection.assets.values():
+            if hasattr(asset, "extra_fields") and asset.extra_fields:
+                proj_bbox = asset.extra_fields.get("proj:bbox")
+                if proj_bbox:
+                    all_bboxes.append(list(proj_bbox))
+
+    # Also use the existing collection extent as a fallback
+    if collection.extent and collection.extent.spatial:
+        for bbox in collection.extent.spatial.bboxes:
+            if bbox not in all_bboxes:
+                all_bboxes.append(list(bbox))
+
+    if not all_bboxes:
+        return  # No bboxes to process
+
+    # Compute union with anti-meridian handling
+    result = compute_bbox_union(all_bboxes)
+
+    if result.bbox is None:
+        logger.warning(
+            "Collection '%s': all bboxes are invalid, keeping existing extent",
+            collection.id,
+        )
+        return
+
+    # Update collection extent
+    if result.is_multi_bbox and result.bboxes:
+        # Use multi-bbox for anti-meridian crossing
+        collection.extent.spatial = pystac.SpatialExtent(bboxes=result.bboxes)
+        logger.info(
+            "Collection '%s': using multi-bbox extent for anti-meridian crossing (%d bboxes)",
+            collection.id,
+            len(result.bboxes),
+        )
+    else:
+        # Single bbox
+        collection.extent.spatial = pystac.SpatialExtent(bboxes=[result.bbox])
+
+
 def _add_prepared_items_to_collection(
     collection: pystac.Collection,
     items: list[PreparedDataset],
@@ -1798,6 +1863,11 @@ def finalize_datasets(
         # Collections should declare extensions used by their items
         if collection.summaries is not None:
             add_collection_extensions_from_summaries(collection, collection.summaries.to_dict())
+
+        # Issue #516: Recompute spatial extent with anti-meridian handling
+        # This step collects all item/asset bboxes and computes proper multi-bbox
+        # when anti-meridian crossing is detected.
+        _recompute_collection_extent_with_multibbox(collection)
 
         # Save collection.json ONCE for all items in this collection
         _save_collection_with_links(collection, collection_dir, catalog_root, collection_id)
@@ -2401,25 +2471,27 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
 def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
     """Compute the union (enclosing) bounding box from multiple bboxes.
 
-    Note: This uses simple min/max aggregation which does NOT correctly handle
-    antimeridian-crossing bboxes (where west > east, e.g., Fiji: [177, -20, -175, -15]).
-    For catalogs with such collections, use explicit bbox in metadata.yaml.
+    Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
+    Handles antimeridian-crossing bboxes properly.
 
     Args:
         bboxes: List of bboxes, each [west, south, east, north].
 
     Returns:
         Union bbox [min_west, min_south, max_east, max_north].
+        Returns global fallback if all bboxes are invalid.
     """
+    from portolan_cli.bbox import compute_bbox_union
+
     if not bboxes:
         return [-180.0, -90.0, 180.0, 90.0]  # Global fallback
 
-    west = min(bbox[0] for bbox in bboxes)
-    south = min(bbox[1] for bbox in bboxes)
-    east = max(bbox[2] for bbox in bboxes)
-    north = max(bbox[3] for bbox in bboxes)
+    result = compute_bbox_union(bboxes)
+    if result.bbox is None:
+        # All bboxes were invalid - return global fallback
+        return [-180.0, -90.0, 180.0, 90.0]
 
-    return [west, south, east, north]
+    return result.bbox
 
 
 def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:

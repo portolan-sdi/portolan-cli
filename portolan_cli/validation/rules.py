@@ -588,3 +588,115 @@ class PartitionSchemaConsistencyRule(ValidationRule):
             f"Schema inconsistency: {issue_list}",
             fix_hint="Re-partition with consistent source data",
         )
+
+
+class BboxValidRule(ValidationRule):
+    """Check that all collection and item bboxes are valid (issue #516).
+
+    Validates that bboxes:
+    - Do not contain inf or nan values
+    - Have coordinates within WGS84 bounds (lon: -180 to 180, lat: -90 to 90)
+    - Have south <= north
+
+    This catches garbage coordinates that can poison catalog-level extent unions
+    and break map UI browsing (discovered in IGN Argentina with sentinel -1.79e308 values).
+    """
+
+    name = "bbox_valid"
+    severity = Severity.ERROR
+    description = "Check for invalid bbox coordinates (inf/nan/out of range)"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Find collections and items with invalid bboxes."""
+        catalog_json = catalog_path / "catalog.json"
+        if not catalog_json.exists():
+            return self._pass("No catalog.json found")
+
+        invalid = self._check_catalog_bbox(catalog_json)
+        invalid.extend(self._check_collections(catalog_path))
+
+        if not invalid:
+            return self._pass("All bboxes are valid")
+
+        summary = ", ".join(invalid[:5])
+        if len(invalid) > 5:
+            summary += f" (+{len(invalid) - 5} more)"
+
+        return self._fail(
+            f"{len(invalid)} invalid bbox(es): {summary}",
+            fix_hint="Re-add the affected collections to regenerate with valid source data",
+        )
+
+    def _check_catalog_bbox(self, catalog_json: Path) -> list[str]:
+        """Check catalog-level extent if present."""
+        from portolan_cli.bbox import get_bbox_validation_reason
+
+        try:
+            data = json.loads(catalog_json.read_text(encoding="utf-8"))
+            bbox = data.get("extent", {}).get("spatial", {}).get("bbox", [[]])[0]
+            if bbox:
+                reason = get_bbox_validation_reason(bbox)
+                if reason:
+                    return [f"catalog: {reason}"]
+        except (json.JSONDecodeError, OSError):
+            pass
+        return []
+
+    def _check_collections(self, catalog_path: Path) -> list[str]:
+        """Check all collection and item bboxes."""
+
+        invalid: list[str] = []
+
+        for collection_json in catalog_path.rglob("collection.json"):
+            collection_dir = collection_json.parent
+            if any(part.startswith(".") for part in collection_dir.parts):
+                continue
+
+            coll_id = str(collection_dir.relative_to(catalog_path)).replace("\\", "/")
+            invalid.extend(self._check_collection_file(collection_json, coll_id))
+            invalid.extend(self._check_items(collection_dir, coll_id))
+
+        return invalid
+
+    def _check_collection_file(self, path: Path, coll_id: str) -> list[str]:
+        """Check a single collection.json for invalid bboxes."""
+        from portolan_cli.bbox import get_bbox_validation_reason
+
+        invalid: list[str] = []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            bbox_list = data.get("extent", {}).get("spatial", {}).get("bbox", [])
+            for i, bbox in enumerate(bbox_list):
+                if not bbox:
+                    continue
+                reason = get_bbox_validation_reason(bbox)
+                if reason:
+                    label = f"{coll_id} bbox[{i}]" if len(bbox_list) > 1 else coll_id
+                    invalid.append(f"{label}: {reason}")
+        except (json.JSONDecodeError, OSError):
+            pass
+        return invalid
+
+    def _check_items(self, collection_dir: Path, coll_id: str) -> list[str]:
+        """Check item bboxes in a collection."""
+        from portolan_cli.bbox import get_bbox_validation_reason
+
+        invalid: list[str] = []
+        skip_names = {"collection.json", "versions.json", "catalog.json"}
+
+        for item_json in collection_dir.rglob("*.json"):
+            if item_json.name in skip_names:
+                continue
+            try:
+                data = json.loads(item_json.read_text(encoding="utf-8"))
+                if data.get("type") != "Feature":
+                    continue
+                bbox = data.get("bbox")
+                if bbox:
+                    reason = get_bbox_validation_reason(bbox)
+                    if reason:
+                        item_id = data.get("id", item_json.stem)
+                        invalid.append(f"{coll_id}/{item_id}: {reason}")
+            except (json.JSONDecodeError, OSError):
+                continue
+        return invalid

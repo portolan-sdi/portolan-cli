@@ -225,21 +225,25 @@ def update_collection_extent(collection_path: Path) -> CollectionModel:
 def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
     """Compute the union bounding box from multiple bboxes.
 
+    Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
+
     Args:
         bboxes: List of bounding boxes, each as [west, south, east, north].
 
     Returns:
         Union bounding box [west, south, east, north].
+        Returns global fallback if all bboxes are invalid.
     """
+    from portolan_cli.bbox import compute_bbox_union
+
     if not bboxes:
         return [-180.0, -90.0, 180.0, 90.0]  # Global default
 
-    min_west = min(bbox[0] for bbox in bboxes)
-    min_south = min(bbox[1] for bbox in bboxes)
-    max_east = max(bbox[2] for bbox in bboxes)
-    max_north = max(bbox[3] for bbox in bboxes)
+    result = compute_bbox_union(bboxes)
+    if result.bbox is None:
+        return [-180.0, -90.0, 180.0, 90.0]  # All invalid - global fallback
 
-    return [min_west, min_south, max_east, max_north]
+    return result.bbox
 
 
 def update_versions_tracking(file_path: Path, versions_path: Path) -> None:

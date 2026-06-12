@@ -644,15 +644,17 @@ def _extract_collection_extent(
 
 
 def _compute_bbox_envelope(bboxes: list[list[float]]) -> list[float] | None:
-    """Compute bounding box envelope (union) from multiple bboxes."""
+    """Compute bounding box envelope (union) from multiple bboxes.
+
+    Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
+    """
+    from portolan_cli.bbox import compute_bbox_union
+
     if not bboxes:
         return None
-    return [
-        min(b[0] for b in bboxes),
-        min(b[1] for b in bboxes),
-        max(b[2] for b in bboxes),
-        max(b[3] for b in bboxes),
-    ]
+
+    result = compute_bbox_union(bboxes)
+    return result.bbox  # None if all invalid
 
 
 def aggregate_catalog_extent(catalog_path: Path) -> dict[str, Any]:
