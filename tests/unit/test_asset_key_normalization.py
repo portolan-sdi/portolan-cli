@@ -1,11 +1,13 @@
-"""Tests for STAC asset key normalization and titles.
+"""Tests for STAC asset key normalization.
 
 When _scan_item_assets builds STAC asset entries, well-known roles
 (thumbnail, metadata, documentation) should:
 - Use the role name as the asset key (e.g., "thumbnail" not "preview")
   so STAC consumers can find the asset by role without inspecting paths.
-- Carry a default title matching the convention used by Element 84
-  Earth Search (every asset has a title).
+
+Note: Titles are human-enrichable fields (Issue #446) and should NOT be
+auto-generated. They come from metadata.yaml or preserved from existing
+metadata via merge strategy.
 
 Falls back to stem on collision so a user with two thumbnails or two
 metadata files still gets stable keys.
@@ -127,10 +129,15 @@ class TestAssetKeyNormalization:
 
 
 class TestAssetTitles:
-    """Well-known roles carry a default title."""
+    """Asset titles are human-enrichable fields (Issue #446).
+
+    Titles should NOT be auto-generated from role names. They should come from
+    metadata.yaml or be preserved from existing metadata via merge strategy.
+    """
 
     @pytest.mark.unit
-    def test_thumbnail_has_default_title(self, item_dir_with_data: tuple[Path, Path]) -> None:
+    def test_thumbnail_has_no_auto_title(self, item_dir_with_data: tuple[Path, Path]) -> None:
+        """Thumbnail assets should not get auto-generated titles."""
         item_dir, data_file = item_dir_with_data
         (item_dir / "preview.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
 
@@ -141,10 +148,11 @@ class TestAssetTitles:
             collection_dir=item_dir.parent,
         )
 
-        assert assets["thumbnail"].title == "Thumbnail"
+        assert assets["thumbnail"].title is None
 
     @pytest.mark.unit
-    def test_metadata_has_default_title(self, item_dir_with_data: tuple[Path, Path]) -> None:
+    def test_metadata_has_no_auto_title(self, item_dir_with_data: tuple[Path, Path]) -> None:
+        """Metadata assets should not get auto-generated titles."""
         item_dir, data_file = item_dir_with_data
         (item_dir / "iso.xml").write_text("<x/>")
 
@@ -155,10 +163,11 @@ class TestAssetTitles:
             collection_dir=item_dir.parent,
         )
 
-        assert assets["metadata"].title == "Metadata"
+        assert assets["metadata"].title is None
 
     @pytest.mark.unit
-    def test_documentation_has_default_title(self, item_dir_with_data: tuple[Path, Path]) -> None:
+    def test_documentation_has_no_auto_title(self, item_dir_with_data: tuple[Path, Path]) -> None:
+        """Documentation assets should not get auto-generated titles."""
         item_dir, data_file = item_dir_with_data
         (item_dir / "README.md").write_text("# Hi")
 
@@ -169,10 +178,11 @@ class TestAssetTitles:
             collection_dir=item_dir.parent,
         )
 
-        assert assets["documentation"].title == "Documentation"
+        assert assets["documentation"].title is None
 
     @pytest.mark.unit
-    def test_data_has_default_title(self, item_dir_with_data: tuple[Path, Path]) -> None:
+    def test_data_has_no_auto_title(self, item_dir_with_data: tuple[Path, Path]) -> None:
+        """Data assets should not get auto-generated titles."""
         item_dir, data_file = item_dir_with_data
 
         assets, _, _ = _scan_item_assets(
@@ -182,4 +192,4 @@ class TestAssetTitles:
             collection_dir=item_dir.parent,
         )
 
-        assert assets["data"].title == "Data"
+        assert assets["data"].title is None

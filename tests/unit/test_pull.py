@@ -1890,3 +1890,206 @@ class TestDryRunNetworkIsolation:
         assert result.local_version is None  # no versions.json = no local version
         assert result.remote_version is None  # dry-run = no remote check
         assert result.files_downloaded == 0
+
+
+class TestPopulateMissingFileSizes:
+    """Tests for _populate_missing_file_sizes (Issue #501)."""
+
+    @pytest.mark.unit
+    def test_populate_missing_file_sizes_collection_assets(self, tmp_path: Path) -> None:
+        """_populate_missing_file_sizes updates collection.json assets."""
+        import asyncio
+        import json
+
+        from portolan_cli.pull import _populate_missing_file_sizes
+
+        # Create collection.json with assets missing file:size
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+        collection_data = {
+            "type": "Collection",
+            "id": "test-collection",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                },
+                "has_size": {
+                    "href": "./other.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "file:size": 500,
+                },
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_data))
+
+        async def mock_get_size(url: str, timeout: float = 30.0) -> int | None:
+            if "data.parquet" in url:
+                return 12345
+            return None
+
+        with patch("portolan_cli.pull.get_remote_file_size_async", mock_get_size):
+            count = asyncio.run(
+                _populate_missing_file_sizes(
+                    local_root=tmp_path,
+                    collection="test-collection",
+                    remote_url="https://example.com/catalog",
+                )
+            )
+
+        assert count == 1
+
+        # Check file was updated
+        updated = json.loads((collection_dir / "collection.json").read_text())
+        assert updated["assets"]["data"]["file:size"] == 12345
+        assert updated["assets"]["has_size"]["file:size"] == 500  # unchanged
+
+    @pytest.mark.unit
+    def test_populate_missing_file_sizes_item_assets(self, tmp_path: Path) -> None:
+        """_populate_missing_file_sizes updates item.json assets."""
+        import asyncio
+        import json
+
+        from portolan_cli.pull import _populate_missing_file_sizes
+
+        # Create collection with an item
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+        (collection_dir / "collection.json").write_text(
+            json.dumps({"type": "Collection", "id": "test", "assets": {}})
+        )
+
+        item_dir = collection_dir / "item1"
+        item_dir.mkdir()
+        item_data = {
+            "type": "Feature",
+            "id": "item1",
+            "assets": {
+                "data": {
+                    "href": "data.tif",
+                    "type": "image/tiff",
+                },
+            },
+        }
+        (item_dir / "item1.json").write_text(json.dumps(item_data))
+
+        async def mock_get_size(url: str, timeout: float = 30.0) -> int | None:
+            if "data.tif" in url:
+                return 9999
+            return None
+
+        with patch("portolan_cli.pull.get_remote_file_size_async", mock_get_size):
+            count = asyncio.run(
+                _populate_missing_file_sizes(
+                    local_root=tmp_path,
+                    collection="test-collection",
+                    remote_url="https://example.com/catalog",
+                )
+            )
+
+        assert count == 1
+
+        # Check item file was updated
+        updated = json.loads((item_dir / "item1.json").read_text())
+        assert updated["assets"]["data"]["file:size"] == 9999
+
+    @pytest.mark.unit
+    def test_populate_missing_file_sizes_no_collection(self, tmp_path: Path) -> None:
+        """_populate_missing_file_sizes returns 0 when collection.json missing."""
+        import asyncio
+
+        from portolan_cli.pull import _populate_missing_file_sizes
+
+        count = asyncio.run(
+            _populate_missing_file_sizes(
+                local_root=tmp_path,
+                collection="nonexistent",
+                remote_url="https://example.com/catalog",
+            )
+        )
+
+        assert count == 0
+
+
+class TestResolveAssetUrl:
+    """Tests for _resolve_asset_url helper function."""
+
+    @pytest.mark.unit
+    def test_absolute_url_returned_unchanged(self) -> None:
+        """Absolute URLs are returned as-is."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("https://example.com/file.parquet", "https://host/cat", "coll")
+            == "https://example.com/file.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_relative_dot_slash_with_rel_path(self) -> None:
+        """./href is resolved relative to base_url/rel_path."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("./data.parquet", "https://host/cat", "coll")
+            == "https://host/cat/coll/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_relative_dot_slash_empty_rel_path(self) -> None:
+        """./href with empty rel_path resolves to base_url/href."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("./data.parquet", "https://host/cat", "")
+            == "https://host/cat/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_parent_path_with_nested_rel_path(self) -> None:
+        """../href navigates up one level from rel_path."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("../shared/data.parquet", "https://host/cat", "coll/item")
+            == "https://host/cat/coll/shared/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_parent_path_with_single_segment_rel_path(self) -> None:
+        """../href with single-segment rel_path resolves to base_url."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("../data.parquet", "https://host/cat", "coll")
+            == "https://host/cat/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_parent_path_empty_rel_path(self) -> None:
+        """../href with empty rel_path still resolves (edge case)."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("../data.parquet", "https://host/cat", "")
+            == "https://host/cat/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_bare_filename_with_rel_path(self) -> None:
+        """Bare filename is resolved relative to base_url/rel_path."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("data.parquet", "https://host/cat", "coll")
+            == "https://host/cat/coll/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_bare_filename_empty_rel_path(self) -> None:
+        """Bare filename with empty rel_path resolves to base_url/filename."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("data.parquet", "https://host/cat", "")
+            == "https://host/cat/data.parquet"
+        )

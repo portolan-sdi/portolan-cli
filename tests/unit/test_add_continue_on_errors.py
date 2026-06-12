@@ -124,7 +124,7 @@ class TestAddFilesContinuesOnErrors:
                 collection_id="collection",
                 format_type=FormatType.VECTOR,
                 bbox=[-122.5, 37.5, -122.0, 38.0],
-                asset_files={"good.parquet": (path, "abc123")},
+                asset_files={"good.parquet": (path, "abc123", 1024)},
                 is_collection_level_asset=False,
             )
 
@@ -182,7 +182,7 @@ class TestAddFilesContinuesOnErrors:
                 collection_id="collection",
                 format_type=FormatType.VECTOR,
                 bbox=[0, 0, 1, 1],
-                asset_files={"file2.parquet": (path, "abc123")},
+                asset_files={"file2.parquet": (path, "abc123", 1024)},
                 is_collection_level_asset=False,
             )
 
@@ -446,7 +446,7 @@ class TestAddFilesReturnContract:
                     collection_id="collection",
                     format_type=FormatType.VECTOR,
                     bbox=[0, 0, 1, 1],
-                    asset_files={"test.parquet": (f, "abc123")},
+                    asset_files={"test.parquet": (f, "abc123", 1024)},
                     is_collection_level_asset=False,
                 ),
             ),

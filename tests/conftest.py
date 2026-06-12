@@ -4,9 +4,13 @@ from __future__ import annotations
 
 # Set matplotlib backend to Agg BEFORE any matplotlib imports.
 # Required for headless CI environments (Windows/Linux without display).
-import matplotlib
+# Conditional: matplotlib is in the [thumbnails] extra, not needed for all tests.
+try:
+    import matplotlib
 
-matplotlib.use("Agg")
+    matplotlib.use("Agg")
+except ModuleNotFoundError:
+    pass  # Iceberg tests don't need matplotlib
 
 from pathlib import Path
 from typing import TYPE_CHECKING

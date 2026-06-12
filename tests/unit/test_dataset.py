@@ -21,6 +21,7 @@ from portolan_cli.dataset import (
     _get_media_type,
     _update_versions,
     add_dataset,
+    compute_dir_size,
     get_dataset_info,
     list_datasets,
     remove_dataset,
@@ -1039,7 +1040,7 @@ class TestUpdateVersionsHref:
             item_id="census-2020",
             collection_id="agriculture",
             asset_files={
-                "census-2020.parquet": (output_file, "abc123"),
+                "census-2020.parquet": (output_file, "abc123", 17),
             },
         )
 
@@ -1065,7 +1066,7 @@ class TestUpdateVersionsHref:
             item_id="pop-data",
             collection_id="demographics",
             asset_files={
-                "pop-data.parquet": (output_file, "def456"),
+                "pop-data.parquet": (output_file, "def456", 17),
             },
         )
 
@@ -1486,9 +1487,9 @@ class TestMultiAssetUpdateVersions:
             item_id="my-item",
             collection_id="my-collection",
             asset_files={
-                "my-item.parquet": (parquet_file, "hash1"),
-                "thumbnail.png": (thumbnail, "hash2"),
-                "metadata.xml": (metadata, "hash3"),
+                "my-item.parquet": (parquet_file, "hash1", 100),
+                "thumbnail.png": (thumbnail, "hash2", 200),
+                "metadata.xml": (metadata, "hash3", 50),
             },
         )
 
@@ -1527,7 +1528,7 @@ class TestMultiAssetUpdateVersions:
             item_id="census-2020",
             collection_id="agriculture",
             asset_files={
-                "census-2020.parquet": (output_file, "abc123"),
+                "census-2020.parquet": (output_file, "abc123", 17),
             },
         )
 
@@ -1635,3 +1636,73 @@ class TestMultiAssetListAndInfo:
         assert len(info.asset_paths) == 2
         assert "data.parquet" in info.asset_paths
         assert "thumb.png" in info.asset_paths
+
+
+class TestComputeDirSize:
+    """Tests for compute_dir_size (Issue #501)."""
+
+    @pytest.mark.unit
+    def test_compute_dir_size_single_file(self, tmp_path: Path) -> None:
+        """compute_dir_size returns size of single file in directory."""
+        test_dir = tmp_path / "test_gdb"
+        test_dir.mkdir()
+
+        # Create a file with known content
+        content = b"Hello, World!"  # 13 bytes
+        (test_dir / "data.bin").write_bytes(content)
+
+        size = compute_dir_size(test_dir)
+        assert size == 13
+
+    @pytest.mark.unit
+    def test_compute_dir_size_multiple_files(self, tmp_path: Path) -> None:
+        """compute_dir_size sums sizes of all files in directory."""
+        test_dir = tmp_path / "test_gdb"
+        test_dir.mkdir()
+
+        # Create multiple files
+        (test_dir / "file1.bin").write_bytes(b"A" * 100)  # 100 bytes
+        (test_dir / "file2.bin").write_bytes(b"B" * 200)  # 200 bytes
+
+        size = compute_dir_size(test_dir)
+        assert size == 300
+
+    @pytest.mark.unit
+    def test_compute_dir_size_nested_files(self, tmp_path: Path) -> None:
+        """compute_dir_size includes files in subdirectories."""
+        test_dir = tmp_path / "test_gdb"
+        test_dir.mkdir()
+        subdir = test_dir / "subdir"
+        subdir.mkdir()
+
+        (test_dir / "root.bin").write_bytes(b"A" * 50)  # 50 bytes
+        (subdir / "nested.bin").write_bytes(b"B" * 75)  # 75 bytes
+
+        size = compute_dir_size(test_dir)
+        assert size == 125
+
+    @pytest.mark.unit
+    def test_compute_dir_size_empty_directory(self, tmp_path: Path) -> None:
+        """compute_dir_size returns 0 for empty directory."""
+        test_dir = tmp_path / "empty_gdb"
+        test_dir.mkdir()
+
+        size = compute_dir_size(test_dir)
+        assert size == 0
+
+    @pytest.mark.unit
+    def test_compute_dir_size_not_directory(self, tmp_path: Path) -> None:
+        """compute_dir_size raises ValueError for non-directory."""
+        test_file = tmp_path / "not_a_dir.txt"
+        test_file.write_text("content")
+
+        with pytest.raises(ValueError, match="Not a directory"):
+            compute_dir_size(test_file)
+
+    @pytest.mark.unit
+    def test_compute_dir_size_not_found(self, tmp_path: Path) -> None:
+        """compute_dir_size raises FileNotFoundError for missing path."""
+        missing = tmp_path / "does_not_exist"
+
+        with pytest.raises(FileNotFoundError, match="Directory not found"):
+            compute_dir_size(missing)

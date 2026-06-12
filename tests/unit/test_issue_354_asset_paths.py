@@ -232,7 +232,7 @@ class TestBatchUpdateVersionsAssetKeys:
             collection_id="my_collection",
             format_type=FormatType.VECTOR,
             bbox=[0, 0, 1, 1],
-            asset_files={"my_collection.parquet": (asset_path, "abc123")},
+            asset_files={"my_collection.parquet": (asset_path, "abc123", 1024)},
             item_json_path=collection_dir / "item.json",
             is_collection_level_asset=True,
         )
@@ -270,7 +270,7 @@ class TestBatchUpdateVersionsAssetKeys:
             collection_id="my_collection",
             format_type=FormatType.VECTOR,
             bbox=[0, 0, 1, 1],
-            asset_files={"data.parquet": (asset_path, "abc123")},
+            asset_files={"data.parquet": (asset_path, "abc123", 1024)},
             item_json_path=item_dir / "item.json",
             is_collection_level_asset=False,
         )

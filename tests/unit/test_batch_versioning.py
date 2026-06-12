@@ -31,7 +31,7 @@ class TestPreparedDataset:
             collection_id="test-collection",
             format_type=FormatType.VECTOR,
             bbox=[-122.5, 37.5, -122.0, 38.0],
-            asset_files={"data.parquet": (Path("/tmp/data.parquet"), "abc123")},
+            asset_files={"data.parquet": (Path("/tmp/data.parquet"), "abc123", 1024)},
             item_json_path=Path("/tmp/item.json"),
         )
 
@@ -50,7 +50,7 @@ class TestPreparedDataset:
             collection_id="test-collection",
             format_type=FormatType.RASTER,
             bbox=[0, 0, 1, 1],
-            asset_files={"data.tif": (Path("/tmp/data.tif"), "def456")},
+            asset_files={"data.tif": (Path("/tmp/data.tif"), "def456", 2048)},
             item_json_path=Path("/tmp/item.json"),
             is_collection_level_asset=True,
         )
@@ -78,7 +78,7 @@ class TestPreparedDataset:
             collection_id="test-collection",
             format_type=FormatType.VECTOR,
             bbox=[0, 0, 1, 1],
-            asset_files={"data.parquet": (Path("/tmp/data.parquet"), "abc123")},
+            asset_files={"data.parquet": (Path("/tmp/data.parquet"), "abc123", 1024)},
             item_json_path=Path("/tmp/item.json"),
             metadata=metadata,
         )
@@ -250,7 +250,7 @@ class TestFinalizeDatasets:
             collection_id="test-collection",
             format_type=FormatType.VECTOR,
             bbox=[-122.5, 37.5, -122.0, 38.0],
-            asset_files={"data1.parquet": (asset1, "checksum1")},
+            asset_files={"data1.parquet": (asset1, "checksum1", 14)},
             item_json_path=item1_dir / "item-1.json",
         )
         prepared2 = PreparedDataset(
@@ -258,7 +258,7 @@ class TestFinalizeDatasets:
             collection_id="test-collection",
             format_type=FormatType.VECTOR,
             bbox=[-122.0, 37.0, -121.5, 37.5],
-            asset_files={"data2.parquet": (asset2, "checksum2")},
+            asset_files={"data2.parquet": (asset2, "checksum2", 14)},
             item_json_path=item2_dir / "item-2.json",
         )
 
@@ -303,6 +303,7 @@ class TestFinalizeDatasets:
                 "data.parquet": (
                     initialized_catalog / "collection-a/item-1/data.parquet",
                     "checksum-a",
+                    4,
                 )
             },
             item_json_path=initialized_catalog / "collection-a/item-1/item-1.json",
@@ -316,6 +317,7 @@ class TestFinalizeDatasets:
                 "data.parquet": (
                     initialized_catalog / "collection-b/item-1/data.parquet",
                     "checksum-b",
+                    4,
                 )
             },
             item_json_path=initialized_catalog / "collection-b/item-1/item-1.json",
@@ -360,6 +362,7 @@ class TestFinalizeDatasets:
                     f"data{i}.parquet": (
                         collection_dir / f"item-{i}/data{i}.parquet",
                         f"checksum{i}",
+                        100 * i,
                     )
                 },
                 item_json_path=collection_dir / f"item-{i}/item-{i}.json",

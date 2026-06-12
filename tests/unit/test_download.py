@@ -1330,3 +1330,74 @@ class TestExceptionCleanupInDownloadFile:
 
                         assert result.success is False
                         # Should not raise, just continue with error result
+
+
+class TestGetRemoteFileSize:
+    """Tests for HTTP HEAD file size retrieval (Issue #501)."""
+
+    @pytest.mark.unit
+    def test_get_remote_file_size_returns_content_length(self) -> None:
+        """get_remote_file_size returns Content-Length header value."""
+        from portolan_cli.download import get_remote_file_size
+
+        with patch("httpx.Client") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value.__enter__.return_value = mock_client
+            mock_response = MagicMock()
+            mock_response.headers = {"content-length": "12345"}
+            mock_client.head.return_value = mock_response
+
+            size = get_remote_file_size("https://example.com/data.parquet")
+
+            assert size == 12345
+            mock_client.head.assert_called_once_with(
+                "https://example.com/data.parquet", follow_redirects=True
+            )
+
+    @pytest.mark.unit
+    def test_get_remote_file_size_returns_none_on_missing_header(self) -> None:
+        """get_remote_file_size returns None when Content-Length is missing."""
+        from portolan_cli.download import get_remote_file_size
+
+        with patch("httpx.Client") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value.__enter__.return_value = mock_client
+            mock_response = MagicMock()
+            mock_response.headers = {}  # No Content-Length
+            mock_client.head.return_value = mock_response
+
+            size = get_remote_file_size("https://example.com/data.parquet")
+
+            assert size is None
+
+    @pytest.mark.unit
+    def test_get_remote_file_size_returns_none_on_http_error(self) -> None:
+        """get_remote_file_size returns None on HTTP errors."""
+        import httpx
+
+        from portolan_cli.download import get_remote_file_size
+
+        with patch("httpx.Client") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value.__enter__.return_value = mock_client
+            mock_client.head.side_effect = httpx.HTTPError("Connection failed")
+
+            size = get_remote_file_size("https://example.com/data.parquet")
+
+            assert size is None
+
+    @pytest.mark.unit
+    def test_get_remote_file_size_uses_custom_timeout(self) -> None:
+        """get_remote_file_size respects custom timeout."""
+        from portolan_cli.download import get_remote_file_size
+
+        with patch("httpx.Client") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value.__enter__.return_value = mock_client
+            mock_response = MagicMock()
+            mock_response.headers = {"content-length": "100"}
+            mock_client.head.return_value = mock_response
+
+            get_remote_file_size("https://example.com/data.parquet", timeout=60.0)
+
+            mock_client_class.assert_called_once_with(timeout=60.0)

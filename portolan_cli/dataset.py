@@ -83,6 +83,8 @@ from portolan_cli.stac import (
     create_collection,
     create_item,
     load_catalog,
+    update_catalog_file_statistics,
+    update_collection_file_statistics,
     update_collection_summaries,
 )
 from portolan_cli.style import enrich_cog_assets
@@ -166,17 +168,6 @@ _MEDIA_TYPE_MAP: dict[str, str] = {
     ".html": "text/html",
 }
 
-# Default titles for well-known STAC asset roles. Matches the convention
-# used by Element 84 Earth Search (e.g. Sentinel-2 items always carry a
-# "title" on every asset). Used by _scan_item_assets when no explicit title
-# is set.
-_ROLE_TITLES: dict[str, str] = {
-    "data": "Data",
-    "thumbnail": "Thumbnail",
-    "metadata": "Metadata",
-    "documentation": "Documentation",
-}
-
 # Asset keys reserved for well-known roles. _scan_item_assets prefers these
 # keys over filename-derived stems so STAC consumers can find assets by role
 # without inspecting file paths. Order matters for collision priority: an
@@ -246,7 +237,7 @@ def _scan_item_assets(
     item_id: str,
     primary_file: Path,
     collection_dir: Path,
-) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str]], list[str]]:
+) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str, int]], list[str]]:
     """Scan an item directory for all trackable assets.
 
     Per issue #133, ALL files in item directories are tracked as assets.
@@ -262,11 +253,11 @@ def _scan_item_assets(
     Returns:
         Tuple of (stac_assets, asset_files, asset_paths):
         - stac_assets: Dict mapping asset key to pystac.Asset
-        - asset_files: Dict mapping filename to (path, checksum) tuples
+        - asset_files: Dict mapping filename to (path, checksum, size) tuples
         - asset_paths: List of absolute path strings
     """
     stac_assets: dict[str, pystac.Asset] = {}
-    asset_files: dict[str, tuple[Path, str]] = {}
+    asset_files: dict[str, tuple[Path, str, int]] = {}
     asset_paths: list[str] = []
 
     for file_path in item_dir.iterdir():
@@ -284,6 +275,7 @@ def _scan_item_assets(
             if not is_filegdb(file_path):
                 continue
             file_checksum = compute_dir_checksum(file_path)
+            file_size = compute_dir_size(file_path)
             # FileGDB is always a geospatial asset
             file_media_type = "application/x-filegdb"
             file_role = "data"
@@ -291,6 +283,7 @@ def _scan_item_assets(
             if file_path.is_symlink():
                 continue
             file_checksum = compute_checksum(file_path)
+            file_size = file_path.stat().st_size
             file_media_type = _get_media_type(file_path)
             file_role = _get_asset_role(file_path)
         else:
@@ -340,9 +333,16 @@ def _scan_item_assets(
             href=asset_href,
             media_type=file_media_type,
             roles=[file_role],
-            title=_ROLE_TITLES.get(file_role),
+            # NOTE: Don't set title here - it's a human-enrichable field (Issue #446).
+            # Titles should come from metadata.yaml or be preserved from existing
+            # metadata via merge strategy. Role-based default titles are NOT
+            # auto-detected values, so they shouldn't appear with OVERWRITE.
+            extra_fields={
+                "file:size": file_size,
+                "file:checksum": f"sha256:{file_checksum}",
+            },
         )
-        asset_files[file_path.name] = (file_path, file_checksum)
+        asset_files[file_path.name] = (file_path, file_checksum, file_size)
         asset_paths.append(str(file_path))
 
     return stac_assets, asset_files, asset_paths
@@ -404,7 +404,7 @@ class PreparedDataset:
         collection_id: Collection identifier (may include '/' for nested).
         format_type: Vector or raster format.
         bbox: Bounding box [min_x, min_y, max_x, max_y] in WGS84.
-        asset_files: Dict mapping filename to (path, checksum) tuples.
+        asset_files: Dict mapping filename to (path, checksum, size) tuples.
         item_json_path: Path to item.json (None for collection-level vector assets per ADR-0031).
         is_collection_level_asset: If True, asset is at collection level (ADR-0031).
         stac_item: The PySTAC Item object (None for collection-level vector assets).
@@ -417,7 +417,7 @@ class PreparedDataset:
     collection_id: str
     format_type: FormatType
     bbox: list[float]
-    asset_files: dict[str, tuple[Path, str]]
+    asset_files: dict[str, tuple[Path, str, int]]
     item_json_path: Path | None  # None for collection-level vector assets
     is_collection_level_asset: bool = False
     stac_item: pystac.Item | None = None
@@ -471,7 +471,7 @@ def _maybe_partition_large_file(
     # Find the primary parquet file in asset_files
     parquet_files = [
         path
-        for filename, (path, _checksum) in prepared.asset_files.items()
+        for filename, (path, _checksum, _size) in prepared.asset_files.items()
         if filename.endswith(".parquet")
     ]
     if not parquet_files:
@@ -1166,6 +1166,9 @@ def _fix_collection_level_asset_hrefs(
             href=fixed_href,
             media_type=asset.media_type,
             roles=asset.roles,
+            title=asset.title,
+            description=asset.description,
+            extra_fields=asset.extra_fields,
         )
     return fixed_assets
 
@@ -1859,6 +1862,9 @@ def finalize_datasets(
         # available immediately after add, not just after push.
         update_collection_summaries(collection)
 
+        # Compute aggregate file statistics (Issue #501)
+        update_collection_file_statistics(collection)
+
         # Add extension declarations based on summaries (Issue #336)
         # Collections should declare extensions used by their items
         if collection.summaries is not None:
@@ -1927,7 +1933,9 @@ def finalize_datasets(
                     collection_id=p.collection_id,
                     format_type=p.format_type,
                     bbox=p.bbox,
-                    asset_paths=[str(path) for _name, (path, _checksum) in p.asset_files.items()],
+                    asset_paths=[
+                        str(path) for _name, (path, _checksum, _size) in p.asset_files.items()
+                    ],
                 )
             )
 
@@ -1937,6 +1945,17 @@ def finalize_datasets(
     from portolan_cli.catalog import ensure_link_titles
 
     ensure_link_titles(catalog_root)
+
+    # Issue #501: update catalog-level aggregate file statistics
+    # Done after all collections are finalized so totals are accurate.
+    try:
+        update_catalog_file_statistics(catalog_root)
+    except Exception:
+        logger.warning(
+            "Failed to update catalog-level file statistics. "
+            "Catalog may have stale or missing aggregate size data.",
+            exc_info=True,
+        )
 
     return results
 
@@ -1964,7 +1983,7 @@ def _finalize_with_backend(
     # Publish version snapshot via the plugin backend
     assets: dict[str, str] = {}
     for p in items:
-        for filename, (file_path, _checksum) in p.asset_files.items():
+        for filename, (file_path, _checksum, _size) in p.asset_files.items():
             if p.is_collection_level_asset:
                 asset_key = filename
             else:
@@ -2055,7 +2074,7 @@ def _batch_update_versions(
     # Build assets dict from ALL items (batch)
     all_assets: dict[str, Asset] = {}
     for p in items:
-        for filename, (file_path, file_checksum) in p.asset_files.items():
+        for filename, (file_path, file_checksum, file_size) in p.asset_files.items():
             # For collection-level assets (ADR-0031), omit item_id from path
             # asset_key is collection-relative; href is catalog-relative
             if p.is_collection_level_asset:
@@ -2066,10 +2085,10 @@ def _batch_update_versions(
                 asset_key = f"{p.item_id}/{filename}"
 
             stat = file_path.stat()
-            size_bytes = stat.st_size if file_path.is_file() else 0
+            # Use pre-computed file_size (handles directories like FileGDB correctly)
             all_assets[asset_key] = Asset(
                 sha256=file_checksum,
-                size_bytes=size_bytes,
+                size_bytes=file_size,
                 href=href,
                 mtime=stat.st_mtime,
             )
@@ -2358,6 +2377,42 @@ def compute_dir_checksum(path: Path) -> str:
     for rel_path, size, mtime in entries:
         sha256.update(f"{rel_path}\x00{size}\x00{mtime:.6f}\n".encode())
     return sha256.hexdigest()
+
+
+def compute_dir_size(path: Path) -> int:
+    """Compute total size of all files in a directory.
+
+    Used for directory-format assets such as FileGDB (.gdb) to populate
+    the STAC file:size field.
+
+    Args:
+        path: Path to the directory.
+
+    Returns:
+        Total size in bytes of all files in the directory.
+
+    Raises:
+        ValueError: If path is not a directory.
+        FileNotFoundError: If path does not exist.
+    """
+    resolved = path.resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Directory not found: {path}")
+    if not resolved.is_dir():
+        raise ValueError(f"Not a directory: {path} (resolves to {resolved})")
+
+    total_size = 0
+    try:
+        for fpath in resolved.rglob("*"):
+            if fpath.is_file():
+                try:
+                    total_size += fpath.stat().st_size
+                except OSError:
+                    pass
+    except OSError as exc:
+        raise ValueError(f"Cannot read directory contents: {path}") from exc
+
+    return total_size
 
 
 def _get_or_create_collection(
@@ -2675,7 +2730,7 @@ def _update_versions(
     output_path: Path | None = None,
     checksum: str | None = None,
     *,
-    asset_files: dict[str, tuple[Path, str]] | None = None,
+    asset_files: dict[str, tuple[Path, str, int]] | None = None,
     is_collection_level_asset: bool = False,
     catalog_root: Path | None = None,
 ) -> None:
@@ -2691,7 +2746,7 @@ def _update_versions(
         collection_id: Collection identifier (full path like "climate/hittekaart" for nested).
         output_path: Path to single output file (legacy mode).
         checksum: SHA-256 checksum for single file (legacy mode).
-        asset_files: Dict mapping filename to (path, checksum) tuples.
+        asset_files: Dict mapping filename to (path, checksum, size) tuples.
             If provided, output_path/checksum are ignored.
         is_collection_level_asset: If True, asset is at collection level (per ADR-0031).
             Affects href construction (no item_id in path).
@@ -2707,7 +2762,7 @@ def _update_versions(
     assets: dict[str, str] = {}
     if asset_files is not None:
         # Multi-asset mode (per issue #133)
-        for filename, (file_path, _checksum) in asset_files.items():
+        for filename, (file_path, _checksum, _size) in asset_files.items():
             # For collection-level assets (Issue #250, ADR-0031), use filename only.
             # Both backends prepend collection/ when building the href,
             # so do NOT include collection_id here to avoid doubling.
@@ -3714,7 +3769,7 @@ def add_files(
     # ========================================================================
     # PHASE 3: Process deferred non-geo files (sequential)
     # ========================================================================
-    _process_deferred_non_geo_files(
+    affected_collections = _process_deferred_non_geo_files(
         deferred_non_geo=deferred_non_geo,
         source_to_item_dir=source_to_item_dir,
         source_to_collection_dir=source_to_collection_dir,
@@ -3722,6 +3777,18 @@ def add_files(
         skipped=skipped,
         failures=failures,
     )
+
+    # ========================================================================
+    # PHASE 3.5: Recompute file statistics for collections with deferred assets
+    # ========================================================================
+    # Deferred assets are added after finalize_datasets, so file statistics
+    # must be recomputed to include them (Issue #501)
+    for collection_dir in affected_collections:
+        collection_json_path = collection_dir / "collection.json"
+        if collection_json_path.exists():
+            collection = pystac.Collection.from_file(str(collection_json_path))
+            update_collection_file_statistics(collection)
+            collection.save_object(include_self_link=False)
 
     return added, skipped, failures
 
@@ -3734,7 +3801,7 @@ def _process_deferred_non_geo_files(
     catalog_root: Path,
     skipped: list[Path],
     failures: list[AddFailure],
-) -> None:
+) -> set[Path]:
     """Process deferred non-geospatial files (ADR-0028).
 
     These files were deferred during the main add loop because they lack
@@ -3748,7 +3815,11 @@ def _process_deferred_non_geo_files(
         catalog_root: Root directory of the catalog.
         skipped: List to append skipped files to (modified in place).
         failures: List to append failures to (modified in place).
+
+    Returns:
+        Set of collection directories that received deferred assets (for statistics recomputation).
     """
+    affected_collections: set[Path] = set()
     for file_path, source_dir, coll_id in deferred_non_geo:
         try:
             if source_dir in source_to_item_dir:
@@ -3775,6 +3846,9 @@ def _process_deferred_non_geo_files(
                     asset_path=dest_path,
                 )
 
+                # Track for statistics recomputation
+                affected_collections.add(catalog_root / coll_id)
+
                 # Add to skipped (tracked but not converted)
                 skipped.append(file_path)
 
@@ -3800,7 +3874,8 @@ def _process_deferred_non_geo_files(
 
                 # Update versions.json so is_current() finds the asset
                 file_checksum = compute_checksum(file_path)
-                asset_files = {file_path.name: (file_path, file_checksum)}
+                file_size = file_path.stat().st_size
+                asset_files = {file_path.name: (file_path, file_checksum, file_size)}
                 _update_versions(
                     collection_dir=resolved_collection_dir,
                     item_id=file_path.stem,  # Use file stem as item_id for collection-level
@@ -3809,6 +3884,9 @@ def _process_deferred_non_geo_files(
                     is_collection_level_asset=True,
                     catalog_root=catalog_root,
                 )
+
+                # Track for statistics recomputation
+                affected_collections.add(resolved_collection_dir)
 
                 # Add to skipped (tracked but not converted)
                 skipped.append(file_path)
@@ -3900,10 +3978,12 @@ def _process_deferred_non_geo_files(
 
                     # Update versions.json so is_current() finds the asset(s)
                     asset_checksum = compute_checksum(asset_path)
-                    asset_files = {asset_path.name: (asset_path, asset_checksum)}
+                    asset_size = asset_path.stat().st_size
+                    asset_files = {asset_path.name: (asset_path, asset_checksum, asset_size)}
                     if source_tracked:
                         source_checksum = compute_checksum(file_path)
-                        asset_files[file_path.name] = (file_path, source_checksum)
+                        source_size = file_path.stat().st_size
+                        asset_files[file_path.name] = (file_path, source_checksum, source_size)
                     _update_versions(
                         collection_dir=collection_dir,
                         item_id=asset_path.stem,  # Use file stem as item_id
@@ -3913,11 +3993,16 @@ def _process_deferred_non_geo_files(
                         catalog_root=catalog_root,
                     )
 
+                    # Track for statistics recomputation
+                    affected_collections.add(collection_dir)
+
                     # Add to skipped (tracked, possibly converted)
                     skipped.append(file_path)
         except Exception as err:
             # Record failure and continue (Issue #175).
             failures.append(AddFailure(path=file_path, error=str(err)))
+
+    return affected_collections
 
 
 def _update_item_with_asset(
@@ -4066,10 +4151,16 @@ def _update_collection_with_asset(
             # Different file with same stem - use full filename to avoid collision
             asset_key = asset_path.name
 
+    # Compute file size and checksum for file extension metadata
+    file_size = asset_path.stat().st_size
+    file_checksum = compute_checksum(asset_path)
+
     assets[asset_key] = {
         "href": f"./{asset_path.name}",
         "type": media_type,
         "roles": [role],
+        "file:size": file_size,
+        "file:checksum": f"sha256:{file_checksum}",
     }
 
     # Write updated collection

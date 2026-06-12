@@ -64,7 +64,7 @@ def _make_context(
         "collection": collection,
         "item_id": "item1",
         "item_dir": item_dir,
-        "asset_files": {"data.parquet": (item_dir / "data.parquet", "abc")},
+        "asset_files": {"data.parquet": (item_dir / "data.parquet", "abc", 1024)},
         "remote": remote,
     }
 

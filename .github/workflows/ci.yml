@@ -44,7 +44,12 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --all-extras
 
       - name: Check code formatting
         run: uv run ruff format --check .
@@ -73,7 +78,12 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --all-extras
 
       - name: Run bandit security scan
         run: uv run bandit -r portolan_cli -c pyproject.toml
@@ -149,7 +159,12 @@ jobs:
         run: brew install tippecanoe
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --all-extras
 
       - name: Run tests (unit + integration, no network, no iceberg)
         run: uv run pytest tests/ --ignore=tests/iceberg/ -v --tb=short -m "not network and not slow and not benchmark" -n auto --dist loadscope --cov=portolan_cli --cov-report=term-missing --cov-report=xml
@@ -190,7 +205,12 @@ jobs:
           command: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra iceberg --extra dev
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --extra iceberg --extra dev
 
       - name: Run unit and integration tests
         run: uv run pytest tests/iceberg/ -v --tb=short -m "not e2e and not e2e_slow and not network and not slow" --cov=portolan_cli/backends/iceberg --cov-report=term-missing --cov-report=xml
@@ -229,7 +249,12 @@ jobs:
           command: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra iceberg --extra dev --extra e2e
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --extra iceberg --extra dev --extra e2e
 
       - name: Start Docker services
         run: docker compose -f tests/iceberg/e2e/docker-compose.yml up -d --wait
@@ -266,7 +291,12 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --all-extras
 
       - name: Check for dead code
         run: uv run vulture portolan_cli tests --min-confidence 80
@@ -292,7 +322,12 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --all-extras
 
       - name: Build documentation
         run: uv run mkdocs build --strict

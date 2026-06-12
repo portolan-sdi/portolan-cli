@@ -682,3 +682,59 @@ def download_directory(
         total_bytes=successful_bytes,
         errors=errors,
     )
+
+
+# =============================================================================
+# HTTP HEAD for Remote File Sizes (Issue #501)
+# =============================================================================
+
+
+def get_remote_file_size(url: str, timeout: float = 30.0) -> int | None:
+    """Get file size from a remote URL via HTTP HEAD request.
+
+    Public API for synchronous callers. The async version
+    (get_remote_file_size_async) is used internally by pull operations.
+
+    Used to populate file:size for STAC assets that lack size information
+    (e.g., remote catalogs during pull/clone).
+
+    Args:
+        url: HTTP(S) URL to check.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        File size in bytes, or None if the size cannot be determined
+        (e.g., server doesn't support HEAD, no Content-Length header).
+    """
+    import httpx
+
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.head(url, follow_redirects=True)
+            response.raise_for_status()
+            content_length = response.headers.get("content-length")
+            return int(content_length) if content_length else None
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
+async def get_remote_file_size_async(url: str, timeout: float = 30.0) -> int | None:
+    """Async version of get_remote_file_size.
+
+    Args:
+        url: HTTP(S) URL to check.
+        timeout: Request timeout in seconds.
+
+    Returns:
+        File size in bytes, or None if the size cannot be determined.
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.head(url, follow_redirects=True)
+            response.raise_for_status()
+            content_length = response.headers.get("content-length")
+            return int(content_length) if content_length else None
+    except (httpx.HTTPError, ValueError):
+        return None
