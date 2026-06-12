@@ -692,6 +692,9 @@ def download_directory(
 def get_remote_file_size(url: str, timeout: float = 30.0) -> int | None:
     """Get file size from a remote URL via HTTP HEAD request.
 
+    Public API for synchronous callers. The async version
+    (get_remote_file_size_async) is used internally by pull operations.
+
     Used to populate file:size for STAC assets that lack size information
     (e.g., remote catalogs during pull/clone).
 

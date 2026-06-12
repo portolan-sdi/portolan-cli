@@ -40,7 +40,7 @@ def _make_item(
         collection_id=collection_id,
         format_type=FormatType.VECTOR,
         bbox=[-10.0, -10.0, 10.0, 10.0],
-        asset_files={filename: (asset_path, "abc123")},
+        asset_files={filename: (asset_path, "abc123", 1024)},
         item_json_path=item_json,
         is_collection_level_asset=is_collection_level,
     )
@@ -236,8 +236,8 @@ class TestFinalizeWithBackend:
             format_type=FormatType.VECTOR,
             bbox=[0, 0, 1, 1],
             asset_files={
-                "data.parquet": (file_a, "hash1"),
-                "metadata.json": (file_b, "hash2"),
+                "data.parquet": (file_a, "hash1", 7),
+                "metadata.json": (file_b, "hash2", 4),
             },
             item_json_path=item_json,
         )

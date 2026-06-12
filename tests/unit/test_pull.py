@@ -2009,3 +2009,87 @@ class TestPopulateMissingFileSizes:
         )
 
         assert count == 0
+
+
+class TestResolveAssetUrl:
+    """Tests for _resolve_asset_url helper function."""
+
+    @pytest.mark.unit
+    def test_absolute_url_returned_unchanged(self) -> None:
+        """Absolute URLs are returned as-is."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("https://example.com/file.parquet", "https://host/cat", "coll")
+            == "https://example.com/file.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_relative_dot_slash_with_rel_path(self) -> None:
+        """./href is resolved relative to base_url/rel_path."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("./data.parquet", "https://host/cat", "coll")
+            == "https://host/cat/coll/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_relative_dot_slash_empty_rel_path(self) -> None:
+        """./href with empty rel_path resolves to base_url/href."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("./data.parquet", "https://host/cat", "")
+            == "https://host/cat/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_parent_path_with_nested_rel_path(self) -> None:
+        """../href navigates up one level from rel_path."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("../shared/data.parquet", "https://host/cat", "coll/item")
+            == "https://host/cat/coll/shared/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_parent_path_with_single_segment_rel_path(self) -> None:
+        """../href with single-segment rel_path resolves to base_url."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("../data.parquet", "https://host/cat", "coll")
+            == "https://host/cat/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_parent_path_empty_rel_path(self) -> None:
+        """../href with empty rel_path still resolves (edge case)."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("../data.parquet", "https://host/cat", "")
+            == "https://host/cat/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_bare_filename_with_rel_path(self) -> None:
+        """Bare filename is resolved relative to base_url/rel_path."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("data.parquet", "https://host/cat", "coll")
+            == "https://host/cat/coll/data.parquet"
+        )
+
+    @pytest.mark.unit
+    def test_bare_filename_empty_rel_path(self) -> None:
+        """Bare filename with empty rel_path resolves to base_url/filename."""
+        from portolan_cli.pull import _resolve_asset_url
+
+        assert (
+            _resolve_asset_url("data.parquet", "https://host/cat", "")
+            == "https://host/cat/data.parquet"
+        )

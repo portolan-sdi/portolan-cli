@@ -168,17 +168,6 @@ _MEDIA_TYPE_MAP: dict[str, str] = {
     ".html": "text/html",
 }
 
-# Default titles for well-known STAC asset roles. Matches the convention
-# used by Element 84 Earth Search (e.g. Sentinel-2 items always carry a
-# "title" on every asset). Used by _scan_item_assets when no explicit title
-# is set.
-_ROLE_TITLES: dict[str, str] = {
-    "data": "Data",
-    "thumbnail": "Thumbnail",
-    "metadata": "Metadata",
-    "documentation": "Documentation",
-}
-
 # Asset keys reserved for well-known roles. _scan_item_assets prefers these
 # keys over filename-derived stems so STAC consumers can find assets by role
 # without inspecting file paths. Order matters for collision priority: an
