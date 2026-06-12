@@ -83,6 +83,8 @@ from portolan_cli.stac import (
     create_collection,
     create_item,
     load_catalog,
+    update_catalog_file_statistics,
+    update_collection_file_statistics,
     update_collection_summaries,
 )
 from portolan_cli.style import enrich_cog_assets
@@ -284,6 +286,7 @@ def _scan_item_assets(
             if not is_filegdb(file_path):
                 continue
             file_checksum = compute_dir_checksum(file_path)
+            file_size = compute_dir_size(file_path)
             # FileGDB is always a geospatial asset
             file_media_type = "application/x-filegdb"
             file_role = "data"
@@ -291,6 +294,7 @@ def _scan_item_assets(
             if file_path.is_symlink():
                 continue
             file_checksum = compute_checksum(file_path)
+            file_size = file_path.stat().st_size
             file_media_type = _get_media_type(file_path)
             file_role = _get_asset_role(file_path)
         else:
@@ -341,6 +345,10 @@ def _scan_item_assets(
             media_type=file_media_type,
             roles=[file_role],
             title=_ROLE_TITLES.get(file_role),
+            extra_fields={
+                "file:size": file_size,
+                "file:checksum": f"sha256:{file_checksum}",
+            },
         )
         asset_files[file_path.name] = (file_path, file_checksum)
         asset_paths.append(str(file_path))
@@ -1166,6 +1174,9 @@ def _fix_collection_level_asset_hrefs(
             href=fixed_href,
             media_type=asset.media_type,
             roles=asset.roles,
+            title=asset.title,
+            description=asset.description,
+            extra_fields=asset.extra_fields,
         )
     return fixed_assets
 
@@ -1794,6 +1805,9 @@ def finalize_datasets(
         # available immediately after add, not just after push.
         update_collection_summaries(collection)
 
+        # Compute aggregate file statistics (Issue #501)
+        update_collection_file_statistics(collection)
+
         # Add extension declarations based on summaries (Issue #336)
         # Collections should declare extensions used by their items
         if collection.summaries is not None:
@@ -1867,6 +1881,17 @@ def finalize_datasets(
     from portolan_cli.catalog import ensure_link_titles
 
     ensure_link_titles(catalog_root)
+
+    # Issue #501: update catalog-level aggregate file statistics
+    # Done after all collections are finalized so totals are accurate.
+    try:
+        update_catalog_file_statistics(catalog_root)
+    except Exception:
+        logger.warning(
+            "Failed to update catalog-level file statistics. "
+            "Catalog may have stale or missing aggregate size data.",
+            exc_info=True,
+        )
 
     return results
 
@@ -2288,6 +2313,42 @@ def compute_dir_checksum(path: Path) -> str:
     for rel_path, size, mtime in entries:
         sha256.update(f"{rel_path}\x00{size}\x00{mtime:.6f}\n".encode())
     return sha256.hexdigest()
+
+
+def compute_dir_size(path: Path) -> int:
+    """Compute total size of all files in a directory.
+
+    Used for directory-format assets such as FileGDB (.gdb) to populate
+    the STAC file:size field.
+
+    Args:
+        path: Path to the directory.
+
+    Returns:
+        Total size in bytes of all files in the directory.
+
+    Raises:
+        ValueError: If path is not a directory.
+        FileNotFoundError: If path does not exist.
+    """
+    resolved = path.resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Directory not found: {path}")
+    if not resolved.is_dir():
+        raise ValueError(f"Not a directory: {path} (resolves to {resolved})")
+
+    total_size = 0
+    try:
+        for fpath in resolved.rglob("*"):
+            if fpath.is_file():
+                try:
+                    total_size += fpath.stat().st_size
+                except OSError:
+                    pass
+    except OSError as exc:
+        raise ValueError(f"Cannot read directory contents: {path}") from exc
+
+    return total_size
 
 
 def _get_or_create_collection(

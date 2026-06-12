@@ -1282,6 +1282,100 @@ def update_collection_summaries(collection: pystac.Collection) -> None:
     collection.summaries = summarizer.summarize(items)
 
 
+def update_collection_file_statistics(collection: pystac.Collection) -> None:
+    """Compute and set aggregate file statistics on a collection.
+
+    Aggregates file:size from all assets (collection-level and item-level)
+    and stores the totals in portolan: extension fields.
+
+    Also declares the file extension when any asset has file:size.
+
+    Sets:
+        portolan:total_size_bytes: Sum of all asset file:size values
+        portolan:asset_count: Number of assets with file:size
+
+    Args:
+        collection: The collection to update statistics for.
+    """
+    total_size = 0
+    asset_count = 0
+    has_file_extension = False
+
+    # Count collection-level assets
+    for asset in collection.assets.values():
+        size = asset.extra_fields.get("file:size") if asset.extra_fields else None
+        if size is not None:
+            total_size += size
+            asset_count += 1
+            has_file_extension = True
+
+    # Count item-level assets
+    for item in collection.get_items(recursive=True):
+        for asset in item.assets.values():
+            size = asset.extra_fields.get("file:size") if asset.extra_fields else None
+            if size is not None:
+                total_size += size
+                asset_count += 1
+                has_file_extension = True
+
+    collection.extra_fields["portolan:total_size_bytes"] = total_size
+    collection.extra_fields["portolan:asset_count"] = asset_count
+
+    # Declare file extension if any asset has file:size
+    if has_file_extension:
+        file_ext_url = EXTENSION_URLS["file"]
+        if file_ext_url not in collection.stac_extensions:
+            collection.stac_extensions.append(file_ext_url)
+
+
+def update_catalog_file_statistics(catalog_root: Path) -> None:
+    """Compute and set aggregate file statistics on a catalog.
+
+    Reads all collection.json files under the catalog root and aggregates
+    their portolan:total_size_bytes and portolan:asset_count fields.
+
+    Sets on catalog.json:
+        portolan:total_size_bytes: Sum across all collections
+        portolan:asset_count: Sum across all collections
+        portolan:collection_count: Number of collections
+
+    Args:
+        catalog_root: Root directory of the catalog.
+    """
+    import json
+
+    catalog_path = catalog_root / "catalog.json"
+    if not catalog_path.exists():
+        return
+
+    total_size = 0
+    asset_count = 0
+    collection_count = 0
+
+    # Walk catalog looking for collection.json files
+    for collection_json in catalog_root.rglob("collection.json"):
+        # Skip if it's not a direct child pattern (avoid nested catalogs confusion)
+        try:
+            data = json.loads(collection_json.read_text())
+            if data.get("type") != "Collection":
+                continue
+            collection_count += 1
+            total_size += data.get("portolan:total_size_bytes", 0)
+            asset_count += data.get("portolan:asset_count", 0)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    # Update catalog.json
+    try:
+        catalog_data = json.loads(catalog_path.read_text())
+        catalog_data["portolan:total_size_bytes"] = total_size
+        catalog_data["portolan:asset_count"] = asset_count
+        catalog_data["portolan:collection_count"] = collection_count
+        catalog_path.write_text(json.dumps(catalog_data, indent=2) + "\n")
+    except (json.JSONDecodeError, OSError):
+        pass
+
+
 def add_via_link(
     collection_path: Path,
     source_url: str,

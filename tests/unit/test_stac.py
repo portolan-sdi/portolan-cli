@@ -342,3 +342,133 @@ class TestItemManagement:
         assert len(items) == 2
         item_ids = {i.id for i in items}
         assert item_ids == {"item1", "item2"}
+
+
+class TestFileStatistics:
+    """Tests for file statistics aggregation (Issue #501)."""
+
+    @pytest.mark.unit
+    def test_update_collection_file_statistics_collection_assets(self) -> None:
+        """update_collection_file_statistics aggregates collection-level assets."""
+        from portolan_cli.stac import update_collection_file_statistics
+
+        collection = create_collection(
+            collection_id="stats-test",
+            description="Test file statistics",
+        )
+
+        # Add assets with file:size
+        asset1 = pystac.Asset(
+            href="./data1.parquet",
+            media_type="application/vnd.apache.parquet",
+            roles=["data"],
+            extra_fields={"file:size": 1000, "file:checksum": "sha256:abc123"},
+        )
+        asset2 = pystac.Asset(
+            href="./data2.parquet",
+            media_type="application/vnd.apache.parquet",
+            roles=["data"],
+            extra_fields={"file:size": 2000, "file:checksum": "sha256:def456"},
+        )
+        collection.add_asset("data1", asset1)
+        collection.add_asset("data2", asset2)
+
+        update_collection_file_statistics(collection)
+
+        assert collection.extra_fields["portolan:total_size_bytes"] == 3000
+        assert collection.extra_fields["portolan:asset_count"] == 2
+
+    @pytest.mark.unit
+    def test_update_collection_file_statistics_item_assets(self) -> None:
+        """update_collection_file_statistics includes item-level assets."""
+        from portolan_cli.stac import update_collection_file_statistics
+
+        collection = create_collection(
+            collection_id="stats-items",
+            description="Test item statistics",
+        )
+
+        # Add an item with assets
+        item = create_item(item_id="item1", bbox=[0, 0, 1, 1])
+        item_asset = pystac.Asset(
+            href="./item1/data.parquet",
+            media_type="application/vnd.apache.parquet",
+            roles=["data"],
+            extra_fields={"file:size": 5000},
+        )
+        item.add_asset("data", item_asset)
+        add_item_to_collection(collection, item)
+
+        update_collection_file_statistics(collection)
+
+        assert collection.extra_fields["portolan:total_size_bytes"] == 5000
+        assert collection.extra_fields["portolan:asset_count"] == 1
+
+    @pytest.mark.unit
+    def test_update_collection_file_statistics_adds_extension(self) -> None:
+        """update_collection_file_statistics declares file extension."""
+        from portolan_cli.stac import EXTENSION_URLS, update_collection_file_statistics
+
+        collection = create_collection(
+            collection_id="ext-test",
+            description="Test extension declaration",
+        )
+
+        asset = pystac.Asset(
+            href="./data.parquet",
+            media_type="application/vnd.apache.parquet",
+            roles=["data"],
+            extra_fields={"file:size": 1000},
+        )
+        collection.add_asset("data", asset)
+
+        update_collection_file_statistics(collection)
+
+        assert EXTENSION_URLS["file"] in collection.stac_extensions
+
+    @pytest.mark.unit
+    def test_update_collection_file_statistics_no_assets(self) -> None:
+        """update_collection_file_statistics handles empty collections."""
+        from portolan_cli.stac import update_collection_file_statistics
+
+        collection = create_collection(
+            collection_id="empty",
+            description="Empty collection",
+        )
+
+        update_collection_file_statistics(collection)
+
+        assert collection.extra_fields["portolan:total_size_bytes"] == 0
+        assert collection.extra_fields["portolan:asset_count"] == 0
+
+    @pytest.mark.unit
+    def test_update_collection_file_statistics_missing_size(self) -> None:
+        """update_collection_file_statistics skips assets without file:size."""
+        from portolan_cli.stac import update_collection_file_statistics
+
+        collection = create_collection(
+            collection_id="partial",
+            description="Partial file sizes",
+        )
+
+        # Asset with file:size
+        asset1 = pystac.Asset(
+            href="./with_size.parquet",
+            media_type="application/vnd.apache.parquet",
+            roles=["data"],
+            extra_fields={"file:size": 1000},
+        )
+        # Asset without file:size
+        asset2 = pystac.Asset(
+            href="./without_size.parquet",
+            media_type="application/vnd.apache.parquet",
+            roles=["data"],
+        )
+        collection.add_asset("with_size", asset1)
+        collection.add_asset("without_size", asset2)
+
+        update_collection_file_statistics(collection)
+
+        # Only counts the asset with file:size
+        assert collection.extra_fields["portolan:total_size_bytes"] == 1000
+        assert collection.extra_fields["portolan:asset_count"] == 1

@@ -171,6 +171,8 @@ portolan pull s3://bucket/my-catalog --restore
 
 The `--restore` flag checks file existence locally and downloads any missing assets, regardless of version metadata. Useful for recovering from accidental deletions.
 
+After downloading, pull operations automatically enrich STAC assets with `file:size` metadata via HTTP HEAD requests when the remote catalog lacks this information.
+
 ## Tips
 
 **Start flat, restructure later.** You can reorganize directories and re-run `portolan add .` — Portolan regenerates the STAC hierarchy from the current structure.

@@ -40,7 +40,7 @@ from portolan_cli.async_utils import (
     get_default_concurrency,
 )
 from portolan_cli.dataset import compute_checksum
-from portolan_cli.download import download_file
+from portolan_cli.download import download_file, get_remote_file_size_async
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.upload import _setup_store_and_kwargs, parse_object_store_url
 from portolan_cli.versions import (
@@ -859,6 +859,158 @@ async def _download_assets_async(
 
 
 # =============================================================================
+# Populate Missing File Sizes (Issue #501)
+# =============================================================================
+
+
+def _resolve_asset_url(href: str, base_url: str, rel_path: str = "") -> str:
+    """Resolve an asset href to a full URL for HTTP HEAD requests."""
+    if href.startswith(("http://", "https://")):
+        return href
+    if href.startswith("../"):
+        parent = "/".join(rel_path.split("/")[:-1]) if "/" in rel_path else ""
+        return f"{base_url}/{parent}/{href[3:]}" if parent else f"{base_url}/{href[3:]}"
+    if href.startswith("./"):
+        return f"{base_url}/{rel_path}/{href[2:]}" if rel_path else f"{base_url}/{href[2:]}"
+    return f"{base_url}/{rel_path}/{href}" if rel_path else f"{base_url}/{href}"
+
+
+async def _fetch_and_set_file_size(
+    asset: dict[str, Any],
+    asset_url: str,
+) -> bool:
+    """Fetch file size via HTTP HEAD and set on asset if successful."""
+    size = await get_remote_file_size_async(asset_url)
+    if size is not None:
+        asset["file:size"] = size
+        return True
+    return False
+
+
+async def _populate_missing_file_sizes(
+    local_root: Path,
+    collection: str,
+    remote_url: str,
+    *,
+    verbose: bool = False,
+) -> int:
+    """Populate missing file:size values in STAC assets via HTTP HEAD.
+
+    After pulling a remote catalog, some assets may not have file:size
+    populated. This function reads the collection.json and item.json files,
+    identifies assets missing file:size, fetches sizes via HTTP HEAD,
+    and updates the STAC files.
+
+    Args:
+        local_root: Local catalog root directory.
+        collection: Collection name.
+        remote_url: Remote catalog URL for constructing asset URLs.
+        verbose: If True, log each file size fetch.
+
+    Returns:
+        Number of file sizes populated.
+    """
+
+    collection_dir = local_root / collection
+    collection_json = collection_dir / "collection.json"
+
+    if not collection_json.exists():
+        return 0
+
+    populated = 0
+    base_url = f"{remote_url}/{collection}"
+
+    # Process collection.json assets
+    populated += await _process_stac_file_sizes(collection_json, base_url, "", verbose)
+
+    # Process item.json files
+    for item_json in collection_dir.rglob("*.json"):
+        if item_json.name in ("collection.json", "versions.json"):
+            continue
+        rel_path = item_json.parent.relative_to(local_root).as_posix()
+        item_base = f"{remote_url}/{rel_path}"
+        populated += await _process_stac_file_sizes(item_json, item_base, rel_path, verbose)
+
+    return populated
+
+
+async def _enrich_file_sizes_safe(
+    local_root: Path,
+    collection: str,
+    remote_url: str,
+    *,
+    verbose: bool = False,
+) -> None:
+    """Safely enrich STAC assets with file:size metadata.
+
+    This is a non-fatal wrapper around _populate_missing_file_sizes.
+    File sizes are nice-to-have, so failures are silently ignored.
+
+    Args:
+        local_root: Local catalog root directory.
+        collection: Collection name.
+        remote_url: Remote catalog URL.
+        verbose: If True, log each file size fetch.
+    """
+    try:
+        sizes_populated = await _populate_missing_file_sizes(
+            local_root=local_root,
+            collection=collection,
+            remote_url=remote_url,
+            verbose=verbose,
+        )
+        if sizes_populated > 0 and verbose:
+            detail(f"Populated file:size for {sizes_populated} asset(s)")
+    except Exception:
+        # Non-fatal: file sizes are nice-to-have, don't fail the pull
+        pass
+
+
+async def _process_stac_file_sizes(
+    stac_file: Path,
+    base_url: str,
+    rel_path: str,
+    verbose: bool,
+) -> int:
+    """Process a single STAC file and populate missing file:size values."""
+    import json
+
+    try:
+        data = json.loads(stac_file.read_text())
+    except (json.JSONDecodeError, OSError):
+        return 0
+
+    # Skip non-STAC files
+    stac_type = data.get("type")
+    if stac_type not in ("Collection", "Feature"):
+        return 0
+
+    assets = data.get("assets", {})
+    if not assets:
+        return 0
+
+    populated = 0
+    modified = False
+
+    for asset_key, asset in assets.items():
+        if "file:size" in asset:
+            continue
+        href = asset.get("href", "")
+        asset_url = _resolve_asset_url(href, base_url, rel_path)
+
+        if await _fetch_and_set_file_size(asset, asset_url):
+            modified = True
+            populated += 1
+            if verbose:
+                detail(f"Fetched file:size for {stac_file.name}:{asset_key}")
+
+    if modified:
+        stac_file.write_text(json.dumps(data, indent=2) + "\n")
+
+    return populated
+
+
+# =============================================================================
 # Async Pull Function
 # =============================================================================
 
@@ -1023,6 +1175,14 @@ async def pull_async(
             remote_version=diff.remote_version,
             files_restored=min(downloaded, restore_count),
         )
+
+    # Issue #501: Populate missing file:size values via HTTP HEAD
+    await _enrich_file_sizes_safe(
+        local_root=local_root,
+        collection=collection,
+        remote_url=remote_url,
+        verbose=verbose,
+    )
 
     # Update local versions.json (only if version actually changed)
     versions_path.parent.mkdir(parents=True, exist_ok=True)
