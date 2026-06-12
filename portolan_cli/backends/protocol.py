@@ -62,11 +62,17 @@ class SchemaFingerprint(TypedDict):
 
 
 class PostAddItemContext(TypedDict):
-    """Per-item context within PostAddContext.items list."""
+    """Per-item context within PostAddContext.items list.
+
+    Attributes:
+        item_id: The STAC item identifier.
+        item_dir: Path to the item directory containing assets.
+        asset_files: Dict mapping filename to (path, checksum, size) tuples.
+    """
 
     item_id: str
     item_dir: Path
-    asset_files: dict[str, tuple[Path, str]]
+    asset_files: dict[str, tuple[Path, str, int]]
 
 
 class PostAddContext(TypedDict):
@@ -94,7 +100,7 @@ class PostAddContext(TypedDict):
     collection: Any  # pystac.Collection (typed as Any to avoid import)
     item_id: str
     item_dir: Path
-    asset_files: dict[str, tuple[Path, str]]
+    asset_files: dict[str, tuple[Path, str, int]]
     remote: str | None
     items: list[PostAddItemContext]
 
