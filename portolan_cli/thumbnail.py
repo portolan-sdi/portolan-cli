@@ -726,7 +726,15 @@ def _read_geoparquet_for_thumbnail(
 
         # If no bbox from metadata, compute from data
         if full_bbox is None:
+            from portolan_cli.bbox import is_finite_bbox
+
             bounds = gdf.total_bounds
+            bbox_list = [bounds[0], bounds[1], bounds[2], bounds[3]]
+            if not is_finite_bbox(bbox_list):
+                # Invalid bounds (inf/nan) would poison set_xlim/set_ylim — fail
+                # fast rather than render with a garbage extent (issue #516).
+                logger.warning("Invalid bounds from GeoParquet data (inf/nan): %s", bbox_list)
+                return None, None, None
             full_bbox = (bounds[0], bounds[1], bounds[2], bounds[3])
 
         return gdf, full_bbox, source_crs

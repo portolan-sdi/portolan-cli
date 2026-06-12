@@ -21,6 +21,13 @@ LON_MAX = 180.0
 LAT_MIN = -90.0
 LAT_MAX = 90.0
 
+# Sanity bound for any CRS. No real-world coordinate on Earth, in any projection,
+# approaches this magnitude (Web Mercator maxes near 2e7 m; the most extreme
+# projected grids stay well under 1e8). Values beyond it are "effectively
+# infinite" sentinels (e.g. WFS-served ±1.79e308 ~ ±float-max), not real data.
+# Used to reject such poison even for projected (non-WGS84) bboxes (issue #516).
+MAX_SANE_COORD = 1e9
+
 
 @dataclass
 class BboxValidationResult:
@@ -71,7 +78,7 @@ def is_finite_bbox(bbox: list[float]) -> bool:
     if len(bbox) not in (4, 6):
         return False
 
-    return all(math.isfinite(c) for c in bbox[:4])
+    return all(math.isfinite(c) for c in bbox)
 
 
 def is_valid_bbox(bbox: list[float], *, wgs84_only: bool = True) -> bool:
@@ -141,6 +148,21 @@ def get_bbox_validation_reason(bbox: list[float], *, wgs84_only: bool = True) ->
         if math.isinf(val):
             return f"{name} is infinite ({val})"
 
+    # 6-element (3D) bboxes carry elevation values beyond the first four;
+    # validate their finiteness too so poisoned Z values are caught (issue #516).
+    for i in range(4, len(bbox)):
+        if math.isnan(bbox[i]):
+            return f"elevation coordinate at index {i} is NaN"
+        if math.isinf(bbox[i]):
+            return f"elevation coordinate at index {i} is infinite ({bbox[i]})"
+
+    # Reject "effectively infinite" sentinel coordinates: finite, but far beyond
+    # any real-world magnitude in any CRS (e.g. ±1.79e308). Applied universally
+    # so poison is caught even for projected bboxes (wgs84_only=False) (#516).
+    for i, val in enumerate(bbox):
+        if abs(val) > MAX_SANE_COORD:
+            return f"coordinate at index {i} ({val}) exceeds sane magnitude"
+
     # WGS84-specific checks
     if wgs84_only:
         if not (LON_MIN <= west <= LON_MAX):
@@ -203,11 +225,16 @@ def normalize_antimeridian_bbox(bbox: list[float]) -> list[list[float]]:
 
 def filter_valid_bboxes(
     bboxes: list[list[float]],
+    *,
+    wgs84_only: bool = True,
 ) -> BboxValidationResult:
     """Filter a list of bboxes, separating valid from invalid.
 
     Args:
         bboxes: List of bboxes to filter.
+        wgs84_only: When True, also reject bboxes outside WGS84 ranges. Set to
+            False for source-CRS (e.g. projected) bboxes, where only finiteness
+            is universally meaningful (issue #516).
 
     Returns:
         BboxValidationResult with valid and invalid (with reasons) lists.
@@ -216,7 +243,7 @@ def filter_valid_bboxes(
     invalid: list[tuple[list[float], str]] = []
 
     for bbox in bboxes:
-        reason = get_bbox_validation_reason(bbox)
+        reason = get_bbox_validation_reason(bbox, wgs84_only=wgs84_only)
         if reason is None:
             valid.append(bbox)
         else:
@@ -229,6 +256,7 @@ def compute_bbox_union(
     bboxes: list[list[float]],
     *,
     collection_ids: list[str] | None = None,
+    wgs84_only: bool = True,
 ) -> BboxUnionResult:
     """Compute the union of multiple bboxes with validation and antimeridian handling.
 
@@ -238,6 +266,9 @@ def compute_bbox_union(
     Args:
         bboxes: List of bboxes to union.
         collection_ids: Optional list of collection IDs for logging (parallel to bboxes).
+        wgs84_only: When True, also reject bboxes outside WGS84 ranges. Set to
+            False when unioning source-CRS (e.g. projected) bboxes, where only
+            finiteness is universally meaningful (issue #516).
 
     Returns:
         BboxUnionResult with union bbox(es) and any skipped invalid bboxes.
@@ -246,7 +277,7 @@ def compute_bbox_union(
         return BboxUnionResult(bbox=None, skipped=[])
 
     # Filter invalid bboxes
-    validation = filter_valid_bboxes(bboxes)
+    validation = filter_valid_bboxes(bboxes, wgs84_only=wgs84_only)
     _log_skipped_bboxes(validation.invalid, collection_ids)
 
     if not validation.valid:

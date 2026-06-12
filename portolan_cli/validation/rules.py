@@ -628,19 +628,23 @@ class BboxValidRule(ValidationRule):
         )
 
     def _check_catalog_bbox(self, catalog_json: Path) -> list[str]:
-        """Check catalog-level extent if present."""
+        """Check catalog-level extent if present (all bbox entries)."""
         from portolan_cli.bbox import get_bbox_validation_reason
 
+        invalid: list[str] = []
         try:
             data = json.loads(catalog_json.read_text(encoding="utf-8"))
-            bbox = data.get("extent", {}).get("spatial", {}).get("bbox", [[]])[0]
-            if bbox:
+            bbox_list = data.get("extent", {}).get("spatial", {}).get("bbox", [])
+            for i, bbox in enumerate(bbox_list):
+                if not bbox:
+                    continue
                 reason = get_bbox_validation_reason(bbox)
                 if reason:
-                    return [f"catalog: {reason}"]
+                    label = f"catalog bbox[{i}]" if len(bbox_list) > 1 else "catalog"
+                    invalid.append(f"{label}: {reason}")
         except (json.JSONDecodeError, OSError):
             pass
-        return []
+        return invalid
 
     def _check_collections(self, catalog_path: Path) -> list[str]:
         """Check all collection and item bboxes."""

@@ -144,18 +144,23 @@ class TestBboxValidationIntegration:
                 )
             )
 
-            # Create collection directory with a VALID parquet file
+            # Create a collection with BOTH a valid and an invalid parquet file.
+            # The invalid file carries the IGN Argentina poison bbox (effectively
+            # -inf sentinels). Adding them together must succeed by filtering the
+            # invalid bbox out of the aggregated collection extent (issue #516).
             collection_dir = Path("test-collection")
             collection_dir.mkdir()
 
-            parquet_path = collection_dir / "data.parquet"
-            _create_valid_geoparquet(parquet_path)
+            valid_path = collection_dir / "data_valid.parquet"
+            invalid_path = collection_dir / "data_invalid.parquet"
+            _create_valid_geoparquet(valid_path)  # bbox [-74, 40, -73, 41]
+            _create_geoparquet_with_inf_bbox(invalid_path)  # bbox [-1.79e308, ...]
 
-            # Add the valid file
-            result = runner.invoke(cli, ["add", str(parquet_path)])
+            # Add both files in one invocation
+            result = runner.invoke(cli, ["add", str(valid_path), str(invalid_path)])
             assert result.exit_code == 0, f"add failed: {result.output}"
 
-            # Check the collection extent - should have valid bbox
+            # Check the collection extent - should reflect ONLY the valid file
             collection_json = collection_dir / "collection.json"
             assert collection_json.exists(), "collection.json should exist"
 
@@ -166,15 +171,23 @@ class TestBboxValidationIntegration:
             spatial = extent.get("spatial", {})
             bboxes = spatial.get("bbox", [[]])
 
-            # The bbox should be valid (not contain inf/nan)
+            # The invalid file's poison value must NOT appear in any extent bbox,
+            # and every coordinate must be finite and in WGS84 range.
+            assert bboxes and any(bboxes), "collection extent should have a bbox"
             for bbox in bboxes:
                 if bbox:
                     for coord in bbox[:4]:
                         assert np.isfinite(coord), f"Collection bbox has non-finite: {bbox}"
+                        assert abs(coord) < 1e9, f"Collection bbox has poison coord: {bbox}"
                     assert -180 <= bbox[0] <= 180, f"west out of range: {bbox}"
                     assert -90 <= bbox[1] <= 90, f"south out of range: {bbox}"
                     assert -180 <= bbox[2] <= 180, f"east out of range: {bbox}"
                     assert -90 <= bbox[3] <= 90, f"north out of range: {bbox}"
+
+            # The surviving extent must be exactly the valid file's bbox.
+            assert [b[:4] for b in bboxes if b] == [[-74.0, 40.0, -73.0, 41.0]], (
+                f"Expected only the valid bbox to survive, got: {bboxes}"
+            )
 
     def test_check_detects_invalid_bbox_in_collection(self) -> None:
         """Check command should detect collections with invalid bbox."""
@@ -342,6 +355,27 @@ class TestAntimeridianBboxIntegration:
                 assert -90 <= bbox[1] <= 90
                 assert -180 <= bbox[2] <= 180
                 assert -90 <= bbox[3] <= 90
+
+            # An anti-meridian crossing input ([177, -20, -175, -15]) must be
+            # represented in STAC-compliant form: either a split into a western
+            # and an eastern half, or preserved as a single crossing bbox (west >
+            # east). It must NOT collapse into a whole-world-width [-180, ..., 180]
+            # envelope, which would falsely claim the dataset spans the globe.
+            halves = [b[:4] for b in bboxes]
+            if len(bboxes) == 2:
+                # Split form: one western half (touches -180), one eastern (touches 180)
+                western = [-180.0, -20.0, -175.0, -15.0]
+                eastern = [177.0, -20.0, 180.0, -15.0]
+                assert western in halves and eastern in halves, (
+                    f"Anti-meridian extent not split into expected halves: {bboxes}"
+                )
+            else:
+                # Single-bbox form must keep the crossing (west > east), not an envelope
+                assert len(bboxes) == 1, f"Unexpected bbox count: {bboxes}"
+                bbox = bboxes[0]
+                assert bbox[0] > bbox[2], (
+                    f"Anti-meridian extent collapsed to a non-crossing envelope: {bbox}"
+                )
 
             # Run check - should pass
             result = runner.invoke(cli, ["check", "."])
