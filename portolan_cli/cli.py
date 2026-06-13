@@ -6313,12 +6313,25 @@ def _resolve_arcgis_token(
     """
     from portolan_cli.extract.arcgis.auth import ArcGISCredentials, resolve_token
 
+    resolved_token = token or os.environ.get("ARCGIS_TOKEN")
     resolved_password = password or os.environ.get("ARCGIS_PASSWORD")
     if username and not resolved_password and not auto and not use_json:
         resolved_password = click.prompt("ArcGIS password", hide_input=True)
 
+    # Explicit username with no resolvable password must fail fast, not silently
+    # run unauthenticated (resolve_token returns None for incomplete credentials).
+    if username and not resolved_password and not resolved_token:
+        _output_extract_error(
+            use_json,
+            "ArcGISAuthError",
+            "ArcGIS --username requires a password (set ARCGIS_PASSWORD, "
+            "or omit --auto/--json to be prompted)",
+            url,
+        )
+        raise SystemExit(1)
+
     creds = ArcGISCredentials(
-        token=token or os.environ.get("ARCGIS_TOKEN"),
+        token=resolved_token,
         username=username,
         password=resolved_password,
     )
@@ -6737,6 +6750,16 @@ def extract_arcgis_cmd(
 
     # Handle ImageServer URLs (raster extraction)
     if parsed.url_type == ArcGISURLType.IMAGE_SERVER:
+        if resolved_token is not None:
+            # Raster extraction does not thread the token yet (issue #311); reject
+            # rather than silently running unauthenticated against a secured service.
+            _output_extract_error(
+                use_json,
+                "ArcGISAuthError",
+                "ArcGIS authentication is not yet supported for ImageServer URLs (issue #311)",
+                url,
+            )
+            raise SystemExit(1)
         _handle_imageserver_extraction(
             ctx=ctx,
             url=url,

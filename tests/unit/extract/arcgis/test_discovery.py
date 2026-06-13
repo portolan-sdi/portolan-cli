@@ -382,6 +382,18 @@ def test_fetch_json_raises_on_http_error_status(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.unit
+def test_fetch_json_raises_on_non_object_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-object JSON must raise ArcGISDiscoveryError, not AttributeError on .get()."""
+
+    def fake_get(self: object, url: str) -> httpx.Response:
+        return httpx.Response(200, json=["not", "an", "object"])
+
+    monkeypatch.setattr(httpx.Client, "get", fake_get)
+    with pytest.raises(ArcGISDiscoveryError, match="Expected JSON object"):
+        _fetch_json("https://x/rest/services")
+
+
+@pytest.mark.unit
 def test_discover_services_forwards_token(monkeypatch: pytest.MonkeyPatch) -> None:
     """Should forward token to the request so --no-recurse discovery stays authenticated."""
     seen: dict[str, str] = {}

@@ -140,3 +140,45 @@ def test_password_resolved_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert result.exit_code == 0
     assert captured["password"] == "envpass"
+
+
+@pytest.mark.unit
+def test_username_without_password_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    """--username with no resolvable password must error, not run unauthenticated."""
+    monkeypatch.delenv("ARCGIS_PASSWORD", raising=False)
+    monkeypatch.delenv("ARCGIS_TOKEN", raising=False)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "arcgis",
+            "https://x/server/rest/services",
+            "--list-services",
+            "--username",
+            "u",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "ArcGISAuthError" in result.output
+    assert "password" in result.output.lower()
+
+
+@pytest.mark.unit
+def test_imageserver_rejects_auth_flags() -> None:
+    """Auth flags must be rejected (not silently dropped) for ImageServer URLs."""
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "extract",
+            "arcgis",
+            "https://x/server/rest/services/Imagery/ImageServer",
+            "--token",
+            "TKN",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "ImageServer" in result.output

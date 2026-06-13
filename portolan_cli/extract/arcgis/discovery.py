@@ -159,7 +159,12 @@ def _fetch_json(url: str, timeout: float = 60.0, token: str | None = None) -> di
             if response.status_code >= 400:
                 msg = f"Failed to fetch from {url}: HTTP {response.status_code}"
                 raise ArcGISDiscoveryError(msg)
-            data = cast("dict[str, Any]", response.json())
+            raw = response.json()
+            if not isinstance(raw, dict):
+                raise ArcGISDiscoveryError(
+                    f"Expected JSON object from {url}, got {type(raw).__name__}"
+                )
+            data = cast("dict[str, Any]", raw)
     except ArcGISDiscoveryError:
         raise
     except httpx.RequestError as e:
