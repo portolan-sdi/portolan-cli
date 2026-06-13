@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 if TYPE_CHECKING:
     from portolan_cli.backends.protocol import VersioningBackend
     from portolan_cli.extract.arcgis.report import ExtractionReport
+    from portolan_cli.extract.arcgis.url_parser import ParsedArcGISURL
     from portolan_cli.pull import PullResult
 
 import click
@@ -6293,6 +6294,55 @@ def _output_extract_error(
         error(message)
 
 
+def _resolve_arcgis_token(
+    *,
+    url: str,
+    token: str | None,
+    username: str | None,
+    password: str | None,
+    timeout: float,
+    auto: bool,
+    use_json: bool,
+) -> str | None:
+    """Resolve an ArcGIS token from flags, env, or username/password.
+
+    Precedence: explicit token > ARCGIS_TOKEN > username/password (minted).
+    The password is never required on argv (it leaks via shell history and
+    process listings): it comes from ARCGIS_PASSWORD, or an interactive prompt.
+    Outputs an error envelope and raises SystemExit on auth failure.
+    """
+    from portolan_cli.extract.arcgis.auth import ArcGISCredentials, resolve_token
+
+    resolved_password = password or os.environ.get("ARCGIS_PASSWORD")
+    if username and not resolved_password and not auto and not use_json:
+        resolved_password = click.prompt("ArcGIS password", hide_input=True)
+
+    creds = ArcGISCredentials(
+        token=token or os.environ.get("ARCGIS_TOKEN"),
+        username=username,
+        password=resolved_password,
+    )
+    if creds.is_empty:
+        return None
+    try:
+        return resolve_token(creds, url, timeout=timeout)
+    except Exception as e:  # ArcGISAuthError and transport errors
+        _output_extract_error(use_json, type(e).__name__, str(e), url)
+        raise SystemExit(1) from None
+
+
+def _default_arcgis_output_dir(parsed: ParsedArcGISURL) -> Path:
+    """Infer the default output directory from a parsed ArcGIS URL."""
+    from portolan_cli.extract.arcgis.url_parser import ArcGISURLType
+
+    if parsed.url_type == ArcGISURLType.SERVICES_ROOT:
+        return Path("services_extract")
+    if parsed.url_type == ArcGISURLType.SERVICES_FOLDER:
+        return Path((parsed.folder or "services_extract").replace("/", "_").lower())
+    service_name = parsed.service_name or "arcgis_extract"
+    return Path(service_name.replace("/", "_").lower())
+
+
 def _output_extract_result(
     report: ExtractionReport,
     output_dir: Path,
@@ -6652,25 +6702,15 @@ def extract_arcgis_cmd(
         _output_extract_error(use_json, "InvalidURLError", str(e), url)
         raise SystemExit(1) from None
 
-    # Resolve credentials and token (token > username/password > env).
-    # Never require the password on argv (it leaks via shell history and process
-    # listings). Take it from ARCGIS_PASSWORD, or prompt when running interactively.
-    from portolan_cli.extract.arcgis.auth import ArcGISCredentials, resolve_token
-
-    resolved_password = password or os.environ.get("ARCGIS_PASSWORD")
-    if username and not resolved_password and not auto and not use_json:
-        resolved_password = click.prompt("ArcGIS password", hide_input=True)
-
-    creds = ArcGISCredentials(
-        token=token or os.environ.get("ARCGIS_TOKEN"),
+    resolved_token = _resolve_arcgis_token(
+        url=url,
+        token=token,
         username=username,
-        password=resolved_password,
+        password=password,
+        timeout=timeout,
+        auto=auto,
+        use_json=use_json,
     )
-    try:
-        resolved_token = resolve_token(creds, url, timeout=timeout) if not creds.is_empty else None
-    except Exception as e:  # ArcGISAuthError and transport errors
-        _output_extract_error(use_json, type(e).__name__, str(e), url)
-        raise SystemExit(1) from None
 
     # Handle --list-services mode
     if list_services:
@@ -6693,13 +6733,7 @@ def extract_arcgis_cmd(
 
     # Default output directory from service name (or "services_extract" for services root)
     if output_dir is None:
-        if parsed.url_type == ArcGISURLType.SERVICES_ROOT:
-            output_dir = Path("services_extract")
-        elif parsed.url_type == ArcGISURLType.SERVICES_FOLDER:
-            output_dir = Path((parsed.folder or "services_extract").replace("/", "_").lower())
-        else:
-            service_name = parsed.service_name or "arcgis_extract"
-            output_dir = Path(service_name.replace("/", "_").lower())
+        output_dir = _default_arcgis_output_dir(parsed)
 
     # Handle ImageServer URLs (raster extraction)
     if parsed.url_type == ArcGISURLType.IMAGE_SERVER:
