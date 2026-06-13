@@ -9,6 +9,7 @@ All errors follow the format PRTLN-{category}{number}:
 - PRTLN-VAL*: Validation errors
 - PRTLN-CNV*: Conversion errors
 - PRTLN-CFG*: Configuration errors
+- PRTLN-EXT*: Extract / harvest errors
 """
 
 from __future__ import annotations
@@ -439,3 +440,13 @@ class ConfigInvalidStructureError(ConfigError):
             path=path,
             detail=detail,
         )
+
+
+# Extract Errors (PRTLN-EXT*)
+class ArcGISAuthError(PortolanError):
+    """Raised when ArcGIS token resolution or authentication fails.
+
+    Error code: PRTLN-EXT002
+    """
+
+    code = "PRTLN-EXT002"

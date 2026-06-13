@@ -361,6 +361,70 @@ portolan extract arcgis \
   ./output --services "Census*,Demographics*"
 ```
 
+### Folder Recursion
+
+By default, Portolan **recursively traverses ArcGIS Server folders** when you point it at a services root. Services inside folders are discovered automatically and appear with folder-qualified names such as `NationalDatasets/Property`.
+
+```bash
+# Default: recurse into all folders (services root URL)
+portolan extract arcgis https://gis.example.com/arcgis/rest/services ./output
+
+# Disable folder traversal (only top-level services)
+portolan extract arcgis https://gis.example.com/arcgis/rest/services ./output --no-recurse
+```
+
+To extract only a single folder, point at the folder URL directly:
+
+```bash
+portolan extract arcgis \
+  https://gis.example.com/arcgis/rest/services/NationalDatasets \
+  ./output
+```
+
+Folders map to nested subcatalogs in the output: each folder segment becomes a subcatalog directory containing the services discovered inside it.
+
+### Authentication
+
+For secured services or folders, supply credentials with one of these options (listed in precedence order, highest first):
+
+- `--token <TOKEN>`: pass an ArcGIS token directly
+- `--username <U> --password <P>`: Portolan mints a token via the server's `generateToken` endpoint
+- `ARCGIS_TOKEN` environment variable: token read from the environment
+
+```bash
+# Token flag
+portolan extract arcgis URL ./output --token "eyJ..."
+
+# Username and password (token is minted automatically)
+portolan extract arcgis URL ./output --username myuser --password mypass
+
+# Environment variable
+ARCGIS_TOKEN="eyJ..." portolan extract arcgis URL ./output
+```
+
+Secured folders that cannot be accessed (for example, a 499 Token Required response) are **skipped with a warning**, not a fatal error. The extraction continues with any accessible services.
+
+### Coverage Report
+
+After a services-root extraction (or when using `--list-services`), Portolan reports folder traversal statistics: how many folders were visited, how many were skipped, and how many services were found.
+
+```bash
+portolan extract arcgis https://gis.example.com/arcgis/rest/services ./output --list-services
+# Output includes: folders visited, folders skipped (with reason), total services found
+```
+
+With `--json`, the coverage appears as a `folder_coverage` key in the JSON output:
+
+```json
+{
+  "folder_coverage": {
+    "folders_visited": ["NationalDatasets", "Boundaries"],
+    "folders_skipped": [{"folder": "Restricted", "reason": "499 Token Required"}],
+    "services_found": 14
+  }
+}
+```
+
 ### Filtering Services
 
 ```bash
@@ -370,6 +434,8 @@ portolan extract arcgis URL --services "Census*,Transport*"
 # Exclude services matching patterns
 portolan extract arcgis URL --exclude-services "*_Archive,*_Test"
 ```
+
+Patterns use fnmatch, and `*` spans `/`, so they work naturally with folder-qualified service names produced when extracting from a services root that contains ArcGIS folders. For example, `--services "ecml/*"` selects every service inside the `ecml` folder, and `--services "*faults*"` matches `ecml/active_faults` too.
 
 ### Output Structure
 

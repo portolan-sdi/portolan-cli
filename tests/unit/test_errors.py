@@ -12,6 +12,7 @@ from __future__ import annotations
 import pytest
 
 from portolan_cli.errors import (
+    ArcGISAuthError,
     CatalogAlreadyExistsError,
     # Catalog errors
     CatalogError,
@@ -468,3 +469,12 @@ class TestConversionErrors:
         assert "/path/to/output.parquet" in str(error)
         # Message should mention validation failure
         assert "validation" in str(error).lower() or "failed" in str(error).lower()
+
+
+@pytest.mark.unit
+def test_arcgis_auth_error_code_and_message() -> None:
+    err = ArcGISAuthError("token request failed", url="https://x/generateToken")
+    assert isinstance(err, PortolanError)
+    assert err.code == "PRTLN-EXT002"
+    assert "token request failed" in str(err)
+    assert err.to_dict()["context"]["url"] == "https://x/generateToken"

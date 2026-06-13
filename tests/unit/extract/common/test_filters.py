@@ -226,3 +226,20 @@ class TestApplyUnifiedFilter:
 
         assert filtered_services is None
         assert len(filtered_layers) == 1
+
+
+# =============================================================================
+# Folder-Qualified Name Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+def test_filter_matches_folder_qualified_names() -> None:
+    """fnmatch * spans / so folder-qualified names like ecml/active_faults are matched by ecml/*."""
+    names = ["ecml/active_faults", "ecml/airports_v2", "water/rivers", "Top"]
+    assert filter_services(names, include=["ecml/*"]) == ["ecml/active_faults", "ecml/airports_v2"]
+    assert filter_services(names, exclude=["water/*"]) == [
+        "ecml/active_faults",
+        "ecml/airports_v2",
+        "Top",
+    ]
