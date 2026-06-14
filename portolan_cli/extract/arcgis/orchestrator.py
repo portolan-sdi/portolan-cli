@@ -30,11 +30,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from portolan_cli.extract.arcgis.discovery import (
+    FolderTraversal,
     LayerInfo,
     ServiceDiscoveryResult,
     ServiceInfo,
     discover_layers,
     discover_services,
+    discover_services_recursive,
 )
 from portolan_cli.extract.arcgis.metadata import extract_arcgis_metadata
 from portolan_cli.extract.arcgis.url_parser import (
@@ -46,6 +48,7 @@ from portolan_cli.extract.common.filters import filter_layers
 from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,
+    FolderCoverage,
     LayerResult,
     MetadataExtracted,
     load_report,
@@ -63,6 +66,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _coverage_from_traversal(traversal: FolderTraversal) -> FolderCoverage:
+    """Map a discovery FolderTraversal to a serializable FolderCoverage."""
+    return FolderCoverage(
+        folders_visited=traversal.visited,
+        folders_skipped=traversal.skipped,
+        services_found=traversal.service_count,
+    )
+
+
 @dataclass
 class ServicesRootDiscoveryResult:
     """Result of listing services from a services root URL.
@@ -73,15 +85,17 @@ class ServicesRootDiscoveryResult:
         services: List of discovered services.
         folders: List of folder names in the services root.
         base_url: The services root URL that was queried.
+        coverage: Optional folder traversal coverage when recursion was used.
     """
 
     services: list[ServiceInfo]
     folders: list[str]
     base_url: str
+    coverage: FolderCoverage | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Convert to JSON-serializable dict."""
-        return {
+        result: dict[str, object] = {
             "base_url": self.base_url,
             "services": [
                 {
@@ -94,6 +108,9 @@ class ServicesRootDiscoveryResult:
             "folders": self.folders,
             "total_services": len(self.services),
         }
+        if self.coverage is not None:
+            result["folder_coverage"] = self.coverage.to_dict()
+        return result
 
 
 def list_services(
@@ -101,42 +118,55 @@ def list_services(
     *,
     service_types: Sequence[str] | None = None,
     service_filter: list[str] | None = None,
+    token: str | None = None,
+    recurse: bool = True,
     timeout: float = 60.0,
 ) -> ServicesRootDiscoveryResult:
-    """List services from an ArcGIS services root URL.
+    """List services from an ArcGIS services root or folder URL.
 
-    This is a lightweight discovery operation that does NOT probe each service
-    for layers. Use this for --list-services mode.
+    Recurses into folders by default. Folders that error are skipped and
+    recorded in the returned coverage.
 
     Args:
-        url: ArcGIS services root URL (must end with /rest/services).
+        url: ArcGIS services root or folder URL.
         service_types: Filter by service types (e.g., ["FeatureServer"]).
         service_filter: Glob patterns to filter service names.
+        token: Optional ArcGIS token for authenticated endpoints.
+        recurse: Whether to recurse into sub-folders (default True).
         timeout: Request timeout in seconds.
 
     Returns:
-        ServicesRootDiscoveryResult with services and folders.
+        ServicesRootDiscoveryResult with services, folders, and optional coverage.
 
     Raises:
-        ValueError: If URL is not a services root URL.
+        ValueError: If URL is not a services root or folder URL.
     """
     from portolan_cli.extract.arcgis.filters import filter_services
 
-    # Parse URL to verify it's a services root
     parsed = parse_arcgis_url(url)
-    if parsed.url_type != ArcGISURLType.SERVICES_ROOT:
-        msg = f"URL is not a services root URL: {url}"
+    if parsed.url_type not in (ArcGISURLType.SERVICES_ROOT, ArcGISURLType.SERVICES_FOLDER):
+        msg = f"URL is not a services root or folder URL: {url}"
         raise ValueError(msg)
 
-    # Discover services
-    services, folders = discover_services(
-        url,
-        service_types=list(service_types) if service_types else None,
-        return_folders=True,
-        timeout=timeout,
-    )
+    if recurse:
+        services, traversal = discover_services_recursive(
+            url,
+            service_types=list(service_types) if service_types else None,
+            token=token,
+            timeout=timeout,
+        )
+        coverage: FolderCoverage | None = _coverage_from_traversal(traversal)
+        folders = traversal.visited
+    else:
+        services, folders = discover_services(
+            url,
+            service_types=list(service_types) if service_types else None,
+            return_folders=True,
+            timeout=timeout,
+            token=token,
+        )
+        coverage = None
 
-    # Apply service filter if provided
     if service_filter:
         service_names = [s.name for s in services]
         filtered_names = filter_services(
@@ -150,6 +180,7 @@ def list_services(
         services=services,
         folders=folders,
         base_url=parsed.base_url,
+        coverage=coverage,
     )
 
 
@@ -192,6 +223,21 @@ def _slugify(name: str) -> str:
     return slug or "unnamed"
 
 
+def _service_output_dir(output_dir: Path, service_name: str) -> Path:
+    """Map a (possibly folder-qualified) service name to a nested directory.
+
+    "ecml/active_faults" -> output_dir/ecml/active_faults
+    "Top"                -> output_dir/top
+    Each path segment is slugified independently so the folder hierarchy is
+    preserved as nested subcatalogs (ADR-0032, ADR-0054).
+    """
+    parts = [_slugify(p) for p in service_name.split("/") if p]
+    result = output_dir
+    for part in parts:
+        result = result / part
+    return result
+
+
 @dataclass
 class ExtractionOptions:
     """Options for the extraction process.
@@ -205,6 +251,8 @@ class ExtractionOptions:
         sort_hilbert: Whether to apply Hilbert spatial sorting
         raw: If True, skip auto-init (only create extraction files, no STAC catalog)
         no_styles: If True, skip style extraction from ESRI drawingInfo
+        token: Optional ArcGIS token for authenticated endpoints
+        recurse: Whether to recurse into sub-folders during discovery (default True)
     """
 
     workers: int = 3
@@ -215,6 +263,8 @@ class ExtractionOptions:
     dry_run: bool = False
     sort_hilbert: bool = True
     no_styles: bool = False
+    token: str | None = None
+    recurse: bool = True
 
 
 @dataclass
@@ -263,13 +313,15 @@ def _extract_single_layer(
     layer_url = f"{service_url.rstrip('/')}/{layer.id}"
     start_time = time.monotonic()
 
-    # Check if gpio.extract_arcgis supports max_workers (added in gpio 0.10.0+)
+    # Check which optional parameters gpio.extract_arcgis supports (feature-detected
+    # so older gpio versions continue to work without modification).
     sig = inspect.signature(gpio.extract_arcgis)
+    kwargs: dict[str, object] = {}
     if "max_workers" in sig.parameters:
-        table = gpio.extract_arcgis(layer_url, max_workers=options.workers)
-    else:
-        # Fallback for gpio < 0.10.0
-        table = gpio.extract_arcgis(layer_url)
+        kwargs["max_workers"] = options.workers
+    if options.token and "token" in sig.parameters:
+        kwargs["token"] = options.token
+    table = gpio.extract_arcgis(layer_url, **kwargs)
 
     # Apply Hilbert sorting if requested
     if options.sort_hilbert:
@@ -513,8 +565,8 @@ def extract_arcgis_catalog(
     # Parse URL
     parsed = parse_arcgis_url(url)
 
-    # Handle services root URLs differently
-    if parsed.url_type == ArcGISURLType.SERVICES_ROOT:
+    # Handle services root and folder URLs differently
+    if parsed.url_type in (ArcGISURLType.SERVICES_ROOT, ArcGISURLType.SERVICES_FOLDER):
         return _extract_services_root(
             url=url,
             parsed=parsed,
@@ -804,16 +856,41 @@ def _discover_and_filter_services(
     service_filter: list[str] | None,
     service_exclude: list[str] | None,
     timeout: float,
-) -> list[ServiceInfo]:
-    """Discover services and apply filters."""
+    *,
+    token: str | None = None,
+    folder: str | None = None,
+    recurse: bool = True,
+) -> tuple[list[ServiceInfo], FolderCoverage | None]:
+    """Discover services (recursively by default), scope to a folder, and apply filters.
+
+    Returns (services, coverage). When recurse is False the flat (non-recursive)
+    discovery is used and coverage is None. When folder is set (SERVICES_FOLDER
+    URL) only services under that folder prefix are kept.
+    """
     from portolan_cli.extract.arcgis.filters import filter_services
 
-    services, _folders = discover_services(
-        url,
-        service_types=["FeatureServer", "MapServer"],
-        return_folders=True,
-        timeout=timeout,
-    )
+    coverage: FolderCoverage | None
+    if recurse:
+        services, traversal = discover_services_recursive(
+            url,
+            service_types=["FeatureServer", "MapServer"],
+            token=token,
+            timeout=timeout,
+        )
+        coverage = _coverage_from_traversal(traversal)
+    else:
+        services, _folders = discover_services(
+            url,
+            service_types=["FeatureServer", "MapServer"],
+            return_folders=True,
+            timeout=timeout,
+            token=token,
+        )
+        coverage = None
+
+    if folder:
+        prefix = f"{folder.rstrip('/')}/"
+        services = [s for s in services if s.name.startswith(prefix)]
 
     if service_filter or service_exclude:
         service_names = [s.name for s in services]
@@ -825,7 +902,7 @@ def _discover_and_filter_services(
         )
         services = [s for s in services if s.name in filtered_names]
 
-    return services
+    return services, coverage
 
 
 def _collect_layers_from_services(
@@ -941,7 +1018,15 @@ def _extract_services_root(
         options = ExtractionOptions()
 
     # Discover and filter services
-    services = _discover_and_filter_services(url, service_filter, service_exclude, options.timeout)
+    services, coverage = _discover_and_filter_services(
+        url,
+        service_filter,
+        service_exclude,
+        options.timeout,
+        token=options.token,
+        folder=parsed.folder,
+        recurse=options.recurse,
+    )
 
     # Collect layers from all services
     all_layers, service_for_layer, layer_count_per_service, _discovery_errors = (
@@ -972,11 +1057,13 @@ def _extract_services_root(
         combined_discovery = ServiceDiscoveryResult(
             layers=[layer for _, layer in filtered_layers],
         )
-        return _build_report(
+        dry_report = _build_report(
             url=url,
             discovery_result=combined_discovery,
             layer_results=dry_run_results,
         )
+        dry_report.folder_coverage = coverage
+        return dry_report
 
     # Create output directory structure
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -994,18 +1081,18 @@ def _extract_services_root(
     for progress_idx, (layer_idx, layer) in enumerate(filtered_layers):
         service = service_for_layer[layer_idx]
         service_url = service.get_url(parsed.base_url)
-        service_slug = _slugify(service.name)
         layer_slug = _slugify(layer.name)
+        service_dir = _service_output_dir(output_dir, service.name)
+        service_leaf_slug = service_dir.name
 
         # Determine output path based on layer count:
         # - Single-layer service: service_name/service_name.parquet (flattened - no subcatalog)
         # - Multi-layer service: service_name/layer_name/layer_name.parquet (nested)
         is_single_layer = layer_count_per_service.get(service.name, 0) == 1
-        service_dir = output_dir / service_slug
 
         if is_single_layer:
             # Flatten: service becomes collection directly
-            output_path = service_dir / f"{service_slug}.parquet"
+            output_path = service_dir / f"{service_leaf_slug}.parquet"
         else:
             # Nested: service is subcatalog, layer is collection
             collection_dir = service_dir / layer_slug
@@ -1097,6 +1184,7 @@ def _extract_services_root(
         discovery_result=combined_discovery,
         layer_results=layer_results,
     )
+    report.folder_coverage = coverage
     report_path = output_dir / ".portolan" / "extraction-report.json"
     save_report(report, report_path)
 

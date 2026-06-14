@@ -21,6 +21,7 @@ Typical usage:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -29,6 +30,8 @@ import httpx
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+logger = logging.getLogger(__name__)
 
 
 class ArcGISDiscoveryError(Exception):
@@ -96,6 +99,15 @@ class ServiceDiscoveryResult:
     access_information: str | None = None
 
 
+def _append_query_param(url: str, key: str, value: str) -> str:
+    """Append a single query parameter to a URL."""
+    parsed = urlparse(url)
+    query_params = parse_qs(parsed.query)
+    query_params[key] = [value]
+    new_query = urlencode(query_params, doseq=True)
+    return urlunparse(parsed._replace(query=new_query))
+
+
 def _ensure_json_format(url: str) -> str:
     """Ensure URL has f=json parameter for ArcGIS REST API.
 
@@ -119,35 +131,56 @@ def _ensure_json_format(url: str) -> str:
     return urlunparse(new_parsed)
 
 
-def _fetch_json(url: str, timeout: float = 60.0) -> dict[str, Any]:
+def _fetch_json(url: str, timeout: float = 60.0, token: str | None = None) -> dict[str, Any]:
     """Fetch JSON from URL with standard error handling.
+
+    Appends f=json and, when provided, token=<token>. ArcGIS returns HTTP 200
+    with an embedded {"error": {...}} body for secured or invalid endpoints;
+    that case is raised as ArcGISDiscoveryError.
 
     Args:
         url: URL to fetch (will have f=json added if needed)
         timeout: Request timeout in seconds
+        token: Optional ArcGIS token appended as token=<token> query param
 
     Returns:
         Parsed JSON response
 
     Raises:
-        ArcGISDiscoveryError: On HTTP or parsing errors
+        ArcGISDiscoveryError: On HTTP errors, parsing errors, or embedded ArcGIS errors
     """
     request_url = _ensure_json_format(url)
+    if token:
+        request_url = _append_query_param(request_url, "token", token)
 
     try:
         with httpx.Client(timeout=timeout) as client:
             response = client.get(request_url)
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
-    except httpx.HTTPStatusError as e:
-        msg = f"Failed to fetch from {url}: HTTP {e.response.status_code}"
-        raise ArcGISDiscoveryError(msg) from e
+            if response.status_code >= 400:
+                msg = f"Failed to fetch from {url}: HTTP {response.status_code}"
+                raise ArcGISDiscoveryError(msg)
+            raw = response.json()
+            if not isinstance(raw, dict):
+                raise ArcGISDiscoveryError(
+                    f"Expected JSON object from {url}, got {type(raw).__name__}"
+                )
+            data = cast("dict[str, Any]", raw)
+    except ArcGISDiscoveryError:
+        raise
     except httpx.RequestError as e:
         msg = f"Failed to fetch from {url}: {e}"
         raise ArcGISDiscoveryError(msg) from e
     except ValueError as e:
         msg = f"Invalid JSON response from {url}: {e}"
         raise ArcGISDiscoveryError(msg) from e
+
+    error = data.get("error")
+    if isinstance(error, dict):
+        code = error.get("code", "unknown")
+        message = error.get("message", "ArcGIS error")
+        raise ArcGISDiscoveryError(f"ArcGIS error from {url}: {code} {message}")
+
+    return data
 
 
 def discover_layers(
@@ -219,6 +252,7 @@ def discover_services(
     service_types: Sequence[str] | None = ...,
     return_folders: Literal[False] = ...,
     timeout: float = ...,
+    token: str | None = ...,
 ) -> list[ServiceInfo]: ...
 
 
@@ -229,6 +263,7 @@ def discover_services(
     service_types: Sequence[str] | None = ...,
     return_folders: Literal[True],
     timeout: float = ...,
+    token: str | None = ...,
 ) -> tuple[list[ServiceInfo], list[str]]: ...
 
 
@@ -238,6 +273,7 @@ def discover_services(
     service_types: Sequence[str] | None = None,
     return_folders: bool = False,
     timeout: float = 60.0,
+    token: str | None = None,
 ) -> list[ServiceInfo] | tuple[list[ServiceInfo], list[str]]:
     """Discover services from an ArcGIS REST services root.
 
@@ -250,6 +286,7 @@ def discover_services(
             (e.g., ["FeatureServer", "MapServer"])
         return_folders: If True, also return list of folder names
         timeout: Request timeout in seconds
+        token: Optional ArcGIS token for authenticated discovery
 
     Returns:
         List of ServiceInfo objects (or tuple with folders if return_folders=True)
@@ -257,26 +294,93 @@ def discover_services(
     Raises:
         ArcGISDiscoveryError: If the request fails or response is invalid
     """
-    data = _fetch_json(url, timeout=timeout)
+    data = _fetch_json(url, timeout=timeout, token=token)
 
-    # Extract services
-    services: list[ServiceInfo] = []
-
-    for service_data in data.get("services", []):
-        service = ServiceInfo(
-            name=service_data["name"],
-            service_type=service_data["type"],
-        )
-
-        # Filter by type if specified
-        if service_types is None or service.service_type in service_types:
-            services.append(service)
+    services = _build_service_list(data, service_types)
 
     if return_folders:
         folders = data.get("folders", [])
         return services, folders
 
     return services
+
+
+@dataclass(frozen=True)
+class FolderTraversal:
+    """Record of a recursive services-root traversal.
+
+    Attributes:
+        visited: Folder names successfully fetched.
+        skipped: (folder_name, reason) pairs for folders that errored.
+        service_count: Total services discovered (root plus all folders).
+    """
+
+    visited: list[str]
+    skipped: list[tuple[str, str]]
+    service_count: int
+
+
+def _build_service_list(
+    data: dict[str, Any],
+    service_types: Sequence[str] | None,
+) -> list[ServiceInfo]:
+    """Build a filtered ServiceInfo list from a services-root JSON payload."""
+    services: list[ServiceInfo] = []
+    for service_data in data.get("services", []):
+        service = ServiceInfo(name=service_data["name"], service_type=service_data["type"])
+        if service_types is None or service.service_type in service_types:
+            services.append(service)
+    return services
+
+
+def discover_services_recursive(
+    url: str,
+    *,
+    service_types: Sequence[str] | None = None,
+    token: str | None = None,
+    timeout: float = 60.0,
+    max_depth: int = 2,
+) -> tuple[list[ServiceInfo], FolderTraversal]:
+    """Discover services from a services root, recursing into folders.
+
+    ArcGIS returns service names already qualified by folder (e.g.
+    "NationalDatasets/Property"), so ServiceInfo.get_url(root) stays correct.
+    Folders that error (secured, non-200, embedded error) are recorded and
+    skipped, never raised. max_depth guards against pathological nesting;
+    standard ArcGIS folders are single-level. Defaults to 2 because standard
+    ArcGIS servers nest folders at most one level; the extra level guards against
+    non-standard but valid configurations.
+
+    Returns:
+        (services, traversal) where traversal records visited/skipped folders.
+    """
+    root_base = url.split("?")[0].rstrip("/")
+    root_data = _fetch_json(root_base, timeout=timeout, token=token)
+
+    services = _build_service_list(root_data, service_types)
+    visited: list[str] = []
+    skipped: list[tuple[str, str]] = []
+
+    # Queue of (folder_name, depth). Folder names are paths relative to root.
+    queue: list[tuple[str, int]] = [(f, 1) for f in root_data.get("folders", [])]
+    while queue:
+        folder, depth = queue.pop(0)
+        if depth > max_depth:
+            continue
+        folder_url = f"{root_base}/{folder}"
+        try:
+            folder_data = _fetch_json(folder_url, timeout=timeout, token=token)
+        except ArcGISDiscoveryError as e:
+            skipped.append((folder, str(e)))
+            logger.warning("Skipping folder '%s': %s", folder, e)
+            continue
+        visited.append(folder)
+        services.extend(_build_service_list(folder_data, service_types))
+        for sub in folder_data.get("folders", []):
+            queue.append((f"{folder}/{sub}", depth + 1))
+
+    traversal = FolderTraversal(visited=visited, skipped=skipped, service_count=len(services))
+    return services, traversal
 
 
 def fetch_layer_details(

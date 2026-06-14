@@ -16,6 +16,7 @@ from portolan_cli.extract.arcgis.orchestrator import (
     ExtractionOptions,
     ExtractionProgress,
     extract_arcgis_catalog,
+    list_services,
 )
 
 # Philadelphia's public ArcGIS services (stable, open data)
@@ -141,3 +142,29 @@ class TestLiveMetadataExtraction:
             "keywords": result.metadata_extracted.keywords,
         }
         assert report_dict["source_url"] is not None
+
+
+# South African national data portal — services live in a NationalDatasets folder.
+SA_ROOT = "https://nspdr.dlrrd.gov.za/server/rest/services"
+# JRC federated server — ALL services are in folders, zero top-level services.
+JRC_ROOT = "https://arcgis-maps.jrc.ec.europa.eu/federated_server/rest/services"
+
+
+@pytest.mark.network
+@pytest.mark.slow
+def test_sa_root_traverses_folders() -> None:
+    result = list_services(SA_ROOT, timeout=60.0)
+    names = [s.name for s in result.services]
+    # NationalDatasets services live in a folder; recursion must surface them
+    assert any(n.startswith("NationalDatasets/") for n in names)
+    assert result.coverage is not None
+    assert "NationalDatasets" in result.coverage.folders_visited
+
+
+@pytest.mark.network
+@pytest.mark.slow
+def test_jrc_root_has_only_folder_services() -> None:
+    # JRC root has ZERO top-level services; everything is in folders.
+    result = list_services(JRC_ROOT, timeout=60.0)
+    assert len(result.services) > 0
+    assert all("/" in s.name for s in result.services)
