@@ -5,6 +5,7 @@ Tests vector thumbnail generation from PMTiles and GeoParquet sources.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -221,11 +222,13 @@ class TestBasemapOrdering:
         assert captured_xlim is not None, "add_basemap was never called"
         assert captured_ylim is not None, "add_basemap was never called"
 
-        # Limits should match the bounds we passed
-        assert captured_xlim[0] == pytest.approx(bounds[0], abs=0.01)  # minx
-        assert captured_xlim[1] == pytest.approx(bounds[2], abs=0.01)  # maxx
-        assert captured_ylim[0] == pytest.approx(bounds[1], abs=0.01)  # miny
-        assert captured_ylim[1] == pytest.approx(bounds[3], abs=0.01)  # maxy
+        # Limits are the FRAMED bounds (aspect-cap + margin, #518): they must
+        # enclose the data bounds (not the matplotlib default 0..1), proving the
+        # extent was set from the data before the basemap zoom was derived.
+        assert captured_xlim[0] <= bounds[0]
+        assert captured_xlim[1] >= bounds[2]
+        assert captured_ylim[0] <= bounds[1]
+        assert captured_ylim[1] >= bounds[3]
 
     @pytest.mark.unit
     def test_render_geometries_no_basemap_when_no_bounds(self, tmp_path: Path) -> None:
@@ -867,9 +870,15 @@ class TestGeoparquetCrsHandling:
 
             _render_geoparquet(gpq_path, output_path, config)
 
-            # Verify set_xlim/set_ylim use NATIVE bounds (no transformation)
-            mock_ax.set_xlim.assert_called_once_with(-61.0, -59.0)
-            mock_ax.set_ylim.assert_called_once_with(-33.0, -31.0)
+            # Limits use NATIVE-CRS bounds (no reprojection), now framed with
+            # the aspect-cap + margin helper (#518). Values stay in native
+            # degrees (~ -61), nowhere near EPSG:3857 metres, confirming the
+            # data was not reprojected.
+            from portolan_cli.thumbnail import _frame_bounds
+
+            framed = _frame_bounds(full_bbox)
+            mock_ax.set_xlim.assert_called_once_with(framed[0], framed[2])
+            mock_ax.set_ylim.assert_called_once_with(framed[1], framed[3])
 
 
 class TestGeoparquetThumbnailIntegration:
@@ -900,4 +909,265 @@ class TestGeoparquetThumbnailIntegration:
 
         assert result is not None
         assert result.exists()
+        assert result.stat().st_size > 0
+
+
+# =============================================================================
+# Phase 5: Data-aware framing (#518 Track 1)
+# =============================================================================
+
+
+class TestFrameBounds:
+    """Tests for _frame_bounds aspect-cap + padding (Issue #518)."""
+
+    @pytest.mark.unit
+    def test_square_bounds_only_get_margin(self) -> None:
+        """A square extent is not aspect-adjusted; only the margin expands it."""
+        from portolan_cli.thumbnail import _frame_bounds
+
+        framed = _frame_bounds((0.0, 0.0, 10.0, 10.0), max_aspect=2.5, margin=0.05)
+        # 5% of a 10-unit span = 0.5 on each side, no aspect change.
+        assert framed[0] == pytest.approx(-0.5)
+        assert framed[1] == pytest.approx(-0.5)
+        assert framed[2] == pytest.approx(10.5)
+        assert framed[3] == pytest.approx(10.5)
+
+    @pytest.mark.unit
+    def test_tall_sliver_capped_by_widening(self) -> None:
+        """A 1:100 (w:h) sliver is widened so aspect is capped at max_aspect."""
+        from portolan_cli.thumbnail import _frame_bounds
+
+        framed = _frame_bounds((0.0, 0.0, 1.0, 100.0), max_aspect=2.5, margin=0.0)
+        width = framed[2] - framed[0]
+        height = framed[3] - framed[1]
+        # Capped: height/width == max_aspect, achieved by growing WIDTH.
+        assert height / width == pytest.approx(2.5, rel=1e-6)
+        assert height == pytest.approx(100.0)  # height untouched
+        # Geometry stays centered on its original center (x=0.5).
+        assert (framed[0] + framed[2]) / 2 == pytest.approx(0.5)
+
+    @pytest.mark.unit
+    def test_wide_sliver_capped_by_heightening(self) -> None:
+        """A 100:1 (w:h) sliver is heightened so aspect is capped at max_aspect."""
+        from portolan_cli.thumbnail import _frame_bounds
+
+        framed = _frame_bounds((0.0, 0.0, 100.0, 1.0), max_aspect=2.5, margin=0.0)
+        width = framed[2] - framed[0]
+        height = framed[3] - framed[1]
+        assert width / height == pytest.approx(2.5, rel=1e-6)
+        assert width == pytest.approx(100.0)
+        assert (framed[1] + framed[3]) / 2 == pytest.approx(0.5)
+
+    @pytest.mark.unit
+    def test_degenerate_point_gets_finite_box(self) -> None:
+        """A zero-area extent (single point) is expanded to a finite box."""
+        from portolan_cli.thumbnail import _frame_bounds
+
+        framed = _frame_bounds((5.0, 5.0, 5.0, 5.0))
+        assert framed[2] > framed[0]
+        assert framed[3] > framed[1]
+
+
+class TestComputeRenderParams:
+    """Tests for data-aware _compute_render_params (Issue #518)."""
+
+    @pytest.mark.unit
+    def test_sparse_points_larger_than_dense(self) -> None:
+        """Few points render with larger markers than a dense point cloud."""
+        from portolan_cli.thumbnail import _compute_render_params
+
+        sparse = _compute_render_params("point", 5)
+        dense = _compute_render_params("point", 50_000)
+        assert sparse.marker_size > dense.marker_size
+
+    @pytest.mark.unit
+    def test_dense_polygons_more_transparent(self) -> None:
+        """Dense polygon layers get lower fill opacity so they don't blob solid."""
+        from portolan_cli.thumbnail import _compute_render_params
+
+        sparse = _compute_render_params("polygon", 5)
+        dense = _compute_render_params("polygon", 50_000)
+        assert dense.fill_opacity < sparse.fill_opacity
+
+    @pytest.mark.unit
+    def test_opacity_never_washed_out(self) -> None:
+        """Fill opacity stays >= 0.5 for every geometry type and density.
+
+        This is the anti-washout guarantee: the pale WFS default (0.2) must
+        never reach the canvas via these params.
+        """
+        from portolan_cli.thumbnail import _compute_render_params
+
+        for geom in ("point", "line", "polygon"):
+            for count in (1, 100, 1_000, 100_000):
+                assert _compute_render_params(geom, count).fill_opacity >= 0.5
+
+    @pytest.mark.unit
+    def test_polygon_has_visible_edge(self) -> None:
+        """Polygons always get a non-hairline stroke width."""
+        from portolan_cli.thumbnail import _compute_render_params
+
+        assert _compute_render_params("polygon", 100).stroke_width > 0
+
+
+class TestThumbnailIgnoresPaleStylePaint:
+    """The matplotlib floor must NOT honor pale WFS paint (Issue #518).
+
+    Regression for the washed-out bug: a present style used to override the
+    punchy thumbnail defaults with its own opacity/edge (e.g. fill-opacity 0.2,
+    hairline outline, #dadada). These tests fail against that old behavior.
+    """
+
+    @staticmethod
+    def _pale_style_file(tmp_path: Path) -> Path:
+        style = {
+            "version": 8,
+            "sources": {},
+            "layers": [
+                {
+                    "id": "fill",
+                    "type": "fill",
+                    "paint": {
+                        "fill-color": "#dadada",
+                        "fill-opacity": 0.2,
+                        "fill-outline-color": "#cccccc",
+                    },
+                }
+            ],
+        }
+        path = tmp_path / "style.json"
+        path.write_text(json.dumps(style))
+        return path
+
+    @pytest.mark.unit
+    def test_geoparquet_uses_punchy_paint_not_style(self, tmp_path: Path) -> None:
+        """_render_geoparquet ignores style opacity/edge, uses thumbnail preset."""
+        pytest.importorskip("matplotlib")
+
+        from portolan_cli.thumbnail import (
+            THUMB_EDGE_COLOR,
+            ThumbnailConfig,
+            _render_geoparquet,
+        )
+
+        gpq_path = tmp_path / "test.parquet"
+        output_path = tmp_path / "test.thumb.jpg"
+        style_path = self._pale_style_file(tmp_path)
+        config = ThumbnailConfig(basemap_provider="none")
+
+        mock_gdf = MagicMock()
+        mock_gdf.empty = False
+        mock_gdf.crs = "EPSG:4326"
+        full_bbox = (-60.5, -32.5, -60.0, -32.0)
+
+        with (
+            patch(
+                "portolan_cli.thumbnail._read_geoparquet_for_thumbnail",
+                return_value=(mock_gdf, full_bbox, "EPSG:4326"),
+            ),
+            patch("matplotlib.pyplot.subplots") as mock_subplots,
+            patch("matplotlib.pyplot.savefig"),
+            patch("matplotlib.pyplot.close"),
+        ):
+            mock_subplots.return_value = (MagicMock(), MagicMock())
+            output_path.touch()
+
+            _render_geoparquet(gpq_path, output_path, config, style_path=style_path)
+
+        plot_kwargs = mock_gdf.plot.call_args.kwargs
+        # Pale style opacity (0.2) must NOT win — thumbnail preset is >= 0.5.
+        assert plot_kwargs["alpha"] >= 0.5
+        # Edge color is the bold thumbnail preset, not the style's hairline color.
+        assert plot_kwargs["edgecolor"] == THUMB_EDGE_COLOR
+
+
+class TestThumbnailRendersVisibleGeometry:
+    """End-to-end render of a representative spread — assert non-blank output.
+
+    Pixel variance / a non-white minimum proves geometry actually drew, which
+    is the concrete regression for the washed-out bug (#514/#518).
+    """
+
+    @staticmethod
+    def _write_gdf(geometries: list, tmp_path: Path, name: str) -> Path:
+        import geopandas as gpd
+
+        gdf = gpd.GeoDataFrame(geometry=geometries, crs="EPSG:4326")
+        path = tmp_path / f"{name}.parquet"
+        gdf.to_parquet(path)
+        return path
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "kind", ["sparse_points", "dense_lines", "many_polygons", "giant_polygon"]
+    )
+    def test_render_is_not_blank(self, kind: str, tmp_path: Path) -> None:
+        """Each representative layer renders visible (non-white) geometry."""
+        pytest.importorskip("geopandas")
+        pytest.importorskip("matplotlib")
+        np = pytest.importorskip("numpy")
+        pil = pytest.importorskip("PIL.Image")
+        from shapely.geometry import LineString, Point, Polygon
+
+        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        if kind == "sparse_points":
+            geoms = [Point(x, x) for x in range(-50, 50, 5)]
+        elif kind == "dense_lines":
+            geoms = [LineString([(i, 0), (i + 1, 10)]) for i in range(0, 200)]
+        elif kind == "many_polygons":
+            geoms = [
+                Polygon([(i, j), (i + 0.8, j), (i + 0.8, j + 0.8), (i, j + 0.8)])
+                for i in range(0, 20)
+                for j in range(0, 20)
+            ]
+        else:  # giant_polygon: one hemisphere-spanning sliver (the provincia case)
+            geoms = [Polygon([(-65, -90), (-63, -90), (-63, -20), (-65, -20)])]
+
+        gpq_path = self._write_gdf(geoms, tmp_path, kind)
+        config = ThumbnailConfig(basemap_provider="none")  # no network
+        result = generate_thumbnail_from_geoparquet(gpq_path, config)
+
+        assert result is not None and result.exists()
+        assert result.stat().st_size > 0
+        arr = np.asarray(pil.open(result).convert("L"))
+        # Not a blank white tile: real ink is present.
+        assert arr.min() < 200, f"{kind}: thumbnail appears blank (min={arr.min()})"
+        assert arr.std() > 1.0, f"{kind}: thumbnail has no variance (std={arr.std()})"
+
+    @pytest.mark.integration
+    def test_renders_geographic_crs_with_projected_coords(self, tmp_path: Path) -> None:
+        """A layer declaring a geographic CRS but holding projected-magnitude
+        coords still renders (every collection gets a thumbnail, #518).
+
+        geopandas otherwise tries a latitude-corrected aspect on the mislabeled
+        coords and raises "aspect must be finite and positive", yielding no
+        thumbnail. We force an equal aspect to keep the floor robust.
+        """
+        gpd = pytest.importorskip("geopandas")
+        pytest.importorskip("matplotlib")
+        from shapely.geometry import Polygon
+
+        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        # CRS84 (geographic) declared, but coordinates are ~1.6e6 (projected).
+        geoms = [
+            Polygon(
+                [
+                    (1_611_000 + i, 1_910_000),
+                    (1_611_500 + i, 1_910_000),
+                    (1_611_500 + i, 1_910_500),
+                    (1_611_000 + i, 1_910_500),
+                ]
+            )
+            for i in range(0, 1000, 100)
+        ]
+        gdf = gpd.GeoDataFrame(geometry=geoms, crs="OGC:CRS84")
+        gpq_path = tmp_path / "mislabeled.parquet"
+        gdf.to_parquet(gpq_path)
+
+        config = ThumbnailConfig(basemap_provider="none")
+        result = generate_thumbnail_from_geoparquet(gpq_path, config)
+
+        assert result is not None and result.exists()
         assert result.stat().st_size > 0

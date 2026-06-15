@@ -176,6 +176,7 @@ def _extract_first_color_from_interpolate(expr: list[Any]) -> str:
 def resolve_colors_for_gdf(
     gdf: Any,
     style: ThumbnailStyle,
+    fallback: str | None = None,
 ) -> Any:
     """Resolve per-feature colors from style and GeoDataFrame attributes.
 
@@ -187,13 +188,19 @@ def resolve_colors_for_gdf(
     Args:
         gdf: GeoDataFrame with feature attributes.
         style: Parsed thumbnail style.
+        fallback: Color for unmapped values and missing fields. Defaults to the
+            style's own ``fill_color``. Thumbnail rendering passes a punchy
+            override here so the (often pale) WFS default never reaches the
+            canvas (#518).
 
     Returns:
         Either a pandas Series of hex colors (categorical) or a single hex
         string (uniform color).
     """
+    default = fallback if fallback is not None else style.fill_color
+
     if style.color_map is None or style.color_field is None:
-        return style.fill_color
+        return default
 
     # Case-insensitive field lookup
     field = style.color_field
@@ -201,16 +208,16 @@ def resolve_colors_for_gdf(
 
     if actual_field is None:
         logger.debug("Field %s not found in GDF columns: %s", field, list(gdf.columns))
-        return style.fill_color
+        return default
 
-    # Map field values to colors, using fill_color as default
+    # Map field values to colors, using the fallback as default
     values = gdf[actual_field]
 
     # Convert color_map keys to strings for consistent matching
     # (GDF values might be strings, color_map keys might be from JSON)
     str_color_map = {str(k): v for k, v in style.color_map.items()}
 
-    colors = values.astype(str).map(str_color_map).fillna(style.fill_color)
+    colors = values.astype(str).map(str_color_map).fillna(default)
 
     return colors
 
@@ -238,6 +245,7 @@ def _find_column_case_insensitive(
 def resolve_color_for_properties(
     properties: dict[str, Any],
     style: ThumbnailStyle,
+    fallback: str | None = None,
 ) -> str:
     """Resolve color for a single feature from its properties.
 
@@ -246,12 +254,16 @@ def resolve_color_for_properties(
     Args:
         properties: Feature properties dict.
         style: Parsed thumbnail style.
+        fallback: Color for unmapped values and missing fields. Defaults to the
+            style's own ``fill_color`` (see ``resolve_colors_for_gdf``).
 
     Returns:
         Hex color string.
     """
+    default = fallback if fallback is not None else style.fill_color
+
     if style.color_map is None or style.color_field is None:
-        return style.fill_color
+        return default
 
     # Case-insensitive property lookup
     field = style.color_field
@@ -263,13 +275,13 @@ def resolve_color_for_properties(
             break
 
     if value is None:
-        return style.fill_color
+        return default
 
     # Look up in color_map (try both original and string representation)
     color = style.color_map.get(value)
     if color is None:
         color = style.color_map.get(str(value))
     if color is None:
-        color = style.fill_color
+        color = default
 
     return color

@@ -81,6 +81,28 @@ render paths.
   paths, then assert parity. Basemaps are for **vector** thumbnails only, raster
   thumbnails get no basemap (ADR-0043).
 - `contextily` is an optional lazy import, guard for its absence.
+- **The matplotlib floor is a punchy data-aware preset, NOT the extracted style**
+  (#518, Track 1). The WFS/Mapbox style is pale by design (`fill-opacity 0.2`,
+  hairline outline) and washes out at 512 px, so do **not** read `fill_opacity`
+  / `fill_outline_color` / the style's default fill into the thumbnail. Use
+  `THUMB_FILL_COLOR` / `THUMB_EDGE_COLOR` and `_compute_render_params()` (scales
+  marker size / stroke / opacity to geometry type + feature count, opacity always
+  ≥ 0.5). Only the style's **categorical** color map is reused, via
+  `resolve_color_for_properties` / `resolve_colors_for_gdf` with an explicit
+  punchy `fallback`. The *real* style is rendered by the opt-in MapLibre-native
+  skill (Track 2), never here. Do not re-open fixed-preset tuning or
+  vision-in-the-loop (both rejected in #518).
+- **Frame the bbox before setting limits** with `_frame_bounds()` (aspect-cap +
+  margin): elongated extents (a hemisphere-spanning sliver, an outlier-inflated
+  bbox) otherwise render as an illegible hairline under `set_aspect('equal')`.
+  It is O(1) on the bbox — do not reach for per-vertex percentile cropping.
+- Pass `aspect="equal"` to `gdf.plot()`. Without it geopandas derives a
+  latitude-corrected aspect and raises "aspect must be finite and positive" when
+  a layer declares a geographic CRS but holds projected-magnitude coords (#516
+  family) — that would leave the collection with no thumbnail at all.
+- The render presets and helpers (`_compute_render_params`, `_frame_bounds`,
+  `_geom_category`, `_profile_*`) are **shared by both paths** — that *is* the
+  parity mechanism. Change them once, both paths follow.
 
 ## PMTiles: thread src_crs through, register at collection level
 
