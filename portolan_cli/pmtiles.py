@@ -566,16 +566,22 @@ def _track_generated_assets_in_versions(
     write_versions(versions_path, updated)
 
 
-def _backfill_skipped_assets(collection_path: Path, pmtiles_path: Path, catalog_root: Path) -> None:
+def _backfill_skipped_assets(
+    collection_path: Path, asset_key: str, pmtiles_path: Path, catalog_root: Path
+) -> None:
     """Track an up-to-date PMTiles and its thumbnail if not already tracked.
 
     Runs on the skip path to heal catalogs whose artifacts were generated before
     versions.json tracking existed (Issue #519), without bumping a version when
-    everything is already tracked.
+    everything is already tracked. When a thumbnail exists on disk it is also
+    re-registered as a STAC asset (mirroring the PMTiles), so the backfilled
+    versions.json entry can never be orphaned from collection.json.
     """
     backfill = [pmtiles_path]
     existing_thumb = thumbnail_path_for(pmtiles_path)
     if existing_thumb.exists():
+        # Ensure the thumbnail is a STAC asset too, even when skipping generation.
+        add_thumbnail_asset_to_collection(collection_path, f"{asset_key}-tiles", existing_thumb)
         backfill.append(existing_thumb)
     try:
         _track_generated_assets_in_versions(
@@ -730,7 +736,7 @@ def generate_pmtiles_for_collection(
             )
             # Backfill versions.json for artifacts generated before this tracking
             # existed (the original #519 bug state), idempotently.
-            _backfill_skipped_assets(collection_path, pmtiles_path, catalog_root)
+            _backfill_skipped_assets(collection_path, asset_key, pmtiles_path, catalog_root)
             result.skipped.append(pmtiles_path)
             continue
 

@@ -883,6 +883,14 @@ class TestGeneratePMTilesForCollection:
         assert "data.pmtiles" in latest, "Untracked PMTiles should be backfilled on skip"
         assert "data.thumb.jpg" in latest, "Untracked thumbnail should be backfilled on skip"
 
+        # The thumbnail must also be (re-)registered as a STAC asset on skip, so a
+        # backfilled versions.json entry is never orphaned from collection.json.
+        coll_json = json.loads((collection_dir / "collection.json").read_text())
+        thumb_assets = [
+            k for k, v in coll_json["assets"].items() if "thumbnail" in v.get("roles", [])
+        ]
+        assert thumb_assets, "Backfilled thumbnail must be registered as a STAC asset"
+
         # Idempotent: a second run with everything tracked creates NO new version.
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
             with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):

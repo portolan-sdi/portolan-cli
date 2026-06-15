@@ -342,8 +342,16 @@ class TestPMTilesGeneration:
         assert pmtiles.exists(), "PMTiles should have been generated"
         thumb_rendered = thumb.exists()
 
-        # Simulate the #519 bug state: forget the artifacts in versions.json.
+        # Simulate the #519 bug state: forget the artifacts in versions.json. Also
+        # drop the thumbnail STAC asset from collection.json so the skip path must
+        # re-register it (no orphaned versions.json entry).
         self._reset_versions_to_baseline(collection_with_geoparquet)
+        coll_path = collection_with_geoparquet / "collection.json"
+        coll = json.loads(coll_path.read_text())
+        coll["assets"] = {
+            k: v for k, v in coll["assets"].items() if "thumbnail" not in v.get("roles", [])
+        }
+        coll_path.write_text(json.dumps(coll, indent=2))
         before = json.loads((collection_with_geoparquet / "versions.json").read_text())
 
         # Second run: PMTiles is up-to-date -> skip path -> backfill.
@@ -359,6 +367,12 @@ class TestPMTilesGeneration:
         assert "roads.pmtiles" in latest, "Untracked PMTiles must be backfilled on skip"
         if thumb_rendered:
             assert "roads.thumb.jpg" in latest, "Untracked thumbnail must be backfilled on skip"
+            # And it must be re-registered as a STAC asset, not left orphaned.
+            coll_after = json.loads(coll_path.read_text())
+            thumb_stac = [
+                k for k, v in coll_after["assets"].items() if "thumbnail" in v.get("roles", [])
+            ]
+            assert thumb_stac, "Backfilled thumbnail must be re-registered as a STAC asset"
 
     def test_backfill_is_idempotent_when_already_tracked(
         self, collection_with_geoparquet: Path
