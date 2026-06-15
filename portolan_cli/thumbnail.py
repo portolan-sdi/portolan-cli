@@ -474,6 +474,183 @@ def _collect_geometries_at_zoom(
     return False
 
 
+# =============================================================================
+# Thumbnail rendering presets and data-aware parameters (Issue #518)
+# =============================================================================
+#
+# The matplotlib floor renders a deliberately punchy, data-aware preset instead
+# of honoring the extracted Mapbox/WFS style, which is pale by design (e.g.
+# fill-opacity 0.2, hairline outlines) and washes out on a 512 px tile over a
+# light basemap. Only the style's *categorical* fill colors are reused; opacity,
+# edge color, and stroke widths always come from these presets. The real style
+# is rendered by the opt-in MapLibre-native skill (Track 2), not here.
+
+THUMB_FILL_COLOR = "#3388ff"  # punchy default fill / categorical fallback
+THUMB_EDGE_COLOR = "#13447a"  # bold outline (vs the old hairline #2266cc)
+
+# Feature-count thresholds for data-aware parameter selection.
+_DENSE_FEATURE_COUNT = 2000
+_MID_FEATURE_COUNT = 200
+
+# Visibility floors for the off-axis dimensions. A single RenderParams is
+# applied to every feature in a layer (the GeoParquet path issues one
+# ``gdf.plot`` for the whole frame), so a layer with mixed geometry types would
+# otherwise drop the non-dominant ones to nothing: points vanish when
+# marker_size is 0, lines/edges vanish when stroke_width is 0. Flooring both to
+# a small positive value keeps every geometry type visible. Pure single-type
+# layers are unaffected (a polygon layer has no points to size, etc.).
+_MIN_VISIBLE_MARKER = 2.0
+_MIN_VISIBLE_STROKE = 0.4
+
+
+@dataclass(frozen=True)
+class RenderParams:
+    """Data-aware cosmetic parameters for one thumbnail render.
+
+    Attributes:
+        marker_size: Point marker size (matplotlib ``markersize``).
+        stroke_width: Line thickness (lines) or polygon edge width.
+        fill_opacity: Fill/marker alpha. Always >= 0.5 to avoid washout.
+    """
+
+    marker_size: float
+    stroke_width: float
+    fill_opacity: float
+
+
+def _geom_category(geom_type: str) -> str | None:
+    """Map a geometry type string to 'point', 'line', or 'polygon' (or None)."""
+    t = geom_type.lower()
+    if "point" in t:
+        return "point"
+    if "line" in t:
+        return "line"
+    if "polygon" in t:
+        return "polygon"
+    return None
+
+
+def _compute_render_params(geom_category: str, feature_count: int) -> RenderParams:
+    """Select punchy, data-aware render parameters (Issue #518).
+
+    Scales marker size / stroke width / fill opacity to geometry type and
+    feature density: sparse layers get bigger, bolder marks; dense layers get
+    smaller marks and (for polygons) lower opacity so they don't blob to solid.
+    Fill opacity is clamped to >= 0.5 so the result is never washed out.
+    """
+    dense = feature_count >= _DENSE_FEATURE_COUNT
+    mid = feature_count >= _MID_FEATURE_COUNT
+
+    # The dominant geometry type drives the *primary* dimension's density
+    # scaling; the off-axis dimension is floored (not zeroed) so a mixed-geometry
+    # layer never renders a minority type invisibly (see _MIN_VISIBLE_* above).
+    if geom_category == "point":
+        marker = 1.5 if dense else 3.0 if mid else 6.0
+        return RenderParams(marker_size=marker, stroke_width=_MIN_VISIBLE_STROKE, fill_opacity=0.8)
+
+    if geom_category == "line":
+        width = 0.4 if dense else 0.8 if mid else 1.5
+        return RenderParams(marker_size=_MIN_VISIBLE_MARKER, stroke_width=width, fill_opacity=0.9)
+
+    # polygon (also the default for unknown categories)
+    opacity = 0.5 if dense else 0.6 if mid else 0.7
+    edge = 0.2 if dense else 0.4 if mid else 0.8
+    return RenderParams(marker_size=_MIN_VISIBLE_MARKER, stroke_width=edge, fill_opacity=opacity)
+
+
+def _frame_bounds(
+    bounds: tuple[float, float, float, float],
+    max_aspect: float = 2.5,
+    margin: float = 0.05,
+) -> tuple[float, float, float, float]:
+    """Frame a bbox for a square thumbnail: pad, give degenerate extents a box,
+    and bound the limit aspect ratio (#518).
+
+    Two real jobs and one caveat:
+
+    1. **Margin** — adds a uniform ``margin`` so geometry is not flush to the
+       figure edge.
+    2. **Degenerate extents** — a single point (both axes zero) or a perfectly
+       vertical/horizontal extent (one axis zero) would otherwise collapse
+       ``set_xlim``/``set_ylim``; the aspect cap grows the zero/short axis to a
+       finite span so the limits stay valid and contextily can derive a zoom.
+
+    Caveat: this does **not** make an elongated *geometry* more legible. Under
+    ``set_aspect('equal')`` the displayed scale is fixed by the longer axis, so
+    widening the short axis's *limits* only adds whitespace around the geometry —
+    a 35:1 polygon is still rendered as a thin strip either way (measured: ~11px
+    vs ~14px wide at 512px). ``max_aspect`` therefore bounds the surrounding
+    whitespace, it does not de-elongate the data. Operates on the bbox only
+    (O(1)); never reads geometry.
+
+    Args:
+        bounds: (minx, miny, maxx, maxy).
+        max_aspect: Maximum allowed width/height (or height/width) ratio.
+        margin: Fractional padding added to each side after capping.
+
+    Returns:
+        Framed (minx, miny, maxx, maxy).
+    """
+    minx, miny, maxx, maxy = bounds
+    width = maxx - minx
+    height = maxy - miny
+
+    # Degenerate extent (a single point, both axes zero): give it a finite box
+    # so set_xlim/set_ylim don't collapse. True scale is unknown, so a nominal
+    # span is fine — contextily derives a sensible zoom from it.
+    if width <= 0 and height <= 0:
+        half = 0.5
+        minx, maxx = minx - half, maxx + half
+        miny, maxy = miny - half, maxy + half
+        width = height = 1.0
+
+    # Cap aspect ratio by growing the short axis around its center.
+    if width > max_aspect * height:
+        target = width / max_aspect
+        pad = (target - height) / 2.0
+        miny -= pad
+        maxy += pad
+        height = target
+    elif height > max_aspect * width:
+        target = height / max_aspect
+        pad = (target - width) / 2.0
+        minx -= pad
+        maxx += pad
+        width = target
+
+    mx = width * margin
+    my = height * margin
+    return (minx - mx, miny - my, maxx + mx, maxy + my)
+
+
+def _profile_geometries(geometries: list[dict[str, Any]]) -> tuple[str, int]:
+    """Dominant geometry category and feature count for the PMTiles path."""
+    counts = {"point": 0, "line": 0, "polygon": 0}
+    for geom in geometries:
+        category = _geom_category(str(geom.get("type", "")))
+        if category:
+            counts[category] += 1
+    dominant = max(counts, key=lambda k: counts[k]) if any(counts.values()) else "polygon"
+    return dominant, len(geometries)
+
+
+def _profile_geoparquet(gdf: Any) -> tuple[str, int]:
+    """Dominant geometry category and feature count for the GeoParquet path."""
+    try:
+        count = len(gdf)
+    except TypeError:
+        count = 0
+    category = "polygon"
+    try:
+        mode = gdf.geom_type.value_counts().index[0]
+        resolved = _geom_category(str(mode))
+        if resolved:
+            category = resolved
+    except Exception as exc:  # best-effort profiling; fall back to polygon
+        logger.debug("Could not profile GeoParquet geometry type: %s", exc)
+    return category, count
+
+
 def _add_polygon_patches(coords: list[Any], patches: list[Any], mpl_polygon_cls: type) -> None:
     """Add polygon patches from coordinates."""
     if coords and coords[0]:
@@ -487,24 +664,38 @@ def _add_multipolygon_patches(coords: list[Any], patches: list[Any], mpl_polygon
             patches.append(mpl_polygon_cls(polygon[0], closed=True))
 
 
-def _plot_points(ax: Any, coords: list[Any], geom_type: str, color: str = "#3388ff") -> None:
+def _plot_points(
+    ax: Any,
+    coords: list[Any],
+    geom_type: str,
+    color: str = THUMB_FILL_COLOR,
+    marker_size: float = 6.0,
+    opacity: float = 0.8,
+) -> None:
     """Plot point or multipoint geometries."""
     if geom_type == "Point":
-        ax.plot(coords[0], coords[1], "o", markersize=2, color=color)
+        ax.plot(coords[0], coords[1], "o", markersize=marker_size, color=color, alpha=opacity)
     else:
         for pt in coords:
-            ax.plot(pt[0], pt[1], "o", markersize=2, color=color)
+            ax.plot(pt[0], pt[1], "o", markersize=marker_size, color=color, alpha=opacity)
 
 
-def _plot_lines(ax: Any, coords: list[Any], geom_type: str, color: str = "#3388ff") -> None:
+def _plot_lines(
+    ax: Any,
+    coords: list[Any],
+    geom_type: str,
+    color: str = THUMB_FILL_COLOR,
+    line_width: float = 1.5,
+    opacity: float = 0.9,
+) -> None:
     """Plot linestring or multilinestring geometries."""
     if geom_type == "LineString":
         xs, ys = [c[0] for c in coords], [c[1] for c in coords]
-        ax.plot(xs, ys, linewidth=1, color=color)
+        ax.plot(xs, ys, linewidth=line_width, color=color, alpha=opacity)
     else:
         for line in coords:
             xs, ys = [c[0] for c in line], [c[1] for c in line]
-            ax.plot(xs, ys, linewidth=1, color=color)
+            ax.plot(xs, ys, linewidth=line_width, color=color, alpha=opacity)
 
 
 def _render_geometries(
@@ -534,22 +725,19 @@ def _render_geometries(
         logger.debug("matplotlib not available")
         return False
 
-    # Load style if provided
-    style = None
+    # Reuse only the style's categorical fill colors (when present); opacity,
+    # edge, and stroke always come from the punchy preset, never the pale
+    # extracted paint (#518).
+    categorical_style = None
     if style_path:
         from portolan_cli.thumbnail_style import load_thumbnail_style
 
-        style = load_thumbnail_style(style_path)
+        loaded = load_thumbnail_style(style_path)
+        if loaded and loaded.color_map and loaded.color_field:
+            categorical_style = loaded
 
-    # Default colors
-    default_fill = "#3388ff"
-    default_edge = "#2266cc"
-    default_opacity = 0.6
-
-    if style:
-        default_fill = style.fill_color
-        default_edge = style.edge_color or default_edge
-        default_opacity = style.fill_opacity
+    # Data-aware cosmetics scaled to geometry type and feature density.
+    params = _compute_render_params(*_profile_geometries(geometries))
 
     fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
     ax.set_aspect("equal")
@@ -563,13 +751,15 @@ def _render_geometries(
         geom_type, coords = geom["type"], geom["coordinates"]
         props = geom.get("properties", {})
 
-        # Resolve color for this geometry
-        if style and style.color_map and style.color_field:
+        # Categorical fill from the style (with a punchy fallback), else preset.
+        if categorical_style is not None:
             from portolan_cli.thumbnail_style import resolve_color_for_properties
 
-            fill_color = resolve_color_for_properties(props, style)
+            fill_color = resolve_color_for_properties(
+                props, categorical_style, fallback=THUMB_FILL_COLOR
+            )
         else:
-            fill_color = default_fill
+            fill_color = THUMB_FILL_COLOR
 
         if geom_type == "Polygon":
             n_before = len(patches)
@@ -580,24 +770,39 @@ def _render_geometries(
             _add_multipolygon_patches(coords, patches, MplPolygon)
             patch_colors.extend([fill_color] * (len(patches) - n_before))
         elif geom_type in ("Point", "MultiPoint"):
-            _plot_points(ax, coords, geom_type, color=fill_color)
+            _plot_points(
+                ax,
+                coords,
+                geom_type,
+                color=fill_color,
+                marker_size=params.marker_size,
+                opacity=params.fill_opacity,
+            )
         elif geom_type in ("LineString", "MultiLineString"):
-            _plot_lines(ax, coords, geom_type, color=fill_color)
+            _plot_lines(
+                ax,
+                coords,
+                geom_type,
+                color=fill_color,
+                line_width=params.stroke_width,
+                opacity=params.fill_opacity,
+            )
 
     if patches:
-        # Apply individual colors to patches
+        # Apply individual fills with the shared thumbnail edge/opacity/stroke.
         for patch, color in zip(patches, patch_colors, strict=True):
             patch.set_facecolor(color)
-            patch.set_edgecolor(default_edge)
-            patch.set_alpha(default_opacity)
-            patch.set_linewidth(0.5)
+            patch.set_edgecolor(THUMB_EDGE_COLOR)
+            patch.set_alpha(params.fill_opacity)
+            patch.set_linewidth(params.stroke_width)
         pc = PatchCollection(patches, match_original=True)
         ax.add_collection(pc)
 
-    # Set axis limits from bounds (required before adding basemap)
+    # Set framed axis limits from bounds (required before adding basemap).
     if bounds is not None:
-        ax.set_xlim(bounds[0], bounds[2])
-        ax.set_ylim(bounds[1], bounds[3])
+        framed = _frame_bounds(bounds)
+        ax.set_xlim(framed[0], framed[2])
+        ax.set_ylim(framed[1], framed[3])
     else:
         ax.autoscale()
 
@@ -793,10 +998,10 @@ def _render_geoparquet(
         if gdf is None or full_bounds is None:
             return False
 
-        # Load style if provided
-        fill_color: str | Any = "#3388ff"  # Any allows pd.Series
-        edge_color = "#2266cc"
-        fill_opacity = 0.6
+        # Data-aware cosmetics; reuse only the style's categorical fill colors
+        # (with a punchy fallback), never its pale opacity/edge paint (#518).
+        params = _compute_render_params(*_profile_geoparquet(gdf))
+        fill_color: str | Any = THUMB_FILL_COLOR  # Any allows pd.Series
 
         if style_path:
             from portolan_cli.thumbnail_style import (
@@ -805,27 +1010,32 @@ def _render_geoparquet(
             )
 
             style = load_thumbnail_style(style_path)
-            if style:
-                fill_color = resolve_colors_for_gdf(gdf, style)
-                edge_color = style.edge_color or edge_color
-                fill_opacity = style.fill_opacity
+            if style and style.color_map and style.color_field:
+                fill_color = resolve_colors_for_gdf(gdf, style, fallback=THUMB_FILL_COLOR)
 
         fig, ax = plt.subplots(figsize=(config.max_size / 100, config.max_size / 100), dpi=100)
         ax.set_aspect("equal")
         ax.axis("off")
 
-        # Plot data first (establishes axes extent for basemap zoom calculation)
+        # Plot data first (establishes axes extent for basemap zoom calculation).
+        # aspect="equal" stops geopandas from deriving a latitude-corrected
+        # aspect, which raises "aspect must be finite and positive" when a layer
+        # declares a geographic CRS but holds projected-magnitude coords (#516
+        # family). The floor must still produce a thumbnail for such layers.
         gdf.plot(
             ax=ax,
             facecolor=fill_color,
-            edgecolor=edge_color,
-            alpha=fill_opacity,
-            linewidth=0.5,
+            edgecolor=THUMB_EDGE_COLOR,
+            alpha=params.fill_opacity,
+            linewidth=params.stroke_width,
+            markersize=params.marker_size,
+            aspect="equal",
         )
 
-        # Set axis limits to full bounds from metadata
-        ax.set_xlim(full_bounds[0], full_bounds[2])
-        ax.set_ylim(full_bounds[1], full_bounds[3])
+        # Set framed axis limits (aspect-cap + margin) from the metadata bbox.
+        framed = _frame_bounds(full_bounds)
+        ax.set_xlim(framed[0], framed[2])
+        ax.set_ylim(framed[1], framed[3])
 
         # Add basemap AFTER data (contextily needs axes extent for zoom calculation)
         # zorder=-1 renders basemap behind data

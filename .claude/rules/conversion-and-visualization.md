@@ -81,6 +81,40 @@ render paths.
   paths, then assert parity. Basemaps are for **vector** thumbnails only, raster
   thumbnails get no basemap (ADR-0043).
 - `contextily` is an optional lazy import, guard for its absence.
+- **The matplotlib floor is a punchy data-aware preset, NOT the extracted style**
+  (#518, Track 1). The WFS/Mapbox style is pale by design (`fill-opacity 0.2`,
+  hairline outline) and washes out at 512 px, so do **not** read `fill_opacity`
+  / `fill_outline_color` / the style's default fill into the thumbnail. Use
+  `THUMB_FILL_COLOR` / `THUMB_EDGE_COLOR` and `_compute_render_params()` (scales
+  marker size / stroke / opacity to geometry type + feature count, opacity always
+  ≥ 0.5). Only the style's **categorical** color map is reused, via
+  `resolve_color_for_properties` / `resolve_colors_for_gdf` with an explicit
+  punchy `fallback`. The *real* style is rendered by the opt-in MapLibre-native
+  skill (Track 2), never here. Do not re-open fixed-preset tuning or
+  vision-in-the-loop (both rejected in #518).
+- **Frame the bbox before setting limits** with `_frame_bounds()` (margin +
+  aspect-cap). Its real jobs are (1) adding a margin so geometry isn't flush to
+  the edge and (2) giving degenerate extents — a single point, or a perfectly
+  vertical/horizontal line — a finite box so `set_xlim`/`set_ylim` don't collapse
+  and contextily can still derive a zoom. It is O(1) on the bbox — do not reach
+  for per-vertex percentile cropping. Note what it does **not** do: under
+  `set_aspect('equal')` it cannot de-elongate the *geometry* — a hemisphere-
+  spanning sliver still renders as a thin strip (~11px vs ~14px wide at 512px,
+  measured), because the longer axis fixes the scale and widening the short
+  axis's limits only adds whitespace. If elongated geometry must read wider,
+  that's a Track-2 (MapLibre) concern, not something `max_aspect` delivers here.
+- **Mixed-geometry layers**: one `RenderParams` is applied to every feature
+  (the GeoParquet path issues a single `gdf.plot`), so `_compute_render_params`
+  floors the off-axis dimensions (`_MIN_VISIBLE_MARKER` / `_MIN_VISIBLE_STROKE`)
+  rather than zeroing them — otherwise points vanish in a polygon-dominant layer
+  and lines/edges vanish in a point-dominant one. Keep the floors non-zero.
+- Pass `aspect="equal"` to `gdf.plot()`. Without it geopandas derives a
+  latitude-corrected aspect and raises "aspect must be finite and positive" when
+  a layer declares a geographic CRS but holds projected-magnitude coords (#516
+  family) — that would leave the collection with no thumbnail at all.
+- The render presets and helpers (`_compute_render_params`, `_frame_bounds`,
+  `_geom_category`, `_profile_*`) are **shared by both paths** — that *is* the
+  parity mechanism. Change them once, both paths follow.
 
 ## PMTiles: thread src_crs through, register at collection level
 

@@ -15,6 +15,7 @@ from portolan_cli.thumbnail_style import (
     ThumbnailStyle,
     load_thumbnail_style,
     parse_match_expression,
+    resolve_color_for_properties,
     resolve_colors_for_gdf,
 )
 
@@ -389,3 +390,49 @@ def test_resolve_colors_unmapped_values():
     colors = resolve_colors_for_gdf(gdf, style)
 
     assert list(colors) == ["#ff6b6b", "#default"]
+
+
+@pytest.mark.unit
+def test_resolve_colors_unmapped_uses_explicit_fallback():
+    """An explicit fallback overrides the style's (pale) default for unmapped values.
+
+    The thumbnail floor passes a punchy fallback so the WFS pale default never
+    reaches the canvas (#518).
+    """
+    pytest.importorskip("geopandas")
+    import geopandas as gpd
+    from shapely.geometry import Point
+
+    gdf = gpd.GeoDataFrame(
+        {"land_use": ["residential", "unknown_type"]},
+        geometry=[Point(0, 0)] * 2,
+    )
+    style = ThumbnailStyle(
+        fill_color="#dadada",  # pale WFS default — must NOT be used
+        fill_opacity=0.2,
+        edge_color=None,
+        color_field="land_use",
+        color_map={"residential": "#ff6b6b"},
+    )
+
+    colors = resolve_colors_for_gdf(gdf, style, fallback="#3388ff")
+
+    assert list(colors) == ["#ff6b6b", "#3388ff"]
+
+
+@pytest.mark.unit
+def test_resolve_color_for_properties_unmapped_uses_explicit_fallback():
+    """Per-feature (PMTiles) resolution honors an explicit fallback too."""
+    style = ThumbnailStyle(
+        fill_color="#dadada",  # pale WFS default — must NOT be used
+        fill_opacity=0.2,
+        edge_color=None,
+        color_field="land_use",
+        color_map={"residential": "#ff6b6b"},
+    )
+
+    mapped = resolve_color_for_properties({"land_use": "residential"}, style, fallback="#3388ff")
+    unmapped = resolve_color_for_properties({"land_use": "unknown_type"}, style, fallback="#3388ff")
+
+    assert mapped == "#ff6b6b"
+    assert unmapped == "#3388ff"
