@@ -31,11 +31,18 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from portolan_cli.config import load_merged_metadata
+
+# Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
+# (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;
+# an otherwise-curated list is filtered then truncated to a readable count.
+MAX_KEYWORD_BADGES = 12  # cap on rendered badges (curated lists are truncated)
+TECHNICAL_KEYWORD_RATIO = 0.6  # >60% technical entries -> non-curated dump -> omit
 
 
 def _format_size(size_bytes: int) -> str:
@@ -354,23 +361,68 @@ def _add_version_section(sections: list[str], metadata: dict[str, Any]) -> None:
     sections.append("")
 
 
-def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None:
-    """Add keywords as shield.io badges.
+def _is_meaningful_keyword(keyword: str) -> bool:
+    """Return True if a keyword is a meaningful discovery term, not a slug (#515).
 
-    Renders keywords as visual badges for quick scanning and
-    potential use in search/filtering.
+    Filters out the technical junk that extraction seeds verbatim into
+    ``metadata.yaml`` (WFS layer ids, FACC codes, STAC summary values). The junk
+    is characterised by structure, not case: lowercase common nouns (``census``,
+    ``roads``) are valid keywords and must be kept, so this deliberately does
+    *not* reuse :func:`is_technical_name`, which is title-oriented and treats
+    any lowercase single word as a slug.
+
+    Dropped: anything with an underscore (``vial_nacional``,
+    ``lineas_de_geomorfologia_CA010``), a colon (``orden:30``, ``ns:Name``), or a
+    short letters-then-digits code (``AP010``, ``DB120``). Kept: ``census``,
+    ``land use``, ``Provincia``, ``COVID19``.
+    """
+    text = keyword.strip()
+    if not text:
+        return False
+    # snake_case slugs and WFS layer ids.
+    if "_" in text:
+        return False
+    # field:value summary entries (orden:30) and namespace prefixes (ns:Name).
+    if ":" in text:
+        return False
+    # Short alphanumeric codes (FACC: AP010, DB120, BH020, CA010).
+    if len(text) <= 8 and re.fullmatch(r"[A-Za-z]{1,3}\d{1,4}[A-Za-z0-9]*", text):
+        return False
+    return True
+
+
+def _add_keywords_section(sections: list[str], metadata: dict[str, Any]) -> None:
+    """Add curated keywords as shield.io badges.
+
+    Renders keywords as visual badges for quick scanning. Technical junk is
+    filtered out; a junk-dominated list (a machine dump rather than curated
+    keywords) is omitted entirely so it cannot bury the description, and an
+    otherwise-curated list is truncated to a readable count (#515).
     """
     keywords = metadata.get("keywords")
-    if not keywords or not isinstance(keywords, list) or len(keywords) == 0:
+    if not keywords or not isinstance(keywords, list):
+        return
+    kws = [str(k).strip() for k in keywords if str(k).strip()]
+    if not kws:
+        return
+
+    meaningful = [k for k in kws if _is_meaningful_keyword(k)]
+    if not meaningful:
+        return
+
+    # A junk-dominated list is a machine dump, not curation -> omit. The
+    # proportion (not the length) is the signal: it tells a real curated list
+    # from one where a few clean tokens survived by coincidence.
+    technical_ratio = (len(kws) - len(meaningful)) / len(kws)
+    if technical_ratio > TECHNICAL_KEYWORD_RATIO:
         return
 
     badges = []
-    for keyword in keywords:
+    for keyword_str in meaningful[:MAX_KEYWORD_BADGES]:
         # Shield.io badge format requires:
         # - Spaces become underscores (or %20)
         # - Hyphens become double hyphens (--)
         # - Other special chars need URL encoding
-        keyword_str = str(keyword)
         # First handle shield.io-specific escaping
         safe_keyword = keyword_str.replace("-", "--")
         # Then URL-encode the rest (safe='' encodes everything except alphanumerics)

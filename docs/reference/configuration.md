@@ -921,7 +921,7 @@ The `portolan readme` command generates `README.md` by combining:
 - Upstream version (with optional URL)
 - Known issues
 - Source URL, processing notes
-- Keywords (as [shields.io](https://shields.io) badges with proper URL encoding)
+- Keywords (as [shields.io](https://shields.io) badges with proper URL encoding). Technical slugs (snake_case ids, `field:value` summary entries, short alphanumeric codes) are filtered out; a junk-dominated list seeded from extraction is suppressed entirely, and an otherwise-curated list is truncated to a readable count, so machine-generated tags never bury the description.
 - Attribution
 
 ```bash
