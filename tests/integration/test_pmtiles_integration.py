@@ -94,6 +94,63 @@ def collection_with_geoparquet(tmp_path: Path, fixtures_dir: Path) -> Path:
     return collection_dir
 
 
+@pytest.fixture
+def collection_with_two_geoparquet(tmp_path: Path, fixtures_dir: Path) -> Path:
+    """Create a collection with two GeoParquet assets (a.parquet, b.parquet)."""
+    collection_dir = tmp_path / "roads"
+    collection_dir.mkdir()
+
+    src = fixtures_dir / "realdata" / "road-detections.parquet"
+    shutil.copy(src, collection_dir / "a.parquet")
+    shutil.copy(src, collection_dir / "b.parquet")
+
+    collection_json = {
+        "type": "Collection",
+        "id": "roads",
+        "stac_version": "1.1.0",
+        "description": "Road detections",
+        "license": "proprietary",
+        "extent": {
+            "spatial": {"bbox": [[-61.0, 13.7, -60.9, 13.9]]},
+            "temporal": {"interval": [[None, None]]},
+        },
+        "assets": {
+            "a": {
+                "href": "./a.parquet",
+                "type": "application/vnd.apache.parquet",
+                "roles": ["data"],
+            },
+            "b": {
+                "href": "./b.parquet",
+                "type": "application/vnd.apache.parquet",
+                "roles": ["data"],
+            },
+        },
+    }
+    (collection_dir / "collection.json").write_text(json.dumps(collection_json, indent=2))
+
+    versions_json = {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2026-01-01T00:00:00Z",
+                "breaking": False,
+                "assets": {},
+                "changes": [],
+            }
+        ],
+    }
+    (collection_dir / "versions.json").write_text(json.dumps(versions_json, indent=2))
+
+    portolan_dir = tmp_path / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("catalog_id: test-catalog\n")
+
+    return collection_dir
+
+
 class TestPMTilesGeneration:
     """Test PMTiles generation from GeoParquet."""
 
@@ -248,6 +305,119 @@ class TestPMTilesGeneration:
             thumb_asset = latest_version["assets"]["roads.thumb.jpg"]
             assert "sha256" in thumb_asset
             assert thumb_asset["size_bytes"] > 0
+
+    @staticmethod
+    def _reset_versions_to_baseline(collection: Path) -> None:
+        """Drop generated version snapshots, leaving only the empty 1.0.0 baseline.
+
+        Reproduces the original #519 state: artifacts exist on disk and in
+        collection.json, but versions.json does not track them.
+        """
+        data = json.loads((collection / "versions.json").read_text())
+        data["versions"] = data["versions"][:1]
+        data["current_version"] = data["versions"][0]["version"]
+        (collection / "versions.json").write_text(json.dumps(data, indent=2))
+
+    def test_skip_path_backfills_untracked_artifacts(
+        self, collection_with_geoparquet: Path
+    ) -> None:
+        """Skip path heals artifacts left untracked by the old code (Issue #519).
+
+        Reproduce the pre-fix state (PMTiles + thumbnail on disk and in
+        collection.json, absent from versions.json), then run generation again.
+        The PMTiles is up-to-date so generation is skipped, but the untracked
+        artifacts must still be backfilled into versions.json — without forcing
+        a regenerate.
+        """
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        catalog_root = collection_with_geoparquet.parent
+
+        # First run actually generates the artifacts.
+        generate_pmtiles_for_collection(
+            collection_path=collection_with_geoparquet, catalog_root=catalog_root
+        )
+        pmtiles = collection_with_geoparquet / "roads.pmtiles"
+        thumb = collection_with_geoparquet / "roads.thumb.jpg"
+        assert pmtiles.exists(), "PMTiles should have been generated"
+        thumb_rendered = thumb.exists()
+
+        # Simulate the #519 bug state: forget the artifacts in versions.json.
+        self._reset_versions_to_baseline(collection_with_geoparquet)
+        before = json.loads((collection_with_geoparquet / "versions.json").read_text())
+
+        # Second run: PMTiles is up-to-date -> skip path -> backfill.
+        result = generate_pmtiles_for_collection(
+            collection_path=collection_with_geoparquet, catalog_root=catalog_root
+        )
+        assert pmtiles in result.skipped, "Up-to-date PMTiles must be skipped, not regenerated"
+
+        after = json.loads((collection_with_geoparquet / "versions.json").read_text())
+        # Exactly one backfill version added.
+        assert len(after["versions"]) == len(before["versions"]) + 1
+        latest = after["versions"][-1]["assets"]
+        assert "roads.pmtiles" in latest, "Untracked PMTiles must be backfilled on skip"
+        if thumb_rendered:
+            assert "roads.thumb.jpg" in latest, "Untracked thumbnail must be backfilled on skip"
+
+    def test_backfill_is_idempotent_when_already_tracked(
+        self, collection_with_geoparquet: Path
+    ) -> None:
+        """A skip with everything already tracked creates NO new version (Issue #519)."""
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        catalog_root = collection_with_geoparquet.parent
+
+        # Generate + track.
+        generate_pmtiles_for_collection(
+            collection_path=collection_with_geoparquet, catalog_root=catalog_root
+        )
+        after_generate = json.loads((collection_with_geoparquet / "versions.json").read_text())
+
+        # Re-run: PMTiles up-to-date, everything tracked -> no version bump.
+        generate_pmtiles_for_collection(
+            collection_path=collection_with_geoparquet, catalog_root=catalog_root
+        )
+        after_skip = json.loads((collection_with_geoparquet / "versions.json").read_text())
+
+        assert len(after_skip["versions"]) == len(after_generate["versions"]), (
+            "Idempotent skip must not bump a version when everything is tracked"
+        )
+        assert after_skip["current_version"] == after_generate["current_version"]
+
+    def test_each_geoparquet_asset_gets_its_own_version(
+        self, collection_with_two_geoparquet: Path
+    ) -> None:
+        """Each source asset's side-step is one version; the latest is cumulative.
+
+        Two GeoParquet assets -> two side-steps -> two new version snapshots
+        (one per asset, each bundling that asset's PMTiles + thumbnail), and the
+        final snapshot carries every generated artifact (Issue #519).
+        """
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+
+        collection = collection_with_two_geoparquet
+        catalog_root = collection.parent
+
+        before = json.loads((collection / "versions.json").read_text())
+        result = generate_pmtiles_for_collection(
+            collection_path=collection, catalog_root=catalog_root
+        )
+        after = json.loads((collection / "versions.json").read_text())
+
+        assert len(result.generated) == 2
+        # One version per source asset (not per artifact): +2, not +4.
+        assert len(after["versions"]) == len(before["versions"]) + 2
+
+        # The latest snapshot is cumulative across both assets.
+        latest = after["versions"][-1]["assets"]
+        assert "a.pmtiles" in latest
+        assert "b.pmtiles" in latest
+        # Thumbnails are bundled into their asset's snapshot when rendered.
+        if (collection / "a.thumb.jpg").exists():
+            assert "a.thumb.jpg" in latest
+        if (collection / "b.thumb.jpg").exists():
+            assert "b.thumb.jpg" in latest
 
 
 class TestPMTilesZoomLevels:
