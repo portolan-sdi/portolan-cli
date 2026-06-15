@@ -492,6 +492,16 @@ THUMB_EDGE_COLOR = "#13447a"  # bold outline (vs the old hairline #2266cc)
 _DENSE_FEATURE_COUNT = 2000
 _MID_FEATURE_COUNT = 200
 
+# Visibility floors for the off-axis dimensions. A single RenderParams is
+# applied to every feature in a layer (the GeoParquet path issues one
+# ``gdf.plot`` for the whole frame), so a layer with mixed geometry types would
+# otherwise drop the non-dominant ones to nothing: points vanish when
+# marker_size is 0, lines/edges vanish when stroke_width is 0. Flooring both to
+# a small positive value keeps every geometry type visible. Pure single-type
+# layers are unaffected (a polygon layer has no points to size, etc.).
+_MIN_VISIBLE_MARKER = 2.0
+_MIN_VISIBLE_STROKE = 0.4
+
 
 @dataclass(frozen=True)
 class RenderParams:
@@ -531,18 +541,21 @@ def _compute_render_params(geom_category: str, feature_count: int) -> RenderPara
     dense = feature_count >= _DENSE_FEATURE_COUNT
     mid = feature_count >= _MID_FEATURE_COUNT
 
+    # The dominant geometry type drives the *primary* dimension's density
+    # scaling; the off-axis dimension is floored (not zeroed) so a mixed-geometry
+    # layer never renders a minority type invisibly (see _MIN_VISIBLE_* above).
     if geom_category == "point":
         marker = 1.5 if dense else 3.0 if mid else 6.0
-        return RenderParams(marker_size=marker, stroke_width=0.0, fill_opacity=0.8)
+        return RenderParams(marker_size=marker, stroke_width=_MIN_VISIBLE_STROKE, fill_opacity=0.8)
 
     if geom_category == "line":
         width = 0.4 if dense else 0.8 if mid else 1.5
-        return RenderParams(marker_size=0.0, stroke_width=width, fill_opacity=0.9)
+        return RenderParams(marker_size=_MIN_VISIBLE_MARKER, stroke_width=width, fill_opacity=0.9)
 
     # polygon (also the default for unknown categories)
     opacity = 0.5 if dense else 0.6 if mid else 0.7
     edge = 0.2 if dense else 0.4 if mid else 0.8
-    return RenderParams(marker_size=0.0, stroke_width=edge, fill_opacity=opacity)
+    return RenderParams(marker_size=_MIN_VISIBLE_MARKER, stroke_width=edge, fill_opacity=opacity)
 
 
 def _frame_bounds(
@@ -550,14 +563,25 @@ def _frame_bounds(
     max_aspect: float = 2.5,
     margin: float = 0.05,
 ) -> tuple[float, float, float, float]:
-    """Frame a bbox for a square thumbnail: cap aspect ratio, then pad (#518).
+    """Frame a bbox for a square thumbnail: pad, give degenerate extents a box,
+    and bound the limit aspect ratio (#518).
 
-    Elongated extents (a hemisphere-spanning sliver, or a bbox inflated by an
-    outlier feature) render as an illegible hairline under
-    ``set_aspect('equal')`` on a square figure. This grows the short axis
-    symmetrically so the rendered aspect ratio is at most ``max_aspect`` (the
-    geometry stays centered), then adds a uniform ``margin`` so features are not
-    flush to the edges. Operates on the bbox only (O(1)); never reads geometry.
+    Two real jobs and one caveat:
+
+    1. **Margin** — adds a uniform ``margin`` so geometry is not flush to the
+       figure edge.
+    2. **Degenerate extents** — a single point (both axes zero) or a perfectly
+       vertical/horizontal extent (one axis zero) would otherwise collapse
+       ``set_xlim``/``set_ylim``; the aspect cap grows the zero/short axis to a
+       finite span so the limits stay valid and contextily can derive a zoom.
+
+    Caveat: this does **not** make an elongated *geometry* more legible. Under
+    ``set_aspect('equal')`` the displayed scale is fixed by the longer axis, so
+    widening the short axis's *limits* only adds whitespace around the geometry —
+    a 35:1 polygon is still rendered as a thin strip either way (measured: ~11px
+    vs ~14px wide at 512px). ``max_aspect`` therefore bounds the surrounding
+    whitespace, it does not de-elongate the data. Operates on the bbox only
+    (O(1)); never reads geometry.
 
     Args:
         bounds: (minx, miny, maxx, maxy).

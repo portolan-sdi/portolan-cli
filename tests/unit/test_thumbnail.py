@@ -1009,6 +1009,22 @@ class TestComputeRenderParams:
 
         assert _compute_render_params("polygon", 100).stroke_width > 0
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize("geom", ["point", "line", "polygon"])
+    def test_off_axis_dimensions_are_floored_not_zeroed(self, geom: str) -> None:
+        """Both marker_size and stroke_width stay > 0 for every geometry type.
+
+        A single RenderParams is applied to every feature in a layer, so a
+        mixed-geometry layer would render its minority type invisibly if the
+        off-axis dimension were zero (points need marker_size, lines/edges need
+        stroke_width). Regression for that: every type must keep both positive.
+        """
+        from portolan_cli.thumbnail import _compute_render_params
+
+        params = _compute_render_params(geom, 100)
+        assert params.marker_size > 0, f"{geom}: points would be invisible"
+        assert params.stroke_width > 0, f"{geom}: lines/edges would be invisible"
+
 
 class TestThumbnailIgnoresPaleStylePaint:
     """The matplotlib floor must NOT honor pale WFS paint (Issue #518).
@@ -1080,6 +1096,43 @@ class TestThumbnailIgnoresPaleStylePaint:
         # Edge color is the bold thumbnail preset, not the style's hairline color.
         assert plot_kwargs["edgecolor"] == THUMB_EDGE_COLOR
 
+    @pytest.mark.integration
+    def test_pmtiles_path_uses_punchy_fill_not_pale_style(self, tmp_path: Path) -> None:
+        """_render_geometries (PMTiles twin) ignores a pale fill-only style.
+
+        Parity with the GeoParquet test above: the historically regression-prone
+        PMTiles path must also render the punchy preset (#3388ff), not the pale
+        WFS fill (#dadada). Pre-fix the old code read style.fill_color into the
+        default fill, so the polygon would render gray — this asserts blue.
+        """
+        pytest.importorskip("matplotlib")
+        np = pytest.importorskip("numpy")
+        pil = pytest.importorskip("PIL.Image")
+
+        from portolan_cli.thumbnail import ThumbnailConfig, _render_geometries
+
+        style_path = self._pale_style_file(tmp_path)
+        output_path = tmp_path / "pmtiles.thumb.jpg"
+        config = ThumbnailConfig(basemap_provider="none")  # no network
+        geometries = [
+            {
+                "type": "Polygon",
+                "coordinates": [[[10, 10], [90, 10], [90, 90], [10, 90], [10, 10]]],
+                "properties": {},
+            }
+        ]
+
+        assert _render_geometries(
+            geometries, output_path, config, bounds=(10, 10, 90, 90), style_path=style_path
+        )
+
+        arr = np.asarray(pil.open(output_path).convert("RGB")).reshape(-1, 3)
+        fill = arr[(arr < 240).any(axis=1)]  # non-white pixels = the polygon
+        assert len(fill) > 0, "no geometry rendered"
+        mean = fill.mean(axis=0)
+        # Punchy #3388ff is blue-dominant; pale #dadada is neutral gray (R≈G≈B).
+        assert mean[2] > mean[0] + 20, f"fill is not punchy blue (mean RGB={mean})"
+
 
 class TestThumbnailRendersVisibleGeometry:
     """End-to-end render of a representative spread — assert non-blank output.
@@ -1134,6 +1187,42 @@ class TestThumbnailRendersVisibleGeometry:
         # Not a blank white tile: real ink is present.
         assert arr.min() < 200, f"{kind}: thumbnail appears blank (min={arr.min()})"
         assert arr.std() > 1.0, f"{kind}: thumbnail has no variance (std={arr.std()})"
+
+    @pytest.mark.integration
+    def test_mixed_geometry_minority_points_stay_visible(self, tmp_path: Path) -> None:
+        """Points in a polygon-dominant layer still render (visibility floor, #518).
+
+        One RenderParams is applied to the whole frame, keyed off the dominant
+        geometry type. With marker_size zeroed for polygons (the pre-fix
+        behavior), the minority points drew at size 0 and vanished. Polygons sit
+        bottom-left, points top-right; we assert the points' corner has ink.
+        """
+        pytest.importorskip("geopandas")
+        pytest.importorskip("matplotlib")
+        np = pytest.importorskip("numpy")
+        pil = pytest.importorskip("PIL.Image")
+        from shapely.geometry import Point, Polygon
+
+        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+
+        # 50 polygons (dominant) bottom-left, 16 points top-right (minority).
+        polys = [
+            Polygon([(i, j), (i + 0.8, j), (i + 0.8, j + 0.8), (i, j + 0.8)])
+            for i in range(0, 10)
+            for j in range(0, 5)
+        ]
+        points = [Point(88 + dx, 88 + dy) for dx in range(0, 4) for dy in range(0, 4)]
+        gpq_path = self._write_gdf([*polys, *points], tmp_path, "mixed")
+
+        config = ThumbnailConfig(basemap_provider="none")  # no network
+        result = generate_thumbnail_from_geoparquet(gpq_path, config)
+
+        assert result is not None and result.exists()
+        arr = np.asarray(pil.open(result).convert("L"))
+        h, w = arr.shape
+        # Top-right block holds only the points (polygons are bottom-left).
+        corner = arr[: int(0.15 * h), int(0.85 * w) :]
+        assert corner.min() < 200, "minority points rendered invisibly in mixed layer"
 
     @pytest.mark.integration
     def test_renders_geographic_crs_with_projected_coords(self, tmp_path: Path) -> None:

@@ -92,10 +92,22 @@ render paths.
   punchy `fallback`. The *real* style is rendered by the opt-in MapLibre-native
   skill (Track 2), never here. Do not re-open fixed-preset tuning or
   vision-in-the-loop (both rejected in #518).
-- **Frame the bbox before setting limits** with `_frame_bounds()` (aspect-cap +
-  margin): elongated extents (a hemisphere-spanning sliver, an outlier-inflated
-  bbox) otherwise render as an illegible hairline under `set_aspect('equal')`.
-  It is O(1) on the bbox — do not reach for per-vertex percentile cropping.
+- **Frame the bbox before setting limits** with `_frame_bounds()` (margin +
+  aspect-cap). Its real jobs are (1) adding a margin so geometry isn't flush to
+  the edge and (2) giving degenerate extents — a single point, or a perfectly
+  vertical/horizontal line — a finite box so `set_xlim`/`set_ylim` don't collapse
+  and contextily can still derive a zoom. It is O(1) on the bbox — do not reach
+  for per-vertex percentile cropping. Note what it does **not** do: under
+  `set_aspect('equal')` it cannot de-elongate the *geometry* — a hemisphere-
+  spanning sliver still renders as a thin strip (~11px vs ~14px wide at 512px,
+  measured), because the longer axis fixes the scale and widening the short
+  axis's limits only adds whitespace. If elongated geometry must read wider,
+  that's a Track-2 (MapLibre) concern, not something `max_aspect` delivers here.
+- **Mixed-geometry layers**: one `RenderParams` is applied to every feature
+  (the GeoParquet path issues a single `gdf.plot`), so `_compute_render_params`
+  floors the off-axis dimensions (`_MIN_VISIBLE_MARKER` / `_MIN_VISIBLE_STROKE`)
+  rather than zeroing them — otherwise points vanish in a polygon-dominant layer
+  and lines/edges vanish in a point-dominant one. Keep the floors non-zero.
 - Pass `aspect="equal"` to `gdf.plot()`. Without it geopandas derives a
   latitude-corrected aspect and raises "aspect must be finite and positive" when
   a layer declares a geographic CRS but holds projected-magnitude coords (#516
