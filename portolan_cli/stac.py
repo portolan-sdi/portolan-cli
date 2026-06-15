@@ -1488,10 +1488,16 @@ def is_technical_name(text: str | None) -> bool:
     Technical names are typically identifiers that aren't useful as metadata:
     - Pure snake_case names without spaces (e.g., "bu_building_emprise_v2")
     - Namespace-prefixed (e.g., "ns:LayerName")
-    - Short all-lowercase without spaces (e.g., "layer1")
+    - Short all-lowercase names without spaces (e.g., "layer", "parcels")
+    - Short names carrying digits (e.g., "layer1", "parcels2024", "Q4")
 
     Valid titles include:
     - CamelCase names (e.g., "DenHaagHousing")
+    - All-caps acronyms (e.g., "USA", "IGN")
+    - Capitalized, digit-free single words (e.g., "Provincia", "País") — Issue
+      #513. Note: this also keeps capitalized single-word source/layer titles
+      ("Buildings", "Parcels") that were previously filtered, which is the
+      intended behavior across all callers (extraction, metadata seeding).
     - Titles with spaces, even if they contain underscores (e.g., "Building - building_emprise")
 
     Args:
@@ -1524,7 +1530,9 @@ def is_technical_name(text: str | None) -> bool:
     # Identifiers are all-lowercase ("layer", "parcels") or carry digits
     # ("layer1", "parcels2024"). A capitalized, digit-free word ("Provincia",
     # "Localidad", "País") is a legitimate title and must be preserved.
-    # CamelCase (has uppercase after first char) is already allowed above.
+    # CamelCase and all-caps acronyms ("DenHaagHousing", "USA", "IGN") have an
+    # uppercase letter after the first char, so they fail this branch's guard
+    # and fall through to the final non-technical return below.
     if not re.search(r"[A-Z]", text[1:]) and len(text) < 20:
         has_digit = any(char.isdigit() for char in text)
         starts_capitalized = text[:1].isupper()

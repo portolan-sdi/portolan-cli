@@ -90,12 +90,31 @@ class TestIsTechnicalName:
         # Issue #513: ordinary one-word proper titles are human-readable.
         assert is_technical_name(text) is False
 
+    @pytest.mark.parametrize("text", ["USA", "IGN", "COVID19"])
+    def test_acronyms_are_not_technical(self, text: str) -> None:
+        # An uppercase letter after the first char (acronym or CamelCase) fails
+        # the ambiguous-token guard, so these stay human-readable.
+        assert is_technical_name(text) is False
+
     @pytest.mark.parametrize(
         "text",
         ["layer1", "parcels2024", "bu_building_emprise_v2", "ns:LayerName", "parcels", "q4"],
     )
     def test_identifiers_are_technical(self, text: str) -> None:
         assert is_technical_name(text) is True
+
+    @pytest.mark.parametrize("text", ["Q4", "Zone5", "Route66"])
+    def test_capitalized_with_digit_is_technical(self, text: str) -> None:
+        # A capitalized word carrying a digit is still an identifier: the digit
+        # check fires before the capitalization check. Pin this ambiguous case.
+        assert is_technical_name(text) is True
+
+    @pytest.mark.parametrize("text", ["Buildings", "Parcels", "Roads"])
+    def test_capitalized_single_word_layer_titles_survive_filter(self, text: str) -> None:
+        # Issue #513 broadened scope: extraction/seeding callers gate on
+        # is_technical_name, so capitalized single-word source/layer titles now
+        # survive filtering instead of being clobbered by an id-derived slug.
+        assert is_technical_name(text) is False
 
     @pytest.mark.parametrize("text", ["", None])
     def test_empty_is_technical(self, text: str | None) -> None:
