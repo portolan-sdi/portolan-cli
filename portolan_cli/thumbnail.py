@@ -186,6 +186,22 @@ def get_thumbnail_config(catalog_path: Path) -> ThumbnailConfig:
     )
 
 
+def thumbnail_path_for(data_path: Path) -> Path:
+    """Return the thumbnail path for a data file (single source of the convention).
+
+    Thumbnails are written next to their source as ``{stem}.thumb.jpg``. Both the
+    PMTiles and GeoParquet render paths use this, and the PMTiles side-step relies
+    on it to locate an already-generated thumbnail when generation is skipped.
+
+    Args:
+        data_path: Path to the source data file (PMTiles or GeoParquet).
+
+    Returns:
+        Path to the sibling thumbnail file.
+    """
+    return data_path.with_name(f"{data_path.stem}.thumb.jpg")
+
+
 # =============================================================================
 # Tile Coordinate Transformation
 # =============================================================================
@@ -912,7 +928,7 @@ def generate_thumbnail_from_pmtiles(
     Returns:
         Path to generated thumbnail, or None if generation failed.
     """
-    thumb_path = pmtiles_path.with_name(f"{pmtiles_path.stem}.thumb.jpg")
+    thumb_path = thumbnail_path_for(pmtiles_path)
 
     try:
         geometries, bounds = _read_pmtiles_geometries(pmtiles_path)
@@ -946,7 +962,7 @@ def generate_thumbnail_from_geoparquet(
     Returns:
         Path to generated thumbnail, or None if generation failed.
     """
-    thumb_path = gpq_path.with_name(f"{gpq_path.stem}.thumb.jpg")
+    thumb_path = thumbnail_path_for(gpq_path)
 
     bounds = _read_geoparquet_bounds(gpq_path)
     if bounds is None:

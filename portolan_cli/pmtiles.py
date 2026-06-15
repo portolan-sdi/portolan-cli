@@ -32,7 +32,11 @@ from typing import Any
 
 from portolan_cli.errors import PortolanError
 from portolan_cli.output import warn
-from portolan_cli.thumbnail import ThumbnailConfig, generate_vector_thumbnail, get_thumbnail_config
+from portolan_cli.thumbnail import (
+    generate_vector_thumbnail,
+    get_thumbnail_config,
+    thumbnail_path_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -452,20 +456,47 @@ def add_thumbnail_asset_to_collection(
     collection_json_path.write_text(json.dumps(data, indent=2))
 
 
-def track_pmtiles_in_versions(
+def _compute_sha256(path: Path) -> str:
+    """Stream a file in 64KB chunks and return its SHA-256 hex digest.
+
+    Chunked to avoid loading large PMTiles/thumbnail files fully into memory.
+    """
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _track_generated_assets_in_versions(
     collection_path: Path,
-    pmtiles_path: Path,
+    asset_paths: list[Path],
     catalog_root: Path,
+    *,
+    message: str,
+    only_if_missing: bool = False,
 ) -> None:
-    """Track PMTiles file in versions.json.
+    """Track generated side-step assets (PMTiles, thumbnail) in versions.json.
+
+    Computes SHA-256, size, and mtime for each path and records them in a *single*
+    new version snapshot. The PMTiles and its thumbnail come from the same
+    side-step for the same source asset, so they belong in one version, not two
+    (Issue #519). ``add_version`` carries forward the previous version's assets,
+    so the result is a complete snapshot with these assets added/updated.
 
     Args:
         collection_path: Path to collection directory.
-        pmtiles_path: Path to PMTiles file.
-        catalog_root: Path to catalog root.
+        asset_paths: Paths to the generated files to track.
+        catalog_root: Path to catalog root (hrefs are catalog-root-relative).
+        message: Human-readable description of the change.
+        only_if_missing: When True, only track assets whose filename is not
+            already present in the latest version snapshot, and create no version
+            at all if every asset is already tracked. Used by the skip path to
+            backfill artifacts generated before this tracking existed without
+            bumping a version on every unchanged ``add`` (Issue #519).
 
     Raises:
-        FileNotFoundError: If PMTiles file doesn't exist.
+        FileNotFoundError: If any asset path doesn't exist.
     """
     from portolan_cli.versions import (
         Asset,
@@ -476,8 +507,9 @@ def track_pmtiles_in_versions(
         write_versions,
     )
 
-    if not pmtiles_path.exists():
-        raise FileNotFoundError(f"PMTiles file not found at {pmtiles_path}")
+    for asset_path in asset_paths:
+        if not asset_path.exists():
+            raise FileNotFoundError(f"File not found at {asset_path}")
 
     versions_path = collection_path / "versions.json"
 
@@ -491,27 +523,30 @@ def track_pmtiles_in_versions(
     else:
         versions_file = read_versions(versions_path)
 
-    # Compute checksum and stats (stream in chunks to avoid OOM on large files)
-    stat = pmtiles_path.stat()
-    hasher = hashlib.sha256()
-    with open(pmtiles_path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
-            hasher.update(chunk)
-    sha256 = hasher.hexdigest()
+    # Backfill mode: skip assets already tracked, and create no version if none
+    # are missing (otherwise the message would force a no-op version bump).
+    paths_to_track = asset_paths
+    if only_if_missing and versions_file.versions:
+        tracked = versions_file.versions[-1].assets
+        paths_to_track = [p for p in asset_paths if p.name not in tracked]
+    if not paths_to_track:
+        return
 
-    # Href is relative to catalog root
-    try:
-        rel_path = pmtiles_path.relative_to(catalog_root)
-    except ValueError:
-        # Fallback if not relative
-        rel_path = pmtiles_path.relative_to(collection_path.parent)
-
-    pmtiles_asset = Asset(
-        sha256=sha256,
-        size_bytes=stat.st_size,
-        href=rel_path.as_posix(),
-        mtime=stat.st_mtime,
-    )
+    assets: dict[str, Asset] = {}
+    for asset_path in paths_to_track:
+        stat = asset_path.stat()
+        # Href is relative to catalog root
+        try:
+            rel_path = asset_path.relative_to(catalog_root)
+        except ValueError:
+            # Fallback if not relative
+            rel_path = asset_path.relative_to(collection_path.parent)
+        assets[asset_path.name] = Asset(
+            sha256=_compute_sha256(asset_path),
+            size_bytes=stat.st_size,
+            href=rel_path.as_posix(),
+            mtime=stat.st_mtime,
+        )
 
     # Determine next version
     if versions_file.current_version:
@@ -520,16 +555,102 @@ def track_pmtiles_in_versions(
     else:
         new_version = "1.0.0"
 
-    # Add version with pmtiles asset
     updated = add_version(
         versions_file,
         version=new_version,
-        assets={pmtiles_path.name: pmtiles_asset},
+        assets=assets,
         breaking=False,
-        message=f"Generated PMTiles: {pmtiles_path.name}",
+        message=message,
     )
 
     write_versions(versions_path, updated)
+
+
+def _backfill_skipped_assets(
+    collection_path: Path, asset_key: str, pmtiles_path: Path, catalog_root: Path
+) -> None:
+    """Track an up-to-date PMTiles and its thumbnail if not already tracked.
+
+    Runs on the skip path to heal catalogs whose artifacts were generated before
+    versions.json tracking existed (Issue #519), without bumping a version when
+    everything is already tracked. When a thumbnail exists on disk it is also
+    re-registered as a STAC asset (mirroring the PMTiles), so the backfilled
+    versions.json entry can never be orphaned from collection.json.
+    """
+    backfill = [pmtiles_path]
+    existing_thumb = thumbnail_path_for(pmtiles_path)
+    if existing_thumb.exists():
+        # Ensure the thumbnail is a STAC asset too, even when skipping generation.
+        add_thumbnail_asset_to_collection(collection_path, f"{asset_key}-tiles", existing_thumb)
+        backfill.append(existing_thumb)
+    try:
+        _track_generated_assets_in_versions(
+            collection_path,
+            backfill,
+            catalog_root,
+            message="Backfilled visualization asset tracking",
+            only_if_missing=True,
+        )
+    except Exception as e:
+        warn(f"Failed to backfill versions.json tracking for {pmtiles_path.name}: {e}")
+
+
+def _generate_thumbnail_asset(
+    collection_path: Path,
+    parquet_path: Path,
+    pmtiles_path: Path,
+    asset_key: str,
+    catalog_root: Path,
+) -> Path | None:
+    """Generate the vector thumbnail and register it as a STAC asset.
+
+    Returns the thumbnail path on success, or None if disabled or failed. Failure
+    is non-fatal: it must not affect PMTiles success (Issue #13).
+    """
+    try:
+        thumb_config = get_thumbnail_config(catalog_root)
+        if not thumb_config.enabled:
+            return None
+        # Discover style for thumbnail (Issue #495)
+        style_path = _discover_style_for_thumbnail(collection_path)
+        thumb_path = generate_vector_thumbnail(
+            pmtiles_path=pmtiles_path,
+            geoparquet_path=parquet_path,  # fallback
+            config=thumb_config,
+            style_path=style_path,
+        )
+        if thumb_path:
+            add_thumbnail_asset_to_collection(collection_path, f"{asset_key}-tiles", thumb_path)
+        return thumb_path
+    except Exception as e:
+        warn(f"Thumbnail generation failed for {pmtiles_path.name}: {e}")
+        return None
+
+
+def _track_side_step_assets(
+    collection_path: Path,
+    pmtiles_path: Path,
+    thumb_path: Path | None,
+    catalog_root: Path,
+) -> None:
+    """Track the PMTiles and its thumbnail in a SINGLE versions.json snapshot.
+
+    One side-step is one version bump, not two (Issue #519). Called outside the
+    generation try/finally so a versions.json write error cannot trigger the
+    partial-file cleanup that deletes the freshly generated PMTiles.
+    """
+    generated_assets = [pmtiles_path]
+    if thumb_path:
+        generated_assets.append(thumb_path)
+        message = f"Generated PMTiles and thumbnail: {pmtiles_path.name}, {thumb_path.name}"
+    else:
+        message = f"Generated PMTiles: {pmtiles_path.name}"
+    try:
+        _track_generated_assets_in_versions(
+            collection_path, generated_assets, catalog_root, message=message
+        )
+    except Exception as e:
+        warn(f"Failed to track generated assets in versions.json for {pmtiles_path.name}: {e}")
 
 
 def generate_pmtiles_for_collection(
@@ -613,6 +734,9 @@ def generate_pmtiles_for_collection(
                 pmtiles_relative_path=pmtiles_col_rel,
                 catalog_path=catalog_root,
             )
+            # Backfill versions.json for artifacts generated before this tracking
+            # existed (the original #519 bug state), idempotently.
+            _backfill_skipped_assets(collection_path, asset_key, pmtiles_path, catalog_root)
             result.skipped.append(pmtiles_path)
             continue
 
@@ -642,9 +766,6 @@ def generate_pmtiles_for_collection(
             # Register asset in collection.json (Issue #13)
             add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
 
-            # Track in versions.json
-            track_pmtiles_in_versions(collection_path, pmtiles_path, catalog_root)
-
             result.generated.append(pmtiles_path)
             generation_succeeded = True
 
@@ -668,27 +789,14 @@ def generate_pmtiles_for_collection(
                 pmtiles_path.unlink(missing_ok=True)
                 warn(f"Cleaned up partial file after failure: {pmtiles_path.name}")
 
-        # Generate thumbnail separately - failure shouldn't affect PMTiles success (Issue #13)
+        # Generate thumbnail separately - failure shouldn't affect PMTiles success
+        # (Issue #13) - then track the PMTiles and thumbnail in a SINGLE version
+        # snapshot (one side-step == one version, not two, Issue #519).
         if generation_succeeded:
-            try:
-                thumb_config = (
-                    get_thumbnail_config(catalog_root) if catalog_root else ThumbnailConfig()
-                )
-                if thumb_config.enabled:
-                    # Discover style for thumbnail (Issue #495)
-                    style_path = _discover_style_for_thumbnail(collection_path)
-                    thumb_path = generate_vector_thumbnail(
-                        pmtiles_path=pmtiles_path,
-                        geoparquet_path=parquet_path,  # fallback
-                        config=thumb_config,
-                        style_path=style_path,
-                    )
-                    # Register thumbnail as asset so it's tracked in STAC
-                    if thumb_path:
-                        pmtiles_key = f"{asset_key}-tiles"
-                        add_thumbnail_asset_to_collection(collection_path, pmtiles_key, thumb_path)
-            except Exception as e:
-                logger.warning("Thumbnail generation failed for %s: %s", pmtiles_path.name, e)
+            thumb_path = _generate_thumbnail_asset(
+                collection_path, parquet_path, pmtiles_path, asset_key, catalog_root
+            )
+            _track_side_step_assets(collection_path, pmtiles_path, thumb_path, catalog_root)
 
     # Discover and register style assets (ADR-0045)
     from portolan_cli.style import discover_styles, register_style_assets
