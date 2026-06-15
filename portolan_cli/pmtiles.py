@@ -452,6 +452,93 @@ def add_thumbnail_asset_to_collection(
     collection_json_path.write_text(json.dumps(data, indent=2))
 
 
+def _track_generated_asset_in_versions(
+    collection_path: Path,
+    asset_path: Path,
+    catalog_root: Path,
+    *,
+    message: str,
+) -> None:
+    """Track a generated side-step asset (PMTiles, thumbnail) in versions.json.
+
+    Computes the SHA-256 checksum, size, and mtime of ``asset_path`` and adds a
+    new version snapshot. ``add_version`` carries forward the previous version's
+    assets, so the result is a complete snapshot with this asset added/updated.
+
+    Args:
+        collection_path: Path to collection directory.
+        asset_path: Path to the generated file to track.
+        catalog_root: Path to catalog root (hrefs are catalog-root-relative).
+        message: Human-readable description of the change.
+
+    Raises:
+        FileNotFoundError: If ``asset_path`` doesn't exist.
+    """
+    from portolan_cli.versions import (
+        Asset,
+        VersionsFile,
+        add_version,
+        parse_version,
+        read_versions,
+        write_versions,
+    )
+
+    if not asset_path.exists():
+        raise FileNotFoundError(f"File not found at {asset_path}")
+
+    versions_path = collection_path / "versions.json"
+
+    # If no versions.json, create a minimal one
+    if not versions_path.exists():
+        versions_file = VersionsFile(
+            spec_version="1.0.0",
+            current_version=None,
+            versions=[],
+        )
+    else:
+        versions_file = read_versions(versions_path)
+
+    # Compute checksum and stats (stream in chunks to avoid OOM on large files)
+    stat = asset_path.stat()
+    hasher = hashlib.sha256()
+    with open(asset_path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
+            hasher.update(chunk)
+    sha256 = hasher.hexdigest()
+
+    # Href is relative to catalog root
+    try:
+        rel_path = asset_path.relative_to(catalog_root)
+    except ValueError:
+        # Fallback if not relative
+        rel_path = asset_path.relative_to(collection_path.parent)
+
+    asset = Asset(
+        sha256=sha256,
+        size_bytes=stat.st_size,
+        href=rel_path.as_posix(),
+        mtime=stat.st_mtime,
+    )
+
+    # Determine next version
+    if versions_file.current_version:
+        major, minor, patch = parse_version(versions_file.current_version)
+        new_version = f"{major}.{minor}.{patch + 1}"
+    else:
+        new_version = "1.0.0"
+
+    # Add version with the generated asset
+    updated = add_version(
+        versions_file,
+        version=new_version,
+        assets={asset_path.name: asset},
+        breaking=False,
+        message=message,
+    )
+
+    write_versions(versions_path, updated)
+
+
 def track_pmtiles_in_versions(
     collection_path: Path,
     pmtiles_path: Path,
@@ -467,69 +554,40 @@ def track_pmtiles_in_versions(
     Raises:
         FileNotFoundError: If PMTiles file doesn't exist.
     """
-    from portolan_cli.versions import (
-        Asset,
-        VersionsFile,
-        add_version,
-        parse_version,
-        read_versions,
-        write_versions,
-    )
-
-    if not pmtiles_path.exists():
-        raise FileNotFoundError(f"PMTiles file not found at {pmtiles_path}")
-
-    versions_path = collection_path / "versions.json"
-
-    # If no versions.json, create a minimal one
-    if not versions_path.exists():
-        versions_file = VersionsFile(
-            spec_version="1.0.0",
-            current_version=None,
-            versions=[],
-        )
-    else:
-        versions_file = read_versions(versions_path)
-
-    # Compute checksum and stats (stream in chunks to avoid OOM on large files)
-    stat = pmtiles_path.stat()
-    hasher = hashlib.sha256()
-    with open(pmtiles_path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):  # 64KB chunks
-            hasher.update(chunk)
-    sha256 = hasher.hexdigest()
-
-    # Href is relative to catalog root
-    try:
-        rel_path = pmtiles_path.relative_to(catalog_root)
-    except ValueError:
-        # Fallback if not relative
-        rel_path = pmtiles_path.relative_to(collection_path.parent)
-
-    pmtiles_asset = Asset(
-        sha256=sha256,
-        size_bytes=stat.st_size,
-        href=rel_path.as_posix(),
-        mtime=stat.st_mtime,
-    )
-
-    # Determine next version
-    if versions_file.current_version:
-        major, minor, patch = parse_version(versions_file.current_version)
-        new_version = f"{major}.{minor}.{patch + 1}"
-    else:
-        new_version = "1.0.0"
-
-    # Add version with pmtiles asset
-    updated = add_version(
-        versions_file,
-        version=new_version,
-        assets={pmtiles_path.name: pmtiles_asset},
-        breaking=False,
+    _track_generated_asset_in_versions(
+        collection_path,
+        pmtiles_path,
+        catalog_root,
         message=f"Generated PMTiles: {pmtiles_path.name}",
     )
 
-    write_versions(versions_path, updated)
+
+def track_thumbnail_in_versions(
+    collection_path: Path,
+    thumbnail_path: Path,
+    catalog_root: Path,
+) -> None:
+    """Track a generated thumbnail in versions.json (Issue #519).
+
+    Thumbnails are generated in the PMTiles side-step *after* the main version
+    snapshot is published, so — like PMTiles — they need their own tracking
+    call. Without it the thumbnail is referenced in collection.json but carries
+    no checksum/size, so sync cannot verify or skip it.
+
+    Args:
+        collection_path: Path to collection directory.
+        thumbnail_path: Path to the thumbnail file.
+        catalog_root: Path to catalog root.
+
+    Raises:
+        FileNotFoundError: If the thumbnail file doesn't exist.
+    """
+    _track_generated_asset_in_versions(
+        collection_path,
+        thumbnail_path,
+        catalog_root,
+        message=f"Generated thumbnail: {thumbnail_path.name}",
+    )
 
 
 def generate_pmtiles_for_collection(
@@ -687,6 +745,9 @@ def generate_pmtiles_for_collection(
                     if thumb_path:
                         pmtiles_key = f"{asset_key}-tiles"
                         add_thumbnail_asset_to_collection(collection_path, pmtiles_key, thumb_path)
+                        # Track in versions.json so it ships with a checksum/size
+                        # and sync can verify/skip it (Issue #519).
+                        track_thumbnail_in_versions(collection_path, thumb_path, catalog_root)
             except Exception as e:
                 logger.warning("Thumbnail generation failed for %s: %s", pmtiles_path.name, e)
 
