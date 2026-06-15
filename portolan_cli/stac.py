@@ -1519,10 +1519,18 @@ def is_technical_name(text: str | None) -> bool:
     if "_" in text:
         return True
 
-    # Short all-lowercase without CamelCase → technical (e.g., "layer1", "parcels2024")
-    # CamelCase (has uppercase after first char) is allowed
+    # Short tokens without an internal capital are ambiguous: distinguish
+    # technical identifiers from ordinary one-word proper titles (Issue #513).
+    # Identifiers are all-lowercase ("layer", "parcels") or carry digits
+    # ("layer1", "parcels2024"). A capitalized, digit-free word ("Provincia",
+    # "Localidad", "País") is a legitimate title and must be preserved.
+    # CamelCase (has uppercase after first char) is already allowed above.
     if not re.search(r"[A-Z]", text[1:]) and len(text) < 20:
-        return True
+        has_digit = any(char.isdigit() for char in text)
+        starts_capitalized = text[:1].isupper()
+        if has_digit or not starts_capitalized:
+            return True
+        return False
 
     return False
 
