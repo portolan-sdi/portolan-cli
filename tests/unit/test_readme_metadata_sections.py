@@ -9,10 +9,12 @@ from __future__ import annotations
 import pytest
 
 from portolan_cli.readme import (
+    MAX_KEYWORD_BADGES,
     _add_attribution_section,
     _add_keywords_section,
     _add_processing_section,
     _add_source_section,
+    _is_meaningful_keyword,
     generate_readme,
 )
 
@@ -137,6 +139,103 @@ class TestKeywordsSection:
 
         # Spaces should be encoded as %20 or replaced with underscores
         assert "land" in sections[0].lower()
+
+    @pytest.mark.unit
+    def test_truncates_long_curated_list(self) -> None:
+        """A long but clean list is truncated, not omitted (#515).
+
+        Regression guard: the dump signal is the technical ratio, not the
+        length, so a genuinely curated long list still renders (capped).
+        """
+        sections: list[str] = []
+        # 20 clean, meaningful keywords (ratio 0.0).
+        metadata = {"keywords": [f"Theme{chr(65 + i)}" for i in range(20)]}
+
+        _add_keywords_section(sections, metadata)
+
+        output = "\n".join(sections)
+        assert output.count("shields.io") == MAX_KEYWORD_BADGES
+
+    @pytest.mark.unit
+    def test_omits_when_mostly_technical(self) -> None:
+        """A junk-dominated list (>60% technical) is omitted entirely (#515)."""
+        sections: list[str] = []
+        # 4 of 5 are technical (ratio 0.8).
+        metadata = {"keywords": ["census", "AP010", "orden:30", "vial_nacional", "DB120"]}
+
+        _add_keywords_section(sections, metadata)
+
+        assert len(sections) == 0
+
+    @pytest.mark.unit
+    def test_drops_junk_keeps_meaningful(self) -> None:
+        """In a clean-majority list, technical keywords are dropped (#515)."""
+        sections: list[str] = []
+        # ratio 0.33 technical - not a dump, so render the meaningful ones.
+        metadata = {"keywords": ["census", "demographics", "AP010"]}
+
+        _add_keywords_section(sections, metadata)
+
+        output = "\n".join(sections)
+        assert "![census]" in output
+        assert "![demographics]" in output
+        assert "AP010" not in output
+
+    @pytest.mark.unit
+    def test_caps_badge_count(self) -> None:
+        """No more than MAX_KEYWORD_BADGES badges are rendered (#515)."""
+        sections: list[str] = []
+        # 14 distinct meaningful keywords: under the dump threshold, over the cap.
+        metadata = {"keywords": [f"Theme{chr(65 + i)}" for i in range(14)]}
+
+        _add_keywords_section(sections, metadata)
+
+        output = "\n".join(sections)
+        assert output.count("shields.io") == MAX_KEYWORD_BADGES
+
+    @pytest.mark.unit
+    def test_omits_when_all_junk(self) -> None:
+        """A list of only technical slugs renders nothing (the IGN case) (#515)."""
+        sections: list[str] = []
+        metadata = {"keywords": ["AP010", "orden:30", "vial_nacional"]}
+
+        _add_keywords_section(sections, metadata)
+
+        assert len(sections) == 0
+
+
+class TestIsMeaningfulKeyword:
+    """Tests for _is_meaningful_keyword (the keyword-quality predicate, #515)."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "keyword",
+        ["census", "demographics", "Provincia", "land use", "COVID19"],
+    )
+    def test_keeps_meaningful_keywords(self, keyword: str) -> None:
+        """Human-readable discovery terms are kept."""
+        assert _is_meaningful_keyword(keyword) is True
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "keyword",
+        [
+            "AP010",  # FACC code (is_technical_name gap)
+            "DB120",
+            "BH020",
+            "CA010",
+            "orden:30",  # STAC summary value
+            "ns:Name",  # namespace prefix
+            "Foo:Bar",  # colon-bearing, uppercase (is_technical_name gap)
+            "vial_nacional",  # snake_case slug
+            "vial_AP050",
+            "lineas_de_geomorfologia_CA010",  # WFS layer id
+            "",  # empty
+        ],
+    )
+    def test_drops_technical_keywords(self, keyword: str) -> None:
+        """Technical slugs, codes, and summary values are dropped."""
+        assert _is_meaningful_keyword(keyword) is False
 
 
 class TestAttributionSection:

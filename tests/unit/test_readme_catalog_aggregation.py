@@ -198,6 +198,64 @@ class TestGenerateCatalogReadme:
         assert "# My Data Catalog" in readme
 
     @pytest.mark.unit
+    def test_omits_seeded_junk_keyword_wall(self, tmp_path: Path) -> None:
+        """A catalog seeded with a junk keyword dump renders no badge wall (#515).
+
+        Reproduces the IGN Argentina case: extraction seeds hundreds of WFS
+        layer ids / FACC codes into catalog .portolan/metadata.yaml. The catalog
+        README must not render them as badges and bury the description.
+        """
+        (tmp_path / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": "ign-argentina",
+                    "title": "IGN Argentina",
+                    "description": "Geospatial reference data from IGN Argentina.",
+                }
+            )
+        )
+        # Seed a junk keyword dump (the kind extraction writes verbatim) plus a
+        # couple of clean terms.
+        junk = [f"vial_AP{i:03d}" for i in range(40)] + ["AP010", "orden:30"]
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "metadata.yaml").write_text(
+            "keywords:\n" + "".join(f"  - {k}\n" for k in junk + ["roads", "census"])
+        )
+
+        readme = generate_catalog_readme(tmp_path)
+
+        # The long, junk-dominated list is suppressed entirely.
+        assert "shields.io" not in readme
+        assert "vial_AP000" not in readme
+        assert "AP010" not in readme
+        # The description still renders.
+        assert "Geospatial reference data from IGN Argentina." in readme
+
+    @pytest.mark.unit
+    def test_renders_curated_catalog_keywords(self, tmp_path: Path) -> None:
+        """A small curated keyword list still renders as badges (#515)."""
+        (tmp_path / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": "census",
+                    "title": "Census Catalog",
+                    "description": "Curated census data.",
+                }
+            )
+        )
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "metadata.yaml").write_text(
+            "keywords:\n  - census\n  - demographics\n  - population\n"
+        )
+
+        readme = generate_catalog_readme(tmp_path)
+
+        assert "![census]" in readme
+        assert "shields.io" in readme
+
+    @pytest.mark.unit
     def test_includes_collections_section(self, tmp_path: Path) -> None:
         """Catalog README should list collections."""
         (tmp_path / "catalog.json").write_text(
