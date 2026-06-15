@@ -204,11 +204,11 @@ class TestPMTilesGeneration:
         assert "tiles" in pmtiles_asset["title"].lower()
 
     def test_version_tracked(self, collection_with_geoparquet: Path) -> None:
-        """PMTiles and its thumbnail are both tracked in versions.json.
+        """PMTiles and its thumbnail share a single versions.json snapshot.
 
-        The side-step generates two artifacts — the PMTiles and a thumbnail —
-        and each is tracked with its own version bump (Issue #519). The latest
-        snapshot is cumulative, so it carries both.
+        The side-step generates the PMTiles and (when rendering succeeds) a
+        thumbnail. Both belong to ONE version bump, not two (Issue #519), and
+        the snapshot carries both with checksum and size.
         """
         from portolan_cli.pmtiles import generate_pmtiles_for_collection
 
@@ -228,9 +228,9 @@ class TestPMTilesGeneration:
         # Read updated versions.json
         versions_data_after = json.loads((collection_with_geoparquet / "versions.json").read_text())
 
-        # New versions created: one for the PMTiles, one for the thumbnail.
+        # Exactly one new version snapshot for the whole side-step (Issue #519).
         assert versions_data_after["current_version"] != initial_version
-        assert len(versions_data_after["versions"]) == len(versions_data_before["versions"]) + 2
+        assert len(versions_data_after["versions"]) == len(versions_data_before["versions"]) + 1
 
         # Latest snapshot tracks the PMTiles file.
         latest_version = versions_data_after["versions"][-1]
@@ -240,11 +240,14 @@ class TestPMTilesGeneration:
         assert "sha256" in pmtiles_asset
         assert pmtiles_asset["size_bytes"] > 0
 
-        # Latest snapshot also tracks the generated thumbnail (Issue #519).
-        assert "roads.thumb.jpg" in latest_version["assets"]
-        thumb_asset = latest_version["assets"]["roads.thumb.jpg"]
-        assert "sha256" in thumb_asset
-        assert thumb_asset["size_bytes"] > 0
+        # If a thumbnail was actually rendered (matplotlib/contextily available;
+        # basemap fetch is networked, so it may be absent offline), it must live
+        # in the SAME snapshot as the PMTiles with its own checksum (Issue #519).
+        if (collection_with_geoparquet / "roads.thumb.jpg").exists():
+            assert "roads.thumb.jpg" in latest_version["assets"]
+            thumb_asset = latest_version["assets"]["roads.thumb.jpg"]
+            assert "sha256" in thumb_asset
+            assert thumb_asset["size_bytes"] > 0
 
 
 class TestPMTilesZoomLevels:

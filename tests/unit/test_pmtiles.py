@@ -7,6 +7,7 @@ actually generate PMTiles require tippecanoe and are marked accordingly.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -291,12 +292,13 @@ class TestAddPMTilesAssetToCollection:
         assert len(updated["assets"]) == 2
 
 
-class TestTrackThumbnailInVersions:
-    """Tests for track_thumbnail_in_versions (Issue #519).
+class TestTrackGeneratedAssetsInVersions:
+    """Tests for _track_generated_assets_in_versions (Issue #519).
 
-    Thumbnails generated in the PMTiles side-step must be tracked in
-    versions.json with a checksum, size, and mtime — just like PMTiles —
-    so sync can verify integrity and skip unchanged thumbnails.
+    Generated side-step artifacts (PMTiles, thumbnail) must be tracked in
+    versions.json with a checksum, size, and mtime so sync can verify integrity
+    and skip unchanged files. PMTiles and its thumbnail share ONE version
+    snapshot, not two.
     """
 
     @staticmethod
@@ -323,9 +325,9 @@ class TestTrackThumbnailInVersions:
         (collection_dir / "versions.json").write_text(json.dumps(versions_json))
 
     @pytest.mark.unit
-    def test_thumbnail_tracked_with_checksum_size_mtime(self, tmp_path: Path) -> None:
+    def test_asset_tracked_with_checksum_size_mtime(self, tmp_path: Path) -> None:
         """A generated thumbnail is added to versions.json as a full asset."""
-        from portolan_cli.pmtiles import track_thumbnail_in_versions
+        from portolan_cli.pmtiles import _track_generated_assets_in_versions
         from portolan_cli.versions import read_versions
 
         collection_dir = tmp_path / "demographics"
@@ -335,7 +337,9 @@ class TestTrackThumbnailInVersions:
         thumb = collection_dir / "data.thumb.png"
         thumb.write_bytes(b"\x89PNG fake-thumbnail-bytes")
 
-        track_thumbnail_in_versions(collection_dir, thumb, tmp_path)
+        _track_generated_assets_in_versions(
+            collection_dir, [thumb], tmp_path, message="Generated thumbnail: data.thumb.png"
+        )
 
         versions = read_versions(collection_dir / "versions.json")
         assert versions.current_version == "1.0.1"
@@ -355,9 +359,58 @@ class TestTrackThumbnailInVersions:
         assert "data.thumb.png" in latest.changes
 
     @pytest.mark.unit
+    def test_pmtiles_and_thumbnail_share_one_version(self, tmp_path: Path) -> None:
+        """PMTiles + thumbnail tracked together land in a SINGLE version (Issue #519)."""
+        from portolan_cli.pmtiles import _track_generated_assets_in_versions
+        from portolan_cli.versions import read_versions
+
+        collection_dir = tmp_path / "demographics"
+        collection_dir.mkdir()
+        self._write_versions(collection_dir)
+
+        pmtiles = collection_dir / "data.pmtiles"
+        pmtiles.write_bytes(b"PMTILES")
+        thumb = collection_dir / "data.thumb.jpg"
+        thumb.write_bytes(b"\xff\xd8\xff jpeg")
+
+        _track_generated_assets_in_versions(
+            collection_dir, [pmtiles, thumb], tmp_path, message="Generated PMTiles and thumbnail"
+        )
+
+        versions = read_versions(collection_dir / "versions.json")
+        # One bump (1.0.0 -> 1.0.1), not two.
+        assert len(versions.versions) == 2
+        assert versions.current_version == "1.0.1"
+        latest = versions.versions[-1].assets
+        assert "data.pmtiles" in latest
+        assert "data.thumb.jpg" in latest
+
+    @pytest.mark.unit
+    def test_only_if_missing_skips_already_tracked(self, tmp_path: Path) -> None:
+        """only_if_missing creates no version when every asset is already tracked."""
+        from portolan_cli.pmtiles import _track_generated_assets_in_versions
+        from portolan_cli.versions import read_versions
+
+        collection_dir = tmp_path / "demographics"
+        collection_dir.mkdir()
+        self._write_versions(collection_dir)
+
+        parquet = collection_dir / "data.parquet"  # already tracked in fixture
+        parquet.write_bytes(b"PAR1")
+
+        _track_generated_assets_in_versions(
+            collection_dir, [parquet], tmp_path, message="Backfill", only_if_missing=True
+        )
+
+        versions = read_versions(collection_dir / "versions.json")
+        # No new version: data.parquet is already in the latest snapshot.
+        assert len(versions.versions) == 1
+        assert versions.current_version == "1.0.0"
+
+    @pytest.mark.unit
     def test_creates_versions_file_when_missing(self, tmp_path: Path) -> None:
         """First-ever version is created at 1.0.0 if versions.json is absent."""
-        from portolan_cli.pmtiles import track_thumbnail_in_versions
+        from portolan_cli.pmtiles import _track_generated_assets_in_versions
         from portolan_cli.versions import read_versions
 
         collection_dir = tmp_path / "demographics"
@@ -366,23 +419,27 @@ class TestTrackThumbnailInVersions:
         thumb = collection_dir / "data.thumb.png"
         thumb.write_bytes(b"\x89PNG fake-thumbnail-bytes")
 
-        track_thumbnail_in_versions(collection_dir, thumb, tmp_path)
+        _track_generated_assets_in_versions(
+            collection_dir, [thumb], tmp_path, message="Generated thumbnail: data.thumb.png"
+        )
 
         versions = read_versions(collection_dir / "versions.json")
         assert versions.current_version == "1.0.0"
         assert "data.thumb.png" in versions.versions[-1].assets
 
     @pytest.mark.unit
-    def test_raises_when_thumbnail_missing(self, tmp_path: Path) -> None:
-        """A missing thumbnail file is a hard error (no phantom asset)."""
-        from portolan_cli.pmtiles import track_thumbnail_in_versions
+    def test_raises_when_asset_missing(self, tmp_path: Path) -> None:
+        """A missing asset file is a hard error (no phantom asset)."""
+        from portolan_cli.pmtiles import _track_generated_assets_in_versions
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
         self._write_versions(collection_dir)
 
         with pytest.raises(FileNotFoundError):
-            track_thumbnail_in_versions(collection_dir, collection_dir / "data.thumb.png", tmp_path)
+            _track_generated_assets_in_versions(
+                collection_dir, [collection_dir / "data.thumb.png"], tmp_path, message="x"
+            )
 
 
 class TestGeneratePMTiles:
@@ -679,11 +736,13 @@ class TestGeneratePMTilesForCollection:
 
     @pytest.mark.unit
     def test_generated_thumbnail_tracked_in_versions(self, tmp_path: Path) -> None:
-        """Thumbnail from the PMTiles side-step lands in versions.json (Issue #519).
+        """PMTiles and thumbnail land in ONE versions.json snapshot (Issue #519).
 
         Regression: the side-step registered the thumbnail in collection.json
         but never tracked it in versions.json, so it shipped without a
-        checksum/size and sync could not verify it.
+        checksum/size and sync could not verify it. A second regression had the
+        PMTiles and thumbnail each bump their own version (two snapshots for one
+        side-step); they must now share a single version snapshot.
         """
         from portolan_cli.pmtiles import generate_pmtiles_for_collection
         from portolan_cli.versions import read_versions
@@ -741,6 +800,11 @@ class TestGeneratePMTilesForCollection:
         assert pmtiles_path in result.generated
 
         versions = read_versions(collection_dir / "versions.json")
+        # One side-step == one new version snapshot, not two (Issue #519).
+        # The old double-bump behavior produced 3 versions here.
+        assert len(versions.versions) == 2, (
+            "PMTiles + thumbnail must share a single version snapshot, not bump twice"
+        )
         all_tracked = versions.versions[-1].assets
         assert "data.pmtiles" in all_tracked, "PMTiles should still be tracked"
         assert "data.thumb.png" in all_tracked, (
@@ -750,6 +814,83 @@ class TestGeneratePMTilesForCollection:
         assert thumb_asset.sha256
         assert thumb_asset.size_bytes == thumb_path.stat().st_size
         assert thumb_asset.href == "demographics/data.thumb.png"
+
+    @pytest.mark.unit
+    def test_skip_path_backfills_untracked_thumbnail(self, tmp_path: Path) -> None:
+        """Skip path backfills artifacts left untracked by the old code (Issue #519).
+
+        When PMTiles is up-to-date, generation is skipped. A thumbnail generated
+        before tracking existed (present on disk, in collection.json, but absent
+        from versions.json) must be backfilled — without forcing regeneration —
+        and in exactly one version bump.
+        """
+        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.versions import read_versions
+
+        collection_dir = tmp_path / "demographics"
+        collection_dir.mkdir()
+
+        collection_json = {
+            "type": "Collection",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+
+        # Source parquet OLDER than pmtiles -> _should_generate returns False.
+        parquet = collection_dir / "data.parquet"
+        parquet.write_bytes(b"PAR1")
+        pmtiles = collection_dir / "data.pmtiles"
+        pmtiles.write_bytes(b"PMTILES")
+        # Thumbnail uses the .thumb.jpg convention (thumbnail_path_for).
+        thumb = collection_dir / "data.thumb.jpg"
+        thumb.write_bytes(b"\xff\xd8\xff fake-jpeg-bytes")
+
+        old = parquet.stat().st_mtime - 100
+        os.utime(parquet, (old, old))
+
+        # versions.json tracks neither the pmtiles nor the thumbnail yet.
+        versions_json = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2026-01-01T00:00:00Z",
+                    "breaking": False,
+                    "assets": {},
+                    "changes": [],
+                }
+            ],
+        }
+        (collection_dir / "versions.json").write_text(json.dumps(versions_json))
+
+        mock_module = MagicMock()
+        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                result = generate_pmtiles_for_collection(collection_dir, tmp_path)
+
+        assert pmtiles in result.skipped, "Up-to-date PMTiles should be skipped, not regenerated"
+
+        versions = read_versions(collection_dir / "versions.json")
+        # Exactly one backfill version bump.
+        assert len(versions.versions) == 2
+        latest = versions.versions[-1].assets
+        assert "data.pmtiles" in latest, "Untracked PMTiles should be backfilled on skip"
+        assert "data.thumb.jpg" in latest, "Untracked thumbnail should be backfilled on skip"
+
+        # Idempotent: a second run with everything tracked creates NO new version.
+        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                generate_pmtiles_for_collection(collection_dir, tmp_path)
+        versions_after = read_versions(collection_dir / "versions.json")
+        assert len(versions_after.versions) == 2, (
+            "Backfill must not bump a version when everything is already tracked"
+        )
 
 
 # Integration tests that require tippecanoe
