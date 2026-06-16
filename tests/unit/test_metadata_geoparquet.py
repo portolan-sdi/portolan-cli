@@ -154,6 +154,63 @@ class TestGeoParquetMetadata:
         # geometry_type should not be included if None
         assert "geoparquet:geometry_type" not in props
 
+    @pytest.mark.unit
+    def test_to_stac_properties_includes_proj_epsg_from_epsg_string(self) -> None:
+        """to_stac_properties() derives proj:epsg from an EPSG-string CRS (issue #488)."""
+        metadata = GeoParquetMetadata(
+            bbox=None,
+            crs="EPSG:4258",
+            geometry_type="Polygon",
+            geometry_column="standardized_location",
+            feature_count=5,
+            schema={},
+        )
+        props = metadata.to_stac_properties()
+        # The collection proj:epsg must reflect the file's real CRS, not 3857.
+        assert props["proj:epsg"] == 4258
+
+    @pytest.mark.unit
+    def test_to_stac_properties_includes_proj_epsg_from_projected_crs(self) -> None:
+        """to_stac_properties() derives proj:epsg from a projected CRS (issue #488)."""
+        metadata = GeoParquetMetadata(
+            bbox=None,
+            crs="EPSG:28992",
+            geometry_type="Polygon",
+            geometry_column="geom",
+            feature_count=5,
+            schema={},
+        )
+        props = metadata.to_stac_properties()
+        assert props["proj:epsg"] == 28992
+
+    @pytest.mark.unit
+    def test_to_stac_properties_includes_proj_epsg_from_projjson(self) -> None:
+        """to_stac_properties() derives proj:epsg from a PROJJSON dict CRS (issue #488)."""
+        metadata = GeoParquetMetadata(
+            bbox=None,
+            crs={"type": "GeographicCRS", "id": {"authority": "EPSG", "code": 4258}},
+            geometry_type="Polygon",
+            geometry_column="geometry",
+            feature_count=5,
+            schema={},
+        )
+        props = metadata.to_stac_properties()
+        assert props["proj:epsg"] == 4258
+
+    @pytest.mark.unit
+    def test_to_stac_properties_omits_proj_epsg_when_crs_none(self) -> None:
+        """to_stac_properties() omits proj:epsg when CRS is unknown."""
+        metadata = GeoParquetMetadata(
+            bbox=None,
+            crs=None,
+            geometry_type="Point",
+            geometry_column="geometry",
+            feature_count=5,
+            schema={},
+        )
+        props = metadata.to_stac_properties()
+        assert "proj:epsg" not in props
+
 
 class TestProjectedCRS:
     """Tests for projected CRS extraction from GeoParquet."""
