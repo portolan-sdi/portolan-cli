@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any, Literal, overload
 
 import pyarrow.parquet as pq
+from pyproj import CRS
+from pyproj.exceptions import CRSError
 
 from portolan_cli.models.schema import ColumnSchema, SchemaModel
 
@@ -47,9 +49,41 @@ class GeoParquetMetadata:
             "schema": self.schema,
         }
 
+    def _crs_to_epsg(self) -> int | None:
+        """Resolve the CRS to an EPSG code, or None if unavailable.
+
+        ``crs`` may be an EPSG/WKT/OGC-URN string or a PROJJSON dict. A PROJJSON
+        dict that already carries ``id.code`` is read directly (mirroring
+        ``_extract_crs``); otherwise pyproj resolves it.
+        """
+        crs = self.crs
+        if crs is None:
+            return None
+
+        if isinstance(crs, dict):
+            code = crs.get("id", {}).get("code")
+            if code is not None:
+                try:
+                    return int(code)
+                except (TypeError, ValueError):
+                    pass
+
+        try:
+            return CRS.from_user_input(crs).to_epsg()
+        except CRSError:
+            return None  # Unknown CRS format, skip proj:epsg
+
     def to_stac_properties(self) -> dict[str, Any]:
         """Convert to STAC Item properties format."""
         props: dict[str, Any] = {}
+
+        # Derive proj:epsg from the file's real CRS (issue #488). Without this
+        # a GeoParquet collection-level asset contributes no CRS, so a tracked
+        # .pmtiles companion's hardcoded 3857 (the Web-Mercator tiles) becomes
+        # the collection's proj:epsg.
+        epsg = self._crs_to_epsg()
+        if epsg is not None:
+            props["proj:epsg"] = epsg
 
         if self.geometry_type:
             props["geoparquet:geometry_type"] = self.geometry_type

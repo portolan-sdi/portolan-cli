@@ -430,9 +430,16 @@ def add_collection_properties_from_metadata(
     should be applied directly to the collection instead of an item.
 
     Handles:
-    - PMTilesMetadata: proj:epsg=3857, pmtiles:* properties
+    - PMTilesMetadata: pmtiles:* properties, and proj:epsg=3857 only as a
+      fallback (the 3857 describes the Web-Mercator tiles, not the source data)
     - FlatGeobufMetadata: proj:epsg from CRS, flatgeobuf:* properties
     - GeoParquetMetadata: proj:epsg from CRS (table extension handled separately)
+
+    The collection-level ``proj:epsg`` must reflect the source *data* CRS. A
+    tracked ``.pmtiles`` companion (ADR-0028 tracks all files) reports a
+    hardcoded ``proj:epsg: 3857`` for its tiles; that visualization artifact
+    must never overwrite a real source CRS contributed by the vector data asset,
+    regardless of the order assets are applied (issue #488).
 
     Args:
         collection: The collection to add properties to.
@@ -445,8 +452,15 @@ def add_collection_properties_from_metadata(
     if not props:
         return
 
+    from portolan_cli.metadata.pmtiles import PMTilesMetadata
+
+    is_pmtiles = isinstance(metadata, PMTilesMetadata)
+
     # Add properties to collection.extra_fields (STAC collection properties)
     for key, value in props.items():
+        # PMTiles tile CRS is a fallback: never clobber a real source-data CRS.
+        if key == "proj:epsg" and is_pmtiles and "proj:epsg" in collection.extra_fields:
+            continue
         collection.extra_fields[key] = value
 
     # Add projection extension declaration if proj:epsg is present
