@@ -321,12 +321,62 @@ def _discover_style_for_thumbnail(collection_dir: Path) -> Path | None:
     return None
 
 
+def _early_exit_result(
+    source: Path,
+    format_info: Any,
+    *,
+    force: bool,
+    start_time: float,
+) -> ConversionResult | None:
+    """Return a SKIPPED/UNSUPPORTED result if no conversion should run, else None.
+
+    Cloud-native files are skipped, EXCEPT when ``force`` is set and the file is a
+    RASTER (a valid COG) — that case re-optimizes in place (issue #530), so this
+    returns None to let conversion proceed. Vectors are never force-re-processed.
+    Unsupported formats are accepted with no error (ADR-0014).
+    """
+    if format_info.status == CloudNativeStatus.CLOUD_NATIVE:
+        force_raster = force and detect_format(source) == FormatType.RASTER
+        if force_raster:
+            return None
+        duration_ms = int((time.perf_counter() - start_time) * 1000)
+        return ConversionResult(
+            source=source,
+            output=None,
+            format_from=format_info.display_name,
+            format_to=None,
+            status=ConversionStatus.SKIPPED,
+            error=None,
+            duration_ms=duration_ms,
+        )
+
+    if format_info.status == CloudNativeStatus.UNSUPPORTED:
+        duration_ms = int((time.perf_counter() - start_time) * 1000)
+        logger.info(
+            "Unsupported format, skipping: %s (%s)",
+            source,
+            format_info.display_name,
+        )
+        return ConversionResult(
+            source=source,
+            output=None,
+            format_from=format_info.display_name,
+            format_to=None,
+            status=ConversionStatus.UNSUPPORTED,
+            error=None,  # Not an error - just unsupported
+            duration_ms=duration_ms,
+        )
+
+    return None
+
+
 def convert_file(
     source: Path,
     output_dir: Path | None = None,
     catalog_path: Path | None = None,
     cog_settings: CogSettings | None = None,
     vector_settings: VectorSettings | None = None,
+    force: bool = False,
 ) -> ConversionResult:
     """Convert a single file to cloud-native format.
 
@@ -345,6 +395,10 @@ def convert_file(
         vector_settings: Explicit vector settings override. Takes precedence over
             ``catalog_path``-loaded settings. If None, loads from
             ``catalog_path`` or falls back to no spatial optimization.
+        force: Re-optimize an already-cloud-native RASTER by re-applying current
+            ``cog_settings`` (e.g. to add missing overviews). Raster-scoped only:
+            cloud-native vectors are still skipped (issue #530). Has no effect on
+            CONVERTIBLE or UNSUPPORTED files.
 
     Returns:
         ConversionResult with conversion outcome, timing, and paths.
@@ -360,36 +414,11 @@ def convert_file(
     # Get format info
     format_info = get_cloud_native_status(source)
 
-    # Skip if already cloud-native
-    if format_info.status == CloudNativeStatus.CLOUD_NATIVE:
-        duration_ms = int((time.perf_counter() - start_time) * 1000)
-        return ConversionResult(
-            source=source,
-            output=None,
-            format_from=format_info.display_name,
-            format_to=None,
-            status=ConversionStatus.SKIPPED,
-            error=None,
-            duration_ms=duration_ms,
-        )
-
-    # Handle unsupported formats (not an error, just not convertible)
-    if format_info.status == CloudNativeStatus.UNSUPPORTED:
-        duration_ms = int((time.perf_counter() - start_time) * 1000)
-        logger.info(
-            "Unsupported format, skipping: %s (%s)",
-            source,
-            format_info.display_name,
-        )
-        return ConversionResult(
-            source=source,
-            output=None,
-            format_from=format_info.display_name,
-            format_to=None,
-            status=ConversionStatus.UNSUPPORTED,
-            error=None,  # Not an error - just unsupported
-            duration_ms=duration_ms,
-        )
+    # Cloud-native (skip, unless forcing raster re-optimization) and unsupported
+    # files exit early without conversion.
+    early_exit = _early_exit_result(source, format_info, force=force, start_time=start_time)
+    if early_exit is not None:
+        return early_exit
 
     # Determine output directory and format type
     out_dir = output_dir if output_dir else source.parent
@@ -839,6 +868,8 @@ def convert_directory(
     recursive: bool = True,
     file_paths: list[Path] | None = None,
     catalog_path: Path | None = None,
+    workers: int | None = None,
+    force: bool = False,
 ) -> ConversionReport:
     """Convert all geospatial files in a directory to cloud-native formats.
 
@@ -857,6 +888,13 @@ def convert_directory(
             when the caller has already scanned and filtered the files.
         catalog_path: Path to the catalog root for loading conversion config.
             If None, uses ADR-0019 defaults for COG conversion.
+        workers: Number of parallel worker processes. ``None`` or ``1`` runs
+            serially (the default, so existing callers are unchanged). A value
+            > 1 uses a ``ProcessPoolExecutor`` for CPU-bound raster re-encoding
+            (issue #530). Callers wanting parallel-by-default resolve a concrete
+            count (e.g. ``os.cpu_count()``) before calling.
+        force: Re-optimize already-cloud-native rasters (passed through to
+            :func:`convert_file`). Raster-scoped; valid vectors stay skipped.
 
     Returns:
         ConversionReport with results for all processed files.
@@ -886,13 +924,42 @@ def convert_directory(
                     files.append(item)
         files.sort()
 
-    # Process each file
-    results: list[ConversionResult] = []
+    # Load conversion settings once and pass them explicitly to every file, so a
+    # large batch does not re-read .portolan/config.yaml per file (4,200+ tiles).
+    cog_settings = get_cog_settings(catalog_path) if catalog_path else None
+    vector_settings = get_vector_settings(catalog_path) if catalog_path else None
+
+    # Parallelize only when explicitly asked for (>1 worker) and there is more
+    # than one file. A single file or workers<=1 stays serial to avoid pool
+    # overhead and preserve the default behavior of every existing caller.
+    effective_workers = workers if workers is not None else 1
+    if effective_workers > 1 and len(files) > 1:
+        results = _convert_files_parallel(
+            files,
+            output_dir=output_dir,
+            catalog_path=catalog_path,
+            cog_settings=cog_settings,
+            vector_settings=vector_settings,
+            force=force,
+            on_progress=on_progress,
+            workers=effective_workers,
+        )
+        return ConversionReport(results=results)
+
+    # Serial path
+    results = []
     for file_path in files:
         # Determine output directory for this file
         file_output_dir = output_dir if output_dir else file_path.parent
 
-        result = convert_file(file_path, output_dir=file_output_dir, catalog_path=catalog_path)
+        result = convert_file(
+            file_path,
+            output_dir=file_output_dir,
+            catalog_path=catalog_path,
+            cog_settings=cog_settings,
+            vector_settings=vector_settings,
+            force=force,
+        )
         results.append(result)
 
         # Invoke callback if provided
@@ -900,6 +967,69 @@ def convert_directory(
             on_progress(result)
 
     return ConversionReport(results=results)
+
+
+def _convert_files_parallel(
+    files: list[Path],
+    *,
+    output_dir: Path | None,
+    catalog_path: Path | None,
+    cog_settings: CogSettings | None,
+    vector_settings: VectorSettings | None,
+    force: bool,
+    on_progress: Callable[[ConversionResult], None] | None,
+    workers: int,
+) -> list[ConversionResult]:
+    """Convert files concurrently with a ProcessPoolExecutor (issue #530).
+
+    Conversion is CPU/GDAL-bound, so true parallelism needs separate processes,
+    not threads. The ``on_progress`` callback is invoked in the PARENT process as
+    each future completes (it is never pickled into a worker), preserving the
+    streaming-progress contract (ADR-0040). A worker that dies or raises is
+    captured into a FAILED result so one bad file does not abort the batch.
+    """
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    # Use a "spawn" context, not fork. GDAL/rasterio run worker threads, and
+    # fork()-ing a multi-threaded process can deadlock the child (and aborts on
+    # macOS). Spawn re-imports this module cleanly in each worker.
+    mp_context = multiprocessing.get_context("spawn")
+
+    results: list[ConversionResult] = []
+    with ProcessPoolExecutor(max_workers=workers, mp_context=mp_context) as executor:
+        future_to_file = {
+            executor.submit(
+                convert_file,
+                file_path,
+                output_dir=output_dir if output_dir else file_path.parent,
+                catalog_path=catalog_path,
+                cog_settings=cog_settings,
+                vector_settings=vector_settings,
+                force=force,
+            ): file_path
+            for file_path in files
+        }
+        for future in as_completed(future_to_file):
+            file_path = future_to_file[future]
+            try:
+                result = future.result()
+            except Exception as e:  # pragma: no cover - defensive (process crash/pickle)
+                logger.exception("Parallel conversion worker failed for %s", file_path)
+                result = ConversionResult(
+                    source=file_path,
+                    output=None,
+                    format_from=file_path.suffix.lstrip(".").upper(),
+                    format_to=None,
+                    status=ConversionStatus.FAILED,
+                    error=str(e),
+                    duration_ms=0,
+                )
+            results.append(result)
+            if on_progress is not None:
+                on_progress(result)
+
+    return results
 
 
 # ---------------------------------------------------------------------------
