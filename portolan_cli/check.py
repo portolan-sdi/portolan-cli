@@ -31,6 +31,8 @@ from portolan_cli.convert import (
 )
 from portolan_cli.formats import (
     CloudNativeStatus,
+    FormatType,
+    detect_format,
     get_cloud_native_status,
     get_effective_status,
     is_geoparquet,
@@ -304,6 +306,8 @@ def check_directory(
     fix: bool = False,
     dry_run: bool = False,
     remove_legacy: bool = False,
+    force: bool = False,
+    workers: int | None = None,
     on_progress: Callable[[ConversionResult], None] | None = None,
     catalog_path: Path | None = None,
 ) -> CheckReport:
@@ -325,6 +329,12 @@ def check_directory(
         remove_legacy: If True, delete source files after successful conversion.
             Requires fix=True. Handles sidecars (.dbf, .shx, etc.) and
             FileGDB directories (.gdb). Only removes files converted in THIS run.
+        force: If True, also re-optimize already-cloud-native RASTERS (valid COGs)
+            by re-applying current COG settings, e.g. to add missing overviews.
+            Requires fix=True. Raster-scoped: valid GeoParquet is left untouched
+            (issue #530).
+        workers: Parallel worker processes for conversion. None/1 runs serially;
+            >1 uses a process pool. Threaded to convert_directory.
         on_progress: Optional callback for conversion progress (--fix mode).
         catalog_path: Optional catalog root for loading conversion config.
             If provided, loads conversion overrides from .portolan/config.yaml.
@@ -345,6 +355,9 @@ def check_directory(
     # Validate parameter combinations
     if remove_legacy and not fix:
         raise ValueError("remove_legacy requires fix=True")
+
+    if force and not fix:
+        raise ValueError("force requires fix=True")
 
     if not path.exists():
         raise FileNotFoundError(f"Directory not found: {path}")
@@ -382,15 +395,21 @@ def check_directory(
 
     # Handle fix mode
     if fix and not dry_run:
-        # Only convert files that are CONVERTIBLE (not cloud-native, not unsupported)
-        convertible_files = [
+        # Convert CONVERTIBLE files, plus (when --force) already-cloud-native
+        # RASTERS so valid-but-unoptimized COGs get re-encoded with current
+        # settings (issue #530). Valid vectors are never force-re-processed.
+        files_to_convert = [
             f.path for f in file_statuses if f.status == CloudNativeStatus.CONVERTIBLE
         ]
+        if force:
+            files_to_convert.extend(_forced_raster_paths(file_statuses))
         conversion_report = convert_directory(
             path,
             on_progress=on_progress,
-            file_paths=convertible_files,
+            file_paths=files_to_convert,
             catalog_path=catalog_path,
+            workers=workers,
+            force=force,
         )
         report.conversion_report = conversion_report
 
@@ -405,26 +424,68 @@ def check_directory(
                 )
 
     elif fix and dry_run:
-        # Preview mode - create results showing what would be converted
-        preview_results = [
+        # Preview mode - show what would be converted (no changes on disk).
+        report.conversion_report = ConversionReport(
+            results=_build_preview_results(file_statuses, force=force)
+        )
+        # Note: remove_legacy is ignored in dry_run mode (no actual removal)
+
+    return report
+
+
+def _forced_raster_paths(file_statuses: list[FileStatus]) -> list[Path]:
+    """Paths of already-cloud-native RASTERS eligible for --force re-optimization.
+
+    These are valid COGs that `--fix` would normally skip. Vectors are excluded
+    so `--force` only re-encodes rasters (issue #530).
+    """
+    return [
+        f.path
+        for f in file_statuses
+        if f.status == CloudNativeStatus.CLOUD_NATIVE and detect_format(f.path) == FormatType.RASTER
+    ]
+
+
+def _build_preview_results(
+    file_statuses: list[FileStatus], *, force: bool
+) -> list[ConversionResult]:
+    """Build dry-run preview ConversionResults for --fix (and --force)."""
+
+    def predicted_output(f: FileStatus) -> Path:
+        if f.target_format == "GeoParquet":
+            return f.path.parent / f"{f.path.stem}.parquet"
+        return f.path.parent / f"{f.path.stem}.tif"
+
+    previews = [
+        ConversionResult(
+            source=f.path,
+            output=predicted_output(f),
+            format_from=f.display_name,
+            format_to=f.target_format,
+            status=ConversionStatus.SUCCESS,  # Predicted outcome
+            error=None,
+            duration_ms=0,
+        )
+        for f in file_statuses
+        if f.status == CloudNativeStatus.CONVERTIBLE
+    ]
+    if force:
+        # Forced rasters re-encode in place: COG -> COG, same path.
+        forced = set(_forced_raster_paths(file_statuses))
+        previews.extend(
             ConversionResult(
                 source=f.path,
-                output=f.path.parent / f"{f.path.stem}.parquet"
-                if f.target_format == "GeoParquet"
-                else f.path.parent / f"{f.path.stem}.tif",
+                output=f.path.parent / f"{f.path.stem}.tif",
                 format_from=f.display_name,
-                format_to=f.target_format,
+                format_to="COG",
                 status=ConversionStatus.SUCCESS,  # Predicted outcome
                 error=None,
                 duration_ms=0,
             )
             for f in file_statuses
-            if f.status == CloudNativeStatus.CONVERTIBLE
-        ]
-        report.conversion_report = ConversionReport(results=preview_results)
-        # Note: remove_legacy is ignored in dry_run mode (no actual removal)
-
-    return report
+            if f.path in forced
+        )
+    return previews
 
 
 def _scan_for_files(path: Path) -> list[Path]:

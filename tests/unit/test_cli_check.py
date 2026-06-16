@@ -797,3 +797,110 @@ class TestCheckMetadataFixFlag:
             # Both fix functions should be called
             mock_fix.assert_called_once()
             mock_check.assert_called_once()
+
+
+class TestCheckForceWorkers:
+    """Tests for the --force and --workers flags (issue #530)."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI test runner."""
+        return CliRunner()
+
+    @pytest.fixture
+    def catalog(self, tmp_path: Path) -> Path:
+        """A minimal managed catalog directory."""
+        (tmp_path / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "stac_version": "1.0.0",
+                    "id": "c",
+                    "description": "d",
+                    "links": [],
+                }
+            )
+        )
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text("{}")
+        return tmp_path
+
+    @pytest.mark.unit
+    def test_force_flag_exists(self, runner: CliRunner) -> None:
+        """--force is advertised in help."""
+        result = runner.invoke(cli, ["check", "--help"])
+        assert "--force" in result.output
+
+    @pytest.mark.unit
+    def test_workers_flag_exists(self, runner: CliRunner) -> None:
+        """--workers is advertised in help."""
+        result = runner.invoke(cli, ["check", "--help"])
+        assert "--workers" in result.output
+
+    @pytest.mark.unit
+    def test_force_and_workers_threaded_to_check_directory(
+        self, runner: CliRunner, catalog: Path
+    ) -> None:
+        """--fix --force --workers N reaches check_directory with those values."""
+        from portolan_cli.check import CheckReport
+
+        with patch("portolan_cli.cli.check_directory") as mock_check:
+            mock_check.return_value = CheckReport(root=catalog, files=[], conversion_report=None)
+            result = runner.invoke(
+                cli,
+                [
+                    "check",
+                    str(catalog),
+                    "--geo-assets",
+                    "--fix",
+                    "--force",
+                    "--workers",
+                    "3",
+                ],
+            )
+
+        assert result.exit_code in (0, 1)
+        mock_check.assert_called_once()
+        kwargs = mock_check.call_args.kwargs
+        assert kwargs.get("force") is True
+        assert kwargs.get("workers") == 3
+
+    @pytest.mark.unit
+    def test_workers_defaults_to_cpu_count_when_unset(
+        self, runner: CliRunner, catalog: Path
+    ) -> None:
+        """Without --workers, the CLI resolves a concrete worker count (parallel by default)."""
+        import os
+
+        from portolan_cli.check import CheckReport
+
+        with patch("portolan_cli.cli.check_directory") as mock_check:
+            mock_check.return_value = CheckReport(root=catalog, files=[], conversion_report=None)
+            result = runner.invoke(
+                cli,
+                ["check", str(catalog), "--geo-assets", "--fix", "--force"],
+            )
+
+        assert result.exit_code in (0, 1)
+        kwargs = mock_check.call_args.kwargs
+        assert kwargs.get("workers") == (os.cpu_count() or 1)
+
+    @pytest.mark.unit
+    def test_force_without_fix_warns(self, runner: CliRunner, catalog: Path) -> None:
+        """--force without --fix warns and does not enter the fix path."""
+        with patch("portolan_cli.cli.validate_catalog") as mock_validate:
+            from portolan_cli.validation.results import ValidationReport
+
+            mock_validate.return_value = ValidationReport(results=[])
+            result = runner.invoke(cli, ["check", str(catalog), "--force"])
+
+        assert "--force requires --fix" in result.output
+
+    @pytest.mark.unit
+    def test_workers_rejects_zero(self, runner: CliRunner, catalog: Path) -> None:
+        """--workers 0 is rejected by click.IntRange(min=1)."""
+        result = runner.invoke(
+            cli, ["check", str(catalog), "--geo-assets", "--fix", "--workers", "0"]
+        )
+        assert result.exit_code != 0

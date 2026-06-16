@@ -1175,6 +1175,20 @@ def _output_combined_check_json(
     help="Remove source files after successful conversion (use with --fix)",
 )
 @click.option(
+    "--force",
+    is_flag=True,
+    help="Re-optimize already-valid COGs by re-applying current COG settings, "
+    "e.g. to add missing overviews (use with --fix; rasters only)",
+)
+@click.option(
+    "--workers",
+    "-w",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Parallel worker processes for conversion (default: auto-detect from "
+    "CPU count; use 1 for sequential). Applies to --fix.",
+)
+@click.option(
     "--metadata",
     is_flag=True,
     help="Only check/fix STAC metadata (links, schema, staleness)",
@@ -1199,6 +1213,8 @@ def check(
     fix: bool,
     dry_run: bool,
     remove_legacy: bool,
+    force: bool,
+    workers: int | None,
     metadata: bool,
     geo_assets: bool,
     strict: bool,
@@ -1245,6 +1261,14 @@ def check(
     if remove_legacy and not fix:
         warn("--remove-legacy requires --fix")
 
+    # Warn if --force is used without --fix
+    if force and not fix:
+        warn("--force requires --fix")
+
+    # Resolve worker count: auto-detect from CPU count when unset, so a large
+    # --fix run parallelizes by default (issue #530). An explicit value wins.
+    resolved_workers = workers if workers is not None else (os.cpu_count() or 1)
+
     # Determine which checks to run based on scope flags
     run_metadata, run_geo_assets, mode = _determine_check_mode(metadata, geo_assets)
 
@@ -1257,6 +1281,8 @@ def check(
         fix=fix,
         dry_run=dry_run,
         remove_legacy=remove_legacy,
+        force=force,
+        workers=resolved_workers,
         use_json=use_json,
         verbose=verbose,
         strict=strict,
@@ -1412,6 +1438,8 @@ def _execute_check_workflow(
     use_json: bool,
     verbose: bool,
     strict: bool = False,
+    force: bool = False,
+    workers: int | None = None,
 ) -> None:
     """Execute the check workflow based on flags.
 
@@ -1439,6 +1467,8 @@ def _execute_check_workflow(
             remove_legacy=remove_legacy,
             use_json=use_json,
             verbose=verbose,
+            force=force,
+            workers=workers,
         )
         return
 
@@ -1486,6 +1516,8 @@ def _run_fix_workflow(
     remove_legacy: bool,
     use_json: bool,
     verbose: bool,
+    force: bool = False,
+    workers: int | None = None,
 ) -> None:
     """Execute the fix workflow for selected scope.
 
@@ -1498,6 +1530,8 @@ def _run_fix_workflow(
         remove_legacy: Remove source files after successful conversion.
         use_json: Output JSON envelope.
         verbose: Show detailed output.
+        force: Re-optimize already-valid COGs (raster-scoped, issue #530).
+        workers: Parallel worker processes for conversion.
     """
     metadata_fix_report: FixReport | None = None
     format_fix_report = None
@@ -1561,6 +1595,8 @@ def _run_fix_workflow(
             fix=True,
             dry_run=dry_run,
             remove_legacy=remove_legacy,
+            force=force,
+            workers=workers,
             on_progress=show_conversion_progress,
             catalog_path=path,
         )
