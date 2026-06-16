@@ -891,3 +891,64 @@ class TestTimeoutEnforcement:
 
         assert len(results) == 1
         assert results[0].status == "success"
+
+    def test_queued_layers_do_not_time_out(self, tmp_path: Path) -> None:
+        """Queued layers must not time out while waiting for a worker (Issue #526).
+
+        With more layers than workers, total wall-clock exceeds the per-layer
+        timeout even though each layer runs well under it. The deadline must be
+        measured from execution start, not submission time.
+
+        Pre-fix red behavior: layers queued behind the first ``workers`` batch
+        start after the submission-time deadline has already elapsed, so they
+        come back ``status="failed"`` with a ``"Timeout after 1.0s"`` error
+        despite each running only ~0.5s.
+        """
+        import time
+
+        from portolan_cli.extract.common.report import LayerResult
+        from portolan_cli.extract.wfs.orchestrator import _extract_layers_parallel
+
+        num_layers = 8
+        layers = [make_layer_info(f"layer_{i}", i) for i in range(num_layers)]
+        layers_to_extract = [(i, layer) for i, layer in enumerate(layers)]
+        slugs = {i: f"layer_{i}" for i in range(num_layers)}
+
+        def slow_but_ok(*args: object, **kwargs: object) -> LayerResult:
+            layer = args[1]
+            assert isinstance(layer, LayerInfo)
+            # 0.5s < 1.0s timeout, but 4 sequential rounds (8 layers / 2 workers)
+            # add up to ~2.0s of wall-clock, exceeding the per-layer timeout.
+            time.sleep(0.5)
+            return LayerResult(
+                id=layer.id,
+                name=layer.name,
+                status="success",
+                features=10,
+                size_bytes=100,
+                duration_seconds=0.5,
+                output_path=f"{layer.name}/{layer.name}.parquet",
+                warnings=[],
+                error=None,
+                attempts=1,
+            )
+
+        with patch(
+            "portolan_cli.extract.wfs.orchestrator._extract_layer_task",
+            side_effect=slow_but_ok,
+        ):
+            options = ExtractionOptions(workers=2, timeout=1.0)
+            results = _extract_layers_parallel(
+                url="https://example.com/wfs",
+                layers_to_extract=layers_to_extract,
+                output_dir=tmp_path,
+                options=options,
+                negotiated_version="1.1.0",
+                total=num_layers,
+                layer_slugs=slugs,
+                on_progress=None,
+            )
+
+        assert len(results) == num_layers
+        assert all(r.status == "success" for r in results)
+        assert all(r.error is None for r in results)
