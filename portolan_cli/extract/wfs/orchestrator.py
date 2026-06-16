@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, as_completed, wait
 from dataclasses import dataclass
@@ -440,39 +441,53 @@ def _extract_layers_parallel(
     Issue #508: Enforces per-layer timeout using wait() with deadline tracking.
     The old as_completed() + future.result(timeout) was dead code because
     as_completed() only yields already-completed futures.
+
+    Issue #526: The deadline is anchored to when a worker actually *starts* a
+    layer, not when the future is submitted. With more layers than workers,
+    queued futures would otherwise inherit a submission-time deadline and be
+    falsely marked "timed out" the moment wall-clock passed it, despite never
+    having executed. A layer that has not started has no deadline.
     """
     actual_workers = min(options.workers, len(layers_to_extract))
     logger.info("Extracting %d layers with %d workers", len(layers_to_extract), actual_workers)
     results: list[LayerResult] = []
 
+    # Record each layer's execution start time (keyed by layer index) the moment
+    # a worker picks it up. Guarded by a lock because workers and the main loop
+    # both touch it. A missing entry means "not started yet" -> no deadline.
+    start_lock = threading.Lock()
+    started_at: dict[int, float] = {}
+
     with ThreadPoolExecutor(max_workers=actual_workers) as executor:
-        # Track futures with their metadata and deadlines
         future_to_layer: dict[Future[LayerResult], tuple[int, LayerInfo]] = {}
-        future_deadlines: dict[Future[LayerResult], float] = {}
+
+        def _tracked_task(layer_index: int, layer: LayerInfo, slug: str) -> LayerResult:
+            with start_lock:
+                started_at[layer_index] = time.monotonic()
+            return _extract_layer_task(
+                url, layer, output_dir, options, negotiated_version, layer_index, total, slug
+            )
+
+        def _deadline(future: Future[LayerResult]) -> float | None:
+            """Return the execution deadline for a future, or None if unstarted."""
+            layer_index, _ = future_to_layer[future]
+            with start_lock:
+                start = started_at.get(layer_index)
+            return None if start is None else start + options.timeout
 
         for i, layer in layers_to_extract:
-            future = executor.submit(
-                _extract_layer_task,
-                url,
-                layer,
-                output_dir,
-                options,
-                negotiated_version,
-                i,
-                total,
-                layer_slugs[layer.id],
-            )
+            future = executor.submit(_tracked_task, i, layer, layer_slugs[layer.id])
             future_to_layer[future] = (i, layer)
-            future_deadlines[future] = time.monotonic() + options.timeout
 
         pending: set[Future[LayerResult]] = set(future_to_layer.keys())
 
         while pending:
-            # Calculate the minimum wait time until the next deadline
+            # Wait until the soonest deadline among *started* layers. When no
+            # layer has started yet (brief startup gap), poll so the loop
+            # re-checks once workers pick up work.
             now = time.monotonic()
-            min_timeout = max(
-                0.1, min(future_deadlines[f] - now for f in pending if f in future_deadlines)
-            )
+            deadlines = {f: d for f in pending if (d := _deadline(f)) is not None}
+            min_timeout = max(0.1, min(d - now for d in deadlines.values())) if deadlines else 0.5
 
             done, pending = wait(pending, timeout=min_timeout, return_when=FIRST_COMPLETED)
 
@@ -506,11 +521,15 @@ def _extract_layers_parallel(
                         )
                     )
 
-            # Check for timed-out futures (still pending past deadline)
+            # Check for timed-out futures: only layers that have actually started
+            # and have been executing longer than the per-layer timeout. Queued
+            # (unstarted) layers have no deadline and are never timed out (#526).
             now = time.monotonic()
-            timed_out = {f for f in pending if future_deadlines[f] <= now}
+            timed_out = {f for f in pending if (d := _deadline(f)) is not None and d <= now}
             for future in timed_out:
                 i, layer = future_to_layer[future]
+                with start_lock:
+                    elapsed = now - started_at[i]
                 error_msg = f"Timeout after {options.timeout}s"
                 logger.error("Layer %s timed out after %ds", layer.name, options.timeout)
                 _emit_progress(on_progress, i, total, layer.name, "failed", error=error_msg)
@@ -521,7 +540,7 @@ def _extract_layers_parallel(
                         status="failed",
                         features=0,
                         size_bytes=0,
-                        duration_seconds=options.timeout,
+                        duration_seconds=elapsed,
                         output_path="",
                         warnings=[],
                         error=error_msg,
