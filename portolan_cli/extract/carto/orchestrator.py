@@ -34,6 +34,7 @@ from portolan_cli.extract.carto.discovery import (
     CartoDiscoveryResult,
     CartoTableInfo,
     discover_carto_tables,
+    quote_table_identifier,
     table_has_geometry,
     tables_from_names,
 )
@@ -125,8 +126,14 @@ def _slug_for_table(name: str) -> str:
 
 
 def _build_table_query_url(sql_api_url: str, table_name: str) -> str:
-    """Build a SQL API URL that selects a table (used as a provenance via-link)."""
-    return f"{sql_api_url}?{urlencode({'q': f'SELECT * FROM {table_name}'})}"
+    """Build a SQL API URL that selects a table (used as a provenance via-link).
+
+    The query is never executed by Portolan — it is stored as a STAC ``via`` link
+    href — but the table name is still quoted as a SQL identifier so the link is a
+    valid, copy-pasteable Carto query.
+    """
+    query = f"SELECT * FROM {quote_table_identifier(table_name)}"  # nosec B608
+    return f"{sql_api_url}?{urlencode({'q': query})}"
 
 
 def _emit_progress(

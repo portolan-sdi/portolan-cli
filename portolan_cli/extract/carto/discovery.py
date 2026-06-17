@@ -152,8 +152,13 @@ def carto_sql_request(
     return data
 
 
-def _quote_table(name: str) -> str:
-    """Quote a table identifier for safe interpolation into SQL."""
+def quote_table_identifier(name: str) -> str:
+    """Quote a table name as a SQL identifier for safe interpolation.
+
+    Identifiers cannot be passed as bound parameters, so the correct defense is
+    to wrap the name in double quotes and double any embedded quote (standard SQL
+    identifier escaping). This makes the table name inert as SQL.
+    """
     escaped = name.replace('"', '""')
     return f'"{escaped}"'
 
@@ -172,7 +177,9 @@ def table_has_geometry(
     ``"geometry"``. Detection keys on the field *type*, never the column name
     (e.g. ``gdb_geomattr_data`` is a ``bytea``, not geometry).
     """
-    query = f"SELECT * FROM {_quote_table(table_name)} LIMIT 0"
+    # table_name is quoted as a SQL identifier (quote_table_identifier); identifiers
+    # cannot be bound parameters, so quoting is the correct injection defense.
+    query = f"SELECT * FROM {quote_table_identifier(table_name)} LIMIT 0"  # nosec B608
     data = carto_sql_request(sql_api_url, query, api_key=api_key, timeout=timeout)
     fields = data.get("fields", {})
     if not isinstance(fields, dict):
