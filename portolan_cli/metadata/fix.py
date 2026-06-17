@@ -212,6 +212,54 @@ def repair_titles_and_links(catalog_root: Path, *, dry_run: bool = False) -> lis
     return results
 
 
+def repair_tabular_flags(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
+    """Backfill ``portolan:geospatial: false`` on tabular collections (RULE-0090).
+
+    Repairs what :class:`~portolan_cli.validation.rules.TabularGeospatialFlagRule`
+    flags: a collection whose data assets are tabular (CSV/XLSX or plain Parquet)
+    but which is not explicitly marked non-spatial. Geospatial collections and
+    collections already carrying the flag are left untouched.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        dry_run: If True, report what would change without writing.
+
+    Returns:
+        FixResults for each collection that was (or would be) modified.
+    """
+    from portolan_cli.validation.rules import classify_collection_data
+
+    results: list[FixResult] = []
+
+    for collection_json in sorted(catalog_root.rglob("collection.json")):
+        collection_dir = collection_json.parent
+        if any(part.startswith(".") for part in collection_dir.parts):
+            continue
+        try:
+            data = json.loads(collection_json.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+
+        if classify_collection_data(collection_dir, data) != "tabular":
+            continue
+        if data.get("portolan:geospatial") is False:
+            continue
+
+        if not dry_run:
+            data["portolan:geospatial"] = False
+            collection_json.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        results.append(
+            FixResult(
+                file_path=collection_json,
+                action=FixAction.UPDATED,
+                success=True,
+                message="Set portolan:geospatial: false on tabular collection",
+            )
+        )
+
+    return results
+
+
 def _repair_item_titles(
     stac_file: Path,
     data: dict[str, Any],

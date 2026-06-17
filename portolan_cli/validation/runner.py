@@ -17,6 +17,10 @@ from portolan_cli.validation.rules import (
     PMTilesRecommendedRule,
     ProvisionalDatetimeRule,
     StacFieldsRule,
+    TabularCollectionLevelAssetsRule,
+    TabularGeospatialFlagRule,
+    TabularTableExtensionRule,
+    TabularTemporalExtentRule,
     ValidationRule,
 )
 from portolan_cli.validation.stac_rules import (
@@ -40,6 +44,10 @@ DEFAULT_RULES: tuple[ValidationRule, ...] = (
     ProvisionalDatetimeRule(),
     PartitionStructureRule(),
     PartitionSchemaConsistencyRule(),
+    TabularGeospatialFlagRule(),
+    TabularTableExtensionRule(),
+    TabularTemporalExtentRule(),
+    TabularCollectionLevelAssetsRule(),
 )
 
 
@@ -70,6 +78,10 @@ def _build_rules(
         ProvisionalDatetimeRule(),
         PartitionStructureRule(),
         PartitionSchemaConsistencyRule(),
+        TabularGeospatialFlagRule(),
+        TabularTableExtensionRule(),
+        TabularTemporalExtentRule(),
+        TabularCollectionLevelAssetsRule(),
     )
 
 

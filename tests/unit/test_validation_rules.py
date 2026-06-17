@@ -1410,3 +1410,381 @@ class TestPartitionSchemaConsistencyRule:
 
         rule = PartitionSchemaConsistencyRule()
         assert rule.severity == Severity.ERROR
+
+
+# --- Tabular collection rules (RULE-0090 through RULE-0094) ---
+
+TABLE_EXT = "https://stac-extensions.github.io/table/v1.2.0/schema.json"
+
+
+def _write_parquet(path: Path, *, geo: bool) -> None:
+    """Write a tiny Parquet file, with or without GeoParquet `geo` metadata.
+
+    `is_geoparquet()` only checks for a ``b"geo"`` key in the schema metadata,
+    so we can fabricate a "GeoParquet" without any real geometry.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    table = pa.table({"value": [1, 2, 3]})
+    if geo:
+        table = table.replace_schema_metadata({b"geo": b"{}"})
+    pq.write_table(table, path)
+
+
+def _make_collection(
+    catalog: Path,
+    name: str,
+    *,
+    assets: dict[str, dict[str, object]],
+    extra: dict[str, object] | None = None,
+) -> Path:
+    """Create a catalog dir with one collection.json and return the catalog root."""
+    import json
+
+    (catalog / ".portolan").mkdir(exist_ok=True)
+    collection_dir = catalog / name
+    collection_dir.mkdir(parents=True, exist_ok=True)
+    collection_json: dict[str, object] = {
+        "type": "Collection",
+        "id": name,
+        "stac_version": "1.0.0",
+        "description": "Test collection",
+        "license": "MIT",
+        "extent": {
+            "spatial": {"bbox": [[-180, -90, 180, 90]]},
+            "temporal": {"interval": [[None, None]]},
+        },
+        "links": [],
+        "assets": assets,
+    }
+    if extra:
+        collection_json.update(extra)
+    (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+    return collection_dir
+
+
+class TestTabularGeospatialFlagRule:
+    """RULE-0090: tabular collections MUST have portolan:geospatial: false (ERROR)."""
+
+    @pytest.mark.unit
+    def test_severity_is_error(self) -> None:
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        assert TabularGeospatialFlagRule().severity == Severity.ERROR
+
+    @pytest.mark.unit
+    def test_passes_for_tabular_with_flag(self, tmp_path: Path) -> None:
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        coll = _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+            extra={"portolan:geospatial": False},
+        )
+        _write_parquet(coll / "data.parquet", geo=False)
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_for_tabular_missing_flag(self, tmp_path: Path) -> None:
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        coll = _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+        )
+        _write_parquet(coll / "data.parquet", geo=False)
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is False
+        assert result.severity == Severity.ERROR
+        assert "demographics" in result.message
+        assert result.fix_hint is not None
+
+    @pytest.mark.unit
+    def test_fails_for_tabular_csv_missing_flag(self, tmp_path: Path) -> None:
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        coll = _make_collection(
+            tmp_path,
+            "spreadsheet",
+            assets={"data": {"href": "./data.csv", "roles": ["data"]}},
+        )
+        (coll / "data.csv").write_text("a,b\n1,2\n")
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is False
+
+    @pytest.mark.unit
+    def test_passes_for_geoparquet_without_flag(self, tmp_path: Path) -> None:
+        """A real GeoParquet collection is spatial and must NOT be flagged."""
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        coll = _make_collection(
+            tmp_path,
+            "parcels",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+        )
+        _write_parquet(coll / "data.parquet", geo=True)
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_passes_for_raster_collection_without_flag(self, tmp_path: Path) -> None:
+        """A COG/raster collection is spatial-by-extension, never tabular."""
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        coll = _make_collection(
+            tmp_path,
+            "elevation",
+            assets={"data": {"href": "./dem.tif", "roles": ["data"]}},
+        )
+        (coll / "dem.tif").write_bytes(b"II*\x00placeholder")
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is True
+
+
+class TestTabularTableExtensionRule:
+    """RULE-0091: tabular collections SHOULD use the STAC Table extension (WARNING)."""
+
+    @pytest.mark.unit
+    def test_severity_is_warning(self) -> None:
+        from portolan_cli.validation.rules import TabularTableExtensionRule
+
+        assert TabularTableExtensionRule().severity == Severity.WARNING
+
+    @pytest.mark.unit
+    def test_passes_with_table_columns_and_extension(self, tmp_path: Path) -> None:
+        from portolan_cli.validation.rules import TabularTableExtensionRule
+
+        _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+            extra={
+                "portolan:geospatial": False,
+                "stac_extensions": [TABLE_EXT],
+                "table:columns": [{"name": "pop", "type": "int64"}],
+            },
+        )
+        result = TabularTableExtensionRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_warns_when_table_columns_missing(self, tmp_path: Path) -> None:
+        from portolan_cli.validation.rules import TabularTableExtensionRule
+
+        _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+            extra={"portolan:geospatial": False},
+        )
+        result = TabularTableExtensionRule().check(tmp_path)
+        assert result.passed is False
+        assert result.severity == Severity.WARNING
+        assert "demographics" in result.message
+
+    @pytest.mark.unit
+    def test_ignores_geospatial_collections(self, tmp_path: Path) -> None:
+        """Rule keys off portolan:geospatial == false; geo collections are skipped."""
+        from portolan_cli.validation.rules import TabularTableExtensionRule
+
+        _make_collection(
+            tmp_path,
+            "parcels",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+        )
+        result = TabularTableExtensionRule().check(tmp_path)
+        assert result.passed is True
+
+
+class TestTabularTemporalExtentRule:
+    """RULE-0093: tabular collections SHOULD have temporal extent (WARNING)."""
+
+    @pytest.mark.unit
+    def test_severity_is_warning(self) -> None:
+        from portolan_cli.validation.rules import TabularTemporalExtentRule
+
+        assert TabularTemporalExtentRule().severity == Severity.WARNING
+
+    @pytest.mark.unit
+    def test_passes_when_temporal_present(self, tmp_path: Path) -> None:
+        from portolan_cli.validation.rules import TabularTemporalExtentRule
+
+        _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+            extra={"portolan:geospatial": False},
+        )
+        # _make_collection writes extent.temporal by default
+        result = TabularTemporalExtentRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_warns_when_temporal_absent(self, tmp_path: Path) -> None:
+        import json
+
+        from portolan_cli.validation.rules import TabularTemporalExtentRule
+
+        coll = _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+            extra={"portolan:geospatial": False},
+        )
+        # Strip temporal extent to simulate a missing-temporal collection.
+        cj = coll / "collection.json"
+        data = json.loads(cj.read_text())
+        data["extent"] = {"spatial": {"bbox": [[-180, -90, 180, 90]]}}
+        cj.write_text(json.dumps(data))
+
+        result = TabularTemporalExtentRule().check(tmp_path)
+        assert result.passed is False
+        assert result.severity == Severity.WARNING
+        assert "demographics" in result.message
+
+
+class TestTabularCollectionLevelAssetsRule:
+    """RULE-0094: tabular collections MUST use collection-level assets (ERROR)."""
+
+    @pytest.mark.unit
+    def test_severity_is_error(self) -> None:
+        from portolan_cli.validation.rules import TabularCollectionLevelAssetsRule
+
+        assert TabularCollectionLevelAssetsRule().severity == Severity.ERROR
+
+    @pytest.mark.unit
+    def test_passes_for_collection_level_asset(self, tmp_path: Path) -> None:
+        from portolan_cli.validation.rules import TabularCollectionLevelAssetsRule
+
+        coll = _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+            extra={"portolan:geospatial": False},
+        )
+        _write_parquet(coll / "data.parquet", geo=False)
+
+        result = TabularCollectionLevelAssetsRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_when_data_wrapped_in_items(self, tmp_path: Path) -> None:
+        import json
+
+        from portolan_cli.validation.rules import TabularCollectionLevelAssetsRule
+
+        coll = _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+            extra={"portolan:geospatial": False},
+        )
+        item_dir = coll / "row-1"
+        item_dir.mkdir()
+        (item_dir / "item.json").write_text(json.dumps({"type": "Feature", "id": "row-1"}))
+
+        result = TabularCollectionLevelAssetsRule().check(tmp_path)
+        assert result.passed is False
+        assert result.severity == Severity.ERROR
+        assert "demographics" in result.message
+
+    @pytest.mark.unit
+    def test_exempts_partitioned_collections(self, tmp_path: Path) -> None:
+        """Partitioned tabular data legitimately uses items (ADR-0047)."""
+        import json
+
+        from portolan_cli.validation.rules import TabularCollectionLevelAssetsRule
+
+        coll = _make_collection(
+            tmp_path,
+            "timeseries",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+            extra={"portolan:geospatial": False, "partition:scheme": "hive"},
+        )
+        item_dir = coll / "year=2020"
+        item_dir.mkdir()
+        (item_dir / "item.json").write_text(json.dumps({"type": "Feature", "id": "y2020"}))
+
+        result = TabularCollectionLevelAssetsRule().check(tmp_path)
+        assert result.passed is True
+
+
+class TestRepairTabularFlags:
+    """--fix backfills portolan:geospatial: false on tabular collections (RULE-0090)."""
+
+    @pytest.mark.unit
+    def test_backfills_missing_flag(self, tmp_path: Path) -> None:
+        import json
+
+        from portolan_cli.metadata.fix import repair_tabular_flags
+
+        coll = _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+        )
+        _write_parquet(coll / "data.parquet", geo=False)
+
+        results = repair_tabular_flags(tmp_path)
+
+        assert len(results) == 1
+        assert results[0].success is True
+        data = json.loads((coll / "collection.json").read_text())
+        assert data["portolan:geospatial"] is False
+
+    @pytest.mark.unit
+    def test_dry_run_reports_without_writing(self, tmp_path: Path) -> None:
+        import json
+
+        from portolan_cli.metadata.fix import repair_tabular_flags
+
+        coll = _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+        )
+        _write_parquet(coll / "data.parquet", geo=False)
+
+        results = repair_tabular_flags(tmp_path, dry_run=True)
+
+        assert len(results) == 1
+        data = json.loads((coll / "collection.json").read_text())
+        assert "portolan:geospatial" not in data
+
+    @pytest.mark.unit
+    def test_noop_for_geo_collection(self, tmp_path: Path) -> None:
+        from portolan_cli.metadata.fix import repair_tabular_flags
+
+        coll = _make_collection(
+            tmp_path,
+            "parcels",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+        )
+        _write_parquet(coll / "data.parquet", geo=True)
+
+        results = repair_tabular_flags(tmp_path)
+        assert results == []
+
+    @pytest.mark.unit
+    def test_noop_when_flag_already_set(self, tmp_path: Path) -> None:
+        from portolan_cli.metadata.fix import repair_tabular_flags
+
+        coll = _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+            extra={"portolan:geospatial": False},
+        )
+        _write_parquet(coll / "data.parquet", geo=False)
+
+        results = repair_tabular_flags(tmp_path)
+        assert results == []
