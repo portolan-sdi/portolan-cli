@@ -7257,9 +7257,10 @@ def extract_carto_cmd(
 ) -> None:
     """Extract tables from a Carto SQL API account.
 
-    Downloads vector tables from a Carto account and creates a Portolan catalog
-    with GeoParquet files and STAC metadata. Tables are discovered via
-    CDB_UserTables(); non-spatial tables are skipped.
+    Downloads tables from a Carto account and creates a Portolan catalog with
+    STAC metadata. Tables are discovered via CDB_UserTables(). Spatial tables
+    become GeoParquet; non-spatial tables become plain Parquet in tabular
+    collections (ADR-0047).
 
     URL is the Carto SQL API endpoint or account domain
     (e.g. https://phl.carto.com or https://phl.carto.com/api/v2/sql).
@@ -7267,7 +7268,7 @@ def extract_carto_cmd(
 
     \b
     Examples:
-        # Extract all (spatial) tables from an account
+        # Extract all tables from an account
         portolan extract carto https://phl.carto.com ./output
 
         # Extract specific tables by glob
