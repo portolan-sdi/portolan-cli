@@ -7138,6 +7138,238 @@ def extract_wfs_cmd(
     _output_extract_result(report, output_dir, use_json, dry_run, command="extract-wfs")
 
 
+@extract.command("carto")
+@click.argument("url")
+@click.argument("output_dir", type=click.Path(path_type=Path), required=False)
+@click.option(
+    "--tables",
+    type=str,
+    default=None,
+    help="Include tables matching glob patterns (comma-separated). Example: 'vacant_*,zoning*'",
+)
+@click.option(
+    "--exclude-tables",
+    type=str,
+    default=None,
+    help="Exclude tables matching glob patterns (comma-separated). Example: 'test_*'",
+)
+@click.option(
+    "--where",
+    type=str,
+    default=None,
+    help="SQL WHERE clause applied to every table (e.g. \"updated_at > '2026-01-01'\").",
+)
+@click.option(
+    "--bbox",
+    type=str,
+    default=None,
+    help="Bounding box filter: minx,miny,maxx,maxy (WGS84).",
+)
+@click.option(
+    "--limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum rows per table.",
+)
+@click.option(
+    "--include-cols",
+    type=str,
+    default=None,
+    help="Comma-separated columns to include (default: all).",
+)
+@click.option(
+    "--exclude-cols",
+    type=str,
+    default=None,
+    help="Comma-separated columns to exclude.",
+)
+@click.option(
+    "--api-key",
+    type=str,
+    default=None,
+    help="Carto API key for private accounts (or set the CARTO_API_KEY env var).",
+)
+@click.option(
+    "--workers",
+    type=click.IntRange(min=1),
+    default=1,
+    help="Parallel workers for table extraction (default: 1).",
+)
+@click.option(
+    "--retries",
+    type=click.IntRange(min=1),
+    default=3,
+    help="Retry attempts per failed table (default: 3).",
+)
+@click.option(
+    "--timeout",
+    type=click.FloatRange(min=0.0, min_open=True),
+    default=120.0,
+    help="Per-table request timeout in seconds (default: 120).",
+)
+@click.option(
+    "--resume",
+    is_flag=True,
+    help="Resume from existing extraction-report.json (skip succeeded tables).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="List tables without extracting.",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Output extraction report as JSON.",
+)
+@click.option(
+    "--auto",
+    is_flag=True,
+    help="Skip confirmation prompts.",
+)
+@click.option(
+    "--raw",
+    is_flag=True,
+    help="Skip auto-init: create only extraction files, no STAC catalog.",
+)
+@click.pass_context
+def extract_carto_cmd(
+    ctx: click.Context,
+    url: str,
+    output_dir: Path | None,
+    tables: str | None,
+    exclude_tables: str | None,
+    where: str | None,
+    bbox: str | None,
+    limit: int | None,
+    include_cols: str | None,
+    exclude_cols: str | None,
+    api_key: str | None,
+    workers: int,
+    retries: int,
+    timeout: float,
+    resume: bool,
+    dry_run: bool,
+    json_output: bool,
+    auto: bool,
+    raw: bool,
+) -> None:
+    """Extract tables from a Carto SQL API account.
+
+    Downloads vector tables from a Carto account and creates a Portolan catalog
+    with GeoParquet files and STAC metadata. Tables are discovered via
+    CDB_UserTables(); non-spatial tables are skipped.
+
+    URL is the Carto SQL API endpoint or account domain
+    (e.g. https://phl.carto.com or https://phl.carto.com/api/v2/sql).
+    OUTPUT_DIR is the directory to write extracted data (default: 'carto_extract').
+
+    \b
+    Examples:
+        # Extract all (spatial) tables from an account
+        portolan extract carto https://phl.carto.com ./output
+
+        # Extract specific tables by glob
+        portolan extract carto URL --tables "vacant_*"
+
+        # Incremental refresh via a WHERE clause
+        portolan extract carto URL --tables my_table --where "updated_at > '2026-01-01'"
+
+        # Dry run to see available tables
+        portolan extract carto URL --dry-run
+    """
+    from portolan_cli.extract.carto.orchestrator import (
+        ExtractionOptions,
+        ExtractionProgress,
+        extract_carto_catalog,
+    )
+    from portolan_cli.output import detail, info, warn
+
+    use_json = should_output_json(ctx, json_output)
+
+    if output_dir is None:
+        output_dir = Path("carto_extract")
+
+    bbox_tuple: tuple[float, float, float, float] | None = None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) != 4:
+                _output_extract_error(
+                    use_json,
+                    "InvalidBBoxError",
+                    "bbox must have 4 values: minx,miny,maxx,maxy",
+                    url,
+                    command="extract-carto",
+                )
+                raise SystemExit(1)
+            bbox_tuple = (parts[0], parts[1], parts[2], parts[3])
+        except ValueError as e:
+            _output_extract_error(
+                use_json, "InvalidBBoxError", str(e), url, command="extract-carto"
+            )
+            raise SystemExit(1) from None
+
+    table_include = _parse_filter_patterns(tables)
+    table_exclude = _parse_filter_patterns(exclude_tables)
+
+    options = ExtractionOptions(
+        workers=workers,
+        retries=retries,
+        timeout=timeout,
+        resume=resume,
+        dry_run=dry_run,
+        raw=raw,
+        where=where,
+        bbox=bbox_tuple,
+        limit=limit,
+        include_cols=include_cols,
+        exclude_cols=exclude_cols,
+        api_key=api_key,
+    )
+
+    def on_progress(progress: ExtractionProgress) -> None:
+        if progress.status == "starting":
+            info(f"[{progress.layer_index + 1}/{progress.total_layers}] {progress.layer_name}")
+        elif progress.status == "success":
+            detail("  ✓ Success")
+        elif progress.status == "failed":
+            if progress.error:
+                warn(f"  ✗ Failed: {progress.error}")
+            else:
+                warn("  ✗ Failed")
+        elif progress.status == "skipped":
+            detail("  ↪ Skipped")
+
+    if not auto and not dry_run and not use_json:
+        info(f"Extract from: {url}")
+        info(f"Output to: {output_dir}")
+        if table_include:
+            detail(f"Table filter: {', '.join(table_include)}")
+        if table_exclude:
+            detail(f"Exclude: {', '.join(table_exclude)}")
+        if not click.confirm("Continue?", default=True):
+            raise SystemExit(0)
+
+    try:
+        report = extract_carto_catalog(
+            url=url,
+            output_dir=output_dir,
+            layer_filter=table_include,
+            layer_exclude=table_exclude,
+            options=options,
+            on_progress=None if use_json else on_progress,
+        )
+    except Exception as e:
+        _output_extract_error(
+            use_json, type(e).__name__, f"Extraction failed: {e}", url, command="extract-carto"
+        )
+        raise SystemExit(1) from None
+
+    _output_extract_result(report, output_dir, use_json, dry_run, command="extract-carto")
+
+
 # =============================================================================
 # Version management commands (iceberg backend only)
 # =============================================================================
