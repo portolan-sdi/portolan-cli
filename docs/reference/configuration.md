@@ -885,7 +885,11 @@ Only two fields are required in `metadata.yaml`:
 - **`contact.name`** and **`contact.email`** - Who maintains this data
 - **`license`** - SPDX identifier (validated against common licenses)
 
-Title and description come from STAC metadata (set during `portolan init`).
+Title and description come from STAC metadata (set during `portolan init`). You
+may optionally set `title` and `description` in `metadata.yaml` to override the
+auto-derived values; a human-authored title there is the highest-precedence
+source and is honored by `portolan readme` (precedence:
+`metadata.yaml` > STAC > humanized id).
 
 ### Hierarchical Inheritance
 
@@ -907,7 +911,7 @@ Child values override parent values. Use this to set catalog-wide defaults (lice
 The `portolan readme` command generates `README.md` by combining:
 
 **From STAC (automatic):**
-- Title, description
+- Title, description (overridable via `metadata.yaml` `title`/`description`)
 - Spatial/temporal coverage
 - Schema columns (from `table:columns`)
 - Bands (from `eo:bands`, `raster:bands`)
