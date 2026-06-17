@@ -41,7 +41,14 @@ def _patch_discovery(monkeypatch: pytest.MonkeyPatch, tables: list[CartoTableInf
     )
 
 
-def test_skips_non_spatial_tables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_extracts_non_spatial_tables_as_tabular(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Non-geo tables are extracted as plain Parquet (geometry=False), not skipped.
+
+    gpio's ``geometry`` flag is threaded per table; ``bbox`` is dropped for the
+    non-geo table because a bounding-box filter requires a geometry column.
+    """
     _patch_discovery(
         monkeypatch,
         [
@@ -49,25 +56,32 @@ def test_skips_non_spatial_tables(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
             CartoTableInfo("lookup", id=1, has_geometry=False),
         ],
     )
-    extracted: list[str] = []
+    calls: dict[str, dict[str, Any]] = {}
 
-    def fake_single(url: str, table: Any, path: Path, opts: Any) -> tuple[int, int, float]:
-        extracted.append(table.name)
-        return (3, 100, 0.5)
+    def fake_convert(**kwargs: Any) -> None:
+        calls[kwargs["table_name"]] = kwargs
+        pq.write_table(pa.table({"a": [1]}), kwargs["output_file"])
 
-    monkeypatch.setattr(orchestrator, "_extract_single_table", fake_single)
+    import geoparquet_io.core.carto as gpio_carto  # type: ignore[import-untyped]
+
+    monkeypatch.setattr(gpio_carto, "convert_carto_to_geoparquet", fake_convert)
 
     report = extract_carto_catalog(
-        "https://phl.carto.com", tmp_path, options=ExtractionOptions(raw=True)
+        "https://phl.carto.com",
+        tmp_path,
+        options=ExtractionOptions(raw=True, bbox=(0.0, 0.0, 1.0, 1.0)),
     )
 
-    assert extracted == ["parcels"]  # only the spatial table is extracted
-    by_name = {layer.name: layer for layer in report.layers}
-    assert by_name["parcels"].status == "success"
-    assert by_name["lookup"].status == "skipped"
-    assert any("Non-spatial" in w for w in by_name["lookup"].warnings)
-    assert report.summary.succeeded == 1
-    assert report.summary.skipped == 1
+    # Both tables extracted; geometry flag (and bbox handling) threaded per table.
+    assert calls["parcels"]["geometry"] is True
+    assert calls["parcels"]["bbox"] == (0.0, 0.0, 1.0, 1.0)
+    assert calls["lookup"]["geometry"] is False
+    assert calls["lookup"]["bbox"] is None  # bbox needs geometry; dropped for tabular
+    by_name = {layer.name: layer.status for layer in report.layers}
+    assert by_name["parcels"] == "success"
+    assert by_name["lookup"] == "success"
+    assert report.summary.succeeded == 2
+    assert report.summary.skipped == 0
 
 
 def test_threads_options_into_gpio(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -95,6 +109,7 @@ def test_threads_options_into_gpio(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert captured["limit"] == 5
     assert captured["api_key"] == "secret"
     assert captured["url"] == "https://phl.carto.com/api/v2/sql"
+    assert captured["geometry"] is True  # spatial table → GeoParquet path
 
 
 def test_dry_run_marks_pending_without_extracting(

@@ -55,9 +55,9 @@ logger = logging.getLogger(__name__)
 
 _GLOB_CHARS = ("*", "?", "[")
 
-_NON_SPATIAL_WARNING = (
-    "Non-spatial table (no geometry column); skipped. "
-    "Tabular Carto support is tracked under ADR-0047."
+_NON_SPATIAL_NOTE = (
+    "Non-spatial table (no geometry column); will be extracted as plain Parquet "
+    "into a tabular collection (portolan:geospatial: false, ADR-0047)."
 )
 
 
@@ -213,7 +213,12 @@ def _extract_single_table(
     output_path: Path,
     options: ExtractionOptions,
 ) -> tuple[int, int, float]:
-    """Extract one Carto table to GeoParquet via geoparquet-io.
+    """Extract one Carto table via geoparquet-io.
+
+    Spatial tables become optimized GeoParquet; non-spatial tables become plain
+    Parquet (no ``geo`` metadata key) via gpio's ``geometry=False`` path, so they
+    can be routed into Portolan's tabular pipeline (ADR-0047). ``bbox`` is dropped
+    for non-spatial tables because a bounding-box filter requires a geometry.
 
     Returns:
         Tuple of (feature_count, file_size_bytes, duration_seconds).
@@ -228,13 +233,14 @@ def _extract_single_table(
         table_name=table.name,
         output_file=str(output_path),
         where=options.where,
-        bbox=options.bbox,
+        bbox=options.bbox if table.has_geometry else None,
         limit=options.limit,
         include_cols=options.include_cols,
         exclude_cols=options.exclude_cols,
         api_key=options.api_key,
         timeout=options.timeout,
         overwrite=True,
+        geometry=table.has_geometry,
     )
 
     duration = time.monotonic() - start_time
@@ -346,8 +352,8 @@ def _extract_tables(
     return results
 
 
-def _skipped_result(table: CartoTableInfo, reason: str, warning: str | None = None) -> LayerResult:
-    """Build a skipped LayerResult (resume or non-spatial)."""
+def _skipped_result(table: CartoTableInfo, reason: str) -> LayerResult:
+    """Build a skipped LayerResult (resume: already extracted)."""
     return LayerResult(
         id=table.id,
         name=table.name,
@@ -356,8 +362,8 @@ def _skipped_result(table: CartoTableInfo, reason: str, warning: str | None = No
         size_bytes=0,
         duration_seconds=0.0,
         output_path=None,
-        warnings=[warning] if warning else [],
-        error=reason if warning is None else None,
+        warnings=[],
+        error=reason,
         attempts=0,
     )
 
@@ -433,7 +439,7 @@ def _build_dry_run_report(
             size_bytes=0,
             duration_seconds=0.0,
             output_path="",
-            warnings=[] if t.has_geometry else [_NON_SPATIAL_WARNING],
+            warnings=[] if t.has_geometry else [_NON_SPATIAL_NOTE],
             error=None,
             attempts=0,
         )
@@ -498,12 +504,6 @@ def extract_carto_catalog(
             _emit_progress(on_progress, table.id, total, table.name, "skipped")
             pre_results.append(_skipped_result(table, reason="Already extracted"))
             continue
-        if not table.has_geometry:
-            _emit_progress(on_progress, table.id, total, table.name, "skipped")
-            pre_results.append(
-                _skipped_result(table, reason="non-spatial", warning=_NON_SPATIAL_WARNING)
-            )
-            continue
         tables_to_extract.append(table)
 
     extracted_results = _extract_tables(
@@ -533,6 +533,8 @@ def _auto_init_catalog(
     and seeds metadata.yaml at catalog and collection level.
     """
     from portolan_cli.catalog import add_files, init_catalog
+    from portolan_cli.config import set_setting
+    from portolan_cli.formats import is_geoparquet
 
     parquet_files = [
         output_dir / r.output_path for r in report.layers if r.status == "success" and r.output_path
@@ -542,6 +544,12 @@ def _auto_init_catalog(
 
     title = discovery.account_name
     init_catalog(output_dir, title=title, description=None)
+
+    # Non-geo (tabular) outputs carry no `geo` metadata key; add_files only
+    # accepts them as standalone collection-level assets when tabular support is
+    # enabled (ADR-0047). Enable it before add_files when any output is non-geo.
+    if any(not is_geoparquet(path) for path in parquet_files):
+        set_setting(output_dir, "tabular.enabled", True)
 
     add_files(paths=parquet_files, catalog_root=output_dir)
 
