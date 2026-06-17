@@ -21,7 +21,7 @@ jobs:
         run: python scripts/sync_skills_readme.py --update
 
       - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: sync/skills-install
           delete-branch: true
