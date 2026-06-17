@@ -50,6 +50,19 @@ def test_extract_carto_help_lists_flags() -> None:
         assert flag in result.output
 
 
+def test_extract_carto_help_describes_tabular_not_skipped() -> None:
+    """Non-spatial tables are extracted as plain Parquet, not skipped (regression).
+
+    The original help text claimed "non-spatial tables are skipped"; that became
+    false once tabular extraction landed. Guard the description against regressing.
+    """
+    runner = CliRunner()
+    result = runner.invoke(cli, ["extract", "carto", "--help"])
+    assert result.exit_code == 0
+    assert "skipped" not in result.output.lower()
+    assert "tabular" in result.output.lower()
+
+
 def test_extract_carto_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(
