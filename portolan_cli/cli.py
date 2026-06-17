@@ -1574,11 +1574,18 @@ def _run_fix_workflow(
 
             # Issue #502: populate human-readable titles/descriptions and
             # backfill child/item link titles as part of the metadata fix.
-            from portolan_cli.metadata.fix import repair_titles_and_links
+            from portolan_cli.metadata.fix import (
+                repair_tabular_flags,
+                repair_titles_and_links,
+            )
 
             metadata_fix_report.results.extend(
                 repair_titles_and_links(catalog_root, dry_run=dry_run)
             )
+
+            # Issue #481: backfill portolan:geospatial: false on tabular
+            # collections (RULE-0090) as part of the metadata fix.
+            metadata_fix_report.results.extend(repair_tabular_flags(catalog_root, dry_run=dry_run))
 
             if metadata_fix_report.failure_count > 0:
                 has_failures = True

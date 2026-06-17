@@ -494,7 +494,13 @@ rules:
       collections from spatial collections with missing extent. This enables
       validators and federation agents to route queries correctly.
     validation: |
-      If collection has no GeoParquet assets (no geo metadata in .parquet files):
+      Classify the collection by the content of its data assets: a collection
+      with any geospatial asset (GeoParquet, raster/COG, or other geo format) is
+      spatial; one with tabular assets (CSV/XLSX or plain Parquet) and no
+      geospatial asset is tabular. A Parquet asset is only counted when its file
+      is present and readable (an unreadable/remote Parquet is not assumed
+      tabular).
+      If the collection is tabular:
         assert collection["portolan:geospatial"] == false
     references:
       - formats/tabular.md#marking-collections-non-spatial
@@ -508,7 +514,8 @@ rules:
       is the primary semantic handle for consumers and agents. The table:columns
       property surfaces schema information in STAC without opening the Parquet file.
     validation: |
-      If collection["portolan:geospatial"] == false:
+      If the collection is tabular (portolan:geospatial == false, or detected as
+      tabular by asset content so the rule still applies before RULE-0090 is fixed):
         warn if "table:columns" not in collection
         warn if "https://stac-extensions.github.io/table" not in stac_extensions
     references:
@@ -542,7 +549,8 @@ rules:
       Most tabular data has a time dimension (time-series, reporting periods).
       Temporal extent enables time-based queries and browsing.
     validation: |
-      If collection["portolan:geospatial"] == false:
+      If the collection is tabular (portolan:geospatial == false, or detected as
+      tabular by asset content):
         warn if extent.temporal is not set and data appears to have time dimension
     references:
       - formats/tabular.md#temporal-extent
@@ -555,7 +563,8 @@ rules:
       Single-file tabular datasets should not be wrapped in STAC items.
       Collection-level assets are simpler and match the vector data pattern.
     validation: |
-      If collection["portolan:geospatial"] == false:
+      If the collection is tabular (portolan:geospatial == false, or detected as
+      tabular by asset content) and not partitioned (no partition:scheme):
         assert primary data is in collection.assets, not wrapped in items
     references:
       - formats/tabular.md#collection-level-assets

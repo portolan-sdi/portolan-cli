@@ -10,9 +10,109 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
-from pathlib import Path
+from pathlib import Path, PurePath
+from typing import Any
 
+from portolan_cli.scan_classify import (
+    GEO_ASSET_EXTENSIONS,
+    TABULAR_EXTENSIONS,
+    is_geoparquet,
+)
 from portolan_cli.validation.results import Severity, ValidationResult
+
+# Substring identifying the STAC Table extension in stac_extensions URLs.
+_TABLE_EXTENSION_MARKER = "stac-extensions.github.io/table"
+
+
+def _resolve_local_href(collection_dir: Path, href: str) -> Path | None:
+    """Resolve a STAC asset ``href`` to a local filesystem path.
+
+    Returns ``None`` for remote hrefs (any URL scheme such as ``http://`` or
+    ``s3://``), which cannot be inspected on the local filesystem. Relative
+    hrefs are resolved against ``collection_dir``; a leading ``./`` is stripped
+    first so it does not defeat the join.
+    """
+    if "://" in href:
+        return None
+    rel = href[2:] if href.startswith("./") else href
+    return collection_dir / rel
+
+
+def classify_collection_data(collection_dir: Path, data: dict[str, Any]) -> str:
+    """Classify a collection's data assets as ``geo``, ``tabular``, or ``empty``.
+
+    Inspects the registered ``assets`` by extension (and, for ``.parquet``, by
+    peeking at GeoParquet metadata via :func:`is_geoparquet`). A collection with
+    any geospatial asset is ``"geo"``; otherwise one with any tabular asset is
+    ``"tabular"``; otherwise ``"empty"``. Classifying by actual content means a
+    raster/COG-only collection is correctly ``"geo"`` and never mislabeled.
+
+    A ``.parquet`` asset is only counted when its file is present locally and
+    readable: ``is_geoparquet`` cannot distinguish "plain Parquet" from "file
+    missing / remote / unreadable" (both yield ``False``). Treating an
+    unresolvable Parquet as tabular would raise a false RULE-0090 ERROR — and,
+    worse, drive ``--fix`` to stamp ``portolan:geospatial: false`` onto an
+    actually-spatial collection (e.g. one checked before its data is pulled, or
+    one whose asset href is remote). So such assets are left unclassified.
+
+    Args:
+        collection_dir: Directory containing the collection.json (for href resolution).
+        data: Parsed collection.json contents.
+
+    Returns:
+        One of ``"geo"``, ``"tabular"``, or ``"empty"``.
+    """
+    assets = data.get("assets", {})
+    has_geo = False
+    has_tabular = False
+
+    for asset in assets.values():
+        if not isinstance(asset, dict):
+            continue
+        href = asset.get("href", "")
+        if not href:
+            continue
+        # Skip STAC-GeoParquet rollups (items.parquet); they are metadata, not data.
+        roles = asset.get("roles", [])
+        if "stac-items" in roles:
+            continue
+        ext = PurePath(href).suffix.lower()
+        if ext == ".parquet":
+            local = _resolve_local_href(collection_dir, href)
+            if local is None or not local.is_file():
+                # Remote or not-yet-local Parquet: cannot tell geo from plain,
+                # so do not classify it either way.
+                continue
+            if is_geoparquet(local):
+                has_geo = True
+            else:
+                has_tabular = True
+        elif ext in GEO_ASSET_EXTENSIONS:
+            has_geo = True
+        elif ext in TABULAR_EXTENSIONS:
+            has_tabular = True
+
+    if has_geo:
+        return "geo"
+    if has_tabular:
+        return "tabular"
+    return "empty"
+
+
+def _is_tabular_collection(collection_dir: Path, data: dict[str, Any]) -> bool:
+    """Return True if a collection is non-spatial (tabular).
+
+    A collection counts as tabular when it is either explicitly flagged
+    ``portolan:geospatial: false`` or detected as tabular by asset content
+    (:func:`classify_collection_data`). Keying off *both* signals means a single
+    ``check`` pass surfaces the schema / temporal / layout recommendations
+    (RULE-0091/0093/0094) on a tabular collection even before its
+    ``portolan:geospatial`` flag is backfilled (RULE-0090) — instead of hiding
+    them until a second pass.
+    """
+    if data.get("portolan:geospatial") is False:
+        return True
+    return classify_collection_data(collection_dir, data) == "tabular"
 
 
 class ValidationRule(ABC):
@@ -704,3 +804,165 @@ class BboxValidRule(ValidationRule):
             except (json.JSONDecodeError, OSError):
                 continue
         return invalid
+
+
+# --- Tabular collection rules (ADR-0047, RULE-0090 through RULE-0094) ---
+
+
+def _iter_collections(catalog_path: Path) -> list[tuple[Path, dict[str, Any]]]:
+    """Yield (collection_dir, parsed-json) for every non-hidden collection.json.
+
+    Shared by the tabular rules below. Unparsable files are skipped silently,
+    matching the resilience of the other rules in this module.
+    """
+    found: list[tuple[Path, dict[str, Any]]] = []
+    for collection_json in catalog_path.rglob("collection.json"):
+        collection_dir = collection_json.parent
+        # Filter hidden dirs relative to the catalog root, not by absolute path
+        # parts — otherwise a catalog living under a dotted directory (e.g.
+        # ~/.local/share/catalog) would skip every collection.
+        rel_parts = collection_dir.relative_to(catalog_path).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        try:
+            data = json.loads(collection_json.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        found.append((collection_dir, data))
+    return found
+
+
+def _summarize(issues: list[str]) -> str:
+    """Render an issue list as a capped preview (first 5, then `(+N more)`)."""
+    preview = "; ".join(issues[:5])
+    if len(issues) > 5:
+        preview += f" (+{len(issues) - 5} more)"
+    return preview
+
+
+class TabularGeospatialFlagRule(ValidationRule):
+    """RULE-0090: tabular collections MUST set ``portolan:geospatial: false``.
+
+    The flag distinguishes intentionally non-spatial collections from spatial
+    collections with a missing extent, so federation agents can route queries.
+    Fires for collections whose assets are tabular (CSV/XLSX or plain Parquet)
+    when the flag is not explicitly ``false``.
+    """
+
+    name = "tabular_geospatial_flag"
+    severity = Severity.ERROR
+    description = "Verify tabular collections set portolan:geospatial: false"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        issues: list[str] = []
+        for collection_dir, data in _iter_collections(catalog_path):
+            if classify_collection_data(collection_dir, data) != "tabular":
+                continue
+            if data.get("portolan:geospatial") is not False:
+                issues.append(f"{collection_dir.name}: missing portolan:geospatial: false")
+
+        if issues:
+            return self._fail(
+                f"{len(issues)} tabular collection(s) not marked non-spatial: {_summarize(issues)}",
+                fix_hint="Run 'portolan check --fix' to add portolan:geospatial: false",
+            )
+        return self._pass("All tabular collections are marked non-spatial")
+
+
+class TabularTableExtensionRule(ValidationRule):
+    """RULE-0091: tabular collections SHOULD use the STAC Table extension.
+
+    With no geometry to hint at meaning, the schema is the primary semantic
+    handle for consumers. Warns when a non-spatial collection lacks
+    ``table:columns`` or does not declare the Table extension.
+    """
+
+    name = "tabular_table_extension"
+    severity = Severity.WARNING
+    description = "Recommend STAC Table extension for tabular collections"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        issues: list[str] = []
+        for collection_dir, data in _iter_collections(catalog_path):
+            if not _is_tabular_collection(collection_dir, data):
+                continue
+            has_columns = bool(data.get("table:columns"))
+            extensions = data.get("stac_extensions", [])
+            has_extension = any(_TABLE_EXTENSION_MARKER in str(ext) for ext in extensions)
+            if not has_columns or not has_extension:
+                issues.append(f"{collection_dir.name}: no table:columns / Table extension")
+
+        if issues:
+            return self._fail(
+                f"{len(issues)} tabular collection(s) missing Table extension: "
+                f"{_summarize(issues)}",
+                fix_hint="Add the STAC Table extension and table:columns to the collection",
+            )
+        return self._pass("All tabular collections document their schema")
+
+
+class TabularTemporalExtentRule(ValidationRule):
+    """RULE-0093: tabular collections SHOULD have a temporal extent.
+
+    Most tabular data is time-dimensioned (time-series, reporting periods), and
+    a temporal extent enables time-based queries. Warns when a non-spatial
+    collection omits ``extent.temporal`` entirely (a present-but-null interval
+    is the intentional open-interval default of ADR-0035 and is not flagged).
+    """
+
+    name = "tabular_temporal_extent"
+    severity = Severity.WARNING
+    description = "Recommend temporal extent for tabular collections"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        issues: list[str] = []
+        for collection_dir, data in _iter_collections(catalog_path):
+            if not _is_tabular_collection(collection_dir, data):
+                continue
+            extent = data.get("extent", {})
+            if not isinstance(extent, dict) or extent.get("temporal") is None:
+                issues.append(f"{collection_dir.name}: no extent.temporal")
+
+        if issues:
+            return self._fail(
+                f"{len(issues)} tabular collection(s) missing temporal extent: "
+                f"{_summarize(issues)}",
+                fix_hint="Set extent.temporal in metadata.yaml when the data is time-dimensioned",
+            )
+        return self._pass("All tabular collections declare a temporal extent")
+
+
+class TabularCollectionLevelAssetsRule(ValidationRule):
+    """RULE-0094: tabular collections MUST use collection-level assets.
+
+    Single-file tabular datasets should live in ``collection.assets``, not be
+    wrapped in STAC items. Fires for a non-spatial collection that contains
+    ``item.json`` files. Partitioned collections (``partition:scheme`` present)
+    are exempt — ADR-0047 lets Hive-partitioned tabular data use items.
+    """
+
+    name = "tabular_collection_level_assets"
+    severity = Severity.ERROR
+    description = "Verify tabular collections use collection-level assets, not items"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        issues: list[str] = []
+        for collection_dir, data in _iter_collections(catalog_path):
+            if not _is_tabular_collection(collection_dir, data):
+                continue
+            if data.get("partition:scheme"):
+                continue
+            item_files = [
+                p
+                for p in collection_dir.rglob("item.json")
+                if not any(part.startswith(".") for part in p.relative_to(collection_dir).parts)
+            ]
+            if item_files:
+                issues.append(f"{collection_dir.name}: data wrapped in {len(item_files)} item(s)")
+
+        if issues:
+            return self._fail(
+                f"{len(issues)} tabular collection(s) wrap data in items: {_summarize(issues)}",
+                fix_hint="Store single-file tabular data as collection-level assets (ADR-0031)",
+            )
+        return self._pass("All tabular collections use collection-level assets")
