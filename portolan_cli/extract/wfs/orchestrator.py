@@ -75,7 +75,11 @@ class ExtractionOptions:
         bbox: Bounding box filter (xmin, ymin, xmax, ymax) in output CRS.
         limit: Maximum features per layer (None for unlimited).
         page_size: Features per page when gpio uses parallel pagination for
-            very large layers (1M+ features). Default: 10000.
+            very large layers (1M+ features). Default: 100000 (gpio 1.3+ default,
+            ~10x fewer HTTP roundtrips than the old 10000).
+        auto_tile: When True (default), gpio subdivides the bbox and retries when
+            a server caps maxFeatures below the requested page, so capped layers
+            extract completely instead of silently truncating (gpio 1.3+).
     """
 
     workers: int = 1
@@ -89,7 +93,8 @@ class ExtractionOptions:
     output_crs: str | None = None
     bbox: tuple[float, float, float, float] | None = None
     limit: int | None = None
-    page_size: int = 10000
+    page_size: int = 100000
+    auto_tile: bool = True
 
 
 @dataclass
@@ -262,6 +267,7 @@ def _extract_single_layer(
         output_crs=options.output_crs,
         limit=options.limit,
         page_size=options.page_size,
+        auto_tile=options.auto_tile,
         overwrite=True,  # We control overwrites via resume logic
     )
 

@@ -65,7 +65,52 @@ class TestExtractionOptions:
         assert options.raw is False
         assert options.dry_run is False
         assert options.wfs_version == "auto"
-        assert options.page_size == 10000
+        # Issue #529: adopt gpio 1.3+ defaults.
+        assert options.page_size == 100000
+        assert options.auto_tile is True
+
+
+class TestExtractSingleLayer:
+    """Tests for _extract_single_layer gpio delegation (Issue #529)."""
+
+    def test_passes_page_size_and_auto_tile_to_gpio(self, tmp_path: Path) -> None:
+        """page_size and auto_tile from options are forwarded to gpio."""
+        from portolan_cli.extract.wfs.orchestrator import _extract_single_layer
+
+        layer = make_layer_info("buildings", 0)
+        options = ExtractionOptions(page_size=100000, auto_tile=True)
+
+        with patch("geoparquet_io.core.wfs.convert_wfs_to_geoparquet") as mock_convert:
+            _extract_single_layer(
+                service_url="https://example.com/wfs",
+                layer=layer,
+                output_path=tmp_path / "buildings.parquet",
+                options=options,
+                negotiated_version="2.0.0",
+            )
+
+        mock_convert.assert_called_once()
+        kwargs = mock_convert.call_args.kwargs
+        assert kwargs["page_size"] == 100000
+        assert kwargs["auto_tile"] is True
+
+    def test_auto_tile_disabled_is_forwarded(self, tmp_path: Path) -> None:
+        """auto_tile=False is forwarded so users can opt out."""
+        from portolan_cli.extract.wfs.orchestrator import _extract_single_layer
+
+        layer = make_layer_info("roads", 1)
+        options = ExtractionOptions(auto_tile=False)
+
+        with patch("geoparquet_io.core.wfs.convert_wfs_to_geoparquet") as mock_convert:
+            _extract_single_layer(
+                service_url="https://example.com/wfs",
+                layer=layer,
+                output_path=tmp_path / "roads.parquet",
+                options=options,
+                negotiated_version="2.0.0",
+            )
+
+        assert mock_convert.call_args.kwargs["auto_tile"] is False
 
 
 class TestExtractWfsCatalog:
