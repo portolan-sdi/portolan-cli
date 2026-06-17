@@ -1820,7 +1820,7 @@ wheels = [
 [[package]]
 name = "geoparquet-io"
 version = "1.3.0"
-source = { git = "https://github.com/geoparquet/geoparquet-io.git?branch=main#505f3f06f5e3a8eafeb3df79c69e8dfeae4d2a03" }
+source = { git = "https://github.com/geoparquet/geoparquet-io.git?branch=main#a23dafa4fcfbb92cef9b6804c03caf9e2d1ff8b4" }
 dependencies = [
     { name = "aiohttp" },
     { name = "click" },
