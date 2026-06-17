@@ -24,6 +24,20 @@ from portolan_cli.validation.results import Severity, ValidationResult
 _TABLE_EXTENSION_MARKER = "stac-extensions.github.io/table"
 
 
+def _resolve_local_href(collection_dir: Path, href: str) -> Path | None:
+    """Resolve a STAC asset ``href`` to a local filesystem path.
+
+    Returns ``None`` for remote hrefs (any URL scheme such as ``http://`` or
+    ``s3://``), which cannot be inspected on the local filesystem. Relative
+    hrefs are resolved against ``collection_dir``; a leading ``./`` is stripped
+    first so it does not defeat the join.
+    """
+    if "://" in href:
+        return None
+    rel = href[2:] if href.startswith("./") else href
+    return collection_dir / rel
+
+
 def classify_collection_data(collection_dir: Path, data: dict[str, Any]) -> str:
     """Classify a collection's data assets as ``geo``, ``tabular``, or ``empty``.
 
@@ -32,6 +46,14 @@ def classify_collection_data(collection_dir: Path, data: dict[str, Any]) -> str:
     any geospatial asset is ``"geo"``; otherwise one with any tabular asset is
     ``"tabular"``; otherwise ``"empty"``. Classifying by actual content means a
     raster/COG-only collection is correctly ``"geo"`` and never mislabeled.
+
+    A ``.parquet`` asset is only counted when its file is present locally and
+    readable: ``is_geoparquet`` cannot distinguish "plain Parquet" from "file
+    missing / remote / unreadable" (both yield ``False``). Treating an
+    unresolvable Parquet as tabular would raise a false RULE-0090 ERROR — and,
+    worse, drive ``--fix`` to stamp ``portolan:geospatial: false`` onto an
+    actually-spatial collection (e.g. one checked before its data is pulled, or
+    one whose asset href is remote). So such assets are left unclassified.
 
     Args:
         collection_dir: Directory containing the collection.json (for href resolution).
@@ -45,13 +67,23 @@ def classify_collection_data(collection_dir: Path, data: dict[str, Any]) -> str:
     has_tabular = False
 
     for asset in assets.values():
-        href = asset.get("href", "") if isinstance(asset, dict) else ""
+        if not isinstance(asset, dict):
+            continue
+        href = asset.get("href", "")
         if not href:
+            continue
+        # Skip STAC-GeoParquet rollups (items.parquet); they are metadata, not data.
+        roles = asset.get("roles", [])
+        if "stac-items" in roles:
             continue
         ext = PurePath(href).suffix.lower()
         if ext == ".parquet":
-            rel = href[2:] if href.startswith("./") else href
-            if is_geoparquet(collection_dir / rel):
+            local = _resolve_local_href(collection_dir, href)
+            if local is None or not local.is_file():
+                # Remote or not-yet-local Parquet: cannot tell geo from plain,
+                # so do not classify it either way.
+                continue
+            if is_geoparquet(local):
                 has_geo = True
             else:
                 has_tabular = True
@@ -65,6 +97,22 @@ def classify_collection_data(collection_dir: Path, data: dict[str, Any]) -> str:
     if has_tabular:
         return "tabular"
     return "empty"
+
+
+def _is_tabular_collection(collection_dir: Path, data: dict[str, Any]) -> bool:
+    """Return True if a collection is non-spatial (tabular).
+
+    A collection counts as tabular when it is either explicitly flagged
+    ``portolan:geospatial: false`` or detected as tabular by asset content
+    (:func:`classify_collection_data`). Keying off *both* signals means a single
+    ``check`` pass surfaces the schema / temporal / layout recommendations
+    (RULE-0091/0093/0094) on a tabular collection even before its
+    ``portolan:geospatial`` flag is backfilled (RULE-0090) — instead of hiding
+    them until a second pass.
+    """
+    if data.get("portolan:geospatial") is False:
+        return True
+    return classify_collection_data(collection_dir, data) == "tabular"
 
 
 class ValidationRule(ABC):
@@ -764,13 +812,17 @@ class BboxValidRule(ValidationRule):
 def _iter_collections(catalog_path: Path) -> list[tuple[Path, dict[str, Any]]]:
     """Yield (collection_dir, parsed-json) for every non-hidden collection.json.
 
-    Shared by the tabular rules below. Unparseable files are skipped silently,
+    Shared by the tabular rules below. Unparsable files are skipped silently,
     matching the resilience of the other rules in this module.
     """
     found: list[tuple[Path, dict[str, Any]]] = []
     for collection_json in catalog_path.rglob("collection.json"):
         collection_dir = collection_json.parent
-        if any(part.startswith(".") for part in collection_dir.parts):
+        # Filter hidden dirs relative to the catalog root, not by absolute path
+        # parts — otherwise a catalog living under a dotted directory (e.g.
+        # ~/.local/share/catalog) would skip every collection.
+        rel_parts = collection_dir.relative_to(catalog_path).parts
+        if any(part.startswith(".") for part in rel_parts):
             continue
         try:
             data = json.loads(collection_json.read_text(encoding="utf-8"))
@@ -832,7 +884,7 @@ class TabularTableExtensionRule(ValidationRule):
     def check(self, catalog_path: Path) -> ValidationResult:
         issues: list[str] = []
         for collection_dir, data in _iter_collections(catalog_path):
-            if data.get("portolan:geospatial") is not False:
+            if not _is_tabular_collection(collection_dir, data):
                 continue
             has_columns = bool(data.get("table:columns"))
             extensions = data.get("stac_extensions", [])
@@ -865,7 +917,7 @@ class TabularTemporalExtentRule(ValidationRule):
     def check(self, catalog_path: Path) -> ValidationResult:
         issues: list[str] = []
         for collection_dir, data in _iter_collections(catalog_path):
-            if data.get("portolan:geospatial") is not False:
+            if not _is_tabular_collection(collection_dir, data):
                 continue
             extent = data.get("extent", {})
             if not isinstance(extent, dict) or extent.get("temporal") is None:
@@ -896,7 +948,7 @@ class TabularCollectionLevelAssetsRule(ValidationRule):
     def check(self, catalog_path: Path) -> ValidationResult:
         issues: list[str] = []
         for collection_dir, data in _iter_collections(catalog_path):
-            if data.get("portolan:geospatial") is not False:
+            if not _is_tabular_collection(collection_dir, data):
                 continue
             if data.get("partition:scheme"):
                 continue

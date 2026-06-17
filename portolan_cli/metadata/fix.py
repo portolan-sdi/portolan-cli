@@ -233,7 +233,10 @@ def repair_tabular_flags(catalog_root: Path, *, dry_run: bool = False) -> list[F
 
     for collection_json in sorted(catalog_root.rglob("collection.json")):
         collection_dir = collection_json.parent
-        if any(part.startswith(".") for part in collection_dir.parts):
+        # Filter hidden dirs relative to the catalog root, not by absolute path
+        # parts — a catalog under a dotted directory must not skip everything.
+        rel_parts = collection_dir.relative_to(catalog_root).parts
+        if any(part.startswith(".") for part in rel_parts):
             continue
         try:
             data = json.loads(collection_json.read_text(encoding="utf-8"))

@@ -755,6 +755,67 @@ class TestCheckMetadataFixFlag:
         )
         assert metadata_fix["failure_count"] == 0
 
+    def test_metadata_fix_backfills_tabular_geospatial_flag(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        """check --metadata --fix wires repair_tabular_flags (issue #481, RULE-0090).
+
+        End-to-end through the CLI: a tabular collection missing
+        portolan:geospatial: false must have the flag backfilled on disk.
+        """
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        (catalog_dir / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "stac_version": "1.0.0",
+                    "id": "test-catalog",
+                    "title": "Test Catalog",
+                    "description": "Test",
+                    "links": [],
+                }
+            )
+        )
+
+        coll_dir = catalog_dir / "demographics"
+        coll_dir.mkdir()
+        coll_json = coll_dir / "collection.json"
+        coll_json.write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "demographics",
+                    "stac_version": "1.0.0",
+                    "title": "Demographics",
+                    "description": "Tabular demographics",
+                    "license": "MIT",
+                    "extent": {
+                        "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [],
+                    "assets": {"data": {"href": "./data.parquet", "roles": ["data"]}},
+                }
+            )
+        )
+        # Plain (non-geo) Parquet so the collection classifies as tabular.
+        pq.write_table(pa.table({"value": [1, 2, 3]}), coll_dir / "data.parquet")
+
+        result = runner.invoke(
+            cli,
+            ["check", str(catalog_dir), "--metadata", "--fix"],
+        )
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(coll_json.read_text())
+        assert data["portolan:geospatial"] is False
+
     def test_metadata_fix_dry_run_flag(
         self,
         runner: CliRunner,

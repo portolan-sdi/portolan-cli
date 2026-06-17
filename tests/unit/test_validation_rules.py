@@ -1549,6 +1549,118 @@ class TestTabularGeospatialFlagRule:
         result = TabularGeospatialFlagRule().check(tmp_path)
         assert result.passed is True
 
+    @pytest.mark.unit
+    def test_passes_when_parquet_file_missing(self, tmp_path: Path) -> None:
+        """An unreadable/not-yet-local Parquet must NOT be assumed tabular.
+
+        Regression: a metadata-only catalog (data not pulled yet) would have a
+        registered .parquet href with no file on disk. is_geoparquet returns
+        False for both "plain Parquet" and "file missing", so defaulting to
+        tabular raised a false ERROR and drove --fix to mislabel a spatial
+        collection. The href resolves to no file, so the asset is unclassified.
+        """
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        _make_collection(
+            tmp_path,
+            "parcels",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+        )
+        # Deliberately do NOT write data.parquet.
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_passes_for_remote_parquet_href(self, tmp_path: Path) -> None:
+        """A remote (http/s3) Parquet href cannot be inspected, so not tabular."""
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        _make_collection(
+            tmp_path,
+            "parcels",
+            assets={"data": {"href": "https://example.com/data.parquet", "roles": ["data"]}},
+        )
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_geo_asset_wins_in_mixed_collection(self, tmp_path: Path) -> None:
+        """A collection with both a GeoParquet and a CSV classifies as geo."""
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        coll = _make_collection(
+            tmp_path,
+            "mixed",
+            assets={
+                "geo": {"href": "./data.parquet", "roles": ["data"]},
+                "table": {"href": "./extra.csv", "roles": ["data"]},
+            },
+        )
+        _write_parquet(coll / "data.parquet", geo=True)
+        (coll / "extra.csv").write_text("a,b\n1,2\n")
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_passes_for_empty_collection(self, tmp_path: Path) -> None:
+        """A collection with no data assets is neither geo nor tabular; not flagged."""
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        _make_collection(tmp_path, "empty", assets={})
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_stac_geoparquet_rollup_is_not_tabular(self, tmp_path: Path) -> None:
+        """STAC-GeoParquet rollups (items.parquet with stac-items role) are metadata.
+
+        A raster collection with only a stac-items rollup asset (no actual
+        tabular data) must not be classified as tabular, even though the
+        items.parquet file lacks GeoParquet geo metadata.
+        """
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        coll = _make_collection(
+            tmp_path,
+            "rasters",
+            assets={
+                "cog": {"href": "./scene.tif", "roles": ["data"]},
+                "geoparquet-items": {
+                    "href": "./items.parquet",
+                    "roles": ["stac-items"],
+                    "title": "STAC items as GeoParquet",
+                },
+            },
+        )
+        (coll / "scene.tif").write_bytes(b"II*\x00placeholder")
+        # items.parquet is a rollup, not actual tabular data — no geo metadata.
+        _write_parquet(coll / "items.parquet", geo=False)
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_summary_caps_preview_with_more_marker(self, tmp_path: Path) -> None:
+        """More than five offending collections collapse to a '(+N more)' preview."""
+        from portolan_cli.validation.rules import TabularGeospatialFlagRule
+
+        for i in range(7):
+            coll = _make_collection(
+                tmp_path,
+                f"tab{i}",
+                assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+            )
+            _write_parquet(coll / "data.parquet", geo=False)
+
+        result = TabularGeospatialFlagRule().check(tmp_path)
+        assert result.passed is False
+        assert "7 tabular collection(s)" in result.message
+        assert "(+2 more)" in result.message
+
 
 class TestTabularTableExtensionRule:
     """RULE-0091: tabular collections SHOULD use the STAC Table extension (WARNING)."""
@@ -1593,16 +1705,33 @@ class TestTabularTableExtensionRule:
 
     @pytest.mark.unit
     def test_ignores_geospatial_collections(self, tmp_path: Path) -> None:
-        """Rule keys off portolan:geospatial == false; geo collections are skipped."""
+        """A GeoParquet collection is spatial, so the Table rule never applies."""
         from portolan_cli.validation.rules import TabularTableExtensionRule
 
-        _make_collection(
+        coll = _make_collection(
             tmp_path,
             "parcels",
             assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
         )
+        _write_parquet(coll / "data.parquet", geo=True)
         result = TabularTableExtensionRule().check(tmp_path)
         assert result.passed is True
+
+    @pytest.mark.unit
+    def test_warns_on_content_detected_tabular_without_flag(self, tmp_path: Path) -> None:
+        """Fires even before RULE-0090's flag is backfilled (content-detected tabular)."""
+        from portolan_cli.validation.rules import TabularTableExtensionRule
+
+        coll = _make_collection(
+            tmp_path,
+            "demographics",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+        )
+        _write_parquet(coll / "data.parquet", geo=False)  # plain Parquet, no flag set
+        result = TabularTableExtensionRule().check(tmp_path)
+        assert result.passed is False
+        assert result.severity == Severity.WARNING
+        assert "demographics" in result.message
 
 
 class TestTabularTemporalExtentRule:
@@ -1788,3 +1917,27 @@ class TestRepairTabularFlags:
 
         results = repair_tabular_flags(tmp_path)
         assert results == []
+
+    @pytest.mark.unit
+    def test_noop_when_parquet_file_missing(self, tmp_path: Path) -> None:
+        """A registered-but-absent Parquet is unclassified, so --fix must not write.
+
+        Mirrors RULE-0090: never stamp portolan:geospatial: false on a collection
+        whose only data asset cannot be read (could be a spatial collection whose
+        data has not been pulled yet).
+        """
+        import json
+
+        from portolan_cli.metadata.fix import repair_tabular_flags
+
+        coll = _make_collection(
+            tmp_path,
+            "parcels",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+        )
+        # Deliberately do NOT write data.parquet.
+
+        results = repair_tabular_flags(tmp_path)
+        assert results == []
+        data = json.loads((coll / "collection.json").read_text())
+        assert "portolan:geospatial" not in data
