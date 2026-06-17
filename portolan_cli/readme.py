@@ -5,7 +5,7 @@ This module generates README.md files from STAC metadata and
 generated, never hand-edited.
 
 **Sections auto-filled from STAC:**
-- Title, description (from catalog/collection)
+- Title, description (metadata.yaml override > catalog/collection STAC > id, #534)
 - Spatial/temporal coverage (from extent)
 - Schema/columns (from table:columns)
 - Bands (from eo:bands, raster:bands)
@@ -37,6 +37,7 @@ from typing import Any
 from urllib.parse import quote
 
 from portolan_cli.config import load_merged_metadata
+from portolan_cli.errors import ConfigInvalidStructureError
 
 # Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
 # (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;
@@ -115,15 +116,55 @@ print(gdf.head())
 # =============================================================================
 
 
-def _add_title_section(sections: list[str], stac: dict[str, Any]) -> None:
-    """Add title and description from STAC."""
-    title = stac.get("title") or stac.get("id", "Untitled Collection")
+def _metadata_override(metadata: dict[str, Any], field: str) -> str | None:
+    """Return a non-blank human override for ``field`` from metadata.yaml (#534).
+
+    ``metadata.yaml`` may carry optional ``title``/``description`` keys as the
+    highest-precedence human override (Issue #502, mirrored by
+    :func:`portolan_cli.stac.apply_human_titles`). A blank/whitespace value is
+    treated as "not provided" so the auto-derived STAC value is used instead.
+    """
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get(field)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _resolve_title_description(
+    stac: dict[str, Any],
+    metadata: dict[str, Any],
+) -> tuple[str, str]:
+    """Resolve title/description with metadata.yaml override precedence (#534).
+
+    Precedence: metadata.yaml human override > STAC value > humanized id.
+    """
+    # `or` chains (not stac.get defaults) so an explicit null in STAC
+    # (e.g. {"id": null} or {"description": null}) falls through to the literal
+    # fallback instead of becoming the string "None".
+    title = (
+        _metadata_override(metadata, "title")
+        or stac.get("title")
+        or stac.get("id")
+        or "Untitled Collection"
+    )
+    description = _metadata_override(metadata, "description") or stac.get("description") or ""
+    return str(title), str(description)
+
+
+def _add_title_section(
+    sections: list[str],
+    stac: dict[str, Any],
+    metadata: dict[str, Any],
+) -> None:
+    """Add title and description, preferring metadata.yaml overrides (#534)."""
+    title, description = _resolve_title_description(stac, metadata)
     sections.append(f"# {title}")
     sections.append("")
 
-    description = stac.get("description", "")
     if description:
-        sections.append(str(description).strip())
+        sections.append(description.strip())
         sections.append("")
 
 
@@ -585,8 +626,8 @@ def generate_readme(
             if namespaced_key not in assets and asset_key not in assets:
                 assets[namespaced_key] = asset_value
 
-    # STAC-sourced sections
-    _add_title_section(sections, stac)
+    # STAC-sourced sections (title/description honor metadata.yaml overrides, #534)
+    _add_title_section(sections, stac, metadata)
     _add_keywords_section(sections, metadata)  # Visual badges after title
     _add_spatial_section(sections, stac)
     _add_temporal_section(sections, stac)
@@ -794,17 +835,24 @@ def _add_collections_section(
         sections.append("")
 
     for coll_id in sorted(collections):
-        coll_json = catalog_path / coll_id / "collection.json"
-        title = coll_id
-        description = ""
+        coll_dir = catalog_path / coll_id
+        coll_json = coll_dir / "collection.json"
+        stac: dict[str, Any] = {"id": coll_id}
 
         if coll_json.exists():
             try:
-                data = json.loads(coll_json.read_text())
-                title = data.get("title", coll_id)
-                description = data.get("description", "")
+                stac = json.loads(coll_json.read_text())
             except (json.JSONDecodeError, OSError):
-                pass
+                stac = {"id": coll_id}
+
+        # metadata.yaml title/description override the STAC values (#534). A
+        # malformed metadata.yaml in one collection must not abort the catalog
+        # README, so fall back to STAC-only for that entry.
+        try:
+            coll_metadata = load_merged_metadata(coll_dir, catalog_path)
+        except (ConfigInvalidStructureError, OSError):
+            coll_metadata = {}
+        title, description = _resolve_title_description(stac, coll_metadata)
 
         # Link to collection directory
         sections.append(f"### [{title}](./{coll_id}/)")
@@ -882,9 +930,13 @@ def generate_catalog_readme(catalog_path: Path) -> str:
     # Load merged metadata
     metadata = load_merged_metadata(catalog_path, catalog_path)
 
-    # Title and description
-    title = catalog.get("title", catalog.get("id", "Data Catalog"))
-    description = catalog.get("description", "")
+    # Title and description (metadata.yaml overrides catalog.json, #534)
+    title = (
+        _metadata_override(metadata, "title")
+        or catalog.get("title")
+        or catalog.get("id", "Data Catalog")
+    )
+    description = _metadata_override(metadata, "description") or catalog.get("description", "")
 
     sections.append(f"# {title}")
     sections.append("")

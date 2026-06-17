@@ -292,6 +292,77 @@ class TestGenerateCatalogReadme:
         assert "Demographics Data" in readme or "Census" in readme
 
     @pytest.mark.unit
+    def test_collections_listing_uses_collection_metadata_yaml(self, tmp_path: Path) -> None:
+        """Collections listing uses each collection's metadata.yaml title/description (#534).
+
+        When a collection's STAC title/description is still the slug-humanized
+        default but its .portolan/metadata.yaml carries a human-authored
+        title/description, the catalog README must show the metadata.yaml values.
+        """
+        (tmp_path / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": "my-catalog",
+                    "title": "My Catalog",
+                    "description": "Test",
+                }
+            )
+        )
+
+        (tmp_path / "depth-rp100").mkdir()
+        (tmp_path / "depth-rp100" / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "depth-rp100",
+                    "title": "Depth Rp100",
+                    "description": "Depth Rp100",
+                    "extent": {
+                        "spatial": {"bbox": [[-10, -10, 10, 10]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                }
+            )
+        )
+        (tmp_path / "depth-rp100" / ".portolan").mkdir()
+        (tmp_path / "depth-rp100" / ".portolan" / "metadata.yaml").write_text(
+            'title: "Flood Depth - 100-Year Return Period"\n'
+            'description: "Modeled riverine flood water depth (meters)."\n'
+        )
+
+        readme = generate_catalog_readme(tmp_path)
+
+        assert "Flood Depth - 100-Year Return Period" in readme
+        assert "Modeled riverine flood water depth (meters)." in readme
+        # The slug-humanized STAC heading must not appear.
+        assert "[Depth Rp100]" not in readme
+
+    @pytest.mark.unit
+    def test_catalog_title_uses_metadata_yaml_override(self, tmp_path: Path) -> None:
+        """Catalog title/description come from metadata.yaml when set (#534)."""
+        (tmp_path / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": "my-catalog",
+                    "title": "My Catalog",
+                    "description": "Slug description",
+                }
+            )
+        )
+        (tmp_path / ".portolan").mkdir()
+        (tmp_path / ".portolan" / "metadata.yaml").write_text(
+            'title: "Curated Catalog Name"\ndescription: "A human-authored catalog description."\n'
+        )
+
+        readme = generate_catalog_readme(tmp_path)
+
+        assert "# Curated Catalog Name" in readme
+        assert "A human-authored catalog description." in readme
+        assert "# My Catalog" not in readme
+
+    @pytest.mark.unit
     def test_includes_aggregated_extent(self, tmp_path: Path) -> None:
         """Catalog README should show aggregated spatial extent."""
         (tmp_path / "catalog.json").write_text(

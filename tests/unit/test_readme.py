@@ -1,7 +1,7 @@
 """Tests for README generation (ADR-0038).
 
 Tests README generation from STAC metadata + metadata.yaml:
-- Title/description from STAC (not metadata.yaml)
+- Title/description from metadata.yaml override, else STAC, else id (#534, #502)
 - Columns from table:columns extension
 - Code examples based on format
 - Checksums from STAC assets
@@ -45,7 +45,7 @@ class TestGenerateReadme:
 
     @pytest.mark.unit
     def test_title_comes_from_stac(self) -> None:
-        """generate_readme uses title from STAC, not metadata.yaml."""
+        """generate_readme uses STAC title when metadata.yaml has no override."""
         from portolan_cli.readme import generate_readme
 
         stac = {"type": "Collection", "id": "test", "title": "STAC Title"}
@@ -57,6 +57,58 @@ class TestGenerateReadme:
         readme = generate_readme(stac=stac, metadata=metadata)
 
         assert "# STAC Title" in readme
+
+    @pytest.mark.unit
+    def test_title_from_metadata_overrides_stac(self) -> None:
+        """metadata.yaml title/description override STAC values (#534, #502).
+
+        A human-authored title in metadata.yaml is the highest-precedence source
+        (consistent with apply_human_titles), so ``readme`` honors it even when
+        the STAC title/description is still the slug-humanized default.
+        """
+        from portolan_cli.readme import generate_readme
+
+        stac = {
+            "type": "Collection",
+            "id": "depth-rp100",
+            "title": "Depth Rp100",
+            "description": "Depth Rp100",
+        }
+        metadata = {
+            "contact": {"name": "Name", "email": "a@b.c"},
+            "license": "MIT",
+            "title": "Flood Depth - 100-Year Return Period",
+            "description": "Modeled riverine flood water depth (meters).",
+        }
+
+        readme = generate_readme(stac=stac, metadata=metadata)
+
+        assert "# Flood Depth - 100-Year Return Period" in readme
+        assert "Modeled riverine flood water depth (meters)." in readme
+        assert "# Depth Rp100" not in readme
+
+    @pytest.mark.unit
+    def test_blank_metadata_title_falls_back_to_stac(self) -> None:
+        """A blank metadata.yaml title is treated as absent (#502); STAC wins."""
+        from portolan_cli.readme import generate_readme
+
+        stac = {
+            "type": "Collection",
+            "id": "test",
+            "title": "STAC Title",
+            "description": "STAC description.",
+        }
+        metadata = {
+            "contact": {"name": "Name", "email": "a@b.c"},
+            "license": "MIT",
+            "title": "   ",
+            "description": "",
+        }
+
+        readme = generate_readme(stac=stac, metadata=metadata)
+
+        assert "# STAC Title" in readme
+        assert "STAC description." in readme
 
     @pytest.mark.unit
     def test_title_falls_back_to_id(self) -> None:
@@ -72,6 +124,22 @@ class TestGenerateReadme:
         readme = generate_readme(stac=stac, metadata=metadata)
 
         assert "# my-collection" in readme
+
+    @pytest.mark.unit
+    def test_explicit_null_stac_fields_do_not_render_none(self) -> None:
+        """Explicit nulls in STAC fall back, never render the string 'None' (#534)."""
+        from portolan_cli.readme import generate_readme
+
+        stac = {"type": "Collection", "id": None, "title": None, "description": None}
+        metadata = {
+            "contact": {"name": "Name", "email": "a@b.c"},
+            "license": "MIT",
+        }
+
+        readme = generate_readme(stac=stac, metadata=metadata)
+
+        assert "# Untitled Collection" in readme
+        assert "None" not in readme
 
     @pytest.mark.unit
     def test_description_comes_from_stac(self) -> None:

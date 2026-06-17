@@ -182,11 +182,11 @@ class TestReadmeRecursive:
         with runner.isolated_filesystem(temp_dir=catalog_with_collections):
             runner.invoke(cli, ["readme"])
 
-        # Modify a collection to make its README stale
-        coll_json = catalog_with_collections / "alpha" / "collection.json"
-        data = json.loads(coll_json.read_text())
-        data["title"] = "MODIFIED TITLE"
-        coll_json.write_text(json.dumps(data))
+        # Modify a collection to make its README stale. The alpha collection has
+        # a metadata.yaml title, which is the highest-precedence source for the
+        # README heading (#534), so mutate that to actually change the output.
+        meta_yaml = catalog_with_collections / "alpha" / ".portolan" / "metadata.yaml"
+        meta_yaml.write_text("title: MODIFIED TITLE\n")
 
         # Check should now fail
         with runner.isolated_filesystem(temp_dir=catalog_with_collections):
