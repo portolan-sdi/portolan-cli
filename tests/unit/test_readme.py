@@ -126,6 +126,22 @@ class TestGenerateReadme:
         assert "# my-collection" in readme
 
     @pytest.mark.unit
+    def test_explicit_null_stac_fields_do_not_render_none(self) -> None:
+        """Explicit nulls in STAC fall back, never render the string 'None' (#534)."""
+        from portolan_cli.readme import generate_readme
+
+        stac = {"type": "Collection", "id": None, "title": None, "description": None}
+        metadata = {
+            "contact": {"name": "Name", "email": "a@b.c"},
+            "license": "MIT",
+        }
+
+        readme = generate_readme(stac=stac, metadata=metadata)
+
+        assert "# Untitled Collection" in readme
+        assert "None" not in readme
+
+    @pytest.mark.unit
     def test_description_comes_from_stac(self) -> None:
         """generate_readme uses description from STAC."""
         from portolan_cli.readme import generate_readme

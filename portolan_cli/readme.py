@@ -37,6 +37,7 @@ from typing import Any
 from urllib.parse import quote
 
 from portolan_cli.config import load_merged_metadata
+from portolan_cli.errors import ConfigInvalidStructureError
 
 # Keyword-badge rendering limits (#515). A junk-dominated list is a machine dump
 # (e.g. WFS layer ids seeded into metadata.yaml at extraction) and is suppressed;
@@ -139,12 +140,16 @@ def _resolve_title_description(
 
     Precedence: metadata.yaml human override > STAC value > humanized id.
     """
+    # `or` chains (not stac.get defaults) so an explicit null in STAC
+    # (e.g. {"id": null} or {"description": null}) falls through to the literal
+    # fallback instead of becoming the string "None".
     title = (
         _metadata_override(metadata, "title")
         or stac.get("title")
-        or stac.get("id", "Untitled Collection")
+        or stac.get("id")
+        or "Untitled Collection"
     )
-    description = _metadata_override(metadata, "description") or stac.get("description", "")
+    description = _metadata_override(metadata, "description") or stac.get("description") or ""
     return str(title), str(description)
 
 
@@ -840,10 +845,12 @@ def _add_collections_section(
             except (json.JSONDecodeError, OSError):
                 stac = {"id": coll_id}
 
-        # metadata.yaml title/description override the STAC values (#534).
+        # metadata.yaml title/description override the STAC values (#534). A
+        # malformed metadata.yaml in one collection must not abort the catalog
+        # README, so fall back to STAC-only for that entry.
         try:
             coll_metadata = load_merged_metadata(coll_dir, catalog_path)
-        except Exception:
+        except (ConfigInvalidStructureError, OSError):
             coll_metadata = {}
         title, description = _resolve_title_description(stac, coll_metadata)
 
