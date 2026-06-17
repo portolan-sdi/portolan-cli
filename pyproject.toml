@@ -29,7 +29,7 @@ dependencies = [
     "antimeridian>=0.3.11",  # RFC 7946 compliant antimeridian handling for STAC bbox
     "click>=8.3.1",
     "defusedxml>=0.7.1",  # Safe XML parsing (XXE protection) for CSW/ISO 19139 metadata
-    "geoparquet-io>=1.2.0",  # v1.2.0 adds non-geo table write support (geometry_column=None)
+    "geoparquet-io>=1.3.0",  # WFS auto-tile + 100K page_size defaults (Issue #529); git main pinned via [tool.uv.sources]
     "httpx>=0.27.0",  # HTTP client for ArcGIS REST API discovery
     "obstore>=0.8.2",  # Cloud object storage (S3, GCS, Azure) via Rust bindings
     "python-dotenv>=1.0.0",  # Load .env files for credentials (ADR-0024, Issue #356)
@@ -325,6 +325,13 @@ dev = [
     "pytest-xdist>=3.8.0",
     "types-pyyaml>=6.0.12.20250915",
 ]
+
+[tool.uv.sources]
+# Track geoparquet-io git main during fast co-development (Issue #529). The
+# published-metadata spec stays `geoparquet-io>=1.3.0` (PyPI-valid); this
+# dev-only source override pulls main so portolan picks up upstream WFS fixes
+# (auto-tile, 100K page_size) before they hit a PyPI release.
+geoparquet-io = { git = "https://github.com/geoparquet/geoparquet-io.git", branch = "main" }
 
 [tool.menard]
 mode = "block"

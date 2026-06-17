@@ -6943,8 +6943,14 @@ def extract_arcgis_cmd(
 @click.option(
     "--page-size",
     type=click.IntRange(min=100),
-    default=10000,
-    help="Features per page for large layer pagination (default: 10000).",
+    default=100000,
+    help="Features per page for large layer pagination (default: 100000).",
+)
+@click.option(
+    "--auto-tile/--no-auto-tile",
+    default=True,
+    help="Subdivide the bbox and retry when a server caps maxFeatures, so "
+    "capped layers extract completely (default: enabled).",
 )
 @click.option(
     "--resume",
@@ -6987,6 +6993,7 @@ def extract_wfs_cmd(
     retries: int,
     timeout: float,
     page_size: int,
+    auto_tile: bool,
     resume: bool,
     dry_run: bool,
     json_output: bool,
@@ -7077,6 +7084,7 @@ def extract_wfs_cmd(
         bbox=bbox_tuple,
         limit=limit,
         page_size=page_size,
+        auto_tile=auto_tile,
     )
 
     # Progress callback for text output
