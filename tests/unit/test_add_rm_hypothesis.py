@@ -32,7 +32,16 @@ from portolan_cli.dataset import (
 
 # Safe filename characters (avoid path separators, null bytes, etc.)
 safe_chars = st.sampled_from(string.ascii_letters + string.digits + "_-")
-safe_filename = st.text(safe_chars, min_size=1, max_size=20)
+
+# Windows reserved device names (case-insensitive) — cannot be used as filenames.
+_WINDOWS_RESERVED = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{i}" for i in range(1, 10)}
+    | {f"lpt{i}" for i in range(1, 10)}
+)
+safe_filename = st.text(safe_chars, min_size=1, max_size=20).filter(
+    lambda s: s.lower() not in _WINDOWS_RESERVED
+)
 
 # Geospatial extensions
 geospatial_ext = st.sampled_from(list(GEOSPATIAL_EXTENSIONS))
