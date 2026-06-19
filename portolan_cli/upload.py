@@ -161,7 +161,7 @@ def parse_object_store_url(url: str) -> tuple[str, str]:
 
 def _load_aws_credentials_from_profile(
     profile: str = "default",
-) -> tuple[str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, str | None, str | None]:
     """Load AWS credentials from ~/.aws/credentials file.
 
     Uses Python's built-in configparser to read credentials without requiring boto3.
@@ -170,14 +170,16 @@ def _load_aws_credentials_from_profile(
         profile: AWS profile name (default: "default")
 
     Returns:
-        Tuple of (access_key_id, secret_access_key, region)
-        Any value may be None if not found.
+        Tuple of (access_key_id, secret_access_key, session_token, region)
+        Any value may be None if not found. session_token is present for
+        temporary (STS) credentials (access key id starting with "ASIA").
     """
     creds_file = Path.home() / ".aws" / "credentials"
     config_file = Path.home() / ".aws" / "config"
 
     access_key: str | None = None
     secret_key: str | None = None
+    session_token: str | None = None
     region: str | None = None
 
     # Read credentials
@@ -189,9 +191,11 @@ def _load_aws_credentials_from_profile(
             section = parser[profile]
             access_key = section.get("aws_access_key_id")
             secret_key = section.get("aws_secret_access_key")
+            session_token = section.get("aws_session_token")
         elif profile == "default" and "DEFAULT" in parser:
             access_key = parser["DEFAULT"].get("aws_access_key_id")
             secret_key = parser["DEFAULT"].get("aws_secret_access_key")
+            session_token = parser["DEFAULT"].get("aws_session_token")
 
     # Read region from config
     if config_file.exists():
@@ -205,7 +209,7 @@ def _load_aws_credentials_from_profile(
         elif profile == "default" and "DEFAULT" in config:
             region = config["DEFAULT"].get("region")
 
-    return access_key, secret_key, region
+    return access_key, secret_key, session_token, region
 
 
 def _try_infer_region_from_bucket(bucket: str) -> str | None:
@@ -253,7 +257,7 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
     """
     # If profile specified, check credentials file
     if profile:
-        access_key, secret_key, _ = _load_aws_credentials_from_profile(profile)
+        access_key, secret_key, _, _ = _load_aws_credentials_from_profile(profile)
         if access_key and secret_key:
             return True, ""
         else:
@@ -278,7 +282,7 @@ def _check_s3_credentials(profile: str | None = None) -> tuple[bool, str]:
         return True, ""
 
     # Fall back to default profile in ~/.aws/credentials
-    access_key, secret_key, _ = _load_aws_credentials_from_profile("default")
+    access_key, secret_key, _, _ = _load_aws_credentials_from_profile("default")
     if access_key and secret_key:
         return True, ""
 
@@ -448,20 +452,30 @@ def _setup_store_and_kwargs(
         # Load credentials from profile, environment, or default profile
         access_key: str | None = None
         secret_key: str | None = None
+        session_token: str | None = None
         profile_region: str | None = None
 
         if profile:
-            access_key, secret_key, profile_region = _load_aws_credentials_from_profile(profile)
+            (
+                access_key,
+                secret_key,
+                session_token,
+                profile_region,
+            ) = _load_aws_credentials_from_profile(profile)
         else:
             # Try environment variables first
             access_key = os.environ.get("AWS_ACCESS_KEY_ID")
             secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+            session_token = os.environ.get("AWS_SESSION_TOKEN")
 
             # Fall back to default profile if no env vars
             if not (access_key and secret_key):
-                access_key, secret_key, profile_region = _load_aws_credentials_from_profile(
-                    "default"
-                )
+                (
+                    access_key,
+                    secret_key,
+                    session_token,
+                    profile_region,
+                ) = _load_aws_credentials_from_profile("default")
 
         # Determine region: explicit flag > env var > profile config > bucket heuristic
         region = s3_region
@@ -480,6 +494,11 @@ def _setup_store_and_kwargs(
         if access_key and secret_key:
             store_kwargs["access_key_id"] = access_key
             store_kwargs["secret_access_key"] = secret_key
+            # Forward the session token for temporary (STS) credentials, e.g.
+            # those issued by Source Cooperative. Without it, obstore sends an
+            # 'ASIA…' key with no token and S3 returns 403 InvalidAccessKeyId.
+            if session_token:
+                store_kwargs["aws_session_token"] = session_token
 
         # Bucket names with dots (e.g., us-west-2.opendata.source.coop) require
         # path-style requests because virtual-hosted style would create invalid
