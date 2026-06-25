@@ -1292,7 +1292,7 @@ class TestMultiCloudStoreSetup:
         from portolan_cli.upload import setup_store
 
         with patch("portolan_cli.upload._load_aws_credentials_from_profile") as mock_load:
-            mock_load.return_value = ("access_key", "secret_key", "us-east-1")
+            mock_load.return_value = ("access_key", "secret_key", None, "us-east-1")
 
             with patch("portolan_cli.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()

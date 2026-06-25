@@ -74,6 +74,11 @@ aws_secret_access_key = defaultsecret
 [myprofile]
 aws_access_key_id = AKIAPROFILEKEY
 aws_secret_access_key = profilesecret
+
+[temp-sts]
+aws_access_key_id = ASIATEMPKEY
+aws_secret_access_key = tempsecret
+aws_session_token = temp-session-token-value
 """)
 
     config_file = aws_dir / "config"
@@ -448,7 +453,7 @@ class TestCheckCredentials:
 
         with patch.dict(os.environ, {}, clear=True):
             with patch("portolan_cli.upload._load_aws_credentials_from_profile") as mock_load:
-                mock_load.return_value = (None, None, None)
+                mock_load.return_value = (None, None, None, None)
                 valid, hint = check_credentials("s3://mybucket/path")
 
         assert valid is False
@@ -1003,10 +1008,13 @@ class TestLoadAwsCredentials:
 
         # Fixture patches Path.home() - assert it exists to mark as used
         assert mock_aws_credentials.exists()
-        access_key, secret_key, region = _load_aws_credentials_from_profile("default")
+        access_key, secret_key, session_token, region = _load_aws_credentials_from_profile(
+            "default"
+        )
 
         assert access_key == "AKIADEFAULTKEY"
         assert secret_key == "defaultsecret"
+        assert session_token is None
         assert region == "us-east-1"
 
     @pytest.mark.unit
@@ -1016,11 +1024,30 @@ class TestLoadAwsCredentials:
 
         # Fixture patches Path.home() - assert it exists to mark as used
         assert mock_aws_credentials.exists()
-        access_key, secret_key, region = _load_aws_credentials_from_profile("myprofile")
+        access_key, secret_key, session_token, region = _load_aws_credentials_from_profile(
+            "myprofile"
+        )
 
         assert access_key == "AKIAPROFILEKEY"
         assert secret_key == "profilesecret"
+        assert session_token is None
         assert region == "eu-west-1"
+
+    @pytest.mark.unit
+    def test_load_temporary_credentials_with_session_token(
+        self, mock_aws_credentials: Path
+    ) -> None:
+        """Should load the session token for temporary (STS) credentials."""
+        from portolan_cli.upload import _load_aws_credentials_from_profile
+
+        assert mock_aws_credentials.exists()
+        access_key, secret_key, session_token, _region = _load_aws_credentials_from_profile(
+            "temp-sts"
+        )
+
+        assert access_key == "ASIATEMPKEY"
+        assert secret_key == "tempsecret"
+        assert session_token == "temp-session-token-value"
 
     @pytest.mark.unit
     def test_load_missing_profile(self, mock_aws_credentials: Path) -> None:
@@ -1029,11 +1056,70 @@ class TestLoadAwsCredentials:
 
         # Fixture patches Path.home() - assert it exists to mark as used
         assert mock_aws_credentials.exists()
-        access_key, secret_key, region = _load_aws_credentials_from_profile("nonexistent")
+        access_key, secret_key, session_token, region = _load_aws_credentials_from_profile(
+            "nonexistent"
+        )
 
         assert access_key is None
         assert secret_key is None
+        assert session_token is None
         assert region is None
+
+
+class TestSetupStoreSessionToken:
+    """Tests that temporary (STS) session tokens are forwarded to the S3 store."""
+
+    @pytest.mark.unit
+    def test_session_token_forwarded_to_s3store(self, mock_aws_credentials: Path) -> None:
+        """A profile with aws_session_token must pass it through to S3Store."""
+        from portolan_cli.upload import _setup_store_and_kwargs
+
+        assert mock_aws_credentials.exists()
+        with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+            _setup_store_and_kwargs(
+                "s3://us-west-2.opendata.source.coop",
+                profile="temp-sts",
+                chunk_concurrency=4,
+            )
+
+        _args, kwargs = mock_s3_store.call_args
+        assert kwargs["access_key_id"] == "ASIATEMPKEY"
+        assert kwargs["secret_access_key"] == "tempsecret"
+        assert kwargs["aws_session_token"] == "temp-session-token-value"
+
+    @pytest.mark.unit
+    def test_no_session_token_for_long_term_credentials(self, mock_aws_credentials: Path) -> None:
+        """Long-term credentials (no token) must not set aws_session_token."""
+        from portolan_cli.upload import _setup_store_and_kwargs
+
+        assert mock_aws_credentials.exists()
+        with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+            _setup_store_and_kwargs(
+                "s3://us-west-2.opendata.source.coop",
+                profile="myprofile",
+                chunk_concurrency=4,
+            )
+
+        _args, kwargs = mock_s3_store.call_args
+        assert "aws_session_token" not in kwargs
+
+    @pytest.mark.unit
+    def test_session_token_from_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """AWS_SESSION_TOKEN env var is forwarded when no profile is given."""
+        from portolan_cli.upload import _setup_store_and_kwargs
+
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ASIAENVKEY")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "envsecret")
+        monkeypatch.setenv("AWS_SESSION_TOKEN", "env-session-token")
+        with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+            _setup_store_and_kwargs(
+                "s3://us-west-2.opendata.source.coop",
+                profile=None,
+                chunk_concurrency=4,
+            )
+
+        _args, kwargs = mock_s3_store.call_args
+        assert kwargs["aws_session_token"] == "env-session-token"
 
 
 # =============================================================================
