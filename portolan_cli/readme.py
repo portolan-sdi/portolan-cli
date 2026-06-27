@@ -854,8 +854,13 @@ def _add_collections_section(
             coll_metadata = {}
         title, description = _resolve_title_description(stac, coll_metadata)
 
-        # Link to collection directory
-        sections.append(f"### [{title}](./{coll_id}/)")
+        # Link to collection directory. Prefix with the catalog directory name
+        # rather than using a bare "./" relative link (#549): static hosts like
+        # source.coop serve the catalog README at a URL with no trailing slash
+        # (e.g. /tyler/colombia-ecosystems-map), so "./ecosistemas/" resolves
+        # against /tyler/ and drops the catalog name. Including the catalog dir
+        # name makes it resolve to /tyler/colombia-ecosystems-map/ecosistemas/.
+        sections.append(f"### [{title}]({catalog_path.name}/{coll_id}/)")
         sections.append("")
         if description:
             # Truncate long descriptions
