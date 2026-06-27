@@ -292,6 +292,51 @@ class TestGenerateCatalogReadme:
         assert "Demographics Data" in readme or "Census" in readme
 
     @pytest.mark.unit
+    def test_collection_link_includes_catalog_dir(self, tmp_path: Path) -> None:
+        """Collection links include the catalog directory name (#549).
+
+        Static hosts like source.coop serve the catalog README at a URL with no
+        trailing slash (e.g. ``/tyler/colombia-ecosystems-map``). A bare
+        ``./ecosistemas/`` link then resolves against ``/tyler/``, dropping the
+        catalog name and 404-ing. Prefixing the link with the catalog directory
+        name makes it resolve to ``/tyler/colombia-ecosystems-map/ecosistemas/``.
+        """
+        catalog_dir = tmp_path / "colombia-ecosystems-map"
+        catalog_dir.mkdir()
+        (catalog_dir / "catalog.json").write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": "catalog",
+                    "title": "Colombia Ecosystems Map",
+                    "description": "Test",
+                }
+            )
+        )
+
+        (catalog_dir / "ecosistemas").mkdir()
+        (catalog_dir / "ecosistemas" / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "ecosistemas",
+                    "title": "Ecosistemas",
+                    "description": "Ecosystems",
+                    "extent": {
+                        "spatial": {"bbox": [[-82, -5, -66, 16]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                }
+            )
+        )
+
+        readme = generate_catalog_readme(catalog_dir)
+
+        assert "[Ecosistemas](colombia-ecosystems-map/ecosistemas/)" in readme
+        # The old root-relative link dropped the catalog name and 404-ed.
+        assert "(./ecosistemas/)" not in readme
+
+    @pytest.mark.unit
     def test_collections_listing_uses_collection_metadata_yaml(self, tmp_path: Path) -> None:
         """Collections listing uses each collection's metadata.yaml title/description (#534).
 
