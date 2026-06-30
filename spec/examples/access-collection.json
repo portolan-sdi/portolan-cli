@@ -1,0 +1,53 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "emergency-shelters",
+  "title": "Emergency shelters",
+  "description": "Locations of emergency shelters. Access-controlled: the STAC metadata is public and discoverable, but the data bytes require authentication (STAC auth: extension) and short-lived credentials vended via the access: extension.",
+  "license": "proprietary",
+  "stac_extensions": [
+    "https://stac-extensions.github.io/authentication/v1.1.0/schema.json",
+    "https://portolan.org/stac-extensions/access/v1.0.0/schema.json"
+  ],
+  "auth:schemes": {
+    "broker_oidc": {
+      "type": "openIdConnect",
+      "description": "Sign in with the publisher's IdP; the resulting token is exchanged at the credential-vending endpoint.",
+      "openIdConnectUrl": "https://auth.example.com/.well-known/openid-configuration"
+    }
+  },
+  "access:tier": "listed",
+  "access:credentials": {
+    "endpoint": "https://broker.example.com/credentials",
+    "protocol": "portolan-broker/1.0",
+    "scheme": "broker_oidc",
+    "audience": "portolan-broker"
+  },
+  "access:register": "https://publishers.example.com/emergency-shelters/register",
+  "extent": {
+    "spatial": { "bbox": [[-3.9, 40.3, -3.5, 40.6]] },
+    "temporal": { "interval": [["2024-01-01T00:00:00Z", null]] }
+  },
+  "providers": [
+    {
+      "name": "Example City Open Data",
+      "roles": ["producer", "licensor"],
+      "url": "https://data.example.com"
+    }
+  ],
+  "links": [
+    { "rel": "root", "href": "../catalog.json", "type": "application/json" },
+    { "rel": "self", "href": "./collection.json", "type": "application/json" },
+    { "rel": "credentials", "href": "https://broker.example.com/credentials", "title": "Credential-vending endpoint" },
+    { "rel": "register", "href": "https://publishers.example.com/emergency-shelters/register", "type": "text/html", "title": "Request access" }
+  ],
+  "assets": {
+    "data": {
+      "href": "https://storage.example.com/private-bucket/emergency-shelters/emergency-shelters.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": ["data"],
+      "title": "GeoParquet (access-controlled)",
+      "auth:refs": ["broker_oidc"]
+    }
+  }
+}
