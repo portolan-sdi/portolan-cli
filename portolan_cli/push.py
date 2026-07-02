@@ -36,6 +36,7 @@ from portolan_cli.async_utils import (
     CircuitBreakerError,
     get_default_concurrency,
 )
+from portolan_cli.catalog import intermediate_catalog_ids
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.upload import ObjectStore, setup_store
 from portolan_cli.upload_progress import UploadProgressReporter
@@ -625,6 +626,12 @@ def _discover_stac_files(
         root_readme = catalog_root / "README.md"
         if root_readme.exists():
             stac_files["readmes"].append(root_readme)
+        # Intermediate catalog.json / README.md for nested collections (Issue #547, #552).
+        # Only relevant for standalone single-collection push (include_catalog=True);
+        # catalog-wide push handles these centrally after all collections succeed.
+        for inter_file in _discover_intermediate_catalog_files(catalog_root, [collection]):
+            key = "readmes" if inter_file.name == "README.md" else "catalog"
+            stac_files[key].append(inter_file)
 
     # 2. Collection's collection.json (required) and README.md (optional)
     collection_dir = catalog_root / collection
@@ -1228,6 +1235,13 @@ def _handle_push_dry_run(
         for f in metadata_files:
             rel_path = f.relative_to(catalog_root)
             detail(f"  {rel_path}")
+
+    # Show intermediate catalog.json / README.md for nested collections (Issue #547, #552)
+    intermediate_files = _discover_intermediate_catalog_files(catalog_root, [collection])
+    if intermediate_files:
+        info(f"[DRY RUN] Would upload {len(intermediate_files)} intermediate catalog file(s)")
+        for f in intermediate_files:
+            detail(f"  {f.relative_to(catalog_root).as_posix()}")
 
     warn("[DRY RUN] Remote conflict detection skipped (requires network)")
     warn("[DRY RUN] Actual versions pushed may be fewer if remote already has some")
@@ -1946,7 +1960,11 @@ async def _execute_push_uploads_async(
     info("Uploading versions.json...")
     try:
         await _upload_versions_json_async(store, prefix, collection, local_data, etag, force=force)
-        msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
+        if diff.local_only:
+            msg = f"Pushed {len(diff.local_only)} version(s): {diff.local_only}"
+        else:
+            # Force re-push with no version delta refreshes metadata only (Issue #496)
+            msg = "Refreshed metadata (no new versions)"
         if metrics.total_bytes > 0:
             msg += (
                 f" ({format_file_size(metrics.total_bytes)}, {format_speed(metrics.average_speed)})"
@@ -2084,7 +2102,11 @@ async def push_async(
         )
 
     # Nothing to push?
-    if not diff.local_only and not (force and diff.remote_only):
+    # With --force, proceed even when the version list is unchanged so that
+    # regenerated metadata (collection.json, catalog.json, styles) is re-uploaded
+    # (Issue #496). Unchanged data assets are still skipped by the sha256 diff in
+    # _get_assets_to_upload, so this refreshes metadata without a full re-push.
+    if not force and not diff.local_only:
         info("Nothing to push - local and remote are in sync")
         return PushResult(
             success=True, files_uploaded=0, versions_pushed=0, conflicts=[], errors=[]
@@ -2264,6 +2286,42 @@ def _discover_root_metadata_files(catalog_root: Path) -> list[Path]:
     )
 
 
+def _discover_intermediate_catalog_files(catalog_root: Path, collections: list[str]) -> list[Path]:
+    """Discover intermediate catalog.json / README.md files for nested collections.
+
+    Per ADR-0032, a nested collection ``a/b/c`` has a ``catalog.json`` at each
+    intermediate level (``a/``, ``a/b/``) created by ``create_intermediate_catalogs``
+    during ``add``. These are neither leaf ``collection.json`` files nor the root
+    ``catalog.json``, so every other push discovery path misses them (Issue #547,
+    #552). This walks each collection's ancestor sub-catalog ids (shared
+    ``intermediate_catalog_ids`` helper) and returns the metadata files that
+    actually exist on disk, deduped across sibling collections and sorted for
+    deterministic output.
+
+    README.md is included only when present; ``create_intermediate_catalogs``
+    writes only ``catalog.json``, but real catalogs may carry authored READMEs at
+    sub-catalog levels (Issue #547).
+
+    Args:
+        catalog_root: Path to the catalog root directory.
+        collections: Leaf collection ids (from ``discover_collections``).
+
+    Returns:
+        Existing intermediate ``catalog.json``/``README.md`` paths, sorted.
+    """
+    seen: set[str] = set()
+    for collection in collections:
+        seen.update(intermediate_catalog_ids(collection))
+
+    files: list[Path] = []
+    for sub in sorted(seen):
+        for name in ("catalog.json", "README.md"):
+            path = catalog_root / sub / name
+            if path.exists():
+                files.append(path)
+    return files
+
+
 def _push_all_upload_root_files(
     catalog_root: Path,
     destination: str,
@@ -2271,16 +2329,22 @@ def _push_all_upload_root_files(
     region: str | None,
     dry_run: bool,
     stats: dict[str, Any],
+    collections: list[str] | None = None,
 ) -> bool:
-    """Upload root-level files after all collections (Issue #357, #426).
+    """Upload root-level files after all collections (Issue #357, #426, #547, #552).
 
     Uploads from catalog root (in order):
     1. README.md (documentation, optional)
     2. Root metadata files (style.json, thumbnails, etc.) - Issue #426
     3. catalog.json (STAC catalog metadata, required)
-    4. versions.json (manifest, required - uploaded LAST per manifest-last atomicity)
+    4. Intermediate catalog.json / README.md for nested collections - Issue #547, #552
+    5. versions.json (manifest, required - uploaded LAST per manifest-last atomicity)
 
     These are uploaded AFTER all collections succeed.
+
+    Args:
+        collections: Leaf collection ids (from ``discover_collections``), used to
+            discover intermediate catalogs. None/empty means no intermediates.
 
     Returns True if uploads succeeded or were skipped, False if any failed.
     """
@@ -2305,6 +2369,10 @@ def _push_all_upload_root_files(
     # Discover root metadata files (Issue #426)
     root_metadata = _discover_root_metadata_files(catalog_root)
 
+    # Discover intermediate catalog.json / README.md for nested collections
+    # (Issue #547, #552). Uploaded after root catalog.json, before versions.json.
+    intermediate_files = _discover_intermediate_catalog_files(catalog_root, collections or [])
+
     if dry_run:
         if root_readme.exists():
             info("[DRY RUN] Would upload README.md")
@@ -2313,6 +2381,10 @@ def _push_all_upload_root_files(
             for f in root_metadata:
                 detail(f"  {f.name}")
         info("[DRY RUN] Would upload catalog.json")
+        if intermediate_files:
+            info(f"[DRY RUN] Would upload {len(intermediate_files)} intermediate catalog file(s)")
+            for f in intermediate_files:
+                detail(f"  {f.relative_to(catalog_root).as_posix()}")
         if root_versions.exists():
             info("[DRY RUN] Would upload versions.json")
         return True
@@ -2342,6 +2414,16 @@ def _push_all_upload_root_files(
         obs.put(store, catalog_key, catalog_json.read_bytes())
         success("Uploaded catalog.json")
         stats["total_files"] += 1
+
+        # Upload intermediate catalog.json / README.md for nested collections
+        # (Issue #547, #552) - before versions.json to preserve manifest-last.
+        for inter_file in intermediate_files:
+            inter_key = f"{prefix}/{inter_file.relative_to(catalog_root).as_posix()}".lstrip("/")
+            obs.put(store, inter_key, inter_file.read_bytes())
+            detail(f"  Uploaded {inter_file.relative_to(catalog_root).as_posix()}")
+            stats["total_files"] += 1
+        if intermediate_files:
+            info(f"Uploaded {len(intermediate_files)} intermediate catalog file(s)")
 
         # Upload versions.json LAST (manifest-last atomicity per ADR-0005)
         if root_versions.exists():
@@ -2476,7 +2558,7 @@ async def push_all_collections_async(
             _push_all_process_result(coll, push_result, err_msg, i + 1, total, stats)
 
     catalog_ok = _push_all_upload_root_files(
-        catalog_root, destination, profile, region, dry_run, stats
+        catalog_root, destination, profile, region, dry_run, stats, collections
     )
 
     overall_success = stats["failed"] == 0 and catalog_ok

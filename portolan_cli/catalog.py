@@ -542,6 +542,30 @@ class Catalog:
         return cls(root)
 
 
+def intermediate_catalog_ids(collection_id: str) -> list[str]:
+    """Return the ancestor sub-catalog ids for a nested collection (ADR-0032).
+
+    These are the intermediate directory levels between the catalog root and the
+    leaf collection, each of which holds a ``catalog.json`` (created by
+    ``create_intermediate_catalogs`` during ``add``). This is the single source
+    of truth for the path-segment walk, reused by both ``add`` (to create the
+    files) and ``push`` (to discover them as upload targets).
+
+    Examples:
+        "climate/hittekaart" -> ["climate"]
+        "env/air/quality"    -> ["env", "env/air"]
+        "demographics"       -> []  (leaf holds collection.json, no intermediates)
+
+    Args:
+        collection_id: The (possibly nested) collection ID, POSIX-separated.
+
+    Returns:
+        Ancestor sub-catalog ids in root-to-leaf order (empty for single-level).
+    """
+    parts = collection_id.split("/")
+    return ["/".join(parts[: i + 1]) for i in range(len(parts) - 1)]
+
+
 def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None:
     """Create intermediate catalog.json files for nested collection paths (ADR-0032).
 
@@ -559,15 +583,10 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
         collection_id: The nested collection ID (e.g., "climate/hittekaart").
         catalog_root: Root directory of the catalog.
     """
-    parts = collection_id.split("/")
-
-    # No intermediates needed for single-level collections
-    if len(parts) <= 1:
-        return
-
-    # Create catalog.json at each intermediate level (all but the last)
-    for i in range(len(parts) - 1):
-        intermediate_path = "/".join(parts[: i + 1])
+    # Create catalog.json at each intermediate level (all but the last).
+    # intermediate_catalog_ids is the shared source of truth for this walk,
+    # also used by push discovery (keeps add/push in lockstep, ADR-0032).
+    for i, intermediate_path in enumerate(intermediate_catalog_ids(collection_id)):
         catalog_dir = catalog_root / intermediate_path
         catalog_file = catalog_dir / "catalog.json"
 

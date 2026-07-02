@@ -158,6 +158,83 @@ def catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path:
 
 
 @pytest.fixture
+def nested_catalog_with_data(tmp_path: Path, s3_bucket: tuple[str, str]) -> Path:
+    """A nested catalog (ADR-0032) with intermediate catalog.json files (Issue #547, #552)."""
+    bucket_name, endpoint_url = s3_bucket
+
+    catalog_dir = tmp_path / "catalog"
+    (catalog_dir / ".portolan").mkdir(parents=True)
+    (catalog_dir / ".portolan" / "config.yaml").write_text(
+        f"version: 1\nremote: s3://{bucket_name}/catalog\n"
+    )
+
+    def _catalog_json(path: Path, catalog_id: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "type": "Catalog",
+                    "id": catalog_id,
+                    "stac_version": "1.1.0",
+                    "description": f"Catalog: {catalog_id}",
+                    "links": [],
+                }
+            )
+        )
+
+    _catalog_json(catalog_dir / "catalog.json", "root")
+    _catalog_json(catalog_dir / "tst" / "catalog.json", "tst")
+    _catalog_json(catalog_dir / "tst" / "latest" / "catalog.json", "tst/latest")
+
+    for layer in ("adm0", "adm1"):
+        leaf = catalog_dir / "tst" / "latest" / layer
+        leaf.mkdir(parents=True)
+        data = f"parquet-{layer}".encode()
+        (leaf / f"{layer}.parquet").write_bytes(data)
+        (leaf / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": f"tst/latest/{layer}",
+                    "stac_version": "1.1.0",
+                    "description": f"Collection {layer}",
+                    "license": "CC0-1.0",
+                    "extent": {
+                        "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [],
+                }
+            )
+        )
+        (leaf / "versions.json").write_text(
+            json.dumps(
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [
+                        {
+                            "version": "1.0.0",
+                            "created": "2024-01-01T00:00:00Z",
+                            "breaking": False,
+                            "changes": [f"{layer}.parquet"],
+                            "assets": {
+                                f"{layer}.parquet": {
+                                    "sha256": hashlib.sha256(data).hexdigest(),
+                                    "size_bytes": len(data),
+                                    "href": f"tst/latest/{layer}/{layer}.parquet",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
+    return catalog_dir
+
+
+@pytest.fixture
 def _aws_env(s3_bucket: tuple[str, str]) -> Generator[None, None, None]:
     """Set up AWS environment variables for obstore to use moto server.
 
@@ -303,6 +380,50 @@ class TestPushS3Integration:
             f"Second push ({result2.files_uploaded} files) should not upload more "
             f"than initial push ({initial_uploads} files)"
         )
+
+    @pytest.mark.integration
+    def test_push_uploads_intermediate_catalogs_to_s3(
+        self,
+        s3_bucket: tuple[str, str],
+        nested_catalog_with_data: Path,
+        _aws_env: None,
+    ) -> None:
+        """Issue #547/#552: catalog-wide push lands intermediate catalog.json in the bucket.
+
+        The push->bucket round-trip is the guard against the silent-drop class:
+        a client walking child links from the root must find every intermediate
+        catalog.json, not just root catalog.json and leaf collection.json.
+        """
+        bucket_name, endpoint_url = s3_bucket
+
+        from portolan_cli.push import push_all_collections
+
+        result = push_all_collections(
+            catalog_root=nested_catalog_with_data,
+            destination=f"s3://{bucket_name}/catalog",
+            force=False,
+            dry_run=False,
+            profile=None,
+        )
+        assert result.success is True, f"Push failed: {result}"
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+            region_name="us-east-1",
+        )
+        response = client.list_objects_v2(Bucket=bucket_name, Prefix="catalog/")
+        uploaded_keys = {obj["Key"] for obj in response.get("Contents", [])}
+
+        # The two intermediate catalogs that every prior code path dropped.
+        assert "catalog/tst/catalog.json" in uploaded_keys, uploaded_keys
+        assert "catalog/tst/latest/catalog.json" in uploaded_keys, uploaded_keys
+        # Sanity: root and leaves still land too.
+        assert "catalog/catalog.json" in uploaded_keys, uploaded_keys
+        assert "catalog/tst/latest/adm0/collection.json" in uploaded_keys, uploaded_keys
+        assert "catalog/tst/latest/adm1/collection.json" in uploaded_keys, uploaded_keys
 
 
 # =============================================================================

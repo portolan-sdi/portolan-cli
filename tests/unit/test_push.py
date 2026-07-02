@@ -1057,6 +1057,141 @@ class TestForceFlag:
         # versions.json MUST be uploaded to force-overwrite remote state
         mock_upload_versions.assert_called_once()
 
+    @staticmethod
+    def _build_identical_version_catalog(tmp_path: Path) -> Path:
+        """Catalog whose local versions.json exactly matches the remote (Issue #496)."""
+        catalog_dir = tmp_path / "catalog"
+        versions_dir = catalog_dir / "test"
+        versions_dir.mkdir(parents=True)
+        versions_data = {
+            "spec_version": "1.0.0",
+            "current_version": "1.0.0",
+            "versions": [
+                {
+                    "version": "1.0.0",
+                    "created": "2024-01-01T00:00:00Z",
+                    "breaking": False,
+                    "message": "Initial version",
+                    "assets": {
+                        "data.parquet": {
+                            "sha256": "abc123",
+                            "size_bytes": 1024,
+                            "href": "test/data/data.parquet",
+                        }
+                    },
+                    "changes": ["data.parquet"],
+                },
+            ],
+        }
+        (versions_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
+        (versions_dir / "collection.json").write_text(
+            json.dumps(
+                {
+                    "type": "Collection",
+                    "id": "test",
+                    "stac_version": "1.0.0",
+                    "description": "Test collection",
+                    "license": "proprietary",
+                    "extent": {
+                        "spatial": {"bbox": [[-180, -90, 180, 90]]},
+                        "temporal": {"interval": [[None, None]]},
+                    },
+                    "links": [],
+                },
+                indent=2,
+            )
+        )
+        item_dir = versions_dir / "data"
+        item_dir.mkdir(parents=True)
+        (item_dir / "data.parquet").write_bytes(b"x" * 1024)
+        return catalog_dir
+
+    @pytest.mark.unit
+    def test_force_reuploads_metadata_when_versions_identical(self, tmp_path: Path) -> None:
+        """Issue #496: --force must re-upload metadata even with NO version delta.
+
+        Local and remote version lists are identical (no local_only, no
+        remote_only), but a regenerated collection.json needs re-uploading.
+        Before the fix, the "Nothing to push" gate returned early even with
+        --force, so the STAC upload phase never ran.
+        """
+        from portolan_cli.push import push
+
+        catalog_dir = self._build_identical_version_catalog(tmp_path)
+
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
+            # Remote has the EXACT same single version as local.
+            mock_fetch.return_value = (
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [{"version": "1.0.0", "created": "2024-01-01T00:00:00Z"}],
+                },
+                "etag-123",
+            )
+            with patch(
+                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+            ) as mock_upload_assets:
+                mock_upload_assets.return_value = (0, [], [], UploadMetrics())
+                with patch(
+                    "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                ) as mock_upload_stac:
+                    mock_upload_stac.return_value = (1, [], ["stac/collection.json"])
+                    with patch(
+                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                    ) as mock_upload_versions:
+                        mock_upload_versions.return_value = None
+
+                        result = push(
+                            catalog_root=catalog_dir,
+                            collection="test",
+                            destination="s3://mybucket/catalog",
+                            force=True,
+                        )
+
+        assert result.success is True
+        # The STAC upload phase MUST run so collection.json gets refreshed.
+        mock_upload_stac.assert_called_once()
+
+    @pytest.mark.unit
+    def test_no_force_skips_upload_when_versions_identical(self, tmp_path: Path) -> None:
+        """Without --force and no version delta, push is a no-op (regression guard).
+
+        This pins the other side of the Issue #496 gate: the "Nothing to push"
+        short-circuit must remain intact when force is not set.
+        """
+        from portolan_cli.push import push
+
+        catalog_dir = self._build_identical_version_catalog(tmp_path)
+
+        with patch(
+            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+        ) as mock_fetch:
+            mock_fetch.return_value = (
+                {
+                    "spec_version": "1.0.0",
+                    "current_version": "1.0.0",
+                    "versions": [{"version": "1.0.0", "created": "2024-01-01T00:00:00Z"}],
+                },
+                "etag-123",
+            )
+            with patch(
+                "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+            ) as mock_upload_stac:
+                result = push(
+                    catalog_root=catalog_dir,
+                    collection="test",
+                    destination="s3://mybucket/catalog",
+                    force=False,
+                )
+
+        assert result.success is True
+        assert result.files_uploaded == 0
+        # No upload phase should run when nothing changed and force is off.
+        mock_upload_stac.assert_not_called()
+
 
 # =============================================================================
 # Orphan Cleanup Tests

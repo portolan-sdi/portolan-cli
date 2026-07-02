@@ -298,6 +298,45 @@ class TestCreateIntermediateCatalogs:
         assert links_by_rel["parent"]["href"] == "../catalog.json"
 
 
+class TestIntermediateCatalogIds:
+    """Test intermediate_catalog_ids() pure path-walk helper (shared by add + push)."""
+
+    def test_two_level_returns_single_ancestor(self) -> None:
+        """climate/hittekaart -> ['climate']."""
+        from portolan_cli.catalog import intermediate_catalog_ids
+
+        assert intermediate_catalog_ids("climate/hittekaart") == ["climate"]
+
+    def test_three_level_returns_ordered_ancestors(self) -> None:
+        """env/air/quality -> ['env', 'env/air'] (root-to-leaf order)."""
+        from portolan_cli.catalog import intermediate_catalog_ids
+
+        assert intermediate_catalog_ids("env/air/quality") == ["env", "env/air"]
+
+    def test_single_level_returns_empty(self) -> None:
+        """demographics -> [] (leaf holds collection.json, no intermediates)."""
+        from portolan_cli.catalog import intermediate_catalog_ids
+
+        assert intermediate_catalog_ids("demographics") == []
+
+    def test_matches_create_intermediate_catalogs(self, tmp_path: Path) -> None:
+        """The ids must be exactly the dirs create_intermediate_catalogs writes."""
+        from portolan_cli.catalog import (
+            create_intermediate_catalogs,
+            intermediate_catalog_ids,
+        )
+
+        (tmp_path / "catalog.json").write_text('{"type": "Catalog", "id": "test", "links": []}')
+        collection_id = "tst/latest/adm0"
+        create_intermediate_catalogs(collection_id, tmp_path)
+
+        expected_dirs = {
+            (tmp_path / sub / "catalog.json") for sub in intermediate_catalog_ids(collection_id)
+        }
+        written = set((tmp_path).glob("*/catalog.json")) | set((tmp_path).glob("*/*/catalog.json"))
+        assert written == expected_dirs
+
+
 class TestUpdateCatalogLinksNested:
     """Test that catalog links correctly reference intermediate catalogs."""
 
