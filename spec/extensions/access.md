@@ -77,7 +77,7 @@ by the schema URI in `stac_extensions`, not by a field.)
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `endpoint` | string (URI) | **Yes** | HTTPS endpoint. The client `POST`s the bearer token plus the target collection/asset; it returns short-lived, scoped credentials, or `403` if not entitled. |
-| `protocol` | string | **Yes** | Credential wire format: `"portolan-broker/1.0"` (default) or `"opensharing"`. |
+| `protocol` | string | **Yes** | Credential wire format: `"portolan-broker/1.0"` (default) or `"opensharing"` (both return short-lived scoped credentials — best for Iceberg/multi-file, one credential reads many objects); or `"presigned"` (per-object presigned URLs — universal across clouds, simplest client). |
 | `scheme` | string | No | Key of the `auth:schemes` entry whose token the endpoint accepts (links this exchange to a specific STAC auth scheme). |
 | `audience` | string | No | Token audience the endpoint expects, when the IdP requires it. |
 
@@ -127,6 +127,10 @@ identity) and this extension (for vending):
   SHOULD be read-only and scoped to the minimum asset prefix.
 - Revocation is a control-plane concern of the broker; already-issued
   credentials remain valid until expiry, so TTLs SHOULD be short.
+- The referenced `auth:schemes` entry SHOULD point at the **consumer** identity
+  provider, never an operator/editor IdP: the population that authenticates to
+  *read data* is distinct from the one that *administers* the catalog, and
+  conflating them lets a consumer credential reach the control plane.
 
 ## Relationship to OpenSharing
 

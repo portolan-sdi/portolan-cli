@@ -27,8 +27,8 @@
         },
         "protocol": {
           "type": "string",
-          "enum": ["portolan-broker/1.0", "opensharing"],
-          "description": "Credential wire format."
+          "enum": ["portolan-broker/1.0", "opensharing", "presigned"],
+          "description": "Credential wire format. 'portolan-broker/1.0' and 'opensharing' return short-lived scoped credentials (best for Iceberg/multi-file: one credential reads many objects); 'presigned' returns per-object presigned URLs (universal across clouds, simplest client)."
         },
         "scheme": {
           "type": "string",
