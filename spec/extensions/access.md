@@ -42,8 +42,9 @@ This extension is the **consumer-facing wire contract for path 2** — it lets a
 client *discover* that a broker exists and how to use it. It does **not** mandate
 path 2; a publisher using export-only IAM simply omits this extension. The two
 paths are complementary, and the spec stays neutral about which a publisher
-picks. The `access:tier` field aligns with #120's proposed `--visibility`
-metadata tag.
+picks. (Visibility tagging — public/private, `--visibility` — is deliberately
+**out of scope** here: it belongs to the #120 discussion and the publisher's own
+tooling, not this read-time contract.)
 
 ## Design principles
 
@@ -68,9 +69,7 @@ by the schema URI in `stac_extensions`, not by a field.)
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `access:tier` | string | No | Publisher visibility intent: `"listed"` (metadata public, data gated) or `"private"` (metadata also gated). Default `"listed"`. Informational; enforcement is out of band. Aligns with #120 `--visibility`. |
-| `access:credentials` | object | **Yes** | How to exchange a verified identity token (obtained via a STAC `auth:` scheme) for short-lived storage credentials. |
-| `access:register` | string (URI) | No | Where a new consumer requests or self-registers for access (human-facing). |
+| `access:credentials` | object | **Yes** | How to exchange a verified identity token (obtained via a STAC `auth:` scheme) for short-lived storage credentials. **This is the only field this extension defines** — everything else a private catalog needs (visibility tiers, tenancy, registration UX, analytics) is the publisher's own concern and is intentionally kept out of the open contract. |
 
 ### `access:credentials` object
 
@@ -79,7 +78,6 @@ by the schema URI in `stac_extensions`, not by a field.)
 | `endpoint` | string (URI) | **Yes** | HTTPS endpoint. The client `POST`s the bearer token plus the target collection/asset; it returns short-lived, scoped credentials, or `403` if not entitled. |
 | `protocol` | string | **Yes** | Credential wire format: `"portolan-broker/1.0"` (default) or `"opensharing"` (both return short-lived scoped credentials — best for Iceberg/multi-file, one credential reads many objects); or `"presigned"` (per-object presigned URLs — universal across clouds, simplest client). |
 | `scheme` | string | No | Key of the `auth:schemes` entry whose token the endpoint accepts (links this exchange to a specific STAC auth scheme). |
-| `audience` | string | No | Token audience the endpoint expects, when the IdP requires it. |
 
 ### Link relations
 
@@ -88,7 +86,6 @@ Complement `rel: "via"` (data provenance) with access-flow endpoints:
 | `rel` | Description |
 |-------|-------------|
 | `credentials` | The credential-vending endpoint (same URL as `access:credentials.endpoint`). |
-| `register` | Registration / request-access page (same URL as `access:register`). |
 
 (The IdP / login endpoint is already described by the STAC `auth:` scheme; no
 extra link relation is needed for it.)
@@ -105,7 +102,7 @@ extra link relation is needed for it.)
 4. Use those credentials to range-read the absolute asset `href`.
 
 A client that implements neither extension still has valid STAC; the read in
-step 4 returns `401/403`, and the client MAY surface `access:register`.
+step 4 returns `401/403`.
 
 ## `stac_extensions`
 
@@ -147,12 +144,10 @@ See [`../examples/access-collection.json`](../examples/access-collection.json).
 
 1. Per-asset `access:` overrides vs. collection-level only (note `auth:refs` is
    already per-asset).
-2. Whether `access:tier: "private"` (gated metadata) needs a companion
-   authenticated discovery index, or is purely a publisher hint.
-3. Standardize the `access:credentials.endpoint` request/response body, or defer
+2. Standardize the `access:credentials.endpoint` request/response body, or defer
    it entirely to the named `protocol` profile?
-4. Could the vending step instead become a new scheme `type` (e.g.
+3. Could the vending step instead become a new scheme `type` (e.g.
    `tokenExchange`) contributed upstream to the STAC Authentication extension,
    removing the need for a separate namespace? (Tracked against #120.)
-5. Schema-hosting domain: extensions reference `portolan.org/stac-extensions/…`
+4. Schema-hosting domain: extensions reference `portolan.org/stac-extensions/…`
    (ADR-0042) while core schemas use `portolan.dev/schema/…`; to be reconciled.

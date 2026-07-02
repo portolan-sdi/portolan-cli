@@ -5,13 +5,7 @@
   "description": "Companion to the STAC Authentication extension. Adds a credential-vending contract: how a client exchanges a verified identity token (obtained via a STAC auth: scheme) for short-lived, scoped storage credentials. Uses the dedicated 'access:' namespace per ADR-0037. See https://github.com/portolan-sdi/portolan-cli/blob/main/spec/extensions/access.md",
   "type": "object",
   "properties": {
-    "access:tier": {
-      "type": "string",
-      "enum": ["listed", "private"],
-      "description": "Publisher visibility intent. 'listed' = metadata public, data gated; 'private' = metadata also gated. Informational; enforcement is out of band."
-    },
-    "access:credentials": { "$ref": "#/$defs/credentials" },
-    "access:register": { "type": "string", "format": "uri" }
+    "access:credentials": { "$ref": "#/$defs/credentials" }
   },
   "required": ["access:credentials"],
   "$defs": {
@@ -33,10 +27,6 @@
         "scheme": {
           "type": "string",
           "description": "Key of the auth:schemes entry (STAC Authentication extension) whose token this endpoint accepts."
-        },
-        "audience": {
-          "type": "string",
-          "description": "Token audience the endpoint expects, when the IdP requires it."
         }
       }
     }

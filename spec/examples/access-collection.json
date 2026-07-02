@@ -16,14 +16,11 @@
       "openIdConnectUrl": "https://auth.example.com/.well-known/openid-configuration"
     }
   },
-  "access:tier": "listed",
   "access:credentials": {
     "endpoint": "https://broker.example.com/credentials",
     "protocol": "portolan-broker/1.0",
-    "scheme": "broker_oidc",
-    "audience": "portolan-broker"
+    "scheme": "broker_oidc"
   },
-  "access:register": "https://publishers.example.com/emergency-shelters/register",
   "extent": {
     "spatial": { "bbox": [[-3.9, 40.3, -3.5, 40.6]] },
     "temporal": { "interval": [["2024-01-01T00:00:00Z", null]] }
@@ -38,8 +35,7 @@
   "links": [
     { "rel": "root", "href": "../catalog.json", "type": "application/json" },
     { "rel": "self", "href": "./collection.json", "type": "application/json" },
-    { "rel": "credentials", "href": "https://broker.example.com/credentials", "title": "Credential-vending endpoint" },
-    { "rel": "register", "href": "https://publishers.example.com/emergency-shelters/register", "type": "text/html", "title": "Request access" }
+    { "rel": "credentials", "href": "https://broker.example.com/credentials", "title": "Credential-vending endpoint" }
   ],
   "assets": {
     "data": {
