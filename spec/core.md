@@ -27,6 +27,27 @@ project/
 - **MUST** follow STAC specification version 1.0.0 or later
 - **MUST** use `SELF_CONTAINED` catalog type (relative links, portable)
 
+## Human-Readable Titles
+
+STAC Browser and other clients render `child`/`item` link titles directly; without them a client must fetch every child just to display its name. Portolan therefore requires human-readable titles throughout the catalog (see [ADR-0053](../context/shared/adr/0053-mandatory-human-readable-titles.md)):
+
+- Every `catalog.json` and `collection.json` **MUST** have a non-empty `title` and `description`
+- Titles **MUST** be human-readable — a raw slug (e.g. `snake_case`) or a technical namespace prefix (e.g. `ns:LayerName`) is not acceptable
+- Every `child` and `item` link **MUST** include a `title`
+
+`portolan check` enforces these at ERROR severity, and `portolan check --fix` auto-populates human-readable titles by humanizing slugs.
+
+## Bounding Box Validity
+
+Bounding boxes carry the spatial footprint that drives extent unions and map-UI browsing. Garbage coordinates poison the catalog-level extent and break viewers, so every `bbox` (catalog extent, collection extent, and item) **MUST**:
+
+- Contain no `NaN` or infinite values (including 3D elevation coordinates)
+- Contain no sentinel "effectively infinite" values (e.g. `±1.79e308`)
+- Have WGS84 coordinates within range (longitude in `[-180, 180]`, latitude in `[-90, 90]`)
+- Have `south <= north`
+
+`portolan check` enforces bbox validity at ERROR severity.
+
 ### Spatial Extent for Tabular Collections
 
 STAC requires `extent.spatial.bbox` for Collections. For **tabular (non-geospatial) collections** (`portolan:geospatial: false`):

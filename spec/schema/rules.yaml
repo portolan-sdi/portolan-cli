@@ -5,12 +5,15 @@
 #
 # Rule structure:
 #   id: Unique identifier (RULE-XXXX)
-#   level: error | warning
-#   scope: Where the rule applies (catalog, collection, item, asset, versions)
+#   level: error | warning | info
+#   scope: Where the rule applies (catalog, collection, item, asset, versions, config)
 #   description: Human-readable description
 #   rationale: Why this rule exists
 #   validation: How to validate (pseudo-code or description)
 #   references: Links to spec documentation
+#   code_rule: (optional) The `name` of the portolan_cli ValidationRule that
+#     enforces this rule, linking the spec entry to its CLI implementation.
+#     Feeds the rule-coverage matrix and lets tests assert spec/code parity.
 
 rules:
   # =============================================================================
@@ -582,3 +585,187 @@ rules:
           reject with message explaining how to enable
     references:
       - formats/tabular.md#enabling-tabular-support
+
+  # =============================================================================
+  # Metadata Quality Rules (human-readable titles/descriptions)
+  # =============================================================================
+  #
+  # Enforced by MandatoryTitlesRule (ERROR). STAC Browser renders child/item
+  # link titles directly, so missing or raw-slug titles force it to fetch every
+  # child just to display a name. See ADR-0053 and Issue #502.
+
+  - id: RULE-0100
+    level: error
+    scope: catalog
+    description: Catalogs MUST have a human-readable title and description
+    rationale: |
+      Titles and descriptions are the primary handle humans and agents use to
+      understand a catalog. A missing or raw-slug title (e.g. snake_case or a
+      "ns:Layer" namespace prefix) is not human-readable and degrades browsing.
+    validation: |
+      For catalog.json:
+        assert title is a non-empty string
+        assert title is human-readable (no underscores, no "prefix:Name" form)
+        assert description is a non-empty string
+    references:
+      - core.md#human-readable-titles
+    code_rule: mandatory_titles
+
+  - id: RULE-0101
+    level: error
+    scope: collection
+    description: Collections MUST have a human-readable title and description
+    rationale: |
+      Same as RULE-0100 at the collection level: a collection's title and
+      description are what map viewers and agents surface first.
+    validation: |
+      For each collection.json:
+        assert title is a non-empty string
+        assert title is human-readable (no underscores, no "prefix:Name" form)
+        assert description is a non-empty string
+    references:
+      - core.md#human-readable-titles
+    code_rule: mandatory_titles
+
+  - id: RULE-0102
+    level: error
+    scope: catalog
+    description: Child links MUST include a human-readable title
+    rationale: |
+      STAC Browser renders child link titles without dereferencing the target.
+      An untitled child link forces a fetch of every collection to show a name.
+    validation: |
+      For each link in catalog.json (or sub-catalog) with rel == "child":
+        assert link.title is a non-empty string
+    references:
+      - core.md#human-readable-titles
+    code_rule: mandatory_titles
+
+  - id: RULE-0103
+    level: error
+    scope: collection
+    description: Item links MUST include a human-readable title
+    rationale: |
+      As with child links, item link titles let clients render an item list
+      without fetching each item.json.
+    validation: |
+      For each link in collection.json with rel == "item":
+        assert link.title is a non-empty string
+    references:
+      - core.md#human-readable-titles
+    code_rule: mandatory_titles
+
+  # =============================================================================
+  # Bounding Box Validity Rules
+  # =============================================================================
+  #
+  # Enforced by BboxValidRule (ERROR). Garbage coordinates (inf/nan, sentinel
+  # values like ±1.79e308, or out-of-range lon/lat) poison catalog-level extent
+  # unions and break map-UI browsing. See Issue #516.
+
+  - id: RULE-0110
+    level: error
+    scope: catalog
+    description: Catalog extent bboxes MUST be valid
+    rationale: |
+      The catalog extent is the union of its collections; a single poisoned
+      coordinate makes the whole catalog un-browsable in a map UI.
+    validation: |
+      For each bbox in catalog.extent.spatial.bbox:
+        assert no coordinate is NaN or infinite
+        assert no coordinate exceeds a sane magnitude (sentinel poison)
+        assert lon in [-180, 180] and lat in [-90, 90]
+        assert south <= north
+    references:
+      - core.md#bounding-box-validity
+    code_rule: bbox_valid
+
+  - id: RULE-0111
+    level: error
+    scope: collection
+    description: Collection extent bboxes MUST be valid
+    rationale: |
+      Same validity constraints as RULE-0110 at the collection level.
+    validation: |
+      For each bbox in collection.extent.spatial.bbox:
+        assert no coordinate is NaN or infinite
+        assert no coordinate exceeds a sane magnitude (sentinel poison)
+        assert lon in [-180, 180] and lat in [-90, 90]
+        assert south <= north
+    references:
+      - core.md#bounding-box-validity
+    code_rule: bbox_valid
+
+  - id: RULE-0112
+    level: error
+    scope: item
+    description: Item bboxes MUST be valid
+    rationale: |
+      Invalid item bboxes propagate into the collection and catalog extents.
+    validation: |
+      For each item.json with a bbox:
+        assert no coordinate is NaN or infinite
+        assert no coordinate exceeds a sane magnitude (sentinel poison)
+        assert lon in [-180, 180] and lat in [-90, 90]
+        assert south <= north
+    references:
+      - core.md#bounding-box-validity
+    code_rule: bbox_valid
+
+  # =============================================================================
+  # Temporal Metadata Rules
+  # =============================================================================
+
+  - id: RULE-0120
+    level: warning
+    scope: item
+    description: Items SHOULD have an explicit datetime, not a provisional one
+    rationale: |
+      Items added without an explicit datetime get a null temporal extent and
+      are marked portolan:datetime_provisional=true (ADR-0035). They are valid
+      STAC but incomplete; enriching the datetime enables time-based browsing.
+    validation: |
+      For each item.json:
+        warn if properties["portolan:datetime_provisional"] is true
+    references:
+      - core.md#temporal-metadata
+    code_rule: provisional_datetime
+
+  # =============================================================================
+  # Partition Structure Rules (Hive-style partitioned collections)
+  # =============================================================================
+  #
+  # Enforced by PartitionStructureRule (WARNING) and
+  # PartitionSchemaConsistencyRule (ERROR). See ADR-0042 and ADR-0054.
+
+  - id: RULE-0130
+    level: warning
+    scope: collection
+    description: Partitioned collections SHOULD have consistent Hive-style structure
+    rationale: |
+      Mixed partition keys, orphan data files at the collection root, or a
+      missing partition:scheme make a partitioned dataset ambiguous to query
+      engines that rely on the Hive key=value convention.
+    validation: |
+      For each collection with key=value partition directories:
+        warn if partition directories use more than one partition key
+        warn if there are orphan .parquet files at the collection root
+        warn if collection.json is missing the partition:scheme field
+    references:
+      - formats/vector.md#partitioned-datasets
+    code_rule: partition_structure
+
+  - id: RULE-0131
+    level: error
+    scope: collection
+    description: All partition files in a collection MUST share the same schema
+    rationale: |
+      A partitioned collection is a single logical table split across files.
+      Divergent Parquet schemas across partitions break unified reads.
+    validation: |
+      For each collection with key=value partition directories:
+        read the Parquet schema (footer) of every partition file
+        assert all files share the same set of column names
+    references:
+      - formats/vector.md#partitioned-datasets
+    code_rule: partition_schema_consistency

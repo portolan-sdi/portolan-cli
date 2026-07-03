@@ -14,6 +14,7 @@
   "$defs": {
     "PortolanCatalogExtensions": {
       "type": "object",
+      "required": ["title", "description"],
       "properties": {
         "type": {
           "const": "Catalog"
@@ -27,6 +28,16 @@
           "type": "string",
           "description": "Catalog identifier. Defaults to 'portolan-catalog' if not specified.",
           "default": "portolan-catalog"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable catalog title. MUST be present and human-readable (not a raw slug). See RULE-0100 in rules.yaml and core.md#human-readable-titles."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable catalog description. MUST be non-empty. See RULE-0100 in rules.yaml."
         },
         "links": {
           "type": "array",
@@ -79,6 +90,26 @@
                 "not": {
                   "pattern": "^[a-zA-Z][a-zA-Z0-9+.-]*://"
                 }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "rel": {
+                "enum": ["child", "item"]
+              }
+            },
+            "required": ["rel"]
+          },
+          "then": {
+            "description": "Child/item links MUST carry a human-readable title so clients can render them without dereferencing. See RULE-0102/RULE-0103 in rules.yaml.",
+            "required": ["title"],
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
               }
             }
           }
