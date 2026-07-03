@@ -425,6 +425,126 @@ class TestPushS3Integration:
         assert "catalog/tst/latest/adm0/collection.json" in uploaded_keys, uploaded_keys
         assert "catalog/tst/latest/adm1/collection.json" in uploaded_keys, uploaded_keys
 
+    @pytest.mark.integration
+    def test_single_collection_push_uploads_intermediate_catalogs_to_s3(
+        self,
+        s3_bucket: tuple[str, str],
+        nested_catalog_with_data: Path,
+        _aws_env: None,
+    ) -> None:
+        """Issue #547/#552: the SINGLE-collection push path also lands intermediates.
+
+        Distinct code path from the catalog-wide test above: single-collection
+        push discovers intermediates via ``_discover_stac_files(include_catalog=True)``,
+        not the central ``_push_all_upload_root_files`` phase. Both must upload the
+        ancestor catalog.json, or a targeted ``push <collection>`` still leaves the
+        remote child-link chain broken.
+        """
+        bucket_name, endpoint_url = s3_bucket
+
+        from portolan_cli.push import push
+
+        result = push(
+            catalog_root=nested_catalog_with_data,
+            collection="tst/latest/adm0",
+            destination=f"s3://{bucket_name}/catalog",
+            force=False,
+        )
+        assert result.success is True, f"Push failed: {result}"
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+            region_name="us-east-1",
+        )
+        response = client.list_objects_v2(Bucket=bucket_name, Prefix="catalog/")
+        uploaded_keys = {obj["Key"] for obj in response.get("Contents", [])}
+
+        assert "catalog/tst/catalog.json" in uploaded_keys, uploaded_keys
+        assert "catalog/tst/latest/catalog.json" in uploaded_keys, uploaded_keys
+        assert "catalog/catalog.json" in uploaded_keys, uploaded_keys
+        assert "catalog/tst/latest/adm0/collection.json" in uploaded_keys, uploaded_keys
+
+    @pytest.mark.integration
+    def test_force_refreshes_regenerated_collection_json_on_s3(
+        self,
+        s3_bucket: tuple[str, str],
+        nested_catalog_with_data: Path,
+        _aws_env: None,
+    ) -> None:
+        """Issue #496: --force re-uploads regenerated metadata with NO version delta.
+
+        Full round-trip against the bucket, reading actual bytes back:
+        1. push -> remote collection.json holds the original description;
+        2. regenerate collection.json in place (no version bump, versions.json
+           unchanged), push WITHOUT force -> "Nothing to push", remote unchanged
+           (the gate still guards against churn);
+        3. push WITH force -> remote collection.json now holds the new bytes.
+        """
+        bucket_name, endpoint_url = s3_bucket
+
+        from portolan_cli.push import push
+
+        collection = "tst/latest/adm0"
+        destination = f"s3://{bucket_name}/catalog"
+        coll_json = nested_catalog_with_data / "tst" / "latest" / "adm0" / "collection.json"
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+            region_name="us-east-1",
+        )
+
+        def remote_collection_json() -> str:
+            obj = client.get_object(Bucket=bucket_name, Key=f"catalog/{collection}/collection.json")
+            body: str = obj["Body"].read().decode()
+            return body
+
+        # 1. Initial push: remote gets the original description.
+        assert (
+            push(
+                catalog_root=nested_catalog_with_data,
+                collection=collection,
+                destination=destination,
+                force=False,
+            ).success
+            is True
+        )
+        assert "Collection adm0" in remote_collection_json()
+
+        # 2. Regenerate collection.json locally (no version bump).
+        doc = json.loads(coll_json.read_text())
+        doc["description"] = "REGENERATED DESCRIPTION"
+        coll_json.write_text(json.dumps(doc))
+
+        # No-force push is a no-op: the remote keeps the ORIGINAL bytes.
+        assert (
+            push(
+                catalog_root=nested_catalog_with_data,
+                collection=collection,
+                destination=destination,
+                force=False,
+            ).success
+            is True
+        )
+        assert "REGENERATED DESCRIPTION" not in remote_collection_json()
+
+        # 3. Force push refreshes metadata even though the version list is identical.
+        assert (
+            push(
+                catalog_root=nested_catalog_with_data,
+                collection=collection,
+                destination=destination,
+                force=True,
+            ).success
+            is True
+        )
+        assert "REGENERATED DESCRIPTION" in remote_collection_json()
+
 
 # =============================================================================
 # Pull Integration Tests

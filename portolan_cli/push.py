@@ -2363,6 +2363,9 @@ def _push_all_upload_root_files(
         return True
 
     if not catalog_json.exists():
+        # No root catalog.json means the remote root is already broken, so we do
+        # not bother with intermediate catalog.json either (Issue #547, #552) -
+        # they are only reachable by walking child links from this missing root.
         warn(f"catalog.json not found at {catalog_root} - remote catalog may be incomplete")
         return True
 
