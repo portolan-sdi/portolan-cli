@@ -4,13 +4,12 @@ These requirements apply to all Portolan catalogs, regardless of data format.
 
 ## Catalog Structure
 
-A Portolan catalog is a directory with STAC metadata at the project root and internal tooling state in `.portolan/`. See [structure.md](structure.md) for the full directory layout.
+A Portolan catalog is a directory with STAC metadata at the project root and internal tooling configuration in `.portolan/`. See [structure.md](structure.md) for the full directory layout.
 
 ```
 project/
 ├── .portolan/
-│   ├── config.yaml
-│   └── state.json
+│   └── config.yaml
 ├── catalog.json
 ├── llms.txt
 ├── versions.json
