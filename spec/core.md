@@ -58,6 +58,16 @@ STAC requires `extent.spatial.bbox` for Collections. For **tabular (non-geospati
 
 See [formats/tabular.md](formats/tabular.md) for full tabular collection requirements.
 
+## Temporal Metadata
+
+Items **SHOULD** carry an explicit `datetime` (or `start_datetime`/`end_datetime` interval) describing when the data applies. Items added without a datetime receive a null temporal extent (an open interval) and are marked `portolan:datetime_provisional: true` (see [ADR-0035](../context/shared/adr/0035-temporal-extent-handling.md)).
+
+Provisional items are valid STAC but temporally incomplete:
+
+- They are accepted so ingestion is never blocked on unknown dates
+- `portolan check` flags them at WARNING severity
+- Enriching the datetime enables time-based browsing and clears the provisional flag
+
 ## Data Storage
 
 Portolan catalogs assume data is hosted in S3-compatible object storage. This is the ground truth for all assets.
