@@ -744,6 +744,102 @@ class TestPMTilesRecommendedRule:
         assert result.passed is True
 
 
+class TestPMTilesLinkRule:
+    """Tests for PMTilesLinkRule (RULE-0061, Issue #569).
+
+    This rule emits an ERROR when a collection registers a PMTiles asset but
+    does not emit a collection-level ``rel="pmtiles"`` web-map-links link.
+    """
+
+    @staticmethod
+    def _write_collection(tmp_path: Path, *, with_link: bool) -> Path:
+        import json
+
+        (tmp_path / ".portolan").mkdir()
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+
+        links: list[dict[str, object]] = []
+        if with_link:
+            links.append(
+                {
+                    "rel": "pmtiles",
+                    "href": "./data.pmtiles",
+                    "type": "application/vnd.pmtiles",
+                    "pmtiles:layers": ["data"],
+                }
+            )
+
+        collection_json = {
+            "type": "Collection",
+            "id": "test-collection",
+            "stac_version": "1.0.0",
+            "description": "Test collection",
+            "links": links,
+            "assets": {
+                "data-tiles": {
+                    "href": "./data.pmtiles",
+                    "type": "application/vnd.pmtiles",
+                    "roles": ["visual"],
+                }
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "data.pmtiles").write_bytes(b"PMTilesplaceholder")
+        return tmp_path
+
+    @pytest.mark.unit
+    def test_has_error_severity(self) -> None:
+        """RULE-0061 blocks: PMTiles link is an ERROR when missing."""
+        from portolan_cli.validation.rules import PMTilesLinkRule
+
+        assert PMTilesLinkRule().severity == Severity.ERROR
+
+    @pytest.mark.unit
+    def test_fails_when_asset_without_link(self, tmp_path: Path) -> None:
+        """A PMTiles asset with no rel='pmtiles' link fails the check."""
+        from portolan_cli.validation.rules import PMTilesLinkRule
+
+        catalog = self._write_collection(tmp_path, with_link=False)
+        result = PMTilesLinkRule().check(catalog)
+
+        assert result.passed is False
+        assert result.severity == Severity.ERROR
+        assert "pmtiles" in result.message.lower()
+        assert result.fix_hint is not None
+
+    @pytest.mark.unit
+    def test_passes_when_link_present(self, tmp_path: Path) -> None:
+        """A PMTiles asset with a rel='pmtiles' link passes the check."""
+        from portolan_cli.validation.rules import PMTilesLinkRule
+
+        catalog = self._write_collection(tmp_path, with_link=True)
+        result = PMTilesLinkRule().check(catalog)
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_passes_when_no_pmtiles_asset(self, tmp_path: Path) -> None:
+        """Collections without a PMTiles asset are not flagged."""
+        import json
+
+        from portolan_cli.validation.rules import PMTilesLinkRule
+
+        (tmp_path / ".portolan").mkdir()
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+        collection_json = {
+            "type": "Collection",
+            "id": "test-collection",
+            "links": [],
+            "assets": {"data": {"href": "./data.parquet"}},
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+
+        result = PMTilesLinkRule().check(tmp_path)
+        assert result.passed is True
+
+
 class TestMetadataFreshRule:
     """Tests for MetadataFreshRule.
 
@@ -1941,3 +2037,103 @@ class TestRepairTabularFlags:
         assert results == []
         data = json.loads((coll / "collection.json").read_text())
         assert "portolan:geospatial" not in data
+
+
+class TestRepairPMTilesLinks:
+    """--fix backfills the rel='pmtiles' web-map-links link (RULE-0061, #569)."""
+
+    @pytest.mark.unit
+    def test_backfills_missing_link(self, tmp_path: Path) -> None:
+        import json
+
+        from portolan_cli.metadata.fix import repair_pmtiles_links
+        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
+
+        coll = _make_collection(
+            tmp_path,
+            "parcels",
+            assets={
+                "data-tiles": {
+                    "href": "./data.pmtiles",
+                    "type": "application/vnd.pmtiles",
+                    "roles": ["visual"],
+                }
+            },
+        )
+
+        results = repair_pmtiles_links(tmp_path)
+
+        assert len(results) == 1
+        assert results[0].success is True
+        data = json.loads((coll / "collection.json").read_text())
+        pmtiles_links = [link for link in data["links"] if link.get("rel") == "pmtiles"]
+        assert len(pmtiles_links) == 1
+        assert pmtiles_links[0]["type"] == "application/vnd.pmtiles"
+        assert pmtiles_links[0]["pmtiles:layers"] == ["data"]
+        assert WEB_MAP_LINKS_EXTENSION in data["stac_extensions"]
+
+    @pytest.mark.unit
+    def test_dry_run_reports_without_writing(self, tmp_path: Path) -> None:
+        import json
+
+        from portolan_cli.metadata.fix import repair_pmtiles_links
+
+        coll = _make_collection(
+            tmp_path,
+            "parcels",
+            assets={
+                "data-tiles": {
+                    "href": "./data.pmtiles",
+                    "type": "application/vnd.pmtiles",
+                    "roles": ["visual"],
+                }
+            },
+        )
+
+        results = repair_pmtiles_links(tmp_path, dry_run=True)
+
+        assert len(results) == 1
+        data = json.loads((coll / "collection.json").read_text())
+        assert data["links"] == []
+
+    @pytest.mark.unit
+    def test_noop_when_link_present(self, tmp_path: Path) -> None:
+        from portolan_cli.metadata.fix import repair_pmtiles_links
+
+        _make_collection(
+            tmp_path,
+            "parcels",
+            assets={
+                "data-tiles": {
+                    "href": "./data.pmtiles",
+                    "type": "application/vnd.pmtiles",
+                    "roles": ["visual"],
+                }
+            },
+            extra={
+                "links": [
+                    {
+                        "rel": "pmtiles",
+                        "href": "./data.pmtiles",
+                        "type": "application/vnd.pmtiles",
+                        "pmtiles:layers": ["data"],
+                    }
+                ]
+            },
+        )
+
+        results = repair_pmtiles_links(tmp_path)
+        assert results == []
+
+    @pytest.mark.unit
+    def test_noop_when_no_pmtiles_asset(self, tmp_path: Path) -> None:
+        from portolan_cli.metadata.fix import repair_pmtiles_links
+
+        _make_collection(
+            tmp_path,
+            "parcels",
+            assets={"data": {"href": "./data.parquet", "roles": ["data"]}},
+        )
+
+        results = repair_pmtiles_links(tmp_path)
+        assert results == []

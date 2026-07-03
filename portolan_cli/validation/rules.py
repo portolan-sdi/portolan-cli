@@ -404,6 +404,87 @@ class PMTilesRecommendedRule(ValidationRule):
         return self._pass(f"All {total_geoparquet} GeoParquet assets have PMTiles derivatives")
 
 
+# Media type of a PMTiles asset/link per the web-map-links extension (RULE-0061).
+_PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
+
+
+class PMTilesLinkRule(ValidationRule):
+    """Require a ``rel="pmtiles"`` link when a collection has a PMTiles asset.
+
+    Implements RULE-0061: a collection that exposes a PMTiles visualization asset
+    MUST also emit a collection-level ``rel="pmtiles"`` link so the derivative is
+    discoverable via the web-map-links STAC extension, not only as an asset. This
+    is an ERROR-level rule; ``check --fix`` backfills the missing link.
+    """
+
+    name = "pmtiles_link"
+    severity = Severity.ERROR
+    description = "Check collections with PMTiles assets emit a rel='pmtiles' link"
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Fail when any collection has a PMTiles asset but no rel='pmtiles' link.
+
+        Args:
+            catalog_path: Path to the directory containing .portolan.
+
+        Returns:
+            ValidationResult, failing if any PMTiles asset lacks its link.
+        """
+        collection_files = list(catalog_path.rglob("collection.json"))
+
+        if not collection_files:
+            return self._pass("No collections found")
+
+        missing_link: list[str] = []
+        total_with_pmtiles = 0
+
+        for collection_json in collection_files:
+            try:
+                data = json.loads(collection_json.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            assets = data.get("assets", {})
+            has_pmtiles_asset = any(
+                isinstance(asset, dict)
+                and (
+                    asset.get("type") == _PMTILES_MEDIA_TYPE
+                    or str(asset.get("href", "")).endswith(".pmtiles")
+                )
+                for asset in assets.values()
+            )
+            if not has_pmtiles_asset:
+                continue
+
+            total_with_pmtiles += 1
+
+            links = data.get("links", [])
+            has_pmtiles_link = any(
+                isinstance(link, dict) and link.get("rel") == "pmtiles" for link in links
+            )
+            if not has_pmtiles_link:
+                try:
+                    rel_path = collection_json.parent.relative_to(catalog_path)
+                except ValueError:
+                    rel_path = collection_json.parent
+                missing_link.append(str(rel_path))
+
+        if total_with_pmtiles == 0:
+            return self._pass("No PMTiles assets found")
+
+        if missing_link:
+            if len(missing_link) == 1:
+                msg = f"PMTiles asset missing rel='pmtiles' link: {missing_link[0]}"
+            else:
+                msg = f"{len(missing_link)} collections have PMTiles assets missing rel='pmtiles' link"
+            return self._fail(
+                msg,
+                fix_hint="Run 'portolan check --fix' to add the web-map-links pmtiles link",
+            )
+
+        return self._pass(f"All {total_with_pmtiles} PMTiles assets have rel='pmtiles' links")
+
+
 class MetadataFreshRule(ValidationRule):
     """Check that all registered geo-assets have fresh STAC metadata.
 

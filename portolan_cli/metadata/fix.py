@@ -263,6 +263,78 @@ def repair_tabular_flags(catalog_root: Path, *, dry_run: bool = False) -> list[F
     return results
 
 
+def repair_pmtiles_links(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
+    """Backfill the ``rel="pmtiles"`` web-map-links link on collections (RULE-0061).
+
+    Repairs what :class:`~portolan_cli.validation.rules.PMTilesLinkRule` flags: a
+    collection that registers a PMTiles asset but does not emit a collection-level
+    ``rel="pmtiles"`` link. For each PMTiles asset lacking a matching link, the link
+    is added (with the web-map-links extension declared and ``pmtiles:layers`` set
+    from the asset filename). Collections whose links are already present are left
+    untouched.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        dry_run: If True, report what would change without writing.
+
+    Returns:
+        FixResults for each collection that was (or would be) modified.
+    """
+    from portolan_cli.pmtiles import add_pmtiles_link_to_collection
+
+    results: list[FixResult] = []
+
+    for collection_json in sorted(catalog_root.rglob("collection.json")):
+        collection_dir = collection_json.parent
+        rel_parts = collection_dir.relative_to(catalog_root).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        try:
+            data = json.loads(collection_json.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+
+        assets = data.get("assets", {})
+        pmtiles_hrefs = [
+            str(asset["href"])
+            for asset in assets.values()
+            if isinstance(asset, dict)
+            and (
+                asset.get("type") == "application/vnd.pmtiles"
+                or str(asset.get("href", "")).endswith(".pmtiles")
+            )
+            and asset.get("href")
+        ]
+        if not pmtiles_hrefs:
+            continue
+
+        links = data.get("links", [])
+        linked_hrefs = {
+            link.get("href")
+            for link in links
+            if isinstance(link, dict) and link.get("rel") == "pmtiles"
+        }
+        missing = [href for href in pmtiles_hrefs if href not in linked_hrefs]
+        if not missing:
+            continue
+
+        if not dry_run:
+            for href in missing:
+                layer = Path(href).stem
+                add_pmtiles_link_to_collection(collection_dir, href, layers=[layer])
+
+        results.append(
+            FixResult(
+                file_path=collection_json,
+                action=FixAction.UPDATED,
+                success=True,
+                message="Added rel='pmtiles' web-map-links link",
+            )
+        )
+
+    return results
+
+
 def _repair_item_titles(
     stac_file: Path,
     data: dict[str, Any],

@@ -292,6 +292,75 @@ class TestAddPMTilesAssetToCollection:
         assert len(updated["assets"]) == 2
 
 
+class TestAddPMTilesLinkToCollection:
+    """Tests for add_pmtiles_link_to_collection (Issue #569)."""
+
+    @staticmethod
+    def _collection(tmp_path: Path) -> Path:
+        collection_dir = tmp_path / "collection"
+        collection_dir.mkdir()
+        collection_json = {
+            "type": "Collection",
+            "assets": {"data": {"href": "./data.parquet"}},
+            "links": [],
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        return collection_dir
+
+    @pytest.mark.unit
+    def test_adds_web_map_links_link_and_extension(self, tmp_path: Path) -> None:
+        """Adds rel='pmtiles' link with media type, layers, and extension."""
+        from portolan_cli.pmtiles import (
+            WEB_MAP_LINKS_EXTENSION,
+            add_pmtiles_link_to_collection,
+        )
+
+        collection_dir = self._collection(tmp_path)
+
+        add_pmtiles_link_to_collection(collection_dir, "./data.pmtiles", layers=["data"])
+
+        updated = json.loads((collection_dir / "collection.json").read_text())
+        links = [link for link in updated["links"] if link.get("rel") == "pmtiles"]
+        assert len(links) == 1
+        assert links[0]["href"] == "./data.pmtiles"
+        assert links[0]["type"] == "application/vnd.pmtiles"
+        assert links[0]["pmtiles:layers"] == ["data"]
+        assert WEB_MAP_LINKS_EXTENSION in updated["stac_extensions"]
+
+    @pytest.mark.unit
+    def test_idempotent_does_not_duplicate_link_or_extension(self, tmp_path: Path) -> None:
+        """Calling twice keeps exactly one link and one extension entry."""
+        from portolan_cli.pmtiles import (
+            WEB_MAP_LINKS_EXTENSION,
+            add_pmtiles_link_to_collection,
+        )
+
+        collection_dir = self._collection(tmp_path)
+
+        add_pmtiles_link_to_collection(collection_dir, "./data.pmtiles", layers=["data"])
+        add_pmtiles_link_to_collection(collection_dir, "./data.pmtiles", layers=["data"])
+
+        updated = json.loads((collection_dir / "collection.json").read_text())
+        pmtiles_links = [link for link in updated["links"] if link.get("rel") == "pmtiles"]
+        assert len(pmtiles_links) == 1
+        assert updated["stac_extensions"].count(WEB_MAP_LINKS_EXTENSION) == 1
+
+    @pytest.mark.unit
+    def test_realigns_stale_layers(self, tmp_path: Path) -> None:
+        """A pre-existing link with stale pmtiles:layers is updated in place."""
+        from portolan_cli.pmtiles import add_pmtiles_link_to_collection
+
+        collection_dir = self._collection(tmp_path)
+        add_pmtiles_link_to_collection(collection_dir, "./data.pmtiles", layers=["old"])
+
+        add_pmtiles_link_to_collection(collection_dir, "./data.pmtiles", layers=["new"])
+
+        updated = json.loads((collection_dir / "collection.json").read_text())
+        pmtiles_links = [link for link in updated["links"] if link.get("rel") == "pmtiles"]
+        assert len(pmtiles_links) == 1
+        assert pmtiles_links[0]["pmtiles:layers"] == ["new"]
+
+
 class TestTrackGeneratedAssetsInVersions:
     """Tests for _track_generated_assets_in_versions (Issue #519).
 
@@ -814,6 +883,49 @@ class TestGeneratePMTilesForCollection:
         assert thumb_asset.sha256
         assert thumb_asset.size_bytes == thumb_path.stat().st_size
         assert thumb_asset.href == "demographics/data.thumb.png"
+
+    @pytest.mark.unit
+    def test_generate_emits_pmtiles_link(self, tmp_path: Path) -> None:
+        """The generate path emits the rel='pmtiles' web-map-links link (#569)."""
+        from portolan_cli.pmtiles import (
+            WEB_MAP_LINKS_EXTENSION,
+            generate_pmtiles_for_collection,
+        )
+
+        collection_dir = tmp_path / "demographics"
+        collection_dir.mkdir()
+
+        collection_json = {
+            "type": "Collection",
+            "assets": {
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                }
+            },
+            "links": [],
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+        (collection_dir / "data.parquet").write_bytes(b"PAR1")
+
+        pmtiles_path = collection_dir / "data.pmtiles"
+
+        def mock_generate(*args: object, **kwargs: object) -> None:
+            pmtiles_path.write_bytes(b"PMTILES")
+
+        mock_module = MagicMock()
+        with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
+            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate):
+                    generate_pmtiles_for_collection(collection_dir, tmp_path)
+
+        updated = json.loads((collection_dir / "collection.json").read_text())
+        pmtiles_links = [link for link in updated["links"] if link.get("rel") == "pmtiles"]
+        assert len(pmtiles_links) == 1
+        assert pmtiles_links[0]["href"] == "./data.pmtiles"
+        assert pmtiles_links[0]["type"] == "application/vnd.pmtiles"
+        assert pmtiles_links[0]["pmtiles:layers"] == ["data"]
+        assert WEB_MAP_LINKS_EXTENSION in updated["stac_extensions"]
 
     @pytest.mark.unit
     def test_skip_path_backfills_untracked_thumbnail(self, tmp_path: Path) -> None:
