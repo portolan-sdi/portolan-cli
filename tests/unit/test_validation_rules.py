@@ -770,11 +770,14 @@ class TestPMTilesLinkRule:
                 }
             )
 
+        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
+
         collection_json = {
             "type": "Collection",
             "id": "test-collection",
             "stac_version": "1.0.0",
             "description": "Test collection",
+            "stac_extensions": [WEB_MAP_LINKS_EXTENSION] if with_link else [],
             "links": links,
             "assets": {
                 "data-tiles": {
@@ -838,6 +841,103 @@ class TestPMTilesLinkRule:
 
         result = PMTilesLinkRule().check(tmp_path)
         assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_when_second_pmtiles_asset_lacks_link(self, tmp_path: Path) -> None:
+        """Two PMTiles assets but only one rel='pmtiles' link fails (per-asset check).
+
+        Regression for the coarse ``any(rel == 'pmtiles')`` presence test: a
+        collection with a.pmtiles + b.pmtiles and only an a.pmtiles link used to
+        pass while --fix immediately added the missing b.pmtiles link.
+        """
+        import json
+
+        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
+        from portolan_cli.validation.rules import PMTilesLinkRule
+
+        (tmp_path / ".portolan").mkdir()
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+        collection_json = {
+            "type": "Collection",
+            "id": "test-collection",
+            "stac_extensions": [WEB_MAP_LINKS_EXTENSION],
+            "links": [
+                {
+                    "rel": "pmtiles",
+                    "href": "./a.pmtiles",
+                    "type": "application/vnd.pmtiles",
+                    "pmtiles:layers": ["a"],
+                }
+            ],
+            "assets": {
+                "a-tiles": {"href": "./a.pmtiles", "type": "application/vnd.pmtiles"},
+                "b-tiles": {"href": "./b.pmtiles", "type": "application/vnd.pmtiles"},
+            },
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+
+        result = PMTilesLinkRule().check(tmp_path)
+        assert result.passed is False
+        assert "b.pmtiles" in result.message
+
+    @pytest.mark.unit
+    def test_skips_hidden_directories(self, tmp_path: Path) -> None:
+        """A collection under a hidden dir (.portolan/) is not flagged.
+
+        repair_pmtiles_links skips hidden dirs, so the check must too — otherwise
+        it reports a blocking ERROR --fix can never resolve.
+        """
+        import json
+
+        from portolan_cli.validation.rules import PMTilesLinkRule
+
+        (tmp_path / ".portolan").mkdir()
+        hidden_collection = tmp_path / ".portolan" / "cached-collection"
+        hidden_collection.mkdir()
+        collection_json = {
+            "type": "Collection",
+            "id": "cached-collection",
+            "links": [],
+            "assets": {"data-tiles": {"href": "./data.pmtiles", "type": "application/vnd.pmtiles"}},
+        }
+        (hidden_collection / "collection.json").write_text(json.dumps(collection_json))
+
+        result = PMTilesLinkRule().check(tmp_path)
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_when_extension_not_declared(self, tmp_path: Path) -> None:
+        """A PMTiles link present but web-map-links extension undeclared fails.
+
+        RULE-0061 assertion 3: the extension must be declared in stac_extensions.
+        """
+        import json
+
+        from portolan_cli.validation.rules import PMTilesLinkRule
+
+        (tmp_path / ".portolan").mkdir()
+        collection_dir = tmp_path / "test-collection"
+        collection_dir.mkdir()
+        collection_json = {
+            "type": "Collection",
+            "id": "test-collection",
+            "stac_extensions": [],
+            "links": [
+                {
+                    "rel": "pmtiles",
+                    "href": "./data.pmtiles",
+                    "type": "application/vnd.pmtiles",
+                    "pmtiles:layers": ["data"],
+                }
+            ],
+            "assets": {"data-tiles": {"href": "./data.pmtiles", "type": "application/vnd.pmtiles"}},
+        }
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json))
+
+        result = PMTilesLinkRule().check(tmp_path)
+        assert result.passed is False
+        assert "extension" in result.message.lower()
 
 
 class TestMetadataFreshRule:
@@ -2099,6 +2199,7 @@ class TestRepairPMTilesLinks:
     @pytest.mark.unit
     def test_noop_when_link_present(self, tmp_path: Path) -> None:
         from portolan_cli.metadata.fix import repair_pmtiles_links
+        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
 
         _make_collection(
             tmp_path,
@@ -2111,6 +2212,7 @@ class TestRepairPMTilesLinks:
                 }
             },
             extra={
+                "stac_extensions": [WEB_MAP_LINKS_EXTENSION],
                 "links": [
                     {
                         "rel": "pmtiles",
@@ -2118,12 +2220,59 @@ class TestRepairPMTilesLinks:
                         "type": "application/vnd.pmtiles",
                         "pmtiles:layers": ["data"],
                     }
-                ]
+                ],
             },
         )
 
         results = repair_pmtiles_links(tmp_path)
         assert results == []
+
+    @pytest.mark.unit
+    def test_declares_extension_without_touching_custom_layers(self, tmp_path: Path) -> None:
+        """When only the extension declaration is missing, --fix declares it.
+
+        The link is complete but ``stac_extensions`` omits web-map-links. Repair
+        must declare the extension without overwriting a custom ``pmtiles:layers``
+        (which the backfill would derive from the file stem, not the real layer).
+        """
+        import json
+
+        from portolan_cli.metadata.fix import repair_pmtiles_links
+        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
+
+        coll = _make_collection(
+            tmp_path,
+            "parcels",
+            assets={
+                "data-tiles": {
+                    "href": "./data.pmtiles",
+                    "type": "application/vnd.pmtiles",
+                    "roles": ["visual"],
+                }
+            },
+            extra={
+                "stac_extensions": [],
+                "links": [
+                    {
+                        "rel": "pmtiles",
+                        "href": "./data.pmtiles",
+                        "type": "application/vnd.pmtiles",
+                        "pmtiles:layers": ["custom-layer-name"],
+                    }
+                ],
+            },
+        )
+
+        results = repair_pmtiles_links(tmp_path)
+
+        assert len(results) == 1
+        assert results[0].success is True
+        data = json.loads((coll / "collection.json").read_text())
+        assert WEB_MAP_LINKS_EXTENSION in data["stac_extensions"]
+        pmtiles_links = [link for link in data["links"] if link.get("rel") == "pmtiles"]
+        assert len(pmtiles_links) == 1
+        # Custom layer name preserved, not clobbered to the file stem "data".
+        assert pmtiles_links[0]["pmtiles:layers"] == ["custom-layer-name"]
 
     @pytest.mark.unit
     def test_noop_when_no_pmtiles_asset(self, tmp_path: Path) -> None:

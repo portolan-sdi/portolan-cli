@@ -280,7 +280,11 @@ def repair_pmtiles_links(catalog_root: Path, *, dry_run: bool = False) -> list[F
     Returns:
         FixResults for each collection that was (or would be) modified.
     """
-    from portolan_cli.pmtiles import add_pmtiles_link_to_collection
+    from portolan_cli.pmtiles import (
+        WEB_MAP_LINKS_EXTENSION,
+        add_pmtiles_link_to_collection,
+        ensure_web_map_links_extension,
+    )
 
     results: list[FixResult] = []
 
@@ -315,20 +319,40 @@ def repair_pmtiles_links(catalog_root: Path, *, dry_run: bool = False) -> list[F
             if isinstance(link, dict) and link.get("rel") == "pmtiles"
         }
         missing = [href for href in pmtiles_hrefs if href not in linked_hrefs]
-        if not missing:
+        # A collection may have all its links yet still lack the web-map-links
+        # extension declaration (e.g. a hand-edited collection.json). RULE-0061
+        # flags that too, so repair it here to keep check and --fix in agreement.
+        missing_extension = WEB_MAP_LINKS_EXTENSION not in data.get("stac_extensions", [])
+        if not missing and not missing_extension:
             continue
 
         if not dry_run:
             for href in missing:
+                # Best-effort: the layer name is derived from the PMTiles file
+                # stem. If the tiles were generated with a custom ``--layer``
+                # override differing from the file name, the override is not
+                # recorded anywhere the backfill can read, so pmtiles:layers may
+                # not match the actual layer name inside the PMTiles. The
+                # generate path (pmtiles.generate_pmtiles_for_collection) honors
+                # the override; this fallback cannot.
                 layer = Path(href).stem
                 add_pmtiles_link_to_collection(collection_dir, href, layers=[layer])
+            if missing_extension and not missing:
+                # Links are complete but the extension declaration is absent;
+                # declare it without touching links (preserves custom layers).
+                ensure_web_map_links_extension(collection_dir)
 
+        message = (
+            "Added rel='pmtiles' web-map-links link"
+            if missing
+            else "Declared web-map-links extension"
+        )
         results.append(
             FixResult(
                 file_path=collection_json,
                 action=FixAction.UPDATED,
                 success=True,
-                message="Added rel='pmtiles' web-map-links link",
+                message=message,
             )
         )
 

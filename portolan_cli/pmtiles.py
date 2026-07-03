@@ -424,6 +424,35 @@ def add_pmtiles_asset_to_collection(
     collection_json_path.write_text(json.dumps(data, indent=2))
 
 
+def ensure_web_map_links_extension(collection_path: Path) -> bool:
+    """Declare the web-map-links extension in a collection idempotently.
+
+    Adds ``WEB_MAP_LINKS_EXTENSION`` to ``stac_extensions`` if absent, without
+    touching any links (so existing ``pmtiles:layers`` overrides are preserved).
+    Used by ``check --fix`` to repair a collection that carries the PMTiles link
+    but omits the extension declaration (RULE-0061 assertion 3).
+
+    Args:
+        collection_path: Path to collection directory.
+
+    Returns:
+        True if the extension was added and the file rewritten, else False.
+    """
+    collection_json_path = collection_path / "collection.json"
+    if not collection_json_path.exists():
+        return False
+
+    data = json.loads(collection_json_path.read_text())
+    extensions = data.get("stac_extensions", [])
+    if WEB_MAP_LINKS_EXTENSION in extensions:
+        return False
+
+    extensions.append(WEB_MAP_LINKS_EXTENSION)
+    data["stac_extensions"] = extensions
+    collection_json_path.write_text(json.dumps(data, indent=2))
+    return True
+
+
 def add_pmtiles_link_to_collection(
     collection_path: Path,
     pmtiles_href: str,
