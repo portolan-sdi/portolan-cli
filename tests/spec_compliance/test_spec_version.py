@@ -2,8 +2,9 @@
 
 The specification carries a machine-readable SemVer version whose canonical home
 is ``spec/schema/spec-version.json``. Everything else that names the version --
-the CLI constant, ``rules.yaml``, and the schema ``$comment``s -- must mirror it,
-so a spec change that forgets to bump one place fails here.
+the CLI constant, ``rules.yaml``, the schema ``$comment``s, and the
+``spec/README.md`` header -- must mirror it, so a spec change that forgets to
+bump one place fails here.
 
 See ``spec/README.md#versioning`` for the bump policy.
 """
@@ -78,3 +79,17 @@ def test_schema_comment_names_spec_version(
     """Each JSON schema's $comment references the current spec version."""
     schema = json.loads((schemas_dir / schema_name).read_text())
     assert spec_version_doc["spec_version"] in schema["$comment"]
+
+
+# The ``**Spec version: `X.Y.Z`**`` header near the top of spec/README.md.
+_README_HEADER = re.compile(r"\*\*Spec version:\s*`([^`]+)`\*\*")
+
+
+def test_readme_header_matches_canonical_version(
+    schemas_dir: Path, spec_version_doc: dict[str, Any]
+) -> None:
+    """The spec/README.md version header mirrors the canonical spec-version.json."""
+    readme = (schemas_dir.parent / "README.md").read_text()
+    match = _README_HEADER.search(readme)
+    assert match is not None, "spec/README.md is missing the '**Spec version: `X.Y.Z`**' header"
+    assert match.group(1) == spec_version_doc["spec_version"]

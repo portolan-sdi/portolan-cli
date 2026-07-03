@@ -116,23 +116,41 @@ class TestCheckCommand:
             assert "success" in result.output.lower() or "{" in result.output
 
     @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "extra_flags",
+        [
+            pytest.param(["--metadata"], id="metadata-only"),
+            pytest.param(["--geo-assets"], id="geo-assets-only"),
+            pytest.param(["--metadata", "--geo-assets"], id="combined"),
+        ],
+    )
     def test_check_json_exposes_spec_version(
         self,
         runner: CliRunner,
         valid_catalog: Path,
         mock_passing_validation_report: ValidationReport,
+        mock_check_report,
+        extra_flags: list[str],
     ) -> None:
-        """check --json reports the Portolan spec version it validates against (#566)."""
+        """check --json reports the Portolan spec version across every scope (#566).
+
+        The metadata-only, format-only, and combined scopes each route through a
+        distinct JSON output function, so a regression that drops the field from
+        one of them must fail here.
+        """
         from portolan_cli.constants import PORTOLAN_SPEC_VERSION
 
-        with patch(
-            "portolan_cli.cli.validate_catalog",
-            return_value=mock_passing_validation_report,
+        with (
+            patch(
+                "portolan_cli.cli.validate_catalog",
+                return_value=mock_passing_validation_report,
+            ),
+            patch("portolan_cli.cli.check_directory", return_value=mock_check_report),
         ):
-            result = runner.invoke(cli, ["check", str(valid_catalog), "--metadata", "--json"])
+            result = runner.invoke(cli, ["check", str(valid_catalog), *extra_flags, "--json"])
             assert result.exit_code == 0
             envelope = json.loads(result.output)
-            assert envelope["data"]["spec_version"] == PORTOLAN_SPEC_VERSION
+            assert envelope["data"]["portolan_spec_version"] == PORTOLAN_SPEC_VERSION
 
     @pytest.mark.unit
     def test_check_fails_on_catalog_not_found(self, runner: CliRunner, tmp_path: Path) -> None:
@@ -669,6 +687,45 @@ class TestCheckMetadataFixFlag:
                 ["check", str(valid_catalog_with_parquet), "--metadata", "--fix"],
             )
             assert result.exit_code == 0
+
+    @pytest.mark.unit
+    def test_metadata_fix_json_exposes_spec_version(
+        self,
+        runner: CliRunner,
+        valid_catalog_with_parquet: Path,
+        mock_passing_validation_report: ValidationReport,
+    ) -> None:
+        """check --fix --json reports the Portolan spec version (#566).
+
+        The --fix path routes through its own JSON output function, so it needs
+        its own drift guard against dropping the field.
+        """
+        from portolan_cli.constants import PORTOLAN_SPEC_VERSION
+        from portolan_cli.metadata.models import MetadataReport
+
+        metadata_report = MetadataReport(results=[])
+
+        with (
+            patch(
+                "portolan_cli.cli.validate_catalog",
+                return_value=mock_passing_validation_report,
+            ),
+            patch(
+                "portolan_cli.metadata.scan.scan_catalog_metadata",
+                return_value=metadata_report,
+            ),
+            patch("portolan_cli.cli.fix_metadata") as mock_fix,
+        ):
+            from portolan_cli.metadata.fix import FixReport
+
+            mock_fix.return_value = FixReport(results=[], skipped_count=0)
+            result = runner.invoke(
+                cli,
+                ["check", str(valid_catalog_with_parquet), "--metadata", "--fix", "--json"],
+            )
+            assert result.exit_code == 0
+            envelope = json.loads(result.output)
+            assert envelope["data"]["portolan_spec_version"] == PORTOLAN_SPEC_VERSION
 
     @pytest.mark.unit
     def test_metadata_fix_calls_fix_metadata_function(

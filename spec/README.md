@@ -60,13 +60,15 @@ pre-1.0. The version lives in exactly one canonical, machine-readable place:
 
 - [`schema/spec-version.json`](schema/spec-version.json) — read `spec_version`
   from here to claim or verify conformance against a version of the Portolan
-  spec. Everything else (this README, the CLI's
-  `portolan_cli.constants.PORTOLAN_SPEC_VERSION`, `portolan check --json`
-  output) mirrors this value.
+  spec. Everything else (this README's header, the CLI's
+  `portolan_cli.constants.PORTOLAN_SPEC_VERSION`, and the
+  `portolan_spec_version` field in `portolan check --json` output) mirrors this
+  value.
 
 This is distinct from the `spec_version` field inside a `versions.json`
 manifest, which versions the [manifest schema](schema/versions.schema.json), not
-the specification as a whole.
+the specification as a whole. The check output deliberately names its field
+`portolan_spec_version` to avoid colliding with that manifest key.
 
 ### Bump policy
 

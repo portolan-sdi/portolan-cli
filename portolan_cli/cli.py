@@ -1027,7 +1027,7 @@ def _output_check_json(report: Any, *, mode: str = "all") -> None:
     """
     data = report.to_dict()
     data["mode"] = mode
-    data["spec_version"] = PORTOLAN_SPEC_VERSION
+    data["portolan_spec_version"] = PORTOLAN_SPEC_VERSION
     data["summary"] = {
         "total": len(report.results),
         "passed": sum(1 for r in report.results if r.passed),
@@ -1124,7 +1124,7 @@ def _output_combined_check_json(
         format_report: Optional CheckReport from format checking.
         mode: Check mode ("metadata", "format", or "all").
     """
-    data: dict[str, Any] = {"mode": mode, "spec_version": PORTOLAN_SPEC_VERSION}
+    data: dict[str, Any] = {"mode": mode, "portolan_spec_version": PORTOLAN_SPEC_VERSION}
     errors: list[ErrorDetail] = []
 
     if metadata_report is not None:
@@ -1306,7 +1306,7 @@ def _output_fix_json(
         format_fix_report: Results from geo-asset fix (if run).
         has_failures: Whether any fix operation failed.
     """
-    data: dict[str, Any] = {"mode": mode, "spec_version": PORTOLAN_SPEC_VERSION}
+    data: dict[str, Any] = {"mode": mode, "portolan_spec_version": PORTOLAN_SPEC_VERSION}
 
     if metadata_fix_report is not None:
         if not isinstance(metadata_fix_report, FixReport):
@@ -1658,7 +1658,7 @@ def _output_format_only(path: Path, mode: str, use_json: bool, verbose: bool) ->
     if use_json:
         data = format_report.to_dict()
         data["mode"] = mode
-        data["spec_version"] = PORTOLAN_SPEC_VERSION
+        data["portolan_spec_version"] = PORTOLAN_SPEC_VERSION
         envelope = success_envelope("check", data)
         output_json_envelope(envelope)
     else:
