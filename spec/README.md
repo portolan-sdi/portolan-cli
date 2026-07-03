@@ -2,6 +2,11 @@
 
 This directory contains the canonical Portolan specification.
 
+**Spec version: `0.1.0`** ([SemVer](https://semver.org/), pre-1.0). The
+canonical machine-readable home is
+[`schema/spec-version.json`](schema/spec-version.json). See
+[Versioning](#versioning) below for the bump policy.
+
 The **portolan-cli repository is the source of truth** for the spec. The
 [portolan-spec](https://github.com/portolan-sdi/portolan-spec) repository is a
 read-only mirror, automatically synced via CI on every merge to main.
@@ -48,6 +53,49 @@ For all architectural decisions, see [context/shared/adr/](../context/shared/adr
 
 See [examples/](examples/) for reference implementations.
 
+## Versioning
+
+The specification is versioned with [SemVer](https://semver.org/), starting
+pre-1.0. The version lives in exactly one canonical, machine-readable place:
+
+- [`schema/spec-version.json`](schema/spec-version.json) — read `spec_version`
+  from here to claim or verify conformance against a version of the Portolan
+  spec. Everything else (this README, the CLI's
+  `portolan_cli.constants.PORTOLAN_SPEC_VERSION`, `portolan check --json`
+  output) mirrors this value.
+
+This is distinct from the `spec_version` field inside a `versions.json`
+manifest, which versions the [manifest schema](schema/versions.schema.json), not
+the specification as a whole.
+
+### Bump policy
+
+While the spec is pre-1.0, **any breaking change bumps the MINOR** version
+(e.g. `0.1.0` → `0.2.0`); non-breaking changes bump the PATCH. Once the spec
+reaches `1.0.0`, normal SemVer applies (breaking changes bump MAJOR).
+
+A change is **breaking** when a catalog that conformed to the previous version
+may no longer conform, or a tool built against the previous version may
+misvalidate. Examples:
+
+- Raising a rule's severity (e.g. `warning` → `error`) in `schema/rules.yaml`.
+- Adding a new `error`-level rule, or a new required field/constraint in any
+  schema (schema tightening).
+- Removing or renaming a field, rule id, or accepted value.
+- Changing the meaning of an existing field.
+
+A change is **non-breaking** (PATCH) when previously-conforming catalogs still
+conform. Examples:
+
+- Adding a new `warning`-level rule or an optional field.
+- Relaxing a constraint (e.g. `error` → `warning`, widening accepted values).
+- Editorial/documentation-only changes and clarifications.
+
+When you change the spec in a way that trips the criteria above, bump
+`spec_version` in `schema/spec-version.json` **and** the mirrored
+`PORTOLAN_SPEC_VERSION` constant in `portolan_cli/constants.py` in the same PR
+(a spec-compliance test fails if they drift).
+
 ## Making Changes
 
 To propose spec changes:
@@ -55,5 +103,7 @@ To propose spec changes:
 1. Open a PR in this repository (portolan-cli)
 2. Changes to `spec/` trigger review from spec maintainers
 3. On merge, CI syncs to portolan-spec automatically
+4. If the change is normative, bump `spec_version` per the
+   [bump policy](#bump-policy) above
 
 See [ADR-0048](../context/shared/adr/0048-cli-as-spec-source.md) for rationale.

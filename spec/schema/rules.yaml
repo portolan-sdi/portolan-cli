@@ -12,6 +12,12 @@
 #   validation: How to validate (pseudo-code or description)
 #   references: Links to spec documentation
 
+# Portolan specification version these rules belong to. The canonical home is
+# spec/schema/spec-version.json; see spec/README.md#versioning for the bump
+# policy (e.g. raising a rule's level from warning to error is a breaking
+# change and bumps the spec version).
+spec_version: "0.1.0"
+
 rules:
   # =============================================================================
   # Asset URL Rules

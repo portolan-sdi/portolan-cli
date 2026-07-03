@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://portolan.dev/schema/catalog-versions.schema.json",
+  "$comment": "Part of Portolan spec 0.1.0 (see spec/schema/spec-version.json).",
   "title": "Portolan Catalog Versions Index",
   "description": "Schema for the root-level versions.json that indexes collection sync state. Different from collection-level versions.json.",
   "type": "object",

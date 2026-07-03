@@ -6,6 +6,18 @@ to avoid duplication and ensure consistency.
 
 from __future__ import annotations
 
+# Version of the Portolan specification this CLI validates against (issue #566).
+#
+# SemVer, pre-1.0: breaking spec changes bump the MINOR until 1.0 (see the
+# Versioning section of spec/README.md for the bump policy). The canonical
+# machine-readable home is spec/schema/spec-version.json; this constant mirrors
+# it so the value is available at runtime without shipping spec/ inside the
+# installed package. A spec-compliance test keeps the two in sync.
+#
+# NOTE: This is the version of the *specification as a whole*. It is distinct
+# from versions.SPEC_VERSION, which versions the versions.json manifest schema.
+PORTOLAN_SPEC_VERSION: str = "0.1.0"
+
 # Extensions we recognize as geospatial files
 # Note: .gdb is a directory extension (FileGDB) - handled specially in detection code
 GEOSPATIAL_EXTENSIONS: frozenset[str] = frozenset(

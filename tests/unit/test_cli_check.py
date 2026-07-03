@@ -116,6 +116,25 @@ class TestCheckCommand:
             assert "success" in result.output.lower() or "{" in result.output
 
     @pytest.mark.unit
+    def test_check_json_exposes_spec_version(
+        self,
+        runner: CliRunner,
+        valid_catalog: Path,
+        mock_passing_validation_report: ValidationReport,
+    ) -> None:
+        """check --json reports the Portolan spec version it validates against (#566)."""
+        from portolan_cli.constants import PORTOLAN_SPEC_VERSION
+
+        with patch(
+            "portolan_cli.cli.validate_catalog",
+            return_value=mock_passing_validation_report,
+        ):
+            result = runner.invoke(cli, ["check", str(valid_catalog), "--metadata", "--json"])
+            assert result.exit_code == 0
+            envelope = json.loads(result.output)
+            assert envelope["data"]["spec_version"] == PORTOLAN_SPEC_VERSION
+
+    @pytest.mark.unit
     def test_check_fails_on_catalog_not_found(self, runner: CliRunner, tmp_path: Path) -> None:
         """check exits with error when catalog not found."""
         nonexistent = tmp_path / "nonexistent"
