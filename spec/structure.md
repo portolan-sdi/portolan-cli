@@ -7,8 +7,7 @@ A Portolan catalog is a directory with STAC metadata and cloud-native geospatial
 ```
 project/
 ├── .portolan/
-│   ├── config.yaml                    # Internal: catalog configuration
-│   └── state.json                     # Internal: local sync state
+│   └── config.yaml                    # Internal: catalog configuration
 ├── catalog.json                       # STAC Catalog (root metadata)
 ├── versions.json                      # Catalog-level versioning
 └── {collection_id}/
@@ -22,7 +21,7 @@ project/
 
 | File | Required | Description |
 |------|----------|-------------|
-| `.portolan/` | **MUST** | Internal tooling directory (config, state) |
+| `.portolan/` | **MUST** | Internal tooling directory (config) |
 | `catalog.json` | **MUST** | STAC Catalog (root metadata) |
 | `versions.json` | **MUST** | Catalog-level version tracking |
 
@@ -33,7 +32,6 @@ The `.portolan` directory **MUST** exist at the project root. Tools **SHOULD** c
 | File | Required | Description |
 |------|----------|-------------|
 | `config.yaml` | **MUST** | Catalog configuration (sentinel file) |
-| `state.json` | **SHOULD** | Local sync state |
 
 Only Portolan-internal tooling state lives in `.portolan/`. STAC metadata and version manifests live at the project root alongside the data they describe, making catalogs compatible with standard STAC tooling (STAC Browser, PySTAC, stac-validator).
 
@@ -122,8 +120,7 @@ A catalog with a single-file vector collection:
 ```
 project/
 ├── .portolan/
-│   ├── config.yaml
-│   └── state.json
+│   └── config.yaml
 ├── catalog.json
 ├── versions.json
 └── districts/
@@ -139,8 +136,7 @@ A catalog with a partitioned vector collection (data > 2 GB):
 ```
 project/
 ├── .portolan/
-│   ├── config.yaml
-│   └── state.json
+│   └── config.yaml
 ├── catalog.json
 ├── versions.json
 └── buildings/

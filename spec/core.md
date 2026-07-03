@@ -9,8 +9,7 @@ A Portolan catalog is a directory with STAC metadata at the project root and int
 ```
 project/
 ├── .portolan/
-│   ├── config.yaml
-│   └── state.json
+│   └── config.yaml
 ├── catalog.json
 ├── llms.txt
 ├── versions.json
