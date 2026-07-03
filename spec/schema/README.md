@@ -14,6 +14,7 @@ Original location: `https://github.com/portolan-sdi/portolan-spec/tree/main/sche
 
 | File | Description |
 |------|-------------|
+| `spec-version.json` | Canonical machine-readable Portolan spec version (SemVer) — see [Versioning](../README.md#versioning) |
 | `versions.schema.json` | JSON Schema for `versions.json` manifest |
 | `collection.schema.json` | JSON Schema for STAC Collections with Portolan extensions |
 | `catalog.schema.json` | JSON Schema for STAC Catalogs with Portolan extensions |
