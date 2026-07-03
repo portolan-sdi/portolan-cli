@@ -1,6 +1,6 @@
 # Catalog Structure
 
-A Portolan catalog is a directory with STAC metadata and cloud-native geospatial data. Internal tooling state lives in `.portolan/`; all STAC-visible files live at the project root.
+A Portolan catalog is a directory with STAC metadata and cloud-native geospatial data. Internal tooling configuration lives in `.portolan/`; all STAC-visible files live at the project root.
 
 ## Directory Layout
 
@@ -33,7 +33,7 @@ The `.portolan` directory **MUST** exist at the project root. Tools **SHOULD** c
 |------|----------|-------------|
 | `config.yaml` | **MUST** | Catalog configuration (sentinel file) |
 
-Only Portolan-internal tooling state lives in `.portolan/`. STAC metadata and version manifests live at the project root alongside the data they describe, making catalogs compatible with standard STAC tooling (STAC Browser, PySTAC, stac-validator).
+Only Portolan-internal tooling configuration lives in `.portolan/`. STAC metadata and version manifests live at the project root alongside the data they describe, making catalogs compatible with standard STAC tooling (STAC Browser, PySTAC, stac-validator).
 
 ## Collection Level
 
