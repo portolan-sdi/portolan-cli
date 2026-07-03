@@ -404,8 +404,24 @@ class PMTilesRecommendedRule(ValidationRule):
         return self._pass(f"All {total_geoparquet} GeoParquet assets have PMTiles derivatives")
 
 
-# Media type of a PMTiles asset/link per the web-map-links extension (RULE-0061).
-_PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
+def _pmtiles_link_failure_message(missing_link: list[str]) -> str:
+    """Build the RULE-0061 failure message for PMTiles assets lacking a link."""
+    if len(missing_link) == 1:
+        return f"PMTiles asset missing rel='pmtiles' link: {missing_link[0]}"
+    return f"{len(missing_link)} PMTiles assets missing rel='pmtiles' link"
+
+
+def _pmtiles_extension_failure_message(missing_extension: list[str]) -> str:
+    """Build the RULE-0061 failure message for an undeclared web-map-links extension."""
+    if len(missing_extension) == 1:
+        return (
+            "Collection with PMTiles asset missing web-map-links "
+            f"extension declaration: {missing_extension[0]}"
+        )
+    return (
+        f"{len(missing_extension)} collections with PMTiles assets missing "
+        "web-map-links extension declaration"
+    )
 
 
 class PMTilesLinkRule(ValidationRule):
@@ -430,10 +446,7 @@ class PMTilesLinkRule(ValidationRule):
         Returns:
             ValidationResult, failing if any PMTiles asset lacks its link.
         """
-        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
-
         collection_files = list(catalog_path.rglob("collection.json"))
-
         if not collection_files:
             return self._pass("No collections found")
 
@@ -448,87 +461,77 @@ class PMTilesLinkRule(ValidationRule):
         total_pmtiles_assets = 0
 
         for collection_json in collection_files:
-            collection_dir = collection_json.parent
-
-            # Skip hidden directories (e.g. .portolan/) so the check never
-            # reports an asset that repair_pmtiles_links deliberately skips —
-            # that would be a blocking ERROR --fix could never resolve.
-            try:
-                rel_dir = collection_dir.relative_to(catalog_path)
-            except ValueError:
-                rel_dir = collection_dir
-            if any(part.startswith(".") for part in rel_dir.parts):
+            scanned = self._scan_collection(collection_json, catalog_path)
+            if scanned is None:
                 continue
-
-            try:
-                data = json.loads(collection_json.read_text())
-            except (json.JSONDecodeError, OSError):
-                continue
-
-            assets = data.get("assets", {})
-            pmtiles_hrefs = [
-                str(asset["href"])
-                for asset in assets.values()
-                if isinstance(asset, dict)
-                and (
-                    asset.get("type") == _PMTILES_MEDIA_TYPE
-                    or str(asset.get("href", "")).endswith(".pmtiles")
-                )
-                and asset.get("href")
-            ]
-            if not pmtiles_hrefs:
-                continue
-
-            total_pmtiles_assets += len(pmtiles_hrefs)
-            dir_label = str(rel_dir) if rel_dir.parts else "."
-
-            links = data.get("links", [])
-            linked_hrefs = {
-                link.get("href")
-                for link in links
-                if isinstance(link, dict) and link.get("rel") == "pmtiles"
-            }
-            missing = [href for href in pmtiles_hrefs if href not in linked_hrefs]
-            if missing:
-                missing_link.extend(f"{dir_label}:{href}" for href in missing)
-
-            # A collection exposing PMTiles MUST declare the web-map-links
-            # extension (RULE-0061). --fix declares it via
-            # add_pmtiles_link_to_collection, so flagging it here stays fixable.
-            extensions = data.get("stac_extensions", [])
-            if WEB_MAP_LINKS_EXTENSION not in extensions:
-                missing_extension.append(dir_label)
+            count, links_missing, ext_missing = scanned
+            total_pmtiles_assets += count
+            missing_link.extend(links_missing)
+            if ext_missing is not None:
+                missing_extension.append(ext_missing)
 
         if total_pmtiles_assets == 0:
             return self._pass("No PMTiles assets found")
 
         if missing_link:
-            if len(missing_link) == 1:
-                msg = f"PMTiles asset missing rel='pmtiles' link: {missing_link[0]}"
-            else:
-                msg = f"{len(missing_link)} PMTiles assets missing rel='pmtiles' link"
             return self._fail(
-                msg,
+                _pmtiles_link_failure_message(missing_link),
                 fix_hint="Run 'portolan check --fix' to add the web-map-links pmtiles link",
             )
 
         if missing_extension:
-            if len(missing_extension) == 1:
-                msg = (
-                    "Collection with PMTiles asset missing web-map-links "
-                    f"extension declaration: {missing_extension[0]}"
-                )
-            else:
-                msg = (
-                    f"{len(missing_extension)} collections with PMTiles assets missing "
-                    "web-map-links extension declaration"
-                )
             return self._fail(
-                msg,
+                _pmtiles_extension_failure_message(missing_extension),
                 fix_hint="Run 'portolan check --fix' to declare the web-map-links extension",
             )
 
         return self._pass(f"All {total_pmtiles_assets} PMTiles assets have rel='pmtiles' links")
+
+    @staticmethod
+    def _scan_collection(
+        collection_json: Path, catalog_path: Path
+    ) -> tuple[int, list[str], str | None] | None:
+        """Scan one collection for PMTiles link/extension gaps.
+
+        Returns ``(asset_count, missing_link_labels, missing_extension_label)``,
+        or ``None`` when the collection is hidden, unreadable, or has no PMTiles
+        asset. Hidden dirs (e.g. ``.portolan/``) are skipped so the check never
+        reports an asset that repair_pmtiles_links deliberately skips — that
+        would be a blocking ERROR --fix could never resolve.
+        """
+        from portolan_cli.pmtiles import (
+            WEB_MAP_LINKS_EXTENSION,
+            pmtiles_asset_hrefs,
+            pmtiles_link_hrefs,
+        )
+
+        try:
+            rel_dir = collection_json.parent.relative_to(catalog_path)
+        except ValueError:
+            rel_dir = collection_json.parent
+        if any(part.startswith(".") for part in rel_dir.parts):
+            return None
+
+        try:
+            data = json.loads(collection_json.read_text())
+        except (json.JSONDecodeError, OSError):
+            return None
+
+        pmtiles_hrefs = pmtiles_asset_hrefs(data.get("assets", {}))
+        if not pmtiles_hrefs:
+            return None
+
+        dir_label = str(rel_dir) if rel_dir.parts else "."
+        linked_hrefs = pmtiles_link_hrefs(data.get("links", []))
+        missing_links = [
+            f"{dir_label}:{href}" for href in pmtiles_hrefs if href not in linked_hrefs
+        ]
+        # A collection exposing PMTiles MUST declare the web-map-links extension
+        # (RULE-0061). --fix declares it, so flagging it here stays fixable.
+        ext_missing = (
+            dir_label if WEB_MAP_LINKS_EXTENSION not in data.get("stac_extensions", []) else None
+        )
+        return len(pmtiles_hrefs), missing_links, ext_missing
 
 
 class MetadataFreshRule(ValidationRule):

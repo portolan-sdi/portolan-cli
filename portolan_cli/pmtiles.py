@@ -424,6 +424,34 @@ def add_pmtiles_asset_to_collection(
     collection_json_path.write_text(json.dumps(data, indent=2))
 
 
+def pmtiles_asset_hrefs(assets: dict[str, Any]) -> list[str]:
+    """Return the hrefs of all PMTiles assets in a collection's asset dict.
+
+    An asset is a PMTiles asset when its ``type`` is ``application/vnd.pmtiles``
+    or its ``href`` ends in ``.pmtiles``. Shared by the RULE-0061 check and its
+    ``--fix`` repair so both classify assets identically.
+    """
+    return [
+        str(asset["href"])
+        for asset in assets.values()
+        if isinstance(asset, dict)
+        and (
+            asset.get("type") == PMTILES_MEDIA_TYPE
+            or str(asset.get("href", "")).endswith(".pmtiles")
+        )
+        and asset.get("href")
+    ]
+
+
+def pmtiles_link_hrefs(links: list[Any]) -> set[str]:
+    """Return the hrefs of all ``rel='pmtiles'`` links in a collection's links list."""
+    return {
+        str(link["href"])
+        for link in links
+        if isinstance(link, dict) and link.get("rel") == "pmtiles" and link.get("href")
+    }
+
+
 def ensure_web_map_links_extension(collection_path: Path) -> bool:
     """Declare the web-map-links extension in a collection idempotently.
 
