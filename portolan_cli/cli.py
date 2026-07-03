@@ -3417,8 +3417,8 @@ def add_cmd(
 @click.option(
     "--license",
     "license_id",
-    default="proprietary",
-    help="SPDX license identifier (default: proprietary).",
+    default="other",
+    help="SPDX license expression, or 'other' for a non-SPDX license (default: other).",
 )
 @click.option(
     "--via",

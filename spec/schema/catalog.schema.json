@@ -5,7 +5,7 @@
   "description": "Schema for Portolan-compliant STAC Catalogs. Extends the STAC Catalog schema with Portolan-specific requirements. See https://github.com/portolan-sdi/portolan-spec",
   "allOf": [
     {
-      "$ref": "https://schemas.stacspec.org/v1.0.0/catalog-spec/json-schema/catalog.json"
+      "$ref": "https://schemas.stacspec.org/v1.1.0/catalog-spec/json-schema/catalog.json"
     },
     {
       "$ref": "#/$defs/PortolanCatalogExtensions"

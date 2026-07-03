@@ -321,7 +321,10 @@ def _validate_contact(metadata: dict[str, Any]) -> list[str]:
 def _validate_license(metadata: dict[str, Any]) -> list[str]:
     """Validate the required 'license' field.
 
-    License must be a valid SPDX identifier or LicenseRef-* custom identifier.
+    License must be a valid SPDX identifier, a LicenseRef-* custom identifier,
+    or the STAC 1.1 keyword ``other`` (a license not covered by SPDX; a
+    rel="license" link is expected alongside it). STAC 1.1 no longer accepts
+    the deprecated ``proprietary`` value (issue #568).
 
     Args:
         metadata: The full metadata dictionary.
@@ -339,15 +342,17 @@ def _validate_license(metadata: dict[str, Any]) -> list[str]:
         errors.append("Field 'license' cannot be empty")
         return errors
 
-    # Validate license is SPDX identifier or valid LicenseRef-* custom identifier
+    # Validate license is an SPDX identifier, the STAC 1.1 "other" keyword,
+    # or a valid LicenseRef-* custom identifier.
     license_id = str(metadata.get("license"))
     is_standard_license = license_id in COMMON_SPDX_LICENSES
+    is_other_license = license_id == "other"
     is_custom_license = LICENSEREF_PATTERN.match(license_id) is not None
-    if not is_standard_license and not is_custom_license:
+    if not (is_standard_license or is_other_license or is_custom_license):
         errors.append(
             f"Invalid SPDX license identifier: '{license_id}'. "
-            f"Use a standard license (MIT, Apache-2.0, CC-BY-4.0, CC0-1.0) "
-            f"or custom format LicenseRef-YourLicense"
+            f"Use a standard license (MIT, Apache-2.0, CC-BY-4.0, CC0-1.0), "
+            f"'other' for a non-SPDX license, or custom format LicenseRef-YourLicense"
         )
 
     return errors

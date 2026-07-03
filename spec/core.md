@@ -24,7 +24,7 @@ project/
 ## STAC Compliance
 
 - **MUST** be a valid STAC Catalog or Collection
-- **MUST** follow STAC specification version 1.0.0 or later
+- **MUST** follow STAC specification version 1.1.0
 - **MUST** use `SELF_CONTAINED` catalog type (relative links, portable)
 
 ### Spatial Extent for Tabular Collections

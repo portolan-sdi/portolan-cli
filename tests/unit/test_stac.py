@@ -36,7 +36,7 @@ class TestCreateCollection:
 
         assert collection.id == "test-collection"
         assert collection.description == "A test collection"
-        assert collection.license == "proprietary"  # default
+        assert collection.license == "other"  # default (STAC 1.1, issue #568)
         assert isinstance(collection, pystac.Collection)
 
     @pytest.mark.unit

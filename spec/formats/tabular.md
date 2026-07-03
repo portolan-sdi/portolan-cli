@@ -173,7 +173,7 @@ No item directory or item JSON is needed.
 ```json
 {
   "type": "Collection",
-  "stac_version": "1.0.0",
+  "stac_version": "1.1.0",
   "id": "eurostat-electricity-prices",
   "title": "Industrial electricity prices by country",
   "description": "Half-yearly industrial electricity prices (EUR/kWh) by European country. Source: Eurostat nrg_pc_205.",

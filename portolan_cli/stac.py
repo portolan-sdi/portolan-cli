@@ -71,8 +71,11 @@ MACHINE_DERIVABLE_EXTRA_FIELDS = frozenset(
 # STAC version we generate (v1.1.0 has unified bands array, superseding eo:bands/raster:bands)
 STAC_VERSION = "1.1.0"
 
-# Default license when not specified
-DEFAULT_LICENSE = "proprietary"
+# Default license when not specified.
+# STAC 1.1 deprecates "proprietary" (it is not an SPDX identifier); "other" is
+# the spec keyword for a license not covered by an SPDX expression. A rel="license"
+# link SHOULD be added by the user once the concrete license is known (issue #568).
+DEFAULT_LICENSE = "other"
 
 # Sentinel datetime values for provisional items (ADR-0035, STAC 1.1.0 compliance)
 # STAC 1.1.0 and pystac require start_datetime/end_datetime to be valid ISO 8601 strings
@@ -98,7 +101,8 @@ def create_collection(
         description: Human-readable description.
         title: Optional display title. Defaults to a human-readable title
             derived from ``collection_id`` (Issue #502: titles are mandatory).
-        license: SPDX license identifier (default: "proprietary").
+        license: SPDX license expression, or "other" for a non-SPDX license
+            (default: "other"). STAC 1.1 no longer accepts "proprietary".
         bbox: Spatial extent as [min_x, min_y, max_x, max_y] in WGS84.
               Defaults to global extent if not specified.
         temporal_extent: Temporal extent as (start, end) datetimes.

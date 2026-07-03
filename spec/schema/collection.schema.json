@@ -5,7 +5,7 @@
   "description": "Schema for Portolan-compliant STAC Collections. Extends the STAC Collection schema with Portolan-specific requirements. See https://github.com/portolan-sdi/portolan-spec",
   "allOf": [
     {
-      "$ref": "https://schemas.stacspec.org/v1.0.0/collection-spec/json-schema/collection.json"
+      "$ref": "https://schemas.stacspec.org/v1.1.0/collection-spec/json-schema/collection.json"
     },
     {
       "$ref": "#/$defs/PortolanCollectionExtensions"

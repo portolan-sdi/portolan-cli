@@ -50,8 +50,8 @@ uv run pytest tests/spec_compliance/ -v
 ## Schema Notes
 
 The collection and catalog schemas reference external STAC schemas:
-- `https://schemas.stacspec.org/v1.0.0/collection-spec/json-schema/collection.json`
-- `https://schemas.stacspec.org/v1.0.0/catalog-spec/json-schema/catalog.json`
+- `https://schemas.stacspec.org/v1.1.0/collection-spec/json-schema/collection.json`
+- `https://schemas.stacspec.org/v1.1.0/catalog-spec/json-schema/catalog.json`
 
 For compliance testing, we use "Portolan-only" schemas (defined in `conftest.py`)
 that validate Portolan-specific requirements without requiring external $ref resolution.
