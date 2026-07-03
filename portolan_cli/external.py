@@ -33,7 +33,12 @@ from portolan_cli.dataset import (
     _save_collection_with_links,
     _validate_collection_id,
 )
-from portolan_cli.stac import add_asset_to_collection, add_via_link, create_collection
+from portolan_cli.stac import (
+    DEFAULT_LICENSE,
+    add_asset_to_collection,
+    add_via_link,
+    create_collection,
+)
 from portolan_cli.validation import InputValidationError, validate_remote_url
 
 # Marks an asset as referenced in place rather than managed (downloaded/
@@ -168,7 +173,7 @@ def add_external_dataset(
     title: str | None = None,
     description: str | None = None,
     media_type: str | None = None,
-    license: str = "proprietary",
+    license: str = DEFAULT_LICENSE,
     via_url: str | None = None,
     bbox: list[float] | None = None,
     asset_key: str = "data",
@@ -188,7 +193,8 @@ def add_external_dataset(
         title: Optional human-readable collection title.
         description: Optional description (defaults to a generated one).
         media_type: Asset media type. Inferred from the URL when omitted.
-        license: SPDX license identifier (default: "proprietary").
+        license: SPDX license expression, or "other" for a non-SPDX license
+            (default: "other"). STAC 1.1 no longer accepts "proprietary".
         via_url: Provenance URL for the ``rel:"via"`` link. Defaults to ``url``.
         bbox: Optional WGS84 bbox [min_x, min_y, max_x, max_y]. Global if omitted.
         asset_key: Key for the asset entry in collection.json (default "data").

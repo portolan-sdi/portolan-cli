@@ -51,7 +51,7 @@ def create_collection_metadata(
         - extent: spatial from fullExtent (WGS84), temporal open interval
         - summaries: band count, pixel type
         - links: source link to ImageServer, self link
-        - license: "proprietary" (default for unknown sources)
+        - license: "other" (STAC 1.1 default for unknown/non-SPDX sources)
     """
     collection_id = _sanitize_id(service_metadata.name)
 
@@ -103,7 +103,7 @@ def create_collection_metadata(
         "id": collection_id,
         "title": service_metadata.name,
         "description": description,
-        "license": "proprietary",
+        "license": "other",  # STAC 1.1: non-SPDX / unknown license (issue #568)
         "extent": {
             "spatial": {
                 "bbox": [list(wgs84_bbox)],

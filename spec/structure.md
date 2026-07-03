@@ -107,9 +107,9 @@ Portolan catalogs **MUST** be saved as `SELF_CONTAINED` (pystac terminology), me
 
 | Property | Default Value |
 |----------|---------------|
-| STAC version | `1.0.0` |
+| STAC version | `1.1.0` |
 | Catalog ID | `portolan-catalog` |
-| Collection license | `proprietary` (SPDX identifier) |
+| Collection license | `other` (STAC 1.1 keyword for a license not covered by SPDX; add a `rel="license"` link when the concrete license is known) |
 
 These defaults can be overridden during catalog creation or dataset import.
 

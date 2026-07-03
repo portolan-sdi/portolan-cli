@@ -496,7 +496,6 @@ class Catalog:
 
     PORTOLAN_DIR = ".portolan"
     CATALOG_FILE = "catalog.json"
-    STAC_VERSION = "1.0.0"
 
     def __init__(self, root: Path) -> None:
         """Initialize a Catalog instance.

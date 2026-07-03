@@ -167,6 +167,21 @@ class TestMetadataValidation:
             assert license_errors == [], f"License {license_id} should be valid"
 
     @pytest.mark.unit
+    def test_stac_other_license_passes(self) -> None:
+        """validate_metadata accepts the STAC 1.1 'other' license keyword (issue #568)."""
+        from portolan_cli.metadata_yaml import validate_metadata
+
+        metadata = {
+            "contact": {"name": "Data Team", "email": "data@example.org"},
+            "license": "other",
+        }
+
+        errors = validate_metadata(metadata)
+
+        license_errors = [e for e in errors if "license" in e.lower()]
+        assert license_errors == [], "STAC 1.1 'other' license should be valid"
+
+    @pytest.mark.unit
     def test_licenseref_custom_identifiers_pass(self) -> None:
         """validate_metadata accepts LicenseRef-* custom license identifiers (SPDX spec).
 

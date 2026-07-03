@@ -214,10 +214,10 @@ class TestCreateCollectionMetadata:
         assert len(source_links) >= 1
         assert source_links[0]["href"] == url
 
-    def test_license_defaults_to_proprietary(self, sample_metadata: ImageServerMetadata) -> None:
-        """License defaults to proprietary for unknown sources."""
+    def test_license_defaults_to_other(self, sample_metadata: ImageServerMetadata) -> None:
+        """License defaults to the STAC 1.1 'other' keyword for unknown sources (issue #568)."""
         result = create_collection_metadata(sample_metadata, "https://example.com")
-        assert result.get("license") == "proprietary"
+        assert result.get("license") == "other"
 
     def test_providers_from_copyright(self, sample_metadata: ImageServerMetadata) -> None:
         """Providers list is populated from copyright text."""
