@@ -14,9 +14,20 @@
   "$defs": {
     "PortolanCollectionExtensions": {
       "type": "object",
+      "required": ["title", "description"],
       "properties": {
         "type": {
           "const": "Collection"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable collection title. MUST be present and human-readable (not a raw slug). See RULE-0101 in rules.yaml and core.md#human-readable-titles."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable collection description. MUST be non-empty. See RULE-0101 in rules.yaml."
         },
         "portolan:geospatial": {
           "type": "boolean",
@@ -82,6 +93,26 @@
         }
       },
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "rel": {
+                "enum": ["child", "item"]
+              }
+            },
+            "required": ["rel"]
+          },
+          "then": {
+            "description": "Child/item links MUST carry a human-readable title so clients can render them without dereferencing. See RULE-0102/RULE-0103 in rules.yaml.",
+            "required": ["title"],
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
         {
           "if": {
             "properties": {
