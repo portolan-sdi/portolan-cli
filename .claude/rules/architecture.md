@@ -107,9 +107,15 @@ subsystem table below and the path-scoped rules for each.
 
 Two enums in `formats.py`: `CloudNativeStatus` (`CLOUD_NATIVE` / `CONVERTIBLE` /
 `UNSUPPORTED`) and `FormatType` (`VECTOR` routes to geoparquet-io, `RASTER`
-routes to rio-cogeo, `UNKNOWN`). `CLOUD_NATIVE_EXTENSIONS` is the source of truth
-for "already cloud-native, skip conversion" (`.fgb`, `.pmtiles`, `.raquet`,
-while `.parquet`/`.tif` need content inspection). `convert.py` orchestrates only
+routes to rio-cogeo, `UNKNOWN`). The extension vocabulary (which set each
+extension belongs to, plus its media type / role / display name) is
+single-sourced in `extension_registry.py` and *derived* into `formats.py`,
+`constants.py`, `scan_classify.py`, and `add.py` (ADR-0055) — edit the
+registry rows, not the frozensets, and the parity test keeps `spec/extensions.md`
+in sync. `CLOUD_NATIVE_EXTENSIONS` is the derived source of truth for "already
+cloud-native, skip conversion" (`.fgb`, `.pmtiles`; `.parquet`/`.tif` need
+content inspection; `.zarr`/`.copc.laz` are cloud-native via dedicated branches).
+`convert.py` orchestrates only
 (ADR-0010): `CLOUD_NATIVE` -> SKIPPED, `UNSUPPORTED` -> returned with no error
 (ADR-0014, accept with a warning), else route by `detect_format` to
 geoparquet-io or rio-cogeo. Never put geometry or raster math in our layer.

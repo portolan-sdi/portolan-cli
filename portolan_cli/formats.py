@@ -18,6 +18,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from portolan_cli import extension_registry as _reg
+
 if TYPE_CHECKING:
     from portolan_cli.conversion_config import ConversionOverrides
 
@@ -65,86 +67,27 @@ class FormatInfo:
 # Cloud-Native Format Constants
 # =============================================================================
 
-# Extensions for cloud-native formats (pass through without conversion)
-CLOUD_NATIVE_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".fgb",  # FlatGeobuf
-        ".pmtiles",  # PMTiles
-        ".raquet",  # Raquet (raster parquet)
-        # Note: .parquet, .tif, .tiff require content inspection
-        # Note: .copc.laz is handled specially (compound extension)
-        # Note: .zarr is a directory, not a file extension
-    }
-)
+# The extension vocabulary below is DERIVED from portolan_cli.extension_registry
+# (the single source, ADR-0055). Edit rows there, not these frozensets.
 
-# Extensions for convertible vector formats
-# Note: .gdb is a directory extension (FileGDB) - handled specially in detection code
-CONVERTIBLE_VECTOR_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".shp",  # Shapefile
-        ".geojson",  # GeoJSON
-        ".gpkg",  # GeoPackage
-        ".gdb",  # FileGDB directory (ESRI File Geodatabase)
-        ".csv",  # CSV with geometry
-        ".tsv",  # TSV with geometry (tab-separated)
-    }
-)
+# Cloud-native formats that pass through without conversion. Statically
+# cloud-native single-suffix files only: .parquet/.tif are content-inspected
+# ("inspect"), and .zarr/.copc.laz are cloud-native but handled by the
+# directory / compound-extension branches in get_cloud_native_status().
+CLOUD_NATIVE_EXTENSIONS: frozenset[str] = _reg.cloud_native_extensions()
 
-# Extensions for convertible raster formats
-CONVERTIBLE_RASTER_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".jp2",  # JPEG2000
-    }
-)
+# Convertible vector formats (.gdb is a FileGDB directory, handled specially).
+CONVERTIBLE_VECTOR_EXTENSIONS: frozenset[str] = _reg.convertible_extensions("GeoParquet")
 
-# Extensions for unsupported formats
-UNSUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".nc",  # NetCDF
-        ".netcdf",  # NetCDF alternate
-        ".h5",  # HDF5
-        ".hdf5",  # HDF5 alternate
-        ".las",  # LAS (non-COPC)
-        ".laz",  # LAZ (non-COPC, unless .copc.laz)
-    }
-)
+# Convertible raster formats.
+CONVERTIBLE_RASTER_EXTENSIONS: frozenset[str] = _reg.convertible_extensions("COG")
 
-# Display names for formats
-FORMAT_DISPLAY_NAMES: dict[str, str] = {
-    # Cloud-native
-    ".parquet": "GeoParquet",
-    ".fgb": "FlatGeobuf",
-    ".pmtiles": "PMTiles",
-    ".raquet": "Raquet",
-    ".tif": "COG",
-    ".tiff": "COG",
-    # Convertible vector
-    ".shp": "SHP",
-    ".geojson": "GeoJSON",
-    ".gpkg": "GPKG",
-    ".csv": "CSV",
-    ".tsv": "TSV",
-    ".json": "JSON",  # Plain JSON; use content inspection to detect GeoJSON
-    # Convertible raster
-    ".jp2": "JP2",
-    # Unsupported
-    ".nc": "NetCDF",
-    ".netcdf": "NetCDF",
-    ".h5": "HDF5",
-    ".hdf5": "HDF5",
-    ".las": "LAS",
-    ".laz": "LAZ",
-}
+# Explicitly unsupported formats.
+UNSUPPORTED_EXTENSIONS: frozenset[str] = _reg.unsupported_extensions()
 
-# Error messages for unsupported formats
-UNSUPPORTED_ERROR_MESSAGES: dict[str, str] = {
-    ".nc": "NetCDF is not yet supported. Support coming soon.",
-    ".netcdf": "NetCDF is not yet supported. Support coming soon.",
-    ".h5": "HDF5 is not yet supported. Support coming soon.",
-    ".hdf5": "HDF5 is not yet supported. Support coming soon.",
-    ".las": "LAS/LAZ point clouds require COPC format. Use pdal or other tools to convert.",
-    ".laz": "LAS/LAZ point clouds require COPC format. Use pdal or other tools to convert.",
-}
+# Display names and unsupported error messages.
+FORMAT_DISPLAY_NAMES: dict[str, str] = _reg.field_map("display_name")
+UNSUPPORTED_ERROR_MESSAGES: dict[str, str] = _reg.field_map("unsupported_message")
 
 
 # =============================================================================
@@ -499,32 +442,14 @@ class FormatType(Enum):
     UNKNOWN = "unknown"  # Cannot determine format
 
 
-# Extensions that indicate vector formats (handled by geoparquet-io)
-# Note: .gdb is a directory extension (FileGDB) - handled specially in detect_format
-# Note: Cloud-native formats like .fgb and .pmtiles are included here so detect_format()
-# returns VECTOR, allowing convert_vector() to then check cloud-native status and skip.
-VECTOR_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".geojson",
-        ".parquet",
-        ".shp",
-        ".gpkg",
-        ".fgb",  # FlatGeobuf (cloud-native)
-        ".pmtiles",  # PMTiles (cloud-native vector tiles, issue #198)
-        ".gdb",  # FileGDB directory (ESRI File Geodatabase)
-        ".csv",
-        ".tsv",  # Tab-separated values (may or may not have geometry)
-    }
-)
+# Extensions that route to geoparquet-io (vector) / rio-cogeo (raster). Derived
+# from the registry (ADR-0055). Cloud-native vectors like .fgb/.pmtiles are
+# included in VECTOR_EXTENSIONS so detect_format() returns VECTOR, letting
+# convert_vector() then check cloud-native status and skip. .gdb is a FileGDB
+# directory handled specially in detect_format().
+VECTOR_EXTENSIONS: frozenset[str] = _reg.extensions_where(routes_as="vector")
 
-# Extensions that indicate raster formats (handled by rio-cogeo)
-RASTER_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".tif",
-        ".tiff",
-        ".jp2",  # JPEG2000
-    }
-)
+RASTER_EXTENSIONS: frozenset[str] = _reg.extensions_where(routes_as="raster")
 
 
 def detect_format(path: Path) -> FormatType:
@@ -572,13 +497,8 @@ def detect_format(path: Path) -> FormatType:
 # Multi-Layer Format Support (Issue #265)
 # =============================================================================
 
-# Formats that can contain multiple layers
-MULTILAYER_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".gpkg",  # GeoPackage
-        ".gdb",  # FileGDB directory
-    }
-)
+# Formats that can contain multiple layers (derived from the registry, ADR-0055).
+MULTILAYER_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_multilayer=True)
 
 
 def list_layers(path: Path) -> list[str] | None:

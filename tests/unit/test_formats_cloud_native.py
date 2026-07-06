@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from portolan_cli.formats import (
+    FORMAT_DISPLAY_NAMES,
     CloudNativeStatus,
     get_cloud_native_status,
 )
@@ -87,15 +88,20 @@ class TestCloudNativeDetection:
         assert result.error_message is None
 
     @pytest.mark.unit
-    def test_raquet_returns_cloud_native(self, tmp_path: Path) -> None:
-        """Raquet files return CLOUD_NATIVE status."""
+    def test_raquet_extension_is_not_special(self, tmp_path: Path) -> None:
+        """`.raquet` is not a recognized extension (issue #487).
+
+        RaQuet rasters are real Parquet files written with a `.parquet`
+        extension (per raquet.io: `raquet-io convert … output.parquet`), so a
+        literal `.raquet` file matches nothing and is unsupported. Real RaQuet
+        files flow through the `.parquet` content-inspection branch instead.
+        """
         raquet_file = tmp_path / "test.raquet"
         raquet_file.write_bytes(b"\x00\x00\x00\x00")
         result = get_cloud_native_status(raquet_file)
-        assert result.status == CloudNativeStatus.CLOUD_NATIVE
-        assert result.display_name == "Raquet"
-        assert result.target_format is None
-        assert result.error_message is None
+        assert result.status == CloudNativeStatus.UNSUPPORTED
+        assert result.error_message is not None
+        assert ".raquet" not in FORMAT_DISPLAY_NAMES
 
 
 class TestIsGeoparquet:
