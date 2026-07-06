@@ -255,7 +255,11 @@ pytest_add_cli_args_test_selection = ["tests/"]
 
 [tool.importlinter]
 root_packages = ["portolan_cli"]
-include_external_packages = false
+# Required so the validation-no-framework-leakage contract can forbid the
+# external `click`/`rich` packages (import-linter needs external nodes in the
+# graph at the top level). Only adds external nodes; internal contracts are
+# unaffected.
+include_external_packages = true
 
 [[tool.importlinter.contracts]]
 id = "cli-no-storage"
@@ -279,6 +283,40 @@ name = "Iceberg backend must not import CLI layer directly"
 type = "forbidden"
 source_modules = ["portolan_cli.backends.iceberg"]
 forbidden_modules = ["portolan_cli.cli"]
+
+[[tool.importlinter.contracts]]
+id = "validation-seam-for-reis"
+name = "Validation must not import CLI/output/config layers (reis extraction seam)"
+type = "forbidden"
+# portolan_cli.validation is nearly extraction-ready as the future `reis`
+# package (see issue #563). It stays free of the app-framework layers so the
+# seam is cheap to protect now, ahead of the post-sprint extraction.
+source_modules = ["portolan_cli.validation"]
+forbidden_modules = [
+    "portolan_cli.cli",
+    "portolan_cli.output",
+    "portolan_cli.config",
+]
+# Intentional extraction-time couplings: validation reaches into these
+# pure-logic/data modules for classification, bbox checks, and metadata scan.
+# They are leaves (or a self-contained subtree) that carry no CLI/output/config
+# dependency, so they move with `reis` or vendor trivially at extraction time.
+# Documented per the second checkbox on #563 (which listed only scan_classify;
+# metadata.scan and bbox are the same kind of coupling, added since).
+#   portolan_cli.validation -> portolan_cli.scan_classify
+#   portolan_cli.validation -> portolan_cli.metadata.scan
+#   portolan_cli.validation -> portolan_cli.bbox
+
+[[tool.importlinter.contracts]]
+id = "validation-no-framework-leakage"
+name = "Validation must not import Click or Rich (reis extraction seam)"
+type = "forbidden"
+# Framework tripwire: Click/Rich only ever reach validation *through* the
+# cli/output layers forbidden above. Guarding the external packages directly
+# catches a regression even if a new intermediate module were introduced.
+# (External-node analysis is enabled by the top-level include_external_packages.)
+source_modules = ["portolan_cli.validation"]
+forbidden_modules = ["click", "rich"]
 
 [[tool.importlinter.contracts]]
 id = "utilities-are-foundational"
