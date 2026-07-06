@@ -499,7 +499,10 @@ class PMTilesLinkRule(ValidationRule):
         reports an asset that repair_pmtiles_links deliberately skips — that
         would be a blocking ERROR --fix could never resolve.
         """
-        from portolan_cli.pmtiles import (
+        # Import from the framework-free leaf, not pmtiles.py: the latter pulls
+        # in output/thumbnail/style (and click/rich/config), which would break
+        # the reis extraction seam (issue #563).
+        from portolan_cli.pmtiles_links import (
             WEB_MAP_LINKS_EXTENSION,
             pmtiles_asset_hrefs,
             pmtiles_link_hrefs,

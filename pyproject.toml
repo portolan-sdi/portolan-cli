@@ -306,6 +306,9 @@ forbidden_modules = [
 #   portolan_cli.validation -> portolan_cli.scan_classify
 #   portolan_cli.validation -> portolan_cli.metadata.scan
 #   portolan_cli.validation -> portolan_cli.bbox
+#   portolan_cli.validation -> portolan_cli.pmtiles_links
+# (pmtiles_links is a stdlib-only leaf holding the PMTiles asset/link classifiers;
+#  it exists precisely so validation never imports pmtiles.py, issue #586/#592.)
 
 [[tool.importlinter.contracts]]
 id = "validation-no-framework-leakage"
