@@ -23,134 +23,49 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from portolan_cli import extension_registry as _reg
+
 # =============================================================================
-# Extension Mappings
+# Extension Mappings (DERIVED from extension_registry — the single source,
+# ADR-0055. Edit rows there, not these frozensets.)
 # =============================================================================
 
-# Primary geospatial formats (GEO_ASSET)
-# Note: .parquet is NOT here — it requires metadata peeking to distinguish
-# GeoParquet from plain Parquet. See is_geoparquet() and classify_file().
-GEO_ASSET_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".geojson",
-        ".shp",
-        ".gpkg",
-        ".fgb",
-        ".tif",
-        ".tiff",
-        ".jp2",
-        ".pmtiles",  # PMTiles: cloud-native vector tiles (issue #198)
-    }
-)
+# Primary geospatial formats (GEO_ASSET). .parquet is NOT here — it needs a
+# metadata peek to tell GeoParquet from plain Parquet (see is_geoparquet()).
+GEO_ASSET_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="geo_asset")
 
-# Shapefile sidecars (KNOWN_SIDECAR)
-# Note: .aux.xml removed - Path.suffix returns ".xml" not ".aux.xml",
-# so .xml already catches these files
-SIDECAR_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".dbf",
-        ".shx",
-        ".prj",
-        ".cpg",
-        ".sbn",
-        ".sbx",
-        ".ovr",
-        ".xml",
-    }
-)
+# Shapefile / raster sidecars (KNOWN_SIDECAR). Compound forms like .aux.xml are
+# caught by .xml here, since Path.suffix returns only the last extension.
+SIDECAR_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="known_sidecar")
 
-# Tabular data formats (TABULAR_DATA)
-# Note: .parquet is here because plain Parquet (no geo metadata) is tabular.
-# GeoParquet files are detected by is_geoparquet() which peeks at metadata.
-TABULAR_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".csv",
-        ".tsv",
-        ".xlsx",
-        ".xls",
-        ".parquet",  # Plain Parquet; GeoParquet detected via metadata peeking
-    }
-)
+# Tabular data (TABULAR_DATA). .parquet is here because plain Parquet is tabular;
+# GeoParquet is detected by is_geoparquet()'s metadata peek.
+TABULAR_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_tabular=True)
 
-# Documentation formats (DOCUMENTATION)
-DOC_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".md",
-        ".txt",
-        ".rst",
-        ".html",
-        ".htm",
-    }
-)
+# Documentation (DOCUMENTATION).
+DOC_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="documentation")
 
-# Visualization formats (VISUALIZATION)
-# Note: .pmtiles is NOT here — it is a primary cloud-native format (GEO_ASSET).
-# See issue #198 and formats.py CLOUD_NATIVE_EXTENSIONS.
-VIZ_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".mbtiles",
-    }
-)
+# Visualization (VISUALIZATION). .pmtiles is NOT here — it is a primary
+# cloud-native format (GEO_ASSET). See issue #198.
+VIZ_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="visualization")
 
-# Thumbnail/image formats (THUMBNAIL) - checked with size
-IMAGE_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".webp",
-        ".gif",
-    }
-)
+# Thumbnail/image formats (THUMBNAIL) — checked with size.
+IMAGE_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="thumbnail")
 
-# Junk file extensions (JUNK)
-JUNK_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".exe",
-        ".dll",
-        ".so",
-        ".dylib",
-        ".pyc",
-        ".pyo",
-        ".class",
-        ".o",
-        ".obj",
-    }
-)
+# Junk file extensions (JUNK).
+JUNK_EXTENSIONS: frozenset[str] = _reg.extensions_where(scan_category="junk")
 
-# Junk directory names (JUNK)
-JUNK_DIRS: frozenset[str] = frozenset(
-    {
-        "__pycache__",
-        ".git",
-        ".svn",
-        ".hg",
-        ".idea",
-        ".vscode",
-        "node_modules",
-        ".tox",
-        ".pytest_cache",
-    }
-)
+# Junk directory names (JUNK).
+JUNK_DIRS: frozenset[str] = _reg.JUNK_DIRS
 
-# STAC/catalog metadata filenames (STAC_METADATA)
-STAC_FILENAMES: frozenset[str] = frozenset(
-    {
-        "catalog.json",
-        "collection.json",
-        "versions.json",  # Portolan version history
-    }
-)
+# STAC/catalog metadata filenames (STAC_METADATA).
+STAC_FILENAMES: frozenset[str] = _reg.STAC_FILENAMES
 
-# Style filenames (STYLE)
-STYLE_FILENAMES: frozenset[str] = frozenset(
-    {
-        "style.json",
-    }
-)
+# Style filenames (STYLE).
+STYLE_FILENAMES: frozenset[str] = _reg.STYLE_FILENAMES
 
-# Max size for thumbnail classification (1MB)
-THUMBNAIL_MAX_SIZE: int = 1024 * 1024
+# Max size for thumbnail classification (1MB).
+THUMBNAIL_MAX_SIZE: int = _reg.THUMBNAIL_MAX_SIZE
 
 
 def is_geoparquet(path: Path) -> bool:

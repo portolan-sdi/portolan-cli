@@ -28,6 +28,7 @@ import click
 import pystac
 from pystac.layout import AsIsLayoutStrategy
 
+from portolan_cli import extension_registry as _reg
 from portolan_cli.checksums import compute_checksum, compute_dir_checksum, compute_dir_size
 from portolan_cli.collection import (
     _compute_union_bbox,
@@ -156,29 +157,9 @@ IGNORED_FILES: frozenset[str] = frozenset(
     }
 )
 
-# Extension-to-MIME-type mapping for asset files.
-_MEDIA_TYPE_MAP: dict[str, str] = {
-    ".parquet": "application/vnd.apache.parquet",
-    ".tif": "image/tiff; application=geotiff; profile=cloud-optimized",
-    ".tiff": "image/tiff; application=geotiff; profile=cloud-optimized",
-    ".geojson": "application/geo+json",
-    ".json": "application/json",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".svg": "image/svg+xml",
-    ".xml": "application/xml",
-    ".csv": "text/csv",
-    ".gpkg": "application/geopackage+sqlite3",
-    ".fgb": "application/vnd.flatgeobuf",
-    ".flatgeobuf": "application/vnd.flatgeobuf",
-    ".pmtiles": "application/vnd.pmtiles",
-    ".shp": "application/x-shapefile",
-    ".pdf": "application/pdf",
-    ".txt": "text/plain",
-    ".md": "text/markdown",
-    ".html": "text/html",
-}
+# Extension-to-MIME-type mapping for asset files. Derived from the extension
+# registry (the single source, ADR-0055). Edit rows there, not this map.
+_MEDIA_TYPE_MAP: dict[str, str] = _reg.field_map("media_type")
 
 # Asset keys reserved for well-known roles. _scan_item_assets prefers these
 # keys over filename-derived stems so STAC consumers can find assets by role
@@ -192,30 +173,10 @@ _ROLE_KEYS: dict[str, str] = {
     "documentation": "documentation",
 }
 
-# Extension-to-role mapping for asset files.
-# Data formats get "data", images get "thumbnail", metadata gets "metadata".
-_ROLE_MAP: dict[str, str] = {
-    ".parquet": "data",
-    ".tif": "data",
-    ".tiff": "data",
-    ".geojson": "data",
-    ".gpkg": "data",
-    ".fgb": "data",
-    ".flatgeobuf": "data",
-    ".csv": "data",
-    ".shp": "data",
-    ".pmtiles": "data",
-    ".png": "thumbnail",
-    ".jpg": "thumbnail",
-    ".jpeg": "thumbnail",
-    ".svg": "thumbnail",
-    ".xml": "metadata",
-    ".json": "metadata",
-    ".pdf": "documentation",
-    ".txt": "documentation",
-    ".md": "documentation",
-    ".html": "documentation",
-}
+# Extension-to-role mapping for asset files (data / thumbnail / metadata /
+# documentation). Derived from the extension registry (ADR-0055). Unknown
+# extensions fall back to "data" in _get_asset_role().
+_ROLE_MAP: dict[str, str] = _reg.field_map("role")
 
 
 def _get_media_type(path: Path) -> str:

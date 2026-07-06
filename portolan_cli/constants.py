@@ -6,6 +6,8 @@ to avoid duplication and ensure consistency.
 
 from __future__ import annotations
 
+from portolan_cli import extension_registry as _reg
+
 # Version of the Portolan specification this CLI validates against (issue #566).
 #
 # SemVer, pre-1.0: breaking spec changes bump the MINOR until 1.0 (see the
@@ -18,47 +20,24 @@ from __future__ import annotations
 # from versions.SPEC_VERSION, which versions the versions.json manifest schema.
 PORTOLAN_SPEC_VERSION: str = "0.1.0"
 
-# Extensions we recognize as geospatial files
-# Note: .gdb is a directory extension (FileGDB) - handled specially in detection code
-GEOSPATIAL_EXTENSIONS: frozenset[str] = frozenset(
-    {
-        ".geojson",
-        ".parquet",
-        ".shp",
-        ".gpkg",
-        ".fgb",
-        ".gdb",  # FileGDB directory (ESRI File Geodatabase)
-        ".csv",
-        ".tsv",  # Tab-separated values (may or may not have geometry)
-        ".tif",
-        ".tiff",
-        ".jp2",
-        ".pmtiles",
-    }
-)
+# The extension vocabulary below is DERIVED from portolan_cli.extension_registry
+# (the single source, ADR-0055). Edit rows there, not these members.
 
-# Extensions for tabular data that may or may not have geometry columns.
-# When these files lack geometry, they should be tracked as non-geospatial assets
-# (per ADR-0028) rather than causing errors.
-# Includes .parquet per Issue #177: tabular parquet files without geometry
-# should be tracked as auxiliary assets when alongside a primary geo-asset.
-# Includes .xlsx/.xls per Issue #432: basic Excel support for tabular data.
-TABULAR_EXTENSIONS: frozenset[str] = frozenset({".csv", ".tsv", ".parquet", ".xlsx", ".xls"})
+# Extensions we recognize as geospatial files (.gdb is a FileGDB directory,
+# handled specially in detection code).
+GEOSPATIAL_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_geospatial=True)
+
+# Tabular data that may or may not carry geometry columns (ADR-0028). Includes
+# .parquet (issue #177) and .xlsx/.xls (issue #432).
+TABULAR_EXTENSIONS: frozenset[str] = _reg.extensions_where(is_tabular=True)
 
 # Cloud-native parquet extension
 PARQUET_EXTENSION: str = ".parquet"
 
-# Sidecar file patterns by primary file extension
-# Shapefile sidecars include:
-#   Required: .dbf (attributes), .shx (index)
-#   Optional: .prj (projection), .cpg (code page),
-#             .sbn/.sbx (ESRI spatial index), .qix (QGIS spatial index),
-#             .xml (metadata), .shp.xml (ESRI shapefile metadata)
+# Sidecar file patterns by primary file extension. Matched by appending each
+# pattern to the primary's stem, so compound forms (.shp.xml, .aux.xml) resolve.
 SIDECAR_PATTERNS: dict[str, list[str]] = {
-    ".shp": [".dbf", ".shx", ".prj", ".cpg", ".sbn", ".sbx", ".qix", ".xml", ".shp.xml"],
-    ".tif": [".tfw", ".xml", ".aux.xml", ".ovr"],
-    ".tiff": [".tfw", ".xml", ".aux.xml", ".ovr"],
-    ".img": [".ige", ".rrd", ".rde", ".xml"],
+    primary: list(patterns) for primary, patterns in _reg.SIDECAR_OF.items()
 }
 
 # Change detection constants (per ADR-0017)

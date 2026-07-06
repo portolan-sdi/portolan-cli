@@ -112,6 +112,7 @@ AI agents will write most of the code. Human review does not scale to match AI o
 | [0052](context/shared/adr/0052-llms-txt-requirement.md) | Require llms.txt for AI/LLM integration at catalog and collection levels |
 | [0053](context/shared/adr/0053-mandatory-human-readable-titles.md) | Mandatory human-readable titles/descriptions; auto-humanize slugs; title on child/item links |
 | [0054](context/shared/adr/0054-arcgis-folder-recursion-and-structure.md) | ArcGIS folder recursion (default-on), folder URLs, token auth pass-through, nested-folder subcatalogs |
+| [0055](context/shared/adr/0055-extension-registry-single-source.md) | Single-source the recognized-extension vocabulary via a typed in-package registry (derives the formats/constants/scan_classify/add maps; drops dead `.raquet`) |
 
 ## Common Commands
 
