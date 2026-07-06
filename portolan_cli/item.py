@@ -124,7 +124,11 @@ def _bbox_to_polygon(bbox: list[float]) -> dict[str, Any]:
     Returns:
         GeoJSON Polygon geometry.
     """
-    west, south, east, north = bbox[0], bbox[1], bbox[2], bbox[3]
+    # A 6-element bbox is [west, south, min_z, east, north, max_z]; reduce to 2D
+    # so the polygon uses the correct easting/northing (issue #592).
+    from portolan_cli.bbox import to_2d_bbox
+
+    west, south, east, north = to_2d_bbox(bbox)
 
     return {
         "type": "Polygon",

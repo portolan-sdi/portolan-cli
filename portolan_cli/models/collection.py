@@ -67,9 +67,14 @@ class SpatialExtent:
             if len(box) not in (4, 6):
                 raise ValueError(f"bbox must have 4 or 6 elements, got {len(box)}")
 
-            # Skip antimeridian validation - west > east is valid per STAC
+            # Skip antimeridian validation - west > east is valid per STAC.
+            # A 6-element bbox is [west, south, min_z, east, north, max_z], so
+            # east/north are at indices 3/4, not 2/3 (issue #592).
             west, south = box[0], box[1]
-            east, north = box[2], box[3]
+            if len(box) == 6:
+                east, north = box[3], box[4]
+            else:
+                east, north = box[2], box[3]
 
             # Validate longitude range
             if west < -180 or west > 180 or east < -180 or east > 180:

@@ -92,7 +92,12 @@ class FileInfo:
         lines.append(f"CRS: {self.crs or 'Unknown'}")
 
         if self.bbox:
-            bbox_str = f"[{self.bbox[0]}, {self.bbox[1]}, {self.bbox[2]}, {self.bbox[3]}]"
+            from portolan_cli.bbox import to_2d_bbox
+
+            # Reduce to 2D so a 6-element bbox shows [west, south, east, north]
+            # instead of its [west, south, min_z, east] slice (issue #592).
+            west, south, east, north = to_2d_bbox(self.bbox)
+            bbox_str = f"[{west}, {south}, {east}, {north}]"
             lines.append(f"Bbox: {bbox_str}")
 
         if self.format == "GeoParquet" and self.feature_count is not None:
@@ -156,7 +161,12 @@ class CollectionInfo:
             size_mb = self.total_size_bytes / (1024 * 1024)
             lines.append(f"Total Size: {size_mb:.2f} MB")
         if self.bbox:
-            bbox_str = f"[{self.bbox[0]}, {self.bbox[1]}, {self.bbox[2]}, {self.bbox[3]}]"
+            from portolan_cli.bbox import to_2d_bbox
+
+            # Reduce to 2D so a 6-element bbox shows [west, south, east, north]
+            # instead of its [west, south, min_z, east] slice (issue #592).
+            west, south, east, north = to_2d_bbox(self.bbox)
+            bbox_str = f"[{west}, {south}, {east}, {north}]"
             lines.append(f"Bbox: {bbox_str}")
         # Show parquet status
         parquet_status = "Yes" if self.has_parquet else "No"

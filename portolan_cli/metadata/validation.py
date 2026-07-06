@@ -12,6 +12,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from portolan_cli.bbox import to_2d_bbox
 from portolan_cli.metadata.models import MetadataCheckResult, MetadataReport, MetadataStatus
 from portolan_cli.models.catalog import CatalogModel
 from portolan_cli.models.collection import CollectionModel
@@ -79,7 +80,7 @@ def validate_collection_extent(
         return result
 
     coll_bbox = collection.extent.spatial.bbox[0]
-    coll_west, coll_south, coll_east, coll_north = coll_bbox[:4]
+    coll_west, coll_south, coll_east, coll_north = to_2d_bbox(coll_bbox)
 
     # Check each item's bbox is within collection extent
     for item in items:
@@ -91,7 +92,7 @@ def validate_collection_extent(
             )
             continue
 
-        item_west, item_south, item_east, item_north = item.bbox[:4]
+        item_west, item_south, item_east, item_north = to_2d_bbox(item.bbox)
 
         # Check if item bbox is fully contained in collection bbox
         outside = False
