@@ -34,7 +34,7 @@ items = gpd.read_parquet(
 
 ### PMTiles
 
-For vector datasets, **SHOULD** include PMTiles derivatives for web visualization.
+For vector collections, **SHOULD** include PMTiles derivatives for web visualization.
 
 - **SHOULD** provide `.pmtiles` when a GeoParquet file exceeds 10 MB
 - **MUST** provide `.pmtiles` when a GeoParquet file exceeds 100 MB
@@ -129,24 +129,24 @@ The `portolan:styles` property on the collection is a JSON array of asset keys i
 
 #### Best Practices
 
-1. **Create multiple styles for rich datasets.** If a collection has interesting categorical or numeric attributes, create data-driven styles for each (e.g., buildings by age, by use, by height).
+1. **Create multiple styles for rich collections.** If a collection has interesting categorical or numeric attributes, create data-driven styles for each (e.g., buildings by age, by use, by height).
 
 2. **Vary default styles across a catalog.** Each collection should have a visually distinct default color so the catalog is not monotone. Use subject matter to inform color choices — water in blues, vegetation in greens, built environment in warm tones.
 
 3. **Use data-driven styling.** Leverage Mapbox GL expressions (`interpolate`, `match`, `case`, `step`) to reveal patterns. Include a description explaining what the colors represent.
 
-4. **Consider label layers.** For datasets with names (roads, monuments, admin areas), include a label layer or a dedicated "with labels" style variant.
+4. **Consider label layers.** For collections with names (roads, monuments, admin areas), include a label layer or a dedicated "with labels" style variant.
 
 ## Documentation
 
-- **SHOULD** include collection-level READMEs for datasets with:
+- **SHOULD** include collection-level READMEs for collections with:
   - Multiple years of data
   - Multiple source agencies or methodologies
   - Complex versioning or update schedules
 
 ## Metadata
 
-- **SHOULD** provide machine-readable metadata in Parquet format for datasets with:
+- **SHOULD** provide machine-readable metadata in Parquet format for collections with:
   - Many coded/categorical variables
   - Complex classification schemes
   - Variables requiring detailed definitions

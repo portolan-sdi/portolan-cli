@@ -43,7 +43,7 @@ Each collection is a top-level subdirectory of the project root, named with the 
 |------|----------|-------------|
 | `collection.json` | **MUST** | STAC Collection metadata |
 | `versions.json` | **MUST** | Version history and checksums (see [versions.md](versions.md)) |
-| `{item_id}/` | — | One directory per dataset item |
+| `{item_id}/` | — | One directory per item |
 
 Collection IDs **SHOULD**:
 - Contain only lowercase letters, numbers, hyphens, and underscores
@@ -69,7 +69,7 @@ When a collection contains a single data file (e.g., one GeoParquet file), the d
 
 ## Item Level
 
-Items are used when a collection contains multiple data files — for example, partitioned datasets or multi-file raster mosaics.
+Items are used when a collection contains multiple data files — for example, partitioned collections or multi-file raster mosaics.
 
 Each item is a subdirectory of the collection named with the item ID.
 
@@ -111,7 +111,7 @@ Portolan catalogs **MUST** be saved as `SELF_CONTAINED` (pystac terminology), me
 | Catalog ID | `portolan-catalog` |
 | Collection license | `other` (STAC 1.1 keyword for a license not covered by SPDX; add a `rel="license"` link when the concrete license is known) |
 
-These defaults can be overridden during catalog creation or dataset import.
+These defaults can be overridden during catalog creation or import.
 
 ## Examples
 

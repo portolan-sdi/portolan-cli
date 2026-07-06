@@ -18,7 +18,7 @@ These extensions are recognized as importable geospatial data:
 | `.tif`, `.tiff` | GeoTIFF/COG | Raster | Depends | Content inspected for COG compliance |
 | `.jp2` | JPEG2000 | Raster | No | Converts to COG |
 
-Files with these extensions are candidates for `portolan dataset add`.
+Files with these extensions are candidates for `portolan add`.
 
 ### Non-Cloud-Native Format Handling
 
@@ -82,7 +82,7 @@ These are **derivatives**, not primary data. PMTiles **SHOULD** be generated fro
 | `versions.json` | Portolan version manifest |
 | `styles/*.json` | Mapbox GL / MapLibre style definitions (see [best-practices.md#visualization-styles](best-practices.md#visualization-styles)) |
 
-These files have semantic meaning and are not imported as datasets.
+These files have semantic meaning and are not imported as data.
 
 ## Thumbnail/Preview
 
@@ -134,7 +134,7 @@ The following are skipped during directory scans:
 ## Extension vs. Role
 
 STAC uses **asset roles** to describe purpose, not file extensions. The extensions above are used for:
-1. **Import classification** — determining if a file can be added as a dataset
+1. **Import classification** — determining if a file can be added as data
 2. **Format detection** — deciding which conversion pipeline to use
 
 Once imported, the STAC asset's `roles` field (e.g., `["data"]`, `["thumbnail"]`) provides machine-readable semantics.

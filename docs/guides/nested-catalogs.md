@@ -1,6 +1,6 @@
 # Creating Nested Catalogs
 
-Portolan supports hierarchical catalog structures where directories automatically become subcatalogs. This is useful for organizing large datasets by theme, region, or time period.
+Portolan supports hierarchical catalog structures where directories automatically become subcatalogs. This is useful for organizing large collections by theme, region, or time period.
 
 ## Quick Start
 
@@ -81,7 +81,7 @@ keywords:
 
 source_url: "https://data.example.org/"
 processing_notes: "Converted from Shapefile to GeoParquet with Hilbert sorting."
-known_issues: "Temporal extent not specified for most datasets."
+known_issues: "Temporal extent not specified for most items."
 ```
 
 ### Generating READMEs

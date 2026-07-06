@@ -481,7 +481,7 @@ You can browse available services at the root:
 
 ### Large Services
 
-For services with many layers or large datasets:
+For services with many layers or large collections:
 
 1. Use `--dry-run` first to see what will be extracted
 2. Filter with `--layers` (vectors) or `--bbox` (rasters)

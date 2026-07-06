@@ -3413,7 +3413,7 @@ def add_cmd(
     "--collection",
     "collection_id",
     default=None,
-    help="Collection ID for the external dataset (default: derived from the URL).",
+    help="Collection ID for the external collection (default: derived from the URL).",
 )
 @click.option("--title", default=None, help="Human-readable title for the collection/asset.")
 @click.option("--description", default=None, help="Collection description.")
@@ -3468,9 +3468,9 @@ def add_external_cmd(
     catalog_path: Path | None,
     force: bool,
 ) -> None:
-    """Register a remote dataset as a collection WITHOUT downloading or converting it.
+    """Register remote data as a collection WITHOUT downloading or converting it.
 
-    The external counterpart to 'portolan add'. Some valuable datasets are
+    The external counterpart to 'portolan add'. Some valuable data sources are
     already published cloud-natively at a remote location and should be
     *referenced in place* rather than copied. This creates a collection.json
     whose collection-level 'data' asset href is the remote URL (kept as-is,

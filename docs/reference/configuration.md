@@ -533,7 +533,7 @@ collection/
 
 ### Pre-existing Hive Partitions
 
-Portolan automatically detects pre-existing Hive-partitioned data with arbitrary column names (not just kdtree/h3/s2/quadkey/a5). This supports datasets partitioned outside Portolan:
+Portolan automatically detects pre-existing Hive-partitioned data with arbitrary column names (not just kdtree/h3/s2/quadkey/a5). This supports data partitioned outside Portolan:
 
 ```
 # Pre-existing structure (auto-detected):
@@ -623,7 +623,7 @@ portolan add imagery/ --stac-geoparquet
 
 - Collections with >100 items (e.g., satellite imagery time series)
 - Raster collections with many scenes
-- Partitioned vector datasets
+- Partitioned vector collections
 
 !!! warning "Known Limitation"
     For existing catalogs with thousands of items, `push` after generating items.parquet may be slow ([#329](https://github.com/portolan-sdi/portolan-cli/issues/329)). This affects incremental updates to large catalogs. New catalogs and small catalogs work normally.

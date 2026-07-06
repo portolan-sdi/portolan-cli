@@ -42,14 +42,14 @@ A catalog-level `llms.txt` provides an overview of the entire catalog or sub-cat
 
 #### Collection-Level llms.txt
 
-A collection-level `llms.txt` provides everything an AI agent needs to work with a specific dataset. It **SHOULD** include:
+A collection-level `llms.txt` provides everything an AI agent needs to work with a specific collection. It **SHOULD** include:
 
-- **What the dataset is** — a plain-language description, including source, provider, and license
+- **What the collection is** — a plain-language description, including source, provider, and license
 - **How to access the data** — URLs and working code examples for loading the data (e.g., DuckDB SQL, Python)
 - **Schema documentation** — all field names, types, and meanings, ideally as a table
 - **Data quality notes** — sentinel values, privacy suppressions, known quirks, or caveats that would trip up a naive query
 - **Example queries** — practical, working examples showing common analysis patterns
-- **Related datasets** — cross-references to complementary collections, including join keys and how to combine them
+- **Related collections** — cross-references to complementary collections, including join keys and how to combine them
 
 #### General Guidance
 

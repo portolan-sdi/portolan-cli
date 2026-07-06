@@ -133,7 +133,7 @@ Each collection maps to an Iceberg table under the `portolake` namespace: `porto
 
 ### Spatial Optimization
 
-For datasets with geometry columns, the backend automatically:
+For data with geometry columns, the backend automatically:
 
 - Adds a **geohash column** to every table with geometry. Precision is
   auto-selected by row count: `geohash_3` (~150 km cells) for 100K–10M rows,
