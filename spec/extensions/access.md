@@ -4,6 +4,10 @@
 - **Scope:** Catalog, Collection
 - **Extension URI:** `https://portolan.org/stac-extensions/access/v1.0.0/schema.json`
 - **Maturity:** Proposal (per [ADR-0037](../../context/shared/adr/0037-experimental-extension-policy.md): Proposal → Pilot → Stable)
+- **Maturity path:** incubating **within Portolan** — rapid iteration and validation against a
+  running implementation. Once stable, the intent is to propose it to the **STAC community**
+  (stac-extensions) together with a working end-to-end implementation, as a concrete example
+  rather than a spec-only proposal.
 - **Builds on:** [STAC Authentication extension](https://github.com/stac-extensions/authentication) (`auth:`)
 
 ## Summary
@@ -29,20 +33,19 @@ credentials.
 
 Portolan issue [#120 (Access Control & Visibility)](https://github.com/portolan-sdi/portolan-cli/issues/120)
 frames access control as **policy** (portable metadata: who *should* access) vs
-**enforcement** (provider-specific: who *actually* can). It contemplates two
-enforcement paths:
+**enforcement** (provider-specific: who *actually* can). Its **recommended
+enforcement is export-only provider IAM** — compile a portable policy into
+S3/GCS/MinIO IAM and let the storage layer enforce it; consumers are IAM
+principals, **no running service** (the "static files, no servers" path).
+User authentication and **brokered credential vending** are the enforcement
+piece #120 places **beyond the CLI's metadata role**, in a separate managed
+layer.
 
-1. **Export-only / IAM** — compile a portable policy into provider IAM
-   (S3/GCS/MinIO) and let the storage layer enforce it. Consumers are IAM
-   principals; **no running service**. (The "static files, no servers" path.)
-2. **Brokered credential vending** — a control-plane service verifies an
-   external identity and vends short-lived scoped credentials at read time.
-
-This extension is the **consumer-facing wire contract for path 2** — it lets a
-client *discover* that a broker exists and how to use it. It does **not** mandate
-path 2; a publisher using export-only IAM simply omits this extension. The two
-paths are complementary, and the spec stays neutral about which a publisher
-picks. (Visibility tagging — public/private, `--visibility` — is deliberately
+This extension is the **consumer-facing wire contract for that managed layer** —
+it lets a client *discover* that a broker exists and how to use it. It does
+**not** compete with export-only IAM: a publisher enforcing that way simply
+omits this extension. The two are complementary, and the spec stays neutral
+about which a publisher picks. (Visibility tagging — public/private, `--visibility` — is deliberately
 **out of scope** here: it belongs to the #120 discussion and the publisher's own
 tooling, not this read-time contract.)
 
@@ -148,6 +151,10 @@ See [`../examples/access-collection.json`](../examples/access-collection.json).
    it entirely to the named `protocol` profile?
 3. Could the vending step instead become a new scheme `type` (e.g.
    `tokenExchange`) contributed upstream to the STAC Authentication extension,
-   removing the need for a separate namespace? (Tracked against #120.)
+   removing the need for a separate namespace? **Deferred, not open now:** per
+   the maturity path above, the extension incubates within Portolan first; the
+   upstream form (this extension as-is, or a scheme `type`) is decided when it
+   is stable and proposed to the STAC community with a working end-to-end
+   implementation.
 4. Schema-hosting domain: extensions reference `portolan.org/stac-extensions/…`
    (ADR-0042) while core schemas use `portolan.dev/schema/…`; to be reconciled.
