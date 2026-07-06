@@ -202,6 +202,25 @@ def read_schema_json(path: Path) -> SchemaModel:
     return SchemaModel.from_dict(data)
 
 
+def _bbox_2d(bbox: list[float]) -> list[float]:
+    """Reduce a 2D or 3D STAC bbox to ``[west, south, east, north]``.
+
+    STAC allows 6-element bboxes for 3D extents:
+    ``[west, south, min_z, east, north, max_z]``. A naive ``bbox[:4]`` prefix
+    slice would keep ``min_z`` and drop ``north``, corrupting the extent, so the
+    2D components must be selected by position (indices 0, 1, 3, 4).
+
+    Args:
+        bbox: A 4-element (2D) or 6-element (3D) STAC bbox.
+
+    Returns:
+        The 2D ``[west, south, east, north]`` extent.
+    """
+    if len(bbox) == 6:
+        return [bbox[0], bbox[1], bbox[3], bbox[4]]
+    return bbox[:4]
+
+
 def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
     """Get bounding boxes from all sibling collections in the catalog (Issue #432).
 
@@ -262,14 +281,13 @@ def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
                 bbox = bbox_list[0]
                 # Validate bbox format: [west, south, east, north] or 3D variant
                 # STAC allows 6-element bboxes for 3D: [west, south, min_z, east, north, max_z]
-                # We use only the 2D components (first 4 elements) for union computation
+                # We use only the 2D components for union computation
                 if (
                     isinstance(bbox, list)
                     and len(bbox) in (4, 6)
                     and all(isinstance(x, (int, float)) for x in bbox)
                 ):
-                    # Extract 2D bbox (first 4 elements) regardless of 3D or 2D
-                    bboxes.append(bbox[:4])
+                    bboxes.append(_bbox_2d(bbox))
 
         except (json.JSONDecodeError, OSError, KeyError):
             continue
@@ -336,8 +354,8 @@ def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
             and len(bbox) in (4, 6)
             and all(isinstance(x, (int, float)) for x in bbox)
         ):
-            # Return 2D bbox (first 4 elements) for consistency
-            return bbox[:4]
+            # Return 2D [west, south, east, north] for consistency
+            return _bbox_2d(bbox)
 
     except Exception as e:
         # Any error reading/parsing metadata.yaml - fall back to inheritance

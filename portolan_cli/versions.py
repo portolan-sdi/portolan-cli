@@ -440,6 +440,45 @@ def parse_version(version_str: str) -> tuple[int, int, int]:
         return (0, 0, 0)
 
 
+def _increment_version(version: str) -> str:
+    """Safely increment a semantic version string.
+
+    Handles standard semver (1.2.3) and pre-release versions (1.0.0-beta.1).
+
+    Args:
+        version: Current version string.
+
+    Returns:
+        Incremented version string.
+    """
+    if not version:
+        return "0.0.1"
+
+    # Handle pre-release versions (e.g., 1.0.0-beta.1)
+    if "-" in version:
+        base, prerelease = version.split("-", 1)
+        # Try to increment the prerelease number
+        prerelease_parts = prerelease.rsplit(".", 1)
+        if len(prerelease_parts) == 2 and prerelease_parts[1].isdigit():
+            prerelease_parts[1] = str(int(prerelease_parts[1]) + 1)
+            return f"{base}-{'.'.join(prerelease_parts)}"
+        else:
+            # No numeric suffix: 1.0.0-beta → 1.0.0-beta.1
+            # Preserve the prerelease tag by appending .1
+            return f"{base}-{prerelease}.1"
+
+    # Standard semver: increment patch
+    parts = version.split(".")
+    if len(parts) >= 3 and parts[-1].isdigit():
+        parts[-1] = str(int(parts[-1]) + 1)
+    elif len(parts) < 3:
+        # Pad to 3 parts if needed
+        while len(parts) < 3:
+            parts.append("0")
+        parts[-1] = "1"
+    return ".".join(parts)
+
+
 def _compute_changes(versions_file: VersionsFile, new_assets: dict[str, Asset]) -> list[str]:
     """Compute which files changed compared to the previous version.
 

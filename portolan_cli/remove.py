@@ -77,6 +77,83 @@ def remove_item(
             collection_path.write_text(json.dumps(collection_data, indent=2), encoding="utf-8")
 
 
+def _gather_removable_files(path: Path) -> list[Path]:
+    """Expand a removal target into the concrete files it covers.
+
+    Directories expand to every file beneath them; single files are paired with
+    their sidecars (e.g. ``.dbf``/``.shx``/``.prj``).
+
+    Args:
+        path: A file or directory passed to ``remove_files``.
+
+    Returns:
+        List of candidate file paths to untrack/delete.
+    """
+    if path.is_dir():
+        if not path.exists():
+            return []
+        return [f for f in path.rglob("*") if f.is_file()]
+
+    sidecars = get_sidecars(path) if path.exists() else []
+    return [path, *sidecars]
+
+
+def _remove_one_file(
+    file_path: Path,
+    *,
+    catalog_root: Path,
+    keep: bool,
+    dry_run: bool,
+) -> bool:
+    """Untrack (and optionally delete) a single file.
+
+    Args:
+        file_path: File to remove.
+        catalog_root: Root directory of the catalog.
+        keep: If True, preserve the file on disk (only untrack).
+        dry_run: If True, do not mutate anything.
+
+    Returns:
+        True if the file was removed (or would be, in dry-run), False if skipped.
+    """
+    if not file_path.exists() and not keep:
+        return False
+
+    # Refuse to delete symlinks - they might point outside the catalog and
+    # deleting them could have unintended consequences. Users should resolve
+    # symlinks manually or use --keep to just untrack.
+    if file_path.is_symlink() and not keep:
+        return False
+
+    # Determine collection ID (raises if the file is outside the catalog).
+    try:
+        coll_id = resolve_collection_id(file_path, catalog_root)
+    except ValueError:
+        return False
+
+    if dry_run:
+        return True
+
+    # Remove from versions.json
+    versions_path = catalog_root / coll_id / "versions.json"
+    if versions_path.exists():
+        _remove_from_versions(file_path, versions_path)
+
+    # Remove STAC item and files (unless --keep)
+    if not keep:
+        item_dir = catalog_root / coll_id / file_path.stem
+        if item_dir.exists() and item_dir.is_dir():
+            shutil.rmtree(item_dir)
+
+        # Delete file from disk. missing_ok=True handles race conditions where
+        # another process deletes the file between exists() and unlink().
+        file_path.unlink(missing_ok=True)
+        for sidecar in get_sidecars(file_path):
+            sidecar.unlink(missing_ok=True)
+
+    return True
+
+
 def remove_files(
     *,
     paths: list[Path],
@@ -105,103 +182,13 @@ def remove_files(
     skipped: list[Path] = []
 
     for path in paths:
-        if path.is_dir():
-            # Remove all files in directory
-            files = list(path.rglob("*")) if path.exists() else []
-            files = [f for f in files if f.is_file()]
-        else:
-            # Include sidecars for single file removal
-            sidecars = get_sidecars(path) if path.exists() else []
-            files = [path] + sidecars
-
-        for file_path in files:
-            if not file_path.exists() and not keep:
-                skipped.append(file_path)
-                continue
-
-            # Refuse to delete symlinks - they might point outside the catalog
-            # and deleting them could have unintended consequences. Users should
-            # resolve symlinks manually or use --keep to just untrack.
-            if file_path.is_symlink() and not keep:
-                skipped.append(file_path)
-                continue
-
-            # Determine collection ID
-            try:
-                coll_id = resolve_collection_id(file_path, catalog_root)
-            except ValueError:
-                # File is outside catalog - skip with warning
-                skipped.append(file_path)
-                continue
-
-            # In dry-run mode, just record what would be removed
-            if dry_run:
-                removed.append(file_path)
-                continue
-
-            # Remove from versions.json
-            versions_path = catalog_root / coll_id / "versions.json"
-            if versions_path.exists():
-                _remove_from_versions(file_path, versions_path)
-
-            # Remove STAC item and files (unless --keep)
-            if not keep:
-                item_id = file_path.stem
-                item_dir = catalog_root / coll_id / item_id
-                if item_dir.exists() and item_dir.is_dir():
-                    shutil.rmtree(item_dir)
-
-                # Delete file from disk (missing_ok handles race conditions)
-                file_path.unlink(missing_ok=True)
-
-                # Also delete sidecars if this is the primary file
-                # Use missing_ok=True to handle race conditions where another
-                # process might delete the file between exists() and unlink()
-                for sidecar in get_sidecars(file_path):
-                    sidecar.unlink(missing_ok=True)
-
-            removed.append(file_path)
+        for file_path in _gather_removable_files(path):
+            was_removed = _remove_one_file(
+                file_path, catalog_root=catalog_root, keep=keep, dry_run=dry_run
+            )
+            (removed if was_removed else skipped).append(file_path)
 
     return removed, skipped
-
-
-def _increment_version(version: str) -> str:
-    """Safely increment a semantic version string.
-
-    Handles standard semver (1.2.3) and pre-release versions (1.0.0-beta.1).
-
-    Args:
-        version: Current version string.
-
-    Returns:
-        Incremented version string.
-    """
-    if not version:
-        return "0.0.1"
-
-    # Handle pre-release versions (e.g., 1.0.0-beta.1)
-    if "-" in version:
-        base, prerelease = version.split("-", 1)
-        # Try to increment the prerelease number
-        prerelease_parts = prerelease.rsplit(".", 1)
-        if len(prerelease_parts) == 2 and prerelease_parts[1].isdigit():
-            prerelease_parts[1] = str(int(prerelease_parts[1]) + 1)
-            return f"{base}-{'.'.join(prerelease_parts)}"
-        else:
-            # No numeric suffix: 1.0.0-beta → 1.0.0-beta.1
-            # Preserve the prerelease tag by appending .1
-            return f"{base}-{prerelease}.1"
-
-    # Standard semver: increment patch
-    parts = version.split(".")
-    if len(parts) >= 3 and parts[-1].isdigit():
-        parts[-1] = str(int(parts[-1]) + 1)
-    elif len(parts) < 3:
-        # Pad to 3 parts if needed
-        while len(parts) < 3:
-            parts.append("0")
-        parts[-1] = "1"
-    return ".".join(parts)
 
 
 def _remove_from_versions(file_path: Path, versions_path: Path) -> None:

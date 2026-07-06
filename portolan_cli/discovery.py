@@ -95,8 +95,8 @@ def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path
     """Iterate over geospatial files in a directory (including their sidecars).
 
     Returns geospatial files and their associated sidecars (e.g., .dbf/.shx for shapefiles).
-    FileGDB directories (.gdb) are treated as single geospatial assets.
-    Filters by GEOSPATIAL_EXTENSIONS while iterating for efficiency.
+    FileGDB directories (.gdb) are treated as single geospatial assets (which have no
+    sidecars). Discovery and FileGDB handling are delegated to iter_geospatial_files.
 
     Args:
         path: Directory to scan.
@@ -105,45 +105,18 @@ def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path
     Returns:
         List of geospatial file paths (including FileGDB directories) and their sidecars.
     """
-    # Special case: if path itself is a FileGDB, return it directly
-    if is_filegdb(path):
-        return [path]
-
-    if not path.is_dir():
-        return []
-
     files: list[Path] = []
     seen: set[Path] = set()
-    seen_filegdbs: set[Path] = set()  # Track FileGDBs to avoid recursing into them
 
-    iterator = path.rglob("*") if recursive else path.iterdir()
+    for geo_file in iter_geospatial_files(path, recursive=recursive):
+        if geo_file not in seen:
+            files.append(geo_file)
+            seen.add(geo_file)
 
-    for item in iterator:
-        # Skip items inside FileGDB directories (they're internal files)
-        if any(parent in seen_filegdbs for parent in item.parents):
-            continue
-
-        # Check for FileGDB directory (treat as single asset)
-        if item.is_dir() and is_filegdb(item):
-            if item not in seen:
-                files.append(item)
-                seen.add(item)
-                seen_filegdbs.add(item)
-            continue
-
-        if not item.is_file():
-            continue
-
-        # Only process geospatial files (not sidecars directly)
-        if item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
-            if item not in seen:
-                files.append(item)
-                seen.add(item)
-
-            # Also include any sidecars for this file
-            for sidecar in get_sidecars(item):
-                if sidecar not in seen:
-                    files.append(sidecar)
-                    seen.add(sidecar)
+        # Include any sidecars for this file (FileGDB dirs yield none).
+        for sidecar in get_sidecars(geo_file):
+            if sidecar not in seen:
+                files.append(sidecar)
+                seen.add(sidecar)
 
     return sorted(files)

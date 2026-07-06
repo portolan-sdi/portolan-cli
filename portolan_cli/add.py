@@ -76,7 +76,7 @@ from portolan_cli.metadata_yaml import (
     validate_metadata,
 )
 from portolan_cli.query import ItemInfo, get_item_info, is_current, list_items  # noqa: F401
-from portolan_cli.remove import _increment_version, remove_files, remove_item  # noqa: F401
+from portolan_cli.remove import remove_files, remove_item  # noqa: F401
 from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
     MergeStrategy,
@@ -102,6 +102,7 @@ from portolan_cli.style import enrich_cog_assets
 from portolan_cli.versions import (
     Asset,
     VersionsFile,
+    _increment_version,
     add_version,
     read_versions,
     write_versions,
