@@ -58,7 +58,7 @@ class TestDetectFormat:
         """PMTiles files are detected as vector.
 
         Regression test for issue #198: PMTiles was missing from VECTOR_EXTENSIONS,
-        causing detect_format() to return UNKNOWN and add_dataset() to reject
+        causing detect_format() to return UNKNOWN and add() to reject
         PMTiles files with "Unsupported format: .pmtiles".
 
         PMTiles is a cloud-native vector tile format that should be classified

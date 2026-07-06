@@ -1,7 +1,7 @@
 """Unit tests for versions.json read/write/update operations.
 
 Tests the versions module which manages the versions.json file that serves as
-the single source of truth for dataset versioning (ADR-0005).
+the single source of truth for collection versioning (ADR-0005).
 """
 
 from __future__ import annotations

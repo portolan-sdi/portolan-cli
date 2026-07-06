@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.dataset import _scan_item_assets
+from portolan_cli.add import _scan_item_assets
 
 
 @pytest.fixture

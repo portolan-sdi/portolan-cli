@@ -1,8 +1,8 @@
-"""Unit tests for external / remote dataset registration.
+"""Unit tests for external / remote data registration.
 
 Covers `portolan add-external` and the underlying
-`portolan_cli.external.add_external_dataset`, which register a remote
-cloud-native dataset as a catalog collection WITHOUT downloading or
+`portolan_cli.external.add_external`, which register a remote
+cloud-native data as a catalog collection WITHOUT downloading or
 converting it (referenced in place).
 
 Motivating case: Overture Maps places — planet-scale GeoParquet on Overture's
@@ -20,7 +20,7 @@ from click.testing import CliRunner
 from portolan_cli.cli import cli
 from portolan_cli.external import (
     _validate_bbox,
-    add_external_dataset,
+    add_external,
     derive_collection_id_from_url,
     infer_media_type,
     is_external_href,
@@ -127,21 +127,19 @@ class TestADR0030URLValidation:
         """file:// URLs are local paths disguised as URIs — must reject."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="Unsupported URL scheme"):
-            add_external_dataset(catalog_root=tmp_path, url="file:///etc/passwd", collection_id="x")
+            add_external(catalog_root=tmp_path, url="file:///etc/passwd", collection_id="x")
 
     def test_rejects_path_traversal(self, tmp_path: Path) -> None:
         """Path traversals in URLs must be rejected."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="traversal"):
-            add_external_dataset(
-                catalog_root=tmp_path, url="s3://bucket/../etc/passwd", collection_id="x"
-            )
+            add_external(catalog_root=tmp_path, url="s3://bucket/../etc/passwd", collection_id="x")
 
     def test_rejects_control_characters(self, tmp_path: Path) -> None:
         """Control characters in URLs must be rejected."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="Control characters"):
-            add_external_dataset(
+            add_external(
                 catalog_root=tmp_path, url="s3://bucket/key\x00.parquet", collection_id="x"
             )
 
@@ -149,19 +147,19 @@ class TestADR0030URLValidation:
         """URLs without host/bucket must be rejected."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="missing host"):
-            add_external_dataset(catalog_root=tmp_path, url="s3://", collection_id="x")
+            add_external(catalog_root=tmp_path, url="s3://", collection_id="x")
 
     def test_rejects_unsupported_scheme(self, tmp_path: Path) -> None:
         """Only s3, gs, az, http, https are allowed."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="Unsupported URL scheme"):
-            add_external_dataset(
+            add_external(
                 catalog_root=tmp_path, url="ftp://example.org/data.parquet", collection_id="x"
             )
 
     def test_accepts_valid_s3_url(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
-        result = add_external_dataset(
+        result = add_external(
             catalog_root=tmp_path,
             url="s3://bucket/path/to/data.parquet",
             collection_id="test",
@@ -170,7 +168,7 @@ class TestADR0030URLValidation:
 
     def test_accepts_valid_https_url(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
-        result = add_external_dataset(
+        result = add_external(
             catalog_root=tmp_path,
             url="https://example.org/data.parquet",
             collection_id="test",
@@ -179,7 +177,7 @@ class TestADR0030URLValidation:
 
     def test_accepts_valid_gs_url(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
-        result = add_external_dataset(
+        result = add_external(
             catalog_root=tmp_path,
             url="gs://bucket/path/data.parquet",
             collection_id="test",
@@ -188,7 +186,7 @@ class TestADR0030URLValidation:
 
     def test_accepts_valid_az_url(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
-        result = add_external_dataset(
+        result = add_external(
             catalog_root=tmp_path,
             url="az://container/blob.parquet",
             collection_id="test",
@@ -202,20 +200,20 @@ class TestOverwriteProtection:
     def test_rejects_overwrite_without_force(self, tmp_path: Path) -> None:
         """Existing collections must not be overwritten without --force."""
         setup_catalog(tmp_path)
-        add_external_dataset(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="test")
+        add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="test")
         with pytest.raises(FileExistsError, match="already exists"):
-            add_external_dataset(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="test")
+            add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="test")
 
     def test_allows_overwrite_with_force(self, tmp_path: Path) -> None:
         """With force=True, existing collections can be overwritten."""
         setup_catalog(tmp_path)
-        add_external_dataset(
+        add_external(
             catalog_root=tmp_path,
             url=OVERTURE_URL,
             collection_id="test",
             title="Original",
         )
-        result = add_external_dataset(
+        result = add_external(
             catalog_root=tmp_path,
             url=OVERTURE_URL,
             collection_id="test",
@@ -227,13 +225,13 @@ class TestOverwriteProtection:
         assert data["title"] == "Updated"
 
 
-class TestAddExternalDataset:
-    """Tests for the add_external_dataset core function."""
+class TestAddExternal:
+    """Tests for the add_external core function."""
 
     def test_creates_collection_with_remote_asset(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
 
-        result = add_external_dataset(
+        result = add_external(
             catalog_root=tmp_path,
             url=OVERTURE_URL,
             collection_id="overture-places",
@@ -266,18 +264,14 @@ class TestAddExternalDataset:
     def test_no_local_file_written(self, tmp_path: Path) -> None:
         """Nothing is downloaded: only metadata JSON exists in the collection."""
         setup_catalog(tmp_path)
-        add_external_dataset(
-            catalog_root=tmp_path, url=OVERTURE_URL, collection_id="overture-places"
-        )
+        add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="overture-places")
         collection_dir = tmp_path / "overture-places"
         files = sorted(p.name for p in collection_dir.iterdir())
         assert files == ["collection.json"]
 
     def test_links_collection_into_root_catalog(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)
-        add_external_dataset(
-            catalog_root=tmp_path, url=OVERTURE_URL, collection_id="overture-places"
-        )
+        add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="overture-places")
         catalog = json.loads((tmp_path / "catalog.json").read_text())
         child_hrefs = [link["href"] for link in catalog["links"] if link["rel"] == "child"]
         assert "./overture-places/collection.json" in child_hrefs
@@ -285,9 +279,7 @@ class TestAddExternalDataset:
     def test_check_scanner_does_not_flag_remote_asset(self, tmp_path: Path) -> None:
         """The metadata scanner must not report the remote asset as MISSING."""
         setup_catalog(tmp_path)
-        add_external_dataset(
-            catalog_root=tmp_path, url=OVERTURE_URL, collection_id="overture-places"
-        )
+        add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="overture-places")
         report = scan_catalog_metadata(tmp_path)
         # No result should reference the external href as a problem.
         assert all(OVERTURE_URL not in str(r.file_path) for r in report.results)
@@ -296,11 +288,11 @@ class TestAddExternalDataset:
         """Local filesystem paths must be rejected (use 'portolan add' instead)."""
         setup_catalog(tmp_path)
         with pytest.raises(InputValidationError, match="Unsupported URL scheme"):
-            add_external_dataset(catalog_root=tmp_path, url="/tmp/local.parquet", collection_id="x")
+            add_external(catalog_root=tmp_path, url="/tmp/local.parquet", collection_id="x")
 
     def test_rejects_uninitialised_catalog(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError, match="Not a Portolan catalog"):
-            add_external_dataset(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="x")
+            add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="x")
 
 
 class TestAddExternalCommand:

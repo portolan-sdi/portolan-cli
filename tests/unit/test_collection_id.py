@@ -325,12 +325,12 @@ class TestScanFixCollectionId:
         assert "invalid_collection_id" in FIX_FLAG_ISSUE_TYPES
 
 
-class TestAddDatasetValidation:
-    """Tests for collection ID validation in add_dataset()."""
+class TestAddValidation:
+    """Tests for collection ID validation in add()."""
 
-    def test_add_dataset_rejects_invalid_collection_id(self, tmp_path: Path) -> None:
-        """add_dataset should reject invalid collection IDs with helpful error."""
-        from portolan_cli.dataset import add_dataset
+    def test_add_rejects_invalid_collection_id(self, tmp_path: Path) -> None:
+        """add should reject invalid collection IDs with helpful error."""
+        from portolan_cli.add import add
 
         # Create a test file
         test_file = tmp_path / "data.geojson"
@@ -338,7 +338,7 @@ class TestAddDatasetValidation:
 
         # Try to add with invalid collection ID
         with pytest.raises(ValueError) as exc_info:
-            add_dataset(
+            add(
                 path=test_file,
                 catalog_root=tmp_path,
                 collection_id="My Data",  # Invalid: contains space
@@ -348,15 +348,15 @@ class TestAddDatasetValidation:
         assert "Invalid collection ID" in error_msg
         assert "my-data" in error_msg.lower()  # Should suggest normalized name
 
-    def test_add_dataset_rejects_uppercase_collection_id(self, tmp_path: Path) -> None:
-        """add_dataset should reject uppercase collection IDs."""
-        from portolan_cli.dataset import add_dataset
+    def test_add_rejects_uppercase_collection_id(self, tmp_path: Path) -> None:
+        """add should reject uppercase collection IDs."""
+        from portolan_cli.add import add
 
         test_file = tmp_path / "data.geojson"
         test_file.write_text('{"type": "FeatureCollection", "features": []}')
 
         with pytest.raises(ValueError) as exc_info:
-            add_dataset(
+            add(
                 path=test_file,
                 catalog_root=tmp_path,
                 collection_id="MyCollection",

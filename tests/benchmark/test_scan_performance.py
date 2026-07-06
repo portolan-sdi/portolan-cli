@@ -416,7 +416,7 @@ def benchmark_dir_many_dirs(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def _create_many_dirs_structure(base: Path, num_dirs: int) -> None:
     """Create many directories with 1 file each (EuroSAT pattern).
 
-    Structure mimics satellite imagery datasets where each scene
+    Structure mimics satellite imagery collections where each scene
     is in its own subdirectory.
     """
     for i in range(num_dirs):

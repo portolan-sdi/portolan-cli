@@ -185,7 +185,7 @@ class TestItemModel:
 
     @pytest.mark.unit
     def test_item_with_null_geometry(self) -> None:
-        """Item can have null geometry (for non-spatial datasets)."""
+        """Item can have null geometry (for non-spatial data)."""
         item = ItemModel(
             id="non-spatial",
             geometry=None,

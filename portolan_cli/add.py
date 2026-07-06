@@ -1,6 +1,6 @@
-"""Dataset orchestration module - manages the dataset add/list/info/remove workflow.
+"""Add pipeline module - manages the add/list/info/remove workflow.
 
-This module orchestrates the complete workflow for managing datasets in a
+This module orchestrates the complete workflow for managing collections in a
 Portolan catalog:
 1. Format detection (route to vector or raster handler)
 2. Conversion to cloud-native format (GeoParquet or COG)
@@ -349,8 +349,8 @@ def _scan_item_assets(
 
 
 @dataclass
-class DatasetInfo:
-    """Information about a dataset in the catalog.
+class ItemInfo:
+    """Information about an item in the catalog.
 
     Attributes:
         item_id: STAC item identifier.
@@ -389,10 +389,10 @@ class AddFailure:
 
 
 @dataclass
-class PreparedDataset:
-    """Result of prepare_dataset() — metadata extracted, ready for finalization.
+class PreparedItem:
+    """Result of prepare_item() — metadata extracted, ready for finalization.
 
-    This dataclass holds all the information needed to finalize a dataset
+    This dataclass holds all the information needed to finalize an item
     (write versions.json, update collection links) without any I/O happening
     during the prepare phase.
 
@@ -427,25 +427,25 @@ class PreparedDataset:
 
 
 def _maybe_partition_large_file(
-    prepared: PreparedDataset,
+    prepared: PreparedItem,
     catalog_root: Path,
     item_datetime: datetime | None,
     skip_partitioning: bool = False,
-) -> list[PreparedDataset]:
+) -> list[PreparedItem]:
     """Partition a large GeoParquet file if it exceeds the size threshold.
 
     Per ADR-0031 and Issue #352: Files > 2GB should be spatially partitioned.
     Each partition becomes a STAC Item with its own bbox.
 
     Args:
-        prepared: The prepared dataset to potentially partition.
+        prepared: The prepared item to potentially partition.
         catalog_root: Root directory of the catalog.
         item_datetime: Optional datetime for created items.
         skip_partitioning: If True, skip partitioning even if file exceeds threshold.
             Used when user declines interactive prompt.
 
     Returns:
-        List of PreparedDatasets. If partitioning occurred, contains multiple
+        List of PreparedItems. If partitioning occurred, contains multiple
         items (one per partition). Otherwise, returns [prepared] unchanged.
     """
     from portolan_cli.config import get_setting
@@ -544,19 +544,19 @@ def _maybe_partition_large_file(
     if primary_parquet.exists():
         primary_parquet.unlink()
 
-    # Create PreparedDataset for each partition
-    partitioned_datasets: list[PreparedDataset] = []
+    # Create PreparedItem for each partition
+    partitioned_items: list[PreparedItem] = []
 
     for partition_path in partition_files:
         # Create STAC item for this partition
         # item_id auto-derived from partition_path.parent.name (e.g., "kdtree_cell=0000000000")
-        partition_prepared = prepare_dataset(
+        partition_prepared = prepare_item(
             path=partition_path,
             catalog_root=catalog_root,
             collection_id=prepared.collection_id,
             item_datetime=item_datetime,
         )
-        partitioned_datasets.append(partition_prepared)
+        partitioned_items.append(partition_prepared)
 
     # Add collection-level glob asset for bulk access (Issue #351)
     # This provides a single glob URL for DuckDB/PyArrow/GDAL to read all partitions
@@ -573,10 +573,10 @@ def _maybe_partition_large_file(
     # Extract partition metadata for STAC partition extension (Issue #232)
     partition_meta = get_partition_metadata(partition_output_dir, str(strategy))
 
-    # Create a PreparedDataset for the glob asset (collection-level)
+    # Create a PreparedItem for the glob asset (collection-level)
     # Use original item_id as base to avoid collisions across collections
     glob_item_id = f"{prepared.item_id}_partitioned"
-    glob_prepared = PreparedDataset(
+    glob_prepared = PreparedItem(
         item_id=glob_item_id,
         collection_id=prepared.collection_id,
         format_type=FormatType.VECTOR,
@@ -589,9 +589,9 @@ def _maybe_partition_large_file(
         metadata=None,
         partition_metadata=partition_meta,
     )
-    partitioned_datasets.append(glob_prepared)
+    partitioned_items.append(glob_prepared)
 
-    return partitioned_datasets
+    return partitioned_items
 
 
 def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
@@ -730,7 +730,7 @@ def _fix_collection_links(
     """Fix root/parent links and deduplicate item links in collection JSON.
 
     PySTAC sets root to self by default; we need to point to catalog root.
-    Also deduplicates item links that can occur when add_dataset is called
+    Also deduplicates item links that can occur when add is called
     multiple times on the same collection.
     """
     if not collection_json_path.exists():
@@ -757,7 +757,7 @@ def _fix_collection_links(
             {"rel": "parent", "href": relative_root, "type": "application/json"}
         )
 
-    # Deduplicate item links (can occur when add_dataset is called multiple times)
+    # Deduplicate item links (can occur when add is called multiple times)
     seen_item_hrefs: set[str] = set()
     deduped_links: list[dict[str, Any]] = []
     for link in collection_data.get("links", []):
@@ -1186,7 +1186,7 @@ def _create_and_save_item(
 ) -> tuple[pystac.Item, Path]:
     """Create a STAC item with extensions and save it to disk.
 
-    Helper to reduce complexity in prepare_dataset().
+    Helper to reduce complexity in prepare_item().
 
     Args:
         item_id: STAC item identifier.
@@ -1293,7 +1293,7 @@ def _save_collection_with_links(
     _update_catalog_links(catalog_root, collection_id)
 
 
-def prepare_dataset(
+def prepare_item(
     *,
     path: Path,
     catalog_root: Path,
@@ -1304,12 +1304,12 @@ def prepare_dataset(
     item_datetime: datetime | None = None,
     force: bool = False,
     reconvert: bool = False,
-) -> PreparedDataset:
-    """Prepare a dataset for addition (convert, extract metadata, create STAC item).
+) -> PreparedItem:
+    """Prepare files for addition (convert, extract metadata, create STAC item).
 
     This function does the GDAL-bound work (conversion, metadata extraction) but
     does NOT write to versions.json or update collection.json links. This enables
-    O(n) versioning instead of O(n²) by batching writes in finalize_datasets().
+    O(n) versioning instead of O(n²) by batching writes in finalize_items().
 
     Per Issue #281: This is the parallelizable phase of the add workflow.
     Per Issue #386: force/reconvert control conversion skip behavior.
@@ -1317,8 +1317,8 @@ def prepare_dataset(
     Args:
         path: Path to the source file.
         catalog_root: Root directory of the catalog.
-        collection_id: Collection to add the dataset to.
-        title: Optional display title for the dataset.
+        collection_id: Collection to add the data to.
+        title: Optional display title for the item.
         description: Optional description.
         item_id: Optional item ID (defaults to parent directory name).
         item_datetime: Optional acquisition/creation datetime (per ADR-0035).
@@ -1326,7 +1326,7 @@ def prepare_dataset(
         reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
-        PreparedDataset with all metadata needed for finalization.
+        PreparedItem with all metadata needed for finalization.
 
     Raises:
         ValueError: If the format is unsupported or collection_id is invalid.
@@ -1438,7 +1438,7 @@ def prepare_dataset(
     # Item-level assets (rasters, partitioned vectors): create item.json as usual
     if is_collection_level_asset and format_type == FormatType.VECTOR:
         # Collection-level vector asset: no item.json per ADR-0031
-        return PreparedDataset(
+        return PreparedItem(
             item_id=item_id_resolved,
             collection_id=collection_id,
             format_type=format_type,
@@ -1463,7 +1463,7 @@ def prepare_dataset(
         item_dir=item_dir,
     )
 
-    return PreparedDataset(
+    return PreparedItem(
         item_id=item_id_resolved,
         collection_id=collection_id,
         format_type=format_type,
@@ -1543,7 +1543,7 @@ def _recompute_collection_extent_with_multibbox(collection: pystac.Collection) -
 
 def _add_prepared_items_to_collection(
     collection: pystac.Collection,
-    items: list[PreparedDataset],
+    items: list[PreparedItem],
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Add prepared items or collection-level assets to a collection.
@@ -1553,7 +1553,7 @@ def _add_prepared_items_to_collection(
 
     Args:
         collection: The pystac Collection to add to.
-        items: List of PreparedDataset objects.
+        items: List of PreparedItem objects.
         merge_strategy: How to merge auto-detected metadata with existing values.
     """
     for p in items:
@@ -1672,7 +1672,7 @@ def _warn_about_stale_assets(
 def _ensure_partition_metadata(
     collection: pystac.Collection,
     collection_dir: Path,
-    items: list[PreparedDataset],
+    items: list[PreparedItem],
 ) -> list[str]:
     """Add partition metadata to collection from items or auto-detection.
 
@@ -1684,7 +1684,7 @@ def _ensure_partition_metadata(
     Args:
         collection: The STAC collection to update.
         collection_dir: Directory containing the collection.
-        items: List of prepared datasets for this collection.
+        items: List of prepared items for this collection.
 
     Returns:
         List of warning messages (e.g., schema inconsistency warnings).
@@ -1765,23 +1765,23 @@ def _ensure_partition_metadata(
     return warnings
 
 
-def finalize_datasets(
+def finalize_items(
     catalog_root: Path,
-    prepared: list[PreparedDataset],
+    prepared: list[PreparedItem],
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
-) -> list[DatasetInfo]:
-    """Finalize prepared datasets by writing versions.json and collection.json.
+) -> list[ItemInfo]:
+    """Finalize prepared items by writing versions.json and collection.json.
 
     This function batches all writes by collection, enabling O(n) versioning
     instead of O(n²). See Issue #281.
 
     Args:
         catalog_root: Root directory of the catalog.
-        prepared: List of PreparedDataset objects from prepare_dataset().
+        prepared: List of PreparedItem objects from prepare_item().
         merge_strategy: How to merge auto-detected metadata with existing values.
 
     Returns:
-        List of DatasetInfo for each finalized dataset.
+        List of ItemInfo for each finalized item.
     """
     if not prepared:
         return []
@@ -1789,11 +1789,11 @@ def finalize_datasets(
     # Group by collection for efficient batch writes
     from collections import defaultdict
 
-    by_collection: dict[str, list[PreparedDataset]] = defaultdict(list)
+    by_collection: dict[str, list[PreparedItem]] = defaultdict(list)
     for p in prepared:
         by_collection[p.collection_id].append(p)
 
-    results: list[DatasetInfo] = []
+    results: list[ItemInfo] = []
 
     for collection_id, items in by_collection.items():
         collection_dir = catalog_root / Path(*collection_id.split("/"))
@@ -1928,7 +1928,7 @@ def finalize_datasets(
         # Build results
         for p in items:
             results.append(
-                DatasetInfo(
+                ItemInfo(
                     item_id=p.item_id,
                     collection_id=p.collection_id,
                     format_type=p.format_type,
@@ -1965,13 +1965,13 @@ def _finalize_with_backend(
     collection_id: str,
     collection_dir: Path,
     collection: object,
-    items: list[PreparedDataset],
+    items: list[PreparedItem],
     active_backend: str,
 ) -> None:
     """Run backend versioning and post-add hooks for a non-file backend.
 
     Handles both publish_version() and on_post_add() calls so that
-    finalize_datasets() stays within complexity rank C.
+    finalize_items() stays within complexity rank C.
 
     This is backend routing logic added by the iceberg-backend-integration
     branch.
@@ -2037,7 +2037,7 @@ def _finalize_with_backend(
 def _batch_update_versions(
     collection_dir: Path,
     collection_id: str,
-    items: list[PreparedDataset],
+    items: list[PreparedItem],
 ) -> tuple[str, int, int]:
     """Batch update versions.json for multiple items in a single read-modify-write.
 
@@ -2047,7 +2047,7 @@ def _batch_update_versions(
     Args:
         collection_dir: Path to collection directory.
         collection_id: Collection identifier.
-        items: List of PreparedDataset objects to add versions for.
+        items: List of PreparedItem objects to add versions for.
 
     Returns:
         Tuple of (current_version, asset_count, total_size_bytes) for catalog-level
@@ -2114,7 +2114,7 @@ def _batch_update_versions(
     return (new_version, 0, 0)
 
 
-def add_dataset(
+def add(
     *,
     path: Path,
     catalog_root: Path,
@@ -2125,18 +2125,18 @@ def add_dataset(
     item_datetime: datetime | None = None,
     force: bool = False,
     reconvert: bool = False,
-) -> DatasetInfo:
-    """Add a dataset to a Portolan catalog.
+) -> ItemInfo:
+    """Add files to a Portolan catalog.
 
-    This is a convenience wrapper around prepare_dataset() + finalize_datasets()
+    This is a convenience wrapper around prepare_item() + finalize_items()
     for adding a single file. For batch operations, use those functions directly
     to achieve O(n) versioning instead of O(n²). See Issue #281.
 
     Args:
         path: Path to the source file.
         catalog_root: Root directory of the catalog.
-        collection_id: Collection to add the dataset to.
-        title: Optional display title for the dataset.
+        collection_id: Collection to add the data to.
+        title: Optional display title for the item.
         description: Optional description.
         item_id: Optional item ID (defaults to parent directory name).
         item_datetime: Optional acquisition/creation datetime (per ADR-0035).
@@ -2145,14 +2145,14 @@ def add_dataset(
         reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
-        DatasetInfo with details about the added dataset.
+        ItemInfo with details about the added item.
 
     Raises:
         ValueError: If the format is unsupported or collection_id is invalid.
         FileNotFoundError: If the source file doesn't exist.
     """
     # Prepare: extract metadata, convert, create STAC item
-    prepared = prepare_dataset(
+    prepared = prepare_item(
         path=path,
         catalog_root=catalog_root,
         collection_id=collection_id,
@@ -2165,11 +2165,11 @@ def add_dataset(
     )
 
     # Finalize: batch write versions.json and collection.json
-    results = finalize_datasets(catalog_root, [prepared])
+    results = finalize_items(catalog_root, [prepared])
 
     # Return the single result with title/description preserved
     result = results[0]
-    return DatasetInfo(
+    return ItemInfo(
         item_id=result.item_id,
         collection_id=result.collection_id,
         format_type=result.format_type,
@@ -2332,7 +2332,7 @@ def compute_dir_checksum(path: Path) -> str:
     """Compute a stable fingerprint for a directory by hashing its contents' metadata.
 
     Used for directory-format assets such as FileGDB (.gdb). Rather than reading
-    all bytes (expensive for large datasets), hashes the sorted list of
+    all bytes (expensive for large catalogs), hashes the sorted list of
     (relative_path, size, mtime) tuples for every file inside the directory.
     This detects file additions, removals, and modifications within the directory.
 
@@ -2784,18 +2784,18 @@ def _update_versions(
     )
 
 
-def list_datasets(
+def list_items(
     catalog_root: Path,
     collection_id: str | None = None,
-) -> list[DatasetInfo]:
-    """List datasets in a Portolan catalog.
+) -> list[ItemInfo]:
+    """List items in a Portolan catalog.
 
     Args:
         catalog_root: Root directory of the catalog.
         collection_id: Optional collection to filter by.
 
     Returns:
-        List of DatasetInfo objects.
+        List of ItemInfo objects.
     """
     # Catalog at root level (per ADR-0023)
     catalog_path = catalog_root / "catalog.json"
@@ -2803,7 +2803,7 @@ def list_datasets(
     if not catalog_path.exists():
         return []
 
-    datasets: list[DatasetInfo] = []
+    items: list[ItemInfo] = []
 
     # Scan root-level directories for collections (per ADR-0023)
     for col_dir in catalog_root.iterdir():
@@ -2854,8 +2854,8 @@ def list_datasets(
                 elif href.endswith(".tif"):
                     format_type = FormatType.RASTER
 
-            datasets.append(
-                DatasetInfo(
+            items.append(
+                ItemInfo(
                     item_id=item_data.get("id", item_id),
                     collection_id=col_id,
                     format_type=format_type,
@@ -2866,35 +2866,35 @@ def list_datasets(
                 )
             )
 
-    return datasets
+    return items
 
 
-def get_dataset_info(
+def get_item_info(
     catalog_root: Path,
-    dataset_id: str,
-) -> DatasetInfo:
-    """Get information about a specific dataset.
+    stac_id: str,
+) -> ItemInfo:
+    """Get information about a specific item.
 
     Args:
         catalog_root: Root directory of the catalog.
-        dataset_id: Dataset identifier in format "collection/item".
+        stac_id: STAC identifier in format "collection/item".
 
     Returns:
-        DatasetInfo for the requested dataset.
+        ItemInfo for the requested item.
 
     Raises:
-        KeyError: If the dataset doesn't exist.
+        KeyError: If the item doesn't exist.
     """
-    if "/" not in dataset_id:
-        raise KeyError(f"Dataset not found: {dataset_id} (expected format: collection/item)")
+    if "/" not in stac_id:
+        raise KeyError(f"Item not found: {stac_id} (expected format: collection/item)")
 
-    collection_id, item_id = dataset_id.split("/", 1)
+    collection_id, item_id = stac_id.split("/", 1)
 
     # STAC at root level (per ADR-0023)
     item_path = catalog_root / collection_id / item_id / f"{item_id}.json"
 
     if not item_path.exists():
-        raise KeyError(f"Dataset not found: {dataset_id}")
+        raise KeyError(f"Item not found: {stac_id}")
 
     item_data = json.loads(item_path.read_text(encoding="utf-8"))
 
@@ -2909,7 +2909,7 @@ def get_dataset_info(
         elif href.endswith(".tif"):
             format_type = FormatType.RASTER
 
-    return DatasetInfo(
+    return ItemInfo(
         item_id=item_data.get("id", item_id),
         collection_id=collection_id,
         format_type=format_type,
@@ -2920,30 +2920,30 @@ def get_dataset_info(
     )
 
 
-def remove_dataset(
+def remove_item(
     catalog_root: Path,
-    dataset_id: str,
+    stac_id: str,
     *,
     remove_collection: bool = False,
 ) -> None:
-    """Remove a dataset from a Portolan catalog.
+    """Remove an item from a Portolan catalog.
 
     Args:
         catalog_root: Root directory of the catalog.
-        dataset_id: Dataset identifier in format "collection/item" or just "collection".
+        stac_id: STAC identifier in format "collection/item" or just "collection".
         remove_collection: If True, remove entire collection.
 
     Raises:
-        KeyError: If the dataset doesn't exist.
+        KeyError: If the item doesn't exist.
     """
     # STAC at root level (per ADR-0023)
-    if remove_collection or "/" not in dataset_id:
+    if remove_collection or "/" not in stac_id:
         # Remove entire collection
-        collection_id = dataset_id.split("/")[0]
+        collection_id = stac_id.split("/")[0]
         collection_dir = catalog_root / collection_id
 
         if not collection_dir.exists():
-            raise KeyError(f"Dataset not found: {dataset_id}")
+            raise KeyError(f"Item not found: {stac_id}")
 
         # Remove collection directory
         shutil.rmtree(collection_dir)
@@ -2960,11 +2960,11 @@ def remove_dataset(
             catalog_path.write_text(json.dumps(catalog_data, indent=2), encoding="utf-8")
     else:
         # Remove single item
-        collection_id, item_id = dataset_id.split("/", 1)
+        collection_id, item_id = stac_id.split("/", 1)
         item_dir = catalog_root / collection_id / item_id
 
         if not item_dir.exists():
-            raise KeyError(f"Dataset not found: {dataset_id}")
+            raise KeyError(f"Item not found: {stac_id}")
 
         # Remove item directory
         shutil.rmtree(item_dir)
@@ -3049,7 +3049,7 @@ def add_directory(
     recursive: bool = True,
     force: bool = False,
     reconvert: bool = False,
-) -> list[DatasetInfo]:
+) -> list[ItemInfo]:
     """Add all geospatial files in a directory to a collection.
 
     Uses batch versioning (Issue #281) for O(n) instead of O(n²) performance.
@@ -3057,20 +3057,20 @@ def add_directory(
     Args:
         path: Directory containing geospatial files.
         catalog_root: Root directory containing .portolan/.
-        collection_id: Collection to add datasets to.
+        collection_id: Collection to add files to.
         recursive: If True, process subdirectories recursively.
         force: If True, bypass change detection and re-process (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
-        List of DatasetInfo for each added dataset.
+        List of ItemInfo for each added item.
     """
     files = iter_geospatial_files(path, recursive=recursive)
 
-    # Phase 1: Prepare all datasets (GDAL work, parallelizable)
-    prepared: list[PreparedDataset] = []
+    # Phase 1: Prepare all items (GDAL work, parallelizable)
+    prepared: list[PreparedItem] = []
     for file_path in files:
-        result = prepare_dataset(
+        result = prepare_item(
             path=file_path,
             catalog_root=catalog_root,
             collection_id=collection_id,
@@ -3080,7 +3080,7 @@ def add_directory(
         prepared.append(result)
 
     # Phase 2: Finalize (batch write versions.json + collection.json)
-    return finalize_datasets(catalog_root=catalog_root, prepared=prepared)
+    return finalize_items(catalog_root=catalog_root, prepared=prepared)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3499,7 +3499,7 @@ def add_files(
     reconvert: bool = False,
     skip_partitioning: bool = False,
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
-) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
+) -> tuple[list[ItemInfo], list[Path], list[AddFailure]]:
     """Add files to a Portolan catalog.
 
     This is the main entry point for the `portolan add` command.
@@ -3543,12 +3543,12 @@ def add_files(
         reconvert: If True, re-convert from source files (requires force=True).
 
     Returns:
-        Tuple of (added_datasets, skipped_paths, failures).
-        added_datasets: List of DatasetInfo for newly added/updated files.
+        Tuple of (added_items, skipped_paths, failures).
+        added_items: List of ItemInfo for newly added/updated files.
         skipped_paths: List of paths that were skipped (unchanged or non-geospatial).
         failures: List of AddFailure for files that could not be processed.
     """
-    added: list[DatasetInfo] = []
+    added: list[ItemInfo] = []
     skipped: list[Path] = []
     failures: list[AddFailure] = []
 
@@ -3575,29 +3575,29 @@ def add_files(
 
     # Import here to avoid circular imports
 
-    # Accumulate prepared datasets for batch finalization (Issue #281)
-    prepared_datasets: list[PreparedDataset] = []
+    # Accumulate prepared items for batch finalization (Issue #281)
+    prepared_items: list[PreparedItem] = []
 
     def prepare_single_file(
         file_path: Path, coll_id: str
     ) -> tuple[
-        list[PreparedDataset],
+        list[PreparedItem],
         list[AddFailure],
         tuple[Path, Path, str] | None,  # deferred non-geo
     ]:
         """Prepare a single file. Returns (prepared_list, failures, deferred).
 
-        This runs prepare_dataset() which does GDAL work but does NOT write
+        This runs prepare_item() which does GDAL work but does NOT write
         versions.json or collection.json. Those writes are batched in finalize.
 
         Per Issue #281: This is the parallelizable phase. Each item writes to
         its own item.json (no conflict). versions.json and collection.json
-        are written once at the end via finalize_datasets().
+        are written once at the end via finalize_items().
 
         Per Issue #265: Multi-layer files (GeoPackage, FileGDB) are split into
         separate parquet files, one per layer.
         """
-        prepared_list: list[PreparedDataset] = []
+        prepared_list: list[PreparedItem] = []
         failure_list: list[AddFailure] = []
 
         # Check for multi-layer files (GeoPackage, FileGDB) - Issue #265
@@ -3614,7 +3614,7 @@ def add_files(
                     if result.success and result.output:
                         # Prepare each converted layer
                         try:
-                            prepared = prepare_dataset(
+                            prepared = prepare_item(
                                 path=result.output,
                                 catalog_root=catalog_root,
                                 collection_id=coll_id,
@@ -3653,7 +3653,7 @@ def add_files(
 
         # Single-layer file - original behavior
         try:
-            prepared = prepare_dataset(
+            prepared = prepare_item(
                 path=file_path,
                 catalog_root=catalog_root,
                 collection_id=coll_id,
@@ -3663,7 +3663,7 @@ def add_files(
                 reconvert=reconvert,
             )
             # Check if file should be partitioned (Issue #352)
-            # Returns multiple PreparedDatasets if partitioned, else [prepared]
+            # Returns multiple PreparedItems if partitioned, else [prepared]
             partitioned = _maybe_partition_large_file(
                 prepared=prepared,
                 catalog_root=catalog_root,
@@ -3704,7 +3704,7 @@ def add_files(
 
             prepared_list, failure_list, deferred = prepare_single_file(file_path, coll_id)
             for prepared in prepared_list:
-                prepared_datasets.append(prepared)
+                prepared_items.append(prepared)
                 source_dir = file_path.parent
                 collection_dir = catalog_root / Path(*coll_id.split("/"))
                 if prepared.is_collection_level_asset:
@@ -3745,7 +3745,7 @@ def add_files(
                     on_progress(file_path)
 
                 for prepared in prepared_list:
-                    prepared_datasets.append(prepared)
+                    prepared_items.append(prepared)
                     source_dir = file_path.parent
                     collection_dir = catalog_root / Path(*coll_id.split("/"))
                     if prepared.is_collection_level_asset:
@@ -3760,11 +3760,11 @@ def add_files(
                     deferred_non_geo.append(deferred)
 
     # ========================================================================
-    # PHASE 2.5: Batch finalize all prepared datasets (Issue #281)
+    # PHASE 2.5: Batch finalize all prepared items (Issue #281)
     # ========================================================================
     # This is the key optimization: ONE write per collection instead of O(n)
-    if prepared_datasets:
-        added.extend(finalize_datasets(catalog_root, prepared_datasets, merge_strategy))
+    if prepared_items:
+        added.extend(finalize_items(catalog_root, prepared_items, merge_strategy))
 
     # ========================================================================
     # PHASE 3: Process deferred non-geo files (sequential)
@@ -3781,7 +3781,7 @@ def add_files(
     # ========================================================================
     # PHASE 3.5: Recompute file statistics for collections with deferred assets
     # ========================================================================
-    # Deferred assets are added after finalize_datasets, so file statistics
+    # Deferred assets are added after finalize_items, so file statistics
     # must be recomputed to include them (Issue #501)
     for collection_dir in affected_collections:
         collection_json_path = collection_dir / "collection.json"

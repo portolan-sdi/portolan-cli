@@ -1,12 +1,12 @@
-"""Integration tests for dataset orchestration with real file conversions.
+"""Integration tests for add orchestration with real file conversions.
 
-These tests exercise the full add_dataset workflow with real fixtures,
+These tests exercise the full add workflow with real fixtures,
 verifying that format conversion, metadata extraction, and STAC creation
 work end-to-end.
 
 Per ADR-0022 (track in-place design): Files must be INSIDE the catalog
-directory structure BEFORE calling add_dataset(). Tests copy fixtures
-into the catalog first, then call add_dataset() on the copied paths.
+directory structure BEFORE calling add(). Tests copy fixtures
+into the catalog first, then call add() on the copied paths.
 """
 
 from __future__ import annotations
@@ -17,13 +17,13 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.dataset import (
-    add_dataset,
+from portolan_cli.add import (
+    add,
     compute_checksum,
     convert_raster,
     convert_vector,
-    get_dataset_info,
-    list_datasets,
+    get_item_info,
+    list_items,
 )
 from portolan_cli.formats import FormatType
 
@@ -205,19 +205,19 @@ class TestComputeChecksum:
             compute_checksum(nonexistent)
 
 
-class TestAddDatasetIntegration:
-    """Integration tests for full add_dataset workflow.
+class TestAddIntegration:
+    """Integration tests for full add workflow.
 
     Per ADR-0022 (track in-place design): Files must be inside the catalog
-    directory BEFORE calling add_dataset(). Tests copy fixtures into the
+    directory BEFORE calling add(). Tests copy fixtures into the
     collection/item directory structure first.
     """
 
     @pytest.mark.integration
-    def test_add_vector_dataset_end_to_end(
+    def test_add_vector_end_to_end(
         self, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """add_dataset converts GeoJSON and creates STAC item."""
+        """add converts GeoJSON and creates STAC item."""
         # Per ADR-0022: Copy file INTO catalog first (track in-place design)
         collection_dir = initialized_catalog / "test-vectors"
         item_dir = collection_dir / valid_points_geojson.stem
@@ -225,7 +225,7 @@ class TestAddDatasetIntegration:
         in_catalog_path = item_dir / valid_points_geojson.name
         shutil.copy(valid_points_geojson, in_catalog_path)
 
-        result = add_dataset(
+        result = add(
             path=in_catalog_path,
             catalog_root=initialized_catalog,
             collection_id="test-vectors",
@@ -249,10 +249,8 @@ class TestAddDatasetIntegration:
         assert (item_dir / f"{valid_points_geojson.stem}.parquet").exists()
 
     @pytest.mark.integration
-    def test_add_raster_dataset_end_to_end(
-        self, initialized_catalog: Path, valid_rgb_cog: Path
-    ) -> None:
-        """add_dataset converts raster and creates STAC item."""
+    def test_add_raster_end_to_end(self, initialized_catalog: Path, valid_rgb_cog: Path) -> None:
+        """add converts raster and creates STAC item."""
         # Per ADR-0022: Copy file INTO catalog first
         collection_dir = initialized_catalog / "imagery"
         item_dir = collection_dir / valid_rgb_cog.stem
@@ -260,7 +258,7 @@ class TestAddDatasetIntegration:
         in_catalog_path = item_dir / valid_rgb_cog.name
         shutil.copy(valid_rgb_cog, in_catalog_path)
 
-        result = add_dataset(
+        result = add(
             path=in_catalog_path,
             catalog_root=initialized_catalog,
             collection_id="imagery",
@@ -274,10 +272,10 @@ class TestAddDatasetIntegration:
         assert (collection_dir / "collection.json").exists()
 
     @pytest.mark.integration
-    def test_add_multiple_datasets_same_collection(
+    def test_add_multiple_items_same_collection(
         self, initialized_catalog: Path, valid_points_geojson: Path, valid_polygons_geojson: Path
     ) -> None:
-        """Multiple datasets can be added to the same collection."""
+        """Multiple items can be added to the same collection."""
         # Per ADR-0022: Copy files INTO catalog first
         collection_dir = initialized_catalog / "vectors"
 
@@ -293,25 +291,25 @@ class TestAddDatasetIntegration:
         path_2 = item_dir_2 / valid_polygons_geojson.name
         shutil.copy(valid_polygons_geojson, path_2)
 
-        add_dataset(
+        add(
             path=path_1,
             catalog_root=initialized_catalog,
             collection_id="vectors",
         )
-        add_dataset(
+        add(
             path=path_2,
             catalog_root=initialized_catalog,
             collection_id="vectors",
         )
 
-        datasets = list_datasets(initialized_catalog, collection_id="vectors")
-        assert len(datasets) == 2
+        items = list_items(initialized_catalog, collection_id="vectors")
+        assert len(items) == 2
 
     @pytest.mark.integration
-    def test_add_and_retrieve_dataset_info(
+    def test_add_and_retrieve_item_info(
         self, initialized_catalog: Path, valid_points_geojson: Path
     ) -> None:
-        """get_dataset_info returns correct info for added dataset."""
+        """get_item_info returns correct info for added item."""
         # Per ADR-0022: Copy file INTO catalog first
         collection_dir = initialized_catalog / "test-col"
         item_dir = collection_dir / valid_points_geojson.stem
@@ -319,13 +317,13 @@ class TestAddDatasetIntegration:
         in_catalog_path = item_dir / valid_points_geojson.name
         shutil.copy(valid_points_geojson, in_catalog_path)
 
-        add_result = add_dataset(
+        add_result = add(
             path=in_catalog_path,
             catalog_root=initialized_catalog,
             collection_id="test-col",
         )
 
-        info = get_dataset_info(initialized_catalog, f"test-col/{add_result.item_id}")
+        info = get_item_info(initialized_catalog, f"test-col/{add_result.item_id}")
 
         assert info.item_id == add_result.item_id
         assert info.collection_id == "test-col"
@@ -345,7 +343,7 @@ class TestMultiAssetIntegration:
     """
 
     @pytest.mark.integration
-    def test_add_dataset_with_companion_files_tracks_all(
+    def test_add_with_companion_files_tracks_all(
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
         """End-to-end: add geo file with thumbnail and readme tracks all."""
@@ -374,8 +372,8 @@ class TestMultiAssetIntegration:
             )
         )
 
-        # Add the dataset
-        result = add_dataset(
+        # Add the item
+        result = add(
             path=geojson_path,
             catalog_root=initialized_catalog,
             collection_id="multi-asset-test",
@@ -396,7 +394,7 @@ class TestMultiAssetIntegration:
         # Re-add to pick up new files (simulating user workflow)
         # In real usage, user would run `portolan add` again or files would
         # be present before first add
-        result2 = add_dataset(
+        result2 = add(
             path=geojson_path,
             catalog_root=initialized_catalog,
             collection_id="multi-asset-test",

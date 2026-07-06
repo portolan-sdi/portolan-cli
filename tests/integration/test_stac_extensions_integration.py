@@ -263,7 +263,7 @@ class TestEndToEndWorkflow:
     @pytest.mark.integration
     def test_vector_workflow_adds_table_extension(self, open_buildings_path: Path) -> None:
         """Vector workflow adds table extension (projection only if CRS present)."""
-        # Extract metadata (simulating dataset.py workflow)
+        # Extract metadata (simulating add.py workflow)
         metadata = extract_geoparquet_metadata(open_buildings_path)
 
         # Transform bbox

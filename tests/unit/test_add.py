@@ -1,7 +1,7 @@
-"""Unit tests for dataset orchestration module.
+"""Unit tests for the add pipeline module.
 
-Tests the dataset module which orchestrates the workflow for adding,
-listing, and removing datasets from a Portolan catalog.
+Tests the add module which orchestrates the workflow for adding,
+listing, and removing items from a Portolan catalog.
 """
 
 from __future__ import annotations
@@ -14,17 +14,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from portolan_cli.dataset import (
+from portolan_cli.add import (
     IGNORED_FILES,
-    DatasetInfo,
+    ItemInfo,
     _get_asset_role,
     _get_media_type,
     _update_versions,
-    add_dataset,
+    add,
     compute_dir_size,
-    get_dataset_info,
-    list_datasets,
-    remove_dataset,
+    get_item_info,
+    list_items,
+    remove_item,
 )
 from portolan_cli.formats import FormatType
 from portolan_cli.versions import read_versions
@@ -53,13 +53,13 @@ def initialized_catalog(tmp_path: Path) -> Path:
     return tmp_path
 
 
-class TestDatasetInfo:
-    """Tests for the DatasetInfo dataclass."""
+class TestItemInfo:
+    """Tests for the ItemInfo dataclass."""
 
     @pytest.mark.unit
-    def test_dataset_info_creation(self) -> None:
-        """DatasetInfo can be created with required fields."""
-        info = DatasetInfo(
+    def test_item_info_creation(self) -> None:
+        """ItemInfo can be created with required fields."""
+        info = ItemInfo(
             item_id="test-item",
             collection_id="test-collection",
             format_type=FormatType.VECTOR,
@@ -71,9 +71,9 @@ class TestDatasetInfo:
         assert info.format_type == FormatType.VECTOR
 
     @pytest.mark.unit
-    def test_dataset_info_with_metadata(self) -> None:
-        """DatasetInfo accepts optional metadata fields."""
-        info = DatasetInfo(
+    def test_item_info_with_metadata(self) -> None:
+        """ItemInfo accepts optional metadata fields."""
+        info = ItemInfo(
             item_id="test-item",
             collection_id="test-collection",
             format_type=FormatType.RASTER,
@@ -87,12 +87,12 @@ class TestDatasetInfo:
         assert info.description == "A test dataset"
 
 
-class TestAddDataset:
-    """Tests for add_dataset function."""
+class TestAdd:
+    """Tests for add function."""
 
     @pytest.mark.unit
-    def test_add_vector_dataset(self, initialized_catalog: Path, tmp_path: Path) -> None:
-        """add_dataset processes a vector file and creates STAC item."""
+    def test_add_vector(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add processes a vector file and creates STAC item."""
         # Create file INSIDE collection/item directory structure (Issue #163)
         item_dir = initialized_catalog / "test-collection" / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -115,10 +115,10 @@ class TestAddDataset:
         output_file.write_bytes(b"fake parquet data")
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
             mock_convert.return_value = output_file
@@ -133,7 +133,7 @@ class TestAddDataset:
             )
             mock_checksum.return_value = "abc123"
 
-            result = add_dataset(
+            result = add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="test-collection",
@@ -146,8 +146,8 @@ class TestAddDataset:
             mock_convert.assert_called_once()
 
     @pytest.mark.unit
-    def test_add_raster_dataset(self, initialized_catalog: Path, tmp_path: Path) -> None:
-        """add_dataset processes a raster file and creates STAC item."""
+    def test_add_raster(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add processes a raster file and creates STAC item."""
         # Create file INSIDE collection/item directory structure (Issue #163)
         item_dir = initialized_catalog / "imagery" / "satellite"
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -159,10 +159,10 @@ class TestAddDataset:
         output_file = item_dir / "data.tif"
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_raster") as mock_convert,
-            patch("portolan_cli.dataset.extract_cog_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_raster") as mock_convert,
+            patch("portolan_cli.add.extract_cog_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.RASTER
             mock_convert.return_value = output_file
@@ -177,7 +177,7 @@ class TestAddDataset:
             )
             mock_checksum.return_value = "def456"
 
-            result = add_dataset(
+            result = add(
                 path=tiff_path,
                 catalog_root=initialized_catalog,
                 collection_id="imagery",
@@ -188,28 +188,26 @@ class TestAddDataset:
             assert result.format_type == FormatType.RASTER
 
     @pytest.mark.unit
-    def test_add_dataset_unknown_format_raises(
-        self, initialized_catalog: Path, tmp_path: Path
-    ) -> None:
-        """add_dataset raises ValueError for unknown formats."""
+    def test_add_unknown_format_raises(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add raises ValueError for unknown formats."""
         unknown_path = tmp_path / "data.xyz"
         unknown_path.write_text("unknown format")
 
-        with patch("portolan_cli.dataset.detect_format") as mock_detect:
+        with patch("portolan_cli.add.detect_format") as mock_detect:
             mock_detect.return_value = FormatType.UNKNOWN
 
             with pytest.raises(ValueError, match="Unsupported format"):
-                add_dataset(
+                add(
                     path=unknown_path,
                     catalog_root=initialized_catalog,
                     collection_id="test",
                 )
 
     @pytest.mark.unit
-    def test_add_dataset_with_title_and_description(
+    def test_add_with_title_and_description(
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
-        """add_dataset accepts optional title and description."""
+        """add accepts optional title and description."""
         # Create file INSIDE collection/item directory structure (Issue #163)
         item_dir = initialized_catalog / "test" / "mydata"
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -232,10 +230,10 @@ class TestAddDataset:
         output_file.write_bytes(b"fake data")
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
             mock_convert.return_value = output_file
@@ -250,7 +248,7 @@ class TestAddDataset:
             )
             mock_checksum.return_value = "xyz789"
 
-            result = add_dataset(
+            result = add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="test",
@@ -262,10 +260,10 @@ class TestAddDataset:
             assert result.description == "A detailed description"
 
     @pytest.mark.unit
-    def test_add_dataset_creates_collection_if_not_exists(
+    def test_add_creates_collection_if_not_exists(
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
-        """add_dataset creates collection when it doesn't exist."""
+        """add creates collection when it doesn't exist."""
         # Create file INSIDE collection/item directory structure (Issue #163)
         item_dir = initialized_catalog / "new-collection" / "mydata"
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -288,10 +286,10 @@ class TestAddDataset:
         output_file.write_bytes(b"fake data")
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
             mock_convert.return_value = output_file
@@ -306,7 +304,7 @@ class TestAddDataset:
             )
             mock_checksum.return_value = "new123"
 
-            result = add_dataset(
+            result = add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="new-collection",
@@ -320,36 +318,36 @@ class TestAddDataset:
             )
 
 
-class TestListDatasets:
-    """Tests for list_datasets function."""
+class TestListItems:
+    """Tests for list_items function."""
 
     @pytest.mark.unit
     def test_list_empty_catalog(self, initialized_catalog: Path) -> None:
-        """list_datasets returns empty list for catalog with no datasets."""
-        datasets = list_datasets(initialized_catalog)
-        assert datasets == []
+        """list_items returns empty list for catalog with no items."""
+        items = list_items(initialized_catalog)
+        assert items == []
 
     @pytest.mark.unit
     def test_list_no_catalog_returns_empty(self, tmp_path: Path) -> None:
-        """list_datasets returns empty for directory without catalog."""
-        datasets = list_datasets(tmp_path)
-        assert datasets == []
+        """list_items returns empty for directory without catalog."""
+        items = list_items(tmp_path)
+        assert items == []
 
     @pytest.mark.unit
     def test_list_skips_non_directory_at_root(self, initialized_catalog: Path) -> None:
-        """list_datasets skips files at root level (not directories).
+        """list_items skips files at root level (not directories).
 
         Per ADR-0023: Collections are directories at root level.
         """
         # Create a file (not directory) at root
         (initialized_catalog / "not-a-collection.txt").write_text("not a dir")
 
-        datasets = list_datasets(initialized_catalog)
-        assert datasets == []
+        items = list_items(initialized_catalog)
+        assert items == []
 
     @pytest.mark.unit
     def test_list_skips_collection_without_json(self, initialized_catalog: Path) -> None:
-        """list_datasets skips directories without collection.json.
+        """list_items skips directories without collection.json.
 
         Per ADR-0023: Collections live at root level, identified by collection.json.
         """
@@ -358,12 +356,12 @@ class TestListDatasets:
         col_dir.mkdir(parents=True)
         # No collection.json created
 
-        datasets = list_datasets(initialized_catalog)
-        assert datasets == []
+        items = list_items(initialized_catalog)
+        assert items == []
 
     @pytest.mark.unit
     def test_list_skips_missing_item_files(self, initialized_catalog: Path) -> None:
-        """list_datasets skips items where item.json doesn't exist.
+        """list_items skips items where item.json doesn't exist.
 
         Per ADR-0023: Collections live at root level.
         """
@@ -386,12 +384,12 @@ class TestListDatasets:
         }
         (col_dir / "collection.json").write_text(json.dumps(collection_data))
 
-        datasets = list_datasets(initialized_catalog)
-        assert datasets == []
+        items = list_items(initialized_catalog)
+        assert items == []
 
     @pytest.mark.unit
     def test_list_detects_raster_format(self, initialized_catalog: Path) -> None:
-        """list_datasets correctly identifies raster format from .tif assets.
+        """list_items correctly identifies raster format from .tif assets.
 
         Per ADR-0023: Collections live at root level, not inside .portolan/.
         """
@@ -430,14 +428,14 @@ class TestListDatasets:
         }
         (item_dir / "raster.json").write_text(json.dumps(item_data))
 
-        datasets = list_datasets(initialized_catalog)
+        items = list_items(initialized_catalog)
 
-        assert len(datasets) == 1
-        assert datasets[0].format_type == FormatType.RASTER
+        assert len(items) == 1
+        assert items[0].format_type == FormatType.RASTER
 
     @pytest.mark.unit
-    def test_list_all_datasets(self, initialized_catalog: Path) -> None:
-        """list_datasets returns all datasets across collections.
+    def test_list_all_items(self, initialized_catalog: Path) -> None:
+        """list_items returns all items across collections.
 
         Per ADR-0023: Collections live at root level, not inside .portolan/.
         """
@@ -483,15 +481,15 @@ class TestListDatasets:
         catalog_data["links"].append({"rel": "child", "href": "./col1/collection.json"})
         (initialized_catalog / "catalog.json").write_text(json.dumps(catalog_data))
 
-        datasets = list_datasets(initialized_catalog)
+        items = list_items(initialized_catalog)
 
-        assert len(datasets) == 1
-        assert datasets[0].item_id == "item1"
-        assert datasets[0].collection_id == "col1"
+        assert len(items) == 1
+        assert items[0].item_id == "item1"
+        assert items[0].collection_id == "col1"
 
     @pytest.mark.unit
-    def test_list_datasets_filter_by_collection(self, initialized_catalog: Path) -> None:
-        """list_datasets filters by collection when specified.
+    def test_list_items_filter_by_collection(self, initialized_catalog: Path) -> None:
+        """list_items filters by collection when specified.
 
         Per ADR-0023: Collections live at root level.
         """
@@ -539,18 +537,18 @@ class TestListDatasets:
         (initialized_catalog / "catalog.json").write_text(json.dumps(catalog_data))
 
         # Filter by col1
-        datasets = list_datasets(initialized_catalog, collection_id="col1")
+        items = list_items(initialized_catalog, collection_id="col1")
 
-        assert len(datasets) == 1
-        assert datasets[0].collection_id == "col1"
+        assert len(items) == 1
+        assert items[0].collection_id == "col1"
 
 
-class TestGetDatasetInfo:
-    """Tests for get_dataset_info function."""
+class TestGetItemInfo:
+    """Tests for get_item_info function."""
 
     @pytest.mark.unit
-    def test_get_dataset_info_existing(self, initialized_catalog: Path) -> None:
-        """get_dataset_info returns info for existing dataset.
+    def test_get_item_info_existing(self, initialized_catalog: Path) -> None:
+        """get_item_info returns info for existing item.
 
         Per ADR-0023: Collections live at root level.
         """
@@ -591,25 +589,25 @@ class TestGetDatasetInfo:
         }
         (item_dir / "my-item.json").write_text(json.dumps(item_data))
 
-        info = get_dataset_info(initialized_catalog, "test-col/my-item")
+        info = get_item_info(initialized_catalog, "test-col/my-item")
 
         assert info.item_id == "my-item"
         assert info.collection_id == "test-col"
         assert info.bbox == [-122.5, 37.5, -122.0, 38.0]
 
     @pytest.mark.unit
-    def test_get_dataset_info_not_found(self, initialized_catalog: Path) -> None:
-        """get_dataset_info raises KeyError for nonexistent dataset."""
-        with pytest.raises(KeyError, match="Dataset not found"):
-            get_dataset_info(initialized_catalog, "nonexistent/item")
+    def test_get_item_info_not_found(self, initialized_catalog: Path) -> None:
+        """get_item_info raises KeyError for nonexistent item."""
+        with pytest.raises(KeyError, match="Item not found"):
+            get_item_info(initialized_catalog, "nonexistent/item")
 
 
-class TestRemoveDataset:
-    """Tests for remove_dataset function."""
+class TestRemoveItem:
+    """Tests for remove_item function."""
 
     @pytest.mark.unit
-    def test_remove_dataset_single_item(self, initialized_catalog: Path) -> None:
-        """remove_dataset removes a single item from collection.
+    def test_remove_item_single_item(self, initialized_catalog: Path) -> None:
+        """remove_item removes a single item from collection.
 
         Per ADR-0023: Collections live at root level.
         """
@@ -649,20 +647,20 @@ class TestRemoveDataset:
         (item_dir / "to-remove.json").write_text(json.dumps(item_data))
         (item_dir / "data.parquet").write_bytes(b"fake parquet")
 
-        remove_dataset(initialized_catalog, "test-col/to-remove")
+        remove_item(initialized_catalog, "test-col/to-remove")
 
         # Item directory should be removed
         assert not item_dir.exists()
 
     @pytest.mark.unit
-    def test_remove_dataset_not_found(self, initialized_catalog: Path) -> None:
-        """remove_dataset raises KeyError for nonexistent dataset."""
-        with pytest.raises(KeyError, match="Dataset not found"):
-            remove_dataset(initialized_catalog, "nonexistent/item")
+    def test_remove_item_not_found(self, initialized_catalog: Path) -> None:
+        """remove_item raises KeyError for nonexistent item."""
+        with pytest.raises(KeyError, match="Item not found"):
+            remove_item(initialized_catalog, "nonexistent/item")
 
     @pytest.mark.unit
     def test_remove_entire_collection(self, initialized_catalog: Path) -> None:
-        """remove_dataset can remove entire collection.
+        """remove_item can remove entire collection.
 
         Per ADR-0023: Collections live at root level.
         """
@@ -689,19 +687,17 @@ class TestRemoveDataset:
         catalog_data["links"].append({"rel": "child", "href": "./to-remove-col/collection.json"})
         (initialized_catalog / "catalog.json").write_text(json.dumps(catalog_data))
 
-        remove_dataset(initialized_catalog, "to-remove-col", remove_collection=True)
+        remove_item(initialized_catalog, "to-remove-col", remove_collection=True)
 
         assert not col_dir.exists()
 
 
-class TestAddDatasetMissingBbox:
-    """Tests for add_dataset bbox validation."""
+class TestAddMissingBbox:
+    """Tests for add bbox validation."""
 
     @pytest.mark.unit
-    def test_add_dataset_missing_bbox_raises(
-        self, initialized_catalog: Path, tmp_path: Path
-    ) -> None:
-        """add_dataset raises ValueError when metadata has no bbox (Null Island prevention)."""
+    def test_add_missing_bbox_raises(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add raises ValueError when metadata has no bbox (Null Island prevention)."""
         geojson_path = tmp_path / "data.geojson"
         geojson_path.write_text('{"type": "FeatureCollection", "features": []}')
 
@@ -712,10 +708,10 @@ class TestAddDatasetMissingBbox:
         output_file.write_bytes(b"fake data")
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
             mock_convert.return_value = output_file
@@ -732,14 +728,14 @@ class TestAddDatasetMissingBbox:
             mock_checksum.return_value = "xyz789"
 
             with pytest.raises(ValueError, match="missing bounding box"):
-                add_dataset(
+                add(
                     path=geojson_path,
                     catalog_root=initialized_catalog,
                     collection_id="test",
                 )
 
 
-class TestAddDatasetItemIdDerivation:
+class TestAddItemIdDerivation:
     """Tests for item_id derivation from directory structure (Issue #163).
 
     Per the design, item_id should be derived from the PARENT DIRECTORY name,
@@ -782,10 +778,10 @@ class TestAddDatasetItemIdDerivation:
         geojson_path.write_text(json.dumps(geojson_data))
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
             # Simulate conversion output in the SAME directory (in-place)
@@ -803,7 +799,7 @@ class TestAddDatasetItemIdDerivation:
             )
             mock_checksum.return_value = "abc123"
 
-            result = add_dataset(
+            result = add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="censo-2010",
@@ -816,10 +812,8 @@ class TestAddDatasetItemIdDerivation:
             )
 
     @pytest.mark.unit
-    def test_add_dataset_tracks_in_place_no_copy(
-        self, initialized_catalog: Path, tmp_path: Path
-    ) -> None:
-        """add_dataset should track files in-place, not copy them to a new directory.
+    def test_add_tracks_in_place_no_copy(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add should track files in-place, not copy them to a new directory.
 
         Given: collection/item_dir/file.geojson
         Expected: Converted file stays in collection/item_dir/
@@ -846,10 +840,10 @@ class TestAddDatasetItemIdDerivation:
         geojson_path.write_text(json.dumps(geojson_data))
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
             # Simulate conversion output in the SAME directory (in-place)
@@ -867,7 +861,7 @@ class TestAddDatasetItemIdDerivation:
             )
             mock_checksum.return_value = "abc123"
 
-            add_dataset(
+            add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="censo-2010",
@@ -892,12 +886,10 @@ class TestAddDatasetItemIdDerivation:
             )
 
     @pytest.mark.integration
-    def test_add_dataset_no_artifacts_on_validation_failure(
-        self, initialized_catalog: Path
-    ) -> None:
-        """Failed add_dataset leaves no partial artifacts (Issue #163 atomicity).
+    def test_add_no_artifacts_on_validation_failure(self, initialized_catalog: Path) -> None:
+        """Failed add leaves no partial artifacts (Issue #163 atomicity).
 
-        When add_dataset fails due to missing geometry/bbox, it should be atomic:
+        When add fails due to missing geometry/bbox, it should be atomic:
         - No new directories created
         - No files copied
         - No collection.json created
@@ -919,7 +911,7 @@ class TestAddDatasetItemIdDerivation:
 
         # Attempt to add - should fail due to missing bbox
         with pytest.raises(ValueError, match="missing bounding box"):
-            add_dataset(
+            add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="demographics",
@@ -934,7 +926,7 @@ class TestAddDatasetItemIdDerivation:
         unexpected_files = new_files - expected_files
 
         assert unexpected_files == set(), (
-            f"Failed add_dataset created partial artifacts: {unexpected_files}\n"
+            f"Failed add created partial artifacts: {unexpected_files}\n"
             "Expected atomic failure with no leftover files. See Issue #163."
         )
 
@@ -983,12 +975,12 @@ class TestPathSegmentValidation:
     def test_rejects_unsafe_item_id(
         self, initialized_catalog: Path, tmp_path: Path, bad_id: str
     ) -> None:
-        """add_dataset rejects item_id values with path separators or traversal."""
+        """add rejects item_id values with path separators or traversal."""
         geojson_path = tmp_path / "data.geojson"
         geojson_path.write_text(self._GEOJSON)
 
         with pytest.raises(ValueError, match="must be a single path segment"):
-            add_dataset(
+            add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="test",
@@ -1000,7 +992,7 @@ class TestPathSegmentValidation:
     def test_rejects_unsafe_collection_id(
         self, initialized_catalog: Path, tmp_path: Path, bad_id: str
     ) -> None:
-        """add_dataset rejects collection_id values with traversal or backslashes.
+        """add rejects collection_id values with traversal or backslashes.
 
         Per ADR-0032, forward slashes ARE allowed for nested catalog paths
         (e.g., 'climate/hittekaart'), but traversal segments are rejected.
@@ -1009,7 +1001,7 @@ class TestPathSegmentValidation:
         geojson_path.write_text(self._GEOJSON)
 
         with pytest.raises(ValueError, match="not allowed"):
-            add_dataset(
+            add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id=bad_id,
@@ -1031,7 +1023,7 @@ class TestUpdateVersionsHref:
         item_dir = collection_dir / "census-2020"
         item_dir.mkdir(parents=True)
 
-        # Create the output file where add_dataset would place it
+        # Create the output file where add would place it
         output_file = item_dir / "census-2020.parquet"
         output_file.write_bytes(b"fake parquet data")
 
@@ -1249,8 +1241,8 @@ class TestIgnoredFiles:
         assert "versions.json" in IGNORED_FILES
 
 
-class TestMultiAssetAddDataset:
-    """Tests for multi-asset behavior in add_dataset."""
+class TestMultiAssetAdd:
+    """Tests for multi-asset behavior in add."""
 
     # Helper to create valid GeoJSON data
     VALID_GEOJSON = json.dumps(
@@ -1267,10 +1259,10 @@ class TestMultiAssetAddDataset:
     )
 
     @pytest.mark.unit
-    def test_add_dataset_tracks_multiple_files_in_item_dir(
+    def test_add_tracks_multiple_files_in_item_dir(
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
-        """add_dataset creates assets for ALL files in item_dir, not just the primary."""
+        """add creates assets for ALL files in item_dir, not just the primary."""
         # Create file INSIDE item directory (Issue #163)
         item_dir = initialized_catalog / "test-collection" / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -1288,10 +1280,10 @@ class TestMultiAssetAddDataset:
         metadata_file.write_bytes(b"<metadata/>")
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
             mock_convert.return_value = output_file
@@ -1306,7 +1298,7 @@ class TestMultiAssetAddDataset:
             )
             mock_checksum.return_value = "abc123"
 
-            result = add_dataset(
+            result = add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="test-collection",
@@ -1320,10 +1312,10 @@ class TestMultiAssetAddDataset:
             assert str(metadata_file) in result.asset_paths
 
     @pytest.mark.unit
-    def test_add_dataset_ignores_stac_files_in_item_dir(
+    def test_add_ignores_stac_files_in_item_dir(
         self, initialized_catalog: Path, tmp_path: Path
     ) -> None:
-        """add_dataset ignores STAC JSON files (collection.json, etc.) in the item directory."""
+        """add ignores STAC JSON files (collection.json, etc.) in the item directory."""
         # Create file INSIDE item directory (Issue #163)
         item_dir = initialized_catalog / "test-collection" / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -1335,10 +1327,10 @@ class TestMultiAssetAddDataset:
         output_file.write_bytes(b"fake parquet data")
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
             mock_convert.return_value = output_file
@@ -1353,7 +1345,7 @@ class TestMultiAssetAddDataset:
             )
             mock_checksum.return_value = "xyz789"
 
-            result = add_dataset(
+            result = add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="test-collection",
@@ -1367,10 +1359,8 @@ class TestMultiAssetAddDataset:
                 assert basename not in IGNORED_FILES, f"STAC file {basename} should not be an asset"
 
     @pytest.mark.unit
-    def test_add_dataset_skips_hidden_files(
-        self, initialized_catalog: Path, tmp_path: Path
-    ) -> None:
-        """add_dataset skips hidden files (starting with dot) in item_dir."""
+    def test_add_skips_hidden_files(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add skips hidden files (starting with dot) in item_dir."""
         # Create file INSIDE item directory (Issue #163)
         item_dir = initialized_catalog / "test-collection" / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -1385,10 +1375,10 @@ class TestMultiAssetAddDataset:
         hidden_file.write_bytes(b"hidden data")
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
             mock_convert.return_value = output_file
@@ -1403,7 +1393,7 @@ class TestMultiAssetAddDataset:
             )
             mock_checksum.return_value = "xyz789"
 
-            result = add_dataset(
+            result = add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="test-collection",
@@ -1416,8 +1406,8 @@ class TestMultiAssetAddDataset:
                 )
 
     @pytest.mark.unit
-    def test_add_dataset_skips_symlinks(self, initialized_catalog: Path, tmp_path: Path) -> None:
-        """add_dataset does not follow symlinks when scanning item_dir."""
+    def test_add_skips_symlinks(self, initialized_catalog: Path, tmp_path: Path) -> None:
+        """add does not follow symlinks when scanning item_dir."""
         # Create file INSIDE item directory (Issue #163)
         item_dir = initialized_catalog / "test-collection" / "data"
         item_dir.mkdir(parents=True, exist_ok=True)
@@ -1432,10 +1422,10 @@ class TestMultiAssetAddDataset:
         symlink.symlink_to(output_file)
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
             mock_convert.return_value = output_file
@@ -1450,7 +1440,7 @@ class TestMultiAssetAddDataset:
             )
             mock_checksum.return_value = "xyz789"
 
-            result = add_dataset(
+            result = add(
                 path=geojson_path,
                 catalog_root=initialized_catalog,
                 collection_id="test-collection",
@@ -1540,11 +1530,11 @@ class TestMultiAssetUpdateVersions:
 
 
 class TestMultiAssetListAndInfo:
-    """Tests for list_datasets and get_dataset_info with multiple assets."""
+    """Tests for list_items and get_item_info with multiple assets."""
 
     @pytest.mark.unit
-    def test_list_datasets_returns_all_asset_paths(self, initialized_catalog: Path) -> None:
-        """list_datasets returns all assets, not just the data asset."""
+    def test_list_items_returns_all_asset_paths(self, initialized_catalog: Path) -> None:
+        """list_items returns all assets, not just the data asset."""
         col_dir = initialized_catalog / "col1"
         col_dir.mkdir(parents=True)
 
@@ -1583,17 +1573,17 @@ class TestMultiAssetListAndInfo:
         }
         (item_dir / "item1.json").write_text(json.dumps(item_data))
 
-        datasets = list_datasets(initialized_catalog)
+        items = list_items(initialized_catalog)
 
-        assert len(datasets) == 1
-        assert len(datasets[0].asset_paths) == 3
-        assert "data.parquet" in datasets[0].asset_paths
-        assert "thumb.png" in datasets[0].asset_paths
-        assert "extra.xml" in datasets[0].asset_paths
+        assert len(items) == 1
+        assert len(items[0].asset_paths) == 3
+        assert "data.parquet" in items[0].asset_paths
+        assert "thumb.png" in items[0].asset_paths
+        assert "extra.xml" in items[0].asset_paths
 
     @pytest.mark.unit
-    def test_get_dataset_info_returns_all_asset_paths(self, initialized_catalog: Path) -> None:
-        """get_dataset_info returns all assets for a multi-asset item."""
+    def test_get_item_info_returns_all_asset_paths(self, initialized_catalog: Path) -> None:
+        """get_item_info returns all assets for a multi-asset item."""
         col_dir = initialized_catalog / "test-col"
         col_dir.mkdir(parents=True)
 
@@ -1631,7 +1621,7 @@ class TestMultiAssetListAndInfo:
         }
         (item_dir / "my-item.json").write_text(json.dumps(item_data))
 
-        info = get_dataset_info(initialized_catalog, "test-col/my-item")
+        info = get_item_info(initialized_catalog, "test-col/my-item")
 
         assert len(info.asset_paths) == 2
         assert "data.parquet" in info.asset_paths

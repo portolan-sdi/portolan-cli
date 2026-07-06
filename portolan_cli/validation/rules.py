@@ -3,7 +3,7 @@
 Each rule checks one aspect of catalog validity. Rules are designed
 to be unit-testable in isolation and composable into a validation pipeline.
 
-Per ADR-0011, v0.4 rules only check catalog structure, not dataset contents.
+Per ADR-0011, v0.4 rules only check catalog structure, not data contents.
 """
 
 from __future__ import annotations
@@ -1065,7 +1065,7 @@ class TabularTemporalExtentRule(ValidationRule):
 class TabularCollectionLevelAssetsRule(ValidationRule):
     """RULE-0094: tabular collections MUST use collection-level assets.
 
-    Single-file tabular datasets should live in ``collection.assets``, not be
+    Single-file tabular data should live in ``collection.assets``, not be
     wrapped in STAC items. Fires for a non-spatial collection that contains
     ``item.json`` files. Partitioned collections (``partition:scheme`` present)
     are exempt — ADR-0047 lets Hive-partitioned tabular data use items.

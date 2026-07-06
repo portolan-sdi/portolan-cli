@@ -348,7 +348,7 @@ def _add_processing_section(sections: list[str], metadata: dict[str, Any]) -> No
 def _add_authors_section(sections: list[str], metadata: dict[str, Any]) -> None:
     """Add authors section with ORCID links (#316).
 
-    Renders original dataset authors (separate from contact/maintainer).
+    Renders original data authors (separate from contact/maintainer).
     Authors with ORCID IDs are rendered as clickable links.
     """
     authors = metadata.get("authors")

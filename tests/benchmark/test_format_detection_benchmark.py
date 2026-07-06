@@ -1,6 +1,6 @@
 """Benchmarks for format detection to prevent performance regression.
 
-Format detection runs on every file during dataset add, so it must be fast.
+Format detection runs on every file during add, so it must be fast.
 These benchmarks establish baselines and catch regressions.
 """
 

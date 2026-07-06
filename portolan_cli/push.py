@@ -280,7 +280,7 @@ def _transform_collection_glob_assets(
 ) -> bytes:
     """Transform collection.json to populate glob fields for partitioned assets.
 
-    Per Issue #351: Partitioned GeoParquet datasets expose a glob pattern in
+    Per Issue #351: Partitioned GeoParquet collections expose a glob pattern in
     collection-level assets. On push, we populate glob fields with the full
     remote URL.
 

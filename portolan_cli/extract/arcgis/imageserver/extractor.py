@@ -876,8 +876,8 @@ def _auto_init_catalog(
     Returns:
         True if catalog was initialized, False if no files to add.
     """
+    from portolan_cli.add import add_files
     from portolan_cli.catalog import init_catalog
-    from portolan_cli.dataset import add_files
 
     # Get list of extracted COG files (nested in item directories)
     collection_dir = output_dir / collection_name

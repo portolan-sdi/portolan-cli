@@ -3,7 +3,7 @@
 Adds geohash columns for Iceberg partition specs and per-row bounding box
 columns for manifest-level min/max statistics.
 
-Uses vectorized shapely 2.0+ operations for performance on large datasets.
+Uses vectorized shapely 2.0+ operations for performance on large data.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import shapely
 
 
 def detect_geohash_precision(row_count: int) -> int | None:
-    """Determine geohash precision based on dataset size.
+    """Determine geohash precision based on data size.
 
     Returns:
         None if row_count < 100K (no partitioning needed).
@@ -98,7 +98,7 @@ def add_spatial_columns(table: pa.Table, precision: int | None = None) -> pa.Tab
     # Always add bbox columns for manifest statistics
     table = compute_bbox_columns(table)
 
-    # Add geohash column (use default precision 4 for small datasets,
+    # Add geohash column (use default precision 4 for small data,
     # detected precision for larger ones)
     geohash_precision = precision if precision is not None else 4
     table = compute_geohash_column(table, precision=geohash_precision)

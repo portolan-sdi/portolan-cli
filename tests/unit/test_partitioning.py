@@ -605,17 +605,15 @@ class TestPartitionExtensionInStac:
         assert EXTENSION_URLS["partition"] in extensions
 
 
-class TestFinalizeDatasetPartitionWiring:
-    """Tests for partition metadata wiring through finalize_datasets (Issue #232 Phase 3)."""
+class TestFinalizeItemPartitionWiring:
+    """Tests for partition metadata wiring through finalize_items (Issue #232 Phase 3)."""
 
     @pytest.mark.unit
-    def test_finalize_datasets_applies_partition_metadata_to_collection(
-        self, tmp_path: Path
-    ) -> None:
-        """finalize_datasets applies partition_metadata from PreparedDataset to collection."""
+    def test_finalize_items_applies_partition_metadata_to_collection(self, tmp_path: Path) -> None:
+        """finalize_items applies partition_metadata from PreparedItem to collection."""
         import pystac
 
-        from portolan_cli.dataset import PreparedDataset, finalize_datasets
+        from portolan_cli.add import PreparedItem, finalize_items
         from portolan_cli.formats import FormatType
         from portolan_cli.stac import EXTENSION_URLS
 
@@ -627,7 +625,7 @@ class TestFinalizeDatasetPartitionWiring:
         catalog.normalize_hrefs(f"{catalog_root}/")
         catalog.save(catalog_type=pystac.CatalogType.SELF_CONTAINED)
 
-        # Create PreparedDataset with partition_metadata
+        # Create PreparedItem with partition_metadata
         partition_metadata = {
             "partition:scheme": "hive",
             "partition:strategy": "kdtree",
@@ -641,7 +639,7 @@ class TestFinalizeDatasetPartitionWiring:
             roles=["data"],
         )
 
-        prepared = PreparedDataset(
+        prepared = PreparedItem(
             item_id="test_partitioned",
             collection_id="test-collection",
             format_type=FormatType.VECTOR,
@@ -654,7 +652,7 @@ class TestFinalizeDatasetPartitionWiring:
         )
 
         # Finalize
-        finalize_datasets(catalog_root, [prepared])
+        finalize_items(catalog_root, [prepared])
 
         # Verify collection has partition metadata
         collection_path = catalog_root / "test-collection" / "collection.json"
@@ -741,7 +739,7 @@ class TestGlobAssetKeyCollision:
         """
         import pystac
 
-        from portolan_cli.dataset import _ensure_partition_metadata
+        from portolan_cli.add import _ensure_partition_metadata
 
         # Create Hive partition structure
         collection_dir = tmp_path / "collection"
@@ -781,7 +779,7 @@ class TestGlobAssetKeyCollision:
         """When 'partitioned_data' key already has glob asset, skip adding."""
         import pystac
 
-        from portolan_cli.dataset import _ensure_partition_metadata
+        from portolan_cli.add import _ensure_partition_metadata
 
         # Create Hive partition structure
         collection_dir = tmp_path / "collection"

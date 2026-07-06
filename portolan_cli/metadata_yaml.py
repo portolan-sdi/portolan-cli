@@ -651,7 +651,7 @@ known_issues: ""                    # optional - Known limitations or caveats
 # -----------------------------------------------------------------------------
 # OPTIONAL: Data defaults (when auto-extraction fails or needs override)
 # These values apply to items where the source file lacks the metadata.
-# Useful for datasets where nodata or temporal info wasn't set upstream.
+# Useful for data where nodata or temporal info wasn't set upstream.
 # -----------------------------------------------------------------------------
 
 # defaults:
@@ -668,7 +668,7 @@ known_issues: ""                    # optional - Known limitations or caveats
 # -----------------------------------------------------------------------------
 # OPTIONAL: Consumption examples
 # -----------------------------------------------------------------------------
-# Add dataset-specific query examples, especially when structure is unusual
+# Add collection-specific query examples, especially when structure is unusual
 # (multiple related files, required joins, non-obvious column meanings).
 # Default examples (DuckDB SQL + GeoPandas) are auto-generated if omitted.
 #

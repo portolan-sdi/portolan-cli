@@ -18,8 +18,8 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
+from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
-from portolan_cli.dataset import DatasetInfo
 from portolan_cli.formats import FormatType
 
 
@@ -129,7 +129,7 @@ class TestForceBypassesChangeDetection:
             with patch("portolan_cli.cli.add_files") as mock_add:
                 mock_add.return_value = (
                     [
-                        DatasetInfo(
+                        ItemInfo(
                             item_id="test",
                             collection_id="data",
                             format_type=FormatType.VECTOR,
@@ -259,7 +259,7 @@ class TestCloudNativeFormatsWithForce:
     @pytest.mark.unit
     def test_handle_cloud_native_vector_force_reuses_existing(self) -> None:
         """--force with existing PMTiles/FlatGeobuf extracts metadata without re-copy."""
-        from portolan_cli.dataset import _handle_cloud_native_vector
+        from portolan_cli.add import _handle_cloud_native_vector
 
         with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -283,7 +283,7 @@ class TestCloudNativeFormatsWithForce:
     @pytest.mark.unit
     def test_handle_cloud_native_vector_reconvert_overwrites(self) -> None:
         """--force --reconvert with existing PMTiles/FlatGeobuf re-copies from source."""
-        from portolan_cli.dataset import _handle_cloud_native_vector
+        from portolan_cli.add import _handle_cloud_native_vector
 
         with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -307,7 +307,7 @@ class TestCloudNativeFormatsWithForce:
     @pytest.mark.unit
     def test_handle_cloud_native_vector_no_force_raises_on_existing(self) -> None:
         """Without --force, existing output raises FileExistsError."""
-        from portolan_cli.dataset import _handle_cloud_native_vector
+        from portolan_cli.add import _handle_cloud_native_vector
 
         with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -328,7 +328,7 @@ class TestCloudNativeFormatsWithForce:
     @pytest.mark.unit
     def test_handle_cloud_native_vector_no_existing_copies(self) -> None:
         """When output doesn't exist, copies from source regardless of force."""
-        from portolan_cli.dataset import _handle_cloud_native_vector
+        from portolan_cli.add import _handle_cloud_native_vector
 
         with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -382,7 +382,7 @@ class TestWarnIfSourceNewer:
     @pytest.mark.unit
     def test_warn_if_source_newer_emits_warning(self) -> None:
         """Warns when source mtime > output mtime."""
-        from portolan_cli.dataset import _warn_if_source_newer
+        from portolan_cli.add import _warn_if_source_newer
 
         with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -403,7 +403,7 @@ class TestWarnIfSourceNewer:
     @pytest.mark.unit
     def test_warn_if_source_newer_silent_when_output_newer(self) -> None:
         """No warning when output mtime >= source mtime."""
-        from portolan_cli.dataset import _warn_if_source_newer
+        from portolan_cli.add import _warn_if_source_newer
 
         with pytest.importorskip("tempfile").TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

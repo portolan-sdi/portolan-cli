@@ -159,7 +159,7 @@ class TestAddPopulatesVersions:
     def test_add_single_file_creates_versions_json(
         self, catalog_with_source_files: tuple[Path, Path], runner: CliRunner
     ) -> None:
-        """versions.json exists after add (dataset.py:1174)."""
+        """versions.json exists after add (add.py:1174)."""
         catalog_root, collection_dir = catalog_with_source_files
         single_file = collection_dir / "file_0.geojson"
 
@@ -176,7 +176,7 @@ class TestAddPopulatesVersions:
     def test_add_populates_versions_array(
         self, catalog_with_source_files: tuple[Path, Path], runner: CliRunner
     ) -> None:
-        """versions array is non-empty after add (dataset.py:1216)."""
+        """versions array is non-empty after add (add.py:1216)."""
         catalog_root, collection_dir = catalog_with_source_files
         single_file = collection_dir / "file_0.geojson"
 
@@ -196,7 +196,7 @@ class TestAddPopulatesVersions:
     def test_add_sets_current_version(
         self, catalog_with_source_files: tuple[Path, Path], runner: CliRunner
     ) -> None:
-        """current_version field is set (dataset.py:1187-1192)."""
+        """current_version field is set (add.py:1187-1192)."""
         catalog_root, collection_dir = catalog_with_source_files
         single_file = collection_dir / "file_0.geojson"
 
@@ -218,7 +218,7 @@ class TestAddPopulatesVersions:
     def test_add_includes_asset_metadata(
         self, catalog_with_source_files: tuple[Path, Path], runner: CliRunner
     ) -> None:
-        """Assets have sha256, size_bytes, href (dataset.py:1208-1213)."""
+        """Assets have sha256, size_bytes, href (add.py:1208-1213)."""
         catalog_root, collection_dir = catalog_with_source_files
         single_file = collection_dir / "file_0.geojson"
 

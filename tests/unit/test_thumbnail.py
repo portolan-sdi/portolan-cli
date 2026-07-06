@@ -705,7 +705,7 @@ class TestGeoparquetFullReading:
         """_read_geoparquet_for_thumbnail reads ALL features without sampling.
 
         No .head(), .sample(), or row limiting — thumbnails must accurately
-        represent the full dataset. Contextily handles CRS reprojection of
+        represent the full data. Contextily handles CRS reprojection of
         basemap tiles, which is more efficient than reprojecting geometry data.
         """
         import json
@@ -751,7 +751,7 @@ class TestGeoparquetCrsHandling:
 
         Instead of reprojecting millions of geometry vertices to EPSG:3857,
         we keep data in native CRS and let contextily reproject basemap tiles.
-        This is far more efficient for large datasets.
+        This is far more efficient for large data.
         """
         pytest.importorskip("matplotlib")
 

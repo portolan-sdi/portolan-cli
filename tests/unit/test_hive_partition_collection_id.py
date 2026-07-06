@@ -223,7 +223,7 @@ class TestDeriveItemIdHivePartitions:
 
         This is the common case for kdtree partitioning and should work as before.
         """
-        from portolan_cli.dataset import _derive_item_id_and_asset_level
+        from portolan_cli.add import _derive_item_id_and_asset_level
         from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "collection"
@@ -250,7 +250,7 @@ class TestDeriveItemIdHivePartitions:
         Files at year=2023/month=01/file.parquet and year=2024/month=01/file.parquet
         must NOT both get item_id="month=01" (that would be a duplicate).
         """
-        from portolan_cli.dataset import _derive_item_id_and_asset_level
+        from portolan_cli.add import _derive_item_id_and_asset_level
         from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "collection"
@@ -294,7 +294,7 @@ class TestDeriveItemIdHivePartitions:
 
     def test_single_level_partition_unique_per_cell(self, tmp_path: Path) -> None:
         """Single-level partitions have unique item_ids per partition cell."""
-        from portolan_cli.dataset import _derive_item_id_and_asset_level
+        from portolan_cli.add import _derive_item_id_and_asset_level
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -323,7 +323,7 @@ class TestDeriveItemIdHivePartitions:
 
     def test_no_format_type_single_level(self, tmp_path: Path) -> None:
         """Single-level Hive partition without format_type uses parent dir name."""
-        from portolan_cli.dataset import _derive_item_id_and_asset_level
+        from portolan_cli.add import _derive_item_id_and_asset_level
 
         collection_dir = tmp_path / "collection"
         partition_dir = collection_dir / "region=north"
@@ -344,7 +344,7 @@ class TestDeriveItemIdHivePartitions:
 
     def test_explicit_item_id_overrides_hive_logic(self, tmp_path: Path) -> None:
         """Explicit item_id takes precedence over Hive partition detection."""
-        from portolan_cli.dataset import _derive_item_id_and_asset_level
+        from portolan_cli.add import _derive_item_id_and_asset_level
         from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "collection"
@@ -366,7 +366,7 @@ class TestDeriveItemIdHivePartitions:
 
     def test_non_hive_path_unchanged(self, tmp_path: Path) -> None:
         """Paths without Hive partitions work as before."""
-        from portolan_cli.dataset import _derive_item_id_and_asset_level
+        from portolan_cli.add import _derive_item_id_and_asset_level
         from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "collection"

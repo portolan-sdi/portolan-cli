@@ -1,6 +1,6 @@
-"""Unit tests for directory handling in dataset operations.
+"""Unit tests for directory handling in add operations.
 
-Tests recursive file iteration for adding directories as datasets.
+Tests recursive file iteration for adding directories as collections.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from portolan_cli.dataset import (
+from portolan_cli.add import (
     add_directory,
     iter_geospatial_files,
 )
@@ -148,10 +148,10 @@ class TestAddDirectory:
         (item_dir / "data.geojson").write_text(valid_geojson)
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
 
@@ -207,12 +207,12 @@ class TestAddDirectory:
         (item_dir / "b.tif").write_bytes(b"fake tiff")
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert_v,
-            patch("portolan_cli.dataset.convert_raster") as mock_convert_r,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_meta_v,
-            patch("portolan_cli.dataset.extract_cog_metadata") as mock_meta_r,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert_v,
+            patch("portolan_cli.add.convert_raster") as mock_convert_r,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_meta_v,
+            patch("portolan_cli.add.extract_cog_metadata") as mock_meta_r,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
 
             def detect_side_effect(path: Path) -> FormatType:
@@ -298,10 +298,10 @@ class TestAddDirectory:
         (deep_item_dir / "deep.geojson").write_text(valid_geojson)
 
         with (
-            patch("portolan_cli.dataset.detect_format") as mock_detect,
-            patch("portolan_cli.dataset.convert_vector") as mock_convert,
-            patch("portolan_cli.dataset.extract_geoparquet_metadata") as mock_metadata,
-            patch("portolan_cli.dataset.compute_checksum") as mock_checksum,
+            patch("portolan_cli.add.detect_format") as mock_detect,
+            patch("portolan_cli.add.convert_vector") as mock_convert,
+            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
 

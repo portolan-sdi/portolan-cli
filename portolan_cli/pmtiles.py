@@ -40,7 +40,7 @@ from portolan_cli.thumbnail import (
 
 logger = logging.getLogger(__name__)
 
-# MIME type for PMTiles (matches dataset.py)
+# MIME type for PMTiles (matches add.py)
 PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
 
 # web-map-links STAC extension declared for the rel="pmtiles" collection link

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.dataset import add_dataset
+from portolan_cli.add import add
 
 
 def _assert_no_item_json(collection_dir: Path) -> None:
@@ -84,7 +84,7 @@ class TestCollectionLevelAssetWorkflow:
         target_file.write_bytes(test_file.read_bytes())
 
         # Execute: Add collection-level asset
-        result = add_dataset(
+        result = add(
             catalog_root=fresh_catalog_no_versions,
             path=target_file,
             collection_id="demographics",
@@ -142,7 +142,7 @@ class TestCollectionLevelAssetWorkflow:
         census_file = collection_dir / "census.parquet"
         census_file.write_bytes(test_file.read_bytes())
 
-        add_dataset(
+        add(
             catalog_root=fresh_catalog_no_versions,
             path=census_file,
             collection_id="demographics",
@@ -155,7 +155,7 @@ class TestCollectionLevelAssetWorkflow:
         parcels_file = collection_dir / "parcels.parquet"
         parcels_file.write_bytes(test_file.read_bytes())
 
-        add_dataset(
+        add(
             catalog_root=fresh_catalog_no_versions,
             path=parcels_file,
             collection_id="demographics",
@@ -209,7 +209,7 @@ class TestCollectionLevelAssetWorkflow:
         census_file = collection_dir / "census.parquet"
         census_file.write_bytes(test_file.read_bytes())
 
-        add_dataset(
+        add(
             catalog_root=fresh_catalog_no_versions,
             path=census_file,
             collection_id="demographics",
@@ -224,7 +224,7 @@ class TestCollectionLevelAssetWorkflow:
         survey_file = item_dir / "responses.parquet"
         survey_file.write_bytes(test_file.read_bytes())
 
-        add_dataset(
+        add(
             catalog_root=fresh_catalog_no_versions,
             path=survey_file,
             collection_id="demographics",
@@ -291,7 +291,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
 
         This is the primary repro case for issue #383.
         """
-        from portolan_cli.dataset import add_files
+        from portolan_cli.add import add_files
 
         # Set up collection directory
         collection_dir = fresh_catalog_no_versions / "tunnels"
@@ -362,7 +362,7 @@ class TestCollectionLevelNonGeoCompanionWorkflow:
         import pyarrow as pa
         import pyarrow.parquet as pq
 
-        from portolan_cli.dataset import add_files
+        from portolan_cli.add import add_files
 
         collection_dir = fresh_catalog_no_versions / "data"
         collection_dir.mkdir()

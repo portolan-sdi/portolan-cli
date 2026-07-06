@@ -25,7 +25,7 @@ def test_row_count_reads_from_snapshot_summary_without_materializing():
     """row_count should come from the snapshot's total-records, not a table scan.
 
     Materializing the table (table.scan().to_arrow()) is wasteful for the large
-    datasets Iceberg targets; the count must be read from O(1) snapshot metadata.
+    data Iceberg targets; the count must be read from O(1) snapshot metadata.
     """
     from portolan_cli.backends.iceberg.stac_generator import _get_row_count
 

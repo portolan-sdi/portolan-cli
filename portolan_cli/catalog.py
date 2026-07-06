@@ -929,4 +929,4 @@ class CatalogVersionsCorruptedError(Exception):
 
 
 # Re-export add_files for STAC-aligned imports (ADR terminology)
-from portolan_cli.dataset import add_files as add_files  # noqa: E402, F401, PLC0414
+from portolan_cli.add import add_files as add_files  # noqa: E402, F401, PLC0414

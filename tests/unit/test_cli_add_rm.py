@@ -18,8 +18,8 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
+from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
-from portolan_cli.dataset import DatasetInfo
 from portolan_cli.formats import FormatType
 
 
@@ -68,7 +68,7 @@ class TestAdd:
             with patch("portolan_cli.cli.add_files") as mock_add:
                 mock_add.return_value = (
                     [
-                        DatasetInfo(
+                        ItemInfo(
                             item_id="census",
                             collection_id="demographics",
                             format_type=FormatType.VECTOR,
@@ -267,7 +267,7 @@ class TestAdd:
             with patch("portolan_cli.cli.add_files") as mock_add:
                 mock_add.return_value = (
                     [
-                        DatasetInfo(
+                        ItemInfo(
                             item_id="custom-item-id",
                             collection_id="demographics",
                             format_type=FormatType.VECTOR,
@@ -450,14 +450,14 @@ class TestAdd:
                 # Two items added from the same collection
                 mock_add.return_value = (
                     [
-                        DatasetInfo(
+                        ItemInfo(
                             item_id="item1",
                             collection_id="data",
                             format_type=FormatType.VECTOR,
                             bbox=[0, 0, 1, 1],
                             asset_paths=["data1.parquet"],
                         ),
-                        DatasetInfo(
+                        ItemInfo(
                             item_id="item2",
                             collection_id="data",
                             format_type=FormatType.VECTOR,
@@ -952,7 +952,7 @@ class TestAddJsonOutput:
             with patch("portolan_cli.cli.add_files") as mock_add:
                 mock_add.return_value = (
                     [
-                        DatasetInfo(
+                        ItemInfo(
                             item_id="test",
                             collection_id="data",
                             format_type=FormatType.VECTOR,

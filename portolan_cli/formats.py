@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 class CloudNativeStatus(Enum):
     """Classification of file format for cloud-native data handling.
 
-    Used to determine how to handle a file during add_dataset():
+    Used to determine how to handle a file during add():
     - CLOUD_NATIVE: Accept silently, no conversion needed
     - CONVERTIBLE: Warn then convert to cloud-native format
     - UNSUPPORTED: Reject with helpful error message
@@ -46,7 +46,7 @@ class CloudNativeStatus(Enum):
 class FormatInfo:
     """Information about a detected file format.
 
-    Provides metadata needed for user-facing messages during dataset add.
+    Provides metadata needed for user-facing messages during add.
 
     Attributes:
         status: Cloud-native classification status.

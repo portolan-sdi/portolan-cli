@@ -1,4 +1,4 @@
-"""Unit tests for dataset._finalize_with_backend.
+"""Unit tests for add._finalize_with_backend.
 
 Covers the versioning + on_post_add dispatch that occurs after a batch of
 items has been written to the filesystem.  All I/O is mocked so no real
@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from portolan_cli.dataset import PreparedDataset, _finalize_with_backend
+from portolan_cli.add import PreparedItem, _finalize_with_backend
 from portolan_cli.formats import FormatType
 
 # ---------------------------------------------------------------------------
@@ -26,8 +26,8 @@ def _make_item(
     collection_id: str = "boundaries",
     filename: str = "census.parquet",
     is_collection_level: bool = False,
-) -> PreparedDataset:
-    """Build a minimal PreparedDataset suitable for _finalize_with_backend."""
+) -> PreparedItem:
+    """Build a minimal PreparedItem suitable for _finalize_with_backend."""
     item_dir = tmp_path / collection_id / item_id
     item_dir.mkdir(parents=True, exist_ok=True)
     asset_path = item_dir / filename
@@ -35,7 +35,7 @@ def _make_item(
     item_json = item_dir / "item.json"
     item_json.write_text("{}")
 
-    return PreparedDataset(
+    return PreparedItem(
         item_id=item_id,
         collection_id=collection_id,
         format_type=FormatType.VECTOR,
@@ -52,7 +52,7 @@ def _make_item(
 
 
 class TestFinalizeWithBackend:
-    """Tests for _finalize_with_backend helper in dataset.py."""
+    """Tests for _finalize_with_backend helper in add.py."""
 
     @pytest.mark.unit
     def test_calls_publish_version(self, tmp_path: Path) -> None:
@@ -230,7 +230,7 @@ class TestFinalizeWithBackend:
         file_a.write_bytes(b"parquet")
         file_b.write_bytes(b"meta")
 
-        item = PreparedDataset(
+        item = PreparedItem(
             item_id="census",
             collection_id="boundaries",
             format_type=FormatType.VECTOR,

@@ -35,13 +35,13 @@ def initialized_catalog(tmp_path: Path) -> Path:
 def create_partitioned_parquet(
     base_dir: Path, partition_col: str, partition_values: list[str]
 ) -> None:
-    """Create a Hive-partitioned GeoParquet dataset with consistent schema.
+    """Create a Hive-partitioned GeoParquet collection with consistent schema.
 
     Creates valid GeoParquet files with point geometries so they're recognized
     as vector data by Portolan.
 
     Args:
-        base_dir: Base directory for the partitioned dataset.
+        base_dir: Base directory for the partitioned collection.
         partition_col: Name of the partition column.
         partition_values: List of partition values to create.
     """
@@ -72,10 +72,10 @@ def create_multilevel_partitioned_parquet(
     level2_col: str,
     level2_values: list[str],
 ) -> None:
-    """Create a multi-level Hive-partitioned GeoParquet dataset.
+    """Create a multi-level Hive-partitioned GeoParquet collection.
 
     Args:
-        base_dir: Base directory for the partitioned dataset.
+        base_dir: Base directory for the partitioned collection.
         level1_col: Name of first partition level column.
         level1_values: Values for first partition level.
         level2_col: Name of second partition level column.

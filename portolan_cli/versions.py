@@ -1,6 +1,6 @@
-"""Versions module - manages versions.json for dataset versioning.
+"""Versions module - manages versions.json for collection versioning.
 
-The versions.json file is the single source of truth for dataset versioning,
+The versions.json file is the single source of truth for collection versioning,
 sync state, and integrity checksums (see ADR-0005).
 
 Structure:

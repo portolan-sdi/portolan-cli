@@ -78,7 +78,7 @@ class TestBatchVersioningPerformance:
         This is the key metric: regardless of file count, we should only
         write versions.json once per collection.
         """
-        from portolan_cli.dataset import add_files
+        from portolan_cli.add import add_files
         from portolan_cli.versions import write_versions
 
         collection_dir = benchmark_catalog / "test-collection"
@@ -95,7 +95,7 @@ class TestBatchVersioningPerformance:
             write_count += 1
             return original_write(*args, **kwargs)
 
-        with patch("portolan_cli.dataset.write_versions", side_effect=counting_write):
+        with patch("portolan_cli.add.write_versions", side_effect=counting_write):
             add_files(
                 paths=files,
                 catalog_root=benchmark_catalog,
@@ -118,7 +118,7 @@ class TestBatchVersioningPerformance:
         This tests the actual performance characteristic of O(n) vs O(n²).
         We use small file counts to keep the test fast.
         """
-        from portolan_cli.dataset import add_files
+        from portolan_cli.add import add_files
 
         # Test with 10 files
         collection_10 = benchmark_catalog / "collection-10"
@@ -167,7 +167,7 @@ class TestBatchVersioningPerformance:
         benchmark_catalog: Path,
     ) -> None:
         """Verify add_directory also uses batch versioning."""
-        from portolan_cli.dataset import add_directory
+        from portolan_cli.add import add_directory
         from portolan_cli.versions import write_versions
 
         collection_dir = benchmark_catalog / "dir-collection"
@@ -199,7 +199,7 @@ class TestBatchVersioningPerformance:
             write_count += 1
             return original_write(*args, **kwargs)
 
-        with patch("portolan_cli.dataset.write_versions", side_effect=counting_write):
+        with patch("portolan_cli.add.write_versions", side_effect=counting_write):
             add_directory(
                 path=collection_dir,
                 catalog_root=benchmark_catalog,

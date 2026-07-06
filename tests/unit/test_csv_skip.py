@@ -23,14 +23,14 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
-from portolan_cli.dataset import (
+from portolan_cli.add import (
     _copy_non_geo_to_item_dir,
     _is_no_geometry_error,
     _update_item_with_asset,
     add_files,
     iter_files_with_sidecars,
 )
+from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
 
 
 @pytest.fixture
@@ -125,14 +125,14 @@ class TestNonGeospatialCsvSkip:
         self, initialized_catalog: Path, non_geo_csv: Path, geojson_file: Path
     ) -> None:
         """add_files should continue processing other files after skipping non-geo CSV."""
-        # Mock prepare_dataset and finalize_datasets to avoid actual conversion
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Mock prepare_item and finalize_items to avoid actual conversion
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_prepare,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_prepare,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_prepare.return_value = MagicMock(item_id="data", collection_id="collection")
-            mock_finalize.return_value = []  # finalize returns list of DatasetInfo
+            mock_finalize.return_value = []  # finalize returns list of ItemInfo
 
             # Add directory containing both non-geo CSV and valid GeoJSON
             directory = non_geo_csv.parent
@@ -143,7 +143,7 @@ class TestNonGeospatialCsvSkip:
             )
 
             # Should have attempted to prepare the GeoJSON
-            assert mock_prepare.called, "Should have called prepare_dataset for GeoJSON"
+            assert mock_prepare.called, "Should have called prepare_item for GeoJSON"
 
     @pytest.mark.unit
     def test_add_files_error_message_is_user_friendly(
@@ -214,11 +214,11 @@ class TestMixedDirectoryProcessing:
             )
         )
 
-        # Mock prepare_dataset and finalize_datasets to track calls
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Mock prepare_item and finalize_items to track calls
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
             mock_finalize.return_value = []
@@ -285,10 +285,10 @@ class TestCsvGeometryDetection:
         """CSV with lat/lon columns should be attempted for processing."""
         # This test verifies CSVs with geometry are NOT skipped
         # The actual processing depends on geoparquet-io
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_add.return_value = MagicMock(item_id="points", collection_id="collection")
             mock_finalize.return_value = []
@@ -338,10 +338,10 @@ class TestCsvGeometryDetection:
             "name,geometry,value\nPoint A,POINT(-122.4 37.8),100\nPoint B,POINT(-118.2 34.0),200\n"
         )
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_add.return_value = MagicMock(item_id="wkt_data", collection_id="collection")
             mock_finalize.return_value = []
@@ -531,11 +531,11 @@ class TestCsvSkipHypothesis:
                 geojson_file.write_text(json.dumps(geojson_data))
                 geojson_paths.append(geojson_file)
 
-            # Mock prepare_dataset and finalize_datasets to track calls
-            # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+            # Mock prepare_item and finalize_items to track calls
+            # Per Issue #281: add_files now calls prepare_item + finalize_items
             with (
-                patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-                patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+                patch("portolan_cli.add.prepare_item") as mock_add,
+                patch("portolan_cli.add.finalize_items") as mock_finalize,
             ):
                 mock_add.return_value = MagicMock(item_id="test", collection_id="collection")
                 mock_finalize.return_value = []
@@ -667,10 +667,10 @@ class TestTsvSupport:
             "Point B\t34.0522\t-118.2437\t200\n"
         )
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_add.return_value = MagicMock(item_id="points", collection_id="collection")
             mock_finalize.return_value = []
@@ -682,7 +682,7 @@ class TestTsvSupport:
             )
 
             # Should attempt to process
-            assert mock_add.called, "Should have called prepare_dataset for geo TSV"
+            assert mock_add.called, "Should have called prepare_item for geo TSV"
 
     @pytest.mark.unit
     def test_iter_files_with_sidecars_includes_tsv(self, tmp_path: Path) -> None:
@@ -747,9 +747,9 @@ class TestExceptionHandlingNarrowness:
         csv_file = collection_dir / "data.csv"
         csv_file.write_text("name,value\ntest,100\n")
 
-        # Mock add_dataset to raise a non-geometry ClickException
+        # Mock add to raise a non-geometry ClickException
         # Per Issue #175: errors are now collected instead of raised
-        with patch("portolan_cli.dataset.prepare_dataset") as mock_add:
+        with patch("portolan_cli.add.prepare_item") as mock_add:
             mock_add.side_effect = click.ClickException("Permission denied: /some/path")
 
             added, skipped, failures = add_files(
@@ -800,11 +800,11 @@ class TestAdr0028AssetTracking:
             )
         )
 
-        # Mock prepare_dataset and finalize_datasets to simulate successful geo file processing
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Mock prepare_item and finalize_items to simulate successful geo file processing
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
             mock_finalize.return_value = []
@@ -817,7 +817,7 @@ class TestAdr0028AssetTracking:
                 )
 
             # Should process geo file
-            assert mock_add.called, "Should have called prepare_dataset for geo file"
+            assert mock_add.called, "Should have called prepare_item for geo file"
 
     @pytest.mark.unit
     def test_non_geo_only_directory_logs_warning(
@@ -1136,10 +1136,10 @@ class TestAddFilesCodePaths:
         symlink = link_dir / "link.geojson"
         symlink.symlink_to(real_file)
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
             mock_finalize.return_value = []
@@ -1150,8 +1150,8 @@ class TestAddFilesCodePaths:
                 collection_id="collection",
             )
 
-            # Should have called prepare_dataset with the resolved path
-            assert mock_add.called, "Should have called prepare_dataset for symlink"
+            # Should have called prepare_item with the resolved path
+            assert mock_add.called, "Should have called prepare_item for symlink"
 
     @pytest.mark.unit
     def test_duplicate_file_skipping(self, initialized_catalog: Path, tmp_path: Path) -> None:
@@ -1175,10 +1175,10 @@ class TestAddFilesCodePaths:
             )
         )
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
             mock_finalize.return_value = []
@@ -1190,7 +1190,7 @@ class TestAddFilesCodePaths:
                 collection_id="collection",
             )
 
-            # Should only call prepare_dataset once
+            # Should only call prepare_item once
             assert mock_add.call_count == 1
 
     @pytest.mark.unit
@@ -1205,10 +1205,10 @@ class TestAddFilesCodePaths:
         txt_file = collection_dir / "readme.txt"
         txt_file.write_text("This is a readme file")
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_finalize.return_value = []
 
@@ -1218,7 +1218,7 @@ class TestAddFilesCodePaths:
                 collection_id="collection",
             )
 
-            # Should NOT call prepare_dataset for non-geospatial files
+            # Should NOT call prepare_item for non-geospatial files
             assert not mock_add.called
             assert len(added) == 0
 
@@ -1244,15 +1244,15 @@ class TestAddFilesCodePaths:
             )
         )
 
-        with patch("portolan_cli.dataset.prepare_dataset") as mock_add:
-            with patch("portolan_cli.dataset.is_current", return_value=True):
+        with patch("portolan_cli.add.prepare_item") as mock_add:
+            with patch("portolan_cli.add.is_current", return_value=True):
                 added, skipped, failures = add_files(
                     paths=[geojson],
                     catalog_root=initialized_catalog,
                     collection_id="collection",
                 )
 
-                # Should NOT call add_dataset for unchanged files
+                # Should NOT call add for unchanged files
                 assert not mock_add.called
                 assert geojson in skipped
 
@@ -1279,13 +1279,13 @@ class TestAddFilesCodePaths:
             )
         )
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             with patch(
-                "portolan_cli.dataset.infer_nested_collection_id",
+                "portolan_cli.add.infer_nested_collection_id",
                 return_value="my-collection",
             ) as mock_infer:
                 mock_add.return_value = MagicMock(item_id="data", collection_id="my-collection")
@@ -1330,7 +1330,7 @@ class TestAddFilesCodePaths:
         csv_file = source_dir / "metadata.csv"
         csv_file.write_text("name,value\ntest,100\n")
 
-        # Create the item directory that add_dataset would create
+        # Create the item directory that add would create
         item_dir = initialized_catalog / "collection" / "data"
         item_dir.mkdir(parents=True)
 
@@ -1381,7 +1381,7 @@ class TestAddFilesCodePaths:
             )
         )
 
-        def mock_add_dataset_side_effect(
+        def mock_add_side_effect(
             path,
             catalog_root,
             collection_id,
@@ -1390,7 +1390,7 @@ class TestAddFilesCodePaths:
             force=False,
             reconvert=False,
         ):
-            """Simulate add_dataset: success for geojson, geometry error for csv."""
+            """Simulate add: success for geojson, geometry error for csv."""
             if path.suffix.lower() == ".geojson":
                 return MagicMock(item_id="data", collection_id="collection")
             elif path.suffix.lower() == ".csv":
@@ -1399,12 +1399,12 @@ class TestAddFilesCodePaths:
                 # Skip other files (like parquet) - they shouldn't be in source_dir
                 raise ValueError(f"Unexpected file type: {path}")
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
-            mock_add.side_effect = mock_add_dataset_side_effect
+            mock_add.side_effect = mock_add_side_effect
             mock_finalize.return_value = []
 
             with caplog.at_level(logging.INFO):
@@ -1434,7 +1434,7 @@ class TestAddFilesCodePaths:
         geojson = collection_dir / "invalid.geojson"
         geojson.write_text('{"type": "FeatureCollection", "features": []}')
 
-        with patch("portolan_cli.dataset.prepare_dataset") as mock_add:
+        with patch("portolan_cli.add.prepare_item") as mock_add:
             # Simulate geometry detection error for a non-tabular format
             mock_add.side_effect = click.ClickException("Could not detect geometry columns in file")
 
@@ -1460,7 +1460,7 @@ class TestAddFilesCodePaths:
         geojson = collection_dir / "data.geojson"
         geojson.write_text('{"type": "FeatureCollection", "features": []}')
 
-        with patch("portolan_cli.dataset.prepare_dataset") as mock_add:
+        with patch("portolan_cli.add.prepare_item") as mock_add:
             mock_add.side_effect = ValueError("Invalid data")
 
             # Per Issue #175: errors are now collected instead of raised
@@ -1485,7 +1485,7 @@ class TestAddFilesCodePaths:
         geojson = collection_dir / "data.geojson"
         geojson.write_text('{"type": "FeatureCollection", "features": []}')
 
-        with patch("portolan_cli.dataset.prepare_dataset") as mock_add:
+        with patch("portolan_cli.add.prepare_item") as mock_add:
             mock_add.side_effect = FileNotFoundError("File missing")
 
             # Per Issue #175: errors are now collected instead of raised
@@ -1539,10 +1539,10 @@ class TestMixedFormatIntegration:
             )
         )
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_add.return_value = MagicMock(item_id="data", collection_id="collection")
             mock_finalize.return_value = []
@@ -1558,7 +1558,7 @@ class TestMixedFormatIntegration:
                     pytest.fail(f"add_files raised for mixed format directory: {e}")
 
             # Should process the geo file
-            assert mock_add.called, "Should have called prepare_dataset for geo file"
+            assert mock_add.called, "Should have called prepare_item for geo file"
 
     @pytest.mark.unit
     @given(
@@ -1618,10 +1618,10 @@ class TestMixedFormatIntegration:
                     )
                 )
 
-            # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+            # Per Issue #281: add_files now calls prepare_item + finalize_items
             with (
-                patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-                patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+                patch("portolan_cli.add.prepare_item") as mock_add,
+                patch("portolan_cli.add.finalize_items") as mock_finalize,
             ):
                 mock_add.return_value = MagicMock(item_id="test", collection_id="collection")
                 mock_finalize.return_value = []
