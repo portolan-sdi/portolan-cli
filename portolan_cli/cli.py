@@ -23,14 +23,7 @@ if TYPE_CHECKING:
 
 import click
 
-from portolan_cli.add import (
-    AddFailure,
-    ItemInfo,
-    add_files,
-    get_sidecars,
-    remove_files,
-    resolve_collection_id,
-)
+from portolan_cli.add import AddFailure, add_files
 from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root
 from portolan_cli.catalog_list import (
@@ -39,13 +32,17 @@ from portolan_cli.catalog_list import (
     list_catalog_contents,
 )
 from portolan_cli.check import check_directory
+from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.constants import PORTOLAN_SPEC_VERSION
 from portolan_cli.convert import ConversionResult
+from portolan_cli.discovery import get_sidecars
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.metadata import fix_metadata
 from portolan_cli.metadata.fix import FixReport
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
+from portolan_cli.query import ItemInfo
+from portolan_cli.remove import remove_files
 from portolan_cli.scan import (
     IssueType,
     ScanIssue,

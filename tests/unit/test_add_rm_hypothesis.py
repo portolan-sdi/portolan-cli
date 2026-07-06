@@ -19,12 +19,12 @@ from hypothesis import strategies as st
 
 from portolan_cli.add import (
     GEOSPATIAL_EXTENSIONS,
-    SIDECAR_PATTERNS,
     get_sidecars,
     iter_geospatial_files,
     resolve_collection_id,
 )
 from portolan_cli.catalog import find_catalog_root
+from portolan_cli.constants import SIDECAR_PATTERNS
 
 # =============================================================================
 # Custom Strategies
@@ -1017,7 +1017,7 @@ class TestRemoveFromVersionsEdgeCases:
     @pytest.mark.unit
     def test_remove_from_versions_noop_no_file(self, tmp_path: Path) -> None:
         """_remove_from_versions is a no-op if versions.json doesn't exist."""
-        from portolan_cli.add import _remove_from_versions
+        from portolan_cli.remove import _remove_from_versions
 
         test_file = tmp_path / "test.parquet"
         versions_path = tmp_path / "versions.json"
@@ -1028,7 +1028,7 @@ class TestRemoveFromVersionsEdgeCases:
     @pytest.mark.unit
     def test_remove_from_versions_noop_empty_versions(self, tmp_path: Path) -> None:
         """_remove_from_versions is a no-op if versions list is empty."""
-        from portolan_cli.add import _remove_from_versions
+        from portolan_cli.remove import _remove_from_versions
 
         test_file = tmp_path / "test.parquet"
         versions_path = tmp_path / "versions.json"

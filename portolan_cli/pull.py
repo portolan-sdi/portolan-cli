@@ -34,12 +34,12 @@ from typing import TYPE_CHECKING, Any
 
 import obstore as obs
 
-from portolan_cli.add import compute_checksum
 from portolan_cli.async_utils import (
     CircuitBreaker,
     CircuitBreakerError,
     get_default_concurrency,
 )
+from portolan_cli.checksums import compute_checksum
 from portolan_cli.download import download_file, get_remote_file_size_async
 from portolan_cli.output import detail, error, info, output_section, success, warn
 from portolan_cli.upload import _setup_store_and_kwargs, parse_object_store_url

@@ -16,6 +16,10 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from pathlib import Path
+
+from portolan_cli.formats import FormatType, detect_format
+from portolan_cli.scan_detect import is_filegdb
 
 # Pattern for valid collection IDs (supports path syntax per ADR-0032):
 # - Start with lowercase letter or number (year-based organization like 2020/)
@@ -169,3 +173,141 @@ def normalize_collection_id(collection_id: str) -> str:
         )
 
     return "/".join(fixed_segments)
+
+
+def resolve_collection_id(path: Path, catalog_root: Path) -> str:
+    """Resolve collection ID from a file path.
+
+    Per ADR-0022: First path component (relative to catalog root) = collection ID.
+
+    Args:
+        path: Path to the file.
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        Collection ID (first directory component relative to catalog).
+
+    Raises:
+        ValueError: If path is not inside catalog root.
+    """
+    # Get path relative to catalog root
+    try:
+        relative = path.resolve().relative_to(catalog_root.resolve())
+    except ValueError as err:
+        raise ValueError(f"Path {path} is outside catalog root {catalog_root}") from err
+
+    # First component is the collection ID
+    parts = relative.parts
+    if not parts:
+        raise ValueError(f"Cannot determine collection from path: {path}")
+
+    # Skip the filename if path is a file
+    if path.is_file() and len(parts) == 1:
+        raise ValueError(f"File {path} must be in a subdirectory (collection)")
+
+    return parts[0]
+
+
+def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
+    """Infer nested collection ID from a file or directory-based data asset.
+
+    Per ADR-0031 (Collection-Level Assets for Vector Data) and ADR-0032
+    (Nested Catalogs with Flat Collections), the collection depth depends
+    on the format type:
+
+    - **Vector data**: Parent directory = collection (collection-level asset)
+      Example: demographics/boundaries.parquet -> collection = "demographics"
+
+    - **Raster data**: Grandparent directory = collection, parent = item
+      Example: 2025/tile1/scene.tif -> collection = "2025", item = "tile1"
+
+    Per Issue #443, Hive partition directories (key=value format) are filtered
+    out and NOT included in the collection ID:
+      Example: sites/contours/gms_feature_id=abc/data.parquet -> "sites/contours"
+
+    Directory-based formats like FileGDB (*.gdb) are treated as vector data
+    (collection-level assets).
+
+    Examples:
+        # Vector (collection-level)
+        climate/hittekaart/data.parquet -> "climate/hittekaart"
+        demographics/boundaries.geojson -> "demographics"
+        ocha/my_data.gdb -> "ocha"  (FileGDB directory)
+
+        # Raster (item-level, needs subdirectory)
+        imagery/2025/tile1/scene.tif -> "imagery/2025"
+        satellite/scene-001/B04.tif -> "satellite"
+
+        # Hive partitions (filtered out)
+        sites/contours/gms_feature_id=abc/data.parquet -> "sites/contours"
+        data/year=2024/month=01/file.parquet -> "data"
+
+    Args:
+        path: Path to the file or directory-based data asset (e.g., FileGDB).
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        Collection ID (nested path relative to catalog root, excluding Hive partitions).
+
+    Raises:
+        ValueError: If path is not inside catalog root, at root level, or
+            if raster data lacks required item subdirectory structure.
+    """
+    from portolan_cli.scan_detect import is_hive_partition_dir
+
+    # Get path relative to catalog root
+    try:
+        relative = path.resolve().relative_to(catalog_root.resolve())
+    except ValueError as err:
+        raise ValueError(f"Path {path} is outside catalog root {catalog_root}") from err
+
+    # Get parent directory path (all components except filename)
+    parts = relative.parts
+    if not parts:
+        raise ValueError(f"Cannot determine collection from path: {path}")
+
+    # A path is treated as a "data asset" (not a collection) if it's a file
+    # OR a FileGDB directory. FileGDB directories (*.gdb) contain the actual
+    # data - they're assets, not organizational collections (Issue #259).
+    #
+    # For FileGDB detection, we use:
+    # 1. is_filegdb() - content inspection (internal .gdbtable files or 'gdb' marker)
+    # 2. Suffix fallback - handles empty/incomplete/corrupted FileGDB directories
+    is_gdb_suffix = path.is_dir() and path.name.lower().endswith(".gdb")
+    is_asset = path.is_file() or is_filegdb(path) or is_gdb_suffix
+
+    # Data asset must be in at least one subdirectory (collection)
+    if is_asset and len(parts) == 1:
+        raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
+
+    # Detect format type to determine collection depth (ADR-0031)
+    # - Vector: parent directory = collection (collection-level asset)
+    # - Raster: grandparent = collection, parent = item (item-level asset)
+    format_type = detect_format(path)
+    is_raster = format_type == FormatType.RASTER
+
+    if is_raster:
+        # Raster files need item subdirectory: collection/item/data.tif
+        # Minimum depth: 3 parts (collection, item_dir, filename)
+        if len(parts) < 3:
+            raise ValueError(
+                f"Raster file {path} must be in a subdirectory (collection/item/). "
+                f"Per ADR-0031, raster data requires item-level organization."
+            )
+        # Return grandparent as collection (all but last 2 components)
+        collection_parts = parts[:-2]
+    else:
+        # Vector files: parent directory = collection
+        # Return parent as collection (all but last component)
+        collection_parts = parts[:-1] if is_asset else parts
+
+    # Filter out Hive partition directories (key=value pattern)
+    # Per Issue #443: partitions should not be part of collection ID
+    collection_parts = tuple(
+        part for part in collection_parts if is_hive_partition_dir(part) is None
+    )
+
+    if not collection_parts:
+        raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
+
+    return "/".join(collection_parts)
