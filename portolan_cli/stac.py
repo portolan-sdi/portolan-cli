@@ -564,12 +564,18 @@ def _is_placeholder_extent(bbox: list[float]) -> bool:
     Issue #447: Placeholder extents like [-180, -90, 180, 90] should be
     replaced with actual data extent, not expanded.
     """
+    from portolan_cli.bbox import to_2d_bbox
+
+    # Reduce to 2D so a 6-element placeholder ([−180,−90,z,180,90,z]) is still
+    # recognized; east/north live at indices 3/4 there, not 2/3 (issue #592).
+    west, south, east, north = to_2d_bbox(bbox)
+
     # Allow small tolerance for floating point comparison
     return (
-        abs(bbox[0] - (-180)) < 0.001
-        and abs(bbox[1] - (-90)) < 0.001
-        and abs(bbox[2] - 180) < 0.001
-        and abs(bbox[3] - 90) < 0.001
+        abs(west - (-180)) < 0.001
+        and abs(south - (-90)) < 0.001
+        and abs(east - 180) < 0.001
+        and abs(north - 90) < 0.001
     )
 
 
@@ -607,19 +613,23 @@ def _update_collection_extent_from_bbox(
         )
         return
 
-    current_bbox = collection.extent.spatial.bboxes[0]
+    from portolan_cli.bbox import to_2d_bbox
+
+    current_bbox = to_2d_bbox(collection.extent.spatial.bboxes[0])
+    incoming = to_2d_bbox(list(bbox))
 
     # If current extent is placeholder, replace entirely with actual data
     if _is_placeholder_extent(current_bbox):
-        collection.extent.spatial = pystac.SpatialExtent(bboxes=[list(bbox)])
+        collection.extent.spatial = pystac.SpatialExtent(bboxes=[incoming])
         return
 
-    # Otherwise expand to include new bbox
+    # Otherwise expand to include new bbox. Reduce both to 2D first so a
+    # 6-element bbox's min_z can't be mistaken for the easting (issue #592).
     new_bbox = [
-        min(current_bbox[0], bbox[0]),  # min_x
-        min(current_bbox[1], bbox[1]),  # min_y
-        max(current_bbox[2], bbox[2]),  # max_x
-        max(current_bbox[3], bbox[3]),  # max_y
+        min(current_bbox[0], incoming[0]),  # min_x
+        min(current_bbox[1], incoming[1]),  # min_y
+        max(current_bbox[2], incoming[2]),  # max_x
+        max(current_bbox[3], incoming[3]),  # max_y
     ]
 
     collection.extent.spatial = pystac.SpatialExtent(bboxes=[new_bbox])
@@ -660,19 +670,23 @@ def _update_collection_extent(
         )
         return
 
-    current_bbox = collection.extent.spatial.bboxes[0]
+    from portolan_cli.bbox import to_2d_bbox
+
+    current_bbox = to_2d_bbox(collection.extent.spatial.bboxes[0])
+    item_bbox = to_2d_bbox(list(item.bbox))
 
     # If current extent is placeholder, replace entirely with actual data
     if _is_placeholder_extent(current_bbox):
-        collection.extent.spatial = pystac.SpatialExtent(bboxes=[list(item.bbox)])
+        collection.extent.spatial = pystac.SpatialExtent(bboxes=[item_bbox])
         return
 
-    # Otherwise expand to include item bbox
+    # Otherwise expand to include item bbox. Reduce both to 2D first so a
+    # 6-element bbox's min_z can't be mistaken for the easting (issue #592).
     new_bbox = [
-        min(current_bbox[0], item.bbox[0]),  # min_x
-        min(current_bbox[1], item.bbox[1]),  # min_y
-        max(current_bbox[2], item.bbox[2]),  # max_x
-        max(current_bbox[3], item.bbox[3]),  # max_y
+        min(current_bbox[0], item_bbox[0]),  # min_x
+        min(current_bbox[1], item_bbox[1]),  # min_y
+        max(current_bbox[2], item_bbox[2]),  # max_x
+        max(current_bbox[3], item_bbox[3]),  # max_y
     ]
 
     collection.extent.spatial = pystac.SpatialExtent(bboxes=[new_bbox])

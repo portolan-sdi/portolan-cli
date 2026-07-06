@@ -32,6 +32,13 @@ from typing import Any
 
 from portolan_cli.errors import PortolanError
 from portolan_cli.output import warn
+
+# The PMTiles constants and pure asset/link classifiers now live in the
+# framework-free leaf pmtiles_links.py so validation/ can reach them without
+# importing this module (which pulls in output/thumbnail/style). Re-imported
+# here — both constants are used below — so pmtiles.py's public API is unchanged
+# for existing callers/tests (see pmtiles_links.py, issue #563).
+from portolan_cli.pmtiles_links import PMTILES_MEDIA_TYPE, WEB_MAP_LINKS_EXTENSION
 from portolan_cli.thumbnail import (
     generate_vector_thumbnail,
     get_thumbnail_config,
@@ -39,14 +46,6 @@ from portolan_cli.thumbnail import (
 )
 
 logger = logging.getLogger(__name__)
-
-# MIME type for PMTiles (matches add.py)
-PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
-
-# web-map-links STAC extension declared for the rel="pmtiles" collection link
-# (Issue #569). v1.3.0 defines the pmtiles rel, the application/vnd.pmtiles media
-# type, and the pmtiles:layers field for default-visible vector layers.
-WEB_MAP_LINKS_EXTENSION = "https://stac-extensions.github.io/web-map-links/v1.3.0/schema.json"
 
 
 # --- Errors ---
@@ -422,34 +421,6 @@ def add_pmtiles_asset_to_collection(
     data["assets"] = assets
 
     collection_json_path.write_text(json.dumps(data, indent=2))
-
-
-def pmtiles_asset_hrefs(assets: dict[str, Any]) -> list[str]:
-    """Return the hrefs of all PMTiles assets in a collection's asset dict.
-
-    An asset is a PMTiles asset when its ``type`` is ``application/vnd.pmtiles``
-    or its ``href`` ends in ``.pmtiles``. Shared by the RULE-0061 check and its
-    ``--fix`` repair so both classify assets identically.
-    """
-    return [
-        str(asset["href"])
-        for asset in assets.values()
-        if isinstance(asset, dict)
-        and (
-            asset.get("type") == PMTILES_MEDIA_TYPE
-            or str(asset.get("href", "")).endswith(".pmtiles")
-        )
-        and asset.get("href")
-    ]
-
-
-def pmtiles_link_hrefs(links: list[Any]) -> set[str]:
-    """Return the hrefs of all ``rel='pmtiles'`` links in a collection's links list."""
-    return {
-        str(link["href"])
-        for link in links
-        if isinstance(link, dict) and link.get("rel") == "pmtiles" and link.get("href")
-    }
 
 
 def ensure_web_map_links_extension(collection_path: Path) -> bool:

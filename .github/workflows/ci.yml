@@ -60,6 +60,9 @@ jobs:
       - name: Type check
         run: uv run mypy portolan_cli
 
+      - name: Architecture rules (import-linter)
+        run: uv run lint-imports
+
       - name: Spell check
         run: uv run codespell --skip "*.parquet,*.tif,.git,*.lock" portolan_cli tests docs
 

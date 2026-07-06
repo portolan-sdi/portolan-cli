@@ -296,9 +296,11 @@ def repair_pmtiles_links(catalog_root: Path, *, dry_run: bool = False) -> list[F
 def _repair_pmtiles_collection(collection_json: Path, *, dry_run: bool) -> FixResult | None:
     """Backfill PMTiles links / extension for one collection (see repair_pmtiles_links)."""
     from portolan_cli.pmtiles import (
-        WEB_MAP_LINKS_EXTENSION,
         add_pmtiles_link_to_collection,
         ensure_web_map_links_extension,
+    )
+    from portolan_cli.pmtiles_links import (
+        WEB_MAP_LINKS_EXTENSION,
         pmtiles_asset_hrefs,
         pmtiles_link_hrefs,
     )

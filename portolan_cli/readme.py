@@ -181,9 +181,15 @@ def _add_spatial_section(sections: list[str], stac: dict[str, Any]) -> None:
     if len(bbox) < 4:
         return
 
+    from portolan_cli.bbox import to_2d_bbox
+
+    # Reduce to 2D so a 6-element extent shows [west, south, east, north], not
+    # its [west, south, min_z, east] slice (issue #592).
+    west, south, east, north = to_2d_bbox(bbox)
+
     sections.append("## Spatial Coverage")
     sections.append("")
-    sections.append(f"- **Bounding Box**: [{bbox[0]}, {bbox[1]}, {bbox[2]}, {bbox[3]}]")
+    sections.append(f"- **Bounding Box**: [{west}, {south}, {east}, {north}]")
 
     # Add CRS if available
     proj_code = stac.get("summaries", {}).get("proj:code")
@@ -890,11 +896,15 @@ def _add_aggregated_extent_section(
     sections.append("")
 
     if bbox:
+        from portolan_cli.bbox import to_2d_bbox
+
+        # Reduce to 2D so east/north are read from the correct indices for a
+        # 6-element bbox (issue #592).
+        west, south, east, north = to_2d_bbox(bbox)
         sections.append("**Spatial Extent**")
         sections.append("")
         sections.append(
-            f"- West: {bbox[0]:.4f}, South: {bbox[1]:.4f}, "
-            f"East: {bbox[2]:.4f}, North: {bbox[3]:.4f}"
+            f"- West: {west:.4f}, South: {south:.4f}, East: {east:.4f}, North: {north:.4f}"
         )
         sections.append("")
 

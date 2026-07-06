@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,29 @@ class BboxUnionResult:
 
     skipped: list[tuple[list[float], str]] = field(default_factory=list)
     """Bboxes that were skipped due to validation failures."""
+
+
+def to_2d_bbox(bbox: Sequence[float]) -> list[float]:
+    """Reduce a STAC bbox to its 2D ``[west, south, east, north]`` components.
+
+    STAC allows a 6-element 3D bbox ordered
+    ``[west, south, min_z, east, north, max_z]``. The correct 2D reduction keeps
+    indices ``[0, 1, 3, 4]``. A naive ``bbox[:4]`` slice wrongly keeps ``min_z``
+    (index 2) as the easting and drops ``north`` (index 4), silently producing a
+    bogus extent (issue #592). Use this helper anywhere a possibly-3D STAC bbox
+    is reduced to 2D for containment, union, validation, or geometry.
+
+    Args:
+        bbox: A 4-element 2D bbox or a 6-element 3D bbox.
+
+    Returns:
+        A new 2-D ``[west, south, east, north]`` list. Inputs that are neither 4
+        nor 6 elements are passed through as ``list(bbox[:4])`` (their validity
+        is the caller's concern; see :func:`is_valid_bbox`).
+    """
+    if len(bbox) == 6:
+        return [bbox[0], bbox[1], bbox[3], bbox[4]]
+    return list(bbox[:4])
 
 
 def is_finite_bbox(bbox: list[float]) -> bool:
@@ -108,7 +132,9 @@ def is_valid_bbox(bbox: list[float], *, wgs84_only: bool = True) -> bool:
     if not wgs84_only:
         return True
 
-    west, south, east, north = bbox[0], bbox[1], bbox[2], bbox[3]
+    # Reduce to 2D so the range checks read east/north from the correct indices
+    # for both 4- and 6-element bboxes (issue #592).
+    west, south, east, north = to_2d_bbox(bbox)
 
     # Check longitude range (WGS84 only)
     if not (LON_MIN <= west <= LON_MAX and LON_MIN <= east <= LON_MAX):
@@ -139,7 +165,10 @@ def get_bbox_validation_reason(bbox: list[float], *, wgs84_only: bool = True) ->
     if len(bbox) not in (4, 6):
         return f"wrong element count: {len(bbox)} (expected 4 or 6)"
 
-    west, south, east, north = bbox[0], bbox[1], bbox[2], bbox[3]
+    # Reduce to 2D so east/north come from the correct indices for both 4- and
+    # 6-element bboxes; the elevation coordinates are validated separately below
+    # (issue #592, issue #516).
+    west, south, east, north = to_2d_bbox(bbox)
 
     # Check for non-finite values (universal for all CRS)
     for name, val in [("west", west), ("south", south), ("east", east), ("north", north)]:
@@ -194,7 +223,8 @@ def is_antimeridian_crossing(bbox: list[float]) -> bool:
     """
     if len(bbox) < 4:
         return False
-    west, east = bbox[0], bbox[2]
+    reduced = to_2d_bbox(bbox)
+    west, east = reduced[0], reduced[2]
     return west > east
 
 
@@ -212,9 +242,9 @@ def normalize_antimeridian_bbox(bbox: list[float]) -> list[list[float]]:
         two-element list if crossing antimeridian.
     """
     if not is_antimeridian_crossing(bbox):
-        return [bbox]
+        return [to_2d_bbox(bbox)]
 
-    west, south, east, north = bbox[0], bbox[1], bbox[2], bbox[3]
+    west, south, east, north = to_2d_bbox(bbox)
 
     # Split into western and eastern parts
     western_part = [west, south, LON_MAX, north]  # West to 180°
@@ -283,9 +313,14 @@ def compute_bbox_union(
     if not validation.valid:
         return BboxUnionResult(bbox=None, skipped=validation.invalid)
 
+    # Reduce every valid bbox to 2D before any geometric union math so 6-element
+    # 3D bboxes union on [west, south, east, north], never the min_z slice
+    # (issue #592). Validation above already checked their elevation coordinates.
+    valid_2d = [to_2d_bbox(b) for b in validation.valid]
+
     # Separate crossing and non-crossing bboxes
-    crossing = [b for b in validation.valid if is_antimeridian_crossing(b)]
-    normal = [b for b in validation.valid if not is_antimeridian_crossing(b)]
+    crossing = [b for b in valid_2d if is_antimeridian_crossing(b)]
+    normal = [b for b in valid_2d if not is_antimeridian_crossing(b)]
 
     # If no crossing bboxes, simple union
     if not crossing:
@@ -385,9 +420,13 @@ def _compute_simple_union(bboxes: list[list[float]]) -> list[float] | None:
     if not bboxes:
         return None
 
-    west = min(b[0] for b in bboxes)
-    south = min(b[1] for b in bboxes)
-    east = max(b[2] for b in bboxes)
-    north = max(b[3] for b in bboxes)
+    # Reduce defensively so a stray 6-element bbox cannot poison the union with
+    # its min_z as the easting (issue #592).
+    reduced = [to_2d_bbox(b) for b in bboxes]
+
+    west = min(b[0] for b in reduced)
+    south = min(b[1] for b in reduced)
+    east = max(b[2] for b in reduced)
+    north = max(b[3] for b in reduced)
 
     return [west, south, east, north]
