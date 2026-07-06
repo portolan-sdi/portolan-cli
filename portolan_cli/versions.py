@@ -471,12 +471,20 @@ def _increment_version(version: str) -> str:
     parts = version.split(".")
     if len(parts) >= 3 and parts[-1].isdigit():
         parts[-1] = str(int(parts[-1]) + 1)
-    elif len(parts) < 3:
+        return ".".join(parts)
+    if len(parts) < 3:
         # Pad to 3 parts if needed
         while len(parts) < 3:
             parts.append("0")
         parts[-1] = "1"
-    return ".".join(parts)
+        return ".".join(parts)
+
+    # Three-plus parts but the last segment is not purely numeric
+    # (e.g. "1.2.3rc1", "1.2.foo"). A plain join here would return the input
+    # unchanged - a silent no-op that breaks version bumps. Normalize through
+    # parse_version and bump the patch so the result always differs.
+    major, minor, patch = parse_version(version)
+    return f"{major}.{minor}.{patch + 1}"
 
 
 def _compute_changes(versions_file: VersionsFile, new_assets: dict[str, Asset]) -> list[str]:

@@ -207,12 +207,22 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
     if not versions_file.versions:
         return
 
-    # Check if the file is tracked under any key
+    # Check if the file is tracked under any key. Collection-level assets are
+    # keyed by bare filename; item-level assets are keyed "{item_id}/{filename}"
+    # (see .claude/rules/stac-assets.md and _batch_update_versions). The item_id
+    # for a removed file follows the same stem convention used for its item dir.
     current = versions_file.versions[-1]
     filename = file_path.name
     parquet_name = f"{file_path.stem}.parquet"
+    item_id = file_path.stem
+    candidate_keys = {
+        filename,
+        parquet_name,
+        f"{item_id}/{filename}",
+        f"{item_id}/{parquet_name}",
+    }
 
-    removed_keys = {name for name in current.assets if name == filename or name == parquet_name}
+    removed_keys = {name for name in current.assets if name in candidate_keys}
 
     if not removed_keys:
         # File wasn't tracked, nothing to do

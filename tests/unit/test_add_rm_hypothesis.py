@@ -515,6 +515,22 @@ class TestIncrementVersionProperties:
         assert _increment_version("1") == "1.0.1"
         assert _increment_version("1.0") == "1.0.1"
 
+    @pytest.mark.unit
+    def test_increment_nonnumeric_last_part_is_not_noop(self) -> None:
+        """Versions whose last dot-part is non-numeric still bump (no silent no-op).
+
+        Regression: "1.2.3rc1" has three parts but "3rc1" is not a digit and the
+        length is not < 3, so the old fallback returned the input unchanged - a
+        no-op that stalls version bumps. The result must differ from the input.
+        """
+        from portolan_cli.add import _increment_version
+
+        for version in ("1.2.3rc1", "1.2.foo", "2.5.9beta"):
+            result = _increment_version(version)
+            assert result != version, f"{version} was not incremented"
+            # parse_version normalizes the malformed tail, then patch is bumped.
+            assert result == "0.0.1"
+
 
 # =============================================================================
 # Property: Constants module exports correct values

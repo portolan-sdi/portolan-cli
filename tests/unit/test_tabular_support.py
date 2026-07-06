@@ -1226,13 +1226,10 @@ class TestGetSiblingCollectionBboxes:
 
         result = _get_sibling_collection_bboxes(tmp_path)
         assert len(result) == 1
-        # Should extract only 2D bbox (first 4 elements)
-        assert result[0] == [
-            -75.0,
-            39.0,
-            0.0,
-            -74.0,
-        ]  # Note: 0.0 is min_z, becomes "east" in 2D slice
+        # 3D bbox [west, south, min_z, east, north, max_z] collapses to 2D
+        # [west, south, east, north] by selecting indices 0, 1, 3, 4 - min_z
+        # (0.0) and max_z (100.0) are dropped, not sliced into the east slot.
+        assert result[0] == [-75.0, 39.0, -74.0, 40.0]
 
 
 @pytest.mark.unit
@@ -1285,8 +1282,9 @@ extent:
         (tmp_path / "metadata.yaml").write_text("bbox: [-75.0, 39.0, 0.0, -74.0, 40.0, 100.0]\n")
 
         result = _get_metadata_yaml_bbox(tmp_path)
-        # Should extract only first 4 elements
-        assert result == [-75.0, 39.0, 0.0, -74.0]
+        # 3D bbox collapses to 2D [west, south, east, north] via indices 0,1,3,4;
+        # min_z (0.0) and max_z (100.0) are dropped.
+        assert result == [-75.0, 39.0, -74.0, 40.0]
 
     def test_metadata_yaml_with_invalid_bbox_returns_none(self, tmp_path: Path) -> None:
         """metadata.yaml with invalid bbox should return None."""
