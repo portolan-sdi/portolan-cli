@@ -18,12 +18,12 @@ from pathlib import Path
 import pystac
 import pytest
 
-from portolan_cli.catalog import init_catalog
-from portolan_cli.dataset import (
+from portolan_cli.add import (
     _scan_item_assets,
-    add_dataset,
+    add,
     is_current,
 )
+from portolan_cli.catalog import init_catalog
 from portolan_cli.versions import read_versions
 
 
@@ -118,14 +118,14 @@ class TestAssetPathResolution:
         )
 
     @pytest.mark.unit
-    def test_add_dataset_creates_valid_asset_paths(
+    def test_add_creates_valid_asset_paths(
         self, catalog_with_nested_item: tuple[Path, Path, str]
     ) -> None:
-        """After add_dataset, asset hrefs should resolve to actual files."""
+        """After add, asset hrefs should resolve to actual files."""
         catalog_root, data_file, collection_id = catalog_with_nested_item
 
-        # Act: add the dataset
-        result = add_dataset(
+        # Act: add the item
+        result = add(
             path=data_file,
             catalog_root=catalog_root,
             collection_id=collection_id,
@@ -157,8 +157,8 @@ class TestIsCurrentKeyLookup:
         """is_current should find assets stored with {item_id}/{filename} keys."""
         catalog_root, data_file, collection_id = catalog_with_nested_item
 
-        # Act: add the dataset (creates versions.json with item-scoped keys)
-        result = add_dataset(
+        # Act: add the item (creates versions.json with item-scoped keys)
+        result = add(
             path=data_file,
             catalog_root=catalog_root,
             collection_id=collection_id,
@@ -207,7 +207,7 @@ class TestIsCurrentKeyLookup:
         shutil.copy(valid_parquet, file2)
 
         # Act: add first file (should capture both as assets)
-        add_dataset(path=file1, catalog_root=catalog_root, collection_id=collection_id)
+        add(path=file1, catalog_root=catalog_root, collection_id=collection_id)
 
         versions_path = catalog_root / collection_id / "versions.json"
 
@@ -228,8 +228,8 @@ class TestCollectionRootLinks:
         """Collection's root link should point to catalog.json, not itself."""
         catalog_root, data_file, collection_id = catalog_with_nested_item
 
-        # Act: add dataset to create collection
-        add_dataset(
+        # Act: add item to create collection
+        add(
             path=data_file,
             catalog_root=catalog_root,
             collection_id=collection_id,
@@ -265,8 +265,8 @@ class TestCollectionRootLinks:
         """Collection should have a parent link to the catalog."""
         catalog_root, data_file, collection_id = catalog_with_nested_item
 
-        # Act: add dataset to create collection
-        add_dataset(
+        # Act: add item to create collection
+        add(
             path=data_file,
             catalog_root=catalog_root,
             collection_id=collection_id,
@@ -304,8 +304,8 @@ class TestCollectionRootLinks:
         shutil.copy(valid_parquet, file2)
 
         # Act: add both files
-        add_dataset(path=file1, catalog_root=catalog_root, collection_id=collection_id)
-        add_dataset(path=file2, catalog_root=catalog_root, collection_id=collection_id)
+        add(path=file1, catalog_root=catalog_root, collection_id=collection_id)
+        add(path=file2, catalog_root=catalog_root, collection_id=collection_id)
 
         # Load collection
         collection_path = catalog_root / collection_id / "collection.json"

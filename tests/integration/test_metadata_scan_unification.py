@@ -87,7 +87,7 @@ def _write_item_json(
 ) -> None:
     """Write a minimal valid item.json at hierarchical location.
 
-    Convention matches `_create_and_save_item` in dataset.py:
+    Convention matches `_create_and_save_item` in add.py:
     {item_dir}/{item_id}.json with assets resolved relative to item_dir.
     """
     data = {

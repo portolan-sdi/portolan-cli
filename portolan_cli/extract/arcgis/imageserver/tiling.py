@@ -2,7 +2,7 @@
 
 This module computes a grid of tiles covering a service extent. Each tile
 represents a portion of the raster that will be requested independently,
-enabling efficient parallel downloads and handling of large datasets.
+enabling efficient parallel downloads and handling of large data.
 
 Tile grid math:
 - Tile width (map units) = tile_size * pixel_size_x

@@ -17,14 +17,14 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.catalog import find_catalog_root
-from portolan_cli.dataset import (
+from portolan_cli.add import (
     GEOSPATIAL_EXTENSIONS,
-    SIDECAR_PATTERNS,
     get_sidecars,
     iter_geospatial_files,
     resolve_collection_id,
 )
+from portolan_cli.catalog import find_catalog_root
+from portolan_cli.constants import SIDECAR_PATTERNS
 
 # =============================================================================
 # Custom Strategies
@@ -470,7 +470,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_standard_semver(self) -> None:
         """_increment_version increments standard semver correctly."""
-        from portolan_cli.dataset import _increment_version
+        from portolan_cli.add import _increment_version
 
         assert _increment_version("1.2.3") == "1.2.4"
         assert _increment_version("0.0.1") == "0.0.2"
@@ -479,7 +479,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_prerelease_semver(self) -> None:
         """_increment_version handles pre-release versions."""
-        from portolan_cli.dataset import _increment_version
+        from portolan_cli.add import _increment_version
 
         # Pre-release with number suffix
         assert _increment_version("1.0.0-beta.1") == "1.0.0-beta.2"
@@ -489,7 +489,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_prerelease_no_number(self) -> None:
         """_increment_version handles pre-release without number."""
-        from portolan_cli.dataset import _increment_version
+        from portolan_cli.add import _increment_version
 
         # Pre-release without number suffix appends .1 (preserves prerelease tag)
         result = _increment_version("1.0.0-beta")
@@ -502,7 +502,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_empty_version(self) -> None:
         """_increment_version handles empty version."""
-        from portolan_cli.dataset import _increment_version
+        from portolan_cli.add import _increment_version
 
         assert _increment_version("") == "0.0.1"
         assert _increment_version(None) == "0.0.1"  # type: ignore[arg-type]
@@ -510,10 +510,26 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_short_version(self) -> None:
         """_increment_version handles short version strings."""
-        from portolan_cli.dataset import _increment_version
+        from portolan_cli.add import _increment_version
 
         assert _increment_version("1") == "1.0.1"
         assert _increment_version("1.0") == "1.0.1"
+
+    @pytest.mark.unit
+    def test_increment_nonnumeric_last_part_is_not_noop(self) -> None:
+        """Versions whose last dot-part is non-numeric still bump (no silent no-op).
+
+        Regression: "1.2.3rc1" has three parts but "3rc1" is not a digit and the
+        length is not < 3, so the old fallback returned the input unchanged - a
+        no-op that stalls version bumps. The result must differ from the input.
+        """
+        from portolan_cli.add import _increment_version
+
+        for version in ("1.2.3rc1", "1.2.foo", "2.5.9beta"):
+            result = _increment_version(version)
+            assert result != version, f"{version} was not incremented"
+            # parse_version normalizes the malformed tail, then patch is bumped.
+            assert result == "0.0.1"
 
 
 # =============================================================================
@@ -577,7 +593,7 @@ class TestResolveCollectionIdEdgeCases:
     @pytest.mark.unit
     def test_resolve_raises_for_path_outside_catalog(self, tmp_path: Path) -> None:
         """resolve_collection_id raises ValueError for paths outside catalog."""
-        from portolan_cli.dataset import resolve_collection_id
+        from portolan_cli.add import resolve_collection_id
 
         catalog = tmp_path / "catalog"
         catalog.mkdir()
@@ -590,7 +606,7 @@ class TestResolveCollectionIdEdgeCases:
     @pytest.mark.unit
     def test_resolve_raises_for_file_at_root(self, tmp_path: Path) -> None:
         """resolve_collection_id raises ValueError for file directly at root."""
-        from portolan_cli.dataset import resolve_collection_id
+        from portolan_cli.add import resolve_collection_id
 
         catalog = tmp_path / "catalog"
         catalog.mkdir()
@@ -607,7 +623,7 @@ class TestIsCurrentEdgeCases:
     @pytest.mark.unit
     def test_is_current_returns_false_no_versions_file(self, tmp_path: Path) -> None:
         """is_current returns False when versions.json doesn't exist."""
-        from portolan_cli.dataset import is_current
+        from portolan_cli.add import is_current
 
         test_file = tmp_path / "test.parquet"
         test_file.write_bytes(b"data")
@@ -618,7 +634,7 @@ class TestIsCurrentEdgeCases:
     @pytest.mark.unit
     def test_is_current_returns_false_empty_versions(self, tmp_path: Path) -> None:
         """is_current returns False when versions list is empty."""
-        from portolan_cli.dataset import is_current
+        from portolan_cli.add import is_current
 
         test_file = tmp_path / "test.parquet"
         test_file.write_bytes(b"data")
@@ -634,7 +650,7 @@ class TestIsCurrentEdgeCases:
         """is_current returns False when asset not in versions."""
         import json
 
-        from portolan_cli.dataset import is_current
+        from portolan_cli.add import is_current
 
         test_file = tmp_path / "new_file.parquet"
         test_file.write_bytes(b"data")
@@ -671,7 +687,7 @@ class TestIsCurrentEdgeCases:
         """is_current returns True when mtime matches (fast path)."""
         import json
 
-        from portolan_cli.dataset import is_current
+        from portolan_cli.add import is_current
 
         test_file = tmp_path / "test.parquet"
         test_file.write_bytes(b"data")
@@ -712,7 +728,7 @@ class TestIsCurrentEdgeCases:
         """is_current returns False when size differs (skips expensive sha256)."""
         import json
 
-        from portolan_cli.dataset import is_current
+        from portolan_cli.add import is_current
 
         test_file = tmp_path / "test.parquet"
         test_file.write_bytes(b"data" * 100)  # 400 bytes
@@ -752,7 +768,7 @@ class TestIsCurrentEdgeCases:
         """is_current falls back to sha256 when mtime differs but size matches."""
         import json
 
-        from portolan_cli.dataset import compute_checksum, is_current
+        from portolan_cli.add import compute_checksum, is_current
 
         test_file = tmp_path / "test.parquet"
         content = b"exact content"
@@ -798,7 +814,7 @@ class TestAddFilesEdgeCases:
         """add_files resolves symlinks to track real files."""
         from unittest.mock import patch
 
-        from portolan_cli.dataset import add_files
+        from portolan_cli.add import add_files
 
         # Setup catalog
         catalog = tmp_path / "catalog"
@@ -814,15 +830,15 @@ class TestAddFilesEdgeCases:
         link = collection / "link.geojson"
         link.symlink_to(real_file)
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_prepare,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_prepare,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
-            from portolan_cli.dataset import PreparedDataset
+            from portolan_cli.add import PreparedItem
             from portolan_cli.formats import FormatType
 
-            mock_prepare.return_value = PreparedDataset(
+            mock_prepare.return_value = PreparedItem(
                 item_id="real",
                 collection_id="data",
                 format_type=FormatType.VECTOR,
@@ -837,7 +853,7 @@ class TestAddFilesEdgeCases:
                 catalog_root=catalog,
             )
 
-            # Should have called prepare_dataset with resolved path
+            # Should have called prepare_item with resolved path
             if mock_prepare.called:
                 call_path = mock_prepare.call_args.kwargs.get("path") or mock_prepare.call_args[
                     1
@@ -854,7 +870,7 @@ class TestAddFilesEdgeCases:
         """
         from unittest.mock import patch
 
-        from portolan_cli.dataset import add_files
+        from portolan_cli.add import add_files
 
         # Setup catalog
         catalog = tmp_path / "catalog"
@@ -867,8 +883,8 @@ class TestAddFilesEdgeCases:
         test_file = collection / "test.geojson"
         test_file.write_text("{}")
 
-        # Per Issue #281: add_files now calls prepare_dataset instead of add_dataset
-        with patch("portolan_cli.dataset.prepare_dataset") as mock_prepare:
+        # Per Issue #281: add_files now calls prepare_item instead of add
+        with patch("portolan_cli.add.prepare_item") as mock_prepare:
             mock_prepare.side_effect = ValueError("original error")
 
             # Per Issue #175: errors are now collected instead of raised
@@ -887,7 +903,7 @@ class TestRemoveFilesEdgeCases:
         """remove_files refuses to delete symlinks (security)."""
         import json
 
-        from portolan_cli.dataset import remove_files
+        from portolan_cli.add import remove_files
 
         # Setup catalog
         catalog = tmp_path / "catalog"
@@ -924,7 +940,7 @@ class TestRemoveFilesEdgeCases:
     @pytest.mark.unit
     def test_remove_files_skips_outside_catalog(self, tmp_path: Path) -> None:
         """remove_files skips files outside catalog."""
-        from portolan_cli.dataset import remove_files
+        from portolan_cli.add import remove_files
 
         # Setup catalog
         catalog = tmp_path / "catalog"
@@ -952,7 +968,7 @@ class TestRemoveFilesEdgeCases:
         """remove_files deletes sidecars when removing shapefile."""
         import json
 
-        from portolan_cli.dataset import remove_files
+        from portolan_cli.add import remove_files
 
         # Setup catalog
         catalog = tmp_path / "catalog"
@@ -1017,7 +1033,7 @@ class TestRemoveFromVersionsEdgeCases:
     @pytest.mark.unit
     def test_remove_from_versions_noop_no_file(self, tmp_path: Path) -> None:
         """_remove_from_versions is a no-op if versions.json doesn't exist."""
-        from portolan_cli.dataset import _remove_from_versions
+        from portolan_cli.remove import _remove_from_versions
 
         test_file = tmp_path / "test.parquet"
         versions_path = tmp_path / "versions.json"
@@ -1028,7 +1044,7 @@ class TestRemoveFromVersionsEdgeCases:
     @pytest.mark.unit
     def test_remove_from_versions_noop_empty_versions(self, tmp_path: Path) -> None:
         """_remove_from_versions is a no-op if versions list is empty."""
-        from portolan_cli.dataset import _remove_from_versions
+        from portolan_cli.remove import _remove_from_versions
 
         test_file = tmp_path / "test.parquet"
         versions_path = tmp_path / "versions.json"
@@ -1050,7 +1066,7 @@ class TestIterFilesWithSidecarsEdgeCases:
     @pytest.mark.unit
     def test_iter_returns_empty_for_non_directory(self, tmp_path: Path) -> None:
         """iter_files_with_sidecars returns empty list for non-directory."""
-        from portolan_cli.dataset import iter_files_with_sidecars
+        from portolan_cli.add import iter_files_with_sidecars
 
         test_file = tmp_path / "test.geojson"
         test_file.write_text("{}")
@@ -1061,7 +1077,7 @@ class TestIterFilesWithSidecarsEdgeCases:
     @pytest.mark.unit
     def test_iter_skips_non_geospatial_in_nested_dirs(self, tmp_path: Path) -> None:
         """iter_files_with_sidecars skips non-geospatial files in nested dirs."""
-        from portolan_cli.dataset import iter_files_with_sidecars
+        from portolan_cli.add import iter_files_with_sidecars
 
         # Create nested structure
         nested = tmp_path / "sub" / "deep"
@@ -1100,7 +1116,7 @@ class TestMultiAssetProperties:
     @settings(max_examples=5, deadline=30000)
     def test_media_type_is_deterministic(self, ext: str) -> None:
         """Same extension always produces the same MIME type."""
-        from portolan_cli.dataset import _get_media_type
+        from portolan_cli.add import _get_media_type
 
         path1 = Path(f"file1{ext}")
         path2 = Path(f"different_name{ext}")
@@ -1112,7 +1128,7 @@ class TestMultiAssetProperties:
     @settings(max_examples=15)
     def test_media_type_is_case_insensitive(self, ext: str) -> None:
         """Media type lookup is case-insensitive."""
-        from portolan_cli.dataset import _get_media_type
+        from portolan_cli.add import _get_media_type
 
         path = Path(f"test{ext}")
         lower_path = Path(f"test{ext.lower()}")
@@ -1124,7 +1140,7 @@ class TestMultiAssetProperties:
     @settings(max_examples=10)
     def test_data_formats_get_data_role(self, ext: str) -> None:
         """Data format extensions always get 'data' role."""
-        from portolan_cli.dataset import _get_asset_role
+        from portolan_cli.add import _get_asset_role
 
         path = Path(f"file{ext}")
         assert _get_asset_role(path) == "data"
@@ -1134,7 +1150,7 @@ class TestMultiAssetProperties:
     @settings(max_examples=10)
     def test_image_formats_get_thumbnail_role(self, ext: str) -> None:
         """Image format extensions always get 'thumbnail' role."""
-        from portolan_cli.dataset import _get_asset_role
+        from portolan_cli.add import _get_asset_role
 
         path = Path(f"image{ext}")
         assert _get_asset_role(path) == "thumbnail"
@@ -1144,7 +1160,7 @@ class TestMultiAssetProperties:
     @settings(max_examples=10)
     def test_doc_formats_get_documentation_role(self, ext: str) -> None:
         """Documentation format extensions always get 'documentation' role."""
-        from portolan_cli.dataset import _get_asset_role
+        from portolan_cli.add import _get_asset_role
 
         path = Path(f"doc{ext}")
         assert _get_asset_role(path) == "documentation"
@@ -1160,7 +1176,7 @@ class TestMultiAssetProperties:
     @settings(max_examples=30)
     def test_unknown_extensions_get_default_role(self, ext: str) -> None:
         """Unknown extensions get 'data' as default role."""
-        from portolan_cli.dataset import _ROLE_MAP, _get_asset_role
+        from portolan_cli.add import _ROLE_MAP, _get_asset_role
 
         # Skip if extension happens to be in the role map (very unlikely with .zz suffix)
         if ext.lower() in _ROLE_MAP:
@@ -1180,7 +1196,7 @@ class TestMultiAssetProperties:
     @settings(max_examples=30)
     def test_unknown_extensions_get_octet_stream(self, ext: str) -> None:
         """Unknown extensions get 'application/octet-stream' MIME type."""
-        from portolan_cli.dataset import _MEDIA_TYPE_MAP, _get_media_type
+        from portolan_cli.add import _MEDIA_TYPE_MAP, _get_media_type
 
         # Skip if extension happens to be in the map (very unlikely with .zz suffix)
         if ext.lower() in _MEDIA_TYPE_MAP:
@@ -1192,7 +1208,7 @@ class TestMultiAssetProperties:
     @pytest.mark.unit
     def test_ignored_files_are_stac_structural(self) -> None:
         """IGNORED_FILES contains only STAC structural files."""
-        from portolan_cli.dataset import IGNORED_FILES
+        from portolan_cli.add import IGNORED_FILES
 
         # These are the structural files that should never be assets
         expected = {"catalog.json", "collection.json", "versions.json"}
@@ -1213,7 +1229,7 @@ class TestMultiAssetProperties:
     @settings(max_examples=5, deadline=30000)
     def test_scan_item_assets_excludes_hidden_files(self, filenames: list[str]) -> None:
         """_scan_item_assets never includes hidden files."""
-        from portolan_cli.dataset import _scan_item_assets
+        from portolan_cli.add import _scan_item_assets
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             item_dir = Path(tmp_dir)
@@ -1244,7 +1260,7 @@ class TestMultiAssetProperties:
     @pytest.mark.unit
     def test_scan_item_assets_excludes_structural_files(self) -> None:
         """_scan_item_assets excludes STAC structural files."""
-        from portolan_cli.dataset import IGNORED_FILES, _scan_item_assets
+        from portolan_cli.add import IGNORED_FILES, _scan_item_assets
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             item_dir = Path(tmp_dir)
@@ -1362,7 +1378,7 @@ class TestCatalogRootAddProperties:
 # =============================================================================
 
 
-# Valid GeoJSON template for testing add_dataset()
+# Valid GeoJSON template for testing add()
 VALID_GEOJSON_TEMPLATE = {
     "type": "FeatureCollection",
     "features": [
@@ -1410,11 +1426,11 @@ class TestItemIdDerivationProperties:
     Issue #163: item_id should be derived from parent directory name, not filename.
     This enables the canonical structure: catalog_root/collection/item_id/files.
 
-    CRITICAL: These tests MUST call add_dataset() to verify actual behavior,
+    CRITICAL: These tests MUST call add() to verify actual behavior,
     not just test Python's Path operations (which would be tautological).
     """
 
-    @pytest.mark.integration  # Calls add_dataset() with real filesystem + geoparquet-io
+    @pytest.mark.integration  # Calls add() with real filesystem + geoparquet-io
     @given(
         collection=collection_name,
         item_id=collection_name,  # Reuse collection_name strategy (safe dir names)
@@ -1423,19 +1439,19 @@ class TestItemIdDerivationProperties:
     @settings(
         max_examples=5, deadline=30000
     )  # Reduced: integration tests with geoparquet-io are slow
-    def test_add_dataset_derives_item_id_from_parent_directory(
+    def test_add_derives_item_id_from_parent_directory(
         self, collection: str, item_id: str, filename: str
     ) -> None:
-        """add_dataset() should derive item_id from parent directory name, not filename.
+        """add() should derive item_id from parent directory name, not filename.
 
         This is the fundamental invariant from Issue #163: the directory structure
         determines item boundaries, not filenames.
 
-        NON-TAUTOLOGICAL: This test calls add_dataset() and verifies DatasetInfo.item_id.
+        NON-TAUTOLOGICAL: This test calls add() and verifies ItemInfo.item_id.
         """
         import json
 
-        from portolan_cli.dataset import add_dataset
+        from portolan_cli.add import add
 
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
@@ -1451,20 +1467,20 @@ class TestItemIdDerivationProperties:
             geo_file = item_dir / f"{filename}.geojson"
             geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
 
-            # Call add_dataset() - this is what we're actually testing
-            result = add_dataset(
+            # Call add() - this is what we're actually testing
+            result = add(
                 path=geo_file,
                 catalog_root=catalog_root,
                 collection_id=collection,
             )
 
-            # Verify add_dataset() derived item_id from parent directory name
+            # Verify add() derived item_id from parent directory name
             assert result.item_id == item_id, (
-                f"add_dataset() should derive item_id='{item_id}' from parent dir, "
+                f"add() should derive item_id='{item_id}' from parent dir, "
                 f"not '{result.item_id}' (filename stem: '{filename}')"
             )
 
-    @pytest.mark.integration  # Calls add_dataset() with real filesystem + geoparquet-io
+    @pytest.mark.integration  # Calls add() with real filesystem + geoparquet-io
     @given(
         collection=collection_name,
         item_id=collection_name,
@@ -1472,19 +1488,19 @@ class TestItemIdDerivationProperties:
         filename2=safe_filename,
     )
     @settings(max_examples=5, deadline=60000)  # Reduced: creates 2 files per iteration
-    def test_add_dataset_multiple_files_same_item_id(
+    def test_add_multiple_files_same_item_id(
         self, collection: str, item_id: str, filename1: str, filename2: str
     ) -> None:
-        """Multiple calls to add_dataset() for files in same directory return same item_id.
+        """Multiple calls to add() for files in same directory return same item_id.
 
         Issue #163: Files in the same item directory are assets of ONE item,
         not separate items with different item_ids.
 
-        NON-TAUTOLOGICAL: This test calls add_dataset() twice and compares results.
+        NON-TAUTOLOGICAL: This test calls add() twice and compares results.
         """
         import json
 
-        from portolan_cli.dataset import add_dataset
+        from portolan_cli.add import add
 
         # Ensure distinct filenames
         if filename1 == filename2:
@@ -1505,13 +1521,13 @@ class TestItemIdDerivationProperties:
             file1.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
             file2.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
 
-            # Call add_dataset() for both files
-            result1 = add_dataset(
+            # Call add() for both files
+            result1 = add(
                 path=file1,
                 catalog_root=catalog_root,
                 collection_id=collection,
             )
-            result2 = add_dataset(
+            result2 = add(
                 path=file2,
                 catalog_root=catalog_root,
                 collection_id=collection,
@@ -1547,26 +1563,24 @@ class TestPreValidationAtomicityProperties:
     Issue #163: Failed add operations should not create partial artifacts.
     Pre-validation should check for valid geometry BEFORE any filesystem operations.
 
-    CRITICAL: These tests MUST call add_dataset() to verify actual atomicity,
+    CRITICAL: These tests MUST call add() to verify actual atomicity,
     not just _pre_validate_geometry() in isolation.
     """
 
-    @pytest.mark.integration  # Calls add_dataset() - requires full catalog setup
+    @pytest.mark.integration  # Calls add() - requires full catalog setup
     @given(collection=collection_name, item_id=collection_name)
     @settings(max_examples=5, deadline=30000)
-    def test_add_dataset_invalid_geojson_no_stac_artifacts(
-        self, collection: str, item_id: str
-    ) -> None:
-        """add_dataset() failure should not create STAC collection/item/versions.json.
+    def test_add_invalid_geojson_no_stac_artifacts(self, collection: str, item_id: str) -> None:
+        """add() failure should not create STAC collection/item/versions.json.
 
-        Issue #163: When add_dataset fails due to missing geometry, no STAC artifacts
+        Issue #163: When add fails due to missing geometry, no STAC artifacts
         (collection.json, item.json, versions.json) should be created.
 
-        NON-TAUTOLOGICAL: This test calls add_dataset() and checks for artifacts.
+        NON-TAUTOLOGICAL: This test calls add() and checks for artifacts.
         """
         import json
 
-        from portolan_cli.dataset import add_dataset
+        from portolan_cli.add import add
 
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
@@ -1580,12 +1594,12 @@ class TestPreValidationAtomicityProperties:
             invalid_geojson = item_dir / "data.geojson"
             invalid_geojson.write_text(json.dumps(INVALID_GEOJSON_NO_GEOMETRY))
 
-            # Record file state before add_dataset attempt
+            # Record file state before add attempt
             files_before = set(catalog_root.rglob("*"))
 
-            # add_dataset should fail due to missing geometry
+            # add should fail due to missing geometry
             try:
-                add_dataset(
+                add(
                     path=invalid_geojson,
                     catalog_root=catalog_root,
                     collection_id=collection,
@@ -1600,23 +1614,21 @@ class TestPreValidationAtomicityProperties:
 
             stac_artifacts = [f for f in new_files if f.suffix == ".json"]
             assert not stac_artifacts, (
-                f"add_dataset() failure should not create STAC artifacts. "
+                f"add() failure should not create STAC artifacts. "
                 f"Created: {[str(f.relative_to(catalog_root)) for f in stac_artifacts]}"
             )
 
-    @pytest.mark.integration  # Calls add_dataset() - requires full catalog setup
+    @pytest.mark.integration  # Calls add() - requires full catalog setup
     @given(collection=collection_name, item_id=collection_name)
     @settings(max_examples=5, deadline=30000)
-    def test_add_dataset_empty_features_no_stac_artifacts(
-        self, collection: str, item_id: str
-    ) -> None:
-        """add_dataset() with empty features array should fail without creating artifacts.
+    def test_add_empty_features_no_stac_artifacts(self, collection: str, item_id: str) -> None:
+        """add() with empty features array should fail without creating artifacts.
 
-        NON-TAUTOLOGICAL: This test calls add_dataset() and verifies atomicity.
+        NON-TAUTOLOGICAL: This test calls add() and verifies atomicity.
         """
         import json
 
-        from portolan_cli.dataset import add_dataset
+        from portolan_cli.add import add
 
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
@@ -1633,9 +1645,9 @@ class TestPreValidationAtomicityProperties:
             # Record file state
             files_before = set(catalog_root.rglob("*"))
 
-            # add_dataset should fail
+            # add should fail
             try:
-                add_dataset(
+                add(
                     path=empty_geojson,
                     catalog_root=catalog_root,
                     collection_id=collection,
@@ -1661,7 +1673,7 @@ class TestPreValidationAtomicityProperties:
         """
         import json
 
-        from portolan_cli.dataset import _pre_validate_geometry
+        from portolan_cli.add import _pre_validate_geometry
         from portolan_cli.formats import FormatType
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1718,17 +1730,15 @@ class TestItemIdOverrideProperties:
         custom_item_id=collection_name,
     )
     @settings(max_examples=5, deadline=30000)
-    def test_add_dataset_respects_item_id_override(
-        self, collection: str, custom_item_id: str
-    ) -> None:
-        """add_dataset() should use the provided item_id instead of deriving it.
+    def test_add_respects_item_id_override(self, collection: str, custom_item_id: str) -> None:
+        """add() should use the provided item_id instead of deriving it.
 
         Issue #136: When item_id is explicitly provided, it should override
         the automatic derivation from parent directory name.
         """
         import json
 
-        from portolan_cli.dataset import add_dataset
+        from portolan_cli.add import add
 
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
@@ -1742,7 +1752,7 @@ class TestItemIdOverrideProperties:
             geo_file = item_dir / "data.geojson"
             geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
 
-            result = add_dataset(
+            result = add(
                 path=geo_file,
                 catalog_root=catalog_root,
                 collection_id=collection,
@@ -1751,21 +1761,21 @@ class TestItemIdOverrideProperties:
 
             # Item ID should be the custom one, not "auto-derived-dir"
             assert result.item_id == custom_item_id, (
-                f"add_dataset() should use provided item_id='{custom_item_id}', "
+                f"add() should use provided item_id='{custom_item_id}', "
                 f"not auto-derived '{result.item_id}'"
             )
 
     @pytest.mark.unit
     @given(invalid_id=invalid_item_id_with_slash)
     @settings(max_examples=10)
-    def test_add_dataset_rejects_item_id_with_slash(self, invalid_id: str) -> None:
-        """add_dataset() should reject item_ids containing forward slashes.
+    def test_add_rejects_item_id_with_slash(self, invalid_id: str) -> None:
+        """add() should reject item_ids containing forward slashes.
 
         Issue #136: item_id must be a single path segment, not a path.
         """
         import json
 
-        from portolan_cli.dataset import add_dataset
+        from portolan_cli.add import add
 
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
@@ -1779,7 +1789,7 @@ class TestItemIdOverrideProperties:
             geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
 
             with pytest.raises(ValueError, match="single path segment"):
-                add_dataset(
+                add(
                     path=geo_file,
                     catalog_root=catalog_root,
                     collection_id="test-collection",
@@ -1789,14 +1799,14 @@ class TestItemIdOverrideProperties:
     @pytest.mark.unit
     @given(invalid_id=invalid_item_id_with_backslash)
     @settings(max_examples=10)
-    def test_add_dataset_rejects_item_id_with_backslash(self, invalid_id: str) -> None:
-        """add_dataset() should reject item_ids containing backslashes.
+    def test_add_rejects_item_id_with_backslash(self, invalid_id: str) -> None:
+        """add() should reject item_ids containing backslashes.
 
         Issue #136: item_id must be a single path segment, not a path.
         """
         import json
 
-        from portolan_cli.dataset import add_dataset
+        from portolan_cli.add import add
 
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
@@ -1809,7 +1819,7 @@ class TestItemIdOverrideProperties:
             geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
 
             with pytest.raises(ValueError, match="single path segment"):
-                add_dataset(
+                add(
                     path=geo_file,
                     catalog_root=catalog_root,
                     collection_id="test-collection",
@@ -1819,14 +1829,14 @@ class TestItemIdOverrideProperties:
     @pytest.mark.unit
     @given(invalid_id=st.sampled_from([".", ".."]))
     @settings(max_examples=2)
-    def test_add_dataset_rejects_dot_item_ids(self, invalid_id: str) -> None:
-        """add_dataset() should reject '.' and '..' as item_ids.
+    def test_add_rejects_dot_item_ids(self, invalid_id: str) -> None:
+        """add() should reject '.' and '..' as item_ids.
 
         Issue #136: These are reserved path components and not valid item IDs.
         """
         import json
 
-        from portolan_cli.dataset import add_dataset
+        from portolan_cli.add import add
 
         with tempfile.TemporaryDirectory() as tmp:
             catalog_root = Path(tmp).resolve()
@@ -1839,7 +1849,7 @@ class TestItemIdOverrideProperties:
             geo_file.write_text(json.dumps(VALID_GEOJSON_TEMPLATE))
 
             with pytest.raises(ValueError, match="single path segment"):
-                add_dataset(
+                add(
                     path=geo_file,
                     catalog_root=catalog_root,
                     collection_id="test-collection",

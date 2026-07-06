@@ -1,6 +1,6 @@
-"""Versions module - manages versions.json for dataset versioning.
+"""Versions module - manages versions.json for collection versioning.
 
-The versions.json file is the single source of truth for dataset versioning,
+The versions.json file is the single source of truth for collection versioning,
 sync state, and integrity checksums (see ADR-0005).
 
 Structure:
@@ -438,6 +438,53 @@ def parse_version(version_str: str) -> tuple[int, int, int]:
     except (ValueError, OverflowError):
         # Shouldn't happen with \d+ regex, but handle gracefully
         return (0, 0, 0)
+
+
+def _increment_version(version: str) -> str:
+    """Safely increment a semantic version string.
+
+    Handles standard semver (1.2.3) and pre-release versions (1.0.0-beta.1).
+
+    Args:
+        version: Current version string.
+
+    Returns:
+        Incremented version string.
+    """
+    if not version:
+        return "0.0.1"
+
+    # Handle pre-release versions (e.g., 1.0.0-beta.1)
+    if "-" in version:
+        base, prerelease = version.split("-", 1)
+        # Try to increment the prerelease number
+        prerelease_parts = prerelease.rsplit(".", 1)
+        if len(prerelease_parts) == 2 and prerelease_parts[1].isdigit():
+            prerelease_parts[1] = str(int(prerelease_parts[1]) + 1)
+            return f"{base}-{'.'.join(prerelease_parts)}"
+        else:
+            # No numeric suffix: 1.0.0-beta → 1.0.0-beta.1
+            # Preserve the prerelease tag by appending .1
+            return f"{base}-{prerelease}.1"
+
+    # Standard semver: increment patch
+    parts = version.split(".")
+    if len(parts) >= 3 and parts[-1].isdigit():
+        parts[-1] = str(int(parts[-1]) + 1)
+        return ".".join(parts)
+    if len(parts) < 3:
+        # Pad to 3 parts if needed
+        while len(parts) < 3:
+            parts.append("0")
+        parts[-1] = "1"
+        return ".".join(parts)
+
+    # Three-plus parts but the last segment is not purely numeric
+    # (e.g. "1.2.3rc1", "1.2.foo"). A plain join here would return the input
+    # unchanged - a silent no-op that breaks version bumps. Normalize through
+    # parse_version and bump the patch so the result always differs.
+    major, minor, patch = parse_version(version)
+    return f"{major}.{minor}.{patch + 1}"
 
 
 def _compute_changes(versions_file: VersionsFile, new_assets: dict[str, Asset]) -> list[str]:

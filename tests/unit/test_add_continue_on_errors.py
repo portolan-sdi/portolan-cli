@@ -20,12 +20,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from portolan_cli.cli import cli
-from portolan_cli.dataset import (
+from portolan_cli.add import (
     AddFailure,
-    DatasetInfo,
+    ItemInfo,
     add_files,
 )
+from portolan_cli.cli import cli
 from portolan_cli.formats import FormatType
 
 
@@ -59,7 +59,7 @@ class TestAddFilesReturnsFailures:
         # This test verifies the new return signature by checking return type annotation
         import inspect
 
-        from portolan_cli.dataset import add_files
+        from portolan_cli.add import add_files
 
         sig = inspect.signature(add_files)
         # Verify the return annotation exists (indicates 3 values)
@@ -68,7 +68,7 @@ class TestAddFilesReturnsFailures:
     @pytest.mark.unit
     def test_add_failure_dataclass_exists(self) -> None:
         """AddFailure dataclass should exist with path and error fields."""
-        from portolan_cli.dataset import AddFailure
+        from portolan_cli.add import AddFailure
 
         # Create an AddFailure instance
         failure = AddFailure(
@@ -85,7 +85,7 @@ class TestAddFilesContinuesOnErrors:
 
     @pytest.mark.unit
     def test_add_files_continues_after_value_error(self, tmp_path: Path) -> None:
-        """add_files should continue processing when add_dataset raises ValueError."""
+        """add_files should continue processing when add raises ValueError."""
         # Setup catalog
         setup_catalog(tmp_path)
 
@@ -100,10 +100,10 @@ class TestAddFilesContinuesOnErrors:
         bad_file = collection_dir2 / "bad.geojson"
         bad_file.write_text('{"type": "FeatureCollection", "features": []}')
 
-        # Mock add_dataset to fail on the bad file but succeed on good file
+        # Mock add to fail on the bad file but succeed on good file
         call_count = 0
 
-        def mock_add_dataset(
+        def mock_add(
             *,
             path: Path,
             catalog_root: Path,
@@ -117,7 +117,7 @@ class TestAddFilesContinuesOnErrors:
             call_count += 1
             if "bad" in path.name:
                 raise ValueError("missing bounding box")
-            # Return a MagicMock simulating PreparedDataset (Issue #383 requires
+            # Return a MagicMock simulating PreparedItem (Issue #383 requires
             # is_collection_level_asset to be set for source_to_item_dir mapping)
             return MagicMock(
                 item_id="good",
@@ -128,13 +128,13 @@ class TestAddFilesContinuesOnErrors:
                 is_collection_level_asset=False,
             )
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset", side_effect=mock_add_dataset),
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item", side_effect=mock_add),
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_finalize.return_value = []
-            with patch("portolan_cli.dataset.is_current", return_value=False):
+            with patch("portolan_cli.add.is_current", return_value=False):
                 added, skipped, failures = add_files(
                     paths=[collection_dir, collection_dir2],
                     catalog_root=tmp_path,
@@ -144,14 +144,14 @@ class TestAddFilesContinuesOnErrors:
         # Should have processed both files
         assert call_count == 2
         # One success, one failure (finalize mocked to return empty, so added comes from prepare)
-        # Note: with finalize_datasets mocked, added list is populated by finalize_datasets return
+        # Note: with finalize_items mocked, added list is populated by finalize_items return
         assert len(failures) == 1
         assert failures[0].path == bad_file
         assert "missing bounding box" in failures[0].error
 
     @pytest.mark.unit
     def test_add_files_continues_after_file_not_found_error(self, tmp_path: Path) -> None:
-        """add_files should continue processing when add_dataset raises FileNotFoundError."""
+        """add_files should continue processing when add raises FileNotFoundError."""
         setup_catalog(tmp_path)
 
         collection_dir = tmp_path / "collection" / "item1"
@@ -164,7 +164,7 @@ class TestAddFilesContinuesOnErrors:
         file2 = collection_dir2 / "file2.geojson"
         file2.write_text('{"type": "FeatureCollection", "features": []}')
 
-        def mock_add_dataset(
+        def mock_add(
             *,
             path: Path,
             catalog_root: Path,
@@ -176,7 +176,7 @@ class TestAddFilesContinuesOnErrors:
         ) -> MagicMock:
             if "file1" in path.name:
                 raise FileNotFoundError("Source file disappeared")
-            # Return MagicMock simulating PreparedDataset (Issue #383)
+            # Return MagicMock simulating PreparedItem (Issue #383)
             return MagicMock(
                 item_id="file2",
                 collection_id="collection",
@@ -186,13 +186,13 @@ class TestAddFilesContinuesOnErrors:
                 is_collection_level_asset=False,
             )
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch("portolan_cli.dataset.prepare_dataset", side_effect=mock_add_dataset),
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item", side_effect=mock_add),
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_finalize.return_value = []
-            with patch("portolan_cli.dataset.is_current", return_value=False):
+            with patch("portolan_cli.add.is_current", return_value=False):
                 added, skipped, failures = add_files(
                     paths=[collection_dir, collection_dir2],
                     catalog_root=tmp_path,
@@ -215,7 +215,7 @@ class TestAddFilesContinuesOnErrors:
             f = item_dir / f"bad{i}.geojson"
             f.write_text('{"type": "FeatureCollection", "features": []}')
 
-        def mock_add_dataset(
+        def mock_add(
             *,
             path: Path,
             catalog_root: Path,
@@ -224,11 +224,11 @@ class TestAddFilesContinuesOnErrors:
             item_datetime: datetime | None = None,
             force: bool = False,
             reconvert: bool = False,
-        ) -> DatasetInfo:
+        ) -> ItemInfo:
             raise ValueError(f"Error processing {path.name}")
 
-        with patch("portolan_cli.dataset.prepare_dataset", side_effect=mock_add_dataset):
-            with patch("portolan_cli.dataset.is_current", return_value=False):
+        with patch("portolan_cli.add.prepare_item", side_effect=mock_add):
+            with patch("portolan_cli.add.is_current", return_value=False):
                 added, skipped, failures = add_files(
                     paths=[tmp_path / "collection"],
                     catalog_root=tmp_path,
@@ -262,14 +262,14 @@ class TestCliOutputWithFailures:
                 # Return: 2 added, 0 skipped, 1 failure
                 mock_add.return_value = (
                     [
-                        DatasetInfo(
+                        ItemInfo(
                             item_id="good1",
                             collection_id="collection",
                             format_type=FormatType.VECTOR,
                             bbox=[0, 0, 1, 1],
                             asset_paths=["good1.parquet"],
                         ),
-                        DatasetInfo(
+                        ItemInfo(
                             item_id="good2",
                             collection_id="collection",
                             format_type=FormatType.VECTOR,
@@ -352,7 +352,7 @@ class TestCliOutputWithFailures:
             with patch("portolan_cli.cli.add_files") as mock_add:
                 mock_add.return_value = (
                     [
-                        DatasetInfo(
+                        ItemInfo(
                             item_id="good",
                             collection_id="collection",
                             format_type=FormatType.VECTOR,
@@ -397,7 +397,7 @@ class TestCliOutputWithFailures:
             with patch("portolan_cli.cli.add_files") as mock_add:
                 mock_add.return_value = (
                     [
-                        DatasetInfo(
+                        ItemInfo(
                             item_id="test",
                             collection_id="collection",
                             format_type=FormatType.VECTOR,
@@ -436,11 +436,11 @@ class TestAddFilesReturnContract:
         f = collection_dir / "test.geojson"
         f.write_text('{"type": "FeatureCollection", "features": []}')
 
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
-        # Return MagicMock simulating PreparedDataset (Issue #383)
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # Return MagicMock simulating PreparedItem (Issue #383)
         with (
             patch(
-                "portolan_cli.dataset.prepare_dataset",
+                "portolan_cli.add.prepare_item",
                 return_value=MagicMock(
                     item_id="test",
                     collection_id="collection",
@@ -450,10 +450,10 @@ class TestAddFilesReturnContract:
                     is_collection_level_asset=False,
                 ),
             ),
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_finalize.return_value = []
-            with patch("portolan_cli.dataset.is_current", return_value=False):
+            with patch("portolan_cli.add.is_current", return_value=False):
                 result = add_files(
                     paths=[collection_dir],
                     catalog_root=tmp_path,

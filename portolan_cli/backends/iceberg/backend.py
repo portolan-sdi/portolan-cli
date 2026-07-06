@@ -70,7 +70,7 @@ class IcebergBackend:
         """Load an existing table or create one with the given schema.
 
         For new tables with geometry, sets up Iceberg partition spec on the
-        geohash column if the dataset is large enough (>=100K rows).
+        geohash column if the data is large enough (>=100K rows).
         """
         try:
             table = self._catalog.load_table(table_id)
@@ -86,7 +86,7 @@ class IcebergBackend:
 
     @staticmethod
     def _apply_partition_spec(table: Table, arrow_schema: pa.Schema, row_count: int) -> None:
-        """Add Iceberg partition spec on geohash column if dataset is large enough."""
+        """Add Iceberg partition spec on geohash column if data is large enough."""
         precision = detect_geohash_precision(row_count)
         if precision is None:
             return
@@ -326,7 +326,7 @@ class IcebergBackend:
     def on_post_add(self, context: dict[str, Any]) -> None:
         """Post-add hook: update STAC extensions and upload metadata to remote.
 
-        Called by portolan-cli's finalize_datasets() after versioning completes.
+        Called by portolan-cli's finalize_items() after versioning completes.
         Receives batch context with all items in the collection.
         """
         import logging

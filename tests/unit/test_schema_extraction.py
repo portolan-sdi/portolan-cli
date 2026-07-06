@@ -1,6 +1,6 @@
 """Unit tests for schema extraction from GeoParquet and COG files.
 
-User Story 2: Add Dataset with Collection Metadata
+User Story 2: Add Data with Collection Metadata
 
 Tests cover:
 - SchemaModel extraction from GeoParquet

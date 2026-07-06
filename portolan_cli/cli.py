@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 import click
 
+from portolan_cli.add import AddFailure, add_files
 from portolan_cli.add_progress import AddProgressReporter, count_files
 from portolan_cli.catalog import find_catalog_root
 from portolan_cli.catalog_list import (
@@ -31,21 +32,17 @@ from portolan_cli.catalog_list import (
     list_catalog_contents,
 )
 from portolan_cli.check import check_directory
+from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.constants import PORTOLAN_SPEC_VERSION
 from portolan_cli.convert import ConversionResult
-from portolan_cli.dataset import (
-    AddFailure,
-    DatasetInfo,
-    add_files,
-    get_sidecars,
-    remove_files,
-    resolve_collection_id,
-)
+from portolan_cli.discovery import get_sidecars
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.metadata import fix_metadata
 from portolan_cli.metadata.fix import FixReport
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
+from portolan_cli.query import ItemInfo
+from portolan_cli.remove import remove_files
 from portolan_cli.scan import (
     IssueType,
     ScanIssue,
@@ -2512,7 +2509,7 @@ def _handle_cmd_error(cmd: str, err_type: str, message: str, use_json: bool) -> 
 
 
 def _output_add_json(
-    added: list[DatasetInfo],
+    added: list[ItemInfo],
     skipped: list[Path],
     failures: list[AddFailure],
 ) -> None:
@@ -2541,16 +2538,16 @@ def _output_add_json(
     output_json_envelope(envelope)
 
 
-def _format_sidecar_note(ds: DatasetInfo) -> str:
-    """Format sidecar count note for dataset output."""
+def _format_sidecar_note(ds: ItemInfo) -> str:
+    """Format sidecar count note for add output."""
     if not ds.asset_paths:
         return ""
     sidecars = get_sidecars(Path(ds.asset_paths[0]))
     return f" (+ {len(sidecars)} sidecars)" if sidecars else ""
 
 
-def _output_added_single_collection(added: list[DatasetInfo], *, verbose: bool = False) -> None:
-    """Output added datasets for a single collection.
+def _output_added_single_collection(added: list[ItemInfo], *, verbose: bool = False) -> None:
+    """Output added items for a single collection.
 
     Per ADR-0040: Only show per-file output when verbose=True.
     Default is summary only (progress bar + final count).
@@ -2563,14 +2560,14 @@ def _output_added_single_collection(added: list[DatasetInfo], *, verbose: bool =
             success(f"  + {ds.item_id}{_format_sidecar_note(ds)}")
 
 
-def _output_added_multi_collection(added: list[DatasetInfo], *, verbose: bool = False) -> None:
-    """Output added datasets grouped by collection.
+def _output_added_multi_collection(added: list[ItemInfo], *, verbose: bool = False) -> None:
+    """Output added items grouped by collection.
 
     Per ADR-0040: Only show per-file output when verbose=True.
     Default is summary only (progress bar + final count).
     """
     if verbose:
-        collections: dict[str, list[DatasetInfo]] = {}
+        collections: dict[str, list[ItemInfo]] = {}
         for ds in added:
             collections.setdefault(ds.collection_id, []).append(ds)
 
@@ -2578,9 +2575,9 @@ def _output_added_multi_collection(added: list[DatasetInfo], *, verbose: bool = 
         info_output(
             f"Adding {total} file{'s' if total != 1 else ''} to {len(collections)} collections"
         )
-        for coll, datasets in sorted(collections.items()):
+        for coll, items in sorted(collections.items()):
             info_output(f"  {coll}:")
-            for ds in datasets:
+            for ds in items:
                 success(f"    + {ds.item_id}{_format_sidecar_note(ds)}")
 
 
@@ -2632,7 +2629,7 @@ def _output_add_unchanged(skipped: list[Path], verbose: bool) -> None:
             detail(f"  {p.name}")
 
 
-def _output_add_summary(added: list[DatasetInfo]) -> None:
+def _output_add_summary(added: list[ItemInfo]) -> None:
     """Output final success summary after adding files (ADR-0040)."""
     total_added = len(added)
     unique_items = len({ds.item_id for ds in added})
@@ -2656,7 +2653,7 @@ def _output_add_summary(added: list[DatasetInfo]) -> None:
 
 
 def _output_add_human(
-    added: list[DatasetInfo],
+    added: list[ItemInfo],
     skipped: list[Path],
     failures: list[AddFailure],
     verbose: bool,
@@ -2694,7 +2691,7 @@ def _output_add_human(
 
 
 def _output_add_results(
-    added: list[DatasetInfo],
+    added: list[ItemInfo],
     skipped: list[Path],
     failures: list[AddFailure],
     verbose: bool,
@@ -3372,7 +3369,7 @@ def add_cmd(
 
     # Compute affected collections before any post-processing
     # Include both added AND skipped assets so --pmtiles works on already-tracked files
-    # Note: all_added contains DatasetInfo objects, all_skipped contains Path objects
+    # Note: all_added contains ItemInfo objects, all_skipped contains Path objects
     affected: set[str] = set()
     for a in all_added:
         if hasattr(a, "collection_id") and a.collection_id:
@@ -3413,7 +3410,7 @@ def add_cmd(
     "--collection",
     "collection_id",
     default=None,
-    help="Collection ID for the external dataset (default: derived from the URL).",
+    help="Collection ID for the external collection (default: derived from the URL).",
 )
 @click.option("--title", default=None, help="Human-readable title for the collection/asset.")
 @click.option("--description", default=None, help="Collection description.")
@@ -3468,9 +3465,9 @@ def add_external_cmd(
     catalog_path: Path | None,
     force: bool,
 ) -> None:
-    """Register a remote dataset as a collection WITHOUT downloading or converting it.
+    """Register remote data as a collection WITHOUT downloading or converting it.
 
-    The external counterpart to 'portolan add'. Some valuable datasets are
+    The external counterpart to 'portolan add'. Some valuable data sources are
     already published cloud-natively at a remote location and should be
     *referenced in place* rather than copied. This creates a collection.json
     whose collection-level 'data' asset href is the remote URL (kept as-is,
@@ -3490,7 +3487,7 @@ def add_external_cmd(
 
         portolan add-external "https://example.org/data/buildings.parquet"
     """
-    from portolan_cli.external import add_external_dataset
+    from portolan_cli.external import add_external
 
     use_json = should_output_json(ctx, json_output)
     catalog_root = _resolve_catalog_root_for_add(catalog_path, use_json)
@@ -3512,7 +3509,7 @@ def add_external_cmd(
             raise SystemExit(1)
 
     try:
-        result = add_external_dataset(
+        result = add_external(
             catalog_root=catalog_root,
             url=url,
             collection_id=collection_id,
@@ -6724,7 +6721,7 @@ def extract_arcgis_cmd(
         - Country prefix: 'sdn_*', 'ukr_*'
         - Year suffix: '*_2024', '*_2025'
         - Folder path: 'Hosted/cod_ab_*'
-        - Dataset family: 'cod_ab_ukr*'
+        - Data family: 'cod_ab_ukr*'
 
     \b
     Examples:

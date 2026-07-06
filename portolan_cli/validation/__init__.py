@@ -6,7 +6,7 @@ This module provides the public API for validating catalogs:
 - ValidationRule: Base class for custom rules
 
 Per ADR-0011, this is an MVP that validates catalog structure only.
-Dataset-specific and remote validation comes in later versions.
+Collection-specific and remote validation comes in later versions.
 
 Input Hardening:
 - InputValidationError: Exception for input validation failures

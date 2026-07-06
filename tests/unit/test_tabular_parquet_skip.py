@@ -27,8 +27,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from portolan_cli.add import add_files
 from portolan_cli.constants import TABULAR_EXTENSIONS
-from portolan_cli.dataset import add_files
 from portolan_cli.errors import NoGeometryError
 
 if TYPE_CHECKING:
@@ -183,7 +183,7 @@ class TestTabularParquetWithGeoAsset:
             item_id: str | None = None,
             **kwargs: object,
         ) -> MagicMock:
-            """Simulate add_dataset: succeed for GeoJSON, raise for tabular parquet."""
+            """Simulate add: succeed for GeoJSON, raise for tabular parquet."""
             if path.suffix.lower() == ".parquet":
                 raise NoGeometryError(
                     path=path.stem,
@@ -198,16 +198,14 @@ class TestTabularParquetWithGeoAsset:
                 is_collection_level_asset=False,
             )
 
-        # Mock add_dataset to simulate the real flow:
+        # Mock add to simulate the real flow:
         # - GeoJSON succeeds (creates STAC item)
         # - Tabular parquet raises NoGeometryError (deferred, then tracked)
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
         with (
-            patch(
-                "portolan_cli.dataset.prepare_dataset", side_effect=mock_add_side_effect
-            ) as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
-            patch("portolan_cli.dataset._update_item_with_asset") as mock_update_item,
+            patch("portolan_cli.add.prepare_item", side_effect=mock_add_side_effect) as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
+            patch("portolan_cli.add._update_item_with_asset") as mock_update_item,
         ):
             mock_finalize.return_value = []
 
@@ -218,7 +216,7 @@ class TestTabularParquetWithGeoAsset:
             )
 
             # The geo file should be added
-            assert mock_add.called, "Should have called prepare_dataset for GeoJSON"
+            assert mock_add.called, "Should have called prepare_item for GeoJSON"
 
             # The tabular parquet should be tracked as an auxiliary asset
             # (deferred to after geo processing, then _update_item_with_asset called)
@@ -353,8 +351,8 @@ class TestNonGeometryValueErrorsPropagation:
         table = pa.table({"code": ["A"], "value": [1]})
         pq.write_table(table, item_dir / "data.parquet")
 
-        # Mock add_dataset to raise a non-geometry ValueError
-        with patch("portolan_cli.dataset.prepare_dataset") as mock_add:
+        # Mock add to raise a non-geometry ValueError
+        with patch("portolan_cli.add.prepare_item") as mock_add:
             mock_add.side_effect = ValueError("Unsupported format: .xyz")
 
             # Per Issue #175, errors are collected in failures instead of raised
@@ -433,13 +431,13 @@ class TestGeoParquetSuccessPath:
         table = table.replace_schema_metadata(new_meta)
         pq.write_table(table, geo_parquet)
 
-        # Mock prepare_dataset and finalize_datasets to simulate success
-        # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
-        # The added list is populated from finalize_datasets return value
-        from portolan_cli.dataset import DatasetInfo
+        # Mock prepare_item and finalize_items to simulate success
+        # Per Issue #281: add_files now calls prepare_item + finalize_items
+        # The added list is populated from finalize_items return value
+        from portolan_cli.add import ItemInfo
         from portolan_cli.formats import FormatType
 
-        mock_dataset_info = DatasetInfo(
+        mock_item_info = ItemInfo(
             item_id="item",
             collection_id="collection",
             format_type=FormatType.VECTOR,
@@ -448,16 +446,16 @@ class TestGeoParquetSuccessPath:
         )
 
         with (
-            patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-            patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+            patch("portolan_cli.add.prepare_item") as mock_add,
+            patch("portolan_cli.add.finalize_items") as mock_finalize,
         ):
             mock_add.return_value = MagicMock(
                 item_id="item",
                 collection_id="collection",
                 asset_paths=["boundaries.parquet"],
             )
-            # finalize_datasets returns the list of successfully added DatasetInfo objects
-            mock_finalize.return_value = [mock_dataset_info]
+            # finalize_items returns the list of successfully added ItemInfo objects
+            mock_finalize.return_value = [mock_item_info]
 
             added, skipped, failures = add_files(
                 paths=[geo_parquet],
@@ -466,7 +464,7 @@ class TestGeoParquetSuccessPath:
             )
 
             # Valid GeoParquet should be ADDED (not deferred/skipped)
-            assert mock_add.called, "prepare_dataset should be called for valid GeoParquet"
+            assert mock_add.called, "prepare_item should be called for valid GeoParquet"
             assert len(added) == 1, "Valid GeoParquet should appear in added list"
 
 
@@ -613,11 +611,11 @@ class TestTabularParquetHypothesis:
                 }
                 geojson_file.write_text(json.dumps(geojson_data))
 
-            # Mock prepare_dataset and finalize_datasets to track calls
-            # Per Issue #281: add_files now calls prepare_dataset + finalize_datasets
+            # Mock prepare_item and finalize_items to track calls
+            # Per Issue #281: add_files now calls prepare_item + finalize_items
             with (
-                patch("portolan_cli.dataset.prepare_dataset") as mock_add,
-                patch("portolan_cli.dataset.finalize_datasets") as mock_finalize,
+                patch("portolan_cli.add.prepare_item") as mock_add,
+                patch("portolan_cli.add.finalize_items") as mock_finalize,
             ):
                 mock_add.return_value = MagicMock(item_id="item", collection_id="collection")
                 mock_finalize.return_value = []

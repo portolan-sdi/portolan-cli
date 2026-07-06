@@ -5,7 +5,7 @@ When source data files lack certain metadata (like nodata values or temporal inf
 ## Use Cases
 
 - **Aerial imagery without nodata**: Source COGs exported from Global Mapper or ArcGIS often lack nodata values, even when black (0) pixels represent no data
-- **Historical datasets without dates**: Legacy data may not have acquisition dates embedded in file metadata
+- **Historical data without dates**: Legacy data may not have acquisition dates embedded in file metadata
 - **Bulk imports**: When adding many files from the same source, set collection-level defaults instead of per-file flags
 
 ## Setting Defaults
@@ -32,9 +32,9 @@ defaults:
 
 ## Temporal Defaults
 
-For datasets where all items share an acquisition period:
+For collections where all items share an acquisition period:
 
-### Year Range (Recommended for Annual Datasets)
+### Year Range (Recommended for Annual Collections)
 
 ```yaml
 defaults:

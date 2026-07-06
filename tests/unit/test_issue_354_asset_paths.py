@@ -28,7 +28,7 @@ class TestAssetKeyGeneration:
 
     def test_collection_level_asset_key_is_filename_only(self, tmp_path: Path) -> None:
         """Collection-level assets have filename-only keys, not prefixed with collection_id."""
-        from portolan_cli.dataset import finalize_datasets, prepare_dataset
+        from portolan_cli.add import finalize_items, prepare_item
 
         # Set up catalog
         catalog_root = tmp_path / "catalog"
@@ -62,13 +62,13 @@ class TestAssetKeyGeneration:
         shutil.copy(fixture_path, parquet_path)
 
         # Prepare and finalize
-        prepared = prepare_dataset(
+        prepared = prepare_item(
             path=parquet_path,
             catalog_root=catalog_root,
             collection_id=collection_id,
         )
 
-        finalize_datasets(catalog_root, [prepared])
+        finalize_items(catalog_root, [prepared])
 
         # Check versions.json
         versions_path = collection_dir / "versions.json"
@@ -90,7 +90,7 @@ class TestAssetKeyGeneration:
 
     def test_item_level_asset_key_includes_item_id(self, tmp_path: Path) -> None:
         """Item-level assets have item_id/filename keys."""
-        from portolan_cli.dataset import finalize_datasets, prepare_dataset
+        from portolan_cli.add import finalize_items, prepare_item
 
         # Set up catalog
         catalog_root = tmp_path / "catalog"
@@ -124,14 +124,14 @@ class TestAssetKeyGeneration:
         shutil.copy(fixture_path, parquet_path)
 
         # Prepare and finalize
-        prepared = prepare_dataset(
+        prepared = prepare_item(
             path=parquet_path,
             catalog_root=catalog_root,
             collection_id=collection_id,
             item_id=item_id,
         )
 
-        finalize_datasets(catalog_root, [prepared])
+        finalize_items(catalog_root, [prepared])
 
         # Check versions.json
         versions_path = collection_dir / "versions.json"
@@ -147,7 +147,7 @@ class TestAssetKeyGeneration:
 
     def test_nested_catalog_asset_key_no_doubling(self, tmp_path: Path) -> None:
         """Nested catalogs don't double the path in asset keys."""
-        from portolan_cli.dataset import finalize_datasets, prepare_dataset
+        from portolan_cli.add import finalize_items, prepare_item
 
         # Set up catalog with nested structure
         catalog_root = tmp_path / "catalog"
@@ -180,13 +180,13 @@ class TestAssetKeyGeneration:
         shutil.copy(fixture_path, parquet_path)
 
         # Prepare and finalize
-        prepared = prepare_dataset(
+        prepared = prepare_item(
             path=parquet_path,
             catalog_root=catalog_root,
             collection_id=collection_id,
         )
 
-        finalize_datasets(catalog_root, [prepared])
+        finalize_items(catalog_root, [prepared])
 
         # Check versions.json
         versions_path = collection_dir / "versions.json"
@@ -215,7 +215,7 @@ class TestBatchUpdateVersionsAssetKeys:
 
     def test_batch_update_collection_level_asset_keys(self, tmp_path: Path) -> None:
         """_batch_update_versions generates correct keys for collection-level assets."""
-        from portolan_cli.dataset import PreparedDataset, _batch_update_versions
+        from portolan_cli.add import PreparedItem, _batch_update_versions
         from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "my_collection"
@@ -226,8 +226,8 @@ class TestBatchUpdateVersionsAssetKeys:
         asset_path = collection_dir / "my_collection.parquet"
         shutil.copy(fixture_path, asset_path)
 
-        # Create prepared dataset with correct fields
-        prepared = PreparedDataset(
+        # Create prepared item with correct fields
+        prepared = PreparedItem(
             item_id="my_collection",
             collection_id="my_collection",
             format_type=FormatType.VECTOR,
@@ -254,7 +254,7 @@ class TestBatchUpdateVersionsAssetKeys:
 
     def test_batch_update_item_level_asset_keys(self, tmp_path: Path) -> None:
         """_batch_update_versions generates correct keys for item-level assets."""
-        from portolan_cli.dataset import PreparedDataset, _batch_update_versions
+        from portolan_cli.add import PreparedItem, _batch_update_versions
         from portolan_cli.formats import FormatType
 
         collection_dir = tmp_path / "my_collection"
@@ -265,7 +265,7 @@ class TestBatchUpdateVersionsAssetKeys:
         asset_path = item_dir / "data.parquet"
         shutil.copy(fixture_path, asset_path)
 
-        prepared = PreparedDataset(
+        prepared = PreparedItem(
             item_id="my_item",
             collection_id="my_collection",
             format_type=FormatType.VECTOR,

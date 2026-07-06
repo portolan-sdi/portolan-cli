@@ -360,7 +360,7 @@ class TestAntimeridianBboxIntegration:
             # represented in STAC-compliant form: either a split into a western
             # and an eastern half, or preserved as a single crossing bbox (west >
             # east). It must NOT collapse into a whole-world-width [-180, ..., 180]
-            # envelope, which would falsely claim the dataset spans the globe.
+            # envelope, which would falsely claim the data spans the globe.
             halves = [b[:4] for b in bboxes]
             if len(bboxes) == 2:
                 # Split form: one western half (touches -180), one eastern (touches 180)

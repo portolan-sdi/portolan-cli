@@ -62,7 +62,7 @@ class ExtractionOptions:
             layers are processed concurrently.
         retries: Number of retry attempts per failed layer.
         timeout: Per-layer timeout in seconds. Note: geoparquet-io uses a
-            10-minute internal HTTP timeout for large datasets; this timeout
+            10-minute internal HTTP timeout for large responses; this timeout
             wraps the entire layer extraction including retries.
         resume: Whether to resume from existing extraction report.
         raw: If True, skip auto-init (only create extraction files, no STAC catalog).

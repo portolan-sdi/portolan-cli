@@ -52,7 +52,7 @@ def test_publish_adds_geohash_column(iceberg_backend, iceberg_catalog, tmp_path)
     # Should have a geohash column (precision depends on row count, but for <100K rows
     # the plan says no partitioning. However, for geo data we always add geohash for
     # spatial query support -- so this tests that geohash is added when geometry exists)
-    # For small datasets, we still add the column but don't partition by it.
+    # For small data, we still add the column but don't partition by it.
     has_geohash = any(name.startswith("geohash_") for name in field_names)
     assert has_geohash, f"Expected geohash column, got fields: {field_names}"
 
@@ -104,8 +104,8 @@ def test_publish_bbox_values_correct(iceberg_backend, iceberg_catalog, tmp_path)
 
 
 @pytest.mark.integration
-def test_publish_skips_partitioning_small_dataset(iceberg_backend, iceberg_catalog, tmp_path):
-    """Small datasets (<100K rows) should NOT have partition spec on geohash."""
+def test_publish_skips_partitioning_small_collection(iceberg_backend, iceberg_catalog, tmp_path):
+    """Small data (<100K rows) should NOT have partition spec on geohash."""
     geo_file = _write_geo_parquet(
         tmp_path / "geo.parquet",
         [(2.3522, 48.8566), (-73.9857, 40.7484)],
@@ -120,7 +120,7 @@ def test_publish_skips_partitioning_small_dataset(iceberg_backend, iceberg_catal
     )
 
     table = iceberg_catalog.load_table("portolake.small")
-    # Small dataset should have unpartitioned spec
+    # Small data should have unpartitioned spec
     partition_fields = table.spec().fields
     assert len(partition_fields) == 0, f"Expected no partition fields, got {partition_fields}"
 
@@ -149,7 +149,7 @@ def test_publish_no_geometry_skips_spatial_columns(iceberg_backend, iceberg_cata
 
 @pytest.mark.integration
 def test_publish_creates_partitioned_table(iceberg_catalog, tmp_path):
-    """Datasets >= 100K rows should create an Iceberg table partitioned by geohash."""
+    """Collections >= 100K rows should create an Iceberg table partitioned by geohash."""
     import random
 
     from portolan_cli.backends.iceberg.backend import IcebergBackend

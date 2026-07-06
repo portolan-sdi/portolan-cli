@@ -1,6 +1,6 @@
-"""Register external / remote datasets as catalog collections.
+"""Register external / remote data as catalog collections.
 
-Some valuable datasets are already published cloud-natively at a remote
+Some valuable data sources are already published cloud-natively at a remote
 location (e.g. Overture Maps places as planet-scale GeoParquet on Overture's
 own public S3). Such data should be *referenced in place* — added to a Portolan
 catalog as an external collection that points at the remote URL — rather than
@@ -12,7 +12,7 @@ asset ``href`` is the remote URL, marked as external / not-managed, plus a
 conversion runs.
 
 Per ADR-0031 a single vector file is a collection-level asset (no item.json),
-so an external single-file dataset maps cleanly onto one collection with one
+so external single-file data maps cleanly onto one collection with one
 collection-level asset.
 
 The metadata scanner (``portolan_cli.metadata.scan``) already skips
@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 import pystac
 
-from portolan_cli.dataset import (
+from portolan_cli.add import (
     _save_collection_with_links,
     _validate_collection_id,
 )
@@ -74,7 +74,7 @@ DEFAULT_MEDIA_TYPE = "application/octet-stream"
 
 @dataclass
 class ExternalAddResult:
-    """Result of registering an external dataset.
+    """Result of registering external data.
 
     Attributes:
         collection_id: ID of the collection that was created.
@@ -165,7 +165,7 @@ def _validate_bbox(bbox: list[float]) -> None:
         raise ValueError(f"min_y ({min_y}) must be <= max_y ({max_y})")
 
 
-def add_external_dataset(
+def add_external(
     *,
     catalog_root: Path,
     url: str,
@@ -179,7 +179,7 @@ def add_external_dataset(
     asset_key: str = "data",
     force: bool = False,
 ) -> ExternalAddResult:
-    """Register a remote dataset as an external catalog collection.
+    """Register remote data as an external catalog collection.
 
     Creates ``<catalog_root>/<collection_id>/collection.json`` with a
     collection-level ``data`` asset whose ``href`` is ``url`` (kept as-is,
@@ -238,7 +238,7 @@ def add_external_dataset(
         _validate_bbox(bbox)
 
     resolved_media_type = media_type or infer_media_type(url)
-    resolved_description = description or f"External dataset referenced in place from {url}"
+    resolved_description = description or f"External data referenced in place from {url}"
 
     collection = create_collection(
         collection_id=resolved_id,
@@ -269,7 +269,7 @@ def add_external_dataset(
     collection_path = collection_dir / "collection.json"
 
     resolved_via = via_url or url
-    add_via_link(collection_path, resolved_via, title=title or "Source dataset")
+    add_via_link(collection_path, resolved_via, title=title or "Source data")
 
     return ExternalAddResult(
         collection_id=resolved_id,

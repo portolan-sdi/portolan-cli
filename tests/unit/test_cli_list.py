@@ -2,7 +2,7 @@
 
 Tests the CLI layer for the top-level `portolan list` command (ADR-0022).
 
-Note: dataset add/remove were moved to top-level `portolan add` and `portolan rm`
+Note: add/remove were moved to top-level `portolan add` and `portolan rm`
 commands (see test_cli_add_rm.py).
 
 Updated for issue #210: list now shows ALL files with status indicators.

@@ -19,7 +19,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.dataset import AddFailure
+from portolan_cli.add import AddFailure
 
 # =============================================================================
 # Helpers

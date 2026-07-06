@@ -145,7 +145,7 @@ class JsonFileBackend:
         Returns:
             The newly created Version object.
         """
-        from portolan_cli.dataset import compute_checksum
+        from portolan_cli.checksums import compute_checksum
         from portolan_cli.versions import SPEC_VERSION
 
         versions_path = self._versions_path(collection)

@@ -19,8 +19,8 @@ from unittest.mock import patch
 import pytest
 from click.testing import CliRunner
 
+from portolan_cli.add import ItemInfo
 from portolan_cli.cli import cli
-from portolan_cli.dataset import DatasetInfo
 from portolan_cli.formats import FormatType
 
 
@@ -147,15 +147,15 @@ class TestAddAtCatalogRoot:
             (temp_path / "col2").mkdir()
             (temp_path / "col2" / "b.geojson").write_text("{}")
 
-            added_datasets = [
-                DatasetInfo(
+            added_items = [
+                ItemInfo(
                     item_id="a",
                     collection_id="col1",
                     format_type=FormatType.VECTOR,
                     bbox=[-1.0, -1.0, 1.0, 1.0],
                     asset_paths=["a.parquet"],
                 ),
-                DatasetInfo(
+                ItemInfo(
                     item_id="b",
                     collection_id="col2",
                     format_type=FormatType.VECTOR,
@@ -165,7 +165,7 @@ class TestAddAtCatalogRoot:
             ]
 
             with patch("portolan_cli.cli.add_files") as mock_add:
-                mock_add.return_value = (added_datasets, [], [])
+                mock_add.return_value = (added_items, [], [])
 
                 result = runner.invoke(
                     cli,

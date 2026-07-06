@@ -3,7 +3,7 @@
   "stac_version": "1.1.0",
   "id": "eurostat-electricity-prices",
   "title": "Industrial electricity prices by country",
-  "description": "Half-yearly industrial electricity prices (EUR/kWh, including taxes) by European country. Non-geospatial tabular dataset. Source: Eurostat nrg_pc_205.",
+  "description": "Half-yearly industrial electricity prices (EUR/kWh, including taxes) by European country. Non-geospatial tabular data. Source: Eurostat nrg_pc_205.",
   "license": "CC-BY-4.0",
   "portolan:geospatial": false,
   "stac_extensions": [

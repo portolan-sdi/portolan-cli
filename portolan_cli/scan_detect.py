@@ -2,16 +2,16 @@
 
 This module detects special format structures:
 - FileGDB directories (.gdb) and archives (.gdb.zip)
-- Hive-partitioned datasets (key=value/ directories)
+- Hive-partitioned collections (key=value/ directories)
 - Existing STAC catalogs (catalog.json, collection.json)
-- Dual-format datasets (same basename, different formats)
+- Dual-format data (same basename, different formats)
 
 Functions:
     is_filegdb: Check if a path is a FileGDB directory.
     is_filegdb_archive: Check if a path is a zipped FileGDB.
     detect_filegdb: Detect FileGDB and return SpecialFormat.
     is_hive_partition_dir: Check if directory name matches Hive pattern.
-    detect_hive_partitions: Detect Hive-partitioned datasets.
+    detect_hive_partitions: Detect Hive-partitioned collections.
     detect_stac_catalogs: Detect existing STAC catalogs.
     detect_dual_formats: Detect files with same basename, different formats.
 """
@@ -61,7 +61,7 @@ class SpecialFormat:
 
 @dataclass(frozen=True)
 class DualFormatPair:
-    """Two files representing same dataset in different formats."""
+    """Two files representing the same data in different formats."""
 
     basename: str
     files: tuple[Path, Path]
@@ -229,16 +229,16 @@ def is_hive_partition_dir(name: str) -> tuple[str, str] | None:
 
 
 def detect_hive_partitions(root: Path) -> list[SpecialFormat]:
-    """Detect Hive-partitioned datasets under root.
+    """Detect Hive-partitioned collections under root.
 
-    A Hive-partitioned dataset is detected when there are directories
+    A Hive-partitioned collection is detected when there are directories
     following the key=value pattern at any level.
 
     Args:
         root: Root directory to scan.
 
     Returns:
-        List of SpecialFormat objects for each partitioned dataset.
+        List of SpecialFormat objects for each partitioned collection.
     """
     results: list[SpecialFormat] = []
     partition_roots: set[Path] = set()
@@ -251,7 +251,7 @@ def detect_hive_partitions(root: Path) -> list[SpecialFormat]:
         for dirname in dirnames:
             partition_info = is_hive_partition_dir(dirname)
             if partition_info:
-                # Found a Hive partition - the parent is the dataset root
+                # Found a Hive partition - the parent is the data root
                 if current not in partition_roots:
                     partition_roots.add(current)
 
@@ -330,7 +330,7 @@ def detect_stac_catalogs(root: Path) -> list[SpecialFormat]:
 
 
 def detect_dual_formats(files: list[ScannedFile]) -> list[DualFormatPair]:
-    """Detect pairs of files representing same dataset in different formats.
+    """Detect pairs of files representing the same data in different formats.
 
     Only pairs within the same format type (vector/vector or raster/raster)
     are flagged. Cross-type pairs (raster/vector) are intentional.

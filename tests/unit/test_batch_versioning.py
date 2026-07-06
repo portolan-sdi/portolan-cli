@@ -16,17 +16,17 @@ import pytest
 from portolan_cli.versions import read_versions
 
 
-class TestPreparedDataset:
-    """Tests for the PreparedDataset dataclass."""
+class TestPreparedItem:
+    """Tests for the PreparedItem dataclass."""
 
     @pytest.mark.unit
-    def test_prepared_dataset_exists(self) -> None:
-        """PreparedDataset dataclass can be imported and instantiated."""
-        from portolan_cli.dataset import PreparedDataset
+    def test_prepared_item_exists(self) -> None:
+        """PreparedItem dataclass can be imported and instantiated."""
+        from portolan_cli.add import PreparedItem
         from portolan_cli.formats import FormatType
 
         # Should be able to create with required fields
-        prepared = PreparedDataset(
+        prepared = PreparedItem(
             item_id="test-item",
             collection_id="test-collection",
             format_type=FormatType.VECTOR,
@@ -40,12 +40,12 @@ class TestPreparedDataset:
         assert prepared.format_type == FormatType.VECTOR
 
     @pytest.mark.unit
-    def test_prepared_dataset_optional_fields(self) -> None:
-        """PreparedDataset supports optional collection-level asset flag."""
-        from portolan_cli.dataset import PreparedDataset
+    def test_prepared_item_optional_fields(self) -> None:
+        """PreparedItem supports optional collection-level asset flag."""
+        from portolan_cli.add import PreparedItem
         from portolan_cli.formats import FormatType
 
-        prepared = PreparedDataset(
+        prepared = PreparedItem(
             item_id="test-item",
             collection_id="test-collection",
             format_type=FormatType.RASTER,
@@ -58,9 +58,9 @@ class TestPreparedDataset:
         assert prepared.is_collection_level_asset is True
 
     @pytest.mark.unit
-    def test_prepared_dataset_has_metadata_field(self) -> None:
-        """PreparedDataset should have optional metadata field for table extension (Issue #304)."""
-        from portolan_cli.dataset import PreparedDataset
+    def test_prepared_item_has_metadata_field(self) -> None:
+        """PreparedItem should have optional metadata field for table extension (Issue #304)."""
+        from portolan_cli.add import PreparedItem
         from portolan_cli.formats import FormatType
         from portolan_cli.metadata.geoparquet import GeoParquetMetadata
 
@@ -73,7 +73,7 @@ class TestPreparedDataset:
             schema={"id": "int64", "geometry": "binary"},
         )
 
-        prepared = PreparedDataset(
+        prepared = PreparedItem(
             item_id="test-item",
             collection_id="test-collection",
             format_type=FormatType.VECTOR,
@@ -124,20 +124,20 @@ def valid_geojson_content() -> str:
     )
 
 
-class TestPrepareDataset:
-    """Tests for prepare_dataset() function."""
+class TestPrepareItem:
+    """Tests for prepare_item() function."""
 
     @pytest.mark.unit
-    def test_prepare_dataset_does_not_write_versions_json(
+    def test_prepare_item_does_not_write_versions_json(
         self,
         initialized_catalog: Path,
         valid_geojson_content: str,
     ) -> None:
-        """prepare_dataset() extracts metadata but does NOT write versions.json.
+        """prepare_item() extracts metadata but does NOT write versions.json.
 
         This is the key behavior change: prepare is side-effect-free for versioning.
         """
-        from portolan_cli.dataset import prepare_dataset
+        from portolan_cli.add import prepare_item
 
         # Set up test file in catalog structure
         collection_dir = initialized_catalog / "test-collection"
@@ -146,14 +146,14 @@ class TestPrepareDataset:
         test_file = item_dir / "data.geojson"
         test_file.write_text(valid_geojson_content)
 
-        # Prepare the dataset
-        prepared = prepare_dataset(
+        # Prepare the item
+        prepared = prepare_item(
             path=test_file,
             catalog_root=initialized_catalog,
             collection_id="test-collection",
         )
 
-        # Should return PreparedDataset with metadata
+        # Should return PreparedItem with metadata
         assert prepared.item_id == "test-item"
         assert prepared.collection_id == "test-collection"
         assert len(prepared.asset_files) > 0
@@ -161,21 +161,20 @@ class TestPrepareDataset:
         # CRITICAL: versions.json should NOT exist yet
         versions_path = collection_dir / "versions.json"
         assert not versions_path.exists(), (
-            "prepare_dataset() must NOT write versions.json - "
-            "this is the whole point of the refactor!"
+            "prepare_item() must NOT write versions.json - this is the whole point of the refactor!"
         )
 
     @pytest.mark.unit
-    def test_prepare_dataset_does_not_update_collection_json(
+    def test_prepare_item_does_not_update_collection_json(
         self,
         initialized_catalog: Path,
         valid_geojson_content: str,
     ) -> None:
-        """prepare_dataset() should not update collection.json links.
+        """prepare_item() should not update collection.json links.
 
         Collection links are also batched in finalize phase.
         """
-        from portolan_cli.dataset import prepare_dataset
+        from portolan_cli.add import prepare_item
 
         collection_dir = initialized_catalog / "test-collection"
         item_dir = collection_dir / "test-item"
@@ -200,7 +199,7 @@ class TestPrepareDataset:
         collection_json.write_text(json.dumps(initial_collection))
         initial_mtime = collection_json.stat().st_mtime
 
-        prepare_dataset(
+        prepare_item(
             path=test_file,
             catalog_root=initialized_catalog,
             collection_id="test-collection",
@@ -210,24 +209,24 @@ class TestPrepareDataset:
         # (links are added in finalize)
         final_mtime = collection_json.stat().st_mtime
         assert initial_mtime == final_mtime, (
-            "prepare_dataset() should not modify collection.json - "
+            "prepare_item() should not modify collection.json - "
             "link updates are batched in finalize phase"
         )
 
 
-class TestFinalizeDatasets:
-    """Tests for finalize_datasets() function."""
+class TestFinalizeItems:
+    """Tests for finalize_items() function."""
 
     @pytest.mark.unit
-    def test_finalize_datasets_writes_versions_json_once(
+    def test_finalize_items_writes_versions_json_once(
         self,
         initialized_catalog: Path,
     ) -> None:
-        """finalize_datasets() writes versions.json in a single batch.
+        """finalize_items() writes versions.json in a single batch.
 
-        Even with multiple prepared datasets, only one write per collection.
+        Even with multiple prepared items, only one write per collection.
         """
-        from portolan_cli.dataset import PreparedDataset, finalize_datasets
+        from portolan_cli.add import PreparedItem, finalize_items
         from portolan_cli.formats import FormatType
 
         collection_dir = initialized_catalog / "test-collection"
@@ -244,8 +243,8 @@ class TestFinalizeDatasets:
         asset2 = item2_dir / "data2.parquet"
         asset2.write_bytes(b"fake parquet 2")
 
-        # Create two prepared datasets
-        prepared1 = PreparedDataset(
+        # Create two prepared items
+        prepared1 = PreparedItem(
             item_id="item-1",
             collection_id="test-collection",
             format_type=FormatType.VECTOR,
@@ -253,7 +252,7 @@ class TestFinalizeDatasets:
             asset_files={"data1.parquet": (asset1, "checksum1", 14)},
             item_json_path=item1_dir / "item-1.json",
         )
-        prepared2 = PreparedDataset(
+        prepared2 = PreparedItem(
             item_id="item-2",
             collection_id="test-collection",
             format_type=FormatType.VECTOR,
@@ -263,8 +262,8 @@ class TestFinalizeDatasets:
         )
 
         # Track write_versions calls
-        with patch("portolan_cli.dataset.write_versions") as mock_write:
-            finalize_datasets(
+        with patch("portolan_cli.add.write_versions") as mock_write:
+            finalize_items(
                 catalog_root=initialized_catalog,
                 prepared=[prepared1, prepared2],
             )
@@ -272,19 +271,19 @@ class TestFinalizeDatasets:
             # Should only write once per collection (both items in same collection)
             assert mock_write.call_count == 1, (
                 f"Expected 1 write_versions call, got {mock_write.call_count}. "
-                "finalize_datasets should batch all items in a collection."
+                "finalize_items should batch all items in a collection."
             )
 
     @pytest.mark.unit
-    def test_finalize_datasets_groups_by_collection(
+    def test_finalize_items_groups_by_collection(
         self,
         initialized_catalog: Path,
     ) -> None:
-        """finalize_datasets() groups items by collection for efficient writes.
+        """finalize_items() groups items by collection for efficient writes.
 
         Items in different collections get separate writes (one per collection).
         """
-        from portolan_cli.dataset import PreparedDataset, finalize_datasets
+        from portolan_cli.add import PreparedItem, finalize_items
         from portolan_cli.formats import FormatType
 
         # Set up two collections
@@ -294,7 +293,7 @@ class TestFinalizeDatasets:
             item_dir.mkdir(parents=True)
             (item_dir / "data.parquet").write_bytes(b"fake")
 
-        prepared_a = PreparedDataset(
+        prepared_a = PreparedItem(
             item_id="item-1",
             collection_id="collection-a",
             format_type=FormatType.VECTOR,
@@ -308,7 +307,7 @@ class TestFinalizeDatasets:
             },
             item_json_path=initialized_catalog / "collection-a/item-1/item-1.json",
         )
-        prepared_b = PreparedDataset(
+        prepared_b = PreparedItem(
             item_id="item-1",
             collection_id="collection-b",
             format_type=FormatType.VECTOR,
@@ -323,8 +322,8 @@ class TestFinalizeDatasets:
             item_json_path=initialized_catalog / "collection-b/item-1/item-1.json",
         )
 
-        with patch("portolan_cli.dataset.write_versions") as mock_write:
-            finalize_datasets(
+        with patch("portolan_cli.add.write_versions") as mock_write:
+            finalize_items(
                 catalog_root=initialized_catalog,
                 prepared=[prepared_a, prepared_b],
             )
@@ -335,12 +334,12 @@ class TestFinalizeDatasets:
             )
 
     @pytest.mark.unit
-    def test_finalize_datasets_creates_correct_version_entries(
+    def test_finalize_items_creates_correct_version_entries(
         self,
         initialized_catalog: Path,
     ) -> None:
-        """finalize_datasets() creates proper version entries for all items."""
-        from portolan_cli.dataset import PreparedDataset, finalize_datasets
+        """finalize_items() creates proper version entries for all items."""
+        from portolan_cli.add import PreparedItem, finalize_items
         from portolan_cli.formats import FormatType
 
         collection_dir = initialized_catalog / "test-collection"
@@ -353,7 +352,7 @@ class TestFinalizeDatasets:
             (item_dir / f"data{i}.parquet").write_bytes(b"x" * (100 * i))
 
         prepared = [
-            PreparedDataset(
+            PreparedItem(
                 item_id=f"item-{i}",
                 collection_id="test-collection",
                 format_type=FormatType.VECTOR,
@@ -370,7 +369,7 @@ class TestFinalizeDatasets:
             for i in [1, 2]
         ]
 
-        finalize_datasets(
+        finalize_items(
             catalog_root=initialized_catalog,
             prepared=prepared,
         )
@@ -391,17 +390,17 @@ class TestFinalizeDatasets:
         assert "item-2/data2.parquet" in asset_keys
 
 
-class TestAddDatasetBackwardCompatibility:
-    """Ensure add_dataset() still works as a convenience wrapper."""
+class TestAddBackwardCompatibility:
+    """Ensure add() still works as a convenience wrapper."""
 
     @pytest.mark.integration
-    def test_add_dataset_uses_prepare_and_finalize(
+    def test_add_uses_prepare_and_finalize(
         self,
         initialized_catalog: Path,
         valid_geojson_content: str,
     ) -> None:
-        """add_dataset() internally calls prepare_dataset + finalize_datasets."""
-        from portolan_cli.dataset import add_dataset
+        """add() internally calls prepare_item + finalize_items."""
+        from portolan_cli.add import add
 
         collection_dir = initialized_catalog / "test-collection"
         item_dir = collection_dir / "test-item"
@@ -409,8 +408,8 @@ class TestAddDatasetBackwardCompatibility:
         test_file = item_dir / "data.geojson"
         test_file.write_text(valid_geojson_content)
 
-        # add_dataset should still work as before
-        result = add_dataset(
+        # add should still work as before
+        result = add(
             path=test_file,
             catalog_root=initialized_catalog,
             collection_id="test-collection",

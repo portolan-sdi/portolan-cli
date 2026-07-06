@@ -2,7 +2,9 @@
 paths:
   - "portolan_cli/stac.py"
   - "portolan_cli/stac_parquet.py"
-  - "portolan_cli/dataset.py"
+  - "portolan_cli/add.py"
+  - "portolan_cli/query.py"
+  - "portolan_cli/remove.py"
   - "portolan_cli/catalog.py"
   - "portolan_cli/collection.py"
   - "portolan_cli/collection_id.py"
@@ -28,13 +30,13 @@ change STAC output, check the relevant RULE-id there.
 
 `item.json` is written per item during preparation, but `collection.json`,
 `versions.json`, and the parent `catalog.json` links are written **once per
-collection** in `finalize_datasets`, so a prep failure leaves no version entry.
+collection** in `finalize_items`, so a prep failure leaves no version entry.
 
 ```mermaid
 flowchart TD
     A["add_cmd (cli.py)"] --> B[resolve catalog root]
     B --> C[validate item-id, dedup paths]
-    C --> D["add_files (dataset.py)"]
+    C --> D["add_files (add.py)"]
     D --> E[Phase1 collect files]
     E --> F{geospatial ext?}
     F -->|no| G[skip]
@@ -43,7 +45,7 @@ flowchart TD
     I -->|unchanged| G
     I -->|yes| J{multilayer?}
     J -->|yes| K[split layers]
-    J -->|no| M["prepare_dataset"]
+    J -->|no| M["prepare_item"]
     K --> M
     M --> N[detect_format + pre-validate geometry]
     N --> O[derive item-id and asset level]
@@ -54,9 +56,9 @@ flowchart TD
     R --> S
     S --> T[scan assets + stats]
     T --> U{collection-level vector?}
-    U -->|yes| V[PreparedDataset, no item.json]
+    U -->|yes| V[PreparedItem, no item.json]
     U -->|no| W[write item.json]
-    V --> Y["finalize_datasets"]
+    V --> Y["finalize_items"]
     W --> Y
     Y --> Z[get or create collection]
     Z --> AA[merge assets/items by MergeStrategy]
@@ -185,7 +187,7 @@ reintroduce a `state.json` sentinel.
 
 The biggest single cause of regressions here is fixing the path in the traceback
 and missing its twin. The pystac trailing-slash fix shipped for `init_catalog`
-but missed two sites in `dataset.py`, the asset-key fix shipped for one format
+but missed two sites in `add.py`, the asset-key fix shipped for one format
 and missed the others. **After any fix in this area, grep the repo for the
 function/pattern (`normalize_hrefs(`, `add_asset_to_collection`,
 `STAC_VERSION`, the media-type string) and confirm every caller is covered.**

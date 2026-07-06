@@ -255,9 +255,9 @@ rules:
   - id: RULE-0042
     level: error
     scope: collection
-    description: Single-file datasets MUST be collection-level assets
+    description: Single-file collections MUST use collection-level assets
     rationale: |
-      Item indirection adds no value for single-file datasets.
+      Item indirection adds no value for single-file collections.
     validation: |
       If collection contains exactly one data file:
         assert file is in collection.assets, not wrapped in item
@@ -455,7 +455,7 @@ rules:
     description: Collections MUST include llms.txt link
     rationale: |
       Collection-level llms.txt provides everything an agent needs to work
-      with a specific dataset: schema docs, query examples, data quality notes.
+      with a specific collection: schema docs, query examples, data quality notes.
     validation: |
       For each collection.json:
         assert any link has rel="llms"
@@ -476,7 +476,7 @@ rules:
       Missing key sections reduce the file's value to AI agents.
     validation: |
       For catalog llms.txt:
-        warn if file does not mention collections or datasets
+        warn if file does not mention collections or items
         warn if no code examples present
         warn if no license information present
     references:
@@ -576,7 +576,7 @@ rules:
     scope: collection
     description: Tabular collections MUST use collection-level assets
     rationale: |
-      Single-file tabular datasets should not be wrapped in STAC items.
+      Single-file tabular data should not be wrapped in STAC items.
       Collection-level assets are simpler and match the vector data pattern.
     validation: |
       If the collection is tabular (portolan:geospatial == false, or detected as
@@ -757,7 +757,7 @@ rules:
     description: Partitioned collections SHOULD have consistent Hive-style structure
     rationale: |
       Mixed partition keys, orphan data files at the collection root, or a
-      missing partition:scheme make a partitioned dataset ambiguous to query
+      missing partition:scheme make a partitioned collection ambiguous to query
       engines that rely on the Hive key=value convention.
     validation: |
       For each collection with key=value partition directories:
@@ -765,7 +765,7 @@ rules:
         warn if there are orphan .parquet files at the collection root
         warn if collection.json is missing the partition:scheme field
     references:
-      - formats/vector.md#partitioned-datasets
+      - formats/vector.md#partitioned-collections
     code_rule: partition_structure
 
   - id: RULE-0131
@@ -780,5 +780,5 @@ rules:
         read the Parquet schema (footer) of every partition file
         assert all files share the same set of column names
     references:
-      - formats/vector.md#partitioned-datasets
+      - formats/vector.md#partitioned-collections
     code_rule: partition_schema_consistency

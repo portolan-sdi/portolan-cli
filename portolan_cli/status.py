@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from portolan_cli.dataset import compute_checksum
+from portolan_cli.checksums import compute_checksum
 from portolan_cli.versions import VersionsFile, read_versions
 
 

@@ -78,7 +78,7 @@ class PostAddItemContext(TypedDict):
 class PostAddContext(TypedDict):
     """Context passed to a backend's optional on_post_add() hook.
 
-    After add_dataset() completes local processing, portolan-cli checks
+    After add() completes local processing, portolan-cli checks
     ``hasattr(backend, "on_post_add")`` and, if present, calls it with this
     context.  Backends that do not implement on_post_add() are silently
     skipped.
@@ -113,7 +113,7 @@ class VersioningBackend(Protocol):
     The MVP uses JsonFileBackend (versions.json), while enterprise deployments can
     use IcebergBackend via the portolake plugin for ACID transactions.
 
-    All methods take a `collection` parameter identifying which collection/dataset
+    All methods take a `collection` parameter identifying which collection
     to operate on. The collection path is relative to the catalog root.
 
     Thread Safety:

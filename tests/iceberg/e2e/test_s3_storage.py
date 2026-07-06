@@ -57,7 +57,7 @@ def test_iceberg_metadata_in_s3(rest_iceberg_backend, minio_client, tmp_path):
 @pytest.mark.e2e
 @pytest.mark.e2e_slow
 def test_large_dataset_s3(rest_iceberg_backend, rest_catalog, tmp_path):
-    """10K-row dataset round-trips correctly through S3."""
+    """10K-row table round-trips correctly through S3."""
     rows = 10_000
     table = pa.table(
         {

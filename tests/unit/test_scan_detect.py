@@ -147,8 +147,8 @@ class TestHiveDetection:
         assert is_hive_partition_dir("=value") is None
         assert is_hive_partition_dir("key=") is None  # Empty value might be None or tuple
 
-    def test_detect_hive_partitions_finds_partitioned_dataset(self, tmp_path: Path) -> None:
-        """detect_hive_partitions finds Hive-partitioned datasets."""
+    def test_detect_hive_partitions_finds_partitioned_collection(self, tmp_path: Path) -> None:
+        """detect_hive_partitions finds Hive-partitioned collections."""
         # Create Hive partition structure
         (tmp_path / "year=2020" / "state=CA").mkdir(parents=True)
         (tmp_path / "year=2020" / "state=CA" / "data.parquet").write_bytes(b"\x00")

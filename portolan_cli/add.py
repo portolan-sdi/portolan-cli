@@ -1,6 +1,6 @@
-"""Dataset orchestration module - manages the dataset add/list/info/remove workflow.
+"""Add pipeline module - manages the add/list/info/remove workflow.
 
-This module orchestrates the complete workflow for managing datasets in a
+This module orchestrates the complete workflow for managing collections in a
 Portolan catalog:
 1. Format detection (route to vector or raster handler)
 2. Conversion to cloud-native format (GeoParquet or COG)
@@ -14,13 +14,12 @@ Per ADR-0007, all logic lives here; the CLI is a thin wrapper.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
 import shutil
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -29,17 +28,27 @@ import click
 import pystac
 from pystac.layout import AsIsLayoutStrategy
 
-from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
+from portolan_cli.checksums import compute_checksum, compute_dir_checksum, compute_dir_size
+from portolan_cli.collection import (
+    _compute_union_bbox,
+    _get_metadata_yaml_bbox,
+    _get_sibling_collection_bboxes,
+)
+from portolan_cli.collection_id import (
+    infer_nested_collection_id,
+    normalize_collection_id,
+    resolve_collection_id,  # noqa: F401
+    validate_collection_id,
+)
 from portolan_cli.config import get_setting, load_merged_metadata
 from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
-    MTIME_TOLERANCE_SECONDS,
-    SIDECAR_PATTERNS,
     TABULAR_EXTENSIONS,
 )
 from portolan_cli.conversion_config import get_vector_settings
 from portolan_cli.convert import convert_multilayer_file
 from portolan_cli.crs import transform_bbox_to_wgs84
+from portolan_cli.discovery import get_sidecars, iter_files_with_sidecars, iter_geospatial_files
 from portolan_cli.errors import NoGeometryError
 from portolan_cli.formats import (
     FormatType,
@@ -66,6 +75,8 @@ from portolan_cli.metadata_yaml import (
     apply_temporal_defaults,
     validate_metadata,
 )
+from portolan_cli.query import ItemInfo, get_item_info, is_current, list_items  # noqa: F401
+from portolan_cli.remove import remove_files, remove_item  # noqa: F401
 from portolan_cli.scan_detect import is_filegdb
 from portolan_cli.stac import (
     MergeStrategy,
@@ -91,6 +102,7 @@ from portolan_cli.style import enrich_cog_assets
 from portolan_cli.versions import (
     Asset,
     VersionsFile,
+    _increment_version,
     add_version,
     read_versions,
     write_versions,
@@ -349,31 +361,6 @@ def _scan_item_assets(
 
 
 @dataclass
-class DatasetInfo:
-    """Information about a dataset in the catalog.
-
-    Attributes:
-        item_id: STAC item identifier.
-        collection_id: Parent collection identifier.
-        format_type: Vector or raster format.
-        bbox: Bounding box [min_x, min_y, max_x, max_y].
-        asset_paths: Paths to data assets.
-        title: Optional display title.
-        description: Optional description.
-        datetime: Acquisition/creation datetime.
-    """
-
-    item_id: str
-    collection_id: str
-    format_type: FormatType
-    bbox: list[float]
-    asset_paths: list[str] = field(default_factory=list)
-    title: str | None = None
-    description: str | None = None
-    datetime: datetime | None = None
-
-
-@dataclass
 class AddFailure:
     """Information about a failed add operation.
 
@@ -389,10 +376,10 @@ class AddFailure:
 
 
 @dataclass
-class PreparedDataset:
-    """Result of prepare_dataset() — metadata extracted, ready for finalization.
+class PreparedItem:
+    """Result of prepare_item() — metadata extracted, ready for finalization.
 
-    This dataclass holds all the information needed to finalize a dataset
+    This dataclass holds all the information needed to finalize an item
     (write versions.json, update collection links) without any I/O happening
     during the prepare phase.
 
@@ -427,25 +414,25 @@ class PreparedDataset:
 
 
 def _maybe_partition_large_file(
-    prepared: PreparedDataset,
+    prepared: PreparedItem,
     catalog_root: Path,
     item_datetime: datetime | None,
     skip_partitioning: bool = False,
-) -> list[PreparedDataset]:
+) -> list[PreparedItem]:
     """Partition a large GeoParquet file if it exceeds the size threshold.
 
     Per ADR-0031 and Issue #352: Files > 2GB should be spatially partitioned.
     Each partition becomes a STAC Item with its own bbox.
 
     Args:
-        prepared: The prepared dataset to potentially partition.
+        prepared: The prepared item to potentially partition.
         catalog_root: Root directory of the catalog.
         item_datetime: Optional datetime for created items.
         skip_partitioning: If True, skip partitioning even if file exceeds threshold.
             Used when user declines interactive prompt.
 
     Returns:
-        List of PreparedDatasets. If partitioning occurred, contains multiple
+        List of PreparedItems. If partitioning occurred, contains multiple
         items (one per partition). Otherwise, returns [prepared] unchanged.
     """
     from portolan_cli.config import get_setting
@@ -544,19 +531,19 @@ def _maybe_partition_large_file(
     if primary_parquet.exists():
         primary_parquet.unlink()
 
-    # Create PreparedDataset for each partition
-    partitioned_datasets: list[PreparedDataset] = []
+    # Create PreparedItem for each partition
+    partitioned_items: list[PreparedItem] = []
 
     for partition_path in partition_files:
         # Create STAC item for this partition
         # item_id auto-derived from partition_path.parent.name (e.g., "kdtree_cell=0000000000")
-        partition_prepared = prepare_dataset(
+        partition_prepared = prepare_item(
             path=partition_path,
             catalog_root=catalog_root,
             collection_id=prepared.collection_id,
             item_datetime=item_datetime,
         )
-        partitioned_datasets.append(partition_prepared)
+        partitioned_items.append(partition_prepared)
 
     # Add collection-level glob asset for bulk access (Issue #351)
     # This provides a single glob URL for DuckDB/PyArrow/GDAL to read all partitions
@@ -573,10 +560,10 @@ def _maybe_partition_large_file(
     # Extract partition metadata for STAC partition extension (Issue #232)
     partition_meta = get_partition_metadata(partition_output_dir, str(strategy))
 
-    # Create a PreparedDataset for the glob asset (collection-level)
+    # Create a PreparedItem for the glob asset (collection-level)
     # Use original item_id as base to avoid collisions across collections
     glob_item_id = f"{prepared.item_id}_partitioned"
-    glob_prepared = PreparedDataset(
+    glob_prepared = PreparedItem(
         item_id=glob_item_id,
         collection_id=prepared.collection_id,
         format_type=FormatType.VECTOR,
@@ -589,9 +576,9 @@ def _maybe_partition_large_file(
         metadata=None,
         partition_metadata=partition_meta,
     )
-    partitioned_datasets.append(glob_prepared)
+    partitioned_items.append(glob_prepared)
 
-    return partitioned_datasets
+    return partitioned_items
 
 
 def _pre_validate_geometry(path: Path, format_type: FormatType) -> None:
@@ -730,7 +717,7 @@ def _fix_collection_links(
     """Fix root/parent links and deduplicate item links in collection JSON.
 
     PySTAC sets root to self by default; we need to point to catalog root.
-    Also deduplicates item links that can occur when add_dataset is called
+    Also deduplicates item links that can occur when add is called
     multiple times on the same collection.
     """
     if not collection_json_path.exists():
@@ -757,7 +744,7 @@ def _fix_collection_links(
             {"rel": "parent", "href": relative_root, "type": "application/json"}
         )
 
-    # Deduplicate item links (can occur when add_dataset is called multiple times)
+    # Deduplicate item links (can occur when add is called multiple times)
     seen_item_hrefs: set[str] = set()
     deduped_links: list[dict[str, Any]] = []
     for link in collection_data.get("links", []):
@@ -1186,7 +1173,7 @@ def _create_and_save_item(
 ) -> tuple[pystac.Item, Path]:
     """Create a STAC item with extensions and save it to disk.
 
-    Helper to reduce complexity in prepare_dataset().
+    Helper to reduce complexity in prepare_item().
 
     Args:
         item_id: STAC item identifier.
@@ -1293,7 +1280,7 @@ def _save_collection_with_links(
     _update_catalog_links(catalog_root, collection_id)
 
 
-def prepare_dataset(
+def prepare_item(
     *,
     path: Path,
     catalog_root: Path,
@@ -1304,12 +1291,12 @@ def prepare_dataset(
     item_datetime: datetime | None = None,
     force: bool = False,
     reconvert: bool = False,
-) -> PreparedDataset:
-    """Prepare a dataset for addition (convert, extract metadata, create STAC item).
+) -> PreparedItem:
+    """Prepare files for addition (convert, extract metadata, create STAC item).
 
     This function does the GDAL-bound work (conversion, metadata extraction) but
     does NOT write to versions.json or update collection.json links. This enables
-    O(n) versioning instead of O(n²) by batching writes in finalize_datasets().
+    O(n) versioning instead of O(n²) by batching writes in finalize_items().
 
     Per Issue #281: This is the parallelizable phase of the add workflow.
     Per Issue #386: force/reconvert control conversion skip behavior.
@@ -1317,8 +1304,8 @@ def prepare_dataset(
     Args:
         path: Path to the source file.
         catalog_root: Root directory of the catalog.
-        collection_id: Collection to add the dataset to.
-        title: Optional display title for the dataset.
+        collection_id: Collection to add the data to.
+        title: Optional display title for the item.
         description: Optional description.
         item_id: Optional item ID (defaults to parent directory name).
         item_datetime: Optional acquisition/creation datetime (per ADR-0035).
@@ -1326,7 +1313,7 @@ def prepare_dataset(
         reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
-        PreparedDataset with all metadata needed for finalization.
+        PreparedItem with all metadata needed for finalization.
 
     Raises:
         ValueError: If the format is unsupported or collection_id is invalid.
@@ -1438,7 +1425,7 @@ def prepare_dataset(
     # Item-level assets (rasters, partitioned vectors): create item.json as usual
     if is_collection_level_asset and format_type == FormatType.VECTOR:
         # Collection-level vector asset: no item.json per ADR-0031
-        return PreparedDataset(
+        return PreparedItem(
             item_id=item_id_resolved,
             collection_id=collection_id,
             format_type=format_type,
@@ -1463,7 +1450,7 @@ def prepare_dataset(
         item_dir=item_dir,
     )
 
-    return PreparedDataset(
+    return PreparedItem(
         item_id=item_id_resolved,
         collection_id=collection_id,
         format_type=format_type,
@@ -1543,7 +1530,7 @@ def _recompute_collection_extent_with_multibbox(collection: pystac.Collection) -
 
 def _add_prepared_items_to_collection(
     collection: pystac.Collection,
-    items: list[PreparedDataset],
+    items: list[PreparedItem],
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
 ) -> None:
     """Add prepared items or collection-level assets to a collection.
@@ -1553,7 +1540,7 @@ def _add_prepared_items_to_collection(
 
     Args:
         collection: The pystac Collection to add to.
-        items: List of PreparedDataset objects.
+        items: List of PreparedItem objects.
         merge_strategy: How to merge auto-detected metadata with existing values.
     """
     for p in items:
@@ -1672,7 +1659,7 @@ def _warn_about_stale_assets(
 def _ensure_partition_metadata(
     collection: pystac.Collection,
     collection_dir: Path,
-    items: list[PreparedDataset],
+    items: list[PreparedItem],
 ) -> list[str]:
     """Add partition metadata to collection from items or auto-detection.
 
@@ -1684,7 +1671,7 @@ def _ensure_partition_metadata(
     Args:
         collection: The STAC collection to update.
         collection_dir: Directory containing the collection.
-        items: List of prepared datasets for this collection.
+        items: List of prepared items for this collection.
 
     Returns:
         List of warning messages (e.g., schema inconsistency warnings).
@@ -1765,23 +1752,23 @@ def _ensure_partition_metadata(
     return warnings
 
 
-def finalize_datasets(
+def finalize_items(
     catalog_root: Path,
-    prepared: list[PreparedDataset],
+    prepared: list[PreparedItem],
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
-) -> list[DatasetInfo]:
-    """Finalize prepared datasets by writing versions.json and collection.json.
+) -> list[ItemInfo]:
+    """Finalize prepared items by writing versions.json and collection.json.
 
     This function batches all writes by collection, enabling O(n) versioning
     instead of O(n²). See Issue #281.
 
     Args:
         catalog_root: Root directory of the catalog.
-        prepared: List of PreparedDataset objects from prepare_dataset().
+        prepared: List of PreparedItem objects from prepare_item().
         merge_strategy: How to merge auto-detected metadata with existing values.
 
     Returns:
-        List of DatasetInfo for each finalized dataset.
+        List of ItemInfo for each finalized item.
     """
     if not prepared:
         return []
@@ -1789,11 +1776,11 @@ def finalize_datasets(
     # Group by collection for efficient batch writes
     from collections import defaultdict
 
-    by_collection: dict[str, list[PreparedDataset]] = defaultdict(list)
+    by_collection: dict[str, list[PreparedItem]] = defaultdict(list)
     for p in prepared:
         by_collection[p.collection_id].append(p)
 
-    results: list[DatasetInfo] = []
+    results: list[ItemInfo] = []
 
     for collection_id, items in by_collection.items():
         collection_dir = catalog_root / Path(*collection_id.split("/"))
@@ -1928,7 +1915,7 @@ def finalize_datasets(
         # Build results
         for p in items:
             results.append(
-                DatasetInfo(
+                ItemInfo(
                     item_id=p.item_id,
                     collection_id=p.collection_id,
                     format_type=p.format_type,
@@ -1965,13 +1952,13 @@ def _finalize_with_backend(
     collection_id: str,
     collection_dir: Path,
     collection: object,
-    items: list[PreparedDataset],
+    items: list[PreparedItem],
     active_backend: str,
 ) -> None:
     """Run backend versioning and post-add hooks for a non-file backend.
 
     Handles both publish_version() and on_post_add() calls so that
-    finalize_datasets() stays within complexity rank C.
+    finalize_items() stays within complexity rank C.
 
     This is backend routing logic added by the iceberg-backend-integration
     branch.
@@ -2037,7 +2024,7 @@ def _finalize_with_backend(
 def _batch_update_versions(
     collection_dir: Path,
     collection_id: str,
-    items: list[PreparedDataset],
+    items: list[PreparedItem],
 ) -> tuple[str, int, int]:
     """Batch update versions.json for multiple items in a single read-modify-write.
 
@@ -2047,7 +2034,7 @@ def _batch_update_versions(
     Args:
         collection_dir: Path to collection directory.
         collection_id: Collection identifier.
-        items: List of PreparedDataset objects to add versions for.
+        items: List of PreparedItem objects to add versions for.
 
     Returns:
         Tuple of (current_version, asset_count, total_size_bytes) for catalog-level
@@ -2114,7 +2101,7 @@ def _batch_update_versions(
     return (new_version, 0, 0)
 
 
-def add_dataset(
+def add(
     *,
     path: Path,
     catalog_root: Path,
@@ -2125,18 +2112,18 @@ def add_dataset(
     item_datetime: datetime | None = None,
     force: bool = False,
     reconvert: bool = False,
-) -> DatasetInfo:
-    """Add a dataset to a Portolan catalog.
+) -> ItemInfo:
+    """Add files to a Portolan catalog.
 
-    This is a convenience wrapper around prepare_dataset() + finalize_datasets()
+    This is a convenience wrapper around prepare_item() + finalize_items()
     for adding a single file. For batch operations, use those functions directly
     to achieve O(n) versioning instead of O(n²). See Issue #281.
 
     Args:
         path: Path to the source file.
         catalog_root: Root directory of the catalog.
-        collection_id: Collection to add the dataset to.
-        title: Optional display title for the dataset.
+        collection_id: Collection to add the data to.
+        title: Optional display title for the item.
         description: Optional description.
         item_id: Optional item ID (defaults to parent directory name).
         item_datetime: Optional acquisition/creation datetime (per ADR-0035).
@@ -2145,14 +2132,14 @@ def add_dataset(
         reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
-        DatasetInfo with details about the added dataset.
+        ItemInfo with details about the added item.
 
     Raises:
         ValueError: If the format is unsupported or collection_id is invalid.
         FileNotFoundError: If the source file doesn't exist.
     """
     # Prepare: extract metadata, convert, create STAC item
-    prepared = prepare_dataset(
+    prepared = prepare_item(
         path=path,
         catalog_root=catalog_root,
         collection_id=collection_id,
@@ -2165,11 +2152,11 @@ def add_dataset(
     )
 
     # Finalize: batch write versions.json and collection.json
-    results = finalize_datasets(catalog_root, [prepared])
+    results = finalize_items(catalog_root, [prepared])
 
     # Return the single result with title/description preserved
     result = results[0]
-    return DatasetInfo(
+    return ItemInfo(
         item_id=result.item_id,
         collection_id=result.collection_id,
         format_type=result.format_type,
@@ -2297,124 +2284,6 @@ def convert_raster(source: Path, dest_dir: Path) -> Path:
     return output_path
 
 
-def compute_checksum(path: Path) -> str:
-    """Compute SHA-256 checksum of a file securely.
-
-    Security: Validates the resolved path is a regular file to prevent
-    symlink attacks (MAJOR #5 - symlink security vulnerability).
-
-    Args:
-        path: Path to the file.
-
-    Returns:
-        Hex-encoded SHA-256 checksum.
-
-    Raises:
-        ValueError: If path is not a regular file (e.g., symlink to directory,
-            device file, or other non-regular file).
-        FileNotFoundError: If path does not exist.
-    """
-    # Resolve symlinks and check it's a regular file (MAJOR #5)
-    resolved = path.resolve()
-    if not resolved.exists():
-        raise FileNotFoundError(f"File not found: {path}")
-    if not resolved.is_file():
-        raise ValueError(f"Not a regular file: {path} (resolves to {resolved})")
-
-    sha256 = hashlib.sha256()
-    with open(resolved, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            sha256.update(chunk)
-    return sha256.hexdigest()
-
-
-def compute_dir_checksum(path: Path) -> str:
-    """Compute a stable fingerprint for a directory by hashing its contents' metadata.
-
-    Used for directory-format assets such as FileGDB (.gdb). Rather than reading
-    all bytes (expensive for large datasets), hashes the sorted list of
-    (relative_path, size, mtime) tuples for every file inside the directory.
-    This detects file additions, removals, and modifications within the directory.
-
-    Directories are not checksummed by content — the fingerprint is based on the
-    metadata of all contained files (recursively). This is consistent with how
-    ``is_current()`` uses mtime as a fast-path gate before falling back to this
-    checksum.
-
-    Args:
-        path: Path to the directory.
-
-    Returns:
-        Hex-encoded SHA-256 fingerprint of the directory contents.
-
-    Raises:
-        ValueError: If path is not a directory.
-        FileNotFoundError: If path does not exist.
-    """
-    resolved = path.resolve()
-    if not resolved.exists():
-        raise FileNotFoundError(f"Directory not found: {path}")
-    if not resolved.is_dir():
-        raise ValueError(f"Not a directory: {path} (resolves to {resolved})")
-
-    sha256 = hashlib.sha256()
-    # Collect (relative_path, size, mtime) for all files, sorted for determinism.
-    entries: list[tuple[str, int, float]] = []
-    try:
-        for fpath in sorted(resolved.rglob("*")):
-            if not fpath.is_file():
-                continue
-            rel_path = fpath.relative_to(resolved).as_posix()
-            try:
-                stat = fpath.stat()
-                entries.append((rel_path, stat.st_size, stat.st_mtime))
-            except OSError:
-                # Skip files we can't stat (e.g., broken symlinks inside .gdb)
-                entries.append((rel_path, -1, -1.0))
-    except OSError as exc:
-        raise ValueError(f"Cannot read directory contents: {path}") from exc
-
-    for rel_path, size, mtime in entries:
-        sha256.update(f"{rel_path}\x00{size}\x00{mtime:.6f}\n".encode())
-    return sha256.hexdigest()
-
-
-def compute_dir_size(path: Path) -> int:
-    """Compute total size of all files in a directory.
-
-    Used for directory-format assets such as FileGDB (.gdb) to populate
-    the STAC file:size field.
-
-    Args:
-        path: Path to the directory.
-
-    Returns:
-        Total size in bytes of all files in the directory.
-
-    Raises:
-        ValueError: If path is not a directory.
-        FileNotFoundError: If path does not exist.
-    """
-    resolved = path.resolve()
-    if not resolved.exists():
-        raise FileNotFoundError(f"Directory not found: {path}")
-    if not resolved.is_dir():
-        raise ValueError(f"Not a directory: {path} (resolves to {resolved})")
-
-    total_size = 0
-    try:
-        for fpath in resolved.rglob("*"):
-            if fpath.is_file():
-                try:
-                    total_size += fpath.stat().st_size
-                except OSError:
-                    pass
-    except OSError as exc:
-        raise ValueError(f"Cannot read directory contents: {path}") from exc
-
-    return total_size
-
-
 def _get_or_create_collection(
     catalog_root: Path,
     collection_id: str,
@@ -2446,150 +2315,6 @@ def _get_or_create_collection(
         title=title,
         bbox=initial_bbox,
     )
-
-
-def _get_sibling_collection_bboxes(catalog_root: Path) -> list[list[float]]:
-    """Get bounding boxes from all sibling collections in the catalog (Issue #432).
-
-    Scans the catalog for child collection links and extracts their spatial extents.
-    Used for AOI inheritance when creating tabular-only collections.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        List of bboxes [west, south, east, north] from sibling collections.
-        Empty list if no collections with valid extents found.
-    """
-    catalog_path = catalog_root / "catalog.json"
-    if not catalog_path.exists():
-        return []
-
-    try:
-        with open(catalog_path) as f:
-            catalog_data = json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
-
-    bboxes: list[list[float]] = []
-
-    # Find child links to collections
-    for link in catalog_data.get("links", []):
-        if link.get("rel") != "child":
-            continue
-
-        href = link.get("href", "")
-        if not href.endswith("collection.json"):
-            continue
-
-        # Security: Validate path is within catalog_root (ADR-0030 path hardening)
-        # Prevents path traversal via malicious hrefs like "../../../etc/passwd"
-        try:
-            collection_path = (catalog_root / href).resolve()
-            # Ensure resolved path is within catalog_root
-            collection_path.relative_to(catalog_root.resolve())
-        except ValueError:
-            # Path is outside catalog_root - skip silently (path traversal attempt)
-            continue
-
-        if not collection_path.exists():
-            continue
-
-        try:
-            with open(collection_path) as f:
-                collection_data = json.load(f)
-
-            # Extract bbox from extent
-            extent = collection_data.get("extent", {})
-            spatial = extent.get("spatial", {})
-            bbox_list = spatial.get("bbox", [])
-
-            if bbox_list and len(bbox_list) > 0:
-                bbox = bbox_list[0]
-                # Validate bbox format: [west, south, east, north] or 3D variant
-                # STAC allows 6-element bboxes for 3D: [west, south, min_z, east, north, max_z]
-                # We use only the 2D components (first 4 elements) for union computation
-                if (
-                    isinstance(bbox, list)
-                    and len(bbox) in (4, 6)
-                    and all(isinstance(x, (int, float)) for x in bbox)
-                ):
-                    # Extract 2D bbox (first 4 elements) regardless of 3D or 2D
-                    bboxes.append(bbox[:4])
-
-        except (json.JSONDecodeError, OSError, KeyError):
-            continue
-
-    return bboxes
-
-
-def _compute_union_bbox(bboxes: list[list[float]]) -> list[float]:
-    """Compute the union (enclosing) bounding box from multiple bboxes.
-
-    Filters out invalid bboxes (inf/nan/out-of-range) with warnings (issue #516).
-    Handles antimeridian-crossing bboxes properly.
-
-    Args:
-        bboxes: List of bboxes, each [west, south, east, north].
-
-    Returns:
-        Union bbox [min_west, min_south, max_east, max_north].
-        Returns global fallback if all bboxes are invalid.
-    """
-    from portolan_cli.bbox import compute_bbox_union
-
-    if not bboxes:
-        return [-180.0, -90.0, 180.0, 90.0]  # Global fallback
-
-    result = compute_bbox_union(bboxes)
-    if result.bbox is None:
-        # All bboxes were invalid - return global fallback
-        return [-180.0, -90.0, 180.0, 90.0]
-
-    return result.bbox
-
-
-def _get_metadata_yaml_bbox(collection_dir: Path) -> list[float] | None:
-    """Check metadata.yaml for explicit bbox (ADR-0047 priority 1).
-
-    Args:
-        collection_dir: Path to the collection directory.
-
-    Returns:
-        Bbox [west, south, east, north] if found in metadata.yaml, None otherwise.
-    """
-    metadata_path = collection_dir / "metadata.yaml"
-    if not metadata_path.exists():
-        return None
-
-    try:
-        import yaml
-
-        with open(metadata_path) as f:
-            metadata = yaml.safe_load(f) or {}
-
-        # Check for explicit bbox in metadata.yaml
-        # Supported formats: extent.bbox or just bbox at top level
-        bbox = metadata.get("bbox")
-        if bbox is None:
-            extent = metadata.get("extent", {})
-            if isinstance(extent, dict):
-                bbox = extent.get("bbox")
-
-        # Validate bbox format (4-element 2D or 6-element 3D)
-        if (
-            isinstance(bbox, list)
-            and len(bbox) in (4, 6)
-            and all(isinstance(x, (int, float)) for x in bbox)
-        ):
-            # Return 2D bbox (first 4 elements) for consistency
-            return bbox[:4]
-
-    except Exception as e:
-        # Any error reading/parsing metadata.yaml - fall back to inheritance
-        logger.debug("Error reading bbox from %s: %s", metadata_path, e)
-
-    return None
 
 
 def _ensure_tabular_collection(
@@ -2784,203 +2509,6 @@ def _update_versions(
     )
 
 
-def list_datasets(
-    catalog_root: Path,
-    collection_id: str | None = None,
-) -> list[DatasetInfo]:
-    """List datasets in a Portolan catalog.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        collection_id: Optional collection to filter by.
-
-    Returns:
-        List of DatasetInfo objects.
-    """
-    # Catalog at root level (per ADR-0023)
-    catalog_path = catalog_root / "catalog.json"
-
-    if not catalog_path.exists():
-        return []
-
-    datasets: list[DatasetInfo] = []
-
-    # Scan root-level directories for collections (per ADR-0023)
-    for col_dir in catalog_root.iterdir():
-        if not col_dir.is_dir():
-            continue
-
-        # Skip .portolan and hidden directories
-        if col_dir.name.startswith("."):
-            continue
-
-        col_id = col_dir.name
-
-        # Filter by collection if specified
-        if collection_id and col_id != collection_id:
-            continue
-
-        collection_path = col_dir / "collection.json"
-        if not collection_path.exists():
-            continue
-
-        # Load collection to get items
-        collection_data = json.loads(collection_path.read_text(encoding="utf-8"))
-
-        for link in collection_data.get("links", []):
-            if link.get("rel") != "item":
-                continue
-
-            # Parse item href to get item ID
-            item_href = link.get("href", "")
-            # href is like ./item-id/item-id.json
-            item_id = item_href.split("/")[1] if "/" in item_href else item_href
-
-            # Load item
-            item_path = col_dir / item_href.removeprefix("./")
-            if not item_path.exists():
-                continue
-
-            item_data = json.loads(item_path.read_text(encoding="utf-8"))
-
-            # Determine format from assets
-            format_type = FormatType.UNKNOWN
-            asset_paths: list[str] = []
-            for _asset_key, asset in item_data.get("assets", {}).items():
-                href = asset.get("href", "")
-                asset_paths.append(href)
-                if href.endswith(".parquet"):
-                    format_type = FormatType.VECTOR
-                elif href.endswith(".tif"):
-                    format_type = FormatType.RASTER
-
-            datasets.append(
-                DatasetInfo(
-                    item_id=item_data.get("id", item_id),
-                    collection_id=col_id,
-                    format_type=format_type,
-                    bbox=item_data.get("bbox", [0, 0, 0, 0]),
-                    asset_paths=asset_paths,
-                    title=item_data.get("properties", {}).get("title"),
-                    description=item_data.get("properties", {}).get("description"),
-                )
-            )
-
-    return datasets
-
-
-def get_dataset_info(
-    catalog_root: Path,
-    dataset_id: str,
-) -> DatasetInfo:
-    """Get information about a specific dataset.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        dataset_id: Dataset identifier in format "collection/item".
-
-    Returns:
-        DatasetInfo for the requested dataset.
-
-    Raises:
-        KeyError: If the dataset doesn't exist.
-    """
-    if "/" not in dataset_id:
-        raise KeyError(f"Dataset not found: {dataset_id} (expected format: collection/item)")
-
-    collection_id, item_id = dataset_id.split("/", 1)
-
-    # STAC at root level (per ADR-0023)
-    item_path = catalog_root / collection_id / item_id / f"{item_id}.json"
-
-    if not item_path.exists():
-        raise KeyError(f"Dataset not found: {dataset_id}")
-
-    item_data = json.loads(item_path.read_text(encoding="utf-8"))
-
-    # Determine format from assets
-    format_type = FormatType.UNKNOWN
-    asset_paths: list[str] = []
-    for asset in item_data.get("assets", {}).values():
-        href = asset.get("href", "")
-        asset_paths.append(href)
-        if href.endswith(".parquet"):
-            format_type = FormatType.VECTOR
-        elif href.endswith(".tif"):
-            format_type = FormatType.RASTER
-
-    return DatasetInfo(
-        item_id=item_data.get("id", item_id),
-        collection_id=collection_id,
-        format_type=format_type,
-        bbox=item_data.get("bbox", [0, 0, 0, 0]),
-        asset_paths=asset_paths,
-        title=item_data.get("properties", {}).get("title"),
-        description=item_data.get("properties", {}).get("description"),
-    )
-
-
-def remove_dataset(
-    catalog_root: Path,
-    dataset_id: str,
-    *,
-    remove_collection: bool = False,
-) -> None:
-    """Remove a dataset from a Portolan catalog.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        dataset_id: Dataset identifier in format "collection/item" or just "collection".
-        remove_collection: If True, remove entire collection.
-
-    Raises:
-        KeyError: If the dataset doesn't exist.
-    """
-    # STAC at root level (per ADR-0023)
-    if remove_collection or "/" not in dataset_id:
-        # Remove entire collection
-        collection_id = dataset_id.split("/")[0]
-        collection_dir = catalog_root / collection_id
-
-        if not collection_dir.exists():
-            raise KeyError(f"Dataset not found: {dataset_id}")
-
-        # Remove collection directory
-        shutil.rmtree(collection_dir)
-
-        # Update catalog links
-        catalog_path = catalog_root / "catalog.json"
-        if catalog_path.exists():
-            catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
-            catalog_data["links"] = [
-                link
-                for link in catalog_data.get("links", [])
-                if not link.get("href", "").endswith(f"/{collection_id}/collection.json")
-            ]
-            catalog_path.write_text(json.dumps(catalog_data, indent=2), encoding="utf-8")
-    else:
-        # Remove single item
-        collection_id, item_id = dataset_id.split("/", 1)
-        item_dir = catalog_root / collection_id / item_id
-
-        if not item_dir.exists():
-            raise KeyError(f"Dataset not found: {dataset_id}")
-
-        # Remove item directory
-        shutil.rmtree(item_dir)
-
-        # Update collection links
-        collection_path = catalog_root / collection_id / "collection.json"
-        if collection_path.exists():
-            collection_data = json.loads(collection_path.read_text(encoding="utf-8"))
-            collection_data["links"] = [
-                link
-                for link in collection_data.get("links", [])
-                if not link.get("href", "").startswith(f"./{item_id}/")
-            ]
-            collection_path.write_text(json.dumps(collection_data, indent=2), encoding="utf-8")
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Directory handling
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2991,56 +2519,6 @@ def remove_dataset(
 # matches the full FileGDB spec. Do not reimplement here.
 
 
-def iter_geospatial_files(
-    path: Path,
-    *,
-    recursive: bool = True,
-) -> list[Path]:
-    """Iterate over geospatial files in a directory.
-
-    Includes both regular files and FileGDB directories (.gdb).
-    FileGDB directories are treated as single geospatial assets.
-
-    Args:
-        path: Directory to scan.
-        recursive: If True, scan subdirectories recursively.
-
-    Returns:
-        List of paths to geospatial files (including FileGDB directories).
-    """
-    # Special case: if path itself is a FileGDB, return it directly
-    if is_filegdb(path):
-        return [path]
-
-    if not path.is_dir():
-        return []
-
-    files: list[Path] = []
-    seen_filegdbs: set[Path] = set()  # Track FileGDBs to avoid recursing into them
-
-    if recursive:
-        for item in path.rglob("*"):
-            # Skip items inside FileGDB directories (they're internal files)
-            if any(parent in seen_filegdbs for parent in item.parents):
-                continue
-
-            # Check for FileGDB directory
-            if item.is_dir() and is_filegdb(item):
-                files.append(item)
-                seen_filegdbs.add(item)
-            elif item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
-                files.append(item)
-    else:
-        for item in path.iterdir():
-            # Check for FileGDB directory
-            if item.is_dir() and is_filegdb(item):
-                files.append(item)
-            elif item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
-                files.append(item)
-
-    return sorted(files)
-
-
 def add_directory(
     *,
     path: Path,
@@ -3049,7 +2527,7 @@ def add_directory(
     recursive: bool = True,
     force: bool = False,
     reconvert: bool = False,
-) -> list[DatasetInfo]:
+) -> list[ItemInfo]:
     """Add all geospatial files in a directory to a collection.
 
     Uses batch versioning (Issue #281) for O(n) instead of O(n²) performance.
@@ -3057,20 +2535,20 @@ def add_directory(
     Args:
         path: Directory containing geospatial files.
         catalog_root: Root directory containing .portolan/.
-        collection_id: Collection to add datasets to.
+        collection_id: Collection to add files to.
         recursive: If True, process subdirectories recursively.
         force: If True, bypass change detection and re-process (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
 
     Returns:
-        List of DatasetInfo for each added dataset.
+        List of ItemInfo for each added item.
     """
     files = iter_geospatial_files(path, recursive=recursive)
 
-    # Phase 1: Prepare all datasets (GDAL work, parallelizable)
-    prepared: list[PreparedDataset] = []
+    # Phase 1: Prepare all items (GDAL work, parallelizable)
+    prepared: list[PreparedItem] = []
     for file_path in files:
-        result = prepare_dataset(
+        result = prepare_item(
             path=file_path,
             catalog_root=catalog_root,
             collection_id=collection_id,
@@ -3080,7 +2558,7 @@ def add_directory(
         prepared.append(result)
 
     # Phase 2: Finalize (batch write versions.json + collection.json)
-    return finalize_datasets(catalog_root=catalog_root, prepared=prepared)
+    return finalize_items(catalog_root=catalog_root, prepared=prepared)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3088,265 +2566,6 @@ def add_directory(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Note: SIDECAR_PATTERNS imported from portolan_cli.constants
-
-
-def get_sidecars(path: Path) -> list[Path]:
-    """Detect sidecar files for a given primary file.
-
-    Automatically finds associated files like .dbf/.shx/.prj for shapefiles,
-    or .tfw/.xml for GeoTIFFs.
-
-    Args:
-        path: Path to the primary file.
-
-    Returns:
-        List of existing sidecar file paths (may be empty).
-    """
-    suffix_lower = path.suffix.lower()
-    patterns = SIDECAR_PATTERNS.get(suffix_lower, [])
-
-    sidecars: list[Path] = []
-    stem = path.stem
-    parent = path.parent
-
-    for ext in patterns:
-        sidecar_path = parent / f"{stem}{ext}"
-        if sidecar_path.exists():
-            sidecars.append(sidecar_path)
-
-    return sidecars
-
-
-def resolve_collection_id(path: Path, catalog_root: Path) -> str:
-    """Resolve collection ID from a file path.
-
-    Per ADR-0022: First path component (relative to catalog root) = collection ID.
-
-    Args:
-        path: Path to the file.
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        Collection ID (first directory component relative to catalog).
-
-    Raises:
-        ValueError: If path is not inside catalog root.
-    """
-    # Get path relative to catalog root
-    try:
-        relative = path.resolve().relative_to(catalog_root.resolve())
-    except ValueError as err:
-        raise ValueError(f"Path {path} is outside catalog root {catalog_root}") from err
-
-    # First component is the collection ID
-    parts = relative.parts
-    if not parts:
-        raise ValueError(f"Cannot determine collection from path: {path}")
-
-    # Skip the filename if path is a file
-    if path.is_file() and len(parts) == 1:
-        raise ValueError(f"File {path} must be in a subdirectory (collection)")
-
-    return parts[0]
-
-
-def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
-    """Infer nested collection ID from a file or directory-based data asset.
-
-    Per ADR-0031 (Collection-Level Assets for Vector Data) and ADR-0032
-    (Nested Catalogs with Flat Collections), the collection depth depends
-    on the format type:
-
-    - **Vector data**: Parent directory = collection (collection-level asset)
-      Example: demographics/boundaries.parquet -> collection = "demographics"
-
-    - **Raster data**: Grandparent directory = collection, parent = item
-      Example: 2025/tile1/scene.tif -> collection = "2025", item = "tile1"
-
-    Per Issue #443, Hive partition directories (key=value format) are filtered
-    out and NOT included in the collection ID:
-      Example: sites/contours/gms_feature_id=abc/data.parquet -> "sites/contours"
-
-    Directory-based formats like FileGDB (*.gdb) are treated as vector data
-    (collection-level assets).
-
-    Examples:
-        # Vector (collection-level)
-        climate/hittekaart/data.parquet -> "climate/hittekaart"
-        demographics/boundaries.geojson -> "demographics"
-        ocha/my_data.gdb -> "ocha"  (FileGDB directory)
-
-        # Raster (item-level, needs subdirectory)
-        imagery/2025/tile1/scene.tif -> "imagery/2025"
-        satellite/scene-001/B04.tif -> "satellite"
-
-        # Hive partitions (filtered out)
-        sites/contours/gms_feature_id=abc/data.parquet -> "sites/contours"
-        data/year=2024/month=01/file.parquet -> "data"
-
-    Args:
-        path: Path to the file or directory-based data asset (e.g., FileGDB).
-        catalog_root: Root directory of the catalog.
-
-    Returns:
-        Collection ID (nested path relative to catalog root, excluding Hive partitions).
-
-    Raises:
-        ValueError: If path is not inside catalog root, at root level, or
-            if raster data lacks required item subdirectory structure.
-    """
-    from portolan_cli.scan_detect import is_hive_partition_dir
-
-    # Get path relative to catalog root
-    try:
-        relative = path.resolve().relative_to(catalog_root.resolve())
-    except ValueError as err:
-        raise ValueError(f"Path {path} is outside catalog root {catalog_root}") from err
-
-    # Get parent directory path (all components except filename)
-    parts = relative.parts
-    if not parts:
-        raise ValueError(f"Cannot determine collection from path: {path}")
-
-    # A path is treated as a "data asset" (not a collection) if it's a file
-    # OR a FileGDB directory. FileGDB directories (*.gdb) contain the actual
-    # data - they're assets, not organizational collections (Issue #259).
-    #
-    # For FileGDB detection, we use:
-    # 1. is_filegdb() - content inspection (internal .gdbtable files or 'gdb' marker)
-    # 2. Suffix fallback - handles empty/incomplete/corrupted FileGDB directories
-    is_gdb_suffix = path.is_dir() and path.name.lower().endswith(".gdb")
-    is_asset = path.is_file() or is_filegdb(path) or is_gdb_suffix
-
-    # Data asset must be in at least one subdirectory (collection)
-    if is_asset and len(parts) == 1:
-        raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
-
-    # Detect format type to determine collection depth (ADR-0031)
-    # - Vector: parent directory = collection (collection-level asset)
-    # - Raster: grandparent = collection, parent = item (item-level asset)
-    format_type = detect_format(path)
-    is_raster = format_type == FormatType.RASTER
-
-    if is_raster:
-        # Raster files need item subdirectory: collection/item/data.tif
-        # Minimum depth: 3 parts (collection, item_dir, filename)
-        if len(parts) < 3:
-            raise ValueError(
-                f"Raster file {path} must be in a subdirectory (collection/item/). "
-                f"Per ADR-0031, raster data requires item-level organization."
-            )
-        # Return grandparent as collection (all but last 2 components)
-        collection_parts = parts[:-2]
-    else:
-        # Vector files: parent directory = collection
-        # Return parent as collection (all but last component)
-        collection_parts = parts[:-1] if is_asset else parts
-
-    # Filter out Hive partition directories (key=value pattern)
-    # Per Issue #443: partitions should not be part of collection ID
-    collection_parts = tuple(
-        part for part in collection_parts if is_hive_partition_dir(part) is None
-    )
-
-    if not collection_parts:
-        raise ValueError(f"Data asset {path} must be in a subdirectory (collection)")
-
-    return "/".join(collection_parts)
-
-
-def is_current(
-    path: Path,
-    versions_path: Path,
-    *,
-    asset_key: str | None = None,
-) -> bool:
-    """Check if a file is unchanged compared to versions.json.
-
-    Uses mtime as fast-path (per ADR-0017), falls back to sha256 if mtime changed.
-
-    Args:
-        path: Path to the file to check.
-        versions_path: Path to versions.json for this collection.
-        asset_key: Optional explicit key to look up in versions.json.
-            If not provided, looks up by filename alone (legacy behavior).
-
-    Returns:
-        True if file is unchanged (already tracked at current state),
-        False if new or modified.
-    """
-    if not versions_path.exists():
-        return False
-
-    versions_file = read_versions(versions_path)
-    if not versions_file.versions:
-        return False
-
-    current_version = versions_file.versions[-1]
-
-    # Look for this file in current version assets
-    # Try explicit key first, then item-scoped key, then filename, then converted name
-    asset = None
-    filename = path.name
-
-    if asset_key is not None:
-        asset = current_version.assets.get(asset_key)
-
-    if asset is None:
-        # Try item-scoped key format: {item_id}/{filename}
-        # This is how _update_versions stores multi-asset items
-        item_id = path.parent.name
-        item_scoped_key = f"{item_id}/{filename}"
-        asset = current_version.assets.get(item_scoped_key)
-
-    if asset is None:
-        # Try bare filename (legacy format)
-        asset = current_version.assets.get(filename)
-
-    if asset is None:
-        # Also check for stem.parquet (converted name)
-        parquet_name = f"{path.stem}.parquet"
-        asset = current_version.assets.get(parquet_name)
-
-    if asset is None:
-        # Try item-scoped with converted name
-        item_id = path.parent.name
-        item_scoped_parquet = f"{item_id}/{parquet_name}"
-        asset = current_version.assets.get(item_scoped_parquet)
-
-    if asset is None:
-        return False
-
-    # Get file stats once (used for both mtime and size checks)
-    file_stat = path.stat()
-
-    # For directory-format assets (e.g., FileGDB), skip the mtime fast-path and
-    # size comparison — neither is reliable for directories. A directory's mtime
-    # changes when its children change, but MTIME_TOLERANCE_SECONDS (2s, for
-    # NFS/CIFS compatibility) would mask rapid modifications. Instead, go
-    # directly to the content fingerprint (compute_dir_checksum), which hashes
-    # the sorted (path, size, mtime) tuples of all files inside the directory.
-    if path.is_dir():
-        current_checksum = compute_dir_checksum(path)
-        return current_checksum == asset.sha256
-
-    # Fast path: mtime unchanged AND size unchanged → file is current
-    # Both conditions must hold; size check catches fast overwrites within mtime tolerance
-    mtime_unchanged = (
-        asset.mtime is not None and abs(file_stat.st_mtime - asset.mtime) < MTIME_TOLERANCE_SECONDS
-    )
-    size_unchanged = asset.size_bytes is not None and file_stat.st_size == asset.size_bytes
-
-    if mtime_unchanged and size_unchanged:
-        return True
-
-    # Medium path: size differs → definitely changed
-    if asset.size_bytes is not None and file_stat.st_size != asset.size_bytes:
-        return False
-
-    # Slow path: mtime changed but size matches → check sha256
-    current_checksum = compute_checksum(path)
-    return current_checksum == asset.sha256
 
 
 def _is_no_geometry_error(err: click.ClickException) -> bool:
@@ -3499,7 +2718,7 @@ def add_files(
     reconvert: bool = False,
     skip_partitioning: bool = False,
     merge_strategy: MergeStrategy = MergeStrategy.SMART,
-) -> tuple[list[DatasetInfo], list[Path], list[AddFailure]]:
+) -> tuple[list[ItemInfo], list[Path], list[AddFailure]]:
     """Add files to a Portolan catalog.
 
     This is the main entry point for the `portolan add` command.
@@ -3543,12 +2762,12 @@ def add_files(
         reconvert: If True, re-convert from source files (requires force=True).
 
     Returns:
-        Tuple of (added_datasets, skipped_paths, failures).
-        added_datasets: List of DatasetInfo for newly added/updated files.
+        Tuple of (added_items, skipped_paths, failures).
+        added_items: List of ItemInfo for newly added/updated files.
         skipped_paths: List of paths that were skipped (unchanged or non-geospatial).
         failures: List of AddFailure for files that could not be processed.
     """
-    added: list[DatasetInfo] = []
+    added: list[ItemInfo] = []
     skipped: list[Path] = []
     failures: list[AddFailure] = []
 
@@ -3575,29 +2794,29 @@ def add_files(
 
     # Import here to avoid circular imports
 
-    # Accumulate prepared datasets for batch finalization (Issue #281)
-    prepared_datasets: list[PreparedDataset] = []
+    # Accumulate prepared items for batch finalization (Issue #281)
+    prepared_items: list[PreparedItem] = []
 
     def prepare_single_file(
         file_path: Path, coll_id: str
     ) -> tuple[
-        list[PreparedDataset],
+        list[PreparedItem],
         list[AddFailure],
         tuple[Path, Path, str] | None,  # deferred non-geo
     ]:
         """Prepare a single file. Returns (prepared_list, failures, deferred).
 
-        This runs prepare_dataset() which does GDAL work but does NOT write
+        This runs prepare_item() which does GDAL work but does NOT write
         versions.json or collection.json. Those writes are batched in finalize.
 
         Per Issue #281: This is the parallelizable phase. Each item writes to
         its own item.json (no conflict). versions.json and collection.json
-        are written once at the end via finalize_datasets().
+        are written once at the end via finalize_items().
 
         Per Issue #265: Multi-layer files (GeoPackage, FileGDB) are split into
         separate parquet files, one per layer.
         """
-        prepared_list: list[PreparedDataset] = []
+        prepared_list: list[PreparedItem] = []
         failure_list: list[AddFailure] = []
 
         # Check for multi-layer files (GeoPackage, FileGDB) - Issue #265
@@ -3614,7 +2833,7 @@ def add_files(
                     if result.success and result.output:
                         # Prepare each converted layer
                         try:
-                            prepared = prepare_dataset(
+                            prepared = prepare_item(
                                 path=result.output,
                                 catalog_root=catalog_root,
                                 collection_id=coll_id,
@@ -3653,7 +2872,7 @@ def add_files(
 
         # Single-layer file - original behavior
         try:
-            prepared = prepare_dataset(
+            prepared = prepare_item(
                 path=file_path,
                 catalog_root=catalog_root,
                 collection_id=coll_id,
@@ -3663,7 +2882,7 @@ def add_files(
                 reconvert=reconvert,
             )
             # Check if file should be partitioned (Issue #352)
-            # Returns multiple PreparedDatasets if partitioned, else [prepared]
+            # Returns multiple PreparedItems if partitioned, else [prepared]
             partitioned = _maybe_partition_large_file(
                 prepared=prepared,
                 catalog_root=catalog_root,
@@ -3704,7 +2923,7 @@ def add_files(
 
             prepared_list, failure_list, deferred = prepare_single_file(file_path, coll_id)
             for prepared in prepared_list:
-                prepared_datasets.append(prepared)
+                prepared_items.append(prepared)
                 source_dir = file_path.parent
                 collection_dir = catalog_root / Path(*coll_id.split("/"))
                 if prepared.is_collection_level_asset:
@@ -3745,7 +2964,7 @@ def add_files(
                     on_progress(file_path)
 
                 for prepared in prepared_list:
-                    prepared_datasets.append(prepared)
+                    prepared_items.append(prepared)
                     source_dir = file_path.parent
                     collection_dir = catalog_root / Path(*coll_id.split("/"))
                     if prepared.is_collection_level_asset:
@@ -3760,11 +2979,11 @@ def add_files(
                     deferred_non_geo.append(deferred)
 
     # ========================================================================
-    # PHASE 2.5: Batch finalize all prepared datasets (Issue #281)
+    # PHASE 2.5: Batch finalize all prepared items (Issue #281)
     # ========================================================================
     # This is the key optimization: ONE write per collection instead of O(n)
-    if prepared_datasets:
-        added.extend(finalize_datasets(catalog_root, prepared_datasets, merge_strategy))
+    if prepared_items:
+        added.extend(finalize_items(catalog_root, prepared_items, merge_strategy))
 
     # ========================================================================
     # PHASE 3: Process deferred non-geo files (sequential)
@@ -3781,7 +3000,7 @@ def add_files(
     # ========================================================================
     # PHASE 3.5: Recompute file statistics for collections with deferred assets
     # ========================================================================
-    # Deferred assets are added after finalize_datasets, so file statistics
+    # Deferred assets are added after finalize_items, so file statistics
     # must be recomputed to include them (Issue #501)
     for collection_dir in affected_collections:
         collection_json_path = collection_dir / "collection.json"
@@ -4166,232 +3385,3 @@ def _update_collection_with_asset(
     # Write updated collection
     with open(collection_json_path, "w") as f:
         json.dump(collection_data, f, indent=2)
-
-
-def iter_files_with_sidecars(path: Path, *, recursive: bool = True) -> list[Path]:
-    """Iterate over geospatial files in a directory (including their sidecars).
-
-    Returns geospatial files and their associated sidecars (e.g., .dbf/.shx for shapefiles).
-    FileGDB directories (.gdb) are treated as single geospatial assets.
-    Filters by GEOSPATIAL_EXTENSIONS while iterating for efficiency.
-
-    Args:
-        path: Directory to scan.
-        recursive: If True, scan subdirectories recursively.
-
-    Returns:
-        List of geospatial file paths (including FileGDB directories) and their sidecars.
-    """
-    # Special case: if path itself is a FileGDB, return it directly
-    if is_filegdb(path):
-        return [path]
-
-    if not path.is_dir():
-        return []
-
-    files: list[Path] = []
-    seen: set[Path] = set()
-    seen_filegdbs: set[Path] = set()  # Track FileGDBs to avoid recursing into them
-
-    iterator = path.rglob("*") if recursive else path.iterdir()
-
-    for item in iterator:
-        # Skip items inside FileGDB directories (they're internal files)
-        if any(parent in seen_filegdbs for parent in item.parents):
-            continue
-
-        # Check for FileGDB directory (treat as single asset)
-        if item.is_dir() and is_filegdb(item):
-            if item not in seen:
-                files.append(item)
-                seen.add(item)
-                seen_filegdbs.add(item)
-            continue
-
-        if not item.is_file():
-            continue
-
-        # Only process geospatial files (not sidecars directly)
-        if item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
-            if item not in seen:
-                files.append(item)
-                seen.add(item)
-
-            # Also include any sidecars for this file
-            for sidecar in get_sidecars(item):
-                if sidecar not in seen:
-                    files.append(sidecar)
-                    seen.add(sidecar)
-
-    return sorted(files)
-
-
-def remove_files(
-    *,
-    paths: list[Path],
-    catalog_root: Path,
-    keep: bool = False,
-    dry_run: bool = False,
-) -> tuple[list[Path], list[Path]]:
-    """Remove files from Portolan catalog tracking.
-
-    This is the main entry point for the `portolan rm` command.
-    By default, deletes the file AND removes from tracking (git-style).
-    With keep=True, removes from tracking but preserves the file.
-
-    Args:
-        paths: List of paths to remove (files or directories).
-        catalog_root: Root directory of the catalog.
-        keep: If True, preserve file on disk (only untrack).
-        dry_run: If True, preview what would be removed without actually removing.
-
-    Returns:
-        Tuple of (removed_paths, skipped_paths).
-        removed_paths: Paths that were removed from tracking.
-        skipped_paths: Paths that were skipped (not in catalog, errors).
-    """
-    removed: list[Path] = []
-    skipped: list[Path] = []
-
-    for path in paths:
-        if path.is_dir():
-            # Remove all files in directory
-            files = list(path.rglob("*")) if path.exists() else []
-            files = [f for f in files if f.is_file()]
-        else:
-            # Include sidecars for single file removal
-            sidecars = get_sidecars(path) if path.exists() else []
-            files = [path] + sidecars
-
-        for file_path in files:
-            if not file_path.exists() and not keep:
-                skipped.append(file_path)
-                continue
-
-            # Refuse to delete symlinks - they might point outside the catalog
-            # and deleting them could have unintended consequences. Users should
-            # resolve symlinks manually or use --keep to just untrack.
-            if file_path.is_symlink() and not keep:
-                skipped.append(file_path)
-                continue
-
-            # Determine collection ID
-            try:
-                coll_id = resolve_collection_id(file_path, catalog_root)
-            except ValueError:
-                # File is outside catalog - skip with warning
-                skipped.append(file_path)
-                continue
-
-            # In dry-run mode, just record what would be removed
-            if dry_run:
-                removed.append(file_path)
-                continue
-
-            # Remove from versions.json
-            versions_path = catalog_root / coll_id / "versions.json"
-            if versions_path.exists():
-                _remove_from_versions(file_path, versions_path)
-
-            # Remove STAC item and files (unless --keep)
-            if not keep:
-                item_id = file_path.stem
-                item_dir = catalog_root / coll_id / item_id
-                if item_dir.exists() and item_dir.is_dir():
-                    shutil.rmtree(item_dir)
-
-                # Delete file from disk (missing_ok handles race conditions)
-                file_path.unlink(missing_ok=True)
-
-                # Also delete sidecars if this is the primary file
-                # Use missing_ok=True to handle race conditions where another
-                # process might delete the file between exists() and unlink()
-                for sidecar in get_sidecars(file_path):
-                    sidecar.unlink(missing_ok=True)
-
-            removed.append(file_path)
-
-    return removed, skipped
-
-
-def _increment_version(version: str) -> str:
-    """Safely increment a semantic version string.
-
-    Handles standard semver (1.2.3) and pre-release versions (1.0.0-beta.1).
-
-    Args:
-        version: Current version string.
-
-    Returns:
-        Incremented version string.
-    """
-    if not version:
-        return "0.0.1"
-
-    # Handle pre-release versions (e.g., 1.0.0-beta.1)
-    if "-" in version:
-        base, prerelease = version.split("-", 1)
-        # Try to increment the prerelease number
-        prerelease_parts = prerelease.rsplit(".", 1)
-        if len(prerelease_parts) == 2 and prerelease_parts[1].isdigit():
-            prerelease_parts[1] = str(int(prerelease_parts[1]) + 1)
-            return f"{base}-{'.'.join(prerelease_parts)}"
-        else:
-            # No numeric suffix: 1.0.0-beta → 1.0.0-beta.1
-            # Preserve the prerelease tag by appending .1
-            return f"{base}-{prerelease}.1"
-
-    # Standard semver: increment patch
-    parts = version.split(".")
-    if len(parts) >= 3 and parts[-1].isdigit():
-        parts[-1] = str(int(parts[-1]) + 1)
-    elif len(parts) < 3:
-        # Pad to 3 parts if needed
-        while len(parts) < 3:
-            parts.append("0")
-        parts[-1] = "1"
-    return ".".join(parts)
-
-
-def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
-    """Remove a file from version tracking via the active backend.
-
-    This creates a new version entry without the specified file.
-
-    Args:
-        file_path: Path to the file to untrack.
-        versions_path: Path to the versions.json file.
-    """
-    if not versions_path.exists():
-        return
-
-    versions_file = read_versions(versions_path)
-    if not versions_file.versions:
-        return
-
-    # Check if the file is tracked under any key
-    current = versions_file.versions[-1]
-    filename = file_path.name
-    parquet_name = f"{file_path.stem}.parquet"
-
-    removed_keys = {name for name in current.assets if name == filename or name == parquet_name}
-
-    if not removed_keys:
-        # File wasn't tracked, nothing to do
-        return
-
-    from portolan_cli.catalog import find_catalog_root
-    from portolan_cli.version_ops import publish_version
-
-    catalog_root = find_catalog_root(versions_path.parent)
-    if catalog_root is None:
-        catalog_root = versions_path.parent.parent
-    collection_id = versions_path.parent.relative_to(catalog_root).as_posix()
-
-    publish_version(
-        collection_id,
-        assets={},
-        removed=removed_keys,
-        message=f"Removed {filename}",
-        catalog_root=catalog_root,
-    )

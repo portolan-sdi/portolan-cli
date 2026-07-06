@@ -17,8 +17,8 @@ import pytest
 from click.testing import CliRunner
 from shapely.geometry import Point
 
+from portolan_cli.add import add_files, is_current
 from portolan_cli.cli import cli
-from portolan_cli.dataset import add_files, is_current
 
 
 @pytest.fixture

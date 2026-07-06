@@ -1,6 +1,6 @@
 # Tabular (Non-Geospatial) Data Format Requirements
 
-Portolan supports **non-geospatial tabular datasets** as companion data alongside geospatial layers. This enables catalogs to include tables keyed by time, administrative code, or category rather than by location.
+Portolan supports **non-geospatial tabular data** as companion data alongside geospatial layers. This enables catalogs to include tables keyed by time, administrative code, or category rather than by location.
 
 ## Scope
 

@@ -263,8 +263,8 @@ def _compute_short_hash(text: str, length: int = 8) -> str:
     """Compute a short hash of text for uniqueness.
 
     An 8-character hex hash provides 2^32 (~4 billion) unique values,
-    which is sufficient for filename uniqueness in typical datasets.
-    For extremely large datasets, collision probability follows the
+    which is sufficient for filename uniqueness in typical catalogs.
+    For extremely large catalogs, collision probability follows the
     birthday paradox but remains negligible for practical use.
 
     Args:

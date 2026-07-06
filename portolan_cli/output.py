@@ -19,7 +19,7 @@ Dry-Run Mode:
     success("Would write output.parquet", dry_run=True)
     # Output: ✓ [DRY RUN] Would write output.parquet
 
-    Use dry-run mode for commands that modify state (dataset add, sync,
+    Use dry-run mode for commands that modify state (add, sync,
     prune, repair) to preview operations before execution.
 
 Verbose Mode:

@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from portolan_cli.dataset import add_dataset
+from portolan_cli.add import add
 
 
 @pytest.fixture
@@ -56,8 +56,8 @@ class TestCollectionLevelAssets:
         target_file = collection_dir / "census.parquet"
         target_file.write_bytes(test_file.read_bytes())
 
-        # Act: Add the dataset
-        add_dataset(
+        # Act: Add the item
+        add(
             catalog_root=initialized_catalog,
             path=target_file,
             collection_id="demographics",
@@ -105,7 +105,7 @@ class TestCollectionLevelAssets:
         target_file.write_bytes(test_file.read_bytes())
 
         # Act
-        add_dataset(
+        add(
             catalog_root=initialized_catalog,
             path=target_file,
             collection_id="demographics",
@@ -149,7 +149,7 @@ class TestCollectionLevelAssets:
         target_file.write_bytes(test_file.read_bytes())
 
         # Act
-        add_dataset(
+        add(
             catalog_root=initialized_catalog,
             path=target_file,
             collection_id="demographics",
@@ -190,7 +190,7 @@ class TestCollectionLevelAssets:
         target_file.write_bytes(test_file.read_bytes())
 
         # Act
-        add_dataset(
+        add(
             catalog_root=initialized_catalog,
             path=target_file,
             collection_id="demographics",
@@ -237,7 +237,7 @@ class TestCollectionLevelAssets:
         target_file.write_bytes(test_file.read_bytes())
 
         # Act: Explicitly provide item_id
-        add_dataset(
+        add(
             catalog_root=initialized_catalog,
             path=target_file,
             collection_id="demographics",
@@ -287,7 +287,7 @@ class TestCollectionLevelNonGeoCompanions:
 
         TDD: Verify the function signature includes the new parameter.
         """
-        from portolan_cli.dataset import _process_deferred_non_geo_files
+        from portolan_cli.add import _process_deferred_non_geo_files
 
         # Set up minimal arguments
         deferred_non_geo: list = []
@@ -313,7 +313,7 @@ class TestCollectionLevelNonGeoCompanions:
         companion parquet should also be registered as a collection-level asset
         in collection.json.
         """
-        from portolan_cli.dataset import _process_deferred_non_geo_files
+        from portolan_cli.add import _process_deferred_non_geo_files
 
         # Set up collection with collection.json
         collection_dir = initialized_catalog / "my-collection"
@@ -396,7 +396,7 @@ class TestCollectionLevelNonGeoCompanions:
 
     def test_non_geo_without_any_companion_warns(self, initialized_catalog):
         """Non-geo file without geo companion logs warning (existing behavior)."""
-        from portolan_cli.dataset import _process_deferred_non_geo_files
+        from portolan_cli.add import _process_deferred_non_geo_files
 
         # Source dir with no geo companion
         orphan_dir = initialized_catalog / "orphan"

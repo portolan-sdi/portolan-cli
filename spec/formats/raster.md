@@ -8,4 +8,4 @@
 
 ## Status
 
-This format addendum is a stub. Full requirements will be developed after completing a reference raster dataset implementation.
+This format addendum is a stub. Full requirements will be developed after completing a reference raster implementation.

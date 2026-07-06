@@ -1,6 +1,6 @@
 """ItemModel dataclass for STAC Item metadata.
 
-An Item represents a single dataset within a collection.
+An Item represents a single spatiotemporal entity within a collection.
 It has geometry, bbox, datetime, and assets per the STAC spec.
 """
 
@@ -55,7 +55,7 @@ class AssetModel:
 class ItemModel:
     """STAC Item metadata model.
 
-    An Item is a single dataset within a collection.
+    An Item is a single spatiotemporal entity within a collection.
 
     Attributes:
         id: Unique item identifier.

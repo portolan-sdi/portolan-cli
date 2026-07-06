@@ -44,7 +44,7 @@ The public entry point is `convert_file()` in `convert.py`, which calls
 `CLOUD_NATIVE_EXTENSIONS` set in `formats.py`, never a hardcoded `.parquet`
 check, an earlier `.parquet`-only gate let `.pmtiles` and `.fgb` fall through to
 `gpio.convert()` and fail with "No CRS found". Note the legacy `convert_vector()`
-helper in `dataset.py` still has a literal `.parquet` skip, do not copy that
+helper in `add.py` still has a literal `.parquet` skip, do not copy that
 pattern, route new format checks through `get_cloud_native_status()`. Multi-layer
 `.gpkg`/`.gdb` must convert **all** layers or warn explicitly, never silently
 drop layers (that is data loss).

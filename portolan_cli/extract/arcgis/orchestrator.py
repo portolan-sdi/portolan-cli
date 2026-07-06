@@ -628,8 +628,8 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
     Per Issue #369: Propagates rich metadata from ArcGIS service to STAC files,
     avoiding generic placeholders.
     """
+    from portolan_cli.add import add_files
     from portolan_cli.catalog import init_catalog
-    from portolan_cli.dataset import add_files
     from portolan_cli.stac import update_stac_metadata
 
     # Get list of successfully extracted parquet files

@@ -426,9 +426,9 @@ class TestMimeTypeStandardization:
         assert PARQUET_MEDIA_TYPE == "application/vnd.apache.parquet"
 
     @pytest.mark.unit
-    def test_dataset_media_type_parquet(self) -> None:
-        """Dataset module should detect spec-compliant MIME for .parquet."""
-        from portolan_cli.dataset import _MEDIA_TYPE_MAP
+    def test_media_type_parquet(self) -> None:
+        """Add module should detect spec-compliant MIME for .parquet."""
+        from portolan_cli.add import _MEDIA_TYPE_MAP
 
         assert _MEDIA_TYPE_MAP[".parquet"] == "application/vnd.apache.parquet"
 

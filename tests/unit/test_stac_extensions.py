@@ -623,7 +623,7 @@ class TestStacVersionInModels:
 
 
 class TestTableExtensionAggregation:
-    """Tests for Table extension aggregation in finalize_datasets (Issue #304)."""
+    """Tests for Table extension aggregation in finalize_items (Issue #304)."""
 
     @pytest.mark.unit
     def test_aggregate_table_metadata_sums_row_counts(self) -> None:

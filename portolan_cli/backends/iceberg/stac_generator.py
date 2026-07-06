@@ -80,7 +80,7 @@ def _get_row_count(table: Table) -> int:
 
     Iceberg records ``total-records`` (net of deletes) in each snapshot's
     summary, so we read that instead of materializing the whole table — the
-    datasets the Iceberg backend targets can be 100K+ rows, and this runs on
+    data the Iceberg backend targets can be 100K+ rows, and this runs on
     every ``on_post_add``. Returns 0 for an empty table (no current snapshot),
     and falls back to a metadata-only file count for the rare catalog/writer
     that doesn't populate ``total-records``.

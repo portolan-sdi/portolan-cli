@@ -20,7 +20,7 @@ flowchart TD
     end
     subgraph LIB["Library layer (all logic, ADR-0007)"]
         catalog["catalog.py<br/>find_catalog_root, init_catalog"]
-        dataset["dataset.py<br/>add/rm orchestration + STAC build"]
+        dataset["add.py<br/>add/rm orchestration + STAC build"]
         stac["stac.py, stac_parquet.py<br/>catalog, collection, item"]
         formats["formats.py<br/>detect_format, CloudNativeStatus"]
         convert["convert.py<br/>VECTOR to gpio, RASTER to cogeo"]
@@ -78,7 +78,7 @@ decorators, so the root `CLAUDE.md` command references must stay accurate.
 ## Library layer (ADR-0007: all logic lives here, never in cli.py)
 
 `cli.py` parses flags, resolves the catalog root, loads `.env`, and delegates.
-The big orchestrators are `dataset.py` (add/rm, the largest module, drives STAC
+The big orchestrators are `add.py` (add/rm, the largest module, drives STAC
 build + conversion + versioning), `push.py`/`pull.py`/`sync.py` (remote I/O),
 `scan*.py` + `check.py` + `validation/` (discovery and validation), and
 `version_ops.py` (the only bridge from the library to a backend). See the
@@ -131,7 +131,7 @@ geoparquet-io or rio-cogeo. Never put geometry or raster math in our layer.
 | Subsystem | Modules | Path-scoped rule |
 |-----------|---------|------------------|
 | CLI shell + agent contract | `cli.py`, `output.py`, `json_output.py`, `errors.py`, `validation/`, `*_progress.py` | `cli-and-output.md` |
-| Catalog / STAC build | `catalog.py`, `stac.py`, `dataset.py`, `stac_parquet.py`, `collection.py`, `item.py`, `models/` | `stac-assets.md` |
+| Catalog / STAC build | `catalog.py`, `stac.py`, `add.py`, `stac_parquet.py`, `collection.py`, `item.py`, `models/` | `stac-assets.md` |
 | Format detect + convert + viz | `formats.py`, `convert.py`, `crs.py`, `pmtiles.py`, `partitioning.py`, `thumbnail.py`, `style.py` | `conversion-and-visualization.md` |
 | Sync / remote | `push.py`, `pull.py`, `sync.py`, `upload.py`, `download.py`, `async_utils.py` | `sync.md` |
 | Scan / check / metadata | `scan*.py`, `check.py`, `metadata/`, `clean.py` | `scan-check.md` (the four `metadata/{cog,geoparquet,pmtiles,flatgeobuf}.py` format extractors also load `conversion-and-visualization.md`) |

@@ -275,7 +275,7 @@ class NoGeometryError(ValueError):
     It replaces fragile string-pattern matching with a typed check:
         ``isinstance(err, NoGeometryError)``
 
-    Used by ``_pre_validate_geometry`` and ``add_dataset`` when a file has
+    Used by ``_pre_validate_geometry`` and ``add`` when a file has
     no geometry metadata (e.g., tabular parquet without ``geo`` key, GeoJSON
     with no features, etc.).
     """

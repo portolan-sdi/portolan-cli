@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.dataset import infer_nested_collection_id
+from portolan_cli.add import infer_nested_collection_id
 
 
 class TestCollectionInferenceByFormat:

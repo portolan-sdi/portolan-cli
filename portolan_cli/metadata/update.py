@@ -118,7 +118,7 @@ def create_missing_item(file_path: Path, collection_path: Path) -> Path:
 
     Writes item.json into the data file's parent directory at
     `{item_dir}/{item_id}.json`, matching the hierarchical convention
-    that `add` produces (per ADR-0031 and dataset.py:_create_and_save_item).
+    that `add` produces (per ADR-0031 and add.py:_create_and_save_item).
 
     Args:
         file_path: Path to the data file (GeoParquet or COG).

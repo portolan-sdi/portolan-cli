@@ -1,7 +1,7 @@
 """Partitioning support for large GeoParquet files.
 
 This module provides automatic spatial partitioning of large GeoParquet files
-using geoparquet-io's KD-tree partitioning. Per ADR-0031, partitioned datasets
+using geoparquet-io's KD-tree partitioning. Per ADR-0031, partitioned collections
 use Hive-style directories where each partition becomes a STAC Item.
 
 Issue #443: Supports arbitrary Hive partition column names (not just kdtree/h3/s2/quadkey/a5),
@@ -211,7 +211,7 @@ def build_glob_pattern(
 ) -> str:
     """Build glob pattern for collection-level asset href.
 
-    Per Issue #351, partitioned datasets expose a glob URL for bulk access.
+    Per Issue #351, partitioned collections expose a glob URL for bulk access.
     Per Issue #443, supports arbitrary partition column names and multi-level partitions.
 
     Args:
@@ -449,7 +449,7 @@ def detect_partitioning(directory: Path) -> dict[str, Any] | None:
 
 
 def validate_partition_schemas(directory: Path) -> SchemaValidationResult:
-    """Validate schema consistency across all partitions in a Hive-partitioned dataset.
+    """Validate schema consistency across all partitions in a Hive-partitioned collection.
 
     Per Issue #443, reads Parquet metadata (not data) from each partition file
     to verify all partitions have identical schemas. This is fast because Parquet

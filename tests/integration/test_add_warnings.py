@@ -1,7 +1,7 @@
-"""Integration tests for dataset warnings during add_dataset().
+"""Integration tests for warnings during add().
 
 These tests verify that the proper warnings and errors are emitted when adding
-datasets based on their cloud-native status per spec 002-cloud-native-warnings.
+data based on their cloud-native status per spec 002-cloud-native-warnings.
 """
 
 from __future__ import annotations
@@ -141,11 +141,11 @@ class TestUnsupportedEmitsError:
         assert "Unsupported format" in str(exc_info.value)
 
 
-class TestDatasetAddIntegration:
-    """Integration tests for the complete add_dataset flow with warnings."""
+class TestAddIntegration:
+    """Integration tests for the complete add flow with warnings."""
 
     @pytest.mark.integration
-    def test_add_dataset_with_geoparquet_no_warnings(
+    def test_add_with_geoparquet_no_warnings(
         self,
         valid_points_parquet: Path,
         capsys: pytest.CaptureFixture[str],
@@ -157,7 +157,7 @@ class TestDatasetAddIntegration:
         assert result.status == CloudNativeStatus.CLOUD_NATIVE
         # In a full integration test, we would:
         # 1. Initialize a catalog
-        # 2. Call add_dataset with the GeoParquet
+        # 2. Call add with the GeoParquet
         # 3. Verify no warning was printed to stderr
         _ = capsys  # Silence unused warning; will be used in full integration test
 
