@@ -327,14 +327,21 @@ rules:
   - id: RULE-0061
     level: error
     scope: collection
-    description: PMTiles MUST have rel="pmtiles" link when provided
+    description: PMTiles MUST have a rel="pmtiles" web-map-links link when provided
     rationale: |
-      Follows web-map-links STAC extension for discoverability.
+      Follows the web-map-links STAC extension (v1.3.0) for discoverability: the
+      PMTiles derivative must be reachable as a collection-level link, not only as
+      an asset. The link and the asset coexist.
     validation: |
       If collection has PMTiles asset:
         assert any link has rel="pmtiles"
+        assert that link has type="application/vnd.pmtiles"
+        assert "https://stac-extensions.github.io/web-map-links/v1.3.0/schema.json"
+               in collection.stac_extensions
     references:
       - formats/vector.md#recommended-formats
+      - https://github.com/stac-extensions/web-map-links
+    code_rule: pmtiles_link
 
   # =============================================================================
   # Visualization Styles Rules

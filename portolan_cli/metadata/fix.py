@@ -263,6 +263,91 @@ def repair_tabular_flags(catalog_root: Path, *, dry_run: bool = False) -> list[F
     return results
 
 
+def repair_pmtiles_links(catalog_root: Path, *, dry_run: bool = False) -> list[FixResult]:
+    """Backfill the ``rel="pmtiles"`` web-map-links link on collections (RULE-0061).
+
+    Repairs what :class:`~portolan_cli.validation.rules.PMTilesLinkRule` flags: a
+    collection that registers a PMTiles asset but does not emit a collection-level
+    ``rel="pmtiles"`` link. For each PMTiles asset lacking a matching link, the link
+    is added (with the web-map-links extension declared and ``pmtiles:layers`` set
+    from the asset filename). Collections whose links are already present are left
+    untouched.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+        dry_run: If True, report what would change without writing.
+
+    Returns:
+        FixResults for each collection that was (or would be) modified.
+    """
+    results: list[FixResult] = []
+
+    for collection_json in sorted(catalog_root.rglob("collection.json")):
+        rel_parts = collection_json.parent.relative_to(catalog_root).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        result = _repair_pmtiles_collection(collection_json, dry_run=dry_run)
+        if result is not None:
+            results.append(result)
+
+    return results
+
+
+def _repair_pmtiles_collection(collection_json: Path, *, dry_run: bool) -> FixResult | None:
+    """Backfill PMTiles links / extension for one collection (see repair_pmtiles_links)."""
+    from portolan_cli.pmtiles import (
+        WEB_MAP_LINKS_EXTENSION,
+        add_pmtiles_link_to_collection,
+        ensure_web_map_links_extension,
+        pmtiles_asset_hrefs,
+        pmtiles_link_hrefs,
+    )
+
+    try:
+        data = json.loads(collection_json.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+    pmtiles_hrefs = pmtiles_asset_hrefs(data.get("assets", {}))
+    if not pmtiles_hrefs:
+        return None
+
+    linked_hrefs = pmtiles_link_hrefs(data.get("links", []))
+    missing = [href for href in pmtiles_hrefs if href not in linked_hrefs]
+    # A collection may have all its links yet still lack the web-map-links
+    # extension declaration (e.g. a hand-edited collection.json). RULE-0061
+    # flags that too, so repair it here to keep check and --fix in agreement.
+    missing_extension = WEB_MAP_LINKS_EXTENSION not in data.get("stac_extensions", [])
+    if not missing and not missing_extension:
+        return None
+
+    if not dry_run:
+        collection_dir = collection_json.parent
+        for href in missing:
+            # Best-effort: the layer name is derived from the PMTiles file
+            # stem. If the tiles were generated with a custom ``--layer``
+            # override differing from the file name, the override is not
+            # recorded anywhere the backfill can read, so pmtiles:layers may
+            # not match the actual layer name inside the PMTiles. The
+            # generate path (pmtiles.generate_pmtiles_for_collection) honors
+            # the override; this fallback cannot.
+            add_pmtiles_link_to_collection(collection_dir, href, layers=[Path(href).stem])
+        if missing_extension and not missing:
+            # Links are complete but the extension declaration is absent;
+            # declare it without touching links (preserves custom layers).
+            ensure_web_map_links_extension(collection_dir)
+
+    message = (
+        "Added rel='pmtiles' web-map-links link" if missing else "Declared web-map-links extension"
+    )
+    return FixResult(
+        file_path=collection_json,
+        action=FixAction.UPDATED,
+        success=True,
+        message=message,
+    )
+
+
 def _repair_item_titles(
     stac_file: Path,
     data: dict[str, Any],

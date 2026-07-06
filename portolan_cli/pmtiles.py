@@ -43,6 +43,11 @@ logger = logging.getLogger(__name__)
 # MIME type for PMTiles (matches dataset.py)
 PMTILES_MEDIA_TYPE = "application/vnd.pmtiles"
 
+# web-map-links STAC extension declared for the rel="pmtiles" collection link
+# (Issue #569). v1.3.0 defines the pmtiles rel, the application/vnd.pmtiles media
+# type, and the pmtiles:layers field for default-visible vector layers.
+WEB_MAP_LINKS_EXTENSION = "https://stac-extensions.github.io/web-map-links/v1.3.0/schema.json"
+
 
 # --- Errors ---
 
@@ -419,6 +424,133 @@ def add_pmtiles_asset_to_collection(
     collection_json_path.write_text(json.dumps(data, indent=2))
 
 
+def pmtiles_asset_hrefs(assets: dict[str, Any]) -> list[str]:
+    """Return the hrefs of all PMTiles assets in a collection's asset dict.
+
+    An asset is a PMTiles asset when its ``type`` is ``application/vnd.pmtiles``
+    or its ``href`` ends in ``.pmtiles``. Shared by the RULE-0061 check and its
+    ``--fix`` repair so both classify assets identically.
+    """
+    return [
+        str(asset["href"])
+        for asset in assets.values()
+        if isinstance(asset, dict)
+        and (
+            asset.get("type") == PMTILES_MEDIA_TYPE
+            or str(asset.get("href", "")).endswith(".pmtiles")
+        )
+        and asset.get("href")
+    ]
+
+
+def pmtiles_link_hrefs(links: list[Any]) -> set[str]:
+    """Return the hrefs of all ``rel='pmtiles'`` links in a collection's links list."""
+    return {
+        str(link["href"])
+        for link in links
+        if isinstance(link, dict) and link.get("rel") == "pmtiles" and link.get("href")
+    }
+
+
+def ensure_web_map_links_extension(collection_path: Path) -> bool:
+    """Declare the web-map-links extension in a collection idempotently.
+
+    Adds ``WEB_MAP_LINKS_EXTENSION`` to ``stac_extensions`` if absent, without
+    touching any links (so existing ``pmtiles:layers`` overrides are preserved).
+    Used by ``check --fix`` to repair a collection that carries the PMTiles link
+    but omits the extension declaration (RULE-0061 assertion 3).
+
+    Args:
+        collection_path: Path to collection directory.
+
+    Returns:
+        True if the extension was added and the file rewritten, else False.
+    """
+    collection_json_path = collection_path / "collection.json"
+    if not collection_json_path.exists():
+        return False
+
+    data = json.loads(collection_json_path.read_text())
+    extensions = data.get("stac_extensions", [])
+    if WEB_MAP_LINKS_EXTENSION in extensions:
+        return False
+
+    extensions.append(WEB_MAP_LINKS_EXTENSION)
+    data["stac_extensions"] = extensions
+    collection_json_path.write_text(json.dumps(data, indent=2))
+    return True
+
+
+def add_pmtiles_link_to_collection(
+    collection_path: Path,
+    pmtiles_href: str,
+    *,
+    layers: list[str],
+) -> None:
+    """Add a ``rel="pmtiles"`` collection link following web-map-links (Issue #569).
+
+    The link coexists with the PMTiles *asset* (RULE-0060) and satisfies RULE-0061.
+    It declares the web-map-links extension in ``stac_extensions`` and carries the
+    ``pmtiles:layers`` array of default-visible vector layers. The link is keyed by
+    its ``href`` so multiple PMTiles in one collection each get their own link, and
+    re-running keeps ``pmtiles:layers`` in sync without duplicating the link.
+
+    Args:
+        collection_path: Path to collection directory.
+        pmtiles_href: Relative href to the PMTiles file (e.g., "./data.pmtiles").
+        layers: Default-visible vector layer names inside the PMTiles.
+
+    Raises:
+        FileNotFoundError: If collection.json doesn't exist.
+    """
+    collection_json_path = collection_path / "collection.json"
+    if not collection_json_path.exists():
+        raise FileNotFoundError(f"collection.json not found in {collection_path}")
+
+    data = json.loads(collection_json_path.read_text())
+
+    changed = False
+
+    # Declare the web-map-links extension (idempotently).
+    extensions = data.get("stac_extensions", [])
+    if WEB_MAP_LINKS_EXTENSION not in extensions:
+        extensions.append(WEB_MAP_LINKS_EXTENSION)
+        data["stac_extensions"] = extensions
+        changed = True
+
+    links = data.get("links", [])
+    existing = next(
+        (
+            link
+            for link in links
+            if link.get("rel") == "pmtiles" and link.get("href") == pmtiles_href
+        ),
+        None,
+    )
+    if existing is None:
+        links.append(
+            {
+                "rel": "pmtiles",
+                "href": pmtiles_href,
+                "type": PMTILES_MEDIA_TYPE,
+                "pmtiles:layers": layers,
+            }
+        )
+        data["links"] = links
+        changed = True
+    else:
+        # Keep type and layers aligned if a prior link is stale.
+        if existing.get("type") != PMTILES_MEDIA_TYPE:
+            existing["type"] = PMTILES_MEDIA_TYPE
+            changed = True
+        if existing.get("pmtiles:layers") != layers:
+            existing["pmtiles:layers"] = layers
+            changed = True
+
+    if changed:
+        collection_json_path.write_text(json.dumps(data, indent=2))
+
+
 def add_thumbnail_asset_to_collection(
     collection_path: Path,
     pmtiles_key: str,
@@ -726,6 +858,8 @@ def generate_pmtiles_for_collection(
         if not _should_generate(parquet_path, pmtiles_path, force):
             # Ensure asset is registered/updated in collection.json even when skipping
             add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
+            # Emit the rel="pmtiles" web-map-links link alongside the asset (#569)
+            add_pmtiles_link_to_collection(collection_path, pmtiles_href, layers=[layer_name])
             # Ensure default style exists even when PMTiles generation is skipped
             _write_default_style_for_geoparquet(
                 parquet_path=parquet_path,
@@ -765,6 +899,8 @@ def generate_pmtiles_for_collection(
 
             # Register asset in collection.json (Issue #13)
             add_pmtiles_asset_to_collection(collection_path, asset_key, pmtiles_href)
+            # Emit the rel="pmtiles" web-map-links link alongside the asset (#569)
+            add_pmtiles_link_to_collection(collection_path, pmtiles_href, layers=[layer_name])
 
             result.generated.append(pmtiles_path)
             generation_succeeded = True
