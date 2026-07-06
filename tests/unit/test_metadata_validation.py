@@ -128,6 +128,69 @@ class TestValidateCollectionExtent:
         assert result.passed is False
 
     @pytest.mark.unit
+    def test_3d_bboxes_contained_item_passes(self) -> None:
+        """3D (6-element) bboxes must be reduced on [w, s, e, n], not sliced (#592).
+
+        STAC orders a 6-element bbox [west, south, min_z, east, north, max_z].
+        The item is fully within the collection in 2D, so validation must pass.
+        With the pre-fix bbox[:4] slice, the collection east collapses to its
+        min_z (0.0) while the item east collapses to its min_z (10.0), so the
+        item reads as east-of-collection and validation wrongly fails.
+        """
+        collection = CollectionModel(
+            id="test-collection",
+            description="Test collection",
+            extent=ExtentModel(
+                # [west, south, min_z, east, north, max_z]
+                spatial=SpatialExtent(bbox=[[-122.5, 37.7, 0.0, -122.3, 37.9, 100.0]]),
+                temporal=TemporalExtent(interval=[["2026-01-01T00:00:00Z", None]]),
+            ),
+        )
+
+        items = [
+            ItemModel(
+                id="item-3d",
+                geometry={"type": "Point", "coordinates": [-122.4, 37.8]},
+                bbox=[-122.45, 37.75, 10.0, -122.35, 37.85, 50.0],
+                properties={"datetime": "2026-01-15T00:00:00Z"},
+                assets={"data": AssetModel(href="item.parquet")},
+                collection="test-collection",
+            ),
+        ]
+
+        result = validate_collection_extent(collection, items)
+        assert result.passed is True
+        assert len(result.errors) == 0
+
+    @pytest.mark.unit
+    def test_3d_item_outside_still_fails(self) -> None:
+        """A genuinely-outside 3D item must still fail after 2D reduction (#592)."""
+        collection = CollectionModel(
+            id="test-collection",
+            description="Test collection",
+            extent=ExtentModel(
+                spatial=SpatialExtent(bbox=[[-122.5, 37.7, 0.0, -122.3, 37.9, 100.0]]),
+                temporal=TemporalExtent(interval=[["2026-01-01T00:00:00Z", None]]),
+            ),
+        )
+
+        items = [
+            ItemModel(
+                id="item-outside",
+                geometry={"type": "Point", "coordinates": [-123.0, 37.8]},
+                # west -123.1 is west of the collection's -122.5
+                bbox=[-123.1, 37.75, 10.0, -122.9, 37.85, 50.0],
+                properties={"datetime": "2026-01-15T00:00:00Z"},
+                assets={"data": AssetModel(href="item.parquet")},
+                collection="test-collection",
+            ),
+        ]
+
+        result = validate_collection_extent(collection, items)
+        assert result.passed is False
+        assert any("item-outside" in e.message for e in result.errors)
+
+    @pytest.mark.unit
     def test_empty_items_list_passes(self) -> None:
         """Collection with no items should pass validation."""
         collection = CollectionModel(

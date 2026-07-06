@@ -914,7 +914,9 @@ The `portolan readme` command generates `README.md` by combining:
 - Title, description — `metadata.yaml` `title`/`description` override these when
   set; precedence is `metadata.yaml` > STAC > humanized id, and a blank/null
   value at any level falls through to the next source
-- Spatial/temporal coverage
+- Spatial/temporal coverage — the bounding box is shown as 2D
+  `[west, south, east, north]`, reduced from a 3D `[west, south, min_z, east,
+  north, max_z]` extent when the STAC bbox has six elements
 - Schema columns (from `table:columns`)
 - Bands (from `eo:bands`, `raster:bands`)
 - Files with checksums

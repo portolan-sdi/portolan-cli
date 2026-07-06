@@ -9,7 +9,37 @@ from portolan_cli.bbox import (
     is_antimeridian_crossing,
     is_valid_bbox,
     normalize_antimeridian_bbox,
+    to_2d_bbox,
 )
+
+
+class TestTo2dBbox:
+    """Tests for to_2d_bbox: reducing STAC 3D bboxes to 2D (issue #592)."""
+
+    def test_2d_bbox_returned_unchanged(self) -> None:
+        """A 4-element bbox is already 2D and returned as-is."""
+        assert to_2d_bbox([-74.0, 40.0, -73.0, 41.0]) == [-74.0, 40.0, -73.0, 41.0]
+
+    def test_3d_bbox_keeps_indices_0_1_3_4(self) -> None:
+        """A 6-element bbox [w, s, min_z, e, n, max_z] reduces to [w, s, e, n]."""
+        # min_z=100, max_z=500 must be dropped; a naive bbox[:4] would keep
+        # min_z (index 2) as east and drop north (index 4).
+        assert to_2d_bbox([-74.0, 40.0, 100.0, -73.0, 41.0, 500.0]) == [
+            -74.0,
+            40.0,
+            -73.0,
+            41.0,
+        ]
+
+    def test_3d_reduction_differs_from_naive_slice(self) -> None:
+        """The correct reduction must not equal the buggy bbox[:4] slice."""
+        bbox = [-74.0, 40.0, 100.0, -73.0, 41.0, 500.0]
+        assert to_2d_bbox(bbox) != bbox[:4]
+
+    def test_returns_new_list(self) -> None:
+        """The result is a fresh list, not an alias of the input."""
+        src = [-74.0, 40.0, -73.0, 41.0]
+        assert to_2d_bbox(src) is not src
 
 
 class TestIsValidBbox:
@@ -78,12 +108,32 @@ class TestIsValidBbox:
         assert is_valid_bbox([-74.0, 40.0, -73.0, 41.0, 0.0]) is False  # 5 elements
 
     def test_6d_bbox_valid(self) -> None:
-        """6-element 3D bbox should be valid (uses first 4 elements)."""
-        assert is_valid_bbox([-74.0, 40.0, -73.0, 41.0, 0.0, 100.0]) is True
+        """6-element 3D bbox [w, s, min_z, e, n, max_z] should be valid (#592)."""
+        # west=-74, south=40, min_z=0, east=-73, north=41, max_z=100
+        assert is_valid_bbox([-74.0, 40.0, 0.0, -73.0, 41.0, 100.0]) is True
+
+    def test_6d_bbox_range_check_uses_correct_indices(self) -> None:
+        """Range checks must read east/north from indices 3/4, not 2/3 (#592).
+
+        Here east=190 (index 3) is out of longitude range. The pre-#592 slice
+        read east from index 2 (0.0, in range) and would have wrongly passed.
+        """
+        # west=-74, south=40, min_z=0, east=190 (invalid), north=41, max_z=100
+        assert is_valid_bbox([-74.0, 40.0, 0.0, 190.0, 41.0, 100.0]) is False
+
+    def test_6d_bbox_south_gt_north_invalid(self) -> None:
+        """A 3D bbox whose reduced south > north is invalid (#592).
+
+        This is the exact shape of the old bug-encoding fixture
+        [-74, 40, -73, 41, 0, 100]: read as STAC 3D it is
+        [w=-74, s=40, min_z=-73, e=41, n=0, max_z=100], so north (0) < south (40).
+        The pre-#592 slice read north from index 3 (41) and wrongly passed.
+        """
+        assert is_valid_bbox([-74.0, 40.0, -73.0, 41.0, 0.0, 100.0]) is False
 
     def test_6d_bbox_with_invalid_2d_components(self) -> None:
         """6D bbox with invalid 2D components should be invalid."""
-        assert is_valid_bbox([float("inf"), 40.0, -73.0, 41.0, 0.0, 100.0]) is False
+        assert is_valid_bbox([float("inf"), 40.0, 0.0, -73.0, 41.0, 100.0]) is False
 
 
 class TestIsAntimeridianCrossing:
@@ -248,6 +298,20 @@ class TestComputeBboxUnion:
         """Empty list should return None."""
         result = compute_bbox_union([])
         assert result.bbox is None
+
+    def test_3d_bboxes_union_uses_2d_extent(self) -> None:
+        """6-element bboxes must union on [w, s, e, n], not the min_z slice (#592).
+
+        With the pre-fix bbox[2]=east assumption, both bboxes' east collapses to
+        their min_z (0.0) and north to their real east, producing a bogus
+        [-122.5, 37.5, 0.0, -73.0] envelope instead of the real 2D union.
+        """
+        bboxes = [
+            [-74.0, 40.0, 0.0, -73.0, 41.0, 100.0],  # NYC, elevation 0..100
+            [-122.5, 37.5, 0.0, -122.0, 38.0, 100.0],  # SF, elevation 0..100
+        ]
+        result = compute_bbox_union(bboxes)
+        assert result.bbox == [-122.5, 37.5, -73.0, 41.0]
 
     def test_antimeridian_crossing_produces_multi_bbox(self) -> None:
         """Union with antimeridian-crossing bbox should produce multi-bbox."""
