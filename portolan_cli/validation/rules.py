@@ -239,19 +239,23 @@ class CatalogJsonValidRule(ValidationRule):
 
 
 class StacFieldsRule(ValidationRule):
-    """Check that catalogs AND collections have their required STAC fields.
+    """Check that catalogs, collections, AND items have their required STAC fields.
 
     Required fields per STAC spec:
 
     - **Catalog**: ``type`` (== "Catalog"), ``stac_version``, ``id``,
       ``description``, ``links``.
     - **Collection**: the Catalog set plus ``license`` and ``extent``.
+    - **Item**: ``type`` (== "Feature"), ``stac_version``, ``id``, ``geometry``,
+      ``properties``, ``links``, ``assets``.
 
     This walks the root ``catalog.json``, any nested sub-catalogs (ADR-0032),
-    and every ``collection.json`` — not just the root. Only checking the root
-    let collections missing ``extent``/``stac_version`` report "All required
-    STAC fields present" (issue #543). Items are covered structurally by
-    ``StacSchemaRule``.
+    every ``collection.json``, and every STAC **Item** — not just the root. Only
+    checking the root let collections missing ``extent``/``stac_version`` report
+    "All required STAC fields present" (issue #543). Items are ALSO validated by
+    ``StacSchemaRule``, but its recursive stac-check backend crashes on Windows
+    ('list index out of range') before reaching them, so walking items here is
+    the only cross-platform coverage for below-root item fields.
 
     Note: In v2 structure, catalog.json is at root level, not inside .portolan.
     """
@@ -270,9 +274,20 @@ class StacFieldsRule(ValidationRule):
         "extent",
         "links",
     )
+    # `bbox` is conditional in STAC (required only when geometry is non-null) and
+    # `description` is optional for items, so neither is required here.
+    ITEM_REQUIRED_FIELDS = (
+        "type",
+        "stac_version",
+        "id",
+        "geometry",
+        "properties",
+        "links",
+        "assets",
+    )
 
     def check(self, catalog_path: Path) -> ValidationResult:
-        """Check required STAC fields across the root, sub-catalogs, collections."""
+        """Check required STAC fields across the root, sub-catalogs, collections, items."""
         catalog_file = catalog_path / "catalog.json"
 
         # The root catalog.json must exist and parse; other rules report the
@@ -316,6 +331,19 @@ class StacFieldsRule(ValidationRule):
                     self._check_object(data, col_json.relative_to(catalog_path), "Collection")
                 )
 
+        # Every STAC Item in the tree. Items use ``{id}.json`` names (not a fixed
+        # ``item.json``), so they are identified by content rather than filename.
+        for item_json in sorted(catalog_path.rglob("*.json")):
+            if item_json.name in ("catalog.json", "collection.json"):
+                continue
+            if self._is_hidden(item_json, catalog_path):
+                continue
+            data = self._load(item_json)
+            if data is not None and self._is_item(data):
+                problems.extend(
+                    self._check_object(data, item_json.relative_to(catalog_path), "Item")
+                )
+
         if problems:
             preview = "; ".join(problems[:5])
             if len(problems) > 5:
@@ -341,22 +369,37 @@ class StacFieldsRule(ValidationRule):
             return None
         return data if isinstance(data, dict) else None
 
-    def _check_object(self, data: dict[str, Any], rel: Path, expected_type: str) -> list[str]:
-        """Return required-field / type problems for one catalog or collection."""
+    @staticmethod
+    def _is_item(data: dict[str, Any]) -> bool:
+        """True if a JSON object is a STAC Item.
+
+        A STAC Item is a GeoJSON ``Feature`` carrying a ``stac_version``. The
+        ``stac_version`` requirement distinguishes it from a plain GeoJSON
+        Feature stored as ``.json`` (which has no ``stac_version``), so raw
+        vector data is not misreported as a malformed item.
+        """
+        return data.get("type") == "Feature" and "stac_version" in data
+
+    def _check_object(self, data: dict[str, Any], rel: Path, kind: str) -> list[str]:
+        """Return required-field / type problems for one catalog, collection, or item."""
         rel_str = PurePath(rel).as_posix()
-        required = (
-            self.COLLECTION_REQUIRED_FIELDS
-            if expected_type == "Collection"
-            else self.REQUIRED_FIELDS
-        )
+        # (required fields, expected STAC ``type`` value) per object kind. An
+        # item's ``type`` is "Feature", not "Item", so the two are kept distinct.
+        required: tuple[str, ...]
+        if kind == "Collection":
+            required, type_value = self.COLLECTION_REQUIRED_FIELDS, "Collection"
+        elif kind == "Item":
+            required, type_value = self.ITEM_REQUIRED_FIELDS, "Feature"
+        else:
+            required, type_value = self.REQUIRED_FIELDS, "Catalog"
         problems: list[str] = []
         missing = [f for f in required if f not in data]
         if missing:
             problems.append(f"{rel_str}: missing required STAC fields: {', '.join(missing)}")
         # Only flag a wrong type when it is present (absence is already reported).
-        if "type" not in missing and data.get("type") != expected_type:
+        if "type" not in missing and data.get("type") != type_value:
             problems.append(
-                f"{rel_str}: invalid type: expected '{expected_type}', got '{data.get('type')}'"
+                f"{rel_str}: invalid type: expected '{type_value}', got '{data.get('type')}'"
             )
         return problems
 
