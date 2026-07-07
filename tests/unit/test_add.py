@@ -24,7 +24,6 @@ from portolan_cli.add import (
     compute_dir_size,
     get_item_info,
     list_items,
-    remove_item,
 )
 from portolan_cli.formats import FormatType
 from portolan_cli.versions import read_versions
@@ -600,96 +599,6 @@ class TestGetItemInfo:
         """get_item_info raises KeyError for nonexistent item."""
         with pytest.raises(KeyError, match="Item not found"):
             get_item_info(initialized_catalog, "nonexistent/item")
-
-
-class TestRemoveItem:
-    """Tests for remove_item function."""
-
-    @pytest.mark.unit
-    def test_remove_item_single_item(self, initialized_catalog: Path) -> None:
-        """remove_item removes a single item from collection.
-
-        Per ADR-0023: Collections live at root level.
-        """
-        # Create collection at root (per ADR-0023)
-        col_dir = initialized_catalog / "test-col"
-        col_dir.mkdir(parents=True)
-
-        collection_data = {
-            "type": "Collection",
-            "stac_version": "1.0.0",
-            "id": "test-col",
-            "description": "Test",
-            "license": "proprietary",
-            "extent": {
-                "spatial": {"bbox": [[0, 0, 1, 1]]},
-                "temporal": {"interval": [[None, None]]},
-            },
-            "links": [{"rel": "item", "href": "./to-remove/to-remove.json"}],
-        }
-        (col_dir / "collection.json").write_text(json.dumps(collection_data))
-
-        item_dir = col_dir / "to-remove"
-        item_dir.mkdir()
-        item_data = {
-            "type": "Feature",
-            "stac_version": "1.0.0",
-            "id": "to-remove",
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]],
-            },
-            "bbox": [0, 0, 1, 1],
-            "properties": {"datetime": "2024-01-01T00:00:00Z"},
-            "links": [],
-            "assets": {"data": {"href": "data.parquet"}},
-        }
-        (item_dir / "to-remove.json").write_text(json.dumps(item_data))
-        (item_dir / "data.parquet").write_bytes(b"fake parquet")
-
-        remove_item(initialized_catalog, "test-col/to-remove")
-
-        # Item directory should be removed
-        assert not item_dir.exists()
-
-    @pytest.mark.unit
-    def test_remove_item_not_found(self, initialized_catalog: Path) -> None:
-        """remove_item raises KeyError for nonexistent item."""
-        with pytest.raises(KeyError, match="Item not found"):
-            remove_item(initialized_catalog, "nonexistent/item")
-
-    @pytest.mark.unit
-    def test_remove_entire_collection(self, initialized_catalog: Path) -> None:
-        """remove_item can remove entire collection.
-
-        Per ADR-0023: Collections live at root level.
-        """
-        # Create collection at root (per ADR-0023)
-        col_dir = initialized_catalog / "to-remove-col"
-        col_dir.mkdir(parents=True)
-
-        collection_data = {
-            "type": "Collection",
-            "stac_version": "1.0.0",
-            "id": "to-remove-col",
-            "description": "To be removed",
-            "license": "proprietary",
-            "extent": {
-                "spatial": {"bbox": [[0, 0, 1, 1]]},
-                "temporal": {"interval": [[None, None]]},
-            },
-            "links": [],
-        }
-        (col_dir / "collection.json").write_text(json.dumps(collection_data))
-
-        # Update catalog to link to collection (catalog.json is at root per ADR-0023)
-        catalog_data = json.loads((initialized_catalog / "catalog.json").read_text())
-        catalog_data["links"].append({"rel": "child", "href": "./to-remove-col/collection.json"})
-        (initialized_catalog / "catalog.json").write_text(json.dumps(catalog_data))
-
-        remove_item(initialized_catalog, "to-remove-col", remove_collection=True)
-
-        assert not col_dir.exists()
 
 
 class TestAddMissingBbox:
