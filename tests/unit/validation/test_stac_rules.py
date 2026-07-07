@@ -71,6 +71,12 @@ def self_contained_invalid_item_catalog() -> Path:
 
 
 @pytest.fixture
+def lint_below_root_catalog() -> Path:
+    """SELF_CONTAINED 1.1.0 catalog: root clean, collection + item violate best practices."""
+    return FIXTURES_DIR / "lint-below-root"
+
+
+@pytest.fixture
 def catalog_invalid_json() -> Path:
     """Path to catalog with invalid JSON syntax."""
     return FIXTURES_DIR / "invalid-json"
@@ -663,6 +669,54 @@ class TestSelfContainedValidation:
         assert not result.passed
         assert result.severity == Severity.ERROR
         assert "id" in result.message
+
+
+@pytest.mark.unit
+class TestBelowRootLint:
+    """Regression tests for issue #604.
+
+    ``StacLintRule`` ran best-practice checks via a single recursive
+    ``Linter(catalog.json).create_best_practices_dict()`` call, but that method
+    only lints the object it was constructed from — the ROOT ``catalog.json``.
+    Best-practice violations in linked collections and items were never
+    surfaced, so ``check --metadata`` reported ``stac_lint`` clean while
+    below-root objects had missing summaries, missing self links,
+    non-searchable identifiers, etc.
+
+    The ``lint-below-root`` fixture has a CLEAN root catalog, a collection
+    missing both ``summaries`` and a ``rel='self'`` link, and an item whose id
+    (``"Bad Item ID"``) is not a searchable identifier. Pre-fix, all three go
+    undetected and the rule returns "All best practice checks passed".
+    """
+
+    def test_below_root_item_id_error_surfaced(self, lint_below_root_catalog: Path) -> None:
+        """An item's non-searchable id (ERROR) is detected below the root."""
+        from portolan_cli.validation.stac_rules import StacLintRule
+
+        result = StacLintRule().check(lint_below_root_catalog)
+        # searchable_identifiers is ERROR by default -> the whole rule fails.
+        assert not result.passed
+        assert result.severity == Severity.ERROR
+        assert "searchable_identifiers" in result.message
+        # The failing object is named so the user can find it.
+        assert "Bad Item" in result.message
+
+    def test_below_root_collection_warnings_surfaced(self, lint_below_root_catalog: Path) -> None:
+        """A collection's missing summaries + self link (WARNING) surface below the root."""
+        from portolan_cli.validation.stac_rules import StacLintRule
+
+        result = StacLintRule().check(lint_below_root_catalog)
+        assert "check_summaries" in result.message
+        assert "check_links_self" in result.message
+
+    def test_below_root_violation_names_collection_path(
+        self, lint_below_root_catalog: Path
+    ) -> None:
+        """Below-root violations carry the collection's path, not the root's."""
+        from portolan_cli.validation.stac_rules import StacLintRule
+
+        result = StacLintRule().check(lint_below_root_catalog)
+        assert "demo-collection" in result.message
 
 
 @pytest.mark.unit

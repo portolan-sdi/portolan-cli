@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -22,6 +23,69 @@ from portolan_cli.validation.results import Severity, ValidationResult
 
 # Substring identifying the STAC Table extension in stac_extensions URLs.
 _TABLE_EXTENSION_MARKER = "stac-extensions.github.io/table"
+
+
+def _load_stac_json(path: Path) -> dict[str, Any] | None:
+    """Load a STAC JSON object; return None on malformed JSON or a non-object root.
+
+    Malformed files are reported by other rules (``catalog_json_valid``), so a
+    walker that consumes this helper simply skips them.
+    """
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _is_below_hidden_dir(path: Path, catalog_path: Path) -> bool:
+    """True if any directory between the root and ``path`` is hidden (e.g. .portolan)."""
+    return any(part.startswith(".") for part in path.relative_to(catalog_path).parts[:-1])
+
+
+def iter_stac_object_files(catalog_path: Path) -> Iterator[tuple[Path, dict[str, Any], str]]:
+    """Yield ``(path, data, kind)`` for every STAC object file under a catalog root.
+
+    Walks the root ``catalog.json``, nested sub-catalogs (ADR-0032), every
+    ``collection.json``, and every STAC **Item** — items are identified by
+    content (a GeoJSON ``Feature`` carrying a ``stac_version``), since they use
+    ``{id}.json`` names rather than a fixed filename, and the ``stac_version``
+    requirement keeps raw ``.json`` vector data from being mistaken for an item.
+    ``kind`` is ``"Catalog"``, ``"Collection"``, or ``"Item"``.
+
+    Objects are yielded root-first, then nested catalogs, collections, and items
+    (each group in sorted path order). Hidden directories (e.g. ``.portolan/``)
+    and malformed / non-object JSON are skipped. Shared by ``StacFieldsRule``
+    (field checks) and ``StacLintRule`` (best-practice linting) so both cover
+    the same below-root object set (issues #543, #604).
+    """
+    root = catalog_path / "catalog.json"
+    root_data = _load_stac_json(root)
+    if root_data is not None:
+        yield root, root_data, "Catalog"
+
+    for cat_json in sorted(catalog_path.rglob("catalog.json")):
+        if cat_json == root or _is_below_hidden_dir(cat_json, catalog_path):
+            continue
+        data = _load_stac_json(cat_json)
+        if data is not None:
+            yield cat_json, data, "Catalog"
+
+    for col_json in sorted(catalog_path.rglob("collection.json")):
+        if _is_below_hidden_dir(col_json, catalog_path):
+            continue
+        data = _load_stac_json(col_json)
+        if data is not None:
+            yield col_json, data, "Collection"
+
+    for item_json in sorted(catalog_path.rglob("*.json")):
+        if item_json.name in ("catalog.json", "collection.json"):
+            continue
+        if _is_below_hidden_dir(item_json, catalog_path):
+            continue
+        data = _load_stac_json(item_json)
+        if data is not None and data.get("type") == "Feature" and "stac_version" in data:
+            yield item_json, data, "Item"
 
 
 def _resolve_local_href(collection_dir: Path, href: str) -> Path | None:
@@ -291,7 +355,10 @@ class StacFieldsRule(ValidationRule):
         catalog_file = catalog_path / "catalog.json"
 
         # The root catalog.json must exist and parse; other rules report the
-        # specifics, but a missing/invalid root is a hard stop here too.
+        # specifics, but a missing/invalid root is a hard stop here too. The
+        # shared walker (``iter_stac_object_files``) silently skips a malformed
+        # or non-object root, so guard it explicitly here to keep the precise
+        # diagnostics below.
         try:
             root = json.loads(catalog_file.read_text())
         except (OSError, json.JSONDecodeError) as e:
@@ -302,47 +369,17 @@ class StacFieldsRule(ValidationRule):
 
         # A bare JSON scalar/array is valid JSON (CatalogJsonValidRule accepts it)
         # but not a STAC object; guard before _check_object calls data.get(...).
-        # The nested _load helper applies the same isinstance filter to children.
         if not isinstance(root, dict):
             return self._fail(
                 "catalog.json must be a JSON object",
                 fix_hint="Fix catalog.json first (see catalog_json_valid rule)",
             )
 
-        problems: list[str] = self._check_object(root, Path("catalog.json"), "Catalog")
-
-        # Nested sub-catalogs (ADR-0032). Skip the root (already checked).
-        for cat_json in sorted(catalog_path.rglob("catalog.json")):
-            if cat_json == catalog_file or self._is_hidden(cat_json, catalog_path):
-                continue
-            data = self._load(cat_json)
-            if data is not None:
-                problems.extend(
-                    self._check_object(data, cat_json.relative_to(catalog_path), "Catalog")
-                )
-
-        # Every collection.json in the tree.
-        for col_json in sorted(catalog_path.rglob("collection.json")):
-            if self._is_hidden(col_json, catalog_path):
-                continue
-            data = self._load(col_json)
-            if data is not None:
-                problems.extend(
-                    self._check_object(data, col_json.relative_to(catalog_path), "Collection")
-                )
-
-        # Every STAC Item in the tree. Items use ``{id}.json`` names (not a fixed
-        # ``item.json``), so they are identified by content rather than filename.
-        for item_json in sorted(catalog_path.rglob("*.json")):
-            if item_json.name in ("catalog.json", "collection.json"):
-                continue
-            if self._is_hidden(item_json, catalog_path):
-                continue
-            data = self._load(item_json)
-            if data is not None and self._is_item(data):
-                problems.extend(
-                    self._check_object(data, item_json.relative_to(catalog_path), "Item")
-                )
+        # Walk the root, nested sub-catalogs (ADR-0032), every collection, and
+        # every item (root-first, sorted) via the shared enumerator (issue #543).
+        problems: list[str] = []
+        for path, data, kind in iter_stac_object_files(catalog_path):
+            problems.extend(self._check_object(data, path.relative_to(catalog_path), kind))
 
         if problems:
             preview = "; ".join(problems[:5])
@@ -354,31 +391,6 @@ class StacFieldsRule(ValidationRule):
             )
 
         return self._pass("All required STAC fields present")
-
-    @staticmethod
-    def _is_hidden(path: Path, catalog_path: Path) -> bool:
-        """True if any directory between the root and ``path`` is hidden (e.g. .portolan)."""
-        return any(part.startswith(".") for part in path.relative_to(catalog_path).parts[:-1])
-
-    @staticmethod
-    def _load(path: Path) -> dict[str, Any] | None:
-        """Load a STAC JSON object; return None on malformed JSON (reported elsewhere)."""
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return None
-        return data if isinstance(data, dict) else None
-
-    @staticmethod
-    def _is_item(data: dict[str, Any]) -> bool:
-        """True if a JSON object is a STAC Item.
-
-        A STAC Item is a GeoJSON ``Feature`` carrying a ``stac_version``. The
-        ``stac_version`` requirement distinguishes it from a plain GeoJSON
-        Feature stored as ``.json`` (which has no ``stac_version``), so raw
-        vector data is not misreported as a malformed item.
-        """
-        return data.get("type") == "Feature" and "stac_version" in data
 
     def _check_object(self, data: dict[str, Any], rel: Path, kind: str) -> list[str]:
         """Return required-field / type problems for one catalog, collection, or item."""

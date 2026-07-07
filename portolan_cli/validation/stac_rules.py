@@ -10,14 +10,14 @@ from __future__ import annotations
 import json
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 from urllib.parse import urlsplit
 
 from stac_check.lint import Linter  # type: ignore[import-untyped]
 
 from portolan_cli.validation.results import Severity, ValidationResult
-from portolan_cli.validation.rules import ValidationRule
+from portolan_cli.validation.rules import ValidationRule, iter_stac_object_files
 
 # Phrase the schema validator emits when it cannot fetch a JSON Schema over the
 # network. stac-validator raises ``Could not resolve schema: <uri>. Reason:
@@ -209,6 +209,23 @@ class StacLintRule(ValidationRule):
 
     Uses stac-check's best practices checks. Each check can have
     configurable severity via .portolan/config.yaml.
+
+    stac-check's ``create_best_practices_dict()`` only lints the single object
+    the ``Linter`` was built from, so a recursive ``Linter(catalog.json)`` run
+    reported best-practice violations for the ROOT catalog only — missing
+    summaries, self links, non-searchable identifiers, etc. in linked
+    collections and items went unreported (issue #604). This rule instead walks
+    every STAC object (root, sub-catalogs, collections, items) via
+    :func:`iter_stac_object_files` and aggregates each object's best-practices
+    dict, prefixing every finding with the object's path.
+
+    Each object is linted from its already-parsed dict with ``fast=True`` so
+    stac-check skips schema validation (which fetches schemas over the network)
+    — best-practice checks read only the object's own data, so this makes the
+    rule deterministic offline and independent of the ``strict`` flag (which
+    never affected best-practice output). Filename-derived checks
+    (``check_catalog_id``, ``check_item_id``) do not fire on dict input; Portolan
+    controls those filenames, so the loss is immaterial.
     """
 
     name = "stac_lint"
@@ -253,47 +270,39 @@ class StacLintRule(ValidationRule):
         if not catalog_json.exists():
             return self._pass("No catalog.json found")
 
-        try:
-            linter = Linter(
-                item=str(catalog_json),
-                recursive=True,
-                fast=not self.strict,
-                fast_linting=True,  # Always run BP checks
-            )
-        except Exception as e:
-            # Best-practice linting can't run if an extension schema can't be
-            # fetched, but that is not a lint violation — pass rather than
-            # block the catalog on an unreachable/unpublished extension.
-            if not self.strict and _is_schema_resolution_error(str(e)):
-                return self._pass("Lint skipped (unresolved extension schema)")
-            return self._fail(f"STAC lint failed: {e}")
+        severity_map = self._get_severity_map()
+        skip_checks = self.SKIP_CHECKS | self._runtime_skip_checks
 
-        # Get best practices dict (not an attribute, must call method)
-        bp_dict = linter.create_best_practices_dict()
-
-        # Collect violations by severity
+        # Violations by severity, aggregated across every STAC object.
         errors: list[str] = []
         warnings: list[str] = []
         infos: list[str] = []
 
-        severity_map = self._get_severity_map()
-        skip_checks = self.SKIP_CHECKS | self._runtime_skip_checks
+        for path, data, _kind in iter_stac_object_files(catalog_path):
+            try:
+                # fast=True + a dict item makes stac-check skip schema
+                # validation (no network); best-practice checks read only `data`.
+                linter = Linter(item=data, fast=True, fast_linting=True)
+            except Exception as e:
+                # Best-practice linting can't run if an extension schema can't be
+                # fetched, but that is not a lint violation — skip the object
+                # rather than block the catalog on an unreachable/unpublished
+                # extension. A CORE schema failure is not tolerable (see
+                # _is_schema_resolution_error) and still fails the rule.
+                if not self.strict and _is_schema_resolution_error(str(e)):
+                    continue
+                return self._fail(f"STAC lint failed: {e}")
 
-        for check_name, messages in bp_dict.items():
-            if check_name in skip_checks:
-                continue
-            if not messages:
-                continue
-
-            severity = severity_map.get(check_name, Severity.WARNING)
-            message = messages[0] if isinstance(messages, list) else str(messages)
-
-            if severity == Severity.ERROR:
-                errors.append(f"{check_name}: {message}")
-            elif severity == Severity.WARNING:
-                warnings.append(f"{check_name}: {message}")
-            else:
-                infos.append(f"{check_name}: {message}")
+            rel = PurePath(path.relative_to(catalog_path)).as_posix()
+            self._classify_violations(
+                linter.create_best_practices_dict(),
+                rel,
+                severity_map,
+                skip_checks,
+                errors,
+                warnings,
+                infos,
+            )
 
         if not errors and not warnings:
             return self._pass("All best practice checks passed")
@@ -317,6 +326,37 @@ class StacLintRule(ValidationRule):
             message=f"Best practice issues: {', '.join(parts)}. {detail}",
             fix_hint="Run with --verbose to see all issues",
         )
+
+    def _classify_violations(
+        self,
+        bp_dict: dict[str, Any],
+        rel: str,
+        severity_map: dict[str, Severity],
+        skip_checks: frozenset[str],
+        errors: list[str],
+        warnings: list[str],
+        infos: list[str],
+    ) -> None:
+        """Sort one object's best-practice violations into the severity buckets.
+
+        Each finding is prefixed with ``rel`` (the object's catalog-relative
+        path) so the report names which collection/item is affected, not just
+        the root.
+        """
+        for check_name, messages in bp_dict.items():
+            if check_name in skip_checks or not messages:
+                continue
+
+            severity = severity_map.get(check_name, Severity.WARNING)
+            message = messages[0] if isinstance(messages, list) else str(messages)
+            entry = f"{rel}: {check_name}: {message}"
+
+            if severity == Severity.ERROR:
+                errors.append(entry)
+            elif severity == Severity.WARNING:
+                warnings.append(entry)
+            else:
+                infos.append(entry)
 
     def _compute_skip_checks(self) -> frozenset[str]:
         """Compute checks to skip based on config (called once at init)."""
