@@ -285,6 +285,15 @@ class StacFieldsRule(ValidationRule):
                 fix_hint="Fix catalog.json first (see catalog_json_valid rule)",
             )
 
+        # A bare JSON scalar/array is valid JSON (CatalogJsonValidRule accepts it)
+        # but not a STAC object; guard before _check_object calls data.get(...).
+        # The nested _load helper applies the same isinstance filter to children.
+        if not isinstance(root, dict):
+            return self._fail(
+                "catalog.json must be a JSON object",
+                fix_hint="Fix catalog.json first (see catalog_json_valid rule)",
+            )
+
         problems: list[str] = self._check_object(root, Path("catalog.json"), "Catalog")
 
         # Nested sub-catalogs (ADR-0032). Skip the root (already checked).

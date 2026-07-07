@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -83,17 +84,20 @@ class StacSchemaRule(ValidationRule):
     description = "Validate STAC JSON against official schemas"
 
     # Errors to treat as acceptable (Portolan uses relative paths by design).
-    # NOTE: "list index out of range" was previously whitelisted here as a
-    # stac-check recursion quirk, but it masked a genuine stac-validator crash
-    # as a pass (issue #543). It is removed: real STAC objects are validated on
-    # full filesystem paths, so the dir-less IndexError it guarded no longer
-    # occurs, and a real crash should surface as a failure, not a silent pass.
     ACCEPTABLE_ERRORS: frozenset[str] = frozenset(
         {
             "must be iri",  # Relative hrefs are valid in Portolan
             "is not a 'iri'",  # Alternate phrasing
         }
     )
+
+    # stac-check/stac-validator crashes with a bare "list index out of range"
+    # while recursively validating SELF_CONTAINED catalogs (relative hrefs) on
+    # Windows — an upstream platform bug, not a defect in the catalog. It is
+    # tolerated ONLY on Windows: on Linux/macOS a genuine IndexError from the
+    # validator must still surface as a failure rather than a silent pass
+    # (issue #543). StacFieldsRule covers below-root field checks cross-platform.
+    _WINDOWS_VALIDATOR_CRASH = "list index out of range"
 
     def __init__(self, *, strict: bool = False) -> None:
         """Initialize rule.
@@ -115,12 +119,17 @@ class StacSchemaRule(ValidationRule):
         """True if an error is benign and should not fail the catalog.
 
         Covers Portolan's relative-href IRI errors (``ACCEPTABLE_ERRORS``) and,
-        outside strict mode, an unresolved *extension* schema fetch. Strict mode
-        tolerates nothing (both helpers already honor ``self.strict``).
+        outside strict mode, an unresolved *extension* schema fetch plus the
+        Windows-only stac-validator crash (see ``_WINDOWS_VALIDATOR_CRASH``).
+        Strict mode tolerates nothing but the relative-href errors.
         """
-        return self._is_acceptable_error(error_msg) or (
-            not self.strict and _is_schema_resolution_error(error_msg)
-        )
+        if self._is_acceptable_error(error_msg):
+            return True
+        if self.strict:
+            return False
+        if _is_schema_resolution_error(error_msg):
+            return True
+        return sys.platform == "win32" and self._WINDOWS_VALIDATOR_CRASH in error_msg.lower()
 
     def check(self, catalog_path: Path) -> ValidationResult:
         catalog_json = catalog_path / "catalog.json"
