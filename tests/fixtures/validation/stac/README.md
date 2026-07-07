@@ -16,6 +16,18 @@ Test fixtures for `StacSchemaRule` and `StacLintRule` validation.
 | `self-contained-valid/` | SELF_CONTAINED 1.1.0 catalog (relative hrefs) → collection → item, all valid | Pass schema and fields (relative-href IRI errors must not be treated as failures) |
 | `self-contained-invalid-collection/` | SELF_CONTAINED 1.1.0 catalog whose collection is missing `extent` + `stac_version` | Fail schema and fields (issue #543 regression) |
 | `self-contained-invalid-item/` | SELF_CONTAINED 1.1.0 catalog whose nested item is missing `id` | Fail schema (issue #543 regression) |
+| `lint-below-root/` | SELF_CONTAINED 1.1.0 catalog with a CLEAN root, a collection missing `summaries` + a `rel='self'` link, and an item with a non-searchable id | Fail lint on below-root violations, each attributed to its object path (issue #604 regression) |
+
+### Issue #604 regression fixture (below-root best-practice linting)
+
+`lint-below-root/` pins the `StacLintRule` blind spot fixed in #604. stac-check's
+`create_best_practices_dict()` only lints the object its `Linter` was built from,
+so a recursive `Linter(catalog.json)` run reported best-practice violations for
+the ROOT catalog only. The root here is clean while the linked collection and
+item each carry violations — pre-fix `stac_lint` reported "All best practice
+checks passed"; post-fix it fails with `searchable_identifiers` (ERROR) plus
+`check_summaries` and `check_links_self` (WARNING), each prefixed with the
+offending object's relative path.
 
 ### Issue #543 regression fixtures (STAC 1.1.0, relative hrefs)
 
