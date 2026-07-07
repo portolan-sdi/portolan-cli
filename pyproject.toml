@@ -50,6 +50,8 @@ dependencies = [
     "rich>=13.0.0",  # Terminal progress bars (transitive via geoparquet-io, but we import directly)
     "rio-cogeo>=5.0.0",  # COG creation/validation (includes rasterio)
     "stac-check>=1.4.0",  # STAC schema validation + best practices linting
+    "jsonschema>=4.18.0",  # Hermetic spec-schema validation in validation/ seam (registry API needs >=4.18); was transitive via stac-check
+    "referencing>=0.30.0",  # Offline $ref registry for vendored STAC schemas (validation/schema_registry.py)
     "typing_extensions>=4.0.0; python_version < '3.11'",
 ]
 
@@ -90,6 +92,7 @@ dev = [
     "radon>=6.0.1",
     "ruff>=0.14.11",
     "types-defusedxml>=0.7.0",  # Type stubs for defusedxml
+    "types-jsonschema>=4.18.0",  # Type stubs for jsonschema (validation/schema_registry.py)
     "types-PyYAML>=6.0",  # Type stubs for PyYAML
     "vulture>=2.14",
     "xenon>=0.9.3",
@@ -228,6 +231,10 @@ skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
 # "BU" is the INSPIRE theme code for Buildings (used in test fixtures)
 # "disjointness" is a real set-theory term (codespell wants "disjointedness")
 ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,connexion,objets,visibles,issus,fonction,mesures,informations,disjointness"
+# Vendored upstream STAC schemas are byte-identical third-party data (they carry
+# upstream's own typos, e.g. "sumamry" in collection.json). Never spell-check them;
+# a refresh re-imports upstream text verbatim. Keep in sync with the ci.yml --skip.
+skip = "portolan_cli/validation/_vendored"
 
 # ---------- dead code ----------
 
@@ -365,6 +372,7 @@ dev = [
     "pylint>=4.0.5",
     "pytest-asyncio>=1.3.0",
     "pytest-xdist>=3.8.0",
+    "types-jsonschema>=4.18.0",
     "types-pyyaml>=6.0.12.20250915",
 ]
 

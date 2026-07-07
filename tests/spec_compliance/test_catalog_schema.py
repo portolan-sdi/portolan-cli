@@ -30,7 +30,7 @@ class TestCatalogSchemaCompliance:
         self,
         runner: CliRunner,
         tmp_path: Path,
-        portolan_catalog_schema: dict[str, Any],
+        catalog_schema: dict[str, Any],
         validate_stac: Callable[[dict[str, Any], dict[str, Any]], list[str]],
     ) -> None:
         """portolan init creates a schema-compliant catalog.json."""
@@ -42,7 +42,7 @@ class TestCatalogSchemaCompliance:
             assert catalog_path.exists(), "catalog.json not created"
 
             data = json.loads(catalog_path.read_text())
-            errors = validate_stac(data, portolan_catalog_schema)
+            errors = validate_stac(data, catalog_schema)
 
             assert not errors, "Schema validation failed:\n" + "\n".join(errors)
 
@@ -52,7 +52,7 @@ class TestCatalogSchemaCompliance:
         runner: CliRunner,
         tmp_path: Path,
         valid_points_geojson: Path,
-        portolan_catalog_schema: dict[str, Any],
+        catalog_schema: dict[str, Any],
         validate_stac: Callable[[dict[str, Any], dict[str, Any]], list[str]],
     ) -> None:
         """catalog.json remains valid after adding a collection."""
@@ -70,7 +70,7 @@ class TestCatalogSchemaCompliance:
 
             catalog_path = Path("catalog.json")
             data = json.loads(catalog_path.read_text())
-            errors = validate_stac(data, portolan_catalog_schema)
+            errors = validate_stac(data, catalog_schema)
 
             assert not errors, "Schema validation failed:\n" + "\n".join(errors)
 
@@ -354,7 +354,7 @@ class TestCatalogMultipleCollections:
         tmp_path: Path,
         valid_points_geojson: Path,
         valid_polygons_geojson: Path,
-        portolan_catalog_schema: dict[str, Any],
+        catalog_schema: dict[str, Any],
         validate_stac: Callable[[dict[str, Any], dict[str, Any]], list[str]],
     ) -> None:
         """Catalog with multiple collections should have multiple child links."""
@@ -380,7 +380,7 @@ class TestCatalogMultipleCollections:
             data = json.loads(catalog_path.read_text())
 
             # Validate schema
-            errors = validate_stac(data, portolan_catalog_schema)
+            errors = validate_stac(data, catalog_schema)
             assert not errors, "Schema validation failed:\n" + "\n".join(errors)
 
             # Check for multiple child links

@@ -203,6 +203,10 @@ cython_debug/
 catalog.json
 !tests/fixtures/**/catalog.json
 versions.json
+# Vendored upstream STAC schemas are real source, not test artifacts. Their
+# filenames (catalog.json, item.json, ...) collide with the rules above, so
+# un-ignore the whole vendored tree. See portolan_cli/validation/schema_registry.py.
+!portolan_cli/validation/_vendored/**
 
 # PyPI configuration file
 .pypirc
