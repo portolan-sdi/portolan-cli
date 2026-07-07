@@ -218,6 +218,64 @@ class TestWriteVersions:
         assert loaded.versions[0].assets["test.parquet"].sha256 == "roundtrip"
 
     @pytest.mark.unit
+    def test_freshness_heuristic_fields_roundtrip(self, tmp_path: Path) -> None:
+        """#512: feature_count + schema_fingerprint survive write→read.
+
+        These per-asset freshness heuristics let a touched-but-identical
+        asset read FRESH instead of a spurious STALE/BREAKING.
+        """
+        asset = Asset(
+            sha256="fp",
+            size_bytes=512,
+            href="test.parquet",
+            source_mtime=1700000000.0,
+            mtime=1700000000.0,
+            feature_count=1000,
+            schema_fingerprint="deadbeefcafef00d",
+        )
+        version = Version(
+            version="1.0.0",
+            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=timezone.utc),
+            breaking=False,
+            assets={"test.parquet": asset},
+            changes=["test.parquet"],
+        )
+        vf = VersionsFile(spec_version="1.0.0", current_version="1.0.0", versions=[version])
+        versions_path = tmp_path / "versions.json"
+
+        write_versions(versions_path, vf)
+        loaded = read_versions(versions_path).versions[0].assets["test.parquet"]
+
+        assert loaded.feature_count == 1000
+        assert loaded.schema_fingerprint == "deadbeefcafef00d"
+        assert loaded.source_mtime == 1700000000.0
+
+    @pytest.mark.unit
+    def test_heuristic_fields_default_to_none(self, tmp_path: Path) -> None:
+        """An asset written without heuristics reads them back as None and
+        omits them from the JSON (backward-compatible)."""
+        asset = Asset(sha256="none", size_bytes=1, href="d.parquet")
+        version = Version(
+            version="1.0.0",
+            created=datetime(2024, 3, 15, 8, 0, 0, tzinfo=timezone.utc),
+            breaking=False,
+            assets={"d.parquet": asset},
+            changes=["d.parquet"],
+        )
+        vf = VersionsFile(spec_version="1.0.0", current_version="1.0.0", versions=[version])
+        versions_path = tmp_path / "versions.json"
+
+        write_versions(versions_path, vf)
+        raw = json.loads(versions_path.read_text())
+        entry = raw["versions"][0]["assets"]["d.parquet"]
+        assert "feature_count" not in entry
+        assert "schema_fingerprint" not in entry
+
+        loaded = read_versions(versions_path).versions[0].assets["d.parquet"]
+        assert loaded.feature_count is None
+        assert loaded.schema_fingerprint is None
+
+    @pytest.mark.unit
     def test_write_creates_parent_directories(self, tmp_path: Path) -> None:
         """write_versions creates parent directories if they don't exist."""
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])

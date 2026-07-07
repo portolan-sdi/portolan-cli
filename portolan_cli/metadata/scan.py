@@ -23,6 +23,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.checksums import compute_checksum
 from portolan_cli.metadata.detection import (
     check_file_metadata,
     detect_changes,
@@ -307,10 +308,19 @@ def _check_collection_level_asset(
         return None
 
     current = get_current_metadata(asset_path)
+    # Freshness baseline is the asset's own mtime. `add` records it under the
+    # `mtime` field (ADR-0017 fast-path), while `--fix`'s
+    # `update_versions_tracking` records it under `source_mtime`; a single asset
+    # may carry either (or both). Prefer `source_mtime` but fall back to `mtime`
+    # so a plain `add` (which never wrote `source_mtime` for collection-level
+    # assets) is not perpetually STALE — the #512 regression.
+    stored_source_mtime = stored.get("source_mtime")
+    stored_mtime = stored_source_mtime if stored_source_mtime is not None else stored.get("mtime")
+    stored_schema_fingerprint = stored.get("schema_fingerprint")
     state = FileMetadataState(
         file_path=asset_path,
         current_mtime=current.current_mtime,
-        stored_mtime=stored.get("source_mtime"),
+        stored_mtime=stored_mtime,
         # Collection-level assets have no item.json bbox source. Heuristics
         # fall through to feature-count + schema fingerprint comparisons,
         # which is sufficient signal for STALE/BREAKING detection.
@@ -319,7 +329,7 @@ def _check_collection_level_asset(
         current_feature_count=current.current_feature_count,
         stored_feature_count=stored.get("feature_count"),
         current_schema_fingerprint=current.current_schema_fingerprint,
-        stored_schema_fingerprint=stored.get("schema_fingerprint"),
+        stored_schema_fingerprint=stored_schema_fingerprint,
     )
     stale, reason = is_stale(state)
     if not stale:
@@ -328,8 +338,31 @@ def _check_collection_level_asset(
             status=MetadataStatus.FRESH,
             message=f"Metadata is up to date ({reason})",
         )
+    # Older catalogs (and entries written before heuristics were persisted) carry
+    # no schema-fingerprint baseline, so `is_stale` treats any mtime change as an
+    # unprovable change and forces STALE. Before reporting that, fall back to the
+    # stored content hash — the same tiebreaker `add` uses to skip unchanged files
+    # (`is_current`, query.py). A byte-identical asset (e.g. after a `git clone`,
+    # which resets mtimes) then reads FRESH instead of a perpetual STALE that
+    # neither `--fix` nor a plain `add` can clear (#512). Newer catalogs carry
+    # heuristics and resolve touched-but-identical without hashing.
+    stored_sha256 = stored.get("sha256")
+    if (
+        stored_schema_fingerprint is None
+        and isinstance(stored_sha256, str)
+        and _content_hash_matches(asset_path, stored_sha256)
+    ):
+        return MetadataCheckResult(
+            file_path=asset_path,
+            status=MetadataStatus.FRESH,
+            message="Metadata is up to date (content unchanged)",
+        )
     changes = detect_changes(state)
-    if reason == "schema_changed":
+    # Only escalate to BREAKING when a stored schema fingerprint actually
+    # exists to compare against. Without a baseline (older catalogs, or entries
+    # written before heuristics were persisted) a mtime change cannot prove a
+    # schema break — report STALE rather than a blocking BREAKING error.
+    if reason == "schema_changed" and stored_schema_fingerprint is not None:
         return MetadataCheckResult(
             file_path=asset_path,
             status=MetadataStatus.BREAKING,
@@ -344,6 +377,24 @@ def _check_collection_level_asset(
         changes=changes,
         fix_hint="Run 'portolan add' to refresh the collection-level asset",
     )
+
+
+def _content_hash_matches(asset_path: Path, stored_sha256: str) -> bool:
+    """True if the asset file's SHA-256 equals the stored checksum.
+
+    Mirrors the slow-path tiebreaker in `is_current` (query.py) so `check`
+    agrees with `add`'s skip decision: a byte-identical asset is FRESH even
+    when its mtime moved (e.g. after `git clone`, which resets mtimes). Only
+    regular files are hashed — freshness-checkable collection-level assets are
+    always `.parquet`/`.tif`/`.tiff` files (see `_is_freshness_checkable`); a
+    directory asset falls through to the mtime path (and `add` can clear it).
+    """
+    if not asset_path.is_file():
+        return False
+    try:
+        return compute_checksum(asset_path) == stored_sha256
+    except (ValueError, OSError):
+        return False
 
 
 def _read_versions_entry(versions_path: Path, asset_filename: str) -> dict[str, Any] | None:
