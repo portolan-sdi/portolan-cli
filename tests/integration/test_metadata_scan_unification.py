@@ -1356,3 +1356,109 @@ class TestIssue512CollectionFreshnessAfterAdd:
             f"mtime-only entry must not escalate to BREAKING, "
             f"got {results[0].status}: {report.to_dict()}"
         )
+
+    def test_mtime_only_entry_touched_but_identical_reads_fresh(
+        self,
+        tmp_path: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """A heuristic-less entry whose asset was touched (mtime moved) but is
+        byte-identical must read FRESH — the `git clone` case.
+
+        Cloning/copying a catalog resets asset mtimes, so a pre-fix (mtime-only)
+        entry's stored mtime no longer matches the file. Without a stored
+        schema-fingerprint baseline, `is_stale` cannot prove the change and
+        forces STALE — a perpetual STALE that `--fix` skips and a plain `add`
+        skips too (its content hash is unchanged). The content-hash fallback
+        must recognise the file as unchanged.
+
+        Regression: RED before the sha256 fallback (STALE), GREEN after.
+        """
+        import os
+
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "boundaries"
+        collection_dir.mkdir()
+        data_path = collection_dir / "data.parquet"
+        shutil.copy(valid_points_parquet, data_path)
+        _write_collection_json(
+            collection_dir,
+            collection_id="boundaries",
+            extra_assets={
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                }
+            },
+        )
+        _write_versions_json_mtime_only(
+            collection_dir, asset_filename="data.parquet", file_path=data_path
+        )
+
+        # Simulate a clone/checkout: mtime moves well past the fast-path
+        # tolerance, but the bytes are untouched.
+        bumped = data_path.stat().st_mtime + 120.0
+        os.utime(data_path, (bumped, bumped))
+
+        report = scan_catalog_metadata(catalog_dir)
+
+        results = [r for r in report.results if r.file_path.name == "data.parquet"]
+        assert len(results) == 1, f"expected one result, got: {report.to_dict()}"
+        assert results[0].status == MetadataStatus.FRESH, (
+            f"touched-but-identical mtime-only entry must be FRESH via the "
+            f"content-hash fallback, got {results[0].status}: {report.to_dict()}"
+        )
+
+    def test_mtime_only_entry_with_changed_content_is_not_masked(
+        self,
+        tmp_path: Path,
+        valid_points_parquet: Path,
+    ) -> None:
+        """The content-hash fallback must not mask a genuine change: an entry
+        whose asset actually changed (different bytes) must not read FRESH.
+
+        Guards against the fallback degenerating into an always-FRESH shortcut.
+        """
+        import os
+
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        catalog_dir = tmp_path / "catalog"
+        catalog_dir.mkdir()
+        _write_catalog_json(catalog_dir)
+        collection_dir = catalog_dir / "boundaries"
+        collection_dir.mkdir()
+        data_path = collection_dir / "data.parquet"
+        shutil.copy(valid_points_parquet, data_path)
+        _write_collection_json(
+            collection_dir,
+            collection_id="boundaries",
+            extra_assets={
+                "data": {
+                    "href": "./data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                }
+            },
+        )
+        _write_versions_json_mtime_only(
+            collection_dir, asset_filename="data.parquet", file_path=data_path
+        )
+
+        # Genuinely change the bytes (and bump mtime past the fast path).
+        pq.write_table(pa.table({"a": [1, 2, 3], "b": [4, 5, 6]}), data_path)
+        bumped = data_path.stat().st_mtime + 120.0
+        os.utime(data_path, (bumped, bumped))
+
+        report = scan_catalog_metadata(catalog_dir)
+
+        results = [r for r in report.results if r.file_path.name == "data.parquet"]
+        assert len(results) == 1, f"expected one result, got: {report.to_dict()}"
+        assert results[0].status != MetadataStatus.FRESH, (
+            f"a genuinely changed asset must not be masked as FRESH, "
+            f"got {results[0].status}: {report.to_dict()}"
+        )

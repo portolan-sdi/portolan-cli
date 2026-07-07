@@ -291,9 +291,11 @@ def update_versions_tracking(file_path: Path, versions_path: Path) -> None:
     # Get current mtime from file
     current_mtime = file_path.stat().st_mtime
 
-    # Create updated asset with new mtime. Preserve all other tracking fields
-    # (mtime, feature_count, schema_fingerprint) so refreshing source_mtime does
-    # not wipe the freshness heuristics used by the metadata_fresh check (#512).
+    # Refresh both mtime fields to the current file so the entry stays
+    # internally consistent — carrying the current `source_mtime` next to a
+    # stale `mtime` would leave the two fields describing different on-disk
+    # states. Preserve the freshness heuristics (feature_count,
+    # schema_fingerprint) so refreshing mtime does not wipe them (#512).
     old_asset = current_version.assets[asset_name]
     updated_asset = Asset(
         sha256=old_asset.sha256,
@@ -301,7 +303,7 @@ def update_versions_tracking(file_path: Path, versions_path: Path) -> None:
         href=old_asset.href,
         source_path=old_asset.source_path,
         source_mtime=current_mtime,
-        mtime=old_asset.mtime,
+        mtime=current_mtime,
         feature_count=old_asset.feature_count,
         schema_fingerprint=old_asset.schema_fingerprint,
     )
