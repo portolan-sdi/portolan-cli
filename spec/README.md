@@ -26,7 +26,7 @@ cloud-native geospatial data.
 - [Best practices](best-practices.md) - Recommended conventions
 - [AI & LLM integration](ai-integration.md) - llms.txt requirements for agent discoverability
 - [Extensions](extensions/) - Optional STAC profile extensions
-  - [Access (`access:`)](extensions/access.md) - Credential-vending companion to the STAC Authentication extension for gated data assets
+  - [Authentication (`auth:`)](extensions/authentication.md) - Gated catalogs via the STAC Authentication extension incl. the `tokenExchange` flow (RFC 8693)
 
 ## Architectural Decisions
 
