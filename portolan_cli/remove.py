@@ -79,15 +79,27 @@ def _remove_one_file(
 
     # Remove STAC item and files (unless --keep)
     if not keep:
-        item_dir = catalog_root / coll_id / file_path.stem
-        if item_dir.exists() and item_dir.is_dir():
+        # The STAC item lives in the file's PARENT directory (issue #602): a Hive
+        # partition dir (`kdtree_cell=…/`) or a nested item dir whose name is the
+        # parent, NOT the file stem — mirroring `add`, which sets
+        # `item_dir = path.parent` in `_derive_item_id_and_asset_level`.
+        # Reconstructing from `file_path.stem` only matched the degenerate case and
+        # orphaned partition/item dirs (and their `item.json`) on disk.
+        #
+        # Guard the collection-level case: a file sitting directly in the
+        # collection dir (the dir holding `collection.json`) has no item subdir to
+        # remove, so only the file and its sidecars are deleted.
+        item_dir = file_path.parent
+        if not (item_dir / "collection.json").exists() and item_dir.is_dir():
+            # Item-level asset: drop the whole item/partition dir, which owns
+            # item.json and every sibling asset (ADR-0028).
             shutil.rmtree(item_dir)
-
-        # Delete file from disk. missing_ok=True handles race conditions where
-        # another process deletes the file between exists() and unlink().
-        file_path.unlink(missing_ok=True)
-        for sidecar in get_sidecars(file_path):
-            sidecar.unlink(missing_ok=True)
+        else:
+            # Delete file from disk. missing_ok=True handles race conditions where
+            # another process deletes the file between exists() and unlink().
+            file_path.unlink(missing_ok=True)
+            for sidecar in get_sidecars(file_path):
+                sidecar.unlink(missing_ok=True)
 
     return True
 
