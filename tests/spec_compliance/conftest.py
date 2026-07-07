@@ -82,152 +82,29 @@ def validation_rules(schemas_dir: Path) -> list[dict[str, Any]]:
 
 
 # =============================================================================
-# Portolan-Only Schema Fixtures (without external STAC refs)
+# Shipped Schema Fixtures (load the real spec/schema/*.json)
 # =============================================================================
 
 
 @pytest.fixture(scope="session")
-def portolan_collection_schema() -> dict[str, Any]:
-    """Portolan-specific collection schema without external STAC reference.
+def catalog_schema(schemas_dir: Path) -> dict[str, Any]:
+    """Load the shipped STAC catalog schema (spec/schema/catalog.schema.json).
 
-    This validates only the Portolan extensions, not the base STAC schema.
-    Useful for compliance testing where we can't resolve external $refs.
+    This is the real schema published to users. It extends the upstream STAC
+    v1.1.0 schema via ``allOf`` + ``$ref``; those references resolve hermetically
+    from the vendored bundle (see ``portolan_cli.validation.schema_registry``).
+    Pair it with the ``validate_stac`` fixture, which supplies the resolving
+    registry.
     """
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "required": ["type", "stac_version", "id", "description", "license", "extent", "links"],
-        "properties": {
-            "type": {"const": "Collection"},
-            "stac_version": {
-                "type": "string",
-                "pattern": "^1\\.[0-9]+\\.[0-9]+$",
-            },
-            "id": {"type": "string", "minLength": 1},
-            "title": {"type": "string"},
-            "description": {"type": "string"},
-            "license": {"type": "string"},
-            "extent": {
-                "type": "object",
-                "required": ["spatial", "temporal"],
-                "properties": {
-                    "spatial": {
-                        "type": "object",
-                        "required": ["bbox"],
-                        "properties": {
-                            "bbox": {
-                                "type": "array",
-                                "items": {
-                                    "type": "array",
-                                    "items": {"type": "number"},
-                                },
-                            }
-                        },
-                    },
-                    "temporal": {
-                        "type": "object",
-                        "required": ["interval"],
-                        "properties": {
-                            "interval": {
-                                "type": "array",
-                                "items": {
-                                    "type": "array",
-                                    "items": {"type": ["string", "null"]},
-                                },
-                            }
-                        },
-                    },
-                },
-            },
-            "links": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["rel", "href"],
-                    "properties": {
-                        "rel": {"type": "string"},
-                        "href": {"type": "string", "minLength": 1},
-                        "type": {"type": "string"},
-                        "title": {"type": "string"},
-                    },
-                },
-            },
-            "assets": {
-                "type": "object",
-                "additionalProperties": {
-                    "type": "object",
-                    "required": ["href"],
-                    "properties": {
-                        "href": {"type": "string", "minLength": 1},
-                        "type": {"type": "string"},
-                        "title": {"type": "string"},
-                        "description": {"type": "string"},
-                        "roles": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                    },
-                },
-            },
-            "stac_extensions": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
-            "summaries": {"type": "object"},
-            "providers": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["name"],
-                    "properties": {
-                        "name": {"type": "string"},
-                        "roles": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                        "url": {"type": "string"},
-                        "description": {"type": "string"},
-                    },
-                },
-            },
-        },
-    }
+    result: dict[str, Any] = json.loads((schemas_dir / "catalog.schema.json").read_text())
+    return result
 
 
 @pytest.fixture(scope="session")
-def portolan_catalog_schema() -> dict[str, Any]:
-    """Portolan-specific catalog schema without external STAC reference.
-
-    This validates only the Portolan extensions, not the base STAC schema.
-    """
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "required": ["type", "stac_version", "id", "description", "links"],
-        "properties": {
-            "type": {"const": "Catalog"},
-            "stac_version": {
-                "type": "string",
-                "pattern": "^1\\.[0-9]+\\.[0-9]+$",
-            },
-            "id": {"type": "string", "minLength": 1},
-            "title": {"type": "string"},
-            "description": {"type": "string"},
-            "links": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "required": ["rel", "href"],
-                    "properties": {
-                        "rel": {"type": "string"},
-                        "href": {"type": "string", "minLength": 1},
-                        "type": {"type": "string"},
-                        "title": {"type": "string"},
-                    },
-                },
-            },
-        },
-    }
+def collection_schema(schemas_dir: Path) -> dict[str, Any]:
+    """Load the shipped STAC collection schema (spec/schema/collection.schema.json)."""
+    result: dict[str, Any] = json.loads((schemas_dir / "collection.schema.json").read_text())
+    return result
 
 
 # =============================================================================
@@ -255,14 +132,16 @@ def validate_versions() -> Callable[[dict[str, Any], dict[str, Any]], list[str]]
 def validate_stac() -> Callable[[dict[str, Any], dict[str, Any]], list[str]]:
     """Return a validation function for STAC documents (catalog/collection).
 
-    Returns a list of validation error messages (empty if valid).
+    Delegates to ``portolan_cli.validation.schema_registry.validate_document``,
+    which resolves the shipped schemas' upstream STAC ``$ref``s from the vendored
+    bundle (hermetic, no network) and runs with ``format`` assertions off (href
+    policy is deferred; see discussion #573). Returns a list of validation error
+    messages (empty if valid).
     """
-    from jsonschema import Draft202012Validator
+    from portolan_cli.validation.schema_registry import validate_document
 
     def _validate(data: dict[str, Any], schema: dict[str, Any]) -> list[str]:
-        validator = Draft202012Validator(schema)
-        errors = list(validator.iter_errors(data))
-        return [f"{e.json_path}: {e.message}" for e in errors]
+        return validate_document(data, schema)
 
     return _validate
 

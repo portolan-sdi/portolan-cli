@@ -112,7 +112,7 @@ class TestSchemaValidatorRejectsInvalid:
     @pytest.mark.integration
     def test_stac_validator_rejects_wrong_type(
         self,
-        portolan_catalog_schema: dict[str, Any],
+        catalog_schema: dict[str, Any],
         validate_stac: Callable[[dict[str, Any], dict[str, Any]], list[str]],
     ) -> None:
         """STAC validator MUST reject wrong type field."""
@@ -124,14 +124,14 @@ class TestSchemaValidatorRejectsInvalid:
             "links": [],
         }
 
-        errors = validate_stac(invalid_data, portolan_catalog_schema)
+        errors = validate_stac(invalid_data, catalog_schema)
 
         assert errors, "Validator should reject wrong 'type' field"
 
     @pytest.mark.integration
     def test_stac_validator_rejects_invalid_stac_version(
         self,
-        portolan_collection_schema: dict[str, Any],
+        collection_schema: dict[str, Any],
         validate_stac: Callable[[dict[str, Any], dict[str, Any]], list[str]],
     ) -> None:
         """STAC validator MUST reject invalid stac_version pattern."""
@@ -148,7 +148,7 @@ class TestSchemaValidatorRejectsInvalid:
             "links": [],
         }
 
-        errors = validate_stac(invalid_data, portolan_collection_schema)
+        errors = validate_stac(invalid_data, collection_schema)
 
         assert errors, "Validator should reject stac_version that doesn't match 1.x.x"
 

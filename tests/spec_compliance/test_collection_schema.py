@@ -31,7 +31,7 @@ class TestCollectionSchemaCompliance:
         runner: CliRunner,
         tmp_path: Path,
         valid_points_geojson: Path,
-        portolan_collection_schema: dict[str, Any],
+        collection_schema: dict[str, Any],
         validate_stac: Callable[[dict[str, Any], dict[str, Any]], list[str]],
     ) -> None:
         """portolan add creates a schema-compliant collection.json for GeoJSON."""
@@ -54,7 +54,7 @@ class TestCollectionSchemaCompliance:
             assert collection_path.exists(), f"collection.json not found at {collection_path}"
 
             data = json.loads(collection_path.read_text())
-            errors = validate_stac(data, portolan_collection_schema)
+            errors = validate_stac(data, collection_schema)
 
             assert not errors, "Schema validation failed:\n" + "\n".join(errors)
 
@@ -64,7 +64,7 @@ class TestCollectionSchemaCompliance:
         runner: CliRunner,
         tmp_path: Path,
         valid_points_parquet: Path,
-        portolan_collection_schema: dict[str, Any],
+        collection_schema: dict[str, Any],
         validate_stac: Callable[[dict[str, Any], dict[str, Any]], list[str]],
     ) -> None:
         """portolan add creates a schema-compliant collection.json for GeoParquet."""
@@ -87,7 +87,7 @@ class TestCollectionSchemaCompliance:
             assert collection_path.exists(), "collection.json not found"
 
             data = json.loads(collection_path.read_text())
-            errors = validate_stac(data, portolan_collection_schema)
+            errors = validate_stac(data, collection_schema)
 
             assert not errors, "Schema validation failed:\n" + "\n".join(errors)
 
