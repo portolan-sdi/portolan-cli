@@ -1,8 +1,7 @@
 # ADR-0021: catalog.json at Root Level
 
 ## Status
-Accepted
-Superseded-By: ADR-0023
+Superseded by [ADR-0023](0023-stac-structure-separation.md)
 
 > Note: Subsumed by ADR-0023 which provides complete structure specification.
 

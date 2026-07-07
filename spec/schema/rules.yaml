@@ -114,7 +114,7 @@ rules:
       else:
         assert versions is empty
     references:
-      - versions.md#current-version
+      - versions.md#root-level
 
   - id: RULE-0013
     level: error
@@ -387,7 +387,7 @@ rules:
         for style_key in collection["portolan:styles"]:
           assert style_key in collection.assets
     references:
-      - best-practices.md#portolan-styles-manifest
+      - best-practices.md#portolanstyles-manifest
 
   - id: RULE-0068
     level: error
@@ -447,7 +447,7 @@ rules:
           assert file exists at link.href
     references:
       - ai-integration.md
-      - core.md#ai-llm-integration
+      - core.md#ai--llm-integration
 
   - id: RULE-0081
     level: error
@@ -465,7 +465,7 @@ rules:
           assert file exists at link.href
     references:
       - ai-integration.md
-      - core.md#ai-llm-integration
+      - core.md#ai--llm-integration
 
   - id: RULE-0082
     level: warning
