@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 from pathlib import Path
@@ -14,67 +13,6 @@ from portolan_cli.versions import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def remove_item(
-    catalog_root: Path,
-    stac_id: str,
-    *,
-    remove_collection: bool = False,
-) -> None:
-    """Remove an item from a Portolan catalog.
-
-    Args:
-        catalog_root: Root directory of the catalog.
-        stac_id: STAC identifier in format "collection/item" or just "collection".
-        remove_collection: If True, remove entire collection.
-
-    Raises:
-        KeyError: If the item doesn't exist.
-    """
-    # STAC at root level (per ADR-0023)
-    if remove_collection or "/" not in stac_id:
-        # Remove entire collection
-        collection_id = stac_id.split("/")[0]
-        collection_dir = catalog_root / collection_id
-
-        if not collection_dir.exists():
-            raise KeyError(f"Item not found: {stac_id}")
-
-        # Remove collection directory
-        shutil.rmtree(collection_dir)
-
-        # Update catalog links
-        catalog_path = catalog_root / "catalog.json"
-        if catalog_path.exists():
-            catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
-            catalog_data["links"] = [
-                link
-                for link in catalog_data.get("links", [])
-                if not link.get("href", "").endswith(f"/{collection_id}/collection.json")
-            ]
-            catalog_path.write_text(json.dumps(catalog_data, indent=2), encoding="utf-8")
-    else:
-        # Remove single item
-        collection_id, item_id = stac_id.split("/", 1)
-        item_dir = catalog_root / collection_id / item_id
-
-        if not item_dir.exists():
-            raise KeyError(f"Item not found: {stac_id}")
-
-        # Remove item directory
-        shutil.rmtree(item_dir)
-
-        # Update collection links
-        collection_path = catalog_root / collection_id / "collection.json"
-        if collection_path.exists():
-            collection_data = json.loads(collection_path.read_text(encoding="utf-8"))
-            collection_data["links"] = [
-                link
-                for link in collection_data.get("links", [])
-                if not link.get("href", "").startswith(f"./{item_id}/")
-            ]
-            collection_path.write_text(json.dumps(collection_data, indent=2), encoding="utf-8")
 
 
 def _gather_removable_files(path: Path) -> list[Path]:
@@ -207,39 +145,56 @@ def _remove_from_versions(file_path: Path, versions_path: Path) -> None:
     if not versions_file.versions:
         return
 
-    # Check if the file is tracked under any key. Collection-level assets are
-    # keyed by bare filename; item-level assets are keyed "{item_id}/{filename}"
-    # (see .claude/rules/stac-assets.md and _batch_update_versions). The item_id
-    # for a removed file follows the same stem convention used for its item dir.
-    current = versions_file.versions[-1]
-    filename = file_path.name
-    parquet_name = f"{file_path.stem}.parquet"
-    item_id = file_path.stem
-    candidate_keys = {
-        filename,
-        parquet_name,
-        f"{item_id}/{filename}",
-        f"{item_id}/{parquet_name}",
-    }
+    from portolan_cli.catalog import find_catalog_root
 
-    removed_keys = {name for name in current.assets if name in candidate_keys}
+    catalog_root = find_catalog_root(versions_path.parent)
+    if catalog_root is None:
+        catalog_root = versions_path.parent.parent
+
+    # Match on the tracked asset's href, not a key reconstructed from the file
+    # stem. Hrefs are catalog-root-relative and POSIX and already encode the
+    # true item directory that add._batch_update_versions used as the key prefix
+    # ("{collection_id}/{item_id}/{filename}", or "{collection_id}/{filename}"
+    # for collection-level assets). Reconstructing "{stem}/{filename}" is wrong
+    # for every layout where the item dir name != the file stem — every real
+    # Hive partition ("kdtree_cell=.../data.parquet") and nested item dir
+    # (issue #589). Href matching is also unique per file, so it can't
+    # over-match a sibling item that happens to share a filename.
+    try:
+        target_href = file_path.resolve().relative_to(catalog_root.resolve()).as_posix()
+    except ValueError:
+        # File lives outside the catalog; nothing tracked here can match it.
+        return
+
+    current = versions_file.versions[-1]
+    removed_keys = {name for name, asset in current.assets.items() if asset.href == target_href}
+
+    # Convert-on-add: a non-cloud-native source (e.g. roads.shp) is tracked as
+    # its converted roads.parquet. Removing the source must still untrack the
+    # parquet, or it becomes a phantom entry.
+    if not removed_keys and file_path.suffix and file_path.suffix != ".parquet":
+        parquet_href = (
+            file_path.resolve()
+            .relative_to(catalog_root.resolve())
+            .with_suffix(".parquet")
+            .as_posix()
+        )
+        removed_keys = {
+            name for name, asset in current.assets.items() if asset.href == parquet_href
+        }
 
     if not removed_keys:
         # File wasn't tracked, nothing to do
         return
 
-    from portolan_cli.catalog import find_catalog_root
     from portolan_cli.version_ops import publish_version
 
-    catalog_root = find_catalog_root(versions_path.parent)
-    if catalog_root is None:
-        catalog_root = versions_path.parent.parent
     collection_id = versions_path.parent.relative_to(catalog_root).as_posix()
 
     publish_version(
         collection_id,
         assets={},
         removed=removed_keys,
-        message=f"Removed {filename}",
+        message=f"Removed {file_path.name}",
         catalog_root=catalog_root,
     )
