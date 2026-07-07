@@ -2,7 +2,7 @@
 
 This directory contains the canonical Portolan specification.
 
-**Spec version: `0.1.0`** ([SemVer](https://semver.org/), pre-1.0). The
+**Spec version: `0.1.1`** ([SemVer](https://semver.org/), pre-1.0). The
 canonical machine-readable home is
 [`schema/spec-version.json`](schema/spec-version.json). See
 [Versioning](#versioning) below for the bump policy.
