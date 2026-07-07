@@ -88,13 +88,14 @@ Asset hrefs **MUST** be absolute S3 URLs:
 
 ## Link Paths
 
-STAC link relations (`root`, `self`, `child`, `parent`) **SHOULD** use relative paths within the catalog structure:
+STAC link relations (`root`, `self`, `child`, `parent`) **SHOULD** use relative paths within the catalog structure. Hierarchy is built from nested catalogs, so `child` links point from a catalog down to its intermediate catalogs or leaf collections, never from one collection to another (see [structure.md](structure.md#nested-catalogs-flat-collections)). This is an intermediate catalog linking to a leaf collection:
 
 ```json
 "links": [
-  {"rel": "root", "href": "./catalog.json", "type": "application/json"},
-  {"rel": "self", "href": "./collection.json", "type": "application/json"},
-  {"rel": "child", "href": "./2022/collection.json", "type": "application/json"}
+  {"rel": "root", "href": "../catalog.json", "type": "application/json"},
+  {"rel": "parent", "href": "../catalog.json", "type": "application/json"},
+  {"rel": "self", "href": "./catalog.json", "type": "application/json"},
+  {"rel": "child", "href": "./air-quality/collection.json", "type": "application/json", "title": "Air Quality"}
 ]
 ```
 

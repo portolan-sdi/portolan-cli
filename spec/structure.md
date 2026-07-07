@@ -37,7 +37,7 @@ Only Portolan-internal tooling configuration lives in `.portolan/`. STAC metadat
 
 ## Collection Level
 
-Each collection is a top-level subdirectory of the project root, named with the collection ID.
+Each collection lives in a subdirectory named with its collection ID. For a nested collection the ID is a POSIX path (e.g. `environment/air-quality`) and the directory sits under one or more intermediate catalog directories (see [Nested Catalogs, Flat Collections](#nested-catalogs-flat-collections)).
 
 | File | Required | Description |
 |------|----------|-------------|
@@ -81,20 +81,40 @@ Each item is a subdirectory of the collection named with the item ID.
 
 Item IDs are derived from the item directory name. By convention, item directories **SHOULD** be named after the primary data file's stem (e.g., source file `census.shp` goes into item directory `census/`).
 
-## Flat Hierarchy
+## Nested Catalogs, Flat Collections
 
-Portolan catalogs use a **flat hierarchy**: collections contain items directly, with no nested sub-collections.
+Portolan organizes hierarchy with **nested catalogs**, not nested collections ([ADR-0032](../context/shared/adr/0032-nested-catalogs-with-flat-collections.md)). Intermediate levels are catalogs (`catalog.json`); collections are always leaves. A collection **MUST NOT** contain a child collection. This keeps collections flat for STAC API compatibility while still allowing thematic organization above them.
+
+Directory mapping:
+
+| Directory | File | Role |
+|-----------|------|------|
+| Root | `catalog.json` | Root catalog |
+| Level above a collection | `catalog.json` | Intermediate (thematic) catalog |
+| Data directory | `collection.json` | Leaf collection (holds vector assets or item subdirs) |
+| Subdirectory within a collection | `catalog.json` | Organizes many items below a collection |
+
+A nested collection's ID is its POSIX path from the catalog root (e.g. `environment/air-quality`). `portolan add` writes a `catalog.json` at each intermediate level and links parent → child down to the leaf `collection.json`.
 
 ```
-# Correct (flat)
-census-2020/tracts/tracts.parquet
-census-2020/blocks/blocks.parquet
+# Correct: intermediate levels are catalogs, collections are leaves
+environment/
+├── catalog.json                 ← intermediate catalog
+├── air-quality/
+│   ├── collection.json          ← leaf collection (data)
+│   └── pm25.parquet
+└── water-quality/
+    ├── collection.json          ← leaf collection (data)
+    └── turbidity.parquet
 
-# Incorrect (nested)
-census/2020/tracts/tracts.parquet
+# Incorrect: a collection containing a child collection
+environment/
+├── collection.json              ← collection with a child collection (not allowed)
+└── air-quality/
+    └── collection.json
 ```
 
-This simplifies tooling and avoids ambiguity about where versioning boundaries lie.
+Deep nesting is allowed; each level above the leaf is a catalog. Catalogs may also appear *below* a collection to organize its items (for example, a raster collection grouping items by year).
 
 ## STAC Conventions
 
