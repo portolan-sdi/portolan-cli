@@ -115,6 +115,16 @@
           "type": "number",
           "minimum": 0,
           "description": "Optional Unix timestamp of the asset file itself. Used for fast-path change detection (ADR-0017). NOTE: Accepts number (not just integer) because Python's os.stat().st_mtime returns floats. This relaxation should be upstreamed to portolan-spec."
+        },
+        "feature_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optional feature/row count (pixel count for rasters) captured when the asset was tracked. Freshness heuristic (ADR-0017): lets a touched-but-identical asset read fresh instead of stale."
+        },
+        "schema_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional hash of the asset schema captured when the asset was tracked. Freshness heuristic (ADR-0017): a change indicates a breaking schema change."
         }
       }
     },

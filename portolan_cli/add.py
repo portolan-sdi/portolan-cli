@@ -1982,6 +1982,45 @@ def _finalize_with_backend(
         )
 
 
+_FRESHNESS_CHECKABLE_SUFFIXES = frozenset({".parquet", ".tif", ".tiff"})
+
+
+def _asset_freshness_fields(
+    file_path: Path,
+    *,
+    is_collection_level: bool,
+) -> tuple[float | None, int | None, str | None]:
+    """Compute (source_mtime, feature_count, schema_fingerprint) for tracking.
+
+    Only collection-level, freshness-checkable assets (GeoParquet / COG) get a
+    baseline: they have no companion item.json, so the metadata_fresh check
+    reads their freshness straight from versions.json (#512). Item-level assets
+    are left to their existing item.json / ``--fix`` path.
+
+    Best-effort: any extraction failure falls back to ``(None, None, None)`` so
+    tracking never blocks an otherwise successful ``add``. The asset's own mtime
+    doubles as ``source_mtime`` — mirroring ``update_versions_tracking`` — since
+    the freshness fast path compares the asset file's current mtime to it.
+    """
+    if not is_collection_level:
+        return (None, None, None)
+    if file_path.suffix.lower() not in _FRESHNESS_CHECKABLE_SUFFIXES:
+        return (None, None, None)
+
+    from portolan_cli.metadata.detection import get_current_metadata
+
+    try:
+        current = get_current_metadata(file_path)
+        return (
+            file_path.stat().st_mtime,
+            current.current_feature_count,
+            current.current_schema_fingerprint,
+        )
+    except (ValueError, OSError):
+        logger.debug("Could not extract freshness heuristics for %s", file_path, exc_info=True)
+        return (None, None, None)
+
+
 def _batch_update_versions(
     collection_dir: Path,
     collection_id: str,
@@ -2033,12 +2072,24 @@ def _batch_update_versions(
                 asset_key = f"{p.item_id}/{filename}"
 
             stat = file_path.stat()
+            # Collection-level assets (ADR-0031) have no companion item.json, so
+            # the freshness check reads their baseline straight from
+            # versions.json. Persist source_mtime + heuristics here so a plain
+            # `add` produces a FRESH asset instead of a perpetual STALE (#512),
+            # and so a touched-but-identical asset stays FRESH via the ADR-0017
+            # heuristic fallback rather than flipping to STALE/BREAKING.
+            source_mtime, feature_count, schema_fingerprint = _asset_freshness_fields(
+                file_path, is_collection_level=p.is_collection_level_asset
+            )
             # Use pre-computed file_size (handles directories like FileGDB correctly)
             all_assets[asset_key] = Asset(
                 sha256=file_checksum,
                 size_bytes=file_size,
                 href=href,
                 mtime=stat.st_mtime,
+                source_mtime=source_mtime,
+                feature_count=feature_count,
+                schema_fingerprint=schema_fingerprint,
             )
 
     # Add single version with all assets

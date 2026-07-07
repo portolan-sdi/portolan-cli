@@ -76,6 +76,11 @@ class Asset:
             conversion occurred. Used to detect when source has changed.
         mtime: Optional Unix timestamp of the asset file itself.
             Used for fast-path change detection per ADR-0017.
+        feature_count: Optional feature/row count (pixel count for rasters)
+            captured when the asset was tracked. Lets a touched-but-identical
+            asset read FRESH instead of a spurious STALE (ADR-0017 heuristics).
+        schema_fingerprint: Optional hash of the asset schema captured when the
+            asset was tracked. Used to detect breaking schema changes.
     """
 
     sha256: str
@@ -84,6 +89,8 @@ class Asset:
     source_path: str | None = None
     source_mtime: float | None = None
     mtime: float | None = None
+    feature_count: int | None = None
+    schema_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -180,6 +187,9 @@ def _parse_versions_file(data: dict[str, Any]) -> VersionsFile:
                     source_mtime=asset_data.get("source_mtime"),
                     # Optional asset mtime for ADR-0017 fast-path
                     mtime=asset_data.get("mtime"),
+                    # Optional freshness heuristics (ADR-0017)
+                    feature_count=asset_data.get("feature_count"),
+                    schema_fingerprint=asset_data.get("schema_fingerprint"),
                 )
                 for name, asset_data in v["assets"].items()
             }
@@ -254,7 +264,8 @@ def write_versions(path: Path, versions_file: VersionsFile) -> None:
 def _serialize_asset(asset: Asset) -> dict[str, Any]:
     """Serialize an Asset to a JSON-compatible dictionary.
 
-    Only includes optional fields (source_path, source_mtime, mtime) when not None.
+    Only includes optional fields (source_path, source_mtime, mtime,
+    feature_count, schema_fingerprint) when not None.
 
     Args:
         asset: The Asset to serialize.
@@ -274,6 +285,10 @@ def _serialize_asset(asset: Asset) -> dict[str, Any]:
         data["source_mtime"] = asset.source_mtime
     if asset.mtime is not None:
         data["mtime"] = asset.mtime
+    if asset.feature_count is not None:
+        data["feature_count"] = asset.feature_count
+    if asset.schema_fingerprint is not None:
+        data["schema_fingerprint"] = asset.schema_fingerprint
     return data
 
 

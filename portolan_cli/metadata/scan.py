@@ -307,10 +307,19 @@ def _check_collection_level_asset(
         return None
 
     current = get_current_metadata(asset_path)
+    # Freshness baseline is the asset's own mtime. `add` records it under the
+    # `mtime` field (ADR-0017 fast-path), while `--fix`'s
+    # `update_versions_tracking` records it under `source_mtime`; a single asset
+    # may carry either (or both). Prefer `source_mtime` but fall back to `mtime`
+    # so a plain `add` (which never wrote `source_mtime` for collection-level
+    # assets) is not perpetually STALE — the #512 regression.
+    stored_source_mtime = stored.get("source_mtime")
+    stored_mtime = stored_source_mtime if stored_source_mtime is not None else stored.get("mtime")
+    stored_schema_fingerprint = stored.get("schema_fingerprint")
     state = FileMetadataState(
         file_path=asset_path,
         current_mtime=current.current_mtime,
-        stored_mtime=stored.get("source_mtime"),
+        stored_mtime=stored_mtime,
         # Collection-level assets have no item.json bbox source. Heuristics
         # fall through to feature-count + schema fingerprint comparisons,
         # which is sufficient signal for STALE/BREAKING detection.
@@ -319,7 +328,7 @@ def _check_collection_level_asset(
         current_feature_count=current.current_feature_count,
         stored_feature_count=stored.get("feature_count"),
         current_schema_fingerprint=current.current_schema_fingerprint,
-        stored_schema_fingerprint=stored.get("schema_fingerprint"),
+        stored_schema_fingerprint=stored_schema_fingerprint,
     )
     stale, reason = is_stale(state)
     if not stale:
@@ -329,7 +338,11 @@ def _check_collection_level_asset(
             message=f"Metadata is up to date ({reason})",
         )
     changes = detect_changes(state)
-    if reason == "schema_changed":
+    # Only escalate to BREAKING when a stored schema fingerprint actually
+    # exists to compare against. Without a baseline (older catalogs, or entries
+    # written before heuristics were persisted) a mtime change cannot prove a
+    # schema break — report STALE rather than a blocking BREAKING error.
+    if reason == "schema_changed" and stored_schema_fingerprint is not None:
         return MetadataCheckResult(
             file_path=asset_path,
             status=MetadataStatus.BREAKING,
