@@ -1,0 +1,25 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.1.0",
+  "id": "self-contained-valid",
+  "title": "Self-Contained Valid Catalog",
+  "description": "A SELF_CONTAINED catalog (relative hrefs, STAC 1.1.0) whose collection and item are all valid.",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "child",
+      "href": "./demo-collection/collection.json",
+      "type": "application/json",
+      "title": "Demo Collection"
+    }
+  ]
+}

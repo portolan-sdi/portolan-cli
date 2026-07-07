@@ -1,0 +1,25 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.1.0",
+  "id": "self-contained-invalid-item",
+  "title": "Self-Contained Catalog With Invalid Item",
+  "description": "SELF_CONTAINED 1.1.0 catalog whose nested item is missing the required 'id' field.",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "child",
+      "href": "./demo-collection/collection.json",
+      "type": "application/json",
+      "title": "Demo Collection"
+    }
+  ]
+}

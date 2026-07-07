@@ -492,6 +492,64 @@ class TestStacFieldsRule:
 
         assert result.passed is False
 
+    # --- Issue #543: fields must be checked on collections, not just the root ---
+
+    _STAC_FIXTURES = Path(__file__).parent.parent / "fixtures" / "validation" / "stac"
+
+    @pytest.mark.unit
+    def test_passes_self_contained_valid_catalog(self) -> None:
+        """A valid self-contained catalog + collection passes."""
+        rule = StacFieldsRule()
+        result = rule.check(self._STAC_FIXTURES / "self-contained-valid")
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_when_collection_missing_required_fields(self) -> None:
+        """A linked collection missing extent/stac_version fails (issue #543).
+
+        Pre-fix, ``StacFieldsRule`` only read the root ``catalog.json`` and
+        reported ``All required STAC fields present`` here.
+        """
+        rule = StacFieldsRule()
+        result = rule.check(self._STAC_FIXTURES / "self-contained-invalid-collection")
+
+        assert result.passed is False
+        assert "extent" in result.message
+        # The offending collection is identified by path, not just a bare field name.
+        assert "collection.json" in result.message
+
+    @pytest.mark.unit
+    def test_fails_when_item_missing_required_fields(self) -> None:
+        """A nested item missing ``id`` fails cross-platform (issue #543).
+
+        Items use ``{id}.json`` filenames (not a fixed name) and were previously
+        validated only by ``StacSchemaRule``, whose recursive stac-check backend
+        crashes on Windows with 'list index out of range' before reaching them.
+        ``StacFieldsRule`` walks items by content (a ``Feature`` with a
+        ``stac_version``) so the failure surfaces on every platform.
+        """
+        rule = StacFieldsRule()
+        result = rule.check(self._STAC_FIXTURES / "self-contained-invalid-item")
+
+        assert result.passed is False
+        assert result.severity == Severity.ERROR
+        assert "id" in result.message
+        # The offending item is identified by its file path.
+        assert "data-item.json" in result.message
+
+    @pytest.mark.unit
+    def test_passes_self_contained_valid_catalog_with_item(self) -> None:
+        """Walking items must not flag a fully valid item (regression guard).
+
+        ``self-contained-valid`` contains a complete ``data-item.json``; item
+        validation must leave it green.
+        """
+        rule = StacFieldsRule()
+        result = rule.check(self._STAC_FIXTURES / "self-contained-valid")
+
+        assert result.passed is True
+
 
 class TestCatalogJsonValidRuleOSError:
     """Tests for OSError handling in CatalogJsonValidRule."""

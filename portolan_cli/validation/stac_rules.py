@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -82,14 +83,21 @@ class StacSchemaRule(ValidationRule):
     severity = Severity.ERROR
     description = "Validate STAC JSON against official schemas"
 
-    # Errors to treat as acceptable (Portolan uses relative paths by design)
+    # Errors to treat as acceptable (Portolan uses relative paths by design).
     ACCEPTABLE_ERRORS: frozenset[str] = frozenset(
         {
             "must be iri",  # Relative hrefs are valid in Portolan
             "is not a 'iri'",  # Alternate phrasing
-            "list index out of range",  # stac-check bug on Windows with recursive validation
         }
     )
+
+    # stac-check/stac-validator crashes with a bare "list index out of range"
+    # while recursively validating SELF_CONTAINED catalogs (relative hrefs) on
+    # Windows — an upstream platform bug, not a defect in the catalog. It is
+    # tolerated ONLY on Windows: on Linux/macOS a genuine IndexError from the
+    # validator must still surface as a failure rather than a silent pass
+    # (issue #543). StacFieldsRule covers below-root field checks cross-platform.
+    _WINDOWS_VALIDATOR_CRASH = "list index out of range"
 
     def __init__(self, *, strict: bool = False) -> None:
         """Initialize rule.
@@ -106,6 +114,22 @@ class StacSchemaRule(ValidationRule):
             return False  # In strict mode, no errors are acceptable
         error_lower = error_msg.lower()
         return any(pattern in error_lower for pattern in self.ACCEPTABLE_ERRORS)
+
+    def _is_tolerable(self, error_msg: str) -> bool:
+        """True if an error is benign and should not fail the catalog.
+
+        Covers Portolan's relative-href IRI errors (``ACCEPTABLE_ERRORS``) and,
+        outside strict mode, an unresolved *extension* schema fetch plus the
+        Windows-only stac-validator crash (see ``_WINDOWS_VALIDATOR_CRASH``).
+        Strict mode tolerates nothing but the relative-href errors.
+        """
+        if self._is_acceptable_error(error_msg):
+            return True
+        if self.strict:
+            return False
+        if _is_schema_resolution_error(error_msg):
+            return True
+        return sys.platform == "win32" and self._WINDOWS_VALIDATOR_CRASH in error_msg.lower()
 
     def check(self, catalog_path: Path) -> ValidationResult:
         catalog_json = catalog_path / "catalog.json"
@@ -130,36 +154,52 @@ class StacSchemaRule(ValidationRule):
                 fix_hint="Check that all STAC files have valid JSON syntax",
             )
 
-        # Check root-level validation
+        # Aggregate real (non-tolerable) failures across the ROOT catalog AND
+        # every object reached by recursion (collections, items, sub-catalogs).
+        # Crucially, an acceptable error on the root — e.g. its own relative
+        # `self` href failing STAC 1.1.0's `format: iri`, which EVERY
+        # SELF_CONTAINED Portolan catalog produces — must NOT short-circuit the
+        # check. Doing so returned a pass before `validate_all` (which already
+        # holds the child failures) was ever inspected, so only the root was
+        # effectively validated (issue #543).
+        failures: list[tuple[str, str, str | None]] = []  # (message, path, hint)
+        seen: set[tuple[str, str]] = set()
+
+        def _record(message: object, path: str, hint: str | None) -> None:
+            text = str(message)
+            if not text or self._is_tolerable(text):
+                return
+            key = (text, path)
+            if key in seen:
+                return
+            seen.add(key)
+            failures.append((text, path, hint))
+
+        # The root object is not always present in `validate_all`, so its own
+        # validity is checked directly.
         if not linter.valid_stac:
-            error_msg = linter.error_msg or "STAC schema validation failed"
-            if self._is_acceptable_error(error_msg):
-                return self._pass("Schema valid (relative hrefs accepted)")
-            if not self.strict and _is_schema_resolution_error(error_msg):
-                return self._pass("Schema valid (unresolved extension schema accepted)")
-            recommendation = getattr(linter, "recommendation", None)
-            return self._fail(error_msg, fix_hint=recommendation)
+            _record(
+                linter.error_msg or "STAC schema validation failed",
+                str(catalog_json),
+                getattr(linter, "recommendation", None),
+            )
 
-        # Check recursive validation results (stac-check stores these separately)
-        validate_all = getattr(linter, "validate_all", [])
-        failed = [r for r in validate_all if not r.get("valid_stac", True)]
-
-        # Filter out acceptable errors
-        real_failures = []
-        for f in failed:
-            msg = f.get("error_message", "")
-            if self._is_acceptable_error(msg):
+        # Every recursively-validated object (stac-check stores these here).
+        for entry in getattr(linter, "validate_all", []):
+            if entry.get("valid_stac", True):
                 continue
-            if not self.strict and _is_schema_resolution_error(msg):
-                continue
-            real_failures.append(f)
+            _record(
+                entry.get("error_message", "Schema validation failed"),
+                entry.get("path", "unknown"),
+                entry.get("recommendation"),
+            )
 
-        if real_failures:
-            first_error = real_failures[0]
-            msg = first_error.get("error_message", "Schema validation failed")
-            path = first_error.get("path", "unknown")
-            hint = first_error.get("recommendation")
-            return self._fail(f"{msg} in {path}", fix_hint=hint)
+        if failures:
+            message, path, hint = failures[0]
+            detail = f"{message} in {path}"
+            if len(failures) > 1:
+                detail += f" (+{len(failures) - 1} more)"
+            return self._fail(detail, fix_hint=hint)
 
         return self._pass("All STAC objects pass schema validation")
 
