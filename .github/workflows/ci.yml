@@ -64,7 +64,7 @@ jobs:
         run: uv run lint-imports
 
       - name: Spell check
-        run: uv run codespell --skip "*.parquet,*.tif,.git,*.lock" portolan_cli tests docs
+        run: uv run codespell --skip "*.parquet,*.tif,.git,*.lock,portolan_cli/validation/_vendored" portolan_cli tests docs
 
   security:
     name: Security Scan

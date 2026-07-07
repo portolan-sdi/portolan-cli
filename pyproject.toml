@@ -231,6 +231,10 @@ skips = []  # Add specific checks to skip if needed, e.g., ["B101"]
 # "BU" is the INSPIRE theme code for Buildings (used in test fixtures)
 # "disjointness" is a real set-theory term (codespell wants "disjointedness")
 ignore-words-list = "nd,bu,ue,adresse,projet,environnement,copie,explicite,connexion,objets,visibles,issus,fonction,mesures,informations,disjointness"
+# Vendored upstream STAC schemas are byte-identical third-party data (they carry
+# upstream's own typos, e.g. "sumamry" in collection.json). Never spell-check them;
+# a refresh re-imports upstream text verbatim. Keep in sync with the ci.yml --skip.
+skip = "portolan_cli/validation/_vendored"
 
 # ---------- dead code ----------
 

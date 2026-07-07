@@ -28,6 +28,7 @@ from typing import Any
 
 import pytest
 from click.testing import CliRunner
+from referencing.exceptions import Unresolvable
 
 from portolan_cli.cli import cli
 from portolan_cli.validation.schema_registry import build_stac_registry, validate_document
@@ -163,7 +164,7 @@ class TestShippedSchemaEnforcesConstraints:
 
 
 class TestValidationIsHermetic:
-    """Validation must not reach the network even when sockets are unavailable."""
+    """Validation must resolve the STAC $refs offline and never fall back to the network."""
 
     @pytest.mark.unit
     def test_validation_works_with_sockets_blocked(
@@ -171,6 +172,11 @@ class TestValidationIsHermetic:
         monkeypatch: pytest.MonkeyPatch,
         catalog_schema: dict[str, Any],
     ) -> None:
+        # Drop the cached registry so it is rebuilt from the vendored bundle
+        # *under* the socket block. A warm lru_cache would otherwise let this
+        # pass without exercising offline construction at all.
+        build_stac_registry.cache_clear()
+
         def _no_network(*args: Any, **kwargs: Any) -> Any:
             raise AssertionError("validation attempted a network connection")
 
@@ -185,7 +191,21 @@ class TestValidationIsHermetic:
             "description": "d",
             "links": [],
         }
-        # Must complete (resolving the STAC $ref from the vendored bundle) with
-        # no network access.
+        # Resolves the STAC base $ref from the vendored bundle AND accepts a
+        # conformant catalog -- with no network access. Asserting == [] (not just
+        # "is a list") is what makes this a real conformance check.
         errors = validate_document(good_catalog, catalog_schema)
-        assert isinstance(errors, list)
+        assert errors == [], errors
+
+    @pytest.mark.unit
+    def test_unvendored_ref_raises_instead_of_fetching(self) -> None:
+        # The registry is built with no retrieval callable, so a $ref outside the
+        # vendored closure must raise Unresolvable rather than silently fetch it
+        # over the network. This is what gives the socket-blocked test teeth:
+        # an unresolved reference is a hard error, never a network round-trip.
+        schema = {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "allOf": [{"$ref": "https://schemas.stacspec.org/v1.1.0/not-vendored.json"}],
+        }
+        with pytest.raises(Unresolvable):
+            validate_document({"type": "Catalog"}, schema)
