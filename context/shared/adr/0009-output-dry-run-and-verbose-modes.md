@@ -5,7 +5,7 @@ Accepted
 
 ## Context
 
-Portolan CLI performs destructive operations like file deletion (`prune`), remote sync (`sync`), and data transformation (`dataset add`). Users need confidence before executing these operations, especially in production environments or when operating on cloud storage.
+Portolan CLI performs destructive operations like removing tracked files (`rm`), remote sync (`push` / `sync`), and format conversion during import (`add`). Users need confidence before executing these operations, especially in production environments or when operating on cloud storage.
 
 Additionally, debugging and troubleshooting benefit from detailed technical output showing internal decisions, file paths, and library calls. However, this detail should not clutter normal usage.
 
@@ -64,30 +64,37 @@ Add **per-call** `dry_run` and `verbose` parameters to all output functions (`su
 
 ### Command Coverage
 
-Dry-run mode applies to commands that modify state:
+Dry-run mode applies to commands that modify filesystem or network state. The
+table below reflects the flags actually exposed by each command today:
 
 | Command | `--dry-run` | `--verbose` |
 |---------|-------------|-------------|
-| `dataset add` | ✅ | ✅ |
-| `dataset remove` | ✅ | ✅ |
-| `sync` | ✅ | ✅ |
-| `repair` | ✅ | ✅ |
-| `prune` | ✅ | ✅ |
-| `init` | ✅ | ✅ |
-| `check` | ❌ | ✅ |
-| `check --remote` | ❌ | ✅ |
-| `dataset list` | ❌ | ✅ |
-| `dataset info` | ❌ | ✅ |
-| `remote add` | ❌ | ✅ |
-| `remote list` | ❌ | ✅ |
+| `add` | ❌ | ✅ |
+| `add-external` | ❌ | ❌ |
+| `rm` | ✅ | ✅ |
+| `push` | ✅ | ✅ |
+| `pull` | ✅ | ❌ |
+| `sync` | ✅ | ❌ |
+| `clean` | ✅ | ❌ |
+| `scan` | ✅ | ❌ |
+| `check` | ✅ | ✅ |
+| `stac-geoparquet` | ✅ | ❌ |
+| `version prune` | ✅ | ❌ |
+| `extract arcgis` / `wfs` / `carto` | ✅ | ❌ |
+| `init` | ❌ | ❌ |
+| `list` | ❌ | ❌ |
+| `status` | ❌ | ❌ |
+| `info` | ❌ | ❌ |
 
-**Rule:** If it modifies filesystem or network state → support `--dry-run`.
+**Rule:** If it modifies filesystem or network state → it *should* support
+`--dry-run`. `add` and `add-external` are the current gap: they mutate state but
+do not yet expose `--dry-run` (tracked as follow-up work).
 
 ## Consequences
 
 ### What becomes easier
 
-- **Safe exploration:** Users can preview `prune`, `sync`, and `repair` before executing
+- **Safe exploration:** Users can preview `rm`, `sync`, and `clean` before executing
 - **AI integration:** Agents can run tools with `--dry-run` to understand behavior before committing
 - **Debugging:** Future verbose mode will expose technical details without cluttering normal output
 - **Testing:** Per-call parameters are straightforward to test with mutation testing
