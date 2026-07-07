@@ -242,15 +242,20 @@ rules:
   - id: RULE-0041
     level: error
     scope: catalog
-    description: Catalog MUST have flat hierarchy (no nested sub-collections)
+    description: Collections MUST be leaves; a collection MUST NOT contain a child collection
     rationale: |
-      Flat hierarchy simplifies tooling and versioning boundaries.
+      Hierarchy is built from nested catalogs, not nested collections (ADR-0032).
+      Intermediate levels are catalogs; collections are always leaves. Keeping
+      collections flat preserves STAC API compatibility (APIs index collections
+      flat) while catalogs above them provide thematic organization.
     validation: |
       For each collection in catalog:
-        assert collection has no child collections
-        # Collections contain items directly
+        for link in collection.links where link.rel == "child":
+          assert link points to a catalog.json, not a collection.json
+        # Collections hold assets or item subdirs directly, never child collections
     references:
-      - structure.md#flat-hierarchy
+      - structure.md#nested-catalogs-flat-collections
+      - ../context/shared/adr/0032-nested-catalogs-with-flat-collections.md
 
   - id: RULE-0042
     level: error
