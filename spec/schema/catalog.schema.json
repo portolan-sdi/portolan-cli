@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://portolan.dev/schema/catalog.schema.json",
-  "$comment": "Part of Portolan spec 0.1.0 (see spec/schema/spec-version.json).",
+  "$comment": "Part of Portolan spec 0.1.1 (see spec/schema/spec-version.json).",
   "title": "Portolan STAC Catalog",
   "description": "Schema for Portolan-compliant STAC Catalogs. Extends the STAC Catalog schema with Portolan-specific requirements. See https://github.com/portolan-sdi/portolan-spec",
   "allOf": [

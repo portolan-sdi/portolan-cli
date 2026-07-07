@@ -2,7 +2,7 @@
   "$id": "https://portolan.dev/schema/spec-version.json",
   "title": "Portolan Specification Version",
   "description": "Canonical machine-readable home for the Portolan specification version. Tools (the CLI, the read-only mirror, reis, and external conformance checkers) read spec_version from this file to claim or verify conformance against a specific version of the Portolan spec. See spec/README.md#versioning for the bump policy. This is distinct from the versions.json manifest schema version (versions.schema.json).",
-  "spec_version": "0.1.0",
+  "spec_version": "0.1.1",
   "versioning": "semver",
   "stability": "pre-release",
   "policy": "https://github.com/portolan-sdi/portolan-cli/blob/main/spec/README.md#versioning"

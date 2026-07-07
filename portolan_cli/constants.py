@@ -18,7 +18,7 @@ from portolan_cli import extension_registry as _reg
 #
 # NOTE: This is the version of the *specification as a whole*. It is distinct
 # from versions.SPEC_VERSION, which versions the versions.json manifest schema.
-PORTOLAN_SPEC_VERSION: str = "0.1.0"
+PORTOLAN_SPEC_VERSION: str = "0.1.1"
 
 # The extension vocabulary below is DERIVED from portolan_cli.extension_registry
 # (the single source, ADR-0055). Edit rows there, not these members.

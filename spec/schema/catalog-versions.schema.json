@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://portolan.dev/schema/catalog-versions.schema.json",
-  "$comment": "Part of Portolan spec 0.1.0 (see spec/schema/spec-version.json).",
+  "$comment": "Part of Portolan spec 0.1.1 (see spec/schema/spec-version.json).",
   "title": "Portolan Catalog Versions Index",
   "description": "Schema for the root-level versions.json that indexes collection sync state. Different from collection-level versions.json.",
   "type": "object",
@@ -24,21 +24,41 @@
       "description": "ISO 8601 timestamp when catalog was initialized",
       "format": "date-time"
     },
+    "updated": {
+      "type": "string",
+      "description": "ISO 8601 timestamp when catalog data was last updated (i.e. the last `add`). Distinct from per-collection `synced_at`, which tracks the last push to cloud storage.",
+      "format": "date-time"
+    },
     "collections": {
       "type": "object",
-      "description": "Map of collection IDs to their sync state",
+      "description": "Map of collection IDs to their state",
       "additionalProperties": {
         "type": "object",
-        "description": "Collection sync state",
+        "description": "Per-collection state",
         "properties": {
           "current_version": {
             "type": ["string", "null"],
             "description": "Current version of this collection"
           },
+          "updated": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this collection's data was last updated locally (i.e. the last `add`)"
+          },
           "synced_at": {
             "type": "string",
             "format": "date-time",
-            "description": "When this collection was last synced"
+            "description": "When this collection was last synced to cloud storage (i.e. the last `push`)"
+          },
+          "asset_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of assets in the current version of this collection"
+          },
+          "total_size_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total size in bytes of the assets in the current version of this collection"
           }
         }
       }

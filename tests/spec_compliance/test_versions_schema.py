@@ -53,6 +53,44 @@ class TestCatalogVersionsSchemaCompliance:
 
             assert not errors, "Schema validation failed:\n" + "\n".join(errors)
 
+    @pytest.mark.integration
+    def test_add_keeps_catalog_versions_json_valid(
+        self,
+        runner: CliRunner,
+        tmp_path: Path,
+        valid_points_geojson: Path,
+        catalog_versions_schema: dict[str, Any],
+        validate_versions: Callable[[dict[str, Any], dict[str, Any]], list[str]],
+    ) -> None:
+        """portolan add keeps the catalog-level versions.json schema-compliant.
+
+        Regression for #561: ``update_catalog_versions`` wrote a top-level
+        ``updated`` key (plus per-collection ``updated`` / ``asset_count`` /
+        ``total_size_bytes``) that the shipped schema rejected. ``init`` alone
+        never exercised this write path, so the drift went uncaught.
+        """
+        with runner.isolated_filesystem(temp_dir=tmp_path):
+            result = runner.invoke(cli, ["init", "--auto"])
+            assert result.exit_code == 0, f"init failed: {result.output}"
+
+            collection_dir = Path("points")
+            collection_dir.mkdir()
+            shutil.copy(valid_points_geojson, collection_dir / "points.geojson")
+
+            result = runner.invoke(cli, ["add", str(collection_dir / "points.geojson")])
+            assert result.exit_code == 0, f"add failed: {result.output}"
+
+            versions_path = Path("versions.json")
+            assert versions_path.exists(), "catalog-level versions.json not found"
+
+            data = json.loads(versions_path.read_text())
+            assert "points" in data.get("collections", {}), (
+                "collection entry missing from catalog versions.json — add path did not run"
+            )
+            errors = validate_versions(data, catalog_versions_schema)
+
+            assert not errors, "Schema validation failed:\n" + "\n".join(errors)
+
 
 class TestCollectionVersionsSchemaCompliance:
     """Test that collection-level versions.json complies with the spec schema."""
