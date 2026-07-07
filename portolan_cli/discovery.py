@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 
 from portolan_cli.constants import (
@@ -12,6 +13,28 @@ from portolan_cli.constants import (
 from portolan_cli.scan_detect import is_filegdb
 
 logger = logging.getLogger(__name__)
+
+
+def _is_geospatial_file(item: Path) -> bool:
+    """Return True for a regular file with a recognized geospatial extension."""
+    return item.suffix.lower() in GEOSPATIAL_EXTENSIONS and item.is_file()
+
+
+def _iter_recursive(directory: Path) -> Iterator[Path]:
+    """Yield geospatial assets under ``directory``, pruning FileGDB subtrees.
+
+    FileGDB (``.gdb``) directories are single geospatial assets: they are
+    yielded as-is and their internals are *never* enumerated (issue #590),
+    avoiding a wasted walk over the thousands of files a FileGDB contains.
+    """
+    for item in directory.iterdir():
+        if item.is_dir():
+            if is_filegdb(item):
+                yield item  # single asset; do not descend into its internals
+            else:
+                yield from _iter_recursive(item)
+        elif _is_geospatial_file(item):
+            yield item
 
 
 def iter_geospatial_files(
@@ -39,26 +62,16 @@ def iter_geospatial_files(
         return []
 
     files: list[Path] = []
-    seen_filegdbs: set[Path] = set()  # Track FileGDBs to avoid recursing into them
 
     if recursive:
-        for item in path.rglob("*"):
-            # Skip items inside FileGDB directories (they're internal files)
-            if any(parent in seen_filegdbs for parent in item.parents):
-                continue
-
-            # Check for FileGDB directory
-            if item.is_dir() and is_filegdb(item):
-                files.append(item)
-                seen_filegdbs.add(item)
-            elif item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
-                files.append(item)
+        files.extend(_iter_recursive(path))
     else:
         for item in path.iterdir():
-            # Check for FileGDB directory
-            if item.is_dir() and is_filegdb(item):
-                files.append(item)
-            elif item.is_file() and item.suffix.lower() in GEOSPATIAL_EXTENSIONS:
+            # FileGDB directories are single assets; other files match by extension.
+            if item.is_dir():
+                if is_filegdb(item):
+                    files.append(item)
+            elif _is_geospatial_file(item):
                 files.append(item)
 
     return sorted(files)
