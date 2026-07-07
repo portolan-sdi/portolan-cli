@@ -53,6 +53,24 @@ def many_violations_catalog() -> Path:
 
 
 @pytest.fixture
+def self_contained_valid_catalog() -> Path:
+    """SELF_CONTAINED 1.1.0 catalog (relative hrefs), all objects valid."""
+    return FIXTURES_DIR / "self-contained-valid"
+
+
+@pytest.fixture
+def self_contained_invalid_collection_catalog() -> Path:
+    """SELF_CONTAINED 1.1.0 catalog whose collection is missing extent/stac_version."""
+    return FIXTURES_DIR / "self-contained-invalid-collection"
+
+
+@pytest.fixture
+def self_contained_invalid_item_catalog() -> Path:
+    """SELF_CONTAINED 1.1.0 catalog whose nested item is missing id."""
+    return FIXTURES_DIR / "self-contained-invalid-item"
+
+
+@pytest.fixture
 def catalog_invalid_json() -> Path:
     """Path to catalog with invalid JSON syntax."""
     return FIXTURES_DIR / "invalid-json"
@@ -579,6 +597,61 @@ class TestRecursiveValidation:
         # May have warnings but should not have errors
         if not result.passed:
             assert result.severity != Severity.ERROR
+
+
+@pytest.mark.unit
+class TestSelfContainedValidation:
+    """Regression tests for issue #543.
+
+    A SELF_CONTAINED catalog (relative hrefs, STAC 1.1.0) has a root
+    ``catalog.json`` whose own relative ``self`` href fails the STAC 1.1.0
+    ``format: iri`` check with an *acceptable* ``must be iri`` error. Before the
+    fix, that acceptable root error short-circuited ``StacSchemaRule`` into a
+    pass before any linked collection or item was ever inspected — so schema
+    violations below the root went undetected.
+    """
+
+    def test_self_contained_valid_catalog_passes(
+        self, self_contained_valid_catalog: Path
+    ) -> None:
+        """A fully valid self-contained 1.1.0 catalog passes.
+
+        Guards against the opposite failure: the fix must NOT treat the root's
+        acceptable relative-href IRI error as a real failure.
+        """
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        result = StacSchemaRule().check(self_contained_valid_catalog)
+        assert result.passed, f"Expected pass but got: {result.message}"
+
+    def test_invalid_collection_detected(
+        self, self_contained_invalid_collection_catalog: Path
+    ) -> None:
+        """A collection missing extent/stac_version is detected (issue #543).
+
+        Pre-fix behavior: returns ``_pass("Schema valid (relative hrefs
+        accepted)")`` because the root's acceptable IRI error short-circuits
+        before the collection is checked.
+        """
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        result = StacSchemaRule().check(self_contained_invalid_collection_catalog)
+        assert not result.passed
+        assert result.severity == Severity.ERROR
+        # The real violation must surface, not the acceptable relative-href error.
+        assert "extent" in result.message
+        assert "iri" not in result.message.lower()
+
+    def test_invalid_item_detected(
+        self, self_contained_invalid_item_catalog: Path
+    ) -> None:
+        """A nested item missing required ``id`` is detected (issue #543)."""
+        from portolan_cli.validation.stac_rules import StacSchemaRule
+
+        result = StacSchemaRule().check(self_contained_invalid_item_catalog)
+        assert not result.passed
+        assert result.severity == Severity.ERROR
+        assert "id" in result.message
 
 
 @pytest.mark.unit

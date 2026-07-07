@@ -492,6 +492,33 @@ class TestStacFieldsRule:
 
         assert result.passed is False
 
+    # --- Issue #543: fields must be checked on collections, not just the root ---
+
+    _STAC_FIXTURES = Path(__file__).parent.parent / "fixtures" / "validation" / "stac"
+
+    @pytest.mark.unit
+    def test_passes_self_contained_valid_catalog(self) -> None:
+        """A valid self-contained catalog + collection passes."""
+        rule = StacFieldsRule()
+        result = rule.check(self._STAC_FIXTURES / "self-contained-valid")
+
+        assert result.passed is True
+
+    @pytest.mark.unit
+    def test_fails_when_collection_missing_required_fields(self) -> None:
+        """A linked collection missing extent/stac_version fails (issue #543).
+
+        Pre-fix, ``StacFieldsRule`` only read the root ``catalog.json`` and
+        reported ``All required STAC fields present`` here.
+        """
+        rule = StacFieldsRule()
+        result = rule.check(self._STAC_FIXTURES / "self-contained-invalid-collection")
+
+        assert result.passed is False
+        assert "extent" in result.message
+        # The offending collection is identified by path, not just a bare field name.
+        assert "collection.json" in result.message
+
 
 class TestCatalogJsonValidRuleOSError:
     """Tests for OSError handling in CatalogJsonValidRule."""

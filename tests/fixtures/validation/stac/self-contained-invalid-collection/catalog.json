@@ -1,0 +1,25 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.1.0",
+  "id": "self-contained-invalid-collection",
+  "title": "Self-Contained Catalog With Invalid Collection",
+  "description": "A SELF_CONTAINED catalog (relative hrefs, STAC 1.1.0) whose linked collection is missing required fields. Reproduces issue #543: the root catalog's own relative self href triggers an acceptable 'must be iri' error, which previously short-circuited validation before the collection was ever checked.",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "child",
+      "href": "./invalid-collection/collection.json",
+      "type": "application/json",
+      "title": "Invalid Collection"
+    }
+  ]
+}

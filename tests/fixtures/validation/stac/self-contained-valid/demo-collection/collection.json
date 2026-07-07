@@ -1,0 +1,39 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "id": "demo-collection",
+  "title": "Demo Collection",
+  "description": "A valid collection with one item, linked with relative hrefs.",
+  "license": "CC0-1.0",
+  "extent": {
+    "spatial": {
+      "bbox": [[-180, -90, 180, 90]]
+    },
+    "temporal": {
+      "interval": [["2020-01-01T00:00:00Z", null]]
+    }
+  },
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./collection.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "item",
+      "href": "./data-item.json",
+      "type": "application/geo+json",
+      "title": "Data Item"
+    }
+  ]
+}
