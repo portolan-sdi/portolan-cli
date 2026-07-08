@@ -48,14 +48,16 @@ jobs:
               - 'tests/iceberg/**'
               - 'pyproject.toml'
 
-  lint:
-    name: Lint & Format
+  quality:
+    name: Quality Gates (prek — single rule source)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          # Full history so menard's doc-freshness diffing has a base to compare.
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
@@ -73,23 +75,27 @@ jobs:
           retry_wait_seconds: 15
           command: uv sync --all-extras
 
-      - name: Check code formatting
-        run: uv run ruff format --check .
-
-      - name: Run linter
-        run: uv run ruff check .
-
-      - name: Type check
-        run: uv run mypy portolan_cli
-
-      - name: Architecture rules (import-linter)
-        run: uv run lint-imports
-
-      - name: Spell check
-        run: uv run codespell --skip "*.parquet,*.tif,.git,*.lock,portolan_cli/validation/_vendored" portolan_cli tests docs
+      - name: Run all quality gates
+        # ONE rule source: CI runs the SAME hooks developers run locally
+        # (prek.toml), not a re-listing of each tool with its own drifting args.
+        # This covers ruff, ruff-format, mypy, import-linter, codespell, vulture,
+        # xenon, pylint-duplicate, bandit, deptry, menard doc-freshness,
+        # actionlint, zizmor, and the builtin file hooks.
+        #
+        # SKIP:
+        # - no-commit-to-branch: meaningless in CI and fails on push-to-main
+        #   (HEAD is `main`).
+        # - fast-tests: the full matrix runs in the `test` job below.
+        # - update-freshness: stamps today's date into freshness markers, so it
+        #   is non-deterministic across days — a validation gate, not a mutation,
+        #   is what CI needs. Doc drift is still caught by menard-check and
+        #   validate-claude-md (both non-mutating), which DO run here.
+        env:
+          SKIP: no-commit-to-branch,fast-tests,update-freshness
+        run: uvx prek run --all-files --show-diff-on-failure
 
   security:
-    name: Security Scan
+    name: Dependency Audit (pip-audit)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -112,9 +118,6 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 15
           command: uv sync --all-extras
-
-      - name: Run bandit security scan
-        run: uv run bandit -r portolan_cli -c pyproject.toml
 
       - name: Audit dependencies (runtime + extras only)
         # Audit only what we ship: core runtime deps plus the publishable extras
@@ -122,27 +125,18 @@ jobs:
         # itself...) and doc-build deps (mkdocs, pymdown-extensions...) are excluded
         # because they never reach users via the wheel.
         #
-        # Canonical ignore list (sync with nightly.yml and security-audit.yml):
-        # - CVE-2026-4539 (pygments): ReDoS in AdlLexer, CVSS 3.3, local input only.
-        #   No upstream fix available. Track:
-        #   https://github.com/portolan-sdi/portolan-cli/issues/285
-        # - CVE-2026-3219, CVE-2026-6357 (pip): pip 26.0.1 vulnerabilities,
-        #   fix available in 26.1, uv-managed (not user-facing).
-        # - PYSEC-2024-277 (joblib / CVE-2024-34997): vendor-disputed. joblib upstream
-        #   considers NumpyArrayWrapper.read_array safe because it only deserializes
-        #   content the same process just cached (see joblib/joblib#1582, #977). No
-        #   fixed version has been or will be released. joblib is transitive via
-        #   contextily[thumbnails]; we do not import it directly.
+        # Ignores come from the single-source .pip-audit-ignores file (each entry
+        # has an expiry + reason; expired entries drop automatically). The same
+        # file feeds nightly.yml and security-audit.yml — no more triplicated,
+        # never-expiring inline --ignore-vuln lists.
         run: |
           uv export --no-dev --no-emit-project --no-hashes \
             --extra iceberg --extra pmtiles --extra thumbnails \
             -o /tmp/runtime-deps.txt
+          # shellcheck disable=SC2046  # intentional word-splitting of the flag list
           uv run pip-audit \
             --requirement /tmp/runtime-deps.txt \
-            --ignore-vuln CVE-2026-4539 \
-            --ignore-vuln CVE-2026-3219 \
-            --ignore-vuln CVE-2026-6357 \
-            --ignore-vuln PYSEC-2024-277
+            $(uv run python scripts/pip_audit_ignores.py)
 
   test:
     name: Test (Python ${{ matrix.python-version }} / ${{ matrix.os }})
@@ -312,40 +306,6 @@ jobs:
       - name: Teardown
         if: always()
         run: docker compose -f tests/iceberg/e2e/docker-compose.yml down -v
-
-  dead-code:
-    name: Dead Code, Complexity & Duplication
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
-        with:
-          version: "0.6.14"
-
-      - name: Set up Python
-        run: uv python install 3.11
-
-      - name: Install dependencies
-        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
-        with:
-          timeout_minutes: 15
-          max_attempts: 3
-          retry_wait_seconds: 15
-          command: uv sync --all-extras
-
-      - name: Check for dead code
-        run: uv run vulture portolan_cli tests --min-confidence 80
-
-      - name: Check code complexity
-        run: uv run xenon --max-absolute=C --max-modules=B --max-average=A portolan_cli tests
-
-      - name: Check for duplicate code
-        run: uv run pylint --disable=all --enable=duplicate-code --fail-under=9.5 portolan_cli/
 
   docs:
     name: Documentation Build

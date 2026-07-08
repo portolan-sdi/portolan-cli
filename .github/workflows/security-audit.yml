@@ -56,17 +56,15 @@ jobs:
             --extra iceberg --extra pmtiles --extra thumbnails \
             -o /tmp/runtime-deps.txt
 
-          # Run audit and capture output
-          # Canonical ignore list (sync with ci.yml and nightly.yml):
-          # - CVE-2026-4539: pygments ReDoS (CVSS 3.3, local only, no fix)
-          # - CVE-2026-3219, CVE-2026-6357: pip 26.0.1 (fix in 26.1, uv-managed)
-          # - PYSEC-2024-277: joblib (vendor-disputed, no fix planned)
+          # Run audit and capture output. Ignores come from the single-source
+          # .pip-audit-ignores file (expiry + reason per entry); the same file
+          # feeds ci.yml and nightly.yml, and its reasons render into the issue
+          # body below via `--json`.
+          IGNORES=$(uv run python scripts/pip_audit_ignores.py)
+          # shellcheck disable=SC2086  # intentional word-splitting of the flag list
           AUDIT_OUTPUT=$(uv run pip-audit \
             --requirement /tmp/runtime-deps.txt \
-            --ignore-vuln CVE-2026-4539 \
-            --ignore-vuln CVE-2026-3219 \
-            --ignore-vuln CVE-2026-6357 \
-            --ignore-vuln PYSEC-2024-277 \
+            $IGNORES \
             --format json 2>&1) || true
 
           # Save full report as artifact (avoids 1MB output limit)
@@ -224,14 +222,15 @@ jobs:
               '',
               '1. Check if Dependabot has already opened a PR for these dependencies',
               '2. If not, try updating the affected packages: `uv lock --upgrade-package <name>`',
-              '3. If no fix is available, evaluate the risk and consider adding to ignore list in `ci.yml`',
+              '3. If no fix is available, evaluate the risk and add it to the '
+                + '[`.pip-audit-ignores`](' + serverUrl + '/' + repo + '/blob/main/.pip-audit-ignores) '
+                + 'file with an expiry date and reason',
               '',
               '### Ignored vulnerabilities',
               '',
-              'The following are intentionally ignored (documented in `ci.yml`):',
-              '- **CVE-2026-4539** (pygments): ReDoS in AdlLexer, CVSS 3.3, local input only, no fix',
-              '- **CVE-2026-3219, CVE-2026-6357** (pip): Vulnerabilities in pip 26.0.1, fix in 26.1, uv-managed',
-              '- **PYSEC-2024-277** (joblib): Vendor-disputed, no fix planned',
+              'Intentionally-accepted vulnerabilities (each with an expiry + reason) live '
+                + 'in one place: [`.pip-audit-ignores`](' + serverUrl + '/' + repo + '/blob/main/.pip-audit-ignores). '
+                + 'Expired entries drop automatically and start failing the audit again.',
               '',
               '---',
               '',

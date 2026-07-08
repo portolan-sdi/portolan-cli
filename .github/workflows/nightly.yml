@@ -253,18 +253,14 @@ jobs:
 
       - name: Full security audit
         # Soft-fail: security-audit.yml creates issues, this is informational.
-        # Canonical ignore list (sync with ci.yml and security-audit.yml):
-        # - CVE-2026-4539: pygments ReDoS (CVSS 3.3, local only, no fix)
-        # - CVE-2026-3219, CVE-2026-6357: pip 26.0.1 (fix in 26.1, uv-managed)
-        # - PYSEC-2024-277: joblib (vendor-disputed, no fix planned)
+        # Ignores come from the single-source .pip-audit-ignores file (expiry +
+        # reason per entry). Same file feeds ci.yml and security-audit.yml.
         continue-on-error: true
         run: |
           echo "=== Dependency security audit ==="
+          # shellcheck disable=SC2046  # intentional word-splitting of the flag list
           uv run pip-audit --strict \
-            --ignore-vuln CVE-2026-4539 \
-            --ignore-vuln CVE-2026-3219 \
-            --ignore-vuln CVE-2026-6357 \
-            --ignore-vuln PYSEC-2024-277
+            $(uv run python scripts/pip_audit_ignores.py)
 
       - name: Check for outdated dependencies
         # Informational only, soft-fail
