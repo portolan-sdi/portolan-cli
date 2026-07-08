@@ -2,6 +2,37 @@
 
 Thank you for your interest in contributing to portolan-cli!
 
+Most of the code here is written by AI agents, so the bar is set by **automation,
+not by reviewer attention**: every quality gate is enforced in CI, and a PR is
+trustable exactly to the degree it turns those gates green. AI-assisted
+contributions are welcome and encouraged — the strict CI is what makes them safe
+to merge.
+
+## What a finished PR looks like
+
+Before you ask for review, a PR should clear this bar:
+
+- [ ] **Tests first, and they exercise real behavior.** New/changed product code
+      ships with tests written before the implementation (TDD is required, see
+      [Testing](#testing)). Prefer a reproducible failing test as the starting
+      point.
+- [ ] **Integration coverage across boundaries.** If the change spans layers
+      (CLI → API → format handlers → backend), there is a test that crosses them,
+      not only unit tests.
+- [ ] **All CI is green.** Every required check passes — see
+      [What CI checks](#what-ci-checks). "Green means green": nothing merges red.
+- [ ] **Changed lines are covered.** The `codecov/patch` gate (changed-line
+      coverage) is satisfied by the fast test suite.
+- [ ] **At least one adversarial review.** A human or agent has actively tried to
+      break the change (edge cases, failure modes), not just skimmed it.
+- [ ] **CodeRabbit comments addressed.** The automated reviewer's findings are
+      resolved or explicitly answered.
+- [ ] **Docs and ADRs updated.** User-facing behavior is documented; non-obvious
+      decisions have an ADR (`context/shared/adr/`); `menard` doc-freshness passes.
+
+If you run `prek run --all-files` locally and it is green, you have cleared most of
+this bar before pushing.
+
 ## Development Setup
 
 1. **Clone the repository**
@@ -53,30 +84,62 @@ refactor(scope): restructure code
 test(scope): add tests
 ```
 
-Use `uv run cz commit` for interactive commit creation.
+Use `uv run cz commit` for interactive commit creation. PRs are **squash-merged**,
+so the PR title becomes the commit message — write it in conventional form.
 
 ### Pull Request Process
 
 1. Create a branch from `main`
-2. Write tests first, then implement (TDD is required — see Testing section)
+2. Write tests first, then implement (TDD is required — see [Testing](#testing))
 3. Run `prek run --all-files` to check everything locally
 4. Push and open a PR — CI runs automatically
 5. Fill in the PR template and link related issues
 
-### What CI Checks
+## What CI checks
 
-All PRs must pass:
+There is **one rule source**: CI runs the *same* hooks you run locally via
+`prek run --all-files` (see `prek.toml`), rather than re-listing each tool with its
+own arguments. So a green local `prek` run is a faithful preview of the CI `quality`
+job. That single job covers:
 
-- **ruff** — Linting and formatting
-- **mypy** — Type checking (strict mode)
-- **bandit** — Security scanning
-- **pip-audit** — Dependency vulnerabilities
-- **vulture** — Dead code detection
-- **xenon** — Complexity limits
-- **pytest** — Full test suite with coverage
-- **mkdocs** — Documentation build
+- **ruff** — lint + format
+- **mypy** — type checking (strict)
+- **import-linter** — architecture contracts ([ADR-0025](https://github.com/portolan-sdi/portolan-cli/blob/main/context/shared/adr/0025-architecture-as-code.md))
+- **codespell** — spelling
+- **vulture** / **xenon** / **pylint** — dead code, complexity, duplication
+- **bandit** — security scanning
+- **deptry** — dependency hygiene
+- **menard** — code↔doc freshness
+- **actionlint** / **zizmor** — GitHub Actions workflow linting + supply-chain audit
 
-All checks are strict — none allow failures.
+Alongside `quality`, CI runs the **test matrix** (Python 3.10–3.13 × Linux/macOS/
+Windows), **pip-audit** (dependency CVEs, ignores tracked in `.pip-audit-ignores`
+with expiry dates), the **docs build**, and the **package build**.
+
+**Required checks** (enforced by branch-protection rulesets, applied via
+`scripts/apply_branch_protection.sh`): `CI Success` (a single job that aggregates
+every gate above — so adding a Python/OS never drops a required check),
+`codecov/patch`, and `codecov/project`. All checks are strict; none allow failures.
+
+### Heavier gates run nightly, not per-PR
+
+To keep PR feedback fast, the expensive gates run on a schedule and don't block
+your PR:
+
+- **Mutation testing** (`mutmut`) — verifies tests actually catch injected bugs
+  (currently being repaired, see
+  [#612](https://github.com/portolan-sdi/portolan-cli/issues/612)).
+- **Benchmark regression** — flags performance regressions.
+- **Live-network tests** — hit real third-party services; because those can be
+  flaky, this job is **non-blocking** and a failure opens a single self-closing
+  tracking issue instead of turning the nightly red.
+
+### Self-healing automation
+
+- **Dependency vulnerabilities** — the security-audit workflow opens/updates/closes
+  a single tracking issue automatically as CVEs appear and get resolved.
+- **Dependabot auto-merge** — patch/minor dependency bumps are approved and
+  auto-merged once the full green check set passes; majors stay for a human.
 
 ## Testing
 
@@ -107,7 +170,9 @@ uv run pytest --cov=portolan_cli --cov-report=html
 
 ## Release Process
 
-Portolan uses a tag-based release workflow driven by conventional commits:
+Releases are **bump-commit-triggered**, not tag-triggered: pushing a `bump:` commit
+to `main` drives the release workflow, which creates the tag itself. Version bumps
+follow conventional commits:
 
 | Commit type | Version bump |
 |-------------|--------------|
@@ -116,12 +181,14 @@ Portolan uses a tag-based release workflow driven by conventional commits:
 | `BREAKING CHANGE:` | Major (x.0.0) |
 | `docs:`, `refactor:`, `test:`, `chore:` | No release |
 
-To cut a release, create a PR that runs:
+To cut a release, open a PR that runs:
 ```bash
 uv run cz bump --changelog
 ```
 
-Merging that PR triggers the release workflow: it creates a git tag, builds the package, publishes to PyPI, and creates a GitHub Release.
+When that PR merges, the release workflow detects the `bump:` commit, creates the
+git tag, builds the package, publishes to PyPI (trusted publishing), and creates a
+GitHub Release.
 
 ## Code Standards
 
