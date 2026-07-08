@@ -112,6 +112,7 @@ class TestAddFilesContinuesOnErrors:
             item_datetime: datetime | None = None,
             force: bool = False,
             reconvert: bool = False,
+            exclude_sibling_names: frozenset[str] = frozenset(),
         ) -> MagicMock:
             nonlocal call_count
             call_count += 1
@@ -173,6 +174,7 @@ class TestAddFilesContinuesOnErrors:
             item_datetime: datetime | None = None,
             force: bool = False,
             reconvert: bool = False,
+            exclude_sibling_names: frozenset[str] = frozenset(),
         ) -> MagicMock:
             if "file1" in path.name:
                 raise FileNotFoundError("Source file disappeared")
@@ -224,6 +226,7 @@ class TestAddFilesContinuesOnErrors:
             item_datetime: datetime | None = None,
             force: bool = False,
             reconvert: bool = False,
+            exclude_sibling_names: frozenset[str] = frozenset(),
         ) -> ItemInfo:
             raise ValueError(f"Error processing {path.name}")
 
