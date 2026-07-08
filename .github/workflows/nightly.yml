@@ -191,6 +191,12 @@ jobs:
     name: Live Network Tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Non-blocking: live third-party servers (ArcGIS, WFS, ...) being flaky is not
+    # something a contributor can fix, so a failure does NOT fail the workflow —
+    # it opens/updates a single tracking issue instead (mirrors security-audit.yml).
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -211,11 +217,70 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run network tests against live services
+        id: nettests
+        # Keep the workflow green; the tracking-issue step below is the signal.
+        continue-on-error: true
         run: |
           uv run pytest tests/ \
             -m network \
             --timeout=120 \
             -v
+
+      - name: Track live-network status as a single issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          # Trusted github context, via env not a ${{ }} splice into JS (zizmor).
+          TESTS_OUTCOME: ${{ steps.nettests.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const outcome = process.env.TESTS_OUTCOME;
+            const runUrl = process.env.RUN_URL;
+            const label = 'nightly-network-failure';
+            const title = 'Nightly live-network tests are failing';
+
+            // Ensure the tracking label exists (idempotent).
+            try {
+              await github.rest.issues.getLabel({owner, repo, name: label});
+            } catch {
+              await github.rest.issues.createLabel({
+                owner, repo, name: label, color: 'd73a4a',
+                description: 'Auto-managed: nightly live-network test failures',
+              });
+            }
+
+            const {data: open} = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: label,
+            });
+            const existing = open[0];
+
+            if (outcome === 'failure') {
+              const body = [
+                'The nightly **live-network** test job failed against third-party',
+                'services. This job is non-blocking (live servers can be flaky), but a',
+                'persistent failure may indicate a real regression in an extractor.',
+                '',
+                `Latest failing run: ${runUrl}`,
+                '',
+                '_Managed automatically — closes when the next nightly run passes._',
+              ].join('\n');
+              if (existing) {
+                await github.rest.issues.update({owner, repo, issue_number: existing.number, body});
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: existing.number,
+                  body: `Still failing — ${runUrl}`,
+                });
+              } else {
+                await github.rest.issues.create({owner, repo, title, labels: [label], body});
+              }
+            } else if (existing) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: existing.number,
+                body: `Live-network tests recovered — closing. ${runUrl}`,
+              });
+              await github.rest.issues.update({owner, repo, issue_number: existing.number, state: 'closed'});
+            }
 
   slow-tests:
     name: Slow Tests (Stress/Scale)
