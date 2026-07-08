@@ -361,3 +361,33 @@ jobs:
       - name: Check package contents
         run: |
           uv run python -c "import tarfile; t = tarfile.open(list(__import__('pathlib').Path('dist').glob('*.tar.gz'))[0]); print('\n'.join(t.getnames()))"
+
+  ci-success:
+    name: CI Success
+    # Single aggregated status check for branch protection. Requiring THIS one
+    # context (see scripts/apply_branch_protection.sh) instead of every matrix
+    # cell means adding a Python version or OS never silently drops a required
+    # check, and the conditionally-skipped iceberg jobs don't block PRs that
+    # don't touch iceberg.
+    if: always()
+    needs: [quality, security, test, iceberg-test, iceberg-e2e, docs, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify all required jobs succeeded
+        env:
+          # Trusted github context (success|failure|skipped|cancelled), passed
+          # through env rather than spliced into the script body (zizmor).
+          RESULTS: ${{ join(needs.*.result, ',') }}
+        run: |
+          echo "Dependency results: $RESULTS"
+          # A skipped job (e.g. iceberg on a non-iceberg PR) is fine; a failed or
+          # cancelled one is not.
+          IFS=','
+          for r in $RESULTS; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::A required CI job did not succeed (result: $r)"
+              exit 1
+            fi
+          done
+          echo "All required jobs passed (or were legitimately skipped)."
