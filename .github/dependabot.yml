@@ -5,6 +5,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Wait 7 days before proposing a freshly-published version: fresh releases
+    # are where supply-chain compromises surface, and the delay lets advisories
+    # and yanks catch up before the update reaches a PR (zizmor dependabot-cooldown).
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "github-actions"
@@ -18,6 +23,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # See the github-actions block above: 7-day delay before adopting a fresh
+    # release (zizmor dependabot-cooldown).
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "python"

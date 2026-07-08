@@ -23,6 +23,7 @@ jobs:
   audit:
     name: Dependency Vulnerability Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # No issues: write needed for this job
     permissions:
       contents: read
@@ -31,10 +32,12 @@ jobs:
       vuln_count: ${{ steps.audit.outputs.vuln_count }}
       vuln_packages: ${{ steps.audit.outputs.vuln_packages }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.6.14"
 
@@ -107,7 +110,7 @@ jobs:
           fi
 
       - name: Upload audit artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: security-audit-reports
           path: |
@@ -121,6 +124,7 @@ jobs:
     name: Manage Security Issue
     needs: audit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Only this job needs issues: write (least privilege)
     permissions:
       contents: read
@@ -128,14 +132,14 @@ jobs:
     steps:
       - name: Download audit report
         if: needs.audit.outputs.has_vulnerabilities == 'true'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: security-audit-reports
           path: /tmp/audit
 
       - name: Find existing security issue
         id: find-issue
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const issues = await github.rest.issues.listForRepo({
@@ -161,13 +165,20 @@ jobs:
 
       - name: Create or update issue (vulnerabilities found)
         if: needs.audit.outputs.has_vulnerabilities == 'true'
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        # Pass the prior step's output through env, not a ${{ }} splice into the
+        # script body (zizmor template-injection). Read it via process.env below.
+        env:
+          ISSUE_NUMBER: ${{ steps.find-issue.outputs.issue_number }}
+          ISSUE_EXISTS: ${{ steps.find-issue.outputs.issue_exists }}
+          VULN_COUNT: ${{ needs.audit.outputs.vuln_count }}
+          VULN_PACKAGES: ${{ needs.audit.outputs.vuln_packages }}
         with:
           script: |
             const fs = require('fs');
             const now = new Date().toISOString();
-            const vulnCount = '${{ needs.audit.outputs.vuln_count }}';
-            const vulnPackages = '${{ needs.audit.outputs.vuln_packages }}';
+            const vulnCount = process.env.VULN_COUNT || '';
+            const vulnPackages = process.env.VULN_PACKAGES || '';
             const runNumber = '${{ github.run_number }}';
             const serverUrl = '${{ github.server_url }}';
             const repo = '${{ github.repository }}';
@@ -227,8 +238,8 @@ jobs:
               '*This issue is automatically managed by the [Security Audit workflow](' + serverUrl + '/' + repo + '/actions/workflows/security-audit.yml). It will be auto-closed when all vulnerabilities are resolved.*'
             ].join('\n');
 
-            const issueExists = '${{ steps.find-issue.outputs.issue_exists }}' === 'true';
-            const issueNumber = parseInt('${{ steps.find-issue.outputs.issue_number }}') || 0;
+            const issueExists = (process.env.ISSUE_EXISTS || '') === 'true';
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER || '0', 10) || 0;
 
             if (issueExists) {
               await github.rest.issues.update({
@@ -251,10 +262,13 @@ jobs:
 
       - name: Close issue (no vulnerabilities)
         if: needs.audit.outputs.has_vulnerabilities == 'false' && steps.find-issue.outputs.issue_exists == 'true'
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        # Step output via env, not a ${{ }} splice into the script (zizmor).
+        env:
+          ISSUE_NUMBER: ${{ steps.find-issue.outputs.issue_number }}
         with:
           script: |
-            const issueNumber = parseInt('${{ steps.find-issue.outputs.issue_number }}');
+            const issueNumber = parseInt(process.env.ISSUE_NUMBER || '0', 10);
             const now = new Date().toISOString();
             const runNumber = '${{ github.run_number }}';
             const serverUrl = '${{ github.server_url }}';

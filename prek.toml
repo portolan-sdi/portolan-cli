@@ -81,6 +81,30 @@ hooks = [
 ]
 
 # =============================================================================
+# Workflow linting — keeps the supply-chain hardening in .github/workflows
+# from rotting (SHA pins, least-privilege permissions, no template injection).
+# =============================================================================
+[[repos]]
+repo = "https://github.com/rhysd/actionlint"
+rev = "v1.7.12"
+hooks = [
+  # -shellcheck= disables actionlint's embedded shellcheck: its presence varies
+  # by machine (it shells out to an optional binary), which would make results
+  # non-deterministic. actionlint's own workflow validation — action refs,
+  # expression syntax, needs/matrix graphs — is what we gate on here.
+  { id = "actionlint", args = ["-shellcheck="] },
+]
+
+[[repos]]
+repo = "https://github.com/woodruffw/zizmor-pre-commit"
+rev = "v1.26.1"
+hooks = [
+  # --no-online-audits: hermetic (no network calls to GitHub during the audit),
+  # so the hook is deterministic and works offline / in CI without a token.
+  { id = "zizmor", args = ["--no-online-audits"] },
+]
+
+# =============================================================================
 # Local hooks
 # =============================================================================
 [[repos]]
