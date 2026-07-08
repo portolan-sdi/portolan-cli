@@ -56,6 +56,7 @@ from portolan_cli.formats import (
     detect_format,
     is_cloud_optimized_geotiff,
     is_multilayer,
+    list_layers,
 )
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.metadata import (
@@ -205,11 +206,51 @@ def _get_asset_role(path: Path) -> str:
     return _ROLE_MAP.get(path.suffix.lower(), "data")
 
 
+def _batch_sibling_names(sources: list[Path]) -> frozenset[str]:
+    """Base filenames of a batch's source files plus their converted outputs.
+
+    Used to prune cross-item re-scanning of collection-level assets (issue #465).
+    For each source we include its filename and its deterministic converted
+    output ``{stem}.parquet`` (which equals the source for cloud-native parquet).
+
+    Names, not paths, so the per-sibling membership check in ``_scan_item_assets``
+    is a plain set lookup — no ``resolve()``/``stat`` syscall per (file × sibling),
+    which would reintroduce O(n²) I/O. This is collision-safe: siblings only ever
+    share the one collection directory, every batch name carries a geospatial or
+    ``.parquet`` extension, and any real file with such a name is itself tracked
+    by its own ``prepare_item`` (or the deferred non-geo pass). Loose companions
+    that rely solely on the scan (``.txt``/``.png``/``.xml`` …) can never match.
+
+    Multi-layer sources (GeoPackage/FileGDB) expand to one
+    ``{stem}_{layer}.parquet`` output per layer (``convert_multilayer_file``),
+    each tracked as its own layer item; their names are included so sibling
+    layers skip each other too. ``list_layers`` is cheap for single-layer
+    formats (extension check, no GDAL open) and reuses the exact naming
+    ``convert_multilayer_file`` applies.
+    """
+    names: set[str] = set()
+    for src in sources:
+        names.add(src.name)
+        names.add(f"{src.stem}.parquet")
+        try:
+            layers = list_layers(src)
+        except Exception:
+            # Pruning is a best-effort optimization; a listing failure only
+            # means a few extra sibling scans, never incorrect output.
+            layers = None
+        if layers:
+            for layer in layers:
+                names.add(f"{src.stem}_{layer}.parquet")
+    return frozenset(names)
+
+
 def _scan_item_assets(
     item_dir: Path,
     item_id: str,
     primary_file: Path,
     collection_dir: Path,
+    *,
+    exclude_names: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, pystac.Asset], dict[str, tuple[Path, str, int]], list[str]]:
     """Scan an item directory for all trackable assets.
 
@@ -222,6 +263,14 @@ def _scan_item_assets(
         item_id: Item identifier (for skipping item.json).
         primary_file: Path to the primary data file (gets "data" key).
         collection_dir: Path to the collection directory.
+        exclude_names: Base filenames of OTHER items being added in the same
+            batch (their sources and converted outputs). For a collection-level
+            asset (``item_dir == collection_dir``) the flat collection directory
+            also holds every sibling asset, so without this the scan re-checksums
+            all siblings on every file — O(n²) (issue #465). Files here that do
+            not share the primary's stem are skipped; each is tracked by its own
+            ``prepare_item``. Loose companions (not in this set) are kept per
+            ADR-0028. Ignored for item-level (subdirectory) scans.
 
     Returns:
         Tuple of (stac_assets, asset_files, asset_paths):
@@ -233,9 +282,28 @@ def _scan_item_assets(
     asset_files: dict[str, tuple[Path, str, int]] = {}
     asset_paths: list[str] = []
 
+    # Resolve directory paths once, not per file (these are O(n) scans; a
+    # per-file resolve() would be an O(n²) syscall storm for flat collections).
+    item_dir_resolved = item_dir.resolve()
+    # Issue #465: only prune cross-item siblings for collection-level (flat) scans.
+    is_collection_level = bool(exclude_names) and item_dir_resolved == collection_dir.resolve()
+    # Whether assets and the item.json will be co-located (affects href prefix).
+    assets_colocated = item_dir_resolved == (collection_dir / item_id).resolve()
+    primary_stem = primary_file.stem
+
     for file_path in item_dir.iterdir():
         # Skip symlinks and hidden files unconditionally
         if file_path.name.startswith("."):
+            continue
+
+        # Issue #465: skip siblings that belong to OTHER items in this batch.
+        # Keep the primary and its own same-stem source/sidecars; keep loose
+        # companions (not in exclude_names) so ADR-0028 tracking is preserved.
+        if (
+            is_collection_level
+            and file_path.stem != primary_stem
+            and file_path.name in exclude_names
+        ):
             continue
         if file_path.name in IGNORED_FILES:
             continue
@@ -294,8 +362,7 @@ def _scan_item_assets(
         # and we need ../ to reach the files. Otherwise, files are already in
         # the item subdirectory.
         #
-        item_json_dir = collection_dir / item_id
-        if item_dir.resolve() == item_json_dir.resolve():
+        if assets_colocated:
             # Assets and item JSON are in the same directory
             asset_href = file_path.name
         else:
@@ -1252,6 +1319,7 @@ def prepare_item(
     item_datetime: datetime | None = None,
     force: bool = False,
     reconvert: bool = False,
+    exclude_sibling_names: frozenset[str] = frozenset(),
 ) -> PreparedItem:
     """Prepare files for addition (convert, extract metadata, create STAC item).
 
@@ -1272,6 +1340,9 @@ def prepare_item(
         item_datetime: Optional acquisition/creation datetime (per ADR-0035).
         force: If True, bypass change detection (Issue #386).
         reconvert: If True, re-convert from source (requires force=True).
+        exclude_sibling_names: Base filenames of other batch items (sources +
+            converted outputs) to prune from a collection-level asset scan
+            (issue #465). Forwarded to _scan_item_assets; see its docstring.
 
     Returns:
         PreparedItem with all metadata needed for finalization.
@@ -1344,6 +1415,7 @@ def prepare_item(
         item_id=item_id_resolved,
         primary_file=output_path,
         collection_dir=collection_dir,
+        exclude_names=exclude_sibling_names,
     )
 
     # Enrich COG assets with render extension properties (Issue #13)
@@ -2555,7 +2627,11 @@ def add_directory(
     Returns:
         List of ItemInfo for each added item.
     """
-    files = iter_geospatial_files(path, recursive=recursive)
+    files = list(iter_geospatial_files(path, recursive=recursive))
+
+    # Issue #465: skip cross-item siblings when scanning collection-level assets
+    # so per-file work stays O(n) instead of O(n²).
+    batch_exclude_names = _batch_sibling_names(files)
 
     # Phase 1: Prepare all items (GDAL work, parallelizable)
     prepared: list[PreparedItem] = []
@@ -2566,6 +2642,7 @@ def add_directory(
             collection_id=collection_id,
             force=force,
             reconvert=reconvert,
+            exclude_sibling_names=batch_exclude_names,
         )
         prepared.append(result)
 
@@ -2804,6 +2881,11 @@ def add_files(
     if not files_to_process:
         return added, skipped, failures
 
+    # Issue #465: filenames of every batch item (sources + converted outputs) so a
+    # collection-level asset scan can skip siblings that are tracked as their own
+    # items instead of re-scanning the whole flat collection dir (O(n²) → O(n)).
+    batch_exclude_names = _batch_sibling_names([fp for fp, _ in files_to_process])
+
     # Import here to avoid circular imports
 
     # Accumulate prepared items for batch finalization (Issue #281)
@@ -2853,6 +2935,7 @@ def add_files(
                                 item_datetime=item_datetime,
                                 force=force,
                                 reconvert=reconvert,
+                                exclude_sibling_names=batch_exclude_names,
                             )
                             # Apply partitioning to each layer (Issue #352)
                             partitioned = _maybe_partition_large_file(
@@ -2892,6 +2975,7 @@ def add_files(
                 item_datetime=item_datetime,
                 force=force,
                 reconvert=reconvert,
+                exclude_sibling_names=batch_exclude_names,
             )
             # Check if file should be partitioned (Issue #352)
             # Returns multiple PreparedItems if partitioned, else [prepared]
