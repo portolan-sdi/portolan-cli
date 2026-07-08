@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 
 import portolan_cli.add as add_mod
-from portolan_cli.add import add_files
+from portolan_cli.add import _batch_sibling_names, add_files
 
 pytestmark = [pytest.mark.unit]
 
@@ -131,3 +131,23 @@ def test_loose_non_geo_companions_are_not_dropped(
     assert any(h.endswith("preview.png") for h in hrefs), (
         f"non-geo companion preview.png was dropped: {hrefs}"
     )
+
+
+def test_batch_sibling_names_includes_multilayer_outputs(fixtures_dir: Path) -> None:
+    """Multi-layer sources contribute their per-layer `{stem}_{layer}.parquet`
+    output names so sibling layer items skip each other in a flat collection
+    scan (issue #465). Without these, each layer's scan re-checksums the other
+    layers' outputs — O(n²) in the layer count.
+    """
+    gpkg = fixtures_dir / "multilayer" / "multilayer.gpkg"
+    names = _batch_sibling_names([gpkg])
+
+    # Source + its single-file output form (always added).
+    assert "multilayer.gpkg" in names
+    assert "multilayer.parquet" in names
+    # Per-layer outputs, matching convert_multilayer_file's `{stem}_{layer}.parquet`.
+    assert {
+        "multilayer_lines.parquet",
+        "multilayer_points.parquet",
+        "multilayer_polygons.parquet",
+    } <= names

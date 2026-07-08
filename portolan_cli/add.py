@@ -56,6 +56,7 @@ from portolan_cli.formats import (
     detect_format,
     is_cloud_optimized_geotiff,
     is_multilayer,
+    list_layers,
 )
 from portolan_cli.humanize import humanize_slug
 from portolan_cli.metadata import (
@@ -219,11 +220,27 @@ def _batch_sibling_names(sources: list[Path]) -> frozenset[str]:
     ``.parquet`` extension, and any real file with such a name is itself tracked
     by its own ``prepare_item`` (or the deferred non-geo pass). Loose companions
     that rely solely on the scan (``.txt``/``.png``/``.xml`` …) can never match.
+
+    Multi-layer sources (GeoPackage/FileGDB) expand to one
+    ``{stem}_{layer}.parquet`` output per layer (``convert_multilayer_file``),
+    each tracked as its own layer item; their names are included so sibling
+    layers skip each other too. ``list_layers`` is cheap for single-layer
+    formats (extension check, no GDAL open) and reuses the exact naming
+    ``convert_multilayer_file`` applies.
     """
     names: set[str] = set()
     for src in sources:
         names.add(src.name)
         names.add(f"{src.stem}.parquet")
+        try:
+            layers = list_layers(src)
+        except Exception:
+            # Pruning is a best-effort optimization; a listing failure only
+            # means a few extra sibling scans, never incorrect output.
+            layers = None
+        if layers:
+            for layer in layers:
+                names.add(f"{src.stem}_{layer}.parquet")
     return frozenset(names)
 
 
