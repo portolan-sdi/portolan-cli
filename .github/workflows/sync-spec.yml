@@ -11,9 +11,15 @@ concurrency:
   group: sync-spec-to-mirror
   cancel-in-progress: true  # Latest spec state wins
 
+# Least-privilege default. Cross-repo writes use SPEC_REPO_PAT, not GITHUB_TOKEN,
+# so the workflow token only needs read access to check out this repo.
+permissions:
+  contents: read
+
 jobs:
   sync-spec:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout CLI repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
