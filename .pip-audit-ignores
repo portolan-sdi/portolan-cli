@@ -1,0 +1,18 @@
+# pip-audit ignore list — single source of truth.
+#
+# Consumed by ci.yml (security job), nightly.yml (dependency-check), and
+# security-audit.yml via:
+#     uv run pip-audit ... $(uv run python scripts/pip_audit_ignores.py)
+# and rendered into the security-audit issue body via `--json`.
+#
+# Format:  VULN-ID  EXPIRES(YYYY-MM-DD)  REASON...
+#
+# Entries past their expiry date are dropped automatically: if the vulnerability
+# is fixed upstream by then, the audit stays green; if not, it goes red and
+# demands a conscious decision (extend the date with a reason, or pin/replace
+# the dependency). Never leave an entry without a real expiry and reason.
+
+CVE-2026-4539   2026-10-08  pygments ReDoS in AdlLexer (CVSS 3.3, local input only); no upstream fix — see portolan-sdi/portolan-cli#285
+CVE-2026-3219   2026-08-15  pip 26.0.1 vuln, fixed in pip 26.1 (uv-managed, not user-facing); drop once the lock's pip updates
+CVE-2026-6357   2026-08-15  pip 26.0.1 vuln, fixed in pip 26.1 (uv-managed, not user-facing); drop once the lock's pip updates
+PYSEC-2024-277  2026-12-31  joblib NumpyArrayWrapper.read_array — vendor-disputed (joblib#1582, #977), no fix will ship; transitive via contextily[thumbnails], not imported directly
