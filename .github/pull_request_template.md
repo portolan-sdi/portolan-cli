@@ -17,6 +17,12 @@ Examples: "Add `portolan publish` command for S3 sync" or "Fix collection asset 
 - #
 
 ## Checklist
-- [ ] Tests added/updated
-- [ ] All tests pass (`uv run pytest`)
-- [ ] Documentation updated (README, guides, CLI reference)
+See [what a finished PR looks like](https://github.com/portolan-sdi/portolan-cli/blob/main/docs/contributing.md#what-a-finished-pr-looks-like).
+
+- [ ] Tests written **first** and exercise real behavior (TDD)
+- [ ] Integration coverage where the change crosses layers
+- [ ] `prek run --all-files` is green locally; all required CI checks pass
+- [ ] Changed lines are covered (`codecov/patch`)
+- [ ] At least one adversarial review (actively tried to break it)
+- [ ] CodeRabbit comments addressed
+- [ ] Docs updated and, for non-obvious decisions, an ADR added
