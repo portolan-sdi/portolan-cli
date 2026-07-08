@@ -29,16 +29,22 @@ Install with: `uv tool install prek && prek install`
 
 **Checks (all blocking):**
 
-- `ruff` — Linting with auto-fix
-- `ruff format` — Code formatting
-- `vulture` — Dead code detection
-- `xenon` — Complexity monitoring
+- `ruff` / `ruff format` — Linting with auto-fix + formatting
 - `mypy` — Type checking (strict)
-- `pytest -m unit` — Fast unit tests only
-- `menard check` — Documentation freshness (requires Python 3.11+)
-- `menard check-protected` — Protected content validation
+- `import-linter` — Architecture contracts (ADR-0025)
+- `codespell` — Spell checking
+- `vulture` / `xenon` / `pylint` — Dead code, complexity, duplicate code (R0801)
+- `bandit` — Static security analysis
+- `deptry` — Dependency hygiene
+- `actionlint` / `zizmor` — GitHub Actions workflow linting + supply-chain audit
+- `menard check` / `check-protected` — Documentation freshness + protected content
+- `validate-claude-md` — ADR index / reference validation
+- `pytest -m unit` — Fast unit tests (pre-push stage)
 - `commitizen` — Commit message validation (commit-msg stage)
-- Builtin hooks: trailing whitespace, YAML validation, large file detection
+- Builtin hooks: trailing whitespace, YAML/TOML validation, large file detection
+
+**This is the single rule source.** Tier 2 CI runs the exact same hooks via
+`prek run --all-files` (see below), so a green local `prek` run previews CI.
 
 **Philosophy:** All hooks block. No `--no-verify`. Fix issues before committing.
 
@@ -50,30 +56,32 @@ Workflow: `.github/workflows/ci.yml`
 
 ### Jobs
 
-#### `lint` — Lint & Format
+#### `quality` — Quality Gates (single rule source)
 
-- `ruff format --check` — Formatting verification
-- `ruff check` — Linting
-- `mypy` — Type checking (strict)
-- `codespell` — Spell checking
+Runs `prek run --all-files` — the *same* hooks developers run locally (see Tier 1),
+so CI and local hooks can't drift. Covers ruff, mypy, import-linter, codespell,
+vulture, xenon, pylint-duplicate, bandit, deptry, menard, actionlint, zizmor, and
+the builtin file hooks. Replaces the old separate `lint` and `dead-code` jobs.
 
-#### `security` — Security Scan
+CI skips three hooks: `no-commit-to-branch` (fails on push-to-main), `fast-tests`
+(the `test` job covers them), and `update-freshness` (stamps today's date, so it's
+non-deterministic in CI — drift is still caught by the non-mutating `menard-check`
+and `validate-claude-md`).
 
-- `bandit` — Static security analysis
-- `pip-audit` — Dependency vulnerability scanning
+#### `security` — Dependency Audit
+
+- `pip-audit` — dependency vulnerability scanning. Ignores come from the
+  single-source `.pip-audit-ignores` file (each entry has an expiry + reason;
+  expired entries drop automatically). The same file feeds `nightly.yml` and
+  `security-audit.yml`. (`bandit` moved into the `quality` job.)
 
 #### `test` — Test Matrix
 
 - Python versions: 3.10, 3.11, 3.12, 3.13
 - Operating systems: Ubuntu, macOS, Windows
 - Excludes network, slow, and benchmark tests
-- Coverage reporting to Codecov
-
-#### `dead-code` — Dead Code, Complexity & Duplication
-
-- `vulture` — Unused code detection (min confidence 80%)
-- `xenon` — Complexity thresholds (max C absolute, B modules, A average)
-- `pylint` — Duplicate code detection (R0801 only, `--fail-under=9.5`)
+- Coverage reporting to Codecov (the `codecov/patch` changed-line gate is a
+  required check — see [Branch protection](#branch-protection))
 
 #### `docs` — Documentation Build
 
@@ -112,7 +120,23 @@ Runs at 4 AM UTC daily. Can be triggered manually.
 
 Uses `mutmut` to verify tests actually catch bugs.
 
-**Threshold:** Kill rate must be ≥ 60% (increase as codebase matures)
+**Threshold:** the floor lives in `.mutation-baseline` (a single integer, currently
+60). The job reads it rather than hardcoding the number, so it can be ratcheted up
+in a one-line, reviewable diff as the suite matures. **Lowering it requires a
+justification in the PR that does so.**
+
+**Fails loud, never silent.** If mutmut generates zero testable mutants — i.e.
+mutation testing is broken, not passing — the job hard-fails (it used to `exit 0`
+and report a green nightly, hiding a broken setup). `[tool.mutmut]` in
+`pyproject.toml` copies the `scripts/` package + data files into the mutants
+sandbox and scopes the stats run to the fast, offline suite with `--no-cov`.
+
+> **Status:** mutation testing is being repaired — the sandbox baseline still fails
+> on a test that passes normally, and the ~45k generated mutants exceed the nightly
+> window. Tracked in [#612](https://github.com/portolan-sdi/portolan-cli/issues/612).
+> Until it is resolved the nightly `mutation` job **correctly fails** rather than
+> silently passing. (The geoparquet-io #565 CWD guard was evaluated and is **not**
+> needed: `isolated_filesystem`/`chdir` tests do not crash the stats phase.)
 
 Why this matters: AI-generated tests can be tautological — they may pass but not actually verify behavior. Mutation testing injects bugs and checks if tests catch them.
 
@@ -127,6 +151,9 @@ Why this matters: AI-generated tests can be tautological — they may pass but n
 - Runs tests marked with `@pytest.mark.network`
 - Tests against real external services
 - 120-second timeout per test
+- **Non-blocking:** live third-party flakiness isn't a contributor's to fix, so a
+  failure does not fail the workflow — it opens/updates a single self-closing
+  tracking issue instead (mirrors the `security-audit` pattern)
 
 #### `dependency-check` — Dependency Audit
 
@@ -138,6 +165,34 @@ Why this matters: AI-generated tests can be tautological — they may pass but n
 - Python 3.11 on Ubuntu
 - Spins up `docker-compose` (REST Iceberg catalog + MinIO), runs `-m e2e` (includes `e2e_slow`: concurrency stress and large datasets)
 - 120s per-test timeout; Docker logs on failure; always tears down
+
+---
+
+## Branch Protection
+
+`main` protection is defined **as code** in `scripts/apply_branch_protection.sh`
+(idempotent, admin one-shot). It creates two rulesets:
+
+- **PR + green checks** (no bypass — binds admins too): every push goes through a
+  PR and the required status checks must pass.
+- **Review required** (repo admins may bypass): 1 approving review.
+
+**Required checks** are three stable contexts: `CI Success` (the `ci.yml`
+aggregation job that gates on quality/security/test/iceberg/docs/build — requiring
+this one context means adding a Python/OS never drops a required check),
+`codecov/patch`, and `codecov/project`.
+
+## Self-Healing Automation
+
+- **Supply-chain hardening is lint-enforced.** All workflows are SHA-pinned,
+  least-privilege (`permissions: contents: read` widened per job), and
+  `persist-credentials: false`; `actionlint` + `zizmor` (Tier 1 + the `quality`
+  job) keep it that way.
+- **Dependabot auto-merge** (`dependabot-automerge.yml`): patch/minor bumps are
+  approved and auto-merged once the full green check set passes; majors stay human.
+  A 7-day cooldown ages fresh releases before they reach a PR.
+- **Security issue automation** (`security-audit.yml`): opens/updates/closes a
+  single dependency-vulnerability tracking issue as CVEs appear and resolve.
 
 ---
 
@@ -234,7 +289,13 @@ Using `xenon` (based on radon cyclomatic complexity):
 
 ### "Mutation kill rate below threshold"
 
-Your tests aren't catching enough injected bugs. Review the mutation report artifact and add tests for survived mutants.
+Your tests aren't catching enough injected bugs. Review the mutation report artifact and add tests for survived mutants. The floor lives in `.mutation-baseline`.
+
+### "No testable mutants were generated"
+
+Mutation testing is broken, not passing — the job hard-fails on this. Usually the
+mutmut sandbox baseline failed (a test that passes normally but not in `mutants/`)
+or the `[tool.mutmut]` sandbox is missing a file. See [#612](https://github.com/portolan-sdi/portolan-cli/issues/612).
 
 ### "Complexity exceeds threshold"
 

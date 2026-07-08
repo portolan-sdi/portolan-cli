@@ -1,0 +1,6 @@
+# Minimum mutation kill rate (%) enforced by the nightly `mutation` job.
+# Rate = killed / (killed + survived) from mutmut's cicd-stats.
+#
+# Ratchet this UP as the test suite matures; LOWERING it requires an explicit
+# justification in the PR that does so. First non-comment, non-blank line wins.
+60

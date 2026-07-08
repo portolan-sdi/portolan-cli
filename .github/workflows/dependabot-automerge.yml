@@ -1,0 +1,40 @@
+# Auto-merge Dependabot PRs for patch and minor updates.
+#
+# Safe because the `main` rulesets (scripts/apply_branch_protection.sh) require
+# the full green check set before any merge. Auto-merge only *queues* the PR;
+# GitHub still blocks it until every required status check passes. Majors are
+# deliberately left for a human.
+name: Dependabot auto-merge
+
+on: pull_request
+
+permissions:
+  contents: read
+
+jobs:
+  dependabot:
+    # Gate on the PR author, not github.actor: the actor context is spoofable
+    # via re-runs; the author of a Dependabot PR is not (zizmor bot-conditions).
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
+
+      - name: Approve and enable auto-merge for patch/minor updates
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+          steps.metadata.outputs.update-type == 'version-update:semver-minor'
+        # `gh pr review --approve` satisfies the "review required" ruleset; the
+        # subsequent auto-merge then waits for the required status checks.
+        run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

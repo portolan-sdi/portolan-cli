@@ -72,21 +72,42 @@ jobs:
           echo "  Suspicious: $SUSPICIOUS"
           echo "  Total testable: $TESTABLE"
 
+          # Zero testable mutants means mutmut generated/parsed nothing — that
+          # is mutation testing being SILENTLY BROKEN, not a pass. This exact
+          # no-op shipped before (the old code `exit 0`d here), so treat it as a
+          # hard failure that demands investigation.
           if [ "$TESTABLE" -eq 0 ]; then
-            echo "No testable mutations generated - check if source code has test coverage"
-            exit 0
+            echo "::error::No testable mutants were generated/parsed — mutation testing is silently broken. See portolan-sdi/portolan-cli#612 (sandbox baseline + scalability)."
+            exit 1
           fi
 
           # Calculate kill rate (higher is better)
           KILL_RATE=$(echo "scale=2; $KILLED * 100 / $TESTABLE" | bc)
           echo "Mutation kill rate: $KILL_RATE% ($KILLED killed, $SURVIVED survived)"
 
-          # Fail if kill rate drops below 60%
-          # Start conservative; increase as test suite matures (see ci.md)
-          MIN_KILL_RATE=60
+          # Floor comes from .mutation-baseline (first non-comment, non-blank
+          # line) so it can be ratcheted in a reviewable, single-line diff.
+          MIN_KILL_RATE=$(grep -vE '^\s*#' .mutation-baseline | grep -vE '^\s*$' | head -1)
+          if ! [[ "$MIN_KILL_RATE" =~ ^[0-9]+$ ]]; then
+            echo "::error::.mutation-baseline floor is not an integer: '$MIN_KILL_RATE'"
+            exit 1
+          fi
+
+          {
+            echo "## Mutation Testing"
+            echo ""
+            echo "| Metric | Value |"
+            echo "| --- | --- |"
+            echo "| Kill rate | ${KILL_RATE}% |"
+            echo "| Floor | ${MIN_KILL_RATE}% |"
+            echo "| Killed | $KILLED |"
+            echo "| Survived | $SURVIVED |"
+            echo "| Total testable | $TESTABLE |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
           below_floor=$(echo "$KILL_RATE < $MIN_KILL_RATE" | bc)
           if [ "$below_floor" -eq 1 ]; then
-            echo "::error::Mutation kill rate ($KILL_RATE%) is below threshold ($MIN_KILL_RATE%)"
+            echo "::error::Mutation kill rate ($KILL_RATE%) is below the ${MIN_KILL_RATE}% floor from .mutation-baseline"
             echo "Tests are not catching enough bugs. Review survived mutants:"
             uv run mutmut results --all true | grep -E ': survived$' | head -20
             exit 1
@@ -170,6 +191,12 @@ jobs:
     name: Live Network Tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Non-blocking: live third-party servers (ArcGIS, WFS, ...) being flaky is not
+    # something a contributor can fix, so a failure does NOT fail the workflow —
+    # it opens/updates a single tracking issue instead (mirrors security-audit.yml).
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -190,11 +217,70 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run network tests against live services
+        id: nettests
+        # Keep the workflow green; the tracking-issue step below is the signal.
+        continue-on-error: true
         run: |
           uv run pytest tests/ \
             -m network \
             --timeout=120 \
             -v
+
+      - name: Track live-network status as a single issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          # Trusted github context, via env not a ${{ }} splice into JS (zizmor).
+          TESTS_OUTCOME: ${{ steps.nettests.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const outcome = process.env.TESTS_OUTCOME;
+            const runUrl = process.env.RUN_URL;
+            const label = 'nightly-network-failure';
+            const title = 'Nightly live-network tests are failing';
+
+            // Ensure the tracking label exists (idempotent).
+            try {
+              await github.rest.issues.getLabel({owner, repo, name: label});
+            } catch {
+              await github.rest.issues.createLabel({
+                owner, repo, name: label, color: 'd73a4a',
+                description: 'Auto-managed: nightly live-network test failures',
+              });
+            }
+
+            const {data: open} = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: label,
+            });
+            const existing = open[0];
+
+            if (outcome === 'failure') {
+              const body = [
+                'The nightly **live-network** test job failed against third-party',
+                'services. This job is non-blocking (live servers can be flaky), but a',
+                'persistent failure may indicate a real regression in an extractor.',
+                '',
+                `Latest failing run: ${runUrl}`,
+                '',
+                '_Managed automatically — closes when the next nightly run passes._',
+              ].join('\n');
+              if (existing) {
+                await github.rest.issues.update({owner, repo, issue_number: existing.number, body});
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: existing.number,
+                  body: `Still failing — ${runUrl}`,
+                });
+              } else {
+                await github.rest.issues.create({owner, repo, title, labels: [label], body});
+              }
+            } else if (existing) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: existing.number,
+                body: `Live-network tests recovered — closing. ${runUrl}`,
+              });
+              await github.rest.issues.update({owner, repo, issue_number: existing.number, state: 'closed'});
+            }
 
   slow-tests:
     name: Slow Tests (Stress/Scale)
@@ -253,18 +339,14 @@ jobs:
 
       - name: Full security audit
         # Soft-fail: security-audit.yml creates issues, this is informational.
-        # Canonical ignore list (sync with ci.yml and security-audit.yml):
-        # - CVE-2026-4539: pygments ReDoS (CVSS 3.3, local only, no fix)
-        # - CVE-2026-3219, CVE-2026-6357: pip 26.0.1 (fix in 26.1, uv-managed)
-        # - PYSEC-2024-277: joblib (vendor-disputed, no fix planned)
+        # Ignores come from the single-source .pip-audit-ignores file (expiry +
+        # reason per entry). Same file feeds ci.yml and security-audit.yml.
         continue-on-error: true
         run: |
           echo "=== Dependency security audit ==="
+          # shellcheck disable=SC2046  # intentional word-splitting of the flag list
           uv run pip-audit --strict \
-            --ignore-vuln CVE-2026-4539 \
-            --ignore-vuln CVE-2026-3219 \
-            --ignore-vuln CVE-2026-6357 \
-            --ignore-vuln PYSEC-2024-277
+            $(uv run python scripts/pip_audit_ignores.py)
 
       - name: Check for outdated dependencies
         # Informational only, soft-fail

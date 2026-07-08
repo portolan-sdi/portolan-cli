@@ -188,6 +188,36 @@ hooks = [
     pass_filenames = false,
   },
 
+  # === LINT / SECURITY / DUPLICATION ===
+  # These moved out of ci.yml's lint/dead-code/security jobs so there is ONE
+  # rule source: CI runs `prek run --all-files` (see .github/workflows/ci.yml
+  # `quality` job) instead of re-invoking each tool with its own drifting args.
+  # Config lives in pyproject.toml ([tool.codespell], [tool.bandit]).
+  {
+    id = "codespell",
+    name = "spell check",
+    entry = "uv run codespell",
+    language = "system",
+    args = ["portolan_cli", "tests", "docs"],
+    pass_filenames = false,
+  },
+  {
+    id = "bandit",
+    name = "bandit security scan",
+    entry = "uv run bandit -r portolan_cli -c pyproject.toml",
+    language = "system",
+    types = ["python"],
+    pass_filenames = false,
+  },
+  {
+    id = "pylint-duplicate",
+    name = "duplicate code (pylint R0801)",
+    entry = "uv run pylint --disable=all --enable=duplicate-code --fail-under=9.5 portolan_cli/",
+    language = "system",
+    types = ["python"],
+    pass_filenames = false,
+  },
+
   # === DOCUMENTATION SYNC HOOKS ===
   # menard: detect when code changes require doc updates
   {
