@@ -72,21 +72,42 @@ jobs:
           echo "  Suspicious: $SUSPICIOUS"
           echo "  Total testable: $TESTABLE"
 
+          # Zero testable mutants means mutmut generated/parsed nothing — that
+          # is mutation testing being SILENTLY BROKEN, not a pass. This exact
+          # no-op shipped before (the old code `exit 0`d here), so treat it as a
+          # hard failure that demands investigation.
           if [ "$TESTABLE" -eq 0 ]; then
-            echo "No testable mutations generated - check if source code has test coverage"
-            exit 0
+            echo "::error::No testable mutants were generated/parsed — mutation testing is silently broken. See portolan-sdi/portolan-cli#612 (sandbox baseline + scalability)."
+            exit 1
           fi
 
           # Calculate kill rate (higher is better)
           KILL_RATE=$(echo "scale=2; $KILLED * 100 / $TESTABLE" | bc)
           echo "Mutation kill rate: $KILL_RATE% ($KILLED killed, $SURVIVED survived)"
 
-          # Fail if kill rate drops below 60%
-          # Start conservative; increase as test suite matures (see ci.md)
-          MIN_KILL_RATE=60
+          # Floor comes from .mutation-baseline (first non-comment, non-blank
+          # line) so it can be ratcheted in a reviewable, single-line diff.
+          MIN_KILL_RATE=$(grep -vE '^\s*#' .mutation-baseline | grep -vE '^\s*$' | head -1)
+          if ! [[ "$MIN_KILL_RATE" =~ ^[0-9]+$ ]]; then
+            echo "::error::.mutation-baseline floor is not an integer: '$MIN_KILL_RATE'"
+            exit 1
+          fi
+
+          {
+            echo "## Mutation Testing"
+            echo ""
+            echo "| Metric | Value |"
+            echo "| --- | --- |"
+            echo "| Kill rate | ${KILL_RATE}% |"
+            echo "| Floor | ${MIN_KILL_RATE}% |"
+            echo "| Killed | $KILLED |"
+            echo "| Survived | $SURVIVED |"
+            echo "| Total testable | $TESTABLE |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
           below_floor=$(echo "$KILL_RATE < $MIN_KILL_RATE" | bc)
           if [ "$below_floor" -eq 1 ]; then
-            echo "::error::Mutation kill rate ($KILL_RATE%) is below threshold ($MIN_KILL_RATE%)"
+            echo "::error::Mutation kill rate ($KILL_RATE%) is below the ${MIN_KILL_RATE}% floor from .mutation-baseline"
             echo "Tests are not catching enough bugs. Review survived mutants:"
             uv run mutmut results --all true | grep -E ': survived$' | head -20
             exit 1

@@ -112,7 +112,23 @@ Runs at 4 AM UTC daily. Can be triggered manually.
 
 Uses `mutmut` to verify tests actually catch bugs.
 
-**Threshold:** Kill rate must be ≥ 60% (increase as codebase matures)
+**Threshold:** the floor lives in `.mutation-baseline` (a single integer, currently
+60). The job reads it rather than hardcoding the number, so it can be ratcheted up
+in a one-line, reviewable diff as the suite matures. **Lowering it requires a
+justification in the PR that does so.**
+
+**Fails loud, never silent.** If mutmut generates zero testable mutants — i.e.
+mutation testing is broken, not passing — the job hard-fails (it used to `exit 0`
+and report a green nightly, hiding a broken setup). `[tool.mutmut]` in
+`pyproject.toml` copies the `scripts/` package + data files into the mutants
+sandbox and scopes the stats run to the fast, offline suite with `--no-cov`.
+
+> **Status:** mutation testing is being repaired — the sandbox baseline still fails
+> on a test that passes normally, and the ~45k generated mutants exceed the nightly
+> window. Tracked in [#612](https://github.com/portolan-sdi/portolan-cli/issues/612).
+> Until it is resolved the nightly `mutation` job **correctly fails** rather than
+> silently passing. (The geoparquet-io #565 CWD guard was evaluated and is **not**
+> needed: `isolated_filesystem`/`chdir` tests do not crash the stats phase.)
 
 Why this matters: AI-generated tests can be tautological — they may pass but not actually verify behavior. Mutation testing injects bugs and checks if tests catch them.
 
@@ -234,7 +250,13 @@ Using `xenon` (based on radon cyclomatic complexity):
 
 ### "Mutation kill rate below threshold"
 
-Your tests aren't catching enough injected bugs. Review the mutation report artifact and add tests for survived mutants.
+Your tests aren't catching enough injected bugs. Review the mutation report artifact and add tests for survived mutants. The floor lives in `.mutation-baseline`.
+
+### "No testable mutants were generated"
+
+Mutation testing is broken, not passing — the job hard-fails on this. Usually the
+mutmut sandbox baseline failed (a test that passes normally but not in `mutants/`)
+or the `[tool.mutmut]` sandbox is missing a file. See [#612](https://github.com/portolan-sdi/portolan-cli/issues/612).
 
 ### "Complexity exceeds threshold"
 

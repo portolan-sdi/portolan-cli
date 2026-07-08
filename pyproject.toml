@@ -255,6 +255,27 @@ verbose = false
 [tool.mutmut]
 paths_to_mutate = ["portolan_cli/"]
 pytest_add_cli_args_test_selection = ["tests/"]
+# The `scripts/` package is imported by a few tests (test_scripts,
+# test_pip_audit_ignores, test_fetch_lib_docs_integration). mutmut runs the
+# suite from a copied `mutants/` sandbox, so scripts/ must be copied in too or
+# collection dies with `ModuleNotFoundError: No module named 'scripts'` — which
+# used to sink the whole stats phase silently (see nightly.yml's zero-mutant
+# guard).
+# scripts/ (imported by a few tests) and the data files those tests read must
+# be present in the sandbox, or collection/execution dies there.
+also_copy = ["scripts/", ".pip-audit-ignores", ".mutation-baseline"]
+# The stats/baseline run must mirror the fast CI test job, not the whole suite:
+# - --no-cov: pyproject's addopts inject --cov, whose instrumentation conflicts
+#   with mutmut's; without this the stats phase is unreliable.
+# - --tb=short: a stats-phase failure must show WHERE it broke.
+# - marker filter: exclude network/slow/benchmark/e2e (mutation of portolan_cli
+#   is validated by the fast, offline suite; e2e needs Docker, network needs a
+#   live server).
+pytest_add_cli_args = [
+    "--no-cov",
+    "--tb=short",
+    "-m", "not network and not slow and not benchmark and not e2e and not e2e_slow",
+]
 
 # ---------- architecture enforcement ----------
 # See ADR-0025 for rationale. These contracts enforce critical architectural boundaries.
