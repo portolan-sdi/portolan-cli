@@ -5,6 +5,7 @@ backends (ArcGIS, WFS, etc.):
 
 - filters: Glob-based filtering for services/layers
 - metadata_seeding: Collection-level metadata seeding
+- orchestrator_base: Shared post-extraction catalog lifecycle
 - report: Extraction report models (LayerResult, ExtractionReport)
 - retry: Retry logic with exponential backoff
 - resume: Resume state for interrupted extractions
@@ -17,6 +18,13 @@ from portolan_cli.extract.common.filters import (
 )
 from portolan_cli.extract.common.metadata_seeding import (
     seed_collection_metadata,
+)
+from portolan_cli.extract.common.orchestrator_base import (
+    add_source_links,
+    collect_successful_parquet_files,
+    init_extracted_catalog,
+    register_collection_styles,
+    seed_catalog_metadata,
 )
 from portolan_cli.extract.common.report import (
     ExtractionReport,
@@ -45,6 +53,12 @@ __all__ = [
     "filter_services",
     # metadata_seeding
     "seed_collection_metadata",
+    # orchestrator_base
+    "add_source_links",
+    "collect_successful_parquet_files",
+    "init_extracted_catalog",
+    "register_collection_styles",
+    "seed_catalog_metadata",
     # report
     "ExtractionReport",
     "ExtractionSummary",
