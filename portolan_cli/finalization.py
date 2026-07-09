@@ -403,8 +403,11 @@ def _collect_parquet_metadata_from_disk(
     tracked_hrefs: set[str] = set()
     for asset in collection.assets.values():
         if asset.href:
-            # Normalize: strip ./ prefix for comparison
-            href = asset.href.lstrip("./")
+            # Normalize to match relative_to(...).as_posix() below: drop only an
+            # exact "./" prefix. lstrip("./") would also strip leading dots from
+            # hidden paths (".hidden/x.parquet" -> "hidden/x.parquet") and never
+            # match, silently dropping the asset from row-count aggregation.
+            href = asset.href.removeprefix("./")
             tracked_hrefs.add(href)
 
     metadata_list: list[GeoParquetMetadata] = []
