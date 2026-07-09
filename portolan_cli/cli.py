@@ -36,6 +36,7 @@ from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.constants import PORTOLAN_SPEC_VERSION
 from portolan_cli.convert import ConversionResult
 from portolan_cli.discovery import get_sidecars
+from portolan_cli.emit import emit_error, emit_success
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
 from portolan_cli.metadata import fix_metadata
 from portolan_cli.metadata.fix import FixReport
@@ -172,14 +173,7 @@ def require_catalog_root(
     catalog_root = find_catalog_root()
     if catalog_root is None:
         msg = "fatal: not a portolan catalog (or any parent up to mount point)"
-        if use_json:
-            envelope = error_envelope(
-                command_name,
-                [ErrorDetail(type="NotACatalogError", message=msg)],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(msg)
+        emit_error(command_name, "NotACatalogError", msg, use_json=use_json)
         raise SystemExit(1)
     return catalog_root
 
@@ -385,18 +379,16 @@ def init(
         catalog_data = json.loads(catalog_file.read_text())
         catalog_id = catalog_data.get("id", "unknown")
 
-        if use_json:
-            envelope = success_envelope(
-                "init",
-                {
-                    "path": str(path.resolve()),
-                    "catalog_file": "catalog.json",
-                    "catalog_id": catalog_id,
-                    "warnings": warnings,
-                },
-            )
-            output_json_envelope(envelope)
-        else:
+        if not emit_success(
+            "init",
+            {
+                "path": str(path.resolve()),
+                "catalog_file": "catalog.json",
+                "catalog_id": catalog_id,
+                "warnings": warnings,
+            },
+            use_json=use_json,
+        ):
             success(f"Initialized Portolan catalog in {path.resolve()}")
             info_output(f"Catalog ID: {catalog_id}")
             for w in warnings:
@@ -806,10 +798,7 @@ def status_cmd(
         collections = discover_collections(catalog_path)
 
     if not collections:
-        if use_json:
-            envelope = success_envelope("status", {"collections": []})
-            output_json_envelope(envelope)
-        else:
+        if not emit_success("status", {"collections": []}, use_json=use_json):
             info_output("No collections found")
         return
 
@@ -824,13 +813,9 @@ def status_cmd(
         )
         statuses.append(status)
 
-    if use_json:
-        envelope = success_envelope(
-            "status",
-            {"collections": [s.to_dict() for s in statuses]},
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success(
+        "status", {"collections": [s.to_dict() for s in statuses]}, use_json=use_json
+    ):
         _output_status_human(statuses)
 
 
@@ -964,53 +949,30 @@ def info_cmd(
             raise FileNotFoundError(f"Path not found: {target}")
 
     except FileNotFoundError as err:
-        if use_json:
-            envelope = error_envelope(
-                "info",
-                [ErrorDetail(type="FileNotFoundError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
+        emit_error("info", "FileNotFoundError", str(err), use_json=use_json)
         raise SystemExit(1) from err
     except ValueError as err:
-        if use_json:
-            envelope = error_envelope(
-                "info",
-                [ErrorDetail(type="ValueError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
+        emit_error("info", "ValueError", str(err), use_json=use_json)
         raise SystemExit(1) from err
 
 
 def _output_file_info(result: Any, *, use_json: bool) -> None:
     """Output file info in human or JSON format."""
-    if use_json:
-        envelope = success_envelope("info", result.to_dict())
-        output_json_envelope(envelope)
-    else:
+    if not emit_success("info", result.to_dict(), use_json=use_json):
         for line in result.format_human():
             info_output(line)
 
 
 def _output_collection_info(result: Any, *, use_json: bool) -> None:
     """Output collection info in human or JSON format."""
-    if use_json:
-        envelope = success_envelope("info", result.to_dict())
-        output_json_envelope(envelope)
-    else:
+    if not emit_success("info", result.to_dict(), use_json=use_json):
         for line in result.format_human():
             info_output(line)
 
 
 def _output_catalog_info(result: Any, *, use_json: bool) -> None:
     """Output catalog info in human or JSON format."""
-    if use_json:
-        envelope = success_envelope("info", result.to_dict())
-        output_json_envelope(envelope)
-    else:
+    if not emit_success("info", result.to_dict(), use_json=use_json):
         for line in result.format_human():
             info_output(line)
 
@@ -1379,14 +1341,7 @@ def _output_fix_human(
 
 def _handle_path_not_found(path: Path, use_json: bool) -> None:
     """Handle path not found error and exit."""
-    if use_json:
-        envelope = error_envelope(
-            "check",
-            [ErrorDetail(type="PathNotFoundError", message=f"Path does not exist: {path}")],
-        )
-        output_json_envelope(envelope)
-    else:
-        error(f"Path does not exist: {path}")
+    emit_error("check", "PathNotFoundError", f"Path does not exist: {path}", use_json=use_json)
     raise SystemExit(1)
 
 
@@ -1558,14 +1513,7 @@ def _run_fix_workflow(
                     f"fatal: not a portolan catalog (or any parent of {path}): "
                     "no catalog.json found, cannot run metadata fix"
                 )
-                if use_json:
-                    envelope = error_envelope(
-                        "check",
-                        [ErrorDetail(type="NotACatalogError", message=msg)],
-                    )
-                    output_json_envelope(envelope)
-                else:
-                    error(msg)
+                emit_error("check", "NotACatalogError", msg, use_json=use_json)
                 raise SystemExit(1)
         else:
             metadata_check_report = scan_catalog_metadata(catalog_root)
@@ -1940,33 +1888,15 @@ def scan(
 
     # Validate path exists and is a directory (handle in code for JSON envelope support)
     if not path.exists():
-        if use_json:
-            envelope = error_envelope(
-                "scan",
-                [
-                    ErrorDetail(
-                        type="PathNotFoundError", message=f"Directory does not exist: {path}"
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Directory does not exist: {path}")
+        emit_error(
+            "scan", "PathNotFoundError", f"Directory does not exist: {path}", use_json=use_json
+        )
         raise SystemExit(1)
 
     if not path.is_dir():
-        if use_json:
-            envelope = error_envelope(
-                "scan",
-                [
-                    ErrorDetail(
-                        type="NotADirectoryError", message=f"Path is not a directory: {path}"
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(f"Path is not a directory: {path}")
+        emit_error(
+            "scan", "NotADirectoryError", f"Path is not a directory: {path}", use_json=use_json
+        )
         raise SystemExit(1)
 
     # Build options from CLI flags
@@ -2004,24 +1934,10 @@ def scan(
         with progress_reporter:
             result = scan_directory(path, options, progress_callback=progress_reporter.advance)
     except FileNotFoundError as err:
-        if use_json:
-            envelope = error_envelope(
-                "scan",
-                [ErrorDetail(type="FileNotFoundError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
+        emit_error("scan", "FileNotFoundError", str(err), use_json=use_json)
         raise SystemExit(1) from err
     except NotADirectoryError as err:
-        if use_json:
-            envelope = error_envelope(
-                "scan",
-                [ErrorDetail(type="NotADirectoryError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
+        emit_error("scan", "NotADirectoryError", str(err), use_json=use_json)
         raise SystemExit(1) from err
 
     # Run collection inference if requested
@@ -2499,15 +2415,6 @@ def _print_next_steps(result: ScanResult) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _handle_cmd_error(cmd: str, err_type: str, message: str, use_json: bool) -> None:
-    """Handle error output for add/rm commands (standardized)."""
-    if use_json:
-        envelope = error_envelope(cmd, [ErrorDetail(type=err_type, message=message)])
-        output_json_envelope(envelope)
-    else:
-        error(message)
-
-
 def _output_add_json(
     added: list[ItemInfo],
     skipped: list[Path],
@@ -2729,7 +2636,9 @@ def _resolve_catalog_root_for_add(
         # Validate catalog exists (when explicitly specified)
         # Per ADR-0029, use .portolan/config.yaml as the single sentinel
         if not (catalog_root / ".portolan" / "config.yaml").exists():
-            _handle_cmd_error("add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json)
+            emit_error(
+                "add", "NotACatalogError", f"Not a catalog: {catalog_root}", use_json=use_json
+            )
             if not use_json:
                 detail("Run 'portolan init' to create a catalog")
             raise SystemExit(1)
@@ -2738,11 +2647,11 @@ def _resolve_catalog_root_for_add(
     # Auto-detect catalog root (git-style)
     detected_root = find_catalog_root()
     if detected_root is None:
-        _handle_cmd_error(
+        emit_error(
             "add",
             "NotACatalogError",
             "Not inside a Portolan catalog (no .portolan/config.yaml found)",
-            use_json,
+            use_json=use_json,
         )
         if not use_json:
             detail("Run 'portolan init' to create a catalog, or cd into one")
@@ -2769,21 +2678,21 @@ def _validate_item_id_usage(
         return
 
     if len(paths) != 1:
-        _handle_cmd_error(
+        emit_error(
             "add",
             "ValueError",
             "--item-id can only be used with a single file, not multiple paths",
-            use_json,
+            use_json=use_json,
         )
         raise SystemExit(1)
 
     # Exactly 1 path: check if it's a directory
     if paths[0].resolve().is_dir():
-        _handle_cmd_error(
+        emit_error(
             "add",
             "ValueError",
             "--item-id can only be used with a single file, not a directory",
-            use_json,
+            use_json=use_json,
         )
         raise SystemExit(1)
 
@@ -3272,12 +3181,7 @@ def add_cmd(
 
     # Validate --reconvert requires --force
     if reconvert and not force:
-        _handle_cmd_error(
-            "add",
-            "UsageError",
-            "--reconvert requires --force",
-            use_json,
-        )
+        emit_error("add", "UsageError", "--reconvert requires --force", use_json=use_json)
         raise SystemExit(1)
 
     # Resolve and validate catalog root (git-style auto-detection)
@@ -3301,7 +3205,7 @@ def add_cmd(
         try:
             resolve_collection_id(single_path, catalog_root)
         except ValueError as err:
-            _handle_cmd_error("add", "PathError", str(err), use_json)
+            emit_error("add", "PathError", str(err), use_json=use_json)
             raise SystemExit(1) from err
 
     # Call add_files once with all resolved paths.
@@ -3364,7 +3268,7 @@ def add_cmd(
         err_type = type(err).__name__
         # Include failed path context in error message when there's only one path
         path_context = f"{resolved_paths[0]}: " if len(resolved_paths) == 1 else ""
-        _handle_cmd_error("add", err_type, f"{path_context}{err}", use_json)
+        emit_error("add", err_type, f"{path_context}{err}", use_json=use_json)
         raise SystemExit(1) from err
 
     # Compute affected collections before any post-processing
@@ -3497,14 +3401,14 @@ def add_external_cmd(
         try:
             parsed_bbox = [float(v) for v in bbox.split(",")]
         except ValueError as err:
-            _handle_cmd_error("add-external", "UsageError", f"Invalid --bbox: {err}", use_json)
+            emit_error("add-external", "UsageError", f"Invalid --bbox: {err}", use_json=use_json)
             raise SystemExit(1) from err
         if len(parsed_bbox) != 4:
-            _handle_cmd_error(
+            emit_error(
                 "add-external",
                 "UsageError",
                 "--bbox must have 4 comma-separated values: min_x,min_y,max_x,max_y",
-                use_json,
+                use_json=use_json,
             )
             raise SystemExit(1)
 
@@ -3522,23 +3426,21 @@ def add_external_cmd(
             force=force,
         )
     except (ValueError, FileNotFoundError, FileExistsError, InputValidationError) as err:
-        _handle_cmd_error("add-external", type(err).__name__, str(err), use_json)
+        emit_error("add-external", type(err).__name__, str(err), use_json=use_json)
         raise SystemExit(1) from err
 
-    if use_json:
-        envelope = success_envelope(
-            "add-external",
-            {
-                "collection_id": result.collection_id,
-                "collection_path": str(result.collection_path),
-                "href": result.href,
-                "media_type": result.media_type,
-                "via": result.via_url,
-                "managed": False,
-            },
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success(
+        "add-external",
+        {
+            "collection_id": result.collection_id,
+            "collection_path": str(result.collection_path),
+            "href": result.href,
+            "media_type": result.media_type,
+            "via": result.via_url,
+            "managed": False,
+        },
+        use_json=use_json,
+    ):
         success(f"Registered external collection '{result.collection_id}'")
         info_output(f"  href: {result.href}")
         info_output(f"  type: {result.media_type} (external, not managed)")
@@ -3615,11 +3517,11 @@ def rm_cmd(
 
     # Require --force for destructive operations (unless --keep or --dry-run)
     if not keep and not dry_run and not force:
-        _handle_cmd_error(
+        emit_error(
             "rm",
             "SafetyError",
             "Destructive rm requires --force flag. Use --keep to preserve files, or --dry-run to preview.",
-            use_json,
+            use_json=use_json,
         )
         if not use_json:
             detail("Examples:")
@@ -3635,11 +3537,11 @@ def rm_cmd(
     else:
         detected_root = find_catalog_root()
         if detected_root is None:
-            _handle_cmd_error(
+            emit_error(
                 "rm",
                 "NotACatalogError",
                 "Not inside a Portolan catalog (no .portolan/config.yaml found)",
-                use_json,
+                use_json=use_json,
             )
             if not use_json:
                 detail("Run 'portolan init' to create a catalog, or cd into one")
@@ -3682,10 +3584,10 @@ def rm_cmd(
                     warn(f"Skipped {p.name} (not in catalog or outside catalog)")
 
     except ValueError as err:
-        _handle_cmd_error("rm", "ValueError", str(err), use_json)
+        emit_error("rm", "ValueError", str(err), use_json=use_json)
         raise SystemExit(1) from err
     except FileNotFoundError as err:
-        _handle_cmd_error("rm", "FileNotFoundError", str(err), use_json)
+        emit_error("rm", "FileNotFoundError", str(err), use_json=use_json)
         raise SystemExit(1) from err
 
 
@@ -3706,13 +3608,7 @@ def _check_backend_push_support(
     if result is None:
         return
 
-    if use_json:
-        envelope = error_envelope(
-            "push", [ErrorDetail(type="NotImplementedError", message=result.message)]
-        )
-        output_json_envelope(envelope)
-    else:
-        error(result.message)
+    emit_error("push", "NotImplementedError", result.message, use_json=use_json)
     raise SystemExit(1)
 
 
@@ -3746,11 +3642,7 @@ def _resolve_push_settings(
         resolved_region = resolve_aws_region(None, catalog_path, collection)
         return resolved_destination, resolved_profile, resolved_region
     except ValueError as e:
-        if use_json:
-            envelope = error_envelope(command, [ErrorDetail(type="ConfigError", message=str(e))])
-            output_json_envelope(envelope)
-        else:
-            error(str(e))
+        emit_error(command, "ConfigError", str(e), use_json=use_json)
         raise SystemExit(1) from None
 
 
@@ -3937,23 +3829,12 @@ def push(
     )
 
     if resolved_destination is None:
-        if use_json:
-            envelope = error_envelope(
-                "push",
-                [
-                    ErrorDetail(
-                        type="UsageError",
-                        message="No destination provided and no 'remote' configured. "
-                        "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(
-                "No destination provided and no 'remote' configured. "
-                "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)"
-            )
+        emit_error(
+            "push",
+            "UsageError",
+            "No destination provided and no 'remote' configured. Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)",
+            use_json=use_json,
+        )
         raise SystemExit(1)
 
     # Apply max_connections cap and warn about high connection count (Issue #344)
@@ -4001,14 +3882,7 @@ def push(
             return
 
         except Exception as err:
-            if use_json:
-                envelope = error_envelope(
-                    "push",
-                    [ErrorDetail(type=type(err).__name__, message=str(err))],
-                )
-                output_json_envelope(envelope)
-            else:
-                error(str(err))
+            emit_error("push", type(err).__name__, str(err), use_json=use_json)
             raise SystemExit(1) from err
 
     try:
@@ -4030,18 +3904,16 @@ def push(
             )
         )
 
-        if use_json:
-            envelope = success_envelope(
-                "push",
-                {
-                    "files_uploaded": result.files_uploaded,
-                    "versions_pushed": result.versions_pushed,
-                    "conflicts": result.conflicts,
-                    "errors": result.errors,
-                },
-            )
-            output_json_envelope(envelope)
-        else:
+        if not emit_success(
+            "push",
+            {
+                "files_uploaded": result.files_uploaded,
+                "versions_pushed": result.versions_pushed,
+                "conflicts": result.conflicts,
+                "errors": result.errors,
+            },
+            use_json=use_json,
+        ):
             if result.success:
                 if result.versions_pushed > 0:
                     success(
@@ -4070,25 +3942,11 @@ def push(
         raise SystemExit(1) from err
 
     except FileNotFoundError as err:
-        if use_json:
-            envelope = error_envelope(
-                "push",
-                [ErrorDetail(type="FileNotFoundError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
+        emit_error("push", "FileNotFoundError", str(err), use_json=use_json)
         raise SystemExit(1) from err
 
     except ValueError as err:
-        if use_json:
-            envelope = error_envelope(
-                "push",
-                [ErrorDetail(type="ValueError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
+        emit_error("push", "ValueError", str(err), use_json=use_json)
         raise SystemExit(1) from err
 
 
@@ -4289,11 +4147,7 @@ def pull_command(
     try:
         resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
     except ValueError as e:
-        if use_json:
-            envelope = error_envelope("pull", [ErrorDetail(type="ConfigError", message=str(e))])
-            output_json_envelope(envelope)
-        else:
-            error(str(e))
+        emit_error("pull", "ConfigError", str(e), use_json=use_json)
         raise SystemExit(1) from None
 
     # Route to backend-specific pull if using non-file backend
@@ -4343,14 +4197,7 @@ def pull_command(
             return
 
         except Exception as err:
-            if use_json:
-                envelope = error_envelope(
-                    "pull",
-                    [ErrorDetail(type=type(err).__name__, message=str(err))],
-                )
-                output_json_envelope(envelope)
-            else:
-                error(str(err))
+            emit_error("pull", type(err).__name__, str(err), use_json=use_json)
             raise SystemExit(1) from err
 
     # Single collection pull
@@ -4399,25 +4246,11 @@ def pull_command(
             raise SystemExit(1)
 
     except FileNotFoundError as err:
-        if use_json:
-            envelope = error_envelope(
-                "pull",
-                [ErrorDetail(type="FileNotFoundError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
+        emit_error("pull", "FileNotFoundError", str(err), use_json=use_json)
         raise SystemExit(1) from err
 
     except ValueError as err:
-        if use_json:
-            envelope = error_envelope(
-                "pull",
-                [ErrorDetail(type="ValueError", message=str(err))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(err))
+        emit_error("pull", "ValueError", str(err), use_json=use_json)
         raise SystemExit(1) from err
 
 
@@ -4507,23 +4340,12 @@ def sync(
     )
 
     if resolved_destination is None:
-        if use_json:
-            envelope = error_envelope(
-                "sync",
-                [
-                    ErrorDetail(
-                        type="UsageError",
-                        message="No destination provided and no 'remote' configured. "
-                        "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(
-                "No destination provided and no 'remote' configured. "
-                "Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)"
-            )
+        emit_error(
+            "sync",
+            "UsageError",
+            "No destination provided and no 'remote' configured. Provide a DESTINATION argument or set PORTOLAN_REMOTE env var (or add to .env)",
+            use_json=use_json,
+        )
         raise SystemExit(1)
 
     result = sync_fn(
@@ -4664,14 +4486,7 @@ def clone(
             if not use_json:
                 info_output(f"Inferred local path: {local_path}")
         except ValueError as e:
-            if use_json:
-                envelope = error_envelope(
-                    "clone",
-                    [ErrorDetail(type="CloneError", message=str(e), code="INVALID_URL")],
-                )
-                output_json_envelope(envelope)
-            else:
-                error(str(e))
+            emit_error("clone", "CloneError", str(e), use_json=use_json, code="INVALID_URL")
             raise SystemExit(1) from None
 
     result = clone_fn(
@@ -4874,13 +4689,7 @@ def config_get(ctx: click.Context, json_output: bool, key: str, collection: str 
         value = get_setting(key, catalog_path=catalog_path, collection=collection)
         source = get_setting_source(key, catalog_path, collection)
     except ValueError as e:
-        if use_json:
-            envelope = error_envelope(
-                "config get", [ErrorDetail(type="ConfigError", message=str(e))]
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(e))
+        emit_error("config get", "ConfigError", str(e), use_json=use_json)
         raise SystemExit(1) from None
 
     if use_json:
@@ -5501,14 +5310,7 @@ def _recursive_init_error(use_json: bool, command: str, error_type: str, message
     ``command`` is the CLI command label (e.g. "metadata init", "readme") so
     JSON error envelopes report the command that actually failed.
     """
-    if use_json:
-        envelope = error_envelope(
-            command,
-            [ErrorDetail(type=error_type, message=message)],
-        )
-        output_json_envelope(envelope)
-    else:
-        error(message)
+    emit_error(command, error_type, message, use_json=use_json)
     raise SystemExit(1)
 
 
@@ -5656,19 +5458,17 @@ def _metadata_init_recursive(
         _process_dir(dirpath, rel_path)
 
     # Output results
-    if use_json:
-        envelope = success_envelope(
-            "metadata init",
-            {
-                "mode": "recursive",
-                "created": created_paths,
-                "skipped": skipped_paths,
-                "permission_errors": permission_errors,
-                "count": len(created_paths),
-            },
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success(
+        "metadata init",
+        {
+            "mode": "recursive",
+            "created": created_paths,
+            "skipped": skipped_paths,
+            "permission_errors": permission_errors,
+            "count": len(created_paths),
+        },
+        use_json=use_json,
+    ):
         if created_paths:
             success(f"Created {len(created_paths)} metadata.yaml template(s)")
             for p in created_paths:
@@ -6061,13 +5861,11 @@ def readme(
     else:
         # Write to file
         readme_path.write_text(readme_content)
-        if use_json:
-            envelope = success_envelope(
-                "readme",
-                {"path": str(readme_path.relative_to(catalog_path)), "generated": True},
-            )
-            output_json_envelope(envelope)
-        else:
+        if not emit_success(
+            "readme",
+            {"path": str(readme_path.relative_to(catalog_path)), "generated": True},
+            use_json=use_json,
+        ):
             success(f"Generated {readme_path.relative_to(catalog_path)}")
 
 
@@ -7456,14 +7254,7 @@ def partition(
 
     # Check if file is GeoParquet
     if input_file.suffix.lower() != ".parquet":
-        if use_json:
-            envelope = error_envelope(
-                "partition",
-                [ErrorDetail(type="FormatError", message="Input must be a .parquet file")],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("Input must be a .parquet file")
+        emit_error("partition", "FormatError", "Input must be a .parquet file", use_json=use_json)
         raise SystemExit(1)
 
     # Preview mode: show analysis without creating files
@@ -7497,19 +7288,12 @@ def partition(
 
     # Require output_dir for actual partitioning
     if output_dir is None:
-        if use_json:
-            envelope = error_envelope(
-                "partition",
-                [
-                    ErrorDetail(
-                        type="UsageError",
-                        message="OUTPUT_DIR required (use --preview for analysis only)",
-                    )
-                ],
-            )
-            output_json_envelope(envelope)
-        else:
-            error("OUTPUT_DIR required (use --preview for analysis only)")
+        emit_error(
+            "partition",
+            "UsageError",
+            "OUTPUT_DIR required (use --preview for analysis only)",
+            use_json=use_json,
+        )
         raise SystemExit(1)
 
     # Create output directory
@@ -7562,14 +7346,7 @@ def _require_iceberg_backend(
     try:
         return require_iceberg_backend(catalog_path, command_name)
     except BackendRequiredError as e:
-        if use_json:
-            envelope = error_envelope(
-                f"version {command_name}",
-                [ErrorDetail(type="BackendError", message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(e))
+        emit_error(f"version {command_name}", "BackendError", str(e), use_json=use_json)
         raise SystemExit(1) from None
 
 
@@ -7625,31 +7402,22 @@ def current(
     try:
         ver = get_current_version(collection, catalog_root=catalog_path)
     except (FileNotFoundError, Exception) as e:
-        if use_json:
-            envelope = error_envelope(
-                "version current",
-                [ErrorDetail(type=type(e).__name__, message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(e))
+        emit_error("version current", type(e).__name__, str(e), use_json=use_json)
         raise SystemExit(1) from None
 
-    if use_json:
-        envelope = success_envelope(
-            "version current",
-            {
-                "collection": collection,
-                "version": ver.version,
-                "created": ver.created.isoformat(),
-                "breaking": ver.breaking,
-                "message": ver.message,
-                "assets": len(ver.assets),
-                "changes": ver.changes,
-            },
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success(
+        "version current",
+        {
+            "collection": collection,
+            "version": ver.version,
+            "created": ver.created.isoformat(),
+            "breaking": ver.breaking,
+            "message": ver.message,
+            "assets": len(ver.assets),
+            "changes": ver.changes,
+        },
+        use_json=use_json,
+    ):
         breaking_flag = " [BREAKING]" if ver.breaking else ""
         timestamp = ver.created.strftime("%Y-%m-%d %H:%M:%S")
         msg = f" — {ver.message}" if ver.message else ""
@@ -7694,14 +7462,7 @@ def version_list_cmd(
     try:
         versions = list_versions(collection, catalog_root=catalog_path)
     except (FileNotFoundError, Exception) as e:
-        if use_json:
-            envelope = error_envelope(
-                "version list",
-                [ErrorDetail(type=type(e).__name__, message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(e))
+        emit_error("version list", type(e).__name__, str(e), use_json=use_json)
         raise SystemExit(1) from None
 
     if use_json:
@@ -7765,14 +7526,7 @@ def _bump_show_changes(
 
 def _bump_error(use_json: bool, error_type: str, message: str) -> None:
     """Output a version bump error and exit."""
-    if use_json:
-        envelope = error_envelope(
-            "version bump",
-            [ErrorDetail(type=error_type, message=message)],
-        )
-        output_json_envelope(envelope)
-    else:
-        error(message)
+    emit_error("version bump", error_type, message, use_json=use_json)
     raise SystemExit(1)
 
 
@@ -7873,13 +7627,11 @@ def bump(
     deleted = detect_deleted_files(collection_path, versions_file)
 
     if not modified and not deleted:
-        if use_json:
-            envelope = success_envelope(
-                "version bump",
-                {"collection": collection, "message": "No changes detected", "created": False},
-            )
-            output_json_envelope(envelope)
-        else:
+        if not emit_success(
+            "version bump",
+            {"collection": collection, "message": "No changes detected", "created": False},
+            use_json=use_json,
+        ):
             info_output(f"No changes detected in '{collection}'")
         return
 
@@ -7910,22 +7662,20 @@ def bump(
     except Exception as e:
         _bump_error(use_json, type(e).__name__, f"Failed to create version: {e}")
 
-    if use_json:
-        envelope = success_envelope(
-            "version bump",
-            {
-                "collection": collection,
-                "version": ver.version,
-                "previous_version": current_version,
-                "created": ver.created.isoformat(),
-                "breaking": ver.breaking,
-                "message": ver.message,
-                "modified_files": modified,
-                "deleted_files": deleted,
-            },
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success(
+        "version bump",
+        {
+            "collection": collection,
+            "version": ver.version,
+            "previous_version": current_version,
+            "created": ver.created.isoformat(),
+            "breaking": ver.breaking,
+            "message": ver.message,
+            "modified_files": modified,
+            "deleted_files": deleted,
+        },
+        use_json=use_json,
+    ):
         success(f"Created version {ver.version}")
         if ver.message:
             detail(f"  {ver.message}")
@@ -7970,27 +7720,18 @@ def rollback(
     try:
         restored = backend.rollback(collection, target_version)
     except (FileNotFoundError, ValueError, Exception) as e:
-        if use_json:
-            envelope = error_envelope(
-                "version rollback",
-                [ErrorDetail(type=type(e).__name__, message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(e))
+        emit_error("version rollback", type(e).__name__, str(e), use_json=use_json)
         raise SystemExit(1) from None
 
-    if use_json:
-        envelope = success_envelope(
-            "version rollback",
-            {
-                "collection": collection,
-                "restored_version": restored.version,
-                "created": restored.created.isoformat(),
-            },
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success(
+        "version rollback",
+        {
+            "collection": collection,
+            "restored_version": restored.version,
+            "created": restored.created.isoformat(),
+        },
+        use_json=use_json,
+    ):
         success(f"Rolled back '{collection}' to version {restored.version}")
 
 
@@ -8044,14 +7785,7 @@ def prune(
     try:
         pruned = backend.prune(collection, keep=keep, dry_run=dry_run)
     except (FileNotFoundError, Exception) as e:
-        if use_json:
-            envelope = error_envelope(
-                "version prune",
-                [ErrorDetail(type=type(e).__name__, message=str(e))],
-            )
-            output_json_envelope(envelope)
-        else:
-            error(str(e))
+        emit_error("version prune", type(e).__name__, str(e), use_json=use_json)
         raise SystemExit(1) from None
 
     if use_json:
@@ -8340,19 +8074,12 @@ def stac_geoparquet(
         # Discover all collections with items
         collections_to_process = _discover_collections_with_items(catalog_path)
         if not collections_to_process:
-            if use_json:
-                envelope = error_envelope(
-                    "stac-geoparquet",
-                    [
-                        ErrorDetail(
-                            type="NoCollectionsError",
-                            message="No collections with items found in catalog",
-                        )
-                    ],
-                )
-                output_json_envelope(envelope)
-            else:
-                error("No collections with items found in catalog")
+            emit_error(
+                "stac-geoparquet",
+                "NoCollectionsError",
+                "No collections with items found in catalog",
+                use_json=use_json,
+            )
             raise SystemExit(1)
 
     # Process each collection
@@ -8403,10 +8130,7 @@ def skills_list_cmd(ctx: click.Context, json_output: bool) -> None:
 
     use_json = should_output_json(ctx, json_output)
 
-    if use_json:
-        envelope = success_envelope("skills list", {"skills": [], "url": SKILLS_REPO})
-        output_json_envelope(envelope)
-    else:
+    if not emit_success("skills list", {"skills": [], "url": SKILLS_REPO}, use_json=use_json):
         click.echo(get_install_instructions())
 
 
@@ -8420,10 +8144,7 @@ def skills_show_cmd(ctx: click.Context, name: str, json_output: bool) -> None:
 
     use_json = should_output_json(ctx, json_output)
 
-    if use_json:
-        envelope = success_envelope(
-            "skills show", {"name": name, "content": None, "url": SKILLS_REPO}
-        )
-        output_json_envelope(envelope)
-    else:
+    if not emit_success(
+        "skills show", {"name": name, "content": None, "url": SKILLS_REPO}, use_json=use_json
+    ):
         click.echo(get_install_instructions())
