@@ -808,3 +808,107 @@ class TestGlobAssetKeyCollision:
         assert "partitioned_data" not in collection.assets
         assert "partitioned_data_glob" not in collection.assets
         assert "existing_glob" in collection.assets
+
+
+def _init_catalog(path: Path, config: str = "") -> None:
+    """Create a minimal catalog with an optional config.yaml body."""
+    portolan_dir = path / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text(config)
+    (path / "catalog.json").write_text("{}")
+
+
+class TestFindLargePartitionCandidates:
+    """Tests for find_large_partition_candidates (config decision, issue #620).
+
+    These exercise the Click-free decision layer extracted from cli.py: config
+    gating plus the file scan. The TTY check and prompt stay in the CLI.
+    """
+
+    @pytest.mark.unit
+    def test_disabled_returns_no_candidates(self, tmp_path: Path) -> None:
+        """partitioning.enabled=false short-circuits: no scan, empty candidates."""
+        from portolan_cli.partitioning import find_large_partition_candidates
+
+        _init_catalog(tmp_path, "partitioning:\n  enabled: false\n")
+        parquet_file = tmp_path / "data.parquet"
+        parquet_file.write_bytes(b"x" * 100)
+
+        with mock.patch("portolan_cli.partitioning.should_partition", return_value=True):
+            decision = find_large_partition_candidates([parquet_file], tmp_path)
+
+        assert decision.enabled is False
+        assert decision.large_files == []
+
+    @pytest.mark.unit
+    def test_prompt_disabled_returns_no_candidates(self, tmp_path: Path) -> None:
+        """partitioning.prompt=false short-circuits even when enabled."""
+        from portolan_cli.partitioning import find_large_partition_candidates
+
+        _init_catalog(tmp_path, "partitioning:\n  enabled: true\n  prompt: false\n")
+        parquet_file = tmp_path / "data.parquet"
+        parquet_file.write_bytes(b"x" * 100)
+
+        with mock.patch("portolan_cli.partitioning.should_partition", return_value=True):
+            decision = find_large_partition_candidates([parquet_file], tmp_path)
+
+        assert decision.prompt is False
+        assert decision.large_files == []
+
+    @pytest.mark.unit
+    def test_flags_large_file(self, tmp_path: Path) -> None:
+        """A file over threshold is returned as a candidate with its size."""
+        from portolan_cli.partitioning import find_large_partition_candidates
+
+        _init_catalog(tmp_path)
+        parquet_file = tmp_path / "big.parquet"
+        parquet_file.write_bytes(b"x" * 100)
+
+        with mock.patch("portolan_cli.partitioning.should_partition", return_value=True):
+            decision = find_large_partition_candidates([parquet_file], tmp_path)
+
+        assert decision.enabled is True
+        assert [p for p, _ in decision.large_files] == [parquet_file]
+
+    @pytest.mark.unit
+    def test_small_file_not_flagged(self, tmp_path: Path) -> None:
+        """A small real file (well under 2GB) is not a candidate."""
+        from portolan_cli.partitioning import find_large_partition_candidates
+
+        _init_catalog(tmp_path)
+        parquet_file = tmp_path / "small.parquet"
+        parquet_file.write_bytes(b"x" * 100)
+
+        decision = find_large_partition_candidates([parquet_file], tmp_path)
+
+        assert decision.large_files == []
+
+    @pytest.mark.unit
+    def test_scans_directories_recursively(self, tmp_path: Path) -> None:
+        """Directories are scanned recursively for parquet candidates."""
+        from portolan_cli.partitioning import find_large_partition_candidates
+
+        _init_catalog(tmp_path)
+        nested = tmp_path / "data" / "nested"
+        nested.mkdir(parents=True)
+        parquet_file = nested / "deep.parquet"
+        parquet_file.write_bytes(b"x" * 100)
+
+        with mock.patch("portolan_cli.partitioning.should_partition", return_value=True):
+            decision = find_large_partition_candidates([tmp_path / "data"], tmp_path)
+
+        assert [p for p, _ in decision.large_files] == [parquet_file]
+
+    @pytest.mark.unit
+    def test_non_parquet_file_ignored(self, tmp_path: Path) -> None:
+        """Non-parquet files are ignored even when should_partition is True."""
+        from portolan_cli.partitioning import find_large_partition_candidates
+
+        _init_catalog(tmp_path)
+        other = tmp_path / "data.csv"
+        other.write_bytes(b"x" * 100)
+
+        with mock.patch("portolan_cli.partitioning.should_partition", return_value=True):
+            decision = find_large_partition_candidates([other], tmp_path)
+
+        assert decision.large_files == []

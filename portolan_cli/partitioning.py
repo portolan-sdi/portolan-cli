@@ -91,6 +91,101 @@ def should_partition(
     return file_size > threshold_bytes
 
 
+@dataclass
+class PartitionPromptDecision:
+    """Config-driven decision inputs for the interactive partition prompt.
+
+    The library computes *whether* there is anything to prompt about (config
+    gating + which files exceed the threshold); the CLI owns the actual TTY
+    check and ``click.confirm`` prompt (ADR-0007).
+    """
+
+    enabled: bool
+    """Value of ``partitioning.enabled`` (default True)."""
+
+    prompt: bool
+    """Value of ``partitioning.prompt`` (default True)."""
+
+    threshold_gb: float
+    """Size threshold in GB (``partitioning.threshold_gb``, default 2.0)."""
+
+    large_files: list[tuple[Path, float]]
+    """(path, size_gb) for files exceeding the threshold. Empty when gating is
+    off, so the CLI can short-circuit without prompting."""
+
+
+def find_large_partition_candidates(
+    resolved_paths: list[Path],
+    catalog_root: Path,
+) -> PartitionPromptDecision:
+    """Read partition config and scan paths for files that would be partitioned.
+
+    Reads ``partitioning.{enabled,prompt,threshold_gb}`` (hierarchical config)
+    and, when both ``enabled`` and ``prompt`` are set, scans ``resolved_paths``
+    for ``.parquet`` files exceeding the threshold. Returns an empty
+    ``large_files`` list when gating is disabled so the caller can skip the
+    prompt. Does no terminal I/O — the TTY check and confirmation live in the CLI.
+
+    Args:
+        resolved_paths: Paths (files or directories) the add command will import.
+        catalog_root: Catalog root used for hierarchical config lookup.
+
+    Returns:
+        A :class:`PartitionPromptDecision` describing the gating and candidates.
+    """
+    from portolan_cli.config import get_setting
+
+    enabled = get_setting("partitioning.enabled", catalog_path=catalog_root)
+    if enabled is None:
+        enabled = True  # Default: enabled (prompt before partitioning large files)
+    prompt = get_setting("partitioning.prompt", catalog_path=catalog_root)
+    if prompt is None:
+        prompt = True  # Default: prompt in interactive mode
+    threshold_gb = get_setting("partitioning.threshold_gb", catalog_path=catalog_root) or 2.0
+
+    if not (enabled and prompt):
+        return PartitionPromptDecision(
+            enabled=bool(enabled),
+            prompt=bool(prompt),
+            threshold_gb=threshold_gb,
+            large_files=[],
+        )
+
+    large_files = _scan_partition_candidates(resolved_paths, threshold_gb)
+    return PartitionPromptDecision(
+        enabled=True,
+        prompt=True,
+        threshold_gb=threshold_gb,
+        large_files=large_files,
+    )
+
+
+def _scan_partition_candidates(
+    resolved_paths: list[Path], threshold_gb: float
+) -> list[tuple[Path, float]]:
+    """Collect ``.parquet`` files exceeding ``threshold_gb`` from paths/dirs."""
+    large_files: list[tuple[Path, float]] = []
+    for p in resolved_paths:
+        try:
+            if p.is_file() and p.suffix.lower() == ".parquet":
+                if should_partition(p, threshold_gb=threshold_gb, enabled=True):
+                    size_gb = p.stat().st_size / (1024 * 1024 * 1024)
+                    large_files.append((p, size_gb))
+            elif p.is_dir():
+                for pq_file in p.rglob("*.parquet"):
+                    try:
+                        if should_partition(pq_file, threshold_gb=threshold_gb, enabled=True):
+                            size_gb = pq_file.stat().st_size / (1024 * 1024 * 1024)
+                            large_files.append((pq_file, size_gb))
+                    except OSError:
+                        # Skip files with permission errors or broken symlinks
+                        continue
+        except OSError:
+            # Skip paths with permission errors or broken symlinks
+            continue
+    return large_files
+
+
 def partition_geoparquet(
     input_path: Path,
     output_dir: Path,

@@ -121,7 +121,7 @@ render paths.
 - PMTiles is required for vector datasets > 100 MB and recommended > 10 MB
   (ADR-0050). Generate alongside the GeoParquet.
 - `pmtiles.src_crs` from `.portolan/config.yaml` must be threaded
-  `_get_pmtiles_settings()` (in `cli.py`) -> `generate_pmtiles_for_collection()`
+  `get_pmtiles_settings()` (in `pmtiles.py`) -> `generate_pmtiles_for_collection()`
   -> `gpio-pmtiles`, which reprojects to WGS84 before tippecanoe. Dropping it
   breaks PMTiles for any projected source.
 - A generated `.pmtiles` MUST be a **collection-level** asset AND have a

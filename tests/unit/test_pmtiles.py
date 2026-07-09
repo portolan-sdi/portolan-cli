@@ -1132,3 +1132,148 @@ class TestPMTilesIntegration:
         # This test would use a real fixture and verify the output
         # Skipped for now as it requires a real GeoParquet file
         pytest.skip("Requires real GeoParquet fixture")
+
+
+def _make_collection(catalog_root: Path, coll_id: str, config: str = "") -> Path:
+    """Create a catalog with one collection containing collection.json."""
+    portolan_dir = catalog_root / ".portolan"
+    portolan_dir.mkdir(exist_ok=True)
+    (portolan_dir / "config.yaml").write_text(config)
+    (catalog_root / "catalog.json").write_text("{}")
+    coll_path = catalog_root / coll_id
+    coll_path.mkdir()
+    (coll_path / "collection.json").write_text(json.dumps({"type": "Collection", "id": coll_id}))
+    return coll_path
+
+
+class TestGetPMTilesSettings:
+    """Tests for get_pmtiles_settings config resolution (#620)."""
+
+    @pytest.mark.unit
+    def test_defaults_when_no_config(self, tmp_path: Path) -> None:
+        from portolan_cli.pmtiles import get_pmtiles_settings
+
+        coll_path = _make_collection(tmp_path, "roads")
+        settings = get_pmtiles_settings(tmp_path, "roads", coll_path)
+
+        assert settings.enabled is False
+        assert settings.min_zoom is None
+        assert settings.max_zoom is None
+        assert settings.precision == 6
+
+    @pytest.mark.unit
+    def test_reads_config_values(self, tmp_path: Path) -> None:
+        from portolan_cli.pmtiles import get_pmtiles_settings
+
+        config = (
+            "pmtiles:\n"
+            "  enabled: true\n"
+            "  min_zoom: 3\n"
+            "  max_zoom: 12\n"
+            "  precision: 7\n"
+            "  layer: roads\n"
+        )
+        coll_path = _make_collection(tmp_path, "roads", config)
+        settings = get_pmtiles_settings(tmp_path, "roads", coll_path)
+
+        assert settings.enabled is True
+        assert settings.min_zoom == 3
+        assert settings.max_zoom == 12
+        assert settings.precision == 7
+        assert settings.layer == "roads"
+
+
+class TestGenerateOrSuggestPMTiles:
+    """Tests for the post-add PMTiles orchestration moved out of cli.py (#620)."""
+
+    @pytest.mark.unit
+    def test_skips_when_disabled_and_not_flagged(self, tmp_path: Path) -> None:
+        from portolan_cli.pmtiles import generate_or_suggest_pmtiles
+
+        _make_collection(tmp_path, "roads")
+        with patch("portolan_cli.pmtiles.generate_pmtiles_for_collection") as mock_gen:
+            generate_or_suggest_pmtiles(
+                tmp_path,
+                {"roads"},
+                generate_pmtiles=False,
+                force=False,
+                verbose=False,
+            )
+        mock_gen.assert_not_called()
+
+    @pytest.mark.unit
+    def test_generates_when_flagged(self, tmp_path: Path) -> None:
+        from portolan_cli.pmtiles import PMTilesResult, generate_or_suggest_pmtiles
+
+        coll_path = _make_collection(tmp_path, "roads")
+        with patch(
+            "portolan_cli.pmtiles.generate_pmtiles_for_collection",
+            return_value=PMTilesResult(),
+        ) as mock_gen:
+            generate_or_suggest_pmtiles(
+                tmp_path,
+                {"roads"},
+                generate_pmtiles=True,
+                force=False,
+                verbose=False,
+            )
+        mock_gen.assert_called_once()
+        assert mock_gen.call_args.args[0] == coll_path
+
+    @pytest.mark.unit
+    def test_explicit_flag_unavailable_exits(self, tmp_path: Path) -> None:
+        from portolan_cli.pmtiles import (
+            PMTilesNotAvailableError,
+            generate_or_suggest_pmtiles,
+        )
+
+        _make_collection(tmp_path, "roads")
+        with patch(
+            "portolan_cli.pmtiles.generate_pmtiles_for_collection",
+            side_effect=PMTilesNotAvailableError(),
+        ):
+            with pytest.raises(SystemExit):
+                generate_or_suggest_pmtiles(
+                    tmp_path,
+                    {"roads"},
+                    generate_pmtiles=True,
+                    force=False,
+                    verbose=False,
+                )
+
+    @pytest.mark.unit
+    def test_auto_unavailable_does_not_exit(self, tmp_path: Path) -> None:
+        """pmtiles.enabled but package missing warns instead of exiting (auto path)."""
+        from portolan_cli.pmtiles import (
+            PMTilesNotAvailableError,
+            generate_or_suggest_pmtiles,
+        )
+
+        _make_collection(tmp_path, "roads", "pmtiles:\n  enabled: true\n")
+        with patch(
+            "portolan_cli.pmtiles.generate_pmtiles_for_collection",
+            side_effect=PMTilesNotAvailableError(),
+        ):
+            # Must not raise SystemExit on the auto path.
+            generate_or_suggest_pmtiles(
+                tmp_path,
+                {"roads"},
+                generate_pmtiles=False,
+                force=False,
+                verbose=False,
+            )
+
+    @pytest.mark.unit
+    def test_missing_collection_json_skipped(self, tmp_path: Path) -> None:
+        from portolan_cli.pmtiles import generate_or_suggest_pmtiles
+
+        (tmp_path / "catalog.json").write_text("{}")
+        with patch("portolan_cli.pmtiles.generate_pmtiles_for_collection") as mock_gen:
+            generate_or_suggest_pmtiles(
+                tmp_path,
+                {"ghost"},
+                generate_pmtiles=True,
+                force=False,
+                verbose=False,
+            )
+        mock_gen.assert_not_called()

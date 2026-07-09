@@ -598,3 +598,113 @@ class TestCollectionLevelAsset:
         # Verify asset was removed
         collection_json = json.loads((collection_with_items / "collection.json").read_text())
         assert "geoparquet-items" not in collection_json.get("assets", {})
+
+
+# =============================================================================
+# Test: generate_or_suggest_parquet (post-add orchestration, issue #620)
+# =============================================================================
+
+
+class TestGenerateOrSuggestParquet:
+    """Tests for the post-add parquet orchestration moved out of cli.py (#620)."""
+
+    @pytest.mark.unit
+    def test_explicit_flag_generates_parquet(self, collection_with_items: Path) -> None:
+        """--stac-geoparquet (generate_parquet=True) generates items.parquet."""
+        from portolan_cli.stac_parquet import generate_or_suggest_parquet
+
+        catalog_root = collection_with_items.parent
+        generate_or_suggest_parquet(
+            catalog_root,
+            {"landsat"},
+            generate_parquet=True,
+            verbose=False,
+        )
+
+        assert (collection_with_items / "items.parquet").exists()
+
+    @pytest.mark.unit
+    def test_no_flag_no_config_does_not_generate(self, collection_with_items: Path) -> None:
+        """Below threshold and without the flag, no items.parquet is written."""
+        from portolan_cli.stac_parquet import generate_or_suggest_parquet
+
+        catalog_root = collection_with_items.parent
+        generate_or_suggest_parquet(
+            catalog_root,
+            {"landsat"},
+            generate_parquet=False,
+            verbose=False,
+            show_hints=False,
+        )
+
+        assert not (collection_with_items / "items.parquet").exists()
+
+    @pytest.mark.unit
+    def test_missing_collection_json_is_skipped(self, tmp_path: Path) -> None:
+        """An affected collection without collection.json is a no-op, not an error."""
+        from portolan_cli.stac_parquet import generate_or_suggest_parquet
+
+        (tmp_path / "catalog.json").write_text("{}")
+        # Should not raise even though 'ghost' has no collection.json
+        generate_or_suggest_parquet(
+            tmp_path,
+            {"ghost"},
+            generate_parquet=True,
+            verbose=False,
+        )
+        assert not (tmp_path / "ghost" / "items.parquet").exists()
+
+    @pytest.mark.unit
+    def test_empty_affected_is_noop(self, tmp_path: Path) -> None:
+        """No affected collections returns without touching the filesystem."""
+        from portolan_cli.stac_parquet import generate_or_suggest_parquet
+
+        # No exception, nothing created
+        generate_or_suggest_parquet(tmp_path, set(), generate_parquet=True, verbose=False)
+
+    @pytest.mark.unit
+    def test_explicit_failure_reraises(self, collection_with_items: Path) -> None:
+        """An explicit --stac-geoparquet generation failure propagates (fails the command)."""
+        from unittest.mock import patch
+
+        from portolan_cli.stac_parquet import generate_or_suggest_parquet
+
+        catalog_root = collection_with_items.parent
+        with patch(
+            "portolan_cli.stac_parquet.generate_items_parquet",
+            side_effect=RuntimeError("boom"),
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                generate_or_suggest_parquet(
+                    catalog_root,
+                    {"landsat"},
+                    generate_parquet=True,
+                    verbose=False,
+                )
+
+    @pytest.mark.unit
+    def test_auto_failure_warns_not_raises(self, collection_with_items: Path) -> None:
+        """An auto-generation failure (config-enabled) warns instead of raising."""
+        from unittest.mock import patch
+
+        from portolan_cli.stac_parquet import generate_or_suggest_parquet
+
+        catalog_root = collection_with_items.parent
+        # Enable auto-generation with threshold 0 so the 5-item collection qualifies.
+        (catalog_root / ".portolan").mkdir(exist_ok=True)
+        (catalog_root / ".portolan" / "config.yaml").write_text(
+            "parquet:\n  enabled: true\n  threshold: 0\n"
+        )
+
+        with patch(
+            "portolan_cli.stac_parquet.generate_items_parquet",
+            side_effect=RuntimeError("boom"),
+        ):
+            # generate_parquet=False → auto path → should NOT raise
+            generate_or_suggest_parquet(
+                catalog_root,
+                {"landsat"},
+                generate_parquet=False,
+                verbose=False,
+            )
+        assert not (collection_with_items / "items.parquet").exists()

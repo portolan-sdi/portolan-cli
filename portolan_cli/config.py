@@ -883,3 +883,99 @@ def check_sensitive_settings_in_config(catalog_path: Path) -> list[str]:
                     found.append(f"collections.{collection_name}.{key}")
 
     return found
+
+
+def coerce_bool(value: Any, *, default: bool = False) -> bool:
+    """Coerce a config value to boolean.
+
+    Settings sourced from environment variables arrive as strings, so accept
+    the common truthy spellings ("true", "1", "yes", "on") in addition to real
+    booleans.
+
+    Args:
+        value: Raw setting value (bool, str, None, or other).
+        default: Value returned when ``value`` is None.
+
+    Returns:
+        The coerced boolean.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "yes", "on")
+    return bool(value)
+
+
+def coerce_int(value: Any, *, default: int) -> int:
+    """Coerce a config value to integer with a safe fallback.
+
+    Args:
+        value: Raw setting value (int, str, None, or other).
+        default: Value returned when ``value`` is None or not parseable.
+
+    Returns:
+        The coerced integer, or ``default`` on failure.
+    """
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def resolve_push_settings(
+    destination: str | None,
+    profile: str | None,
+    catalog_path: Path,
+    collection: str | None,
+) -> tuple[str | None, str, str | None]:
+    """Resolve remote/profile/region for push/sync with CLI > env > config precedence.
+
+    Sensitive settings (remote, profile, region) come from CLI flags, env vars,
+    or ``.env`` — never from ``config.yaml`` (which gets pushed). ``get_setting``
+    raises ``ValueError`` when a stale sensitive value is found in ``config.yaml``;
+    this function lets that propagate so the caller can surface it.
+
+    Args:
+        destination: CLI-provided remote destination (None if not specified).
+        profile: CLI-provided AWS profile (None if not specified).
+        catalog_path: Resolved catalog root for config lookup.
+        collection: Optional collection name for collection-level config.
+
+    Returns:
+        Tuple of (resolved_destination, resolved_profile, resolved_region).
+        ``resolved_profile`` defaults to ``"default"`` when nothing is configured.
+
+    Raises:
+        ValueError: If ``config.yaml`` contains stale sensitive settings.
+    """
+    collection_path = catalog_path / collection if collection else None
+    resolved_destination = get_setting(
+        "remote",
+        cli_value=destination,
+        catalog_path=catalog_path,
+        collection=collection,
+        collection_path=collection_path,
+    )
+    resolved_profile = get_setting(
+        "aws_profile",
+        cli_value=profile,
+        catalog_path=catalog_path,
+        collection=collection,
+        collection_path=collection_path,
+    )
+    resolved_region = get_setting(
+        "region",
+        cli_value=None,
+        catalog_path=catalog_path,
+        collection=collection,
+        collection_path=collection_path,
+    )
+    return (
+        resolved_destination,
+        resolved_profile if resolved_profile is not None else "default",
+        resolved_region,
+    )

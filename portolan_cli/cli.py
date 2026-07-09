@@ -38,7 +38,6 @@ from portolan_cli.convert import ConversionResult
 from portolan_cli.discovery import get_sidecars
 from portolan_cli.emit import emit_error, emit_success
 from portolan_cli.json_output import ErrorDetail, error_envelope, success_envelope
-from portolan_cli.metadata import fix_metadata
 from portolan_cli.metadata.fix import FixReport
 from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
@@ -1401,14 +1400,10 @@ def _execute_check_workflow(
     - Without --fix: run validation and report issues
     - With --fix: run validation AND apply fixes for the selected scope
     """
-    from portolan_cli.config import load_config
-    from portolan_cli.validation.runner import _build_rules
+    from portolan_cli.check import build_check_rules
 
-    # Load config for severity overrides (stac_lint.severity.*)
-    config = load_config(path) if (path / ".portolan" / "config.yaml").exists() else None
-
-    # Always use _build_rules to respect config and strict flag
-    rules = _build_rules(strict=strict, config=config)
+    # Build rules (respects config severity overrides + strict flag)
+    rules = build_check_rules(path, strict=strict)
 
     # Handle fix workflows (may exit early)
     if fix:
@@ -1440,26 +1435,6 @@ def _execute_check_workflow(
         _output_combined(path, metadata_report, mode, use_json, verbose)
 
 
-def _resolve_catalog_root_for_check(path: Path) -> Path | None:
-    """Walk up from `path` to find the directory containing catalog.json.
-
-    The metadata scanner only needs `catalog.json` to function, so this
-    deliberately does not require the `.portolan/config.yaml` sentinel
-    that `find_catalog_root` insists on. Returns None if no catalog.json
-    is found within the search depth.
-    """
-    from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
-
-    candidate = path.resolve() if path.exists() else path
-    for _ in range(MAX_CATALOG_SEARCH_DEPTH):
-        if (candidate / "catalog.json").exists():
-            return candidate
-        if candidate.parent == candidate:
-            break
-        candidate = candidate.parent
-    return None
-
-
 def _run_fix_workflow(
     *,
     path: Path,
@@ -1473,7 +1448,10 @@ def _run_fix_workflow(
     force: bool = False,
     workers: int | None = None,
 ) -> None:
-    """Execute the fix workflow for selected scope.
+    """Run the check --fix workflow (library) and render its results.
+
+    Delegates the fix orchestration to ``check.run_fix_workflow`` and only wires
+    up the progress callback, output rendering, and exit codes here (ADR-0007).
 
     Args:
         path: Directory to check/fix.
@@ -1487,78 +1465,31 @@ def _run_fix_workflow(
         force: Re-optimize already-valid COGs (raster-scoped, issue #530).
         workers: Parallel worker processes for conversion.
     """
-    metadata_fix_report: FixReport | None = None
-    format_fix_report = None
-    has_failures = False
+    from portolan_cli.check import run_fix_workflow
 
-    # Fix metadata if in scope
-    if run_metadata:
-        from portolan_cli.metadata.scan import scan_catalog_metadata
+    # Progress callback for conversion (skip for JSON mode, per ADR-0040: per-file only in verbose)
+    def show_conversion_progress(result: ConversionResult) -> None:
+        if not use_json and verbose and result.source:
+            info_output(f"Converting: {result.source.name}")
 
-        # Resolve to the catalog root before scanning. Without this the
-        # scanner returns an empty report whenever `path` points at a
-        # subdirectory below the root, causing --fix to silently no-op.
-        # The scanner's only structural requirement is catalog.json, so
-        # walk parents looking for it (tests and existing catalogs may
-        # not have a .portolan sentinel, so find_catalog_root is too
-        # strict here).
-        catalog_root = _resolve_catalog_root_for_check(path)
-        if catalog_root is None:
-            # Metadata-only mode: user explicitly asked, fail loudly so the
-            # silent-no-op trap is closed. Mixed mode (--fix without flags):
-            # stay backwards-compatible — skip metadata so the geo-assets
-            # pass can still operate on the directory.
-            if not run_geo_assets:
-                msg = (
-                    f"fatal: not a portolan catalog (or any parent of {path}): "
-                    "no catalog.json found, cannot run metadata fix"
-                )
-                emit_error("check", "NotACatalogError", msg, use_json=use_json)
-                raise SystemExit(1)
-        else:
-            metadata_check_report = scan_catalog_metadata(catalog_root)
-            metadata_fix_report = fix_metadata(catalog_root, metadata_check_report, dry_run=dry_run)
+    outcome = run_fix_workflow(
+        path=path,
+        run_metadata=run_metadata,
+        run_geo_assets=run_geo_assets,
+        dry_run=dry_run,
+        remove_legacy=remove_legacy,
+        force=force,
+        workers=workers,
+        on_progress=show_conversion_progress,
+    )
 
-            # Issue #502: populate human-readable titles/descriptions and
-            # backfill child/item link titles as part of the metadata fix.
-            from portolan_cli.metadata.fix import (
-                repair_pmtiles_links,
-                repair_tabular_flags,
-                repair_titles_and_links,
-            )
+    # Metadata-only fix that found no catalog root: surface and exit (issue #384).
+    if outcome.fatal_error is not None:
+        emit_error("check", "NotACatalogError", outcome.fatal_error, use_json=use_json)
+        raise SystemExit(1)
 
-            metadata_fix_report.results.extend(
-                repair_titles_and_links(catalog_root, dry_run=dry_run)
-            )
-
-            # Issue #481: backfill portolan:geospatial: false on tabular
-            # collections (RULE-0090) as part of the metadata fix.
-            metadata_fix_report.results.extend(repair_tabular_flags(catalog_root, dry_run=dry_run))
-
-            # Issue #569: backfill the rel="pmtiles" web-map-links link on
-            # collections with a PMTiles asset but no link (RULE-0061).
-            metadata_fix_report.results.extend(repair_pmtiles_links(catalog_root, dry_run=dry_run))
-
-            if metadata_fix_report.failure_count > 0:
-                has_failures = True
-
-    # Fix geo-assets if in scope
-    if run_geo_assets:
-        # Progress callback for conversion (skip for JSON mode, per ADR-0040: per-file only in verbose)
-        def show_conversion_progress(result: ConversionResult) -> None:
-            if not use_json and verbose and result.source:
-                info_output(f"Converting: {result.source.name}")
-
-        format_fix_report = check_directory(
-            path,
-            fix=True,
-            dry_run=dry_run,
-            remove_legacy=remove_legacy,
-            force=force,
-            workers=workers,
-            on_progress=show_conversion_progress,
-            catalog_path=path,
-        )
+    metadata_fix_report = outcome.metadata_fix_report
+    format_fix_report = outcome.format_fix_report
 
     # Output results
     if use_json:
@@ -1566,7 +1497,7 @@ def _run_fix_workflow(
             mode=mode,
             metadata_fix_report=metadata_fix_report,
             format_fix_report=format_fix_report,
-            has_failures=has_failures,
+            has_failures=outcome.has_failures,
         )
     else:
         _output_fix_human(
@@ -1578,7 +1509,7 @@ def _run_fix_workflow(
         )
 
     # Exit with error if any failures
-    if has_failures:
+    if outcome.has_failures:
         raise SystemExit(1)
     # Also exit with error if format conversion had failures
     if (
@@ -2713,45 +2644,19 @@ def _check_partition_prompt(
     Returns:
         True if user declined partitioning, False otherwise.
     """
-    from portolan_cli.config import get_setting
-    from portolan_cli.partitioning import should_partition
+    from portolan_cli.partitioning import find_large_partition_candidates
 
-    part_enabled = get_setting("partitioning.enabled", catalog_path=catalog_root)
-    if part_enabled is None:
-        part_enabled = True  # Default: enabled (prompt before partitioning large files)
-    part_prompt = get_setting("partitioning.prompt", catalog_path=catalog_root)
-    if part_prompt is None:
-        part_prompt = True  # Default: prompt in interactive mode
-    threshold_gb = get_setting("partitioning.threshold_gb", catalog_path=catalog_root) or 2.0
-
-    if not (part_enabled and part_prompt and sys.stderr.isatty()):
+    # Prompting only makes sense interactively; skip the config read + scan
+    # entirely when not attached to a terminal.
+    if not sys.stderr.isatty():
         return False
 
-    # Pre-scan for large files that would trigger partitioning
-    large_files: list[tuple[Path, float]] = []
-    for p in resolved_paths:
-        try:
-            if p.is_file() and p.suffix.lower() == ".parquet":
-                if should_partition(p, threshold_gb=threshold_gb, enabled=True):
-                    size_gb = p.stat().st_size / (1024 * 1024 * 1024)
-                    large_files.append((p, size_gb))
-            elif p.is_dir():
-                for pq in p.rglob("*.parquet"):
-                    try:
-                        if should_partition(pq, threshold_gb=threshold_gb, enabled=True):
-                            size_gb = pq.stat().st_size / (1024 * 1024 * 1024)
-                            large_files.append((pq, size_gb))
-                    except OSError:
-                        # Skip files with permission errors or broken symlinks
-                        continue
-        except OSError:
-            # Skip paths with permission errors or broken symlinks
-            continue
-
+    decision = find_large_partition_candidates(resolved_paths, catalog_root)
+    large_files = decision.large_files
     if not large_files:
         return False
 
-    warn(f"Found {len(large_files)} file(s) exceeding {threshold_gb} GB threshold:")
+    warn(f"Found {len(large_files)} file(s) exceeding {decision.threshold_gb} GB threshold:")
     for lf, size in large_files[:5]:  # Show first 5
         detail(f"  {lf.name} ({size:.2f} GB)")
     if len(large_files) > 5:
@@ -2762,262 +2667,6 @@ def _check_partition_prompt(
         return True
 
     return False
-
-
-def _handle_parquet_after_add(
-    catalog_root: Path,
-    affected_collections: set[str],
-    generate_parquet: bool,
-    verbose: bool,
-    *,
-    show_hints: bool = True,
-) -> None:
-    """Handle stac-geoparquet generation/hints after add command.
-
-    If generate_parquet is True or parquet.enabled config is set, generates
-    items.parquet for affected collections. Otherwise, shows hints for
-    collections exceeding the threshold.
-
-    Args:
-        catalog_root: Path to catalog root.
-        affected_collections: Set of collection IDs that were modified.
-        generate_parquet: Whether --stac-geoparquet flag was passed.
-        verbose: Whether to show verbose output.
-        show_hints: Whether to show hints (disabled in JSON output mode).
-    """
-    if not affected_collections:
-        return
-
-    from portolan_cli.config import get_setting
-    from portolan_cli.stac_parquet import (
-        add_parquet_link_to_collection,
-        count_items,
-        generate_items_parquet,
-        should_suggest_parquet,
-        track_parquet_in_versions,
-    )
-
-    for coll_id in affected_collections:
-        coll_path = catalog_root / coll_id
-        if not (coll_path / "collection.json").exists():
-            continue
-
-        # Get settings per-collection with hierarchical lookup (ADR-0039)
-        parquet_enabled_raw = get_setting(
-            "parquet.enabled",
-            catalog_path=catalog_root,
-            collection=coll_id,
-            collection_path=coll_path,
-        )
-        threshold_raw = get_setting(
-            "parquet.threshold",
-            catalog_path=catalog_root,
-            collection=coll_id,
-            collection_path=coll_path,
-        )
-
-        # Type coercion: parquet.enabled can be string from env var
-        parquet_enabled = _coerce_bool(parquet_enabled_raw, default=False)
-        threshold = _coerce_int(threshold_raw, default=100)
-
-        # Count items first to apply threshold gate
-        item_count = count_items(coll_path)
-
-        # Generate when:
-        # - Explicit --stac-geoparquet flag (always generate), OR
-        # - Auto-generation enabled AND item count exceeds threshold
-        should_generate = generate_parquet or (parquet_enabled and item_count > threshold)
-
-        if should_generate and item_count > 0:
-            try:
-                generate_items_parquet(coll_path)
-                add_parquet_link_to_collection(coll_path)
-                track_parquet_in_versions(coll_path)
-                if verbose:
-                    info_output(f"Generated items.parquet for '{coll_id}'")
-            except Exception as e:
-                # Explicit --stac-geoparquet should fail the command
-                if generate_parquet:
-                    raise
-                # Auto-generation failures just warn
-                warn(f"Failed to generate parquet for '{coll_id}': {e}")
-        elif show_hints and should_suggest_parquet(coll_path, threshold=threshold):
-            info_output(
-                f"Hint: Collection '{coll_id}' has {item_count} items (>{threshold}). "
-                f"Consider running: portolan stac-geoparquet -c {coll_id}"
-            )
-
-
-@dataclass
-class PMTilesSettings:
-    """Settings for PMTiles generation."""
-
-    enabled: bool = False
-    min_zoom: int | None = None
-    max_zoom: int | None = None
-    layer: str | None = None
-    bbox: str | None = None
-    where: str | None = None
-    include_cols: str | None = None
-    precision: int = 6
-    attribution: str | None = None
-    src_crs: str | None = None
-
-
-def _get_pmtiles_settings(catalog_root: Path, coll_id: str, coll_path: Path) -> PMTilesSettings:
-    """Get PMTiles settings for a collection."""
-    from portolan_cli.config import get_setting
-
-    def get(key: str) -> Any:
-        return get_setting(
-            f"pmtiles.{key}",
-            catalog_path=catalog_root,
-            collection=coll_id,
-            collection_path=coll_path,
-        )
-
-    return PMTilesSettings(
-        enabled=_coerce_bool(get("enabled"), default=False),
-        min_zoom=None if get("min_zoom") is None else _coerce_int(get("min_zoom"), default=0),
-        max_zoom=None if get("max_zoom") is None else _coerce_int(get("max_zoom"), default=14),
-        layer=get("layer"),
-        bbox=get("bbox"),
-        where=get("where"),
-        include_cols=get("include_cols"),
-        precision=_coerce_int(get("precision"), default=6),
-        attribution=get("attribution"),
-        src_crs=get("src_crs"),
-    )
-
-
-def _handle_pmtiles_after_add(
-    catalog_root: Path,
-    affected_collections: set[str],
-    generate_pmtiles: bool,
-    force: bool,
-    verbose: bool,
-    *,
-    use_json: bool = False,
-) -> None:
-    """Handle PMTiles generation after add command."""
-    if not affected_collections:
-        return
-
-    from portolan_cli.pmtiles import (
-        PMTilesNotAvailableError,
-        TippecanoeNotFoundError,
-        generate_pmtiles_for_collection,
-    )
-
-    for coll_id in affected_collections:
-        coll_path = catalog_root / coll_id
-        if not (coll_path / "collection.json").exists():
-            continue
-
-        settings = _get_pmtiles_settings(catalog_root, coll_id, coll_path)
-        if not (generate_pmtiles or settings.enabled):
-            continue
-
-        try:
-            result = generate_pmtiles_for_collection(
-                coll_path,
-                catalog_root,
-                force=force,
-                min_zoom=settings.min_zoom,
-                max_zoom=settings.max_zoom,
-                layer=settings.layer,
-                bbox=settings.bbox,
-                where=settings.where,
-                include_cols=settings.include_cols,
-                precision=settings.precision,
-                attribution=settings.attribution,
-                src_crs=settings.src_crs,
-            )
-            _report_pmtiles_result(result, verbose, generate_pmtiles, use_json=use_json)
-        except PMTilesNotAvailableError as e:
-            _handle_pmtiles_unavailable(
-                e, generate_pmtiles, settings.enabled, verbose, coll_id, use_json=use_json
-            )
-        except TippecanoeNotFoundError as e:
-            _handle_tippecanoe_missing(e, generate_pmtiles, coll_id, use_json=use_json)
-
-
-def _report_pmtiles_result(
-    result: Any, verbose: bool, explicit_flag: bool, *, use_json: bool = False
-) -> None:
-    """Report PMTiles generation results."""
-    if not use_json:
-        for p in result.generated:
-            success(f"Generated PMTiles: {p.name}")
-        if result.skipped and verbose:
-            for p in result.skipped:
-                info_output(f"Skipped PMTiles (up-to-date): {p.name}")
-    for path, error_msg in result.failed:
-        if explicit_flag:
-            if not use_json:
-                error(f"PMTiles generation failed: {error_msg}")
-            raise SystemExit(1)
-        if not use_json:
-            warn(f"Failed to generate PMTiles for '{path}': {error_msg}")
-
-
-def _handle_pmtiles_unavailable(
-    e: Exception,
-    explicit_flag: bool,
-    config_enabled: bool,
-    verbose: bool,
-    coll_id: str,
-    *,
-    use_json: bool = False,
-) -> None:
-    """Handle PMTilesNotAvailableError."""
-    if explicit_flag:
-        if not use_json:
-            error(str(e))
-        raise SystemExit(1) from e
-    if use_json:
-        return
-    # Warn if pmtiles.enabled in config (user expectation), or info if just verbose
-    if config_enabled:
-        warn(f"PMTiles enabled for '{coll_id}' but gpio-pmtiles not installed")
-    elif verbose:
-        info_output(f"Skipping PMTiles for '{coll_id}': gpio-pmtiles not installed")
-
-
-def _handle_tippecanoe_missing(
-    e: Exception, explicit_flag: bool, coll_id: str, *, use_json: bool = False
-) -> None:
-    """Handle TippecanoeNotFoundError."""
-    if explicit_flag:
-        if not use_json:
-            error(str(e))
-        raise SystemExit(1) from e
-    if not use_json:
-        warn(f"Skipping PMTiles for '{coll_id}': tippecanoe not installed")
-
-
-def _coerce_bool(value: Any, *, default: bool = False) -> bool:
-    """Coerce a value to boolean.
-
-    Handles string values like "true", "1", "yes" from env vars.
-    """
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() in ("true", "1", "yes", "on")
-    return bool(value)
-
-
-def _coerce_int(value: Any, *, default: int) -> int:
-    """Coerce a value to integer with safe fallback."""
-    if value is None:
-        return default
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return default
 
 
 @cli.command("add")
@@ -3291,13 +2940,26 @@ def add_cmd(
     # Handle stac-geoparquet generation BEFORE output (so JSON reflects final state)
     # Always run parquet generation if --stac-geoparquet flag was passed, regardless of output mode
     # Only show hints in non-JSON mode
-    _handle_parquet_after_add(
-        catalog_root, affected, generate_parquet, verbose, show_hints=not use_json
+    from portolan_cli.stac_parquet import generate_or_suggest_parquet
+
+    generate_or_suggest_parquet(
+        catalog_root,
+        affected,
+        generate_parquet=generate_parquet,
+        verbose=verbose,
+        show_hints=not use_json,
     )
 
     # Handle PMTiles generation BEFORE output (so JSON reflects final state)
-    _handle_pmtiles_after_add(
-        catalog_root, affected, generate_pmtiles, force_pmtiles, verbose, use_json=use_json
+    from portolan_cli.pmtiles import generate_or_suggest_pmtiles
+
+    generate_or_suggest_pmtiles(
+        catalog_root,
+        affected,
+        generate_pmtiles=generate_pmtiles,
+        force=force_pmtiles,
+        verbose=verbose,
+        use_json=use_json,
     )
 
     # Output combined results (after all processing complete)
@@ -3636,11 +3298,10 @@ def _resolve_push_settings(
     Raises:
         SystemExit: If config.yaml contains stale sensitive settings
     """
+    from portolan_cli.config import resolve_push_settings
+
     try:
-        resolved_destination = resolve_remote(destination, catalog_path, collection)
-        resolved_profile = resolve_aws_profile(profile, catalog_path, collection)
-        resolved_region = resolve_aws_region(None, catalog_path, collection)
-        return resolved_destination, resolved_profile, resolved_region
+        return resolve_push_settings(destination, profile, catalog_path, collection)
     except ValueError as e:
         emit_error(command, "ConfigError", str(e), use_json=use_json)
         raise SystemExit(1) from None
