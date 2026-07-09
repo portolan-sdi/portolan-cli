@@ -39,6 +39,10 @@ from portolan_cli.extract.carto.discovery import (
     tables_from_names,
 )
 from portolan_cli.extract.common.filters import filter_layers
+from portolan_cli.extract.common.progress import (
+    ExtractionProgress,
+    emit_progress,
+)
 from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,
@@ -95,25 +99,6 @@ class ExtractionOptions:
     api_key: str | None = None
 
 
-@dataclass
-class ExtractionProgress:
-    """Progress callback data for extraction.
-
-    Attributes:
-        layer_index: Current table index (0-based).
-        total_layers: Total number of tables to process.
-        layer_name: Name of the current table.
-        status: One of "starting", "extracting", "success", "failed", "skipped".
-        error: Error message when status is "failed".
-    """
-
-    layer_index: int
-    total_layers: int
-    layer_name: str
-    status: str
-    error: str | None = None
-
-
 def _slug_for_table(name: str) -> str:
     """Convert a Carto table name to a filesystem-safe slug.
 
@@ -134,27 +119,6 @@ def _build_table_query_url(sql_api_url: str, table_name: str) -> str:
     """
     query = f"SELECT * FROM {quote_table_identifier(table_name)}"  # nosec B608
     return f"{sql_api_url}?{urlencode({'q': query})}"
-
-
-def _emit_progress(
-    on_progress: Callable[[ExtractionProgress], None] | None,
-    layer_index: int,
-    total_layers: int,
-    layer_name: str,
-    status: str,
-    error: str | None = None,
-) -> None:
-    """Emit a progress event if a callback is provided."""
-    if on_progress:
-        on_progress(
-            ExtractionProgress(
-                layer_index=layer_index,
-                total_layers=total_layers,
-                layer_name=layer_name,
-                status=status,
-                error=error,
-            )
-        )
 
 
 def _filter_discovered_tables(
@@ -345,16 +309,16 @@ def _extract_tables(
                 result = future.result()
                 results.append(result)
                 err = result.error if result.status == "failed" else None
-                _emit_progress(on_progress, table.id, total, table.name, result.status, error=err)
+                emit_progress(on_progress, table.id, total, table.name, result.status, error=err)
         return results
 
     for table in tables_to_extract:
-        _emit_progress(on_progress, table.id, total, table.name, "starting")
-        _emit_progress(on_progress, table.id, total, table.name, "extracting")
+        emit_progress(on_progress, table.id, total, table.name, "starting")
+        emit_progress(on_progress, table.id, total, table.name, "extracting")
         result = _extract_table_task(sql_api_url, table, output_dir, options)
         results.append(result)
         err = result.error if result.status == "failed" else None
-        _emit_progress(on_progress, table.id, total, table.name, result.status, error=err)
+        emit_progress(on_progress, table.id, total, table.name, result.status, error=err)
 
     return results
 
@@ -508,7 +472,7 @@ def extract_carto_catalog(
 
     for table in tables:
         if resume_state and not should_process_layer(table.id, resume_state, layer_name=table.name):
-            _emit_progress(on_progress, table.id, total, table.name, "skipped")
+            emit_progress(on_progress, table.id, total, table.name, "skipped")
             pre_results.append(_skipped_result(table, reason="Already extracted"))
             continue
         tables_to_extract.append(table)

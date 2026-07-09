@@ -18,7 +18,6 @@ from portolan_cli.extract.arcgis.discovery import (
 from portolan_cli.extract.arcgis.metadata import ArcGISMetadata, extract_arcgis_metadata
 from portolan_cli.extract.arcgis.orchestrator import (
     ExtractionOptions,
-    ExtractionProgress,
     extract_arcgis_catalog,
 )
 from portolan_cli.extract.arcgis.url_parser import (
@@ -32,6 +31,7 @@ from portolan_cli.extract.common.filters import (
     filter_layers,
     filter_services,
 )
+from portolan_cli.extract.common.progress import ExtractionProgress
 from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,

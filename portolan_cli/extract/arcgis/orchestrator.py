@@ -45,6 +45,10 @@ from portolan_cli.extract.arcgis.url_parser import (
     parse_arcgis_url,
 )
 from portolan_cli.extract.common.filters import filter_layers
+from portolan_cli.extract.common.progress import (
+    ExtractionProgress,
+    emit_progress,
+)
 from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,
@@ -184,25 +188,6 @@ def list_services(
     )
 
 
-def _emit_progress(
-    on_progress: Callable[[ExtractionProgress], None] | None,
-    layer_index: int,
-    total_layers: int,
-    layer_name: str,
-    status: str,
-) -> None:
-    """Emit a progress event if callback is provided."""
-    if on_progress:
-        on_progress(
-            ExtractionProgress(
-                layer_index=layer_index,
-                total_layers=total_layers,
-                layer_name=layer_name,
-                status=status,
-            )
-        )
-
-
 def _slugify(name: str) -> str:
     """Convert a name to a filesystem-safe slug.
 
@@ -265,25 +250,6 @@ class ExtractionOptions:
     no_styles: bool = False
     token: str | None = None
     recurse: bool = True
-
-
-@dataclass
-class ExtractionProgress:
-    """Progress callback data for extraction.
-
-    Attributes:
-        layer_index: Current layer index (0-based)
-        total_layers: Total number of layers to extract
-        layer_name: Name of current layer
-        status: Current status ("starting", "extracting", "success", "failed", "skipped")
-        error: Error message when status is "failed" (Issue #504).
-    """
-
-    layer_index: int
-    total_layers: int
-    layer_name: str
-    status: str
-    error: str | None = None
 
 
 def _extract_single_layer(
@@ -447,12 +413,12 @@ def _extract_one_layer(
 ) -> LayerResult:
     """Extract a single layer and return its result."""
     layer_slug = _slugify(layer.name)
-    _emit_progress(on_progress, index, total, layer.name, "starting")
+    emit_progress(on_progress, index, total, layer.name, "starting")
 
     # Check resume state - skip if already succeeded
     if resume_state and not should_process_layer(layer.id, resume_state):
         if layer.id in existing_results:
-            _emit_progress(on_progress, index, total, layer.name, "skipped")
+            emit_progress(on_progress, index, total, layer.name, "skipped")
             return existing_results[layer.id]
         # Resume state says skip, but we have no cached result - re-extract with warning
         logger.warning(
@@ -466,7 +432,7 @@ def _extract_one_layer(
     output_path = collection_dir / f"{layer_slug}.parquet"
 
     # Extract with retry
-    _emit_progress(on_progress, index, total, layer.name, "extracting")
+    emit_progress(on_progress, index, total, layer.name, "extracting")
 
     result = retry_with_backoff(
         _extract_single_layer,
@@ -480,7 +446,7 @@ def _extract_one_layer(
 
     if result.success:
         features, size_bytes, duration = result.value  # type: ignore[misc]
-        _emit_progress(on_progress, index, total, layer.name, "success")
+        emit_progress(on_progress, index, total, layer.name, "success")
 
         # Extract style from ESRI layer (Issue #490)
         if not options.no_styles:
@@ -506,7 +472,8 @@ def _extract_one_layer(
             attempts=result.attempts,
         )
 
-    _emit_progress(on_progress, index, total, layer.name, "failed")
+    error_msg = str(result.error) if result.error else "Unknown error"
+    emit_progress(on_progress, index, total, layer.name, "failed", error=error_msg)
     return LayerResult(
         id=layer.id,
         name=layer.name,
@@ -516,7 +483,7 @@ def _extract_one_layer(
         duration_seconds=0.0,
         output_path="",
         warnings=[],
-        error=str(result.error) if result.error else "Unknown error",
+        error=error_msg,
         attempts=result.attempts,
     )
 
@@ -1100,13 +1067,13 @@ def _extract_services_root(
 
         relative_output_path = output_path.relative_to(output_dir).as_posix()
 
-        _emit_progress(on_progress, progress_idx, total, layer.name, "starting")
+        emit_progress(on_progress, progress_idx, total, layer.name, "starting")
 
         # Check resume state - skip if already succeeded
         if relative_output_path in existing_results_by_path:
             existing_result = existing_results_by_path[relative_output_path]
             layer_results.append(existing_result)
-            _emit_progress(on_progress, progress_idx, total, layer.name, "skipped")
+            emit_progress(on_progress, progress_idx, total, layer.name, "skipped")
             logger.debug(
                 "Skipping already-completed layer: %s/%s",
                 service.name,
@@ -1115,7 +1082,7 @@ def _extract_services_root(
             continue
 
         # Extract with retry
-        _emit_progress(on_progress, progress_idx, total, layer.name, "extracting")
+        emit_progress(on_progress, progress_idx, total, layer.name, "extracting")
 
         result = retry_with_backoff(
             _extract_single_layer,
@@ -1157,8 +1124,9 @@ def _extract_services_root(
                     attempts=result.attempts,
                 )
             )
-            _emit_progress(on_progress, progress_idx, total, layer.name, "success")
+            emit_progress(on_progress, progress_idx, total, layer.name, "success")
         else:
+            error_msg = str(result.error) if result.error else "Unknown error"
             layer_results.append(
                 LayerResult(
                     id=layer.id,
@@ -1169,11 +1137,11 @@ def _extract_services_root(
                     duration_seconds=0.0,
                     output_path="",
                     warnings=[],
-                    error=str(result.error) if result.error else "Unknown error",
+                    error=error_msg,
                     attempts=result.attempts,
                 )
             )
-            _emit_progress(on_progress, progress_idx, total, layer.name, "failed")
+            emit_progress(on_progress, progress_idx, total, layer.name, "failed", error=error_msg)
 
     # Build and save report
     combined_discovery = ServiceDiscoveryResult(

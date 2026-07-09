@@ -423,12 +423,15 @@ class TestOrchestratorIntegration:
                 error=Exception("Connection timeout"),
             )
 
+            progress_events: list[ExtractionProgress] = []
+
             # Use raw=True to skip auto-init (tested separately in integration tests)
             options = ExtractionOptions(raw=True)
             result = extract_arcgis_catalog(
                 url=TEST_FEATURE_SERVER_URL,
                 output_dir=tmp_path,
                 options=options,
+                on_progress=progress_events.append,
             )
 
             # All layers should fail
@@ -436,6 +439,12 @@ class TestOrchestratorIntegration:
             assert result.summary.failed == 3
             assert all(r.status == "failed" for r in result.layers)
             assert all("Connection timeout" in (r.error or "") for r in result.layers)
+
+            # Failed progress events must carry the diagnostic error text so the
+            # CLI callback can render it (parity with WFS/Carto).
+            failed_events = [e for e in progress_events if e.status == "failed"]
+            assert failed_events
+            assert all(e.error == "Connection timeout" for e in failed_events)
 
 
 # =============================================================================

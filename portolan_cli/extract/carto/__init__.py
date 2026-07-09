@@ -18,10 +18,10 @@ from portolan_cli.extract.carto.discovery import (
 from portolan_cli.extract.carto.metadata import CartoMetadata, extract_carto_metadata
 from portolan_cli.extract.carto.orchestrator import (
     ExtractionOptions,
-    ExtractionProgress,
     extract_carto_catalog,
 )
 from portolan_cli.extract.common.filters import filter_layers
+from portolan_cli.extract.common.progress import ExtractionProgress
 from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,

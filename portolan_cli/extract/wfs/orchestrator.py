@@ -31,6 +31,10 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from portolan_cli.extract.common.filters import filter_layers
+from portolan_cli.extract.common.progress import (
+    ExtractionProgress,
+    emit_progress,
+)
 from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,
@@ -95,25 +99,6 @@ class ExtractionOptions:
     limit: int | None = None
     page_size: int = 100000
     auto_tile: bool = True
-
-
-@dataclass
-class ExtractionProgress:
-    """Progress callback data for extraction.
-
-    Attributes:
-        layer_index: Current layer index (0-based).
-        total_layers: Total number of layers to extract.
-        layer_name: Name of current layer.
-        status: Current status ("starting", "extracting", "success", "failed", "skipped").
-        error: Error message when status is "failed" (Issue #504).
-    """
-
-    layer_index: int
-    total_layers: int
-    layer_name: str
-    status: str
-    error: str | None = None
 
 
 def _slugify(name: str, disambiguate: bool = False, unique_id: int | None = None) -> str:
@@ -186,27 +171,6 @@ def _build_wfs_url(base_url: str, params: dict[str, str]) -> str:
     existing_params.update(params)
     new_query = urlencode(existing_params)
     return urlunparse(parsed._replace(query=new_query))
-
-
-def _emit_progress(
-    on_progress: Callable[[ExtractionProgress], None] | None,
-    layer_index: int,
-    total_layers: int,
-    layer_name: str,
-    status: str,
-    error: str | None = None,
-) -> None:
-    """Emit a progress event if callback is provided."""
-    if on_progress:
-        on_progress(
-            ExtractionProgress(
-                layer_index=layer_index,
-                total_layers=total_layers,
-                layer_name=layer_name,
-                status=status,
-                error=error,
-            )
-        )
 
 
 def _filter_discovered_layers(
@@ -505,13 +469,11 @@ def _extract_layers_parallel(
                     results.append(result)
                     # Issue #504: Pass error to progress callback for failed layers
                     error_msg = result.error if result.status == "failed" else None
-                    _emit_progress(
-                        on_progress, i, total, layer.name, result.status, error=error_msg
-                    )
+                    emit_progress(on_progress, i, total, layer.name, result.status, error=error_msg)
                 except Exception as e:
                     error_msg = str(e)
                     logger.error("Layer %s failed: %s", layer.name, error_msg)
-                    _emit_progress(on_progress, i, total, layer.name, "failed", error=error_msg)
+                    emit_progress(on_progress, i, total, layer.name, "failed", error=error_msg)
                     results.append(
                         LayerResult(
                             id=layer.id,
@@ -538,7 +500,7 @@ def _extract_layers_parallel(
                     elapsed = now - started_at[i]
                 error_msg = f"Timeout after {options.timeout}s"
                 logger.error("Layer %s timed out after %ds", layer.name, options.timeout)
-                _emit_progress(on_progress, i, total, layer.name, "failed", error=error_msg)
+                emit_progress(on_progress, i, total, layer.name, "failed", error=error_msg)
                 results.append(
                     LayerResult(
                         id=layer.id,
@@ -734,7 +696,7 @@ def extract_wfs_catalog(
     for i, layer in enumerate(layers):
         if resume_state and not should_process_layer(layer.id, resume_state, layer_name=layer.name):
             if layer.name in existing_results:
-                _emit_progress(on_progress, i, total, layer.name, "skipped")
+                emit_progress(on_progress, i, total, layer.name, "skipped")
                 skipped_results.append(existing_results[layer.name])
                 continue
             logger.warning(
@@ -762,8 +724,8 @@ def extract_wfs_catalog(
     else:
         # Sequential extraction
         for i, layer in layers_to_extract:
-            _emit_progress(on_progress, i, total, layer.name, "starting")
-            _emit_progress(on_progress, i, total, layer.name, "extracting")
+            emit_progress(on_progress, i, total, layer.name, "starting")
+            emit_progress(on_progress, i, total, layer.name, "extracting")
 
             result = _extract_layer_task(
                 url,
@@ -779,7 +741,7 @@ def extract_wfs_catalog(
 
             # Issue #504: Pass error to progress callback for failed layers
             error_msg = result.error if result.status == "failed" else None
-            _emit_progress(on_progress, i, total, layer.name, result.status, error=error_msg)
+            emit_progress(on_progress, i, total, layer.name, result.status, error=error_msg)
 
     # Combine results in original order
     all_results = skipped_results + extracted_results

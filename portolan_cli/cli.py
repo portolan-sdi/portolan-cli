@@ -6217,10 +6217,10 @@ def extract_arcgis_cmd(
     """
     from portolan_cli.extract.arcgis.orchestrator import (
         ExtractionOptions,
-        ExtractionProgress,
         extract_arcgis_catalog,
     )
     from portolan_cli.extract.arcgis.url_parser import ArcGISURLType, parse_arcgis_url
+    from portolan_cli.extract.common.progress import ExtractionProgress
     from portolan_cli.output import detail, info, warn
 
     use_json = should_output_json(ctx, json_output)
@@ -6516,9 +6516,9 @@ def extract_wfs_cmd(
         # Extract 4 layers in parallel with 5-minute timeout per layer
         portolan extract wfs URL --workers 4 --timeout 300
     """
+    from portolan_cli.extract.common.progress import ExtractionProgress
     from portolan_cli.extract.wfs.orchestrator import (
         ExtractionOptions,
-        ExtractionProgress,
         extract_wfs_catalog,
     )
     from portolan_cli.output import detail, info, warn
@@ -6756,9 +6756,9 @@ def extract_carto_cmd(
     """
     from portolan_cli.extract.carto.orchestrator import (
         ExtractionOptions,
-        ExtractionProgress,
         extract_carto_catalog,
     )
+    from portolan_cli.extract.common.progress import ExtractionProgress
     from portolan_cli.output import detail, info, warn
 
     use_json = should_output_json(ctx, json_output)
