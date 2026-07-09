@@ -30,6 +30,8 @@ cloud-native geospatial data.
   - [Tabular (non-geospatial) data](formats/tabular.md)
 - [Best practices](best-practices.md) - Recommended conventions
 - [AI & LLM integration](ai-integration.md) - llms.txt requirements for agent discoverability
+- [Extensions](extensions/) - Optional STAC profile extensions
+  - [Authentication (`auth:`)](extensions/authentication.md) - Gated catalogs via the STAC Authentication extension incl. the `tokenExchange` flow (RFC 8693)
 
 ## Architectural Decisions
 

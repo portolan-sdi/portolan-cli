@@ -1,0 +1,62 @@
+{
+  "type": "Collection",
+  "stac_version": "1.0.0",
+  "id": "city-buildings",
+  "title": "City buildings (access-controlled)",
+  "description": "Building footprints for a metropolitan area, published in a Portolan catalog. The STAC discovery metadata (this document) is public and static; the data assets live in access-controlled object storage. Reading is a two-step flow: (1) sign in at the publisher's consumer IdP (`publisher_oidc` scheme) to obtain an identity token; (2) exchange that token (`credential_exchange` scheme, OAuth 2.0 Token Exchange) for short-lived, prefix-scoped, read-only storage credentials; then read the assets directly from object storage.",
+  "license": "proprietary",
+  "stac_extensions": [
+    "https://stac-extensions.github.io/authentication/v1.1.0/schema.json"
+  ],
+  "auth:schemes": {
+    "publisher_oidc": {
+      "type": "openIdConnect",
+      "description": "Step 1 — identity. Sign in at the publisher's consumer IdP (any OIDC client flow, e.g. Authorization Code + PKCE for browsers). Yields an OIDC identity token.",
+      "openIdConnectUrl": "https://auth.example-sdi.org/.well-known/openid-configuration"
+    },
+    "credential_exchange": {
+      "type": "oauth2",
+      "description": "Step 2 — credentials (OAuth 2.0 Token Exchange, RFC 8693). POST the identity token obtained via the `publisher_oidc` scheme as `subject_token` to the `tokenUrl`. Returns short-lived, prefix-scoped, read-only storage credentials (`access_token` + `issued_token_type` + `expires_in`) for direct reads of this collection's assets — or 403 if the publisher has not granted this identity access. Credentials cover all assets of the collection (one credential, many objects: parquet + Iceberg metadata + manifests).",
+      "flows": {
+        "tokenExchange": {
+          "tokenUrl": "https://broker.example-sdi.org/oauth/token",
+          "scopes": {
+            "read:city-buildings": "Read this collection's data assets"
+          }
+        }
+      }
+    }
+  },
+  "extent": {
+    "spatial": { "bbox": [[-3.9, 40.3, -3.5, 40.6]] },
+    "temporal": { "interval": [["2025-01-01T00:00:00Z", null]] }
+  },
+  "providers": [
+    {
+      "name": "Example SDI Publisher",
+      "roles": ["producer", "licensor", "host"],
+      "url": "https://data.example-sdi.org"
+    }
+  ],
+  "links": [
+    { "rel": "root", "href": "../catalog.json", "type": "application/json" },
+    { "rel": "self", "href": "./collection.json", "type": "application/json" },
+    { "rel": "license", "href": "https://data.example-sdi.org/terms", "title": "Data license and terms of access" }
+  ],
+  "assets": {
+    "data": {
+      "href": "https://storage.example-cloud.com/example-private-bucket/city-buildings/city-buildings.parquet",
+      "type": "application/vnd.apache.parquet",
+      "roles": ["data"],
+      "title": "GeoParquet (access-controlled)",
+      "auth:refs": ["credential_exchange"]
+    },
+    "iceberg-metadata": {
+      "href": "https://storage.example-cloud.com/example-private-bucket/city-buildings/metadata/v3.metadata.json",
+      "type": "application/json",
+      "roles": ["metadata"],
+      "title": "Apache Iceberg table metadata (access-controlled; readable with the same exchanged credentials)",
+      "auth:refs": ["credential_exchange"]
+    }
+  }
+}
