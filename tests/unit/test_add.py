@@ -21,10 +21,10 @@ from portolan_cli.add import (
     _get_media_type,
     _update_versions,
     add,
-    compute_dir_size,
     get_item_info,
     list_items,
 )
+from portolan_cli.checksums import compute_dir_size
 from portolan_cli.formats import FormatType
 from portolan_cli.versions import read_versions
 
@@ -114,9 +114,9 @@ class TestAdd:
         output_file.write_bytes(b"fake parquet data")
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
@@ -158,9 +158,9 @@ class TestAdd:
         output_file = item_dir / "data.tif"
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_raster") as mock_convert,
-            patch("portolan_cli.add.extract_cog_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_raster") as mock_convert,
+            patch("portolan_cli.preparation.extract_cog_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.RASTER
@@ -192,7 +192,7 @@ class TestAdd:
         unknown_path = tmp_path / "data.xyz"
         unknown_path.write_text("unknown format")
 
-        with patch("portolan_cli.add.detect_format") as mock_detect:
+        with patch("portolan_cli.preparation.detect_format") as mock_detect:
             mock_detect.return_value = FormatType.UNKNOWN
 
             with pytest.raises(ValueError, match="Unsupported format"):
@@ -229,9 +229,9 @@ class TestAdd:
         output_file.write_bytes(b"fake data")
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
@@ -285,9 +285,9 @@ class TestAdd:
         output_file.write_bytes(b"fake data")
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
@@ -617,9 +617,9 @@ class TestAddMissingBbox:
         output_file.write_bytes(b"fake data")
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
@@ -687,9 +687,9 @@ class TestAddItemIdDerivation:
         geojson_path.write_text(json.dumps(geojson_data))
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
@@ -749,9 +749,9 @@ class TestAddItemIdDerivation:
         geojson_path.write_text(json.dumps(geojson_data))
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
@@ -1189,9 +1189,9 @@ class TestMultiAssetAdd:
         metadata_file.write_bytes(b"<metadata/>")
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
@@ -1236,9 +1236,9 @@ class TestMultiAssetAdd:
         output_file.write_bytes(b"fake parquet data")
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
@@ -1284,9 +1284,9 @@ class TestMultiAssetAdd:
         hidden_file.write_bytes(b"hidden data")
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
@@ -1331,9 +1331,9 @@ class TestMultiAssetAdd:
         symlink.symlink_to(output_file)
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
