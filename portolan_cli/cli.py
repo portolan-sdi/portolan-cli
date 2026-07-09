@@ -3904,6 +3904,21 @@ def push(
             )
         )
 
+        if not result.success:
+            # Route returned failures through the error path so JSON mode reports
+            # success=false and exits non-zero (never a success envelope).
+            err_msgs = result.errors or ["Push failed"]
+            if use_json:
+                envelope = error_envelope(
+                    "push",
+                    [ErrorDetail(type="PushError", message=msg) for msg in err_msgs],
+                )
+                output_json_envelope(envelope)
+            else:
+                for err_msg in err_msgs:
+                    error(err_msg)
+            raise SystemExit(1)
+
         if not emit_success(
             "push",
             {
@@ -3914,20 +3929,15 @@ def push(
             },
             use_json=use_json,
         ):
-            if result.success:
-                if result.versions_pushed > 0:
-                    success(
-                        f"Pushed {result.versions_pushed} version(s), {result.files_uploaded} file(s)"
-                    )
-                elif dry_run:
-                    # Dry-run mode: push.py already printed what would be done
-                    info_output("[DRY RUN] Complete - no files were uploaded")
-                else:
-                    info_output("Nothing to push - local and remote are in sync")
+            if result.versions_pushed > 0:
+                success(
+                    f"Pushed {result.versions_pushed} version(s), {result.files_uploaded} file(s)"
+                )
+            elif dry_run:
+                # Dry-run mode: push.py already printed what would be done
+                info_output("[DRY RUN] Complete - no files were uploaded")
             else:
-                for err_msg in result.errors:
-                    error(err_msg)
-                raise SystemExit(1)
+                info_output("Nothing to push - local and remote are in sync")
 
     except PushConflictError as err:
         if use_json:
