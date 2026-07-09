@@ -45,6 +45,12 @@ from portolan_cli.extract.arcgis.url_parser import (
     parse_arcgis_url,
 )
 from portolan_cli.extract.common.filters import filter_layers
+from portolan_cli.extract.common.orchestrator_base import (
+    add_source_links,
+    init_extracted_catalog,
+    register_collection_styles,
+    seed_catalog_metadata,
+)
 from portolan_cli.extract.common.progress import (
     ExtractionProgress,
     emit_progress,
@@ -595,68 +601,32 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
     Per Issue #369: Propagates rich metadata from ArcGIS service to STAC files,
     avoiding generic placeholders.
     """
-    from portolan_cli.add import add_files
-    from portolan_cli.catalog import init_catalog
-    from portolan_cli.stac import update_stac_metadata
+    from portolan_cli.stac import is_technical_name, update_stac_metadata
 
-    # Get list of successfully extracted parquet files
-    parquet_files = [
-        output_dir / result.output_path
-        for result in report.layers
-        if result.status == "success" and result.output_path
-    ]
-
-    if not parquet_files:
-        return  # Nothing to add
-
-    # Initialize the catalog
-    # Extract title from service metadata if available (Issue #369)
-    title = None
-    description = None
-    if report.metadata_extracted:
-        # Use description from service metadata
-        description = report.metadata_extracted.description
-
-        # Use service name from URL as title
-        if report.metadata_extracted.source_url:
-            from portolan_cli.extract.arcgis.url_parser import parse_arcgis_url
-
-            try:
-                parsed = parse_arcgis_url(report.metadata_extracted.source_url)
-                title = parsed.service_name
-            except ValueError:
-                pass
+    title, description = _derive_catalog_titles(report)
 
     # Filter technical names BEFORE init_catalog to avoid writing them
-    # (update_stac_metadata can't overwrite if init_catalog already wrote them)
-    from portolan_cli.stac import is_technical_name
-
+    # (update_stac_metadata can't overwrite if init_catalog already wrote them).
     filtered_title = None if is_technical_name(title) else title
     filtered_description = None if is_technical_name(description) else description
 
-    init_catalog(output_dir, title=filtered_title, description=filtered_description)
+    def _post_init(out: Path, _files: list[Path]) -> None:
+        # Per Issue #369: overwrite init_catalog defaults with the rich
+        # (unfiltered) service metadata now that catalog.json exists.
+        update_stac_metadata(out / "catalog.json", title=title, description=description)
 
-    # Per Issue #369: Update catalog.json with rich metadata
-    # This handles cases where init_catalog used defaults
-    catalog_path = output_dir / "catalog.json"
-    update_stac_metadata(catalog_path, title=title, description=description)
-
-    # Add all extracted parquet files
-    add_files(
-        paths=parquet_files,
-        catalog_root=output_dir,
+    added = init_extracted_catalog(
+        output_dir,
+        report,
+        title=filtered_title,
+        description=filtered_description,
+        post_init=_post_init,
     )
+    if added is None:
+        return  # Nothing to add
 
     # Register extracted styles as STAC assets (Issue #490)
-    from portolan_cli.style import discover_styles, register_style_assets
-
-    for result in report.layers:
-        if result.status == "success" and result.output_path:
-            collection_dir = output_dir / Path(result.output_path).parent
-            styles = discover_styles(collection_dir)
-            if styles:
-                register_style_assets(collection_dir, styles)
-                logger.debug("Registered %d style(s) for %s", len(styles), result.name)
+    register_collection_styles(output_dir, report)
 
     # Seed metadata.yaml from extracted service metadata
     _seed_metadata_from_extraction(output_dir, report)
@@ -667,6 +637,27 @@ def _auto_init_catalog(output_dir: Path, report: ExtractionReport) -> None:
     # Seed collection-level metadata.yaml with layer details
     # and update collection.json with rich metadata (Issue #369)
     _seed_collection_metadata_arcgis(output_dir, report)
+
+
+def _derive_catalog_titles(report: ExtractionReport) -> tuple[str | None, str | None]:
+    """Derive catalog title/description from harvested ArcGIS service metadata.
+
+    The service name (parsed from the source URL) becomes the title and the
+    service description becomes the catalog description (Issue #369). Both may be
+    None when no metadata was harvested.
+    """
+    if not report.metadata_extracted:
+        return None, None
+
+    description = report.metadata_extracted.description
+    title = None
+    if report.metadata_extracted.source_url:
+        try:
+            parsed = parse_arcgis_url(report.metadata_extracted.source_url)
+            title = parsed.service_name
+        except ValueError:
+            pass
+    return title, description
 
 
 def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -> None:
@@ -680,20 +671,13 @@ def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -
         output_dir: The catalog output directory.
         report: The extraction report containing metadata.
     """
-    from portolan_cli.metadata_seeding import seed_metadata_yaml
-    from portolan_cli.output import info
-
     if not report.metadata_extracted:
         return
 
-    # Convert MetadataExtracted from report to ArcGISMetadata, then to ExtractedMetadata
-    # We need to reconstruct ArcGISMetadata from the report data
+    # Reconstruct ArcGISMetadata from the report data, then serialize to the
+    # source-agnostic ExtractedMetadata the shared seeder expects.
     arcgis_metadata = _report_metadata_to_arcgis_metadata(report.metadata_extracted)
-    extracted = arcgis_metadata.to_extracted()
-
-    metadata_path = output_dir / ".portolan" / "metadata.yaml"
-    if seed_metadata_yaml(extracted, metadata_path):
-        info(f"Seeded metadata.yaml from {extracted.source_type}")
+    seed_catalog_metadata(output_dir, arcgis_metadata.to_extracted())
 
 
 def _report_metadata_to_arcgis_metadata(
@@ -729,37 +713,20 @@ def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) ->
     """Add via provenance links to each extracted collection.
 
     Per Issue #353: Each collection should have a `via` link pointing to
-    the original data source (ArcGIS layer URL).
+    the original data source (ArcGIS layer URL). The layer-specific URL
+    (service URL + "/" + layer id) gives more precise provenance than the
+    bare service URL.
 
     Args:
         output_dir: The catalog output directory.
         report: The extraction report with layer info and source URL.
     """
-    from portolan_cli.stac import add_via_link
-
-    source_url = report.source_url
-
-    for layer in report.layers:
-        if layer.status != "success" or not layer.output_path:
-            continue
-
-        # Derive collection directory from output_path's parent
-        # Handles nested paths like "service/layer/layer.parquet"
-        collection_dir = output_dir / Path(layer.output_path).parent
-        collection_path = collection_dir / "collection.json"
-
-        if not collection_path.exists():
-            continue
-
-        # Build layer-specific URL: service_url + "/" + layer_id
-        # This gives more specific provenance than just the service URL
-        layer_url = f"{source_url.rstrip('/')}/{layer.id}"
-
-        add_via_link(
-            collection_path,
-            layer_url,
-            title=f"Source ArcGIS layer: {layer.name}",
-        )
+    add_source_links(
+        output_dir,
+        report,
+        url_builder=lambda source_url, layer: f"{source_url.rstrip('/')}/{layer.id}",
+        title_builder=lambda layer: f"Source ArcGIS layer: {layer.name}",
+    )
 
 
 def _seed_collection_metadata_arcgis(

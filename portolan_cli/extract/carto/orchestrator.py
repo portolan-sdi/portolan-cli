@@ -39,6 +39,11 @@ from portolan_cli.extract.carto.discovery import (
     tables_from_names,
 )
 from portolan_cli.extract.common.filters import filter_layers
+from portolan_cli.extract.common.orchestrator_base import (
+    add_source_links,
+    init_extracted_catalog,
+    seed_catalog_metadata,
+)
 from portolan_cli.extract.common.progress import (
     ExtractionProgress,
     emit_progress,
@@ -503,26 +508,27 @@ def _auto_init_catalog(
     Creates catalog.json/config.yaml/collection.json, adds provenance via-links,
     and seeds metadata.yaml at catalog and collection level.
     """
-    from portolan_cli.catalog import add_files, init_catalog
-    from portolan_cli.config import set_setting
-    from portolan_cli.formats import is_geoparquet
 
-    parquet_files = [
-        output_dir / r.output_path for r in report.layers if r.status == "success" and r.output_path
-    ]
-    if not parquet_files:
+    def _post_init(out: Path, parquet_files: list[Path]) -> None:
+        # Non-geo (tabular) outputs carry no `geo` metadata key; add_files only
+        # accepts them as standalone collection-level assets when tabular support
+        # is enabled (ADR-0047). Enable it before add_files when any output is
+        # non-geo.
+        from portolan_cli.config import set_setting
+        from portolan_cli.formats import is_geoparquet
+
+        if any(not is_geoparquet(path) for path in parquet_files):
+            set_setting(out, "tabular.enabled", True)
+
+    added = init_extracted_catalog(
+        output_dir,
+        report,
+        title=discovery.account_name,
+        description=None,
+        post_init=_post_init,
+    )
+    if added is None:
         return
-
-    title = discovery.account_name
-    init_catalog(output_dir, title=title, description=None)
-
-    # Non-geo (tabular) outputs carry no `geo` metadata key; add_files only
-    # accepts them as standalone collection-level assets when tabular support is
-    # enabled (ADR-0047). Enable it before add_files when any output is non-geo.
-    if any(not is_geoparquet(path) for path in parquet_files):
-        set_setting(output_dir, "tabular.enabled", True)
-
-    add_files(paths=parquet_files, catalog_root=output_dir)
 
     _add_via_links_to_collections(output_dir, report)
     _seed_metadata_from_extraction(output_dir, report, discovery.account_name)
@@ -531,19 +537,12 @@ def _auto_init_catalog(
 
 def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) -> None:
     """Add a `via` provenance link (a Carto SQL query URL) to each collection."""
-    from portolan_cli.stac import add_via_link
-
-    for layer in report.layers:
-        if layer.status != "success" or not layer.output_path:
-            continue
-        collection_path = output_dir / Path(layer.output_path).parent / "collection.json"
-        if not collection_path.exists():
-            continue
-        add_via_link(
-            collection_path,
-            _build_table_query_url(report.source_url, layer.name),
-            title=f"Source Carto table: {layer.name}",
-        )
+    add_source_links(
+        output_dir,
+        report,
+        url_builder=lambda source_url, layer: _build_table_query_url(source_url, layer.name),
+        title_builder=lambda layer: f"Source Carto table: {layer.name}",
+    )
 
 
 def _seed_metadata_from_extraction(
@@ -551,13 +550,9 @@ def _seed_metadata_from_extraction(
 ) -> None:
     """Seed catalog-level metadata.yaml from Carto account metadata."""
     from portolan_cli.extract.carto.metadata import extract_carto_metadata
-    from portolan_cli.metadata_seeding import seed_metadata_yaml
-    from portolan_cli.output import info
 
     extracted = extract_carto_metadata(report.source_url, account_name).to_extracted()
-    metadata_path = output_dir / ".portolan" / "metadata.yaml"
-    if seed_metadata_yaml(extracted, metadata_path):
-        info(f"Seeded metadata.yaml from {extracted.source_type}")
+    seed_catalog_metadata(output_dir, extracted)
 
 
 def _seed_collection_metadata_carto(output_dir: Path, report: ExtractionReport) -> None:

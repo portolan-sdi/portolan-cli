@@ -31,6 +31,12 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from portolan_cli.extract.common.filters import filter_layers
+from portolan_cli.extract.common.orchestrator_base import (
+    add_source_links,
+    init_extracted_catalog,
+    register_collection_styles,
+    seed_catalog_metadata,
+)
 from portolan_cli.extract.common.progress import (
     ExtractionProgress,
     emit_progress,
@@ -774,64 +780,30 @@ def _auto_init_catalog(
     Per Issue #369: Propagates rich metadata from WFS service to STAC files,
     avoiding generic placeholders.
     """
-    from portolan_cli.catalog import add_files, init_catalog
     from portolan_cli.stac import update_stac_metadata
 
-    parquet_files = [
-        output_dir / result.output_path
-        for result in report.layers
-        if result.status == "success" and result.output_path
-    ]
+    # Extract and filter service title/description (Issue #369, #376)
+    filtered_title, filtered_description = _derive_catalog_titles(discovery_result)
 
-    if not parquet_files:
+    def _post_init(out: Path, _files: list[Path]) -> None:
+        # Per Issue #369/#376: overwrite init_catalog defaults with the filtered
+        # service metadata (filtered values avoid overwriting with boilerplate).
+        update_stac_metadata(
+            out / "catalog.json", title=filtered_title, description=filtered_description
+        )
+
+    added = init_extracted_catalog(
+        output_dir,
+        report,
+        title=filtered_title,
+        description=filtered_description,
+        post_init=_post_init,
+    )
+    if added is None:
         return
 
-    # Extract service title and description from discovery result (Issue #369)
-    service_title = discovery_result.service_title if discovery_result else None
-    service_description = discovery_result.service_abstract if discovery_result else None
-
-    # Filter technical names AND boilerplate (Issue #376)
-    from portolan_cli.extract.wfs.metadata import is_boilerplate_description
-    from portolan_cli.stac import is_technical_name
-
-    def _should_filter(text: str | None) -> bool:
-        return is_technical_name(text) or is_boilerplate_description(text)
-
-    filtered_title = None if _should_filter(service_title) else service_title
-    filtered_description = None if _should_filter(service_description) else service_description
-
-    init_catalog(output_dir, title=filtered_title, description=filtered_description)
-
-    # Per Issue #369: Update catalog.json with rich metadata
-    # Per Issue #376: Use filtered values to avoid overwriting with boilerplate
-    catalog_path = output_dir / "catalog.json"
-    update_stac_metadata(catalog_path, title=filtered_title, description=filtered_description)
-
-    add_files(
-        paths=parquet_files,
-        catalog_root=output_dir,
-    )
-
     # Register extracted styles and legends as STAC assets (Issue #490, #498)
-    from portolan_cli.style import (
-        discover_legends,
-        discover_styles,
-        register_legend_assets,
-        register_style_assets,
-    )
-
-    for result in report.layers:
-        if result.status == "success" and result.output_path:
-            collection_dir = output_dir / Path(result.output_path).parent
-            styles = discover_styles(collection_dir)
-            if styles:
-                register_style_assets(collection_dir, styles)
-                logger.debug("Registered %d style(s) for %s", len(styles), result.name)
-
-            legends = discover_legends(collection_dir)
-            if legends:
-                register_legend_assets(collection_dir, legends)
-                logger.debug("Registered %d legend(s) for %s", len(legends), result.name)
+    register_collection_styles(output_dir, report, include_legends=True)
 
     # Add via links for provenance tracking
     _add_via_links_to_collections(output_dir, report)
@@ -845,39 +817,47 @@ def _auto_init_catalog(
         _seed_collection_metadata_wfs(output_dir, report, discovery_result)
 
 
+def _derive_catalog_titles(
+    discovery_result: WFSDiscoveryResult | None,
+) -> tuple[str | None, str | None]:
+    """Derive filtered catalog title/description from the WFS discovery result.
+
+    Technical names and boilerplate descriptions are dropped (Issue #376) so the
+    catalog is not populated with service-generated placeholders.
+    """
+    from portolan_cli.extract.wfs.metadata import is_boilerplate_description
+    from portolan_cli.stac import is_technical_name
+
+    service_title = discovery_result.service_title if discovery_result else None
+    service_description = discovery_result.service_abstract if discovery_result else None
+
+    def _should_filter(text: str | None) -> bool:
+        return is_technical_name(text) or is_boilerplate_description(text)
+
+    filtered_title = None if _should_filter(service_title) else service_title
+    filtered_description = None if _should_filter(service_description) else service_description
+    return filtered_title, filtered_description
+
+
 def _add_via_links_to_collections(output_dir: Path, report: ExtractionReport) -> None:
     """Add via provenance links to each extracted collection.
 
     Each collection gets a `via` link pointing to a GetFeature-style URL
-    for the original WFS layer.
+    (``service_url?service=WFS&request=GetFeature&typename=X``) for the original
+    WFS layer.
     """
-    from portolan_cli.stac import add_via_link
 
-    source_url = report.source_url
-
-    for layer in report.layers:
-        if layer.status != "success" or not layer.output_path:
-            continue
-
-        # Derive collection directory from output_path's parent
-        # Handles nested paths like "service/layer/layer.parquet"
-        collection_dir = output_dir / Path(layer.output_path).parent
-        collection_path = collection_dir / "collection.json"
-
-        if not collection_path.exists():
-            continue
-
-        # Build GetFeature-style URL for provenance
-        # WFS GetFeature URL pattern: service_url?service=WFS&request=GetFeature&typename=X
-        layer_url = _build_wfs_url(
+    def _url(source_url: str, layer: LayerResult) -> str:
+        return _build_wfs_url(
             source_url, {"service": "WFS", "request": "GetFeature", "typename": layer.name}
         )
 
-        add_via_link(
-            collection_path,
-            layer_url,
-            title=f"Source WFS layer: {layer.name}",
-        )
+    add_source_links(
+        output_dir,
+        report,
+        url_builder=_url,
+        title_builder=lambda layer: f"Source WFS layer: {layer.name}",
+    )
 
 
 def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -> None:
@@ -891,18 +871,11 @@ def _seed_metadata_from_extraction(output_dir: Path, report: ExtractionReport) -
         output_dir: The catalog output directory.
         report: The extraction report containing metadata.
     """
-    from portolan_cli.metadata_seeding import seed_metadata_yaml
-    from portolan_cli.output import info
-
     if not report.metadata_extracted:
         return
 
     wfs_metadata = _report_metadata_to_wfs_metadata(report.metadata_extracted)
-    extracted = wfs_metadata.to_extracted()
-
-    metadata_path = output_dir / ".portolan" / "metadata.yaml"
-    if seed_metadata_yaml(extracted, metadata_path):
-        info(f"Seeded metadata.yaml from {extracted.source_type}")
+    seed_catalog_metadata(output_dir, wfs_metadata.to_extracted())
 
 
 def _report_metadata_to_wfs_metadata(
