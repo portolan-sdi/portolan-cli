@@ -262,7 +262,7 @@ class TestFinalizeItems:
         )
 
         # Track write_versions calls
-        with patch("portolan_cli.add.write_versions") as mock_write:
+        with patch("portolan_cli.finalization.write_versions") as mock_write:
             finalize_items(
                 catalog_root=initialized_catalog,
                 prepared=[prepared1, prepared2],
@@ -322,7 +322,7 @@ class TestFinalizeItems:
             item_json_path=initialized_catalog / "collection-b/item-1/item-1.json",
         )
 
-        with patch("portolan_cli.add.write_versions") as mock_write:
+        with patch("portolan_cli.finalization.write_versions") as mock_write:
             finalize_items(
                 catalog_root=initialized_catalog,
                 prepared=[prepared_a, prepared_b],
