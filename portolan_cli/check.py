@@ -19,7 +19,7 @@ import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, PARQUET_EXTENSION, SIDECAR_PATTERNS
 from portolan_cli.conversion_config import ConversionOverrides, get_conversion_overrides
@@ -38,6 +38,9 @@ from portolan_cli.formats import (
     is_geoparquet,
 )
 from portolan_cli.scan_detect import is_filegdb
+
+if TYPE_CHECKING:
+    from portolan_cli.metadata.fix import FixReport
 
 logger = logging.getLogger(__name__)
 
@@ -522,3 +525,165 @@ def _get_relative_path(file_path: Path, root: Path) -> str:
         return file_path.relative_to(root).as_posix()
     except ValueError:
         return file_path.as_posix()
+
+
+# --- Check / fix workflow orchestration (ADR-0007: logic lives here) ---
+
+
+def resolve_catalog_root_for_check(path: Path) -> Path | None:
+    """Walk up from ``path`` to find the directory containing ``catalog.json``.
+
+    The metadata scanner only needs ``catalog.json`` to function, so this
+    deliberately does not require the ``.portolan/config.yaml`` sentinel that
+    ``find_catalog_root`` insists on. Returns None if no ``catalog.json`` is
+    found within the search depth.
+    """
+    from portolan_cli.constants import MAX_CATALOG_SEARCH_DEPTH
+
+    candidate = path.resolve() if path.exists() else path
+    for _ in range(MAX_CATALOG_SEARCH_DEPTH):
+        if (candidate / "catalog.json").exists():
+            return candidate
+        if candidate.parent == candidate:
+            break
+        candidate = candidate.parent
+    return None
+
+
+def build_check_rules(path: Path, *, strict: bool) -> tuple[Any, ...]:
+    """Build the validation rule set, honoring config severity overrides.
+
+    Loads ``.portolan/config.yaml`` (when present) for ``stac_lint.severity.*``
+    overrides and always routes through ``_build_rules`` so the ``strict`` flag
+    and config are respected.
+
+    Args:
+        path: Directory being checked (catalog root or a subdirectory).
+        strict: Whether ``--strict`` was passed (escalates warnings to errors).
+
+    Returns:
+        The ordered list of validation rule instances.
+    """
+    from portolan_cli.config import load_config
+    from portolan_cli.validation.runner import _build_rules
+
+    config = load_config(path) if (path / ".portolan" / "config.yaml").exists() else None
+    return _build_rules(strict=strict, config=config)
+
+
+@dataclass
+class FixWorkflowOutcome:
+    """Result of running the ``check --fix`` workflow.
+
+    Attributes:
+        metadata_fix_report: Metadata fix results (None when metadata not in scope
+            or skipped because no catalog root was found in mixed mode).
+        format_fix_report: Geo-asset conversion results (None when not in scope).
+        has_failures: True if any metadata fix failed.
+        fatal_error: Non-catalog message when a metadata-only fix found no
+            ``catalog.json``; the caller surfaces it and exits non-zero.
+    """
+
+    metadata_fix_report: FixReport | None = None
+    format_fix_report: Any = None
+    has_failures: bool = False
+    fatal_error: str | None = None
+
+
+def run_fix_workflow(
+    *,
+    path: Path,
+    run_metadata: bool,
+    run_geo_assets: bool,
+    dry_run: bool,
+    remove_legacy: bool,
+    force: bool = False,
+    workers: int | None = None,
+    on_progress: Callable[[ConversionResult], None] | None = None,
+) -> FixWorkflowOutcome:
+    """Run the metadata and/or geo-asset fix workflow and return the reports.
+
+    This owns the fix orchestration (ADR-0007): resolving the catalog root,
+    scanning metadata, applying fixes plus the title/tabular/PMTiles repairs, and
+    converting geo-assets. It performs no output rendering or process exit — the
+    caller renders the returned :class:`FixWorkflowOutcome` and decides exit codes.
+
+    Args:
+        path: Directory to check/fix.
+        run_metadata: Whether to fix metadata issues.
+        run_geo_assets: Whether to fix geo-asset format issues.
+        dry_run: Preview changes without applying them.
+        remove_legacy: Remove source files after successful conversion.
+        force: Re-optimize already-valid COGs (raster-scoped, issue #530).
+        workers: Parallel worker processes for conversion.
+        on_progress: Optional per-conversion progress callback.
+
+    Returns:
+        A :class:`FixWorkflowOutcome` with the fix reports and status flags.
+    """
+    outcome = FixWorkflowOutcome()
+
+    # Fix metadata if in scope
+    if run_metadata:
+        from portolan_cli.metadata import fix_metadata
+        from portolan_cli.metadata.fix import (
+            repair_pmtiles_links,
+            repair_tabular_flags,
+            repair_titles_and_links,
+        )
+        from portolan_cli.metadata.scan import scan_catalog_metadata
+
+        # Resolve to the catalog root before scanning. Without this the scanner
+        # returns an empty report whenever `path` points at a subdirectory below
+        # the root, causing --fix to silently no-op. The scanner's only
+        # structural requirement is catalog.json, so walk parents looking for it
+        # (tests and existing catalogs may not have a .portolan sentinel, so
+        # find_catalog_root is too strict here).
+        catalog_root = resolve_catalog_root_for_check(path)
+        if catalog_root is None:
+            # Metadata-only mode: user explicitly asked, fail loudly so the
+            # silent-no-op trap is closed. Mixed mode (--fix without flags):
+            # stay backwards-compatible — skip metadata so the geo-assets pass
+            # can still operate on the directory.
+            if not run_geo_assets:
+                outcome.fatal_error = (
+                    f"fatal: not a portolan catalog (or any parent of {path}): "
+                    "no catalog.json found, cannot run metadata fix"
+                )
+                return outcome
+        else:
+            metadata_check_report = scan_catalog_metadata(catalog_root)
+            metadata_fix_report = fix_metadata(catalog_root, metadata_check_report, dry_run=dry_run)
+
+            # Issue #502: populate human-readable titles/descriptions and
+            # backfill child/item link titles as part of the metadata fix.
+            metadata_fix_report.results.extend(
+                repair_titles_and_links(catalog_root, dry_run=dry_run)
+            )
+
+            # Issue #481: backfill portolan:geospatial: false on tabular
+            # collections (RULE-0090) as part of the metadata fix.
+            metadata_fix_report.results.extend(repair_tabular_flags(catalog_root, dry_run=dry_run))
+
+            # Issue #569: backfill the rel="pmtiles" web-map-links link on
+            # collections with a PMTiles asset but no link (RULE-0061).
+            metadata_fix_report.results.extend(repair_pmtiles_links(catalog_root, dry_run=dry_run))
+
+            outcome.metadata_fix_report = metadata_fix_report
+            if metadata_fix_report.failure_count > 0:
+                outcome.has_failures = True
+
+    # Fix geo-assets if in scope
+    if run_geo_assets:
+        outcome.format_fix_report = check_directory(
+            path,
+            fix=True,
+            dry_run=dry_run,
+            remove_legacy=remove_legacy,
+            force=force,
+            workers=workers,
+            on_progress=on_progress,
+            catalog_path=path,
+        )
+
+    return outcome

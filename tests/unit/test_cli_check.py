@@ -677,7 +677,7 @@ class TestCheckMetadataFixFlag:
                 "portolan_cli.metadata.scan.scan_catalog_metadata",
                 return_value=metadata_report,
             ),
-            patch("portolan_cli.cli.fix_metadata") as mock_fix,
+            patch("portolan_cli.metadata.fix_metadata") as mock_fix,
         ):
             from portolan_cli.metadata.fix import FixReport
 
@@ -714,7 +714,7 @@ class TestCheckMetadataFixFlag:
                 "portolan_cli.metadata.scan.scan_catalog_metadata",
                 return_value=metadata_report,
             ),
-            patch("portolan_cli.cli.fix_metadata") as mock_fix,
+            patch("portolan_cli.metadata.fix_metadata") as mock_fix,
         ):
             from portolan_cli.metadata.fix import FixReport
 
@@ -762,7 +762,7 @@ class TestCheckMetadataFixFlag:
                 "portolan_cli.metadata.scan.scan_catalog_metadata",
                 return_value=metadata_report,
             ),
-            patch("portolan_cli.cli.fix_metadata") as mock_fix,
+            patch("portolan_cli.metadata.fix_metadata") as mock_fix,
         ):
             # Mock fix_metadata to return a successful report
             from portolan_cli.metadata.fix import FixReport
@@ -812,7 +812,7 @@ class TestCheckMetadataFixFlag:
                 "portolan_cli.metadata.scan.scan_catalog_metadata",
                 return_value=metadata_report,
             ),
-            patch("portolan_cli.cli.fix_metadata") as mock_fix,
+            patch("portolan_cli.metadata.fix_metadata") as mock_fix,
         ):
             from portolan_cli.metadata.fix import FixReport
 
@@ -845,9 +845,9 @@ class TestCheckMetadataFixFlag:
         # --fix without scope flags should run both metadata and geo-asset fixes
         with (
             patch("portolan_cli.cli.validate_catalog") as mock_validate,
-            patch("portolan_cli.cli.check_directory") as mock_check,
+            patch("portolan_cli.check.check_directory") as mock_check,
             patch("portolan_cli.metadata.scan.scan_catalog_metadata") as mock_md_check,
-            patch("portolan_cli.cli.fix_metadata") as mock_fix,
+            patch("portolan_cli.metadata.fix_metadata") as mock_fix,
         ):
             from portolan_cli.validation.results import ValidationReport
 
@@ -921,7 +921,7 @@ class TestCheckForceWorkers:
         """--fix --force --workers N reaches check_directory with those values."""
         from portolan_cli.check import CheckReport
 
-        with patch("portolan_cli.cli.check_directory") as mock_check:
+        with patch("portolan_cli.check.check_directory") as mock_check:
             mock_check.return_value = CheckReport(root=catalog, files=[], conversion_report=None)
             result = runner.invoke(
                 cli,
@@ -951,7 +951,7 @@ class TestCheckForceWorkers:
 
         from portolan_cli.check import CheckReport
 
-        with patch("portolan_cli.cli.check_directory") as mock_check:
+        with patch("portolan_cli.check.check_directory") as mock_check:
             mock_check.return_value = CheckReport(root=catalog, files=[], conversion_report=None)
             result = runner.invoke(
                 cli,

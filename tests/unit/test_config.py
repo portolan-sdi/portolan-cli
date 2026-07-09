@@ -1228,3 +1228,90 @@ class TestPMTilesConfigSettings:
         assert get_setting("pmtiles.src_crs", catalog_path=tmp_path) == "EPSG:3035"
         assert get_setting("pmtiles.min_zoom", catalog_path=tmp_path) == 4
         assert get_setting("pmtiles.max_zoom", catalog_path=tmp_path) == 14
+
+
+class TestCoerceHelpers:
+    """Tests for coerce_bool / coerce_int (env values arrive as strings, #620)."""
+
+    @pytest.mark.unit
+    def test_coerce_bool_truthy_strings(self) -> None:
+        from portolan_cli.config import coerce_bool
+
+        for truthy in ("true", "True", "1", "yes", "on"):
+            assert coerce_bool(truthy) is True
+
+    @pytest.mark.unit
+    def test_coerce_bool_falsey_and_default(self) -> None:
+        from portolan_cli.config import coerce_bool
+
+        assert coerce_bool("false") is False
+        assert coerce_bool("no") is False
+        assert coerce_bool(None) is False
+        assert coerce_bool(None, default=True) is True
+        assert coerce_bool(True) is True
+
+    @pytest.mark.unit
+    def test_coerce_int_parses_and_falls_back(self) -> None:
+        from portolan_cli.config import coerce_int
+
+        assert coerce_int("42", default=0) == 42
+        assert coerce_int(7, default=0) == 7
+        assert coerce_int("not-an-int", default=100) == 100
+        assert coerce_int(None, default=5) == 5
+
+
+class TestResolvePushSettings:
+    """Tests for resolve_push_settings precedence (CLI > env > config, #620)."""
+
+    def _init_catalog(self, path: Path, config: str = "") -> None:
+        portolan_dir = path / ".portolan"
+        portolan_dir.mkdir()
+        (portolan_dir / "config.yaml").write_text(config)
+        (path / "catalog.json").write_text("{}")
+
+    @pytest.mark.unit
+    def test_cli_value_wins_and_profile_defaults(self, tmp_path: Path) -> None:
+        from portolan_cli.config import resolve_push_settings
+
+        self._init_catalog(tmp_path)
+        with mock.patch.dict(os.environ, {}, clear=False):
+            for key in ("PORTOLAN_REMOTE", "PORTOLAN_AWS_PROFILE", "PORTOLAN_REGION"):
+                os.environ.pop(key, None)
+            destination, profile, region = resolve_push_settings(
+                "s3://cli-bucket/", None, tmp_path, None
+            )
+
+        assert destination == "s3://cli-bucket/"
+        assert profile == "default"  # nothing configured → default
+        assert region is None
+
+    @pytest.mark.unit
+    def test_env_remote_used_when_no_cli(self, tmp_path: Path) -> None:
+        from portolan_cli.config import resolve_push_settings
+
+        self._init_catalog(tmp_path)
+        with mock.patch.dict(os.environ, {"PORTOLAN_REMOTE": "s3://env-bucket/"}):
+            destination, profile, _ = resolve_push_settings(None, None, tmp_path, None)
+
+        assert destination == "s3://env-bucket/"
+
+    @pytest.mark.unit
+    def test_cli_profile_overrides_env(self, tmp_path: Path) -> None:
+        from portolan_cli.config import resolve_push_settings
+
+        self._init_catalog(tmp_path)
+        with mock.patch.dict(os.environ, {"PORTOLAN_AWS_PROFILE": "env-profile"}):
+            _, profile, _ = resolve_push_settings(None, "cli-profile", tmp_path, None)
+
+        assert profile == "cli-profile"
+
+    @pytest.mark.unit
+    def test_stale_sensitive_config_raises(self, tmp_path: Path) -> None:
+        """A sensitive setting in config.yaml is rejected (must live in .env)."""
+        from portolan_cli.config import resolve_push_settings
+
+        self._init_catalog(tmp_path, "remote: s3://stale-from-config/\n")
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PORTOLAN_REMOTE", None)
+            with pytest.raises(ValueError):
+                resolve_push_settings(None, None, tmp_path, None)

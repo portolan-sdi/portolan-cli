@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from portolan_cli.errors import PortolanError
-from portolan_cli.output import warn
+from portolan_cli.output import error, info, success, warn
 
 # The PMTiles constants and pure asset/link classifiers now live in the
 # framework-free leaf pmtiles_links.py so validation/ can reach them without
@@ -912,3 +912,159 @@ def generate_pmtiles_for_collection(
     register_style_assets(collection_path, styles)
 
     return result
+
+
+@dataclass
+class PMTilesSettings:
+    """Per-collection PMTiles generation settings resolved from config."""
+
+    enabled: bool = False
+    min_zoom: int | None = None
+    max_zoom: int | None = None
+    layer: str | None = None
+    bbox: str | None = None
+    where: str | None = None
+    include_cols: str | None = None
+    precision: int = 6
+    attribution: str | None = None
+    src_crs: str | None = None
+
+
+def get_pmtiles_settings(catalog_root: Path, coll_id: str, coll_path: Path) -> PMTilesSettings:
+    """Resolve PMTiles settings for a collection via hierarchical config (ADR-0039)."""
+    from portolan_cli.config import coerce_bool, coerce_int, get_setting
+
+    def get(key: str) -> Any:
+        return get_setting(
+            f"pmtiles.{key}",
+            catalog_path=catalog_root,
+            collection=coll_id,
+            collection_path=coll_path,
+        )
+
+    return PMTilesSettings(
+        enabled=coerce_bool(get("enabled"), default=False),
+        min_zoom=None if get("min_zoom") is None else coerce_int(get("min_zoom"), default=0),
+        max_zoom=None if get("max_zoom") is None else coerce_int(get("max_zoom"), default=14),
+        layer=get("layer"),
+        bbox=get("bbox"),
+        where=get("where"),
+        include_cols=get("include_cols"),
+        precision=coerce_int(get("precision"), default=6),
+        attribution=get("attribution"),
+        src_crs=get("src_crs"),
+    )
+
+
+def generate_or_suggest_pmtiles(
+    catalog_root: Path,
+    affected_collections: set[str],
+    *,
+    generate_pmtiles: bool,
+    force: bool,
+    verbose: bool,
+    use_json: bool = False,
+) -> None:
+    """Generate PMTiles for affected collections when requested or configured.
+
+    For each affected collection, resolves PMTiles settings and generates when
+    ``--pmtiles`` was passed or ``pmtiles.enabled`` is configured. Generation runs
+    regardless of output mode so the JSON envelope reflects the final state
+    (ADR-0030); an explicitly-requested generation that fails exits non-zero.
+
+    Args:
+        catalog_root: Catalog root directory.
+        affected_collections: Collection IDs modified by the add command.
+        generate_pmtiles: Whether ``--pmtiles`` was passed.
+        force: Whether to regenerate up-to-date PMTiles.
+        verbose: Whether to emit per-file detail.
+        use_json: Whether the command runs in JSON output mode.
+    """
+    if not affected_collections:
+        return
+
+    for coll_id in affected_collections:
+        coll_path = catalog_root / coll_id
+        if not (coll_path / "collection.json").exists():
+            continue
+
+        settings = get_pmtiles_settings(catalog_root, coll_id, coll_path)
+        if not (generate_pmtiles or settings.enabled):
+            continue
+
+        try:
+            result = generate_pmtiles_for_collection(
+                coll_path,
+                catalog_root,
+                force=force,
+                min_zoom=settings.min_zoom,
+                max_zoom=settings.max_zoom,
+                layer=settings.layer,
+                bbox=settings.bbox,
+                where=settings.where,
+                include_cols=settings.include_cols,
+                precision=settings.precision,
+                attribution=settings.attribution,
+                src_crs=settings.src_crs,
+            )
+            _report_pmtiles_result(result, verbose, generate_pmtiles, use_json=use_json)
+        except PMTilesNotAvailableError as e:
+            _report_pmtiles_unavailable(
+                e, generate_pmtiles, settings.enabled, verbose, coll_id, use_json=use_json
+            )
+        except TippecanoeNotFoundError as e:
+            _report_tippecanoe_missing(e, generate_pmtiles, coll_id, use_json=use_json)
+
+
+def _report_pmtiles_result(
+    result: PMTilesResult, verbose: bool, explicit_flag: bool, *, use_json: bool = False
+) -> None:
+    """Report PMTiles generation results; exit non-zero on explicit-flag failure."""
+    if not use_json:
+        for p in result.generated:
+            success(f"Generated PMTiles: {p.name}")
+        if result.skipped and verbose:
+            for p in result.skipped:
+                info(f"Skipped PMTiles (up-to-date): {p.name}")
+    for path, error_msg in result.failed:
+        if explicit_flag:
+            if not use_json:
+                error(f"PMTiles generation failed: {error_msg}")
+            raise SystemExit(1)
+        if not use_json:
+            warn(f"Failed to generate PMTiles for '{path}': {error_msg}")
+
+
+def _report_pmtiles_unavailable(
+    e: Exception,
+    explicit_flag: bool,
+    config_enabled: bool,
+    verbose: bool,
+    coll_id: str,
+    *,
+    use_json: bool = False,
+) -> None:
+    """Report a PMTilesNotAvailableError; exit non-zero when explicitly requested."""
+    if explicit_flag:
+        if not use_json:
+            error(str(e))
+        raise SystemExit(1) from e
+    if use_json:
+        return
+    # Warn if pmtiles.enabled in config (user expectation), or info if just verbose
+    if config_enabled:
+        warn(f"PMTiles enabled for '{coll_id}' but gpio-pmtiles not installed")
+    elif verbose:
+        info(f"Skipping PMTiles for '{coll_id}': gpio-pmtiles not installed")
+
+
+def _report_tippecanoe_missing(
+    e: Exception, explicit_flag: bool, coll_id: str, *, use_json: bool = False
+) -> None:
+    """Report a TippecanoeNotFoundError; exit non-zero when explicitly requested."""
+    if explicit_flag:
+        if not use_json:
+            error(str(e))
+        raise SystemExit(1) from e
+    if not use_json:
+        warn(f"Skipping PMTiles for '{coll_id}': tippecanoe not installed")

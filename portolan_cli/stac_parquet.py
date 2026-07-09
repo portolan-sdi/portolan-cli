@@ -30,6 +30,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.output import info, warn
+
 # Constants
 PARQUET_FILENAME = "items.parquet"
 PARQUET_MEDIA_TYPE = "application/vnd.apache.parquet"
@@ -390,3 +392,90 @@ def track_parquet_in_versions(collection_path: Path) -> None:
     )
 
     write_versions(versions_path, updated)
+
+
+def generate_or_suggest_parquet(
+    catalog_root: Path,
+    affected_collections: set[str],
+    *,
+    generate_parquet: bool,
+    verbose: bool,
+    show_hints: bool = True,
+) -> None:
+    """Generate items.parquet for affected collections, or hint when suggested.
+
+    For each affected collection, reads ``parquet.{enabled,threshold}`` with a
+    hierarchical lookup (ADR-0039) and decides whether to generate:
+
+    - Generate when ``generate_parquet`` (explicit ``--stac-geoparquet``) is set,
+      or when auto-generation is enabled and the item count exceeds the threshold.
+    - Otherwise, when ``show_hints`` and the collection is over threshold, print a
+      hint suggesting ``portolan stac-geoparquet``.
+
+    Generation always runs regardless of output mode so the JSON envelope reflects
+    the final state (ADR-0030). An explicitly-requested generation that fails
+    re-raises; an auto-generation failure only warns.
+
+    Args:
+        catalog_root: Catalog root directory.
+        affected_collections: Collection IDs modified by the add command.
+        generate_parquet: Whether ``--stac-geoparquet`` was passed.
+        verbose: Whether to emit per-collection success detail.
+        show_hints: Whether to print suggestion hints (disabled in JSON mode).
+    """
+    if not affected_collections:
+        return
+
+    from portolan_cli.config import coerce_bool, coerce_int, get_setting
+
+    for coll_id in affected_collections:
+        coll_path = catalog_root / coll_id
+        if not (coll_path / "collection.json").exists():
+            continue
+
+        # Get settings per-collection with hierarchical lookup (ADR-0039)
+        parquet_enabled = coerce_bool(
+            get_setting(
+                "parquet.enabled",
+                catalog_path=catalog_root,
+                collection=coll_id,
+                collection_path=coll_path,
+            ),
+            default=False,
+        )
+        threshold = coerce_int(
+            get_setting(
+                "parquet.threshold",
+                catalog_path=catalog_root,
+                collection=coll_id,
+                collection_path=coll_path,
+            ),
+            default=100,
+        )
+
+        # Count items first to apply threshold gate
+        item_count = count_items(coll_path)
+
+        # Generate when:
+        # - Explicit --stac-geoparquet flag (always generate), OR
+        # - Auto-generation enabled AND item count exceeds threshold
+        should_generate = generate_parquet or (parquet_enabled and item_count > threshold)
+
+        if should_generate and item_count > 0:
+            try:
+                generate_items_parquet(coll_path)
+                add_parquet_link_to_collection(coll_path)
+                track_parquet_in_versions(coll_path)
+                if verbose:
+                    info(f"Generated items.parquet for '{coll_id}'")
+            except Exception as e:
+                # Explicit --stac-geoparquet should fail the command
+                if generate_parquet:
+                    raise
+                # Auto-generation failures just warn
+                warn(f"Failed to generate parquet for '{coll_id}': {e}")
+        elif show_hints and should_suggest_parquet(coll_path, threshold=threshold):
+            info(
+                f"Hint: Collection '{coll_id}' has {item_count} items (>{threshold}). "
+                f"Consider running: portolan stac-geoparquet -c {coll_id}"
+            )
