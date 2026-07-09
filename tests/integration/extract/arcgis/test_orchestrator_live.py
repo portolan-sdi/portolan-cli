@@ -14,10 +14,10 @@ import pytest
 
 from portolan_cli.extract.arcgis.orchestrator import (
     ExtractionOptions,
-    ExtractionProgress,
     extract_arcgis_catalog,
     list_services,
 )
+from portolan_cli.extract.common.progress import ExtractionProgress
 
 # Philadelphia's public ArcGIS services (stable, open data)
 # See: https://services.arcgis.com/fLeGjb7u4uXqeF9q/ArcGIS/rest/services

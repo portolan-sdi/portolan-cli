@@ -11,6 +11,7 @@ from portolan_cli.extract.common.filters import (
     filter_layers,
     filter_services,
 )
+from portolan_cli.extract.common.progress import ExtractionProgress
 from portolan_cli.extract.common.report import (
     ExtractionReport,
     ExtractionSummary,
@@ -43,7 +44,6 @@ from portolan_cli.extract.wfs.metadata import (
 )
 from portolan_cli.extract.wfs.orchestrator import (
     ExtractionOptions,
-    ExtractionProgress,
     extract_wfs_catalog,
 )
 
