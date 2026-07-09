@@ -262,12 +262,16 @@ class TestAddExternal:
         assert via_links[0]["href"] == "https://docs.overturemaps.org/guides/places/"
 
     def test_no_local_file_written(self, tmp_path: Path) -> None:
-        """Nothing is downloaded: only metadata JSON exists in the collection."""
+        """Nothing is downloaded: only metadata sidecars exist in the collection.
+
+        AGENTS.md is scaffolded alongside collection.json (ADR-0052) — it is
+        metadata, not downloaded data, so the "no local data file" invariant holds.
+        """
         setup_catalog(tmp_path)
         add_external(catalog_root=tmp_path, url=OVERTURE_URL, collection_id="overture-places")
         collection_dir = tmp_path / "overture-places"
         files = sorted(p.name for p in collection_dir.iterdir())
-        assert files == ["collection.json"]
+        assert files == ["AGENTS.md", "collection.json"]
 
     def test_links_collection_into_root_catalog(self, tmp_path: Path) -> None:
         setup_catalog(tmp_path)

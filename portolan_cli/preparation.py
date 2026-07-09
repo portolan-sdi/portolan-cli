@@ -63,11 +63,14 @@ logger = logging.getLogger(__name__)
 
 # Files to ignore when scanning item directories for assets.
 # These are STAC/Portolan structural files, not user data.
+# AGENTS.md is referenced via a rel="agents" link, not tracked as an asset
+# (ADR-0052: "AGENTS.md is a link, not an asset").
 IGNORED_FILES: frozenset[str] = frozenset(
     {
         "catalog.json",
         "collection.json",
         "versions.json",
+        "AGENTS.md",
     }
 )
 

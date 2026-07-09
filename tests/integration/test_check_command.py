@@ -729,10 +729,15 @@ class TestCheckMetadataFixFlag:
                     # this test stays focused on the scanner's empty report.
                     "title": "Test Catalog",
                     "description": "Test",
-                    "links": [],
+                    # AGENTS.md link present so RULE-0080 / repair_agents_md are a
+                    # no-op and this test stays focused on the empty scanner report.
+                    "links": [
+                        {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"},
+                    ],
                 }
             )
         )
+        (catalog_dir / "AGENTS.md").write_text("# AGENTS.md — Test Catalog\n")
 
         # Run check --metadata --fix (should not error even with empty catalog)
         result = runner.invoke(

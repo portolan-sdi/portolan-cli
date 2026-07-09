@@ -1207,11 +1207,12 @@ class TestMultiAssetProperties:
 
     @pytest.mark.unit
     def test_ignored_files_are_stac_structural(self) -> None:
-        """IGNORED_FILES contains only STAC structural files."""
+        """IGNORED_FILES contains only STAC structural files and metadata links."""
         from portolan_cli.add import IGNORED_FILES
 
-        # These are the structural files that should never be assets
-        expected = {"catalog.json", "collection.json", "versions.json"}
+        # Structural files and link targets that must never be tracked as assets.
+        # AGENTS.md is referenced via a rel="agents" link, not an asset (ADR-0052).
+        expected = {"catalog.json", "collection.json", "versions.json", "AGENTS.md"}
         assert IGNORED_FILES == frozenset(expected)
 
     @pytest.mark.unit
