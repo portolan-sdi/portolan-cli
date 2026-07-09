@@ -466,6 +466,16 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot update catalog.json with self link: {e}") from e
 
+    # Step 4b: AGENTS.md - scaffold the AI/agent guide and add its rel="agents"
+    # link (ADR-0052, RULE-0080). Emitting it here keeps freshly-created catalogs
+    # schema-valid without a follow-up `check --fix`.
+    from portolan_cli.agents_md import ensure_agents_md
+
+    try:
+        ensure_agents_md(catalog_file)
+    except OSError as e:
+        raise CatalogInitError(f"Cannot write AGENTS.md: {e}") from e
+
     # Step 5: config.yaml - sentinel file per issue #290 (sufficient for MANAGED state)
     # Written LAST for atomicity: if any previous step fails, directory stays FRESH
     # and init can be safely retried. Also serves as user configuration file for
@@ -614,6 +624,12 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
         }
 
         catalog_file.write_text(json.dumps(catalog_data, indent=2))
+
+        # Intermediate catalogs are catalogs too: scaffold AGENTS.md and add the
+        # rel="agents" link so every catalog.json satisfies RULE-0080.
+        from portolan_cli.agents_md import ensure_agents_md
+
+        ensure_agents_md(catalog_file)
 
 
 def update_catalog_links_for_nested(catalog_root: Path, collection_id: str) -> None:

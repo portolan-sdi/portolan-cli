@@ -42,10 +42,18 @@
         },
         "links": {
           "type": "array",
-          "description": "Catalog links. MUST use relative paths (SELF_CONTAINED catalog type).",
+          "description": "Catalog links. MUST use relative paths (SELF_CONTAINED catalog type). MUST contain a rel='agents' AGENTS.md link (RULE-0080).",
           "items": {
             "$ref": "#/$defs/CatalogLink"
-          }
+          },
+          "contains": {
+            "type": "object",
+            "properties": {
+              "rel": { "const": "agents" }
+            },
+            "required": ["rel"]
+          },
+          "minContains": 1
         }
       }
     },
@@ -57,7 +65,7 @@
         "rel": {
           "type": "string",
           "description": "Link relation type",
-          "examples": ["root", "self", "child", "parent", "item", "llms"]
+          "examples": ["root", "self", "child", "parent", "item", "agents"]
         },
         "href": {
           "type": "string",
@@ -118,18 +126,18 @@
         {
           "if": {
             "properties": {
-              "rel": { "const": "llms" }
+              "rel": { "const": "agents" }
             },
             "required": ["rel"]
           },
           "then": {
-            "description": "LLM integration link - MUST point to llms.txt with text/markdown type",
+            "description": "AI/agent integration link - MUST point to AGENTS.md with text/markdown type",
             "required": ["type"],
             "properties": {
               "href": {
                 "type": "string",
-                "pattern": "(^|/)llms\\.txt$",
-                "description": "Must point to llms.txt file"
+                "pattern": "(^|/)AGENTS\\.md$",
+                "description": "Must point to AGENTS.md file"
               },
               "type": {
                 "const": "text/markdown"

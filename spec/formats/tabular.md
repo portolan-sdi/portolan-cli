@@ -161,7 +161,7 @@ When conversion is enabled (`tabular.convert: true`), both the source file and c
 eurostat-electricity-prices/
   collection.json
   versions.json
-  llms.txt
+  AGENTS.md
   electricity-prices.parquet
   electricity-prices.csv        (source, if converted)
 ```
@@ -214,7 +214,7 @@ No item directory or item JSON is needed.
     {"rel": "parent", "href": "../catalog.json", "type": "application/json"},
     {"rel": "self", "href": "./collection.json", "type": "application/json"},
     {"rel": "version-history", "href": "./versions.json", "type": "application/json"},
-    {"rel": "llms", "href": "./llms.txt", "type": "text/markdown", "title": "Agent/LLM usage guide"},
+    {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown", "title": "Agent/LLM usage guide"},
     {
       "rel": "via",
       "href": "https://ec.europa.eu/eurostat/databrowser/view/nrg_pc_205/default/table",
@@ -236,4 +236,4 @@ For tabular collections:
 - **No spatial extent requirement** — `extent.spatial` is optional
 - **No geometry validation** — there is no geometry to validate
 
-All other Portolan core requirements apply unchanged: absolute S3 asset hrefs (when published), relative STAC links, `providers`, provenance via `rel: "via"`, `README.md`, `llms.txt`, and `versions.json` tracking.
+All other Portolan core requirements apply unchanged: absolute S3 asset hrefs (when published), relative STAC links, `providers`, provenance via `rel: "via"`, `README.md`, `AGENTS.md`, and `versions.json` tracking.

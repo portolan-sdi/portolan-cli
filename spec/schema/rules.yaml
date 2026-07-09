@@ -438,18 +438,18 @@ rules:
   - id: RULE-0080
     level: error
     scope: catalog
-    description: Catalogs MUST include llms.txt link
+    code_rule: agents_md_catalog_link
+    description: Catalogs MUST include AGENTS.md link
     rationale: |
       AI agents and LLMs are a primary audience for Portolan catalogs.
-      The llms.txt file provides context that STAC metadata alone cannot:
+      The AGENTS.md file provides context that STAC metadata alone cannot:
       plain-language descriptions, usage examples, and pitfalls to avoid.
     validation: |
       For catalog.json:
-        assert any link has rel="llms"
-        if link with rel="llms" exists:
-          assert link.href ends with "llms.txt"
-          assert link.type == "text/markdown"
-          assert file exists at link.href
+        assert any link has rel="agents"
+        assert link.href ends with "AGENTS.md"
+        assert link.type == "text/markdown"
+        assert file exists at link.href
     references:
       - ai-integration.md
       - core.md#ai--llm-integration
@@ -457,17 +457,17 @@ rules:
   - id: RULE-0081
     level: error
     scope: collection
-    description: Collections MUST include llms.txt link
+    code_rule: agents_md_collection_link
+    description: Collections MUST include AGENTS.md link
     rationale: |
-      Collection-level llms.txt provides everything an agent needs to work
+      Collection-level AGENTS.md provides everything an agent needs to work
       with a specific collection: schema docs, query examples, data quality notes.
     validation: |
       For each collection.json:
-        assert any link has rel="llms"
-        if link with rel="llms" exists:
-          assert link.href ends with "llms.txt"
-          assert link.type == "text/markdown"
-          assert file exists at link.href
+        assert any link has rel="agents"
+        assert link.href ends with "AGENTS.md"
+        assert link.type == "text/markdown"
+        assert file exists at link.href
     references:
       - ai-integration.md
       - core.md#ai--llm-integration
@@ -475,32 +475,32 @@ rules:
   - id: RULE-0082
     level: warning
     scope: catalog
-    description: Catalog llms.txt SHOULD include recommended content
+    description: Catalog AGENTS.md SHOULD include recommended content
     rationale: |
-      Effective llms.txt files follow established patterns for maximum utility.
+      Effective AGENTS.md files follow established patterns for maximum utility.
       Missing key sections reduce the file's value to AI agents.
     validation: |
-      For catalog llms.txt:
+      For catalog AGENTS.md:
         warn if file does not mention collections or items
         warn if no code examples present
         warn if no license information present
     references:
-      - ai-integration.md#catalog-level-llmstxt
+      - ai-integration.md#catalog-level-agentsmd
 
   - id: RULE-0083
     level: warning
     scope: collection
-    description: Collection llms.txt SHOULD include recommended content
+    description: Collection AGENTS.md SHOULD include recommended content
     rationale: |
-      Collection llms.txt should enable agents to immediately work with the data.
+      Collection AGENTS.md should enable agents to immediately work with the data.
       Schema documentation and query examples are particularly valuable.
     validation: |
-      For collection llms.txt:
+      For collection AGENTS.md:
         warn if no schema/field documentation present
         warn if no code/query examples present
         warn if no data access URLs present
     references:
-      - ai-integration.md#collection-level-llmstxt
+      - ai-integration.md#collection-level-agentsmd
 
   # =============================================================================
   # Tabular (Non-Geospatial) Data Rules

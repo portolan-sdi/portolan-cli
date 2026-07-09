@@ -81,6 +81,11 @@ class TestShippedSchemaValidatesRealOutput:
             errors = validate_document(data, catalog_schema)
             assert not errors, "shipped catalog schema rejected init output:\n" + "\n".join(errors)
 
+            # RULE-0080: init scaffolds AGENTS.md next to catalog.json (ADR-0052).
+            agents = Path("AGENTS.md")
+            assert agents.exists(), "init did not scaffold AGENTS.md"
+            assert "AGENTS.md" in agents.read_text(encoding="utf-8")
+
     @pytest.mark.integration
     def test_add_collection_conforms_to_shipped_schemas(
         self,
@@ -111,6 +116,11 @@ class TestShippedSchemaValidatesRealOutput:
             col_errors = validate_document(collection, collection_schema)
             assert not col_errors, "shipped collection schema rejected add output:\n" + "\n".join(
                 col_errors
+            )
+
+            # RULE-0081: add scaffolds AGENTS.md next to collection.json (ADR-0052).
+            assert (collection_dir / "AGENTS.md").exists(), (
+                "add did not scaffold a collection-level AGENTS.md"
             )
 
 
@@ -162,6 +172,65 @@ class TestShippedSchemaEnforcesConstraints:
         errors = validate_document(bad_catalog, catalog_schema)
         assert errors, "shipped catalog schema accepted a child link with no title"
 
+    @pytest.mark.unit
+    def test_catalog_without_agents_link_is_rejected(self, catalog_schema: dict[str, Any]) -> None:
+        # RULE-0080: catalogs MUST carry a rel="agents" AGENTS.md link. An empty
+        # links array is otherwise schema-valid (see the good_catalog below), so
+        # the differential isolates the requirement: adding only the agents link
+        # must remove an error and make the catalog conform.
+        base = {
+            "type": "Catalog",
+            "stac_version": "1.1.0",
+            "id": "x",
+            "title": "Title",
+            "description": "d",
+            "links": [],
+        }
+        with_agents = {
+            **base,
+            "links": [{"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"}],
+        }
+        errors_without = validate_document(base, catalog_schema)
+        errors_with = validate_document(with_agents, catalog_schema)
+        assert errors_without, "shipped catalog schema accepted a catalog with no rel='agents' link"
+        assert not errors_with, (
+            f"catalog with a rel='agents' link should conform, got: {errors_with}"
+        )
+
+    @pytest.mark.unit
+    def test_collection_without_agents_link_is_rejected(
+        self, collection_schema: dict[str, Any]
+    ) -> None:
+        # RULE-0081: collections MUST carry a rel="agents" AGENTS.md link. Only
+        # the links differ between the two documents, so a strictly smaller error
+        # count with the link present proves the missing link is what is rejected.
+        base = {
+            "type": "Collection",
+            "stac_version": "1.1.0",
+            "id": "c",
+            "title": "Collection",
+            "description": "d",
+            "license": "CC0-1.0",
+            "extent": {
+                "spatial": {"bbox": [[-1, -1, 1, 1]]},
+                "temporal": {"interval": [[None, None]]},
+            },
+            "links": [{"rel": "root", "href": "../catalog.json", "title": "Root"}],
+        }
+        with_agents = {
+            **base,
+            "links": [
+                *base["links"],
+                {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"},
+            ],
+        }
+        errors_without = validate_document(base, collection_schema)
+        errors_with = validate_document(with_agents, collection_schema)
+        assert len(errors_without) > len(errors_with), (
+            "adding a rel='agents' link should resolve at least one schema error "
+            f"(without={errors_without}, with={errors_with})"
+        )
+
 
 class TestValidationIsHermetic:
     """Validation must resolve the STAC $refs offline and never fall back to the network."""
@@ -189,7 +258,9 @@ class TestValidationIsHermetic:
             "id": "x",
             "title": "Title",
             "description": "d",
-            "links": [],
+            "links": [
+                {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"},
+            ],
         }
         # Resolves the STAC base $ref from the vendored bundle AND accepts a
         # conformant catalog -- with no network access. Asserting == [] (not just

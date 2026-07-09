@@ -13,6 +13,12 @@
       "rel": "self",
       "href": "./catalog.json",
       "type": "application/json"
+    },
+    {
+      "rel": "agents",
+      "href": "./AGENTS.md",
+      "type": "text/markdown",
+      "title": "Agent/LLM usage guide"
     }
   ]
 }

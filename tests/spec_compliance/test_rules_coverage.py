@@ -49,6 +49,8 @@ _EXEMPT_ERROR_RULES: frozenset[str] = frozenset(
 
 # The rules added for Issue #562, with their expected (level, scope, code_rule).
 _NEW_RULES: dict[str, tuple[str, str, str]] = {
+    "RULE-0080": ("error", "catalog", "agents_md_catalog_link"),
+    "RULE-0081": ("error", "collection", "agents_md_collection_link"),
     "RULE-0100": ("error", "catalog", "mandatory_titles"),
     "RULE-0101": ("error", "collection", "mandatory_titles"),
     "RULE-0102": ("error", "catalog", "mandatory_titles"),

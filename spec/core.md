@@ -11,11 +11,11 @@ project/
 ├── .portolan/
 │   └── config.yaml
 ├── catalog.json
-├── llms.txt
+├── AGENTS.md
 ├── versions.json
 └── {collection_id}/
     ├── collection.json
-    ├── llms.txt
+    ├── AGENTS.md
     ├── versions.json
     └── {item_id}/
         └── data.parquet
@@ -137,8 +137,8 @@ This is standard STAC practice for provenance and enables consumers to trace dat
 
 ## AI & LLM Integration
 
-- **MUST** include an `llms.txt` file at both the catalog root and each collection directory
-- **MUST** link `llms.txt` in the STAC JSON `links` array with `rel: "llms"`
+- **MUST** include an `AGENTS.md` file at both the catalog root and each collection directory
+- **MUST** link `AGENTS.md` in the STAC JSON `links` array with `rel: "agents"`
 
 See [ai-integration.md](ai-integration.md) for full requirements and content recommendations.
 
