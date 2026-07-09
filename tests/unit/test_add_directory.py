@@ -148,9 +148,9 @@ class TestAddDirectory:
         (item_dir / "data.geojson").write_text(valid_geojson)
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
@@ -207,11 +207,11 @@ class TestAddDirectory:
         (item_dir / "b.tif").write_bytes(b"fake tiff")
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert_v,
-            patch("portolan_cli.add.convert_raster") as mock_convert_r,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_meta_v,
-            patch("portolan_cli.add.extract_cog_metadata") as mock_meta_r,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert_v,
+            patch("portolan_cli.preparation.convert_raster") as mock_convert_r,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_meta_v,
+            patch("portolan_cli.preparation.extract_cog_metadata") as mock_meta_r,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
 
@@ -298,9 +298,9 @@ class TestAddDirectory:
         (deep_item_dir / "deep.geojson").write_text(valid_geojson)
 
         with (
-            patch("portolan_cli.add.detect_format") as mock_detect,
-            patch("portolan_cli.add.convert_vector") as mock_convert,
-            patch("portolan_cli.add.extract_geoparquet_metadata") as mock_metadata,
+            patch("portolan_cli.preparation.detect_format") as mock_detect,
+            patch("portolan_cli.preparation.convert_vector") as mock_convert,
+            patch("portolan_cli.preparation.extract_geoparquet_metadata") as mock_metadata,
             patch("portolan_cli.add.compute_checksum") as mock_checksum,
         ):
             mock_detect.return_value = FormatType.VECTOR
