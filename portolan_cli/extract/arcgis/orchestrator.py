@@ -472,7 +472,8 @@ def _extract_one_layer(
             attempts=result.attempts,
         )
 
-    emit_progress(on_progress, index, total, layer.name, "failed")
+    error_msg = str(result.error) if result.error else "Unknown error"
+    emit_progress(on_progress, index, total, layer.name, "failed", error=error_msg)
     return LayerResult(
         id=layer.id,
         name=layer.name,
@@ -482,7 +483,7 @@ def _extract_one_layer(
         duration_seconds=0.0,
         output_path="",
         warnings=[],
-        error=str(result.error) if result.error else "Unknown error",
+        error=error_msg,
         attempts=result.attempts,
     )
 
@@ -1125,6 +1126,7 @@ def _extract_services_root(
             )
             emit_progress(on_progress, progress_idx, total, layer.name, "success")
         else:
+            error_msg = str(result.error) if result.error else "Unknown error"
             layer_results.append(
                 LayerResult(
                     id=layer.id,
@@ -1135,11 +1137,11 @@ def _extract_services_root(
                     duration_seconds=0.0,
                     output_path="",
                     warnings=[],
-                    error=str(result.error) if result.error else "Unknown error",
+                    error=error_msg,
                     attempts=result.attempts,
                 )
             )
-            emit_progress(on_progress, progress_idx, total, layer.name, "failed")
+            emit_progress(on_progress, progress_idx, total, layer.name, "failed", error=error_msg)
 
     # Build and save report
     combined_discovery = ServiceDiscoveryResult(
