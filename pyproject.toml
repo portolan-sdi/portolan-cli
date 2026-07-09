@@ -300,7 +300,10 @@ forbidden_modules = ["portolan_cli.backends"]
 # cli.py uses these modules as a clean interface; direct cli->backends is still forbidden.
 ignore_imports = [
     "portolan_cli.catalog -> portolan_cli.backends",
-    "portolan_cli.add -> portolan_cli.backends",
+    # finalize_items routes version snapshots to the active backend (#624 moved
+    # this edge out of add.py into finalization.py); cli reaches it only via the
+    # library layer, so the direct cli->backends ban still holds (ADR-0007).
+    "portolan_cli.finalization -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends",
     "portolan_cli.version_ops -> portolan_cli.backends.protocol",
     "portolan_cli.cli -> portolan_cli.backends.protocol",  # TYPE_CHECKING only

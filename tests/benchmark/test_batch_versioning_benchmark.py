@@ -95,7 +95,7 @@ class TestBatchVersioningPerformance:
             write_count += 1
             return original_write(*args, **kwargs)
 
-        with patch("portolan_cli.add.write_versions", side_effect=counting_write):
+        with patch("portolan_cli.finalization.write_versions", side_effect=counting_write):
             add_files(
                 paths=files,
                 catalog_root=benchmark_catalog,
@@ -199,7 +199,7 @@ class TestBatchVersioningPerformance:
             write_count += 1
             return original_write(*args, **kwargs)
 
-        with patch("portolan_cli.add.write_versions", side_effect=counting_write):
+        with patch("portolan_cli.finalization.write_versions", side_effect=counting_write):
             add_directory(
                 path=collection_dir,
                 catalog_root=benchmark_catalog,

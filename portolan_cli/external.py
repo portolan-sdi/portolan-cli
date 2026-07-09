@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 import pystac
 
-from portolan_cli.add import _save_collection_with_links
+from portolan_cli.finalization import _save_collection_with_links
 from portolan_cli.preparation import _validate_collection_id
 from portolan_cli.stac import (
     DEFAULT_LICENSE,

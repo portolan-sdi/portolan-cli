@@ -470,7 +470,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_standard_semver(self) -> None:
         """_increment_version increments standard semver correctly."""
-        from portolan_cli.add import _increment_version
+        from portolan_cli.versions import _increment_version
 
         assert _increment_version("1.2.3") == "1.2.4"
         assert _increment_version("0.0.1") == "0.0.2"
@@ -479,7 +479,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_prerelease_semver(self) -> None:
         """_increment_version handles pre-release versions."""
-        from portolan_cli.add import _increment_version
+        from portolan_cli.versions import _increment_version
 
         # Pre-release with number suffix
         assert _increment_version("1.0.0-beta.1") == "1.0.0-beta.2"
@@ -489,7 +489,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_prerelease_no_number(self) -> None:
         """_increment_version handles pre-release without number."""
-        from portolan_cli.add import _increment_version
+        from portolan_cli.versions import _increment_version
 
         # Pre-release without number suffix appends .1 (preserves prerelease tag)
         result = _increment_version("1.0.0-beta")
@@ -502,7 +502,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_empty_version(self) -> None:
         """_increment_version handles empty version."""
-        from portolan_cli.add import _increment_version
+        from portolan_cli.versions import _increment_version
 
         assert _increment_version("") == "0.0.1"
         assert _increment_version(None) == "0.0.1"  # type: ignore[arg-type]
@@ -510,7 +510,7 @@ class TestIncrementVersionProperties:
     @pytest.mark.unit
     def test_increment_short_version(self) -> None:
         """_increment_version handles short version strings."""
-        from portolan_cli.add import _increment_version
+        from portolan_cli.versions import _increment_version
 
         assert _increment_version("1") == "1.0.1"
         assert _increment_version("1.0") == "1.0.1"
@@ -523,7 +523,7 @@ class TestIncrementVersionProperties:
         length is not < 3, so the old fallback returned the input unchanged - a
         no-op that stalls version bumps. The result must differ from the input.
         """
-        from portolan_cli.add import _increment_version
+        from portolan_cli.versions import _increment_version
 
         for version in ("1.2.3rc1", "1.2.foo", "2.5.9beta"):
             result = _increment_version(version)
