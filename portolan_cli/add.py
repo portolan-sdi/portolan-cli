@@ -401,11 +401,6 @@ def _maybe_partition_large_file(
 
     return partitioned_items
 
-    # Shapefile: existence of .shp implies geometry (inherent to format)
-    # Rasters: inherently have bbox (extent is required for geotiff)
-    # Other formats: let conversion handle validation
-    # (We can't easily pre-validate without heavy dependencies)
-
 
 def _deduplicate_collection_item_links(collection: pystac.Collection) -> None:
     """De-duplicate item links in a PySTAC collection.

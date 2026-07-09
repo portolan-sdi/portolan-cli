@@ -170,8 +170,13 @@ def _scan_item_assets(
     primary_stem = primary_file.stem
 
     for file_path in item_dir.iterdir():
-        # Skip symlinks and hidden files unconditionally
+        # Skip hidden files and symlinks unconditionally. The symlink check must
+        # precede is_dir()/is_file() branching below: is_dir() follows symlinks,
+        # so a symlinked .gdb directory would otherwise be checksummed as a
+        # container asset, escaping the intended item boundary.
         if file_path.name.startswith("."):
+            continue
+        if file_path.is_symlink():
             continue
 
         # Issue #465: skip siblings that belong to OTHER items in this batch.
@@ -199,8 +204,6 @@ def _scan_item_assets(
             file_media_type = "application/x-filegdb"
             file_role = "data"
         elif file_path.is_file():
-            if file_path.is_symlink():
-                continue
             file_checksum = compute_checksum(file_path)
             file_size = file_path.stat().st_size
             file_media_type = _get_media_type(file_path)

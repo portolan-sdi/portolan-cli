@@ -21,6 +21,7 @@ from portolan_cli.preparation import (
     _extract_statistics_best_effort,
     _fix_collection_level_asset_hrefs,
     _handle_cloud_native_vector,
+    _scan_item_assets,
     _validate_collection_id,
 )
 
@@ -256,6 +257,40 @@ class TestValidateCollectionId:
     def test_rejects_unsafe_ids(self, bad: str) -> None:
         with pytest.raises(ValueError):
             _validate_collection_id(bad)
+
+
+class TestScanItemAssetsSymlinks:
+    """_scan_item_assets rejects symlinks before is_dir()/is_file() branching."""
+
+    def test_symlinked_filegdb_directory_is_not_tracked(self, tmp_path: Path) -> None:
+        """A symlinked .gdb dir must be skipped, not checksummed as a container.
+
+        is_dir() follows symlinks, so before the fix a symlinked FileGDB
+        directory reached the is_filegdb() container path and got tracked,
+        escaping the item boundary. Pin that it is now excluded.
+        """
+        collection_dir = tmp_path / "roads"
+        collection_dir.mkdir()
+        primary = collection_dir / "roads.parquet"
+        primary.write_bytes(b"parquet")
+
+        # A real FileGDB lives outside the item; a symlink to it sits inside.
+        real_gdb = tmp_path / "external" / "roads.gdb"
+        real_gdb.mkdir(parents=True)
+        (real_gdb / "a00000001.gdbtable").write_bytes(b"gdbtable")
+        (collection_dir / "linked.gdb").symlink_to(real_gdb, target_is_directory=True)
+
+        stac_assets, asset_files, _ = _scan_item_assets(
+            item_dir=collection_dir,
+            item_id="roads",
+            primary_file=primary,
+            collection_dir=collection_dir,
+        )
+
+        assert "linked.gdb" not in asset_files
+        assert all("linked.gdb" not in a.href for a in stac_assets.values())
+        # The genuine primary file is still tracked.
+        assert "roads.parquet" in asset_files
 
 
 class TestExtractBboxWgs84:
