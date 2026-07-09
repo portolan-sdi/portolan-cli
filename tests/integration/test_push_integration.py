@@ -581,6 +581,49 @@ class TestPushJSONOutput:
             assert output_data["success"] is False
             assert "errors" in output_data
 
+    @pytest.mark.integration
+    def test_push_json_returned_failure_is_not_reported_as_success(
+        self, catalog_with_versions: Path
+    ) -> None:
+        """A returned PushResult(success=False) must yield success=False and exit 1.
+
+        Regression: the handler emitted the success envelope unconditionally, so a
+        failed push was reported as ``success: true`` with exit 0 in JSON mode.
+        """
+        from portolan_cli.cli import cli
+        from portolan_cli.push import PushResult
+
+        runner = CliRunner()
+
+        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
+            mock_push.return_value = PushResult(
+                success=False,
+                files_uploaded=0,
+                versions_pushed=0,
+                conflicts=[],
+                errors=["Upload failed: connection reset"],
+            )
+
+            result = runner.invoke(
+                cli,
+                [
+                    "--format",
+                    "json",
+                    "push",
+                    "s3://mybucket/catalog",
+                    "--collection",
+                    "demographics",
+                    "--catalog",
+                    str(catalog_with_versions),
+                ],
+            )
+
+            assert result.exit_code == 1
+            output_data = json.loads(result.output)
+            assert output_data["success"] is False
+            assert output_data["command"] == "push"
+            assert output_data["errors"][0]["message"] == "Upload failed: connection reset"
+
 
 # =============================================================================
 # Dry-run Behavior Tests
