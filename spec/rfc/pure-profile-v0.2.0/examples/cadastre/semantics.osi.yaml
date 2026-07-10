@@ -1,0 +1,41 @@
+# OSI semantic model (illustrative) — Finland cadastre
+# Canonical description of the multi-table model. STAC's osi:relations / osi:metrics summarize this.
+osi_version: "0.1.0"
+model:
+  name: fi_cadastre
+  description: Cadastral model — parcels, buildings on them, and ownership records.
+
+  entities:
+    parcels:
+      primary_key: parcel_id
+      geometry: { column: geometry, type: polygon, crs: "EPSG:3067" }
+      attributes:
+        - { name: parcel_id, type: string, description: Cadastral parcel identifier. }
+        - { name: municipality_code, type: string }
+        - { name: area_m2, type: double }
+    buildings:
+      primary_key: building_id
+      geometry: { column: geometry, type: polygon, crs: "EPSG:3067" }
+      attributes:
+        - { name: building_id, type: string }
+        - { name: parcel_id, type: string, description: FK to parcels.parcel_id. }
+        - { name: use, type: string }
+    ownerships:
+      primary_key: ownership_id
+      geometry: null            # non-spatial table inside a spatial model
+      attributes:
+        - { name: ownership_id, type: string }
+        - { name: parcel_id, type: string, description: FK to parcels.parcel_id. }
+        - { name: owner_name, type: string }
+        - { name: share_pct, type: double }
+
+  relations:
+    - { from: buildings,  to: parcels, on: parcel_id, cardinality: "N:1" }
+    - { from: ownerships, to: parcels, on: parcel_id, cardinality: "N:1" }
+    # spatial-predicate relation (no stored key) — proposed OSI spatial capability
+    - { from: buildings,  to: parcels, predicate: ST_Within, spatial: true, cardinality: "N:1" }
+
+  metrics:
+    - { name: total_parcel_area_km2, expression: "sum(parcels.area_m2) / 1e6" }
+    - { name: building_count,        expression: "count(buildings.building_id)" }
+    - { name: avg_ownership_share,   expression: "avg(ownerships.share_pct)" }

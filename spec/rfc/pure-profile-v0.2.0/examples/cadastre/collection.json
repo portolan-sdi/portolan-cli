@@ -1,0 +1,76 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
+    "https://stac-extensions.github.io/alternate-assets/v1.2.0/schema.json",
+    "https://portolan-sdi.github.io/stac-osi-extension/v0.1.1/schema.json"
+  ],
+  "id": "fi-cadastre",
+  "title": "Finland cadastre (Uusimaa sample)",
+  "description": "A multi-table data model published as ONE Portolan collection (a product released as a unit): parcels (polygons), buildings (polygons, one per building), and ownerships (non-spatial records). Each table is a data asset; the join graph, meaning and metrics live in the linked OSI semantic model — including a spatial-predicate relation (buildings ST_Within parcels). Coordinates EPSG:3067; STAC bbox is WGS84. See AGENTS.md.",
+  "license": "CC-BY-4.0",
+  "conformsTo": [
+    "https://portolan-sdi.github.io/spec/v0.2.0/core"
+  ],
+  "keywords": ["cadastre", "parcels", "buildings", "ownership", "Finland", "data model"],
+  "providers": [
+    { "name": "National Land Survey of Finland (NLS)", "roles": ["producer", "licensor"], "url": "https://www.maanmittauslaitos.fi/en" },
+    { "name": "Example Org", "roles": ["processor", "host"], "url": "https://example.org" }
+  ],
+  "extent": {
+    "spatial": { "bbox": [[23.0, 59.9, 26.0, 60.8]] },
+    "temporal": { "interval": [["2024-01-01T00:00:00Z", null]] }
+  },
+  "osi:version": "0.1.0",
+  "osi:semantic_model_href": "./semantics.osi.yaml",
+  "osi:metrics": [
+    { "name": "total_parcel_area_km2", "description": "Sum of parcel areas over the model AOI." },
+    { "name": "building_count", "description": "Number of building rows." },
+    { "name": "avg_ownership_share", "description": "Average ownership share across ownership records." }
+  ],
+  "osi:relations": [
+    { "from": "buildings", "to": "parcels", "on": "parcel_id", "cardinality": "N:1" },
+    { "from": "ownerships", "to": "parcels", "on": "parcel_id", "cardinality": "N:1" },
+    { "from": "buildings", "to": "parcels", "predicate": "ST_Within", "spatial": true, "cardinality": "N:1" }
+  ],
+  "assets": {
+    "parcels": {
+      "href": "https://example-bucket.s3.eu-north-1.amazonaws.com/fi/cadastre/parcels/",
+      "type": "application/vnd.apache.parquet",
+      "roles": ["data"],
+      "title": "Parcels (GeoParquet)",
+      "description": "Cadastral parcels. PK parcel_id; geometry polygon (WKB, EPSG:3067). Schema self-describing in the files; meaning in the OSI model.",
+      "proj:code": "EPSG:3067"
+    },
+    "buildings": {
+      "href": "https://example-bucket.s3.eu-north-1.amazonaws.com/fi/cadastre/buildings/",
+      "type": "application/vnd.apache.parquet",
+      "roles": ["data"],
+      "title": "Buildings (GeoParquet)",
+      "description": "Buildings on parcels. PK building_id; FK parcel_id → parcels; geometry polygon (WKB, EPSG:3067).",
+      "proj:code": "EPSG:3067"
+    },
+    "ownerships": {
+      "href": "https://example-bucket.s3.eu-north-1.amazonaws.com/fi/cadastre/ownerships/",
+      "type": "application/vnd.apache.parquet",
+      "roles": ["data"],
+      "title": "Ownerships (Parquet, non-spatial)",
+      "description": "Ownership records. PK ownership_id; FK parcel_id → parcels; owner_name, share_pct. No geometry — a non-spatial table inside the model."
+    },
+    "osi_model": {
+      "href": "./semantics.osi.yaml",
+      "type": "application/yaml",
+      "roles": ["metadata"],
+      "title": "OSI semantic model",
+      "description": "Canonical description of entities, relations (incl. spatial-predicate), metrics and meaning for this model. STAC's osi:relations/osi:metrics are a denormalized summary of this."
+    }
+  },
+  "links": [
+    { "rel": "root", "href": "../catalog.json", "type": "application/json" },
+    { "rel": "parent", "href": "../catalog.json", "type": "application/json" },
+    { "rel": "agents", "href": "./AGENTS.md", "type": "text/markdown", "title": "Dataset agent guide" },
+    { "rel": "version-history", "href": "./versions.json", "type": "application/json", "title": "Version manifest" },
+    { "rel": "via", "href": "https://www.maanmittauslaitos.fi/en/maps-and-spatial-data/expert-users/product-descriptions/cadastral-index-map", "type": "text/html", "title": "Source: NLS cadastral data" }
+  ]
+}

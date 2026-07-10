@@ -1,0 +1,65 @@
+{
+  "type": "Collection",
+  "stac_version": "1.1.0",
+  "stac_extensions": [
+    "https://stac-extensions.github.io/table/v1.2.0/schema.json",
+    "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
+    "https://stac-extensions.github.io/alternate-assets/v1.2.0/schema.json"
+  ],
+  "id": "fi-buildings",
+  "title": "Finland building footprints",
+  "description": "Building footprints from the NLS Topographic Database (rakennus feature class). One row per building, ~5.65M rows. GeoParquet, Hive-partitioned by H3 resolution-3 cell (h3_3). Partitions are NOT itemised (too many, not user-meaningful); read the whole dataset with a wildcard glob, or one partition by substituting h3_3. Coordinates in EPSG:3067; STAC bbox is WGS84. See AGENTS.md for query recipes.",
+  "license": "CC-BY-4.0",
+  "conformsTo": [
+    "https://portolan-sdi.github.io/spec/v0.2.0/core"
+  ],
+  "keywords": ["buildings", "footprints", "Finland", "NLS", "GeoParquet"],
+  "providers": [
+    { "name": "National Land Survey of Finland (NLS)", "roles": ["producer", "licensor"], "url": "https://www.maanmittauslaitos.fi/en" },
+    { "name": "Example Org", "roles": ["processor", "host"], "url": "https://example.org" }
+  ],
+  "extent": {
+    "spatial": { "bbox": [[19.0, 59.0, 31.6, 70.1]] },
+    "temporal": { "interval": [["2024-01-01T00:00:00Z", null]] }
+  },
+  "table:primary_geometry": "geometry",
+  "table:row_count": 5650000,
+  "table:columns": [
+    { "name": "mtk_id", "type": "string", "description": "Stable feature id from the source database. Primary key." },
+    { "name": "municipality_code", "type": "string", "description": "Municipality code (kuntakoodi)." },
+    { "name": "use", "type": "string", "description": "Building use class (käyttötarkoitus)." },
+    { "name": "h3_3", "type": "string", "description": "H3 resolution-3 cell id. Hive partition key." },
+    { "name": "geometry", "type": "binary", "description": "Building footprint polygon, WKB, EPSG:3067." }
+  ],
+  "assets": {
+    "data": {
+      "href": "https://example-bucket.s3.eu-north-1.amazonaws.com/fi/buildings/",
+      "type": "application/vnd.apache.parquet",
+      "roles": ["data"],
+      "title": "Building footprints — Hive-partitioned GeoParquet (h3_3=*)",
+      "description": "Directory of GeoParquet partitions. Read all: read_parquet('.../fi/buildings/**/*.parquet', hive_partitioning=true). One partition: substitute h3_3. Schema is self-describing in the files; also restated in table:columns above (CLI-generated).",
+      "proj:code": "EPSG:3067",
+      "alternate:name": "HTTPS",
+      "alternate": {
+        "s3": {
+          "href": "s3://example-bucket/fi/buildings/",
+          "alternate:name": "S3"
+        }
+      }
+    },
+    "tiles": {
+      "href": "https://example-bucket.s3.eu-north-1.amazonaws.com/fi/buildings/buildings.pmtiles",
+      "type": "application/vnd.pmtiles",
+      "roles": ["visual"],
+      "title": "PMTiles vector tiles",
+      "description": "Visualization capability (zero-infra, range-read). Derived from the 'data' asset; regenerate when the data changes. NOTE: formal derived_from + staleness declaration is still an open spec item."
+    }
+  },
+  "links": [
+    { "rel": "root", "href": "../catalog.json", "type": "application/json" },
+    { "rel": "parent", "href": "../catalog.json", "type": "application/json" },
+    { "rel": "agents", "href": "./AGENTS.md", "type": "text/markdown", "title": "Dataset agent guide" },
+    { "rel": "version-history", "href": "./versions.json", "type": "application/json", "title": "Version manifest" },
+    { "rel": "via", "href": "https://www.maanmittauslaitos.fi/en/maps-and-spatial-data/expert-users/product-descriptions/topographic-database", "type": "text/html", "title": "Source: NLS Topographic Database (rakennus)" }
+  ]
+}
