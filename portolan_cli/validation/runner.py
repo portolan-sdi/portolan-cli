@@ -9,8 +9,10 @@ from typing import Any
 from portolan_cli.validation.results import ValidationReport, ValidationResult
 from portolan_cli.validation.rules import (
     BboxValidRule,
+    CatalogAgentsMdLinkRule,
     CatalogExistsRule,
     CatalogJsonValidRule,
+    CollectionAgentsMdLinkRule,
     MetadataFreshRule,
     PartitionSchemaConsistencyRule,
     PartitionStructureRule,
@@ -42,6 +44,8 @@ DEFAULT_RULES: tuple[ValidationRule, ...] = (
     BboxValidRule(),
     PMTilesRecommendedRule(),
     PMTilesLinkRule(),
+    CatalogAgentsMdLinkRule(),
+    CollectionAgentsMdLinkRule(),
     MetadataFreshRule(),
     ProvisionalDatetimeRule(),
     PartitionStructureRule(),
@@ -77,6 +81,8 @@ def _build_rules(
         BboxValidRule(),
         PMTilesRecommendedRule(),
         PMTilesLinkRule(),
+        CatalogAgentsMdLinkRule(),
+        CollectionAgentsMdLinkRule(),
         MetadataFreshRule(),
         ProvisionalDatetimeRule(),
         PartitionStructureRule(),

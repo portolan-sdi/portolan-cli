@@ -40,10 +40,14 @@ def valid_catalog(tmp_path: Path) -> Path:
                 "id": "test-catalog",
                 "title": "Test Catalog",
                 "description": "A test catalog",
-                "links": [],
+                "links": [
+                    {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"},
+                ],
             }
         )
     )
+    # AGENTS.md required at catalog root (ADR-0052, RULE-0080)
+    (tmp_path / "AGENTS.md").write_text("# AGENTS.md — Test Catalog\n")
     # .portolan directory with management files
     portolan_dir = tmp_path / ".portolan"
     portolan_dir.mkdir()

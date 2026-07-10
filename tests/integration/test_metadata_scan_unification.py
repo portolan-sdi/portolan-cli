@@ -47,11 +47,16 @@ def _write_catalog_json(catalog_dir: Path) -> None:
                 "stac_version": "1.1.0",
                 "title": "Test Catalog",
                 "description": "Test catalog",
-                "links": [{"rel": "self", "href": "./catalog.json"}],
+                "links": [
+                    {"rel": "self", "href": "./catalog.json"},
+                    {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"},
+                ],
             },
             indent=2,
         )
     )
+    # AGENTS.md required at catalog root (ADR-0052, RULE-0080)
+    (catalog_dir / "AGENTS.md").write_text("# AGENTS.md — Test Catalog\n")
 
 
 def _write_collection_json(
@@ -72,10 +77,15 @@ def _write_collection_json(
             "spatial": {"bbox": [[-180.0, -90.0, 180.0, 90.0]]},
             "temporal": {"interval": [[None, None]]},
         },
-        "links": [{"rel": "self", "href": "./collection.json"}],
+        "links": [
+            {"rel": "self", "href": "./collection.json"},
+            {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"},
+        ],
         "assets": extra_assets or {},
     }
     (collection_dir / "collection.json").write_text(json.dumps(data, indent=2))
+    # AGENTS.md required at collection level (ADR-0052, RULE-0081)
+    (collection_dir / "AGENTS.md").write_text(f"# AGENTS.md — {collection_id}\n")
 
 
 def _write_item_json(

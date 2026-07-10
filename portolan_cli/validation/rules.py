@@ -657,6 +657,74 @@ class PMTilesLinkRule(ValidationRule):
         return len(pmtiles_hrefs), missing_links, ext_missing
 
 
+class _AgentsMdLinkRule(ValidationRule):
+    """Shared base: every ``<stac_file>`` MUST carry a ``rel="agents"`` AGENTS.md link.
+
+    Implements RULE-0080 (catalogs) / RULE-0081 (collections): every catalog and
+    collection MUST include an ``AGENTS.md`` file referenced by a well-formed
+    ``rel="agents"`` link (ADR-0052). ERROR-level; ``check --fix`` scaffolds the
+    file and backfills the link. Concrete subclasses set ``name`` and the STAC
+    filename they scan.
+    """
+
+    _stac_filename: str
+
+    def check(self, catalog_path: Path) -> ValidationResult:
+        """Fail when any scanned STAC object lacks its AGENTS.md file or link."""
+        # Import from the framework-free leaf, not a CLI/output layer, to respect
+        # the validation-no-framework-leakage import contract.
+        from portolan_cli.agents_md import agents_md_gap
+
+        stac_files = list(catalog_path.rglob(self._stac_filename))
+        if not stac_files:
+            return self._pass(f"No {self._stac_filename} files found")
+
+        problems: list[str] = []
+        checked = 0
+        for stac_json in stac_files:
+            try:
+                rel_dir = stac_json.parent.relative_to(catalog_path)
+            except ValueError:
+                rel_dir = stac_json.parent
+            # Skip internal dirs (e.g. .portolan/) so we never report a gap that
+            # --fix deliberately leaves alone.
+            if any(part.startswith(".") for part in rel_dir.parts):
+                continue
+            checked += 1
+            gap = agents_md_gap(stac_json)
+            if gap is not None:
+                dir_label = str(rel_dir) if rel_dir.parts else "."
+                problems.append(f"{dir_label}: {gap}")
+
+        if problems:
+            preview = "; ".join(problems[:5])
+            suffix = "" if len(problems) <= 5 else f" (+{len(problems) - 5} more)"
+            return self._fail(
+                f"{len(problems)} location(s) missing AGENTS.md: {preview}{suffix}",
+                fix_hint="Run 'portolan check --fix' to scaffold AGENTS.md and add the link",
+            )
+
+        return self._pass(f"All {checked} location(s) have an AGENTS.md link")
+
+
+class CatalogAgentsMdLinkRule(_AgentsMdLinkRule):
+    """RULE-0080: every ``catalog.json`` MUST reference an ``AGENTS.md`` file."""
+
+    name = "agents_md_catalog_link"
+    severity = Severity.ERROR
+    description = "Check every catalog.json emits a rel='agents' AGENTS.md link"
+    _stac_filename = "catalog.json"
+
+
+class CollectionAgentsMdLinkRule(_AgentsMdLinkRule):
+    """RULE-0081: every ``collection.json`` MUST reference an ``AGENTS.md`` file."""
+
+    name = "agents_md_collection_link"
+    severity = Severity.ERROR
+    description = "Check every collection.json emits a rel='agents' AGENTS.md link"
+    _stac_filename = "collection.json"
+
+
 class MetadataFreshRule(ValidationRule):
     """Check that all registered geo-assets have fresh STAC metadata.
 

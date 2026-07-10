@@ -1,0 +1,19 @@
+{
+  "type": "Catalog",
+  "stac_version": "1.1.0",
+  "id": "agents-md-missing-root-link",
+  "title": "AGENTS.md Present But Unlinked",
+  "description": "Regression fixture: AGENTS.md exists on disk but the root catalog.json has no rel='agents' link (reproduces the portolan-nl gap cited in cli#479). RULE-0080 MUST flag this.",
+  "links": [
+    {
+      "rel": "root",
+      "href": "./catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "self",
+      "href": "./catalog.json",
+      "type": "application/json"
+    }
+  ]
+}

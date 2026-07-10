@@ -26,10 +26,14 @@ class TestCheck:
                     "id": "test-catalog",
                     "title": "Test Catalog",
                     "description": "A test catalog",
-                    "links": [],
+                    "links": [
+                        {"rel": "agents", "href": "./AGENTS.md", "type": "text/markdown"},
+                    ],
                 }
             )
         )
+        # AGENTS.md required at catalog root (ADR-0052, RULE-0080)
+        (tmp_path / "AGENTS.md").write_text("# AGENTS.md — Test Catalog\n")
         # .portolan with management files (required for MANAGED state)
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -89,9 +93,10 @@ class TestCheck:
         # No .portolan dir = first rule fails
         report = check(tmp_path)
 
-        # Should have run all 17 default rules even though the first one failed
+        # Should have run all 19 default rules even though the first one failed
         # (6 original + 2 partition rules + 3 STAC rules: StacSchemaRule,
         # StacLintRule, MandatoryTitlesRule + 1 BboxValidRule for issue #516
-        # + 4 tabular rules for issue #481 + 1 PMTilesLinkRule for issue #569).
+        # + 4 tabular rules for issue #481 + 1 PMTilesLinkRule for issue #569
+        # + 2 AGENTS.md rules for ADR-0052 RULE-0080/0081).
         # Verifies no short-circuit on failure.
-        assert len(report.results) == 17
+        assert len(report.results) == 19

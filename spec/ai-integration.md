@@ -2,20 +2,20 @@
 
 This section covers practices for making Portolan catalogs discoverable and usable by AI agents and large language models. This is a rapidly evolving area — the recommendations here represent early patterns that have proven effective and will be refined as the community gains experience.
 
-## llms.txt
+## AGENTS.md
 
-[llms.txt](https://llmstxt.org/) is an emerging standard for providing LLM-friendly documentation alongside web resources. In Portolan, every catalog and collection includes an `llms.txt` file that gives AI agents the context they need to discover, understand, and query the data.
+[AGENTS.md](https://agents.md/) is an emerging cross-tool standard for a Markdown file that gives AI agents the context they need to work with a project. In Portolan, every catalog and collection includes an `AGENTS.md` file that gives AI agents the context they need to discover, understand, and query the data. (Portolan previously used `llms.txt` for this role; `AGENTS.md` replaces it.)
 
 ### Requirements
 
-Every catalog and collection **MUST** include an `llms.txt` file in markdown format.
+Every catalog and collection **MUST** include an `AGENTS.md` file in Markdown format.
 
-The `llms.txt` file **MUST** be referenced in the STAC JSON `links` array:
+The `AGENTS.md` file **MUST** be referenced in the STAC JSON `links` array:
 
 ```json
 {
-  "rel": "llms",
-  "href": "./llms.txt",
+  "rel": "agents",
+  "href": "./AGENTS.md",
   "type": "text/markdown",
   "title": "Agent/LLM usage guide"
 }
@@ -23,26 +23,26 @@ The `llms.txt` file **MUST** be referenced in the STAC JSON `links` array:
 
 - The `href` **MUST** use a relative path (consistent with `SELF_CONTAINED` catalog type)
 - The `type` **MUST** be `text/markdown`
-- `llms.txt` is a **link**, not an asset — it describes the data, it is not the data itself
+- `AGENTS.md` is a **link**, not an asset — it describes the data, it is not the data itself
 
 ### Content Recommendations
 
-These recommendations are early and expected to evolve. They reflect patterns that have worked well in practice but are not exhaustive.
+The requirement is only that `AGENTS.md` exist and be linked — its content is open-ended. The recommendations below are early and expected to evolve; they reflect patterns that have worked well in practice but are not exhaustive. Favor content that is **not already in the README** and that helps an agent use the data.
 
-#### Catalog-Level llms.txt
+#### Catalog-Level AGENTS.md
 
-A catalog-level `llms.txt` provides an overview of the entire catalog or sub-catalog. It **SHOULD** include:
+A catalog-level `AGENTS.md` provides an overview of the entire catalog or sub-catalog. It **SHOULD** include:
 
 - A summary of what the catalog contains and who publishes it
 - A list of all collections with brief descriptions (what each contains, feature count, key fields)
 - Data access patterns (base URLs, S3 paths, code examples)
 - Coordinate system conventions used across the catalog
 - License information
-- Pointers to collection-level `llms.txt` files for detailed documentation
+- Pointers to collection-level `AGENTS.md` files for detailed documentation
 
-#### Collection-Level llms.txt
+#### Collection-Level AGENTS.md
 
-A collection-level `llms.txt` provides everything an AI agent needs to work with a specific collection. It **SHOULD** include:
+A collection-level `AGENTS.md` provides everything an AI agent needs to work with a specific collection. It **SHOULD** include:
 
 - **What the collection is** — a plain-language description, including source, provider, and license
 - **How to access the data** — URLs and working code examples for loading the data (e.g., DuckDB SQL, Python)

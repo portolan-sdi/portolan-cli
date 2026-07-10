@@ -71,8 +71,8 @@
       "type": "application/json"
     },
     {
-      "rel": "llms",
-      "href": "./llms.txt",
+      "rel": "agents",
+      "href": "./AGENTS.md",
       "type": "text/markdown",
       "title": "Agent/LLM usage guide"
     },

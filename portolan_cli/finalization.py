@@ -215,6 +215,13 @@ def _save_collection_with_links(
     _fix_collection_links(collection_json_path, catalog_root, collection_dir)
     _update_catalog_links(catalog_root, collection_id)
 
+    # Scaffold AGENTS.md and add the rel="agents" link (ADR-0052, RULE-0081).
+    # Idempotent and merge-safe: never overwrites an existing AGENTS.md, only
+    # adds the link when absent, so re-running `add` preserves human edits.
+    from portolan_cli.agents_md import ensure_agents_md
+
+    ensure_agents_md(collection_json_path)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Spatial extent recomputation

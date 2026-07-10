@@ -627,6 +627,7 @@ def run_fix_workflow(
     if run_metadata:
         from portolan_cli.metadata import fix_metadata
         from portolan_cli.metadata.fix import (
+            repair_agents_md,
             repair_pmtiles_links,
             repair_tabular_flags,
             repair_titles_and_links,
@@ -668,6 +669,10 @@ def run_fix_workflow(
             # Issue #569: backfill the rel="pmtiles" web-map-links link on
             # collections with a PMTiles asset but no link (RULE-0061).
             metadata_fix_report.results.extend(repair_pmtiles_links(catalog_root, dry_run=dry_run))
+
+            # ADR-0052: scaffold AGENTS.md and backfill the rel="agents" link on
+            # catalogs and collections that lack them (RULE-0080/0081).
+            metadata_fix_report.results.extend(repair_agents_md(catalog_root, dry_run=dry_run))
 
             outcome.metadata_fix_report = metadata_fix_report
             if metadata_fix_report.failure_count > 0:

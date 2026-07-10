@@ -51,10 +51,18 @@
         },
         "links": {
           "type": "array",
-          "description": "Collection links with Portolan requirements. SHOULD include version-history link (see RULE-0070 in rules.yaml).",
+          "description": "Collection links with Portolan requirements. SHOULD include version-history link (see RULE-0070 in rules.yaml). MUST contain a rel='agents' AGENTS.md link (RULE-0081).",
           "items": {
             "$ref": "#/$defs/CollectionLink"
-          }
+          },
+          "contains": {
+            "type": "object",
+            "properties": {
+              "rel": { "const": "agents" }
+            },
+            "required": ["rel"]
+          },
+          "minContains": 1
         },
         "assets": {
           "type": "object",
@@ -157,12 +165,12 @@
         {
           "if": {
             "properties": {
-              "rel": { "const": "llms" }
+              "rel": { "const": "agents" }
             },
             "required": ["rel"]
           },
           "then": {
-            "$ref": "#/$defs/LlmsLink"
+            "$ref": "#/$defs/AgentsLink"
           }
         }
       ]
@@ -184,17 +192,17 @@
       },
       "required": ["rel", "href"]
     },
-    "LlmsLink": {
+    "AgentsLink": {
       "type": "object",
-      "description": "Link to llms.txt for AI/LLM integration - MUST be present",
+      "description": "Link to AGENTS.md for AI/agent integration - MUST be present",
       "properties": {
         "rel": {
-          "const": "llms"
+          "const": "agents"
         },
         "href": {
           "type": "string",
-          "pattern": "(^|/)llms\\.txt$",
-          "description": "Must point to llms.txt file"
+          "pattern": "(^|/)AGENTS\\.md$",
+          "description": "Must point to AGENTS.md file"
         },
         "type": {
           "const": "text/markdown"

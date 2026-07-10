@@ -29,7 +29,7 @@ cloud-native geospatial data.
   - [Point clouds](formats/pointcloud.md)
   - [Tabular (non-geospatial) data](formats/tabular.md)
 - [Best practices](best-practices.md) - Recommended conventions
-- [AI & LLM integration](ai-integration.md) - llms.txt requirements for agent discoverability
+- [AI & LLM integration](ai-integration.md) - AGENTS.md requirements for agent discoverability
 
 ## Architectural Decisions
 
@@ -41,7 +41,7 @@ Spec-related decisions are tracked in the CLI repository's ADR directory:
 - [ADR-0049: STAC-GeoParquet as Scalability Requirement](../context/shared/adr/0049-stac-geoparquet-scalability.md)
 - [ADR-0050: PMTiles as Visualization Requirement](../context/shared/adr/0050-pmtiles-visualization-requirement.md)
 - [ADR-0051: SELF_CONTAINED Catalog Type](../context/shared/adr/0051-self-contained-catalog-type.md)
-- [ADR-0052: Require llms.txt for AI/LLM Integration](../context/shared/adr/0052-llms-txt-requirement.md)
+- [ADR-0052: Require AGENTS.md for AI/LLM Integration](../context/shared/adr/0052-llms-txt-requirement.md)
 
 For all architectural decisions, see [context/shared/adr/](../context/shared/adr/).
 
