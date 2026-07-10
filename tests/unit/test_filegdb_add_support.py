@@ -12,7 +12,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan import FormatType, ScanOptions, scan_directory
+from portolan_cli.scan.core import FormatType, ScanOptions, scan_directory
 
 
 @pytest.mark.unit

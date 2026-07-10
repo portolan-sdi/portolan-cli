@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.thumbnail_style import (
+from portolan_cli.viz.thumbnail_style import (
     ThumbnailStyle,
     load_thumbnail_style,
     parse_match_expression,

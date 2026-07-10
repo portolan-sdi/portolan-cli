@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.scan import IssueType, ScanIssue, Severity
-from portolan_cli.scan_fix import (
+from portolan_cli.scan.core import IssueType, ScanIssue, Severity
+from portolan_cli.scan.fix import (
     FixCategory,
     _compute_safe_rename,
     apply_safe_fixes,
@@ -147,7 +147,7 @@ class TestComputeSafeRename:
 
     def test_path_traversal_sanitized(self, tmp_path: Path) -> None:
         """Path separators should be sanitized for defense-in-depth."""
-        from portolan_cli.scan_fix import _sanitize_filename
+        from portolan_cli.scan.fix import _sanitize_filename
 
         # Test sanitization directly - path separators should become underscores
         result = _sanitize_filename("test_data")
@@ -306,7 +306,7 @@ class TestSidecarHandling:
         (tmp_path / "data with spaces.prj").touch()
 
         # Import function being tested
-        from portolan_cli.scan_fix import _find_sidecars
+        from portolan_cli.scan.fix import _find_sidecars
 
         sidecars = _find_sidecars(tmp_path / "data with spaces.shp")
 
@@ -332,7 +332,7 @@ class TestSidecarHandling:
         (tmp_path / "data.shp").touch()
         (tmp_path / "data.qix").touch()
 
-        from portolan_cli.scan_fix import _find_sidecars
+        from portolan_cli.scan.fix import _find_sidecars
 
         sidecars = _find_sidecars(tmp_path / "data.shp")
 
@@ -344,7 +344,7 @@ class TestSidecarHandling:
         (tmp_path / "data.shp").touch()
         (tmp_path / "data.shp.xml").touch()
 
-        from portolan_cli.scan_fix import _find_sidecars
+        from portolan_cli.scan.fix import _find_sidecars
 
         sidecars = _find_sidecars(tmp_path / "data.shp")
 
@@ -357,7 +357,7 @@ class TestSidecarHandling:
         (tmp_path / "data.shp").touch()
         (tmp_path / "data.qmd").touch()
 
-        from portolan_cli.scan_fix import _find_sidecars
+        from portolan_cli.scan.fix import _find_sidecars
 
         sidecars = _find_sidecars(tmp_path / "data.shp")
 
@@ -770,7 +770,7 @@ class TestApplyRenameEdgeCases:
 
     def test_rename_success_uses_atomic_operation(self, tmp_path: Path) -> None:
         """Successful rename should use atomic os.rename."""
-        from portolan_cli.scan_fix import _apply_rename
+        from portolan_cli.scan.fix import _apply_rename
 
         old_path = tmp_path / "old.geojson"
         new_path = tmp_path / "new.geojson"
@@ -795,7 +795,7 @@ class TestApplyRenameEdgeCases:
         """
         import sys
 
-        from portolan_cli.scan_fix import _apply_rename
+        from portolan_cli.scan.fix import _apply_rename
 
         old_path = tmp_path / "old.geojson"
         new_path = tmp_path / "new.geojson"
@@ -822,7 +822,7 @@ class TestApplyRenameEdgeCases:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Rename should fall back to shutil.move on cross-filesystem OSError."""
-        import portolan_cli.scan_fix as scan_fix_module
+        import portolan_cli.scan.fix as scan_fix_module
 
         old_path = tmp_path / "old.geojson"
         new_path = tmp_path / "new.geojson"
@@ -855,7 +855,7 @@ class TestApplyRenameEdgeCases:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Rename should fail gracefully when rename fails."""
-        import portolan_cli.scan_fix as scan_fix_module
+        import portolan_cli.scan.fix as scan_fix_module
 
         old_path = tmp_path / "old.geojson"
         new_path = tmp_path / "new.geojson"
@@ -884,7 +884,7 @@ class TestApplyShapefileRenameEdgeCases:
 
     def test_shapefile_rename_success(self, tmp_path: Path) -> None:
         """Successful shapefile rename should rename all sidecars."""
-        from portolan_cli.scan_fix import _apply_shapefile_rename
+        from portolan_cli.scan.fix import _apply_shapefile_rename
 
         # Create shapefile with sidecars
         shp = tmp_path / "old.shp"
@@ -908,7 +908,7 @@ class TestApplyShapefileRenameEdgeCases:
 
     def test_shapefile_rename_collision_prevents_rename(self, tmp_path: Path) -> None:
         """Shapefile rename should fail if any target exists."""
-        from portolan_cli.scan_fix import _apply_shapefile_rename
+        from portolan_cli.scan.fix import _apply_shapefile_rename
 
         # Create shapefile with sidecars
         shp = tmp_path / "old.shp"
@@ -933,7 +933,7 @@ class TestApplyShapefileRenameEdgeCases:
         When a collision is detected during the pre-check phase, no rename
         is attempted and all original files remain in place.
         """
-        from portolan_cli.scan_fix import _apply_shapefile_rename
+        from portolan_cli.scan.fix import _apply_shapefile_rename
 
         # Create shapefile with sidecars
         shp = tmp_path / "old.shp"
@@ -977,14 +977,14 @@ class TestRollbackRenames:
 
     def test_rollback_empty_list(self) -> None:
         """Rollback with empty list should do nothing."""
-        from portolan_cli.scan_fix import _rollback_renames
+        from portolan_cli.scan.fix import _rollback_renames
 
         # Should not raise
         _rollback_renames([])
 
     def test_rollback_restores_original_names(self, tmp_path: Path) -> None:
         """Rollback should restore files to original names."""
-        from portolan_cli.scan_fix import _rollback_renames
+        from portolan_cli.scan.fix import _rollback_renames
 
         # Simulate files that were renamed
         old1 = tmp_path / "old1.shp"
@@ -1012,7 +1012,7 @@ class TestRollbackRenames:
         This tests that _rollback_renames handles errors gracefully by
         attempting to rollback files even when one rollback fails.
         """
-        from portolan_cli.scan_fix import _rollback_renames
+        from portolan_cli.scan.fix import _rollback_renames
 
         # Create files - only new2 exists, old1/new1 simulate a missing file scenario
         old1 = tmp_path / "old1.shp"
@@ -1060,7 +1060,7 @@ class TestApplySafeFixesOSErrorPaths:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Non-shapefile rename failure should not apply the fix."""
-        import portolan_cli.scan_fix as scan_fix_module
+        import portolan_cli.scan.fix as scan_fix_module
 
         path = tmp_path / "my file.geojson"
         path.write_text("content")
@@ -1085,7 +1085,7 @@ class TestApplySafeFixesOSErrorPaths:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Shapefile rename failure should not apply the fix."""
-        import portolan_cli.scan_fix as scan_fix_module
+        import portolan_cli.scan.fix as scan_fix_module
 
         shp = tmp_path / "my file.shp"
         dbf = tmp_path / "my file.dbf"

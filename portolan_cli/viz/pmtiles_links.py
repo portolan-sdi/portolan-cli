@@ -1,6 +1,6 @@
 """Framework-free PMTiles asset/link constants and classifiers.
 
-These helpers are extracted from :mod:`portolan_cli.pmtiles` so the validation
+These helpers are extracted from :mod:`portolan_cli.viz.pmtiles` so the validation
 layer can classify PMTiles assets and links **without** importing
 ``pmtiles.py``, which pulls in the ``output``/``thumbnail``/``style`` layers
 (and transitively ``click``/``rich``/``config``).

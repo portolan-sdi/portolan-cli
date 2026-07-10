@@ -10,7 +10,7 @@ This module provides enhanced output formatting for the `portolan scan` command:
 6. Tree View Output - Directory tree with file status markers
 
 Example:
-    >>> from portolan_cli.scan_output import format_scan_output
+    >>> from portolan_cli.scan.output import format_scan_output
     >>> output = format_scan_output(scan_result)
     >>> print(output)
 """
@@ -24,17 +24,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.formats import FormatType
-from portolan_cli.scan import (
+from portolan_cli.scan.classify import FileCategory, SkippedFile
+from portolan_cli.scan.core import (
     IssueType,
     ScanIssue,
     ScannedFile,
     ScanResult,
     Severity,
 )
-from portolan_cli.scan_classify import FileCategory, SkippedFile
 
 if TYPE_CHECKING:
-    from portolan_cli.scan_infer import CollectionSuggestion
+    from portolan_cli.scan.infer import CollectionSuggestion
 
 
 # =============================================================================

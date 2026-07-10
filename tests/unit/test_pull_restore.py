@@ -127,7 +127,7 @@ class TestFindMissingFiles:
     @pytest.mark.unit
     def test_all_files_exist_returns_empty(self, catalog_with_matching_versions: Path) -> None:
         """When all files exist, return empty list."""
-        from portolan_cli.pull import find_missing_files
+        from portolan_cli.sync.pull import find_missing_files
 
         catalog_root = catalog_with_matching_versions
         collection = "test-collection"
@@ -140,7 +140,7 @@ class TestFindMissingFiles:
     @pytest.mark.unit
     def test_one_file_missing_returns_that_file(self, catalog_with_matching_versions: Path) -> None:
         """When one file is missing, return it in the list."""
-        from portolan_cli.pull import find_missing_files
+        from portolan_cli.sync.pull import find_missing_files
 
         catalog_root = catalog_with_matching_versions
         collection = "test-collection"
@@ -155,7 +155,7 @@ class TestFindMissingFiles:
     @pytest.mark.unit
     def test_all_files_missing_returns_all(self, catalog_with_matching_versions: Path) -> None:
         """When all files are missing, return all of them."""
-        from portolan_cli.pull import find_missing_files
+        from portolan_cli.sync.pull import find_missing_files
 
         catalog_root = catalog_with_matching_versions
         collection = "test-collection"
@@ -171,7 +171,7 @@ class TestFindMissingFiles:
     @pytest.mark.unit
     def test_no_versions_json_returns_empty(self, tmp_path: Path) -> None:
         """When no versions.json exists, return empty list (nothing to restore)."""
-        from portolan_cli.pull import find_missing_files
+        from portolan_cli.sync.pull import find_missing_files
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -186,7 +186,7 @@ class TestFindMissingFiles:
     @pytest.mark.unit
     def test_empty_versions_returns_empty(self, tmp_path: Path) -> None:
         """When versions.json has no versions, return empty list."""
-        from portolan_cli.pull import find_missing_files
+        from portolan_cli.sync.pull import find_missing_files
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -221,7 +221,7 @@ class TestPullRestore:
         matching_remote_versions: dict[str, Any],
     ) -> None:
         """restore=True should download missing files even when versions match."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
         from portolan_cli.versions import _parse_versions_file
 
         catalog_root = catalog_with_matching_versions
@@ -247,15 +247,15 @@ class TestPullRestore:
 
         with (
             patch(
-                "portolan_cli.pull._fetch_remote_versions_async",
+                "portolan_cli.sync.pull._fetch_remote_versions_async",
                 new=AsyncMock(return_value=remote_versions),
             ),
             patch(
-                "portolan_cli.pull._download_assets_async",
+                "portolan_cli.sync.pull._download_assets_async",
                 new=mock_download,
             ),
             patch(
-                "portolan_cli.pull._setup_store_and_kwargs",
+                "portolan_cli.sync.pull._setup_store_and_kwargs",
                 return_value=(AsyncMock(), {}),
             ),
         ):
@@ -279,7 +279,7 @@ class TestPullRestore:
         matching_remote_versions: dict[str, Any],
     ) -> None:
         """Without restore=True, missing files are NOT downloaded (original behavior)."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
         from portolan_cli.versions import _parse_versions_file
 
         catalog_root = catalog_with_matching_versions
@@ -293,11 +293,11 @@ class TestPullRestore:
 
         with (
             patch(
-                "portolan_cli.pull._fetch_remote_versions_async",
+                "portolan_cli.sync.pull._fetch_remote_versions_async",
                 new=AsyncMock(return_value=remote_versions),
             ),
             patch(
-                "portolan_cli.pull._setup_store_and_kwargs",
+                "portolan_cli.sync.pull._setup_store_and_kwargs",
                 return_value=(AsyncMock(), {}),
             ),
         ):
@@ -320,7 +320,7 @@ class TestPullRestore:
         matching_remote_versions: dict[str, Any],
     ) -> None:
         """restore=True with all files present should still be 'up to date'."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
         from portolan_cli.versions import _parse_versions_file
 
         catalog_root = catalog_with_matching_versions
@@ -331,11 +331,11 @@ class TestPullRestore:
 
         with (
             patch(
-                "portolan_cli.pull._fetch_remote_versions_async",
+                "portolan_cli.sync.pull._fetch_remote_versions_async",
                 new=AsyncMock(return_value=remote_versions),
             ),
             patch(
-                "portolan_cli.pull._setup_store_and_kwargs",
+                "portolan_cli.sync.pull._setup_store_and_kwargs",
                 return_value=(AsyncMock(), {}),
             ),
         ):
@@ -362,7 +362,7 @@ class TestPullRestore:
         the deleted file is considered an "uncommitted change". We need --force
         to proceed with the pull in this case.
         """
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
         from portolan_cli.versions import _parse_versions_file
 
         catalog_root = catalog_with_matching_versions
@@ -434,15 +434,15 @@ class TestPullRestore:
 
         with (
             patch(
-                "portolan_cli.pull._fetch_remote_versions_async",
+                "portolan_cli.sync.pull._fetch_remote_versions_async",
                 new=AsyncMock(return_value=remote_versions),
             ),
             patch(
-                "portolan_cli.pull._download_assets_async",
+                "portolan_cli.sync.pull._download_assets_async",
                 new=mock_download,
             ),
             patch(
-                "portolan_cli.pull._setup_store_and_kwargs",
+                "portolan_cli.sync.pull._setup_store_and_kwargs",
                 return_value=(AsyncMock(), {}),
             ),
         ):
@@ -470,7 +470,7 @@ class TestPullRestoreDryRun:
         catalog_with_matching_versions: Path,
     ) -> None:
         """dry-run with restore should report missing files without downloading."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
         catalog_root = catalog_with_matching_versions
         collection = "test-collection"
@@ -502,7 +502,7 @@ class TestPullRestoreAndForce:
         matching_remote_versions: dict[str, Any],
     ) -> None:
         """--restore and --force can be used together."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
         from portolan_cli.versions import _parse_versions_file
 
         catalog_root = catalog_with_matching_versions
@@ -524,15 +524,15 @@ class TestPullRestoreAndForce:
 
         with (
             patch(
-                "portolan_cli.pull._fetch_remote_versions_async",
+                "portolan_cli.sync.pull._fetch_remote_versions_async",
                 new=AsyncMock(return_value=remote_versions),
             ),
             patch(
-                "portolan_cli.pull._download_assets_async",
+                "portolan_cli.sync.pull._download_assets_async",
                 new=mock_download,
             ),
             patch(
-                "portolan_cli.pull._setup_store_and_kwargs",
+                "portolan_cli.sync.pull._setup_store_and_kwargs",
                 return_value=(AsyncMock(), {}),
             ),
         ):
@@ -559,7 +559,7 @@ class TestPullResultRestore:
     @pytest.mark.unit
     def test_pull_result_tracks_files_restored(self) -> None:
         """PullResult should have a files_restored field."""
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
         result = PullResult(
             success=True,
@@ -575,7 +575,7 @@ class TestPullResultRestore:
     @pytest.mark.unit
     def test_pull_result_files_restored_defaults_to_zero(self) -> None:
         """files_restored should default to 0 for backward compatibility."""
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
         result = PullResult(
             success=True,

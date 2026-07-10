@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from portolan_cli.scan import ScannedFile
+    from portolan_cli.scan.core import ScannedFile
 
 # Numeric suffix pattern: base_123 or base-123 or baseL123
 NUMERIC_SUFFIX_PATTERN = re.compile(r"^(.+?)[-_]?(\d+)$")

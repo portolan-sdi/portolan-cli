@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.push import discover_collections
+from portolan_cli.sync.push import discover_collections
 
 
 @pytest.fixture

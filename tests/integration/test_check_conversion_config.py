@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.check import check_directory
 from portolan_cli.config import save_config
 from portolan_cli.formats import CloudNativeStatus
+from portolan_cli.scan.check import check_directory
 
 
 class TestCheckWithConversionConfig:

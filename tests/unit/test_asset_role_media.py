@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from portolan_cli.add import _get_asset_role, _get_media_type
-from portolan_cli.scan_classify import IMAGE_EXTENSIONS
+from portolan_cli.scan.classify import IMAGE_EXTENSIONS
 
 pytestmark = pytest.mark.unit
 

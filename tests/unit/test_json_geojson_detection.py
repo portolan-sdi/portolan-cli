@@ -24,7 +24,7 @@ class TestJsonGeoJsonDetectionInScan:
         This is the core fix for Issue #256: rec_centers.json contains
         a valid FeatureCollection but has .json extension instead of .geojson.
         """
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         scan_path = fixtures_dir / "scan" / "json_geojson"
         result = scan_directory(scan_path)
@@ -38,7 +38,7 @@ class TestJsonGeoJsonDetectionInScan:
 
     def test_json_with_geojson_content_has_vector_format_type(self, fixtures_dir: Path) -> None:
         """A .json file with GeoJSON content should have VECTOR format type."""
-        from portolan_cli.scan import FormatType, scan_directory
+        from portolan_cli.scan.core import FormatType, scan_directory
 
         scan_path = fixtures_dir / "scan" / "json_geojson"
         result = scan_directory(scan_path)
@@ -50,7 +50,7 @@ class TestJsonGeoJsonDetectionInScan:
 
     def test_json_with_geojson_content_has_json_extension(self, fixtures_dir: Path) -> None:
         """A .json file with GeoJSON content should keep .json extension."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         scan_path = fixtures_dir / "scan" / "json_geojson"
         result = scan_directory(scan_path)
@@ -65,7 +65,7 @@ class TestJsonGeoJsonDetectionInScan:
         config.json is a plain settings file, not GeoJSON. It should not
         be added to the ready list.
         """
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         scan_path = fixtures_dir / "scan" / "json_geojson"
         result = scan_directory(scan_path)
@@ -88,7 +88,7 @@ class TestJsonGeoJsonDetectionEdgeCases:
 
     def test_json_with_feature_type_is_detected(self, tmp_path: Path) -> None:
         """A .json file with Feature type (not FeatureCollection) is detected."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         # Create a single Feature (not FeatureCollection)
         json_file = tmp_path / "single_feature.json"
@@ -102,7 +102,7 @@ class TestJsonGeoJsonDetectionEdgeCases:
 
     def test_json_with_geometry_type_is_detected(self, tmp_path: Path) -> None:
         """A .json file with bare geometry (Point, Polygon, etc.) is detected."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         # Create a bare geometry (no Feature wrapper)
         json_file = tmp_path / "bare_point.json"
@@ -114,7 +114,7 @@ class TestJsonGeoJsonDetectionEdgeCases:
 
     def test_json_with_multipolygon_is_detected(self, tmp_path: Path) -> None:
         """A .json file with MultiPolygon geometry is detected."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         json_file = tmp_path / "multipolygon.json"
         json_file.write_text(
@@ -127,7 +127,7 @@ class TestJsonGeoJsonDetectionEdgeCases:
 
     def test_json_array_is_skipped(self, tmp_path: Path) -> None:
         """A .json file containing an array (not object) is skipped."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         json_file = tmp_path / "array.json"
         json_file.write_text("[1, 2, 3, 4]")
@@ -138,7 +138,7 @@ class TestJsonGeoJsonDetectionEdgeCases:
 
     def test_json_with_type_key_but_not_geojson_is_skipped(self, tmp_path: Path) -> None:
         """A .json with 'type' key but non-GeoJSON value is skipped."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         json_file = tmp_path / "not_geo.json"
         json_file.write_text('{"type": "something_else", "data": [1, 2, 3]}')
@@ -152,7 +152,7 @@ class TestJsonGeoJsonDetectionEdgeCases:
 
         Detection reads only first 8KB, so GeoJSON type token must appear early.
         """
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         # Create a file with FeatureCollection type early, then padding
         json_file = tmp_path / "large.json"
@@ -175,7 +175,7 @@ class TestJsonGeoJsonMixedDirectory:
 
     def test_mixed_json_and_geojson_both_detected(self, tmp_path: Path) -> None:
         """Both .json and .geojson files with GeoJSON content are detected."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         # Create .geojson file
         geojson_file = tmp_path / "standard.geojson"
@@ -194,7 +194,7 @@ class TestJsonGeoJsonMixedDirectory:
 
     def test_json_geojson_and_plain_json_mixed(self, tmp_path: Path) -> None:
         """Directory with GeoJSON .json and plain .json handles both correctly."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         # GeoJSON in .json
         geo_json = tmp_path / "places.json"
@@ -226,7 +226,7 @@ class TestJsonGeoJsonRobustness:
         This tests the UnicodeDecodeError handling path. Binary files
         cannot be decoded as UTF-8 and should be gracefully skipped.
         """
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         # Create a binary file with .json extension
         binary_json = tmp_path / "binary.json"
@@ -249,7 +249,7 @@ class TestJsonGeoJsonRobustness:
         If the type token appears later, the file is not detected as GeoJSON.
         This is a known limitation documented in the code.
         """
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         # Create a file with GeoJSON type token appearing after 8KB
         json_file = tmp_path / "late_token.json"
@@ -266,7 +266,7 @@ class TestJsonGeoJsonRobustness:
 
     def test_empty_json_file_is_flagged_as_issue(self, tmp_path: Path) -> None:
         """An empty .json file should be flagged as a zero-byte issue."""
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         # Create an empty file
         empty_json = tmp_path / "empty.json"
@@ -288,8 +288,8 @@ class TestJsonGeoJsonRobustness:
 
         This verifies that STAC filenames are handled before GeoJSON content inspection.
         """
-        from portolan_cli.scan import scan_directory
-        from portolan_cli.scan_classify import FileCategory
+        from portolan_cli.scan.classify import FileCategory
+        from portolan_cli.scan.core import scan_directory
 
         # Create a STAC catalog file
         catalog_json = tmp_path / "catalog.json"
@@ -303,8 +303,8 @@ class TestJsonGeoJsonRobustness:
 
     def test_stac_collection_json_is_skipped_as_metadata(self, tmp_path: Path) -> None:
         """STAC collection.json should be skipped as metadata."""
-        from portolan_cli.scan import scan_directory
-        from portolan_cli.scan_classify import FileCategory
+        from portolan_cli.scan.classify import FileCategory
+        from portolan_cli.scan.core import scan_directory
 
         # Create a STAC collection file
         collection_json = tmp_path / "collection.json"
@@ -318,7 +318,7 @@ class TestJsonGeoJsonRobustness:
 
     def test_json_with_null_bytes_is_skipped(self, tmp_path: Path) -> None:
         """A .json file with embedded null bytes should be skipped."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         # Create a file with null bytes (corrupted JSON)
         corrupt_json = tmp_path / "corrupt.json"
@@ -336,7 +336,7 @@ class TestJsonGeoJsonRobustness:
         Some editors add a BOM (Byte Order Mark) to UTF-8 files.
         The detection should still work.
         """
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         # Create a GeoJSON file with UTF-8 BOM
         bom_json = tmp_path / "with_bom.json"

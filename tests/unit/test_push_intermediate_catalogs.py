@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from portolan_cli.push import (
+from portolan_cli.sync.push import (
     PushResult,
     _discover_intermediate_catalog_files,
     _discover_stac_files,
@@ -126,8 +126,8 @@ class TestDiscoverIntermediateCatalogFiles:
 class TestCatalogWidePushIntermediateCatalogs:
     """push_all_collections must upload intermediate catalog.json (Issue #547, #552)."""
 
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_uploads_intermediate_catalogs(
         self, mock_push: MagicMock, mock_obs_put: MagicMock, nested_catalog: Path
     ) -> None:
@@ -150,8 +150,8 @@ class TestCatalogWidePushIntermediateCatalogs:
         assert "catalog/tst/latest/catalog.json" in uploaded_keys, uploaded_keys
         assert "catalog/tst/README.md" in uploaded_keys, uploaded_keys
 
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_versions_json_uploaded_after_intermediate_catalogs(
         self, mock_push: MagicMock, mock_obs_put: MagicMock, nested_catalog: Path
     ) -> None:
@@ -181,7 +181,7 @@ class TestCatalogWidePushIntermediateCatalogs:
 class TestCatalogWideDryRun:
     """Dry-run must report the intermediate catalogs it would upload."""
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_dry_run_lists_intermediate_catalogs(
         self, mock_push: MagicMock, nested_catalog: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

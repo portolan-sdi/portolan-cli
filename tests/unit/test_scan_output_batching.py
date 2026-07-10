@@ -21,8 +21,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan import IssueType, ScanIssue, ScanResult
-from portolan_cli.scan import Severity as ScanSeverity
+from portolan_cli.scan.core import IssueType, ScanIssue, ScanResult
+from portolan_cli.scan.core import Severity as ScanSeverity
 
 # =============================================================================
 # Helpers

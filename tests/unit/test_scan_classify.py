@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.scan_classify import (
+from portolan_cli.scan.classify import (
     GEO_ASSET_EXTENSIONS,
     FileCategory,
     SkippedFile,
@@ -196,7 +196,7 @@ class TestClassifyFile:
         GEO_ASSET_EXTENSIONS, causing scan to classify .pmtiles files as
         VISUALIZATION and skip them instead of treating them as primary assets.
         """
-        from portolan_cli.scan_classify import GEO_ASSET_EXTENSIONS
+        from portolan_cli.scan.classify import GEO_ASSET_EXTENSIONS
 
         assert ".pmtiles" in GEO_ASSET_EXTENSIONS
 
@@ -207,7 +207,7 @@ class TestClassifyFile:
         VIZ_EXTENSIONS alongside .mbtiles. PMTiles is a primary cloud-native
         geospatial format, not a visualization-only derivative.
         """
-        from portolan_cli.scan_classify import VIZ_EXTENSIONS
+        from portolan_cli.scan.classify import VIZ_EXTENSIONS
 
         assert ".pmtiles" not in VIZ_EXTENSIONS
 

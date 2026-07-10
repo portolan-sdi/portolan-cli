@@ -19,8 +19,8 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.pull import PullAllResult, PullResult, pull_all_collections
-from portolan_cli.push import PushAllResult, PushResult, push_all_collections
+from portolan_cli.sync.pull import PullAllResult, PullResult, pull_all_collections
+from portolan_cli.sync.push import PushAllResult, PushResult, push_all_collections
 
 # Mark all tests in this module as unit tests
 pytestmark = pytest.mark.unit
@@ -54,7 +54,7 @@ def _create_collection(catalog_root: Path, name: str) -> None:
 class TestPushAllCollectionsFileConcurrency:
     """Tests for file_concurrency parameter in push_all_collections()."""
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_accepts_file_concurrency_parameter(self, mock_push: AsyncMock, tmp_path: Path) -> None:
         """push_all_collections accepts file_concurrency parameter."""
         _setup_valid_catalog(tmp_path)
@@ -77,7 +77,7 @@ class TestPushAllCollectionsFileConcurrency:
 
         assert result.success is True
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_file_concurrency_passed_to_push_async(
         self, mock_push: AsyncMock, tmp_path: Path
     ) -> None:
@@ -107,7 +107,7 @@ class TestPushAllCollectionsFileConcurrency:
         for call in mock_push.call_args_list:
             assert call.kwargs.get("concurrency") == 5
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_file_concurrency_none_uses_default(self, mock_push: AsyncMock, tmp_path: Path) -> None:
         """file_concurrency=None uses the default concurrency (8 per Issue #344)."""
         _setup_valid_catalog(tmp_path)
@@ -142,7 +142,7 @@ class TestPushAllCollectionsFileConcurrency:
 class TestPullAllCollectionsFileConcurrency:
     """Tests for file_concurrency parameter in pull_all_collections()."""
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_accepts_file_concurrency_parameter(self, mock_pull: AsyncMock, tmp_path: Path) -> None:
         """pull_all_collections accepts file_concurrency parameter."""
         _setup_valid_catalog(tmp_path)
@@ -165,7 +165,7 @@ class TestPullAllCollectionsFileConcurrency:
 
         assert result.success is True
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_file_concurrency_passed_to_pull_async(
         self, mock_pull: AsyncMock, tmp_path: Path
     ) -> None:
@@ -195,7 +195,7 @@ class TestPullAllCollectionsFileConcurrency:
         for call in mock_pull.call_args_list:
             assert call.kwargs.get("concurrency") == 5
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_file_concurrency_none_uses_default(self, mock_pull: AsyncMock, tmp_path: Path) -> None:
         """file_concurrency=None allows pull_async to use its default."""
         _setup_valid_catalog(tmp_path)
@@ -234,7 +234,7 @@ class TestCliConcurrencyFlagCatalogWide:
         """Create a Click test runner."""
         return CliRunner()
 
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_push_concurrency_passed_to_push_all_collections(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -260,7 +260,7 @@ class TestCliConcurrencyFlagCatalogWide:
             call_kwargs = mock_push_all.call_args.kwargs
             assert call_kwargs["file_concurrency"] == 10
 
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_push_concurrency_default_passed_to_push_all_collections(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -287,7 +287,7 @@ class TestCliConcurrencyFlagCatalogWide:
             call_kwargs = mock_push_all.call_args.kwargs
             assert call_kwargs["file_concurrency"] == 8
 
-    @patch("portolan_cli.pull.pull_all_collections")
+    @patch("portolan_cli.sync.pull.pull_all_collections")
     def test_pull_concurrency_passed_to_pull_all_collections(
         self, mock_pull_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -313,7 +313,7 @@ class TestCliConcurrencyFlagCatalogWide:
             call_kwargs = mock_pull_all.call_args.kwargs
             assert call_kwargs["file_concurrency"] == 10
 
-    @patch("portolan_cli.pull.pull_all_collections")
+    @patch("portolan_cli.sync.pull.pull_all_collections")
     def test_pull_concurrency_default_passed_to_pull_all_collections(
         self, mock_pull_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -347,7 +347,7 @@ class TestCliConcurrencyFlagCatalogWide:
 class TestCombinedConcurrencyParameters:
     """Tests for using both --workers and --concurrency together."""
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_push_both_workers_and_file_concurrency(
         self, mock_push: AsyncMock, tmp_path: Path
     ) -> None:
@@ -378,7 +378,7 @@ class TestCombinedConcurrencyParameters:
         for call in mock_push.call_args_list:
             assert call.kwargs.get("concurrency") == 5
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_pull_both_workers_and_file_concurrency(
         self, mock_pull: AsyncMock, tmp_path: Path
     ) -> None:
@@ -414,7 +414,7 @@ class TestCombinedConcurrencyParameters:
         """Create a Click test runner."""
         return CliRunner()
 
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_cli_push_both_workers_and_concurrency(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -444,7 +444,7 @@ class TestCombinedConcurrencyParameters:
             assert call_kwargs["workers"] == 2
             assert call_kwargs["file_concurrency"] == 10
 
-    @patch("portolan_cli.pull.pull_all_collections")
+    @patch("portolan_cli.sync.pull.pull_all_collections")
     def test_cli_pull_both_workers_and_concurrency(
         self, mock_pull_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:

@@ -156,7 +156,7 @@ class TestPMTilesGeneration:
 
     def test_generate_creates_valid_pmtiles(self, collection_with_geoparquet: Path) -> None:
         """PMTiles file is created with valid header (magic bytes)."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -184,7 +184,7 @@ class TestPMTilesGeneration:
 
     def test_skip_when_pmtiles_newer(self, collection_with_geoparquet: Path) -> None:
         """PMTiles regeneration skipped when output is newer than source."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -208,7 +208,7 @@ class TestPMTilesGeneration:
 
     def test_force_regenerates(self, collection_with_geoparquet: Path) -> None:
         """Force flag regenerates PMTiles even when up-to-date."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -238,7 +238,7 @@ class TestPMTilesGeneration:
 
     def test_asset_registered_in_collection_json(self, collection_with_geoparquet: Path) -> None:
         """PMTiles asset is registered in collection.json with correct metadata."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -267,7 +267,7 @@ class TestPMTilesGeneration:
         thumbnail. Both belong to ONE version bump, not two (Issue #519), and
         the snapshot carries both with checksum and size.
         """
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -329,7 +329,7 @@ class TestPMTilesGeneration:
         artifacts must still be backfilled into versions.json — without forcing
         a regenerate.
         """
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -378,7 +378,7 @@ class TestPMTilesGeneration:
         self, collection_with_geoparquet: Path
     ) -> None:
         """A skip with everything already tracked creates NO new version (Issue #519)."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -408,7 +408,7 @@ class TestPMTilesGeneration:
         (one per asset, each bundling that asset's PMTiles + thumbnail), and the
         final snapshot carries every generated artifact (Issue #519).
         """
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection = collection_with_two_geoparquet
         catalog_root = collection.parent
@@ -439,7 +439,7 @@ class TestPMTilesZoomLevels:
 
     def test_custom_zoom_levels(self, collection_with_geoparquet: Path) -> None:
         """Custom min/max zoom levels are passed to tippecanoe."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -515,7 +515,7 @@ class TestPMTilesMultipleAssets:
         portolan_dir.mkdir()
         (portolan_dir / "config.yaml").write_text("catalog_id: test\n")
 
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         result = generate_pmtiles_for_collection(
             collection_path=collection_dir,
@@ -540,7 +540,7 @@ class TestPMTilesAdvancedParameters:
 
     def test_precision_parameter_accepted(self, collection_with_geoparquet: Path) -> None:
         """Custom precision parameter is accepted by tippecanoe."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -556,7 +556,7 @@ class TestPMTilesAdvancedParameters:
 
     def test_layer_parameter_accepted(self, collection_with_geoparquet: Path) -> None:
         """Custom layer name is accepted."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -571,7 +571,7 @@ class TestPMTilesAdvancedParameters:
 
     def test_attribution_parameter_accepted(self, collection_with_geoparquet: Path) -> None:
         """Custom attribution HTML is accepted."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 
@@ -586,7 +586,7 @@ class TestPMTilesAdvancedParameters:
 
     def test_all_parameters_together(self, collection_with_geoparquet: Path) -> None:
         """All advanced parameters work together."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         catalog_root = collection_with_geoparquet.parent
 

@@ -17,7 +17,7 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.push import PushAllResult, PushResult
+from portolan_cli.sync.push import PushAllResult, PushResult
 
 # Remote URL for tests - set via env var (Issue #356: sensitive settings)
 TEST_REMOTE = "s3://test/catalog"
@@ -49,7 +49,7 @@ class TestPushChunkConcurrencyFlag:
         return CliRunner()
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_chunk_concurrency_flag_exists(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -73,7 +73,7 @@ class TestPushChunkConcurrencyFlag:
             assert result.exit_code == 0, f"Failed: {result.output}"
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_chunk_concurrency_value_passed_to_push_all(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -99,7 +99,7 @@ class TestPushChunkConcurrencyFlag:
             assert call_kwargs.get("chunk_concurrency") == 6
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_chunk_concurrency_default_is_4(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -146,7 +146,7 @@ class TestPushChunkConcurrencyFlag:
             assert result.exit_code != 0
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_async")
+    @patch("portolan_cli.sync.push.push_async")
     def test_chunk_concurrency_passed_to_single_collection_push(
         self, mock_push_async: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -200,7 +200,7 @@ class TestConcurrencyInteraction:
         return CliRunner()
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_both_concurrency_flags_can_be_set(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -238,7 +238,7 @@ class TestConcurrencyInteraction:
             assert call_kwargs.get("chunk_concurrency") == 6
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_high_concurrency_shows_warning(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:

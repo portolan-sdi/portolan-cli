@@ -265,7 +265,7 @@ class TestScanFixCollectionId:
         """Should compute fix for uppercase collection ID."""
         from pathlib import Path
 
-        from portolan_cli.scan_fix import _compute_collection_id_fix
+        from portolan_cli.scan.fix import _compute_collection_id_fix
 
         # Mock directory path
         dir_path = Path("/data/MyCollection")
@@ -282,7 +282,7 @@ class TestScanFixCollectionId:
         """Should compute fix for collection ID with spaces."""
         from pathlib import Path
 
-        from portolan_cli.scan_fix import _compute_collection_id_fix
+        from portolan_cli.scan.fix import _compute_collection_id_fix
 
         dir_path = Path("/data/My Data")
 
@@ -296,7 +296,7 @@ class TestScanFixCollectionId:
         """Collection IDs starting with numbers are now valid (ADR-0032)."""
         from pathlib import Path
 
-        from portolan_cli.scan_fix import _compute_collection_id_fix
+        from portolan_cli.scan.fix import _compute_collection_id_fix
 
         dir_path = Path("/data/2020-census")
 
@@ -309,7 +309,7 @@ class TestScanFixCollectionId:
         """Should return None for already valid collection ID."""
         from pathlib import Path
 
-        from portolan_cli.scan_fix import _compute_collection_id_fix
+        from portolan_cli.scan.fix import _compute_collection_id_fix
 
         dir_path = Path("/data/census-2020")
 
@@ -320,7 +320,7 @@ class TestScanFixCollectionId:
 
     def test_is_fix_flag_issue_includes_collection_id(self) -> None:
         """INVALID_COLLECTION_ID should be in FIX_FLAG_ISSUE_TYPES."""
-        from portolan_cli.scan_fix import FIX_FLAG_ISSUE_TYPES
+        from portolan_cli.scan.fix import FIX_FLAG_ISSUE_TYPES
 
         assert "invalid_collection_id" in FIX_FLAG_ISSUE_TYPES
 

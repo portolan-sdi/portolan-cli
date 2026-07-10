@@ -20,7 +20,7 @@ import pytest
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS, TABULAR_EXTENSIONS
 from portolan_cli.extension_registry import EXTENSION_REGISTRY, all_known_sidecar_extensions
 from portolan_cli.formats import UNSUPPORTED_EXTENSIONS
-from portolan_cli.scan_classify import (
+from portolan_cli.scan.classify import (
     DOC_EXTENSIONS,
     IMAGE_EXTENSIONS,
     JUNK_DIRS,

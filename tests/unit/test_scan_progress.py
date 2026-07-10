@@ -17,8 +17,8 @@ from unittest.mock import MagicMock
 import pytest
 from click.testing import CliRunner
 
-from portolan_cli.scan import ScanOptions, scan_directory
-from portolan_cli.scan_progress import ScanProgressReporter, count_directories
+from portolan_cli.scan.core import ScanOptions, scan_directory
+from portolan_cli.scan.progress import ScanProgressReporter, count_directories
 
 if TYPE_CHECKING:
     pass

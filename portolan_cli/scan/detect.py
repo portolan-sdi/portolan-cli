@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from portolan_cli.scan import ScannedFile
+    from portolan_cli.scan.core import ScannedFile
 
 # Hive partition pattern: key=value where key starts with letter/underscore
 HIVE_PARTITION_PATTERN = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)=(.+)$")

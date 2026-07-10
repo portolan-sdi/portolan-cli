@@ -24,7 +24,7 @@ def test_pull_calls_get_current_version(iceberg_backend, parquet_file):
         message="test",
     )
 
-    with patch("portolan_cli.download.download_file") as mock_download:
+    with patch("portolan_cli.sync.download.download_file") as mock_download:
         mock_download.return_value = MagicMock(success=True, files_downloaded=1)
         result = iceberg_backend.pull(
             remote_url="gs://test-bucket/catalog",
@@ -47,7 +47,7 @@ def test_pull_downloads_from_remote_plus_href(iceberg_backend, parquet_file):
         message="test",
     )
 
-    with patch("portolan_cli.download.download_file") as mock_download:
+    with patch("portolan_cli.sync.download.download_file") as mock_download:
         mock_download.return_value = MagicMock(success=True, files_downloaded=1)
         iceberg_backend.pull(
             remote_url="gs://test-bucket/catalog",
@@ -73,7 +73,7 @@ def test_pull_saves_to_local_path(iceberg_backend, parquet_file, tmp_path):
     local_root = tmp_path / "local_catalog"
     local_root.mkdir()
 
-    with patch("portolan_cli.download.download_file") as mock_download:
+    with patch("portolan_cli.sync.download.download_file") as mock_download:
         mock_download.return_value = MagicMock(success=True, files_downloaded=1)
         iceberg_backend.pull(
             remote_url="gs://test-bucket/catalog",
@@ -110,7 +110,7 @@ def test_pull_dry_run_no_download(iceberg_backend, parquet_file):
         message="test",
     )
 
-    with patch("portolan_cli.download.download_file") as mock_download:
+    with patch("portolan_cli.sync.download.download_file") as mock_download:
         result = iceberg_backend.pull(
             remote_url="gs://test-bucket/catalog",
             local_root=Path("/tmp/test"),
@@ -134,7 +134,7 @@ def test_pull_reports_failed_downloads(iceberg_backend, parquet_file):
         message="test",
     )
 
-    with patch("portolan_cli.download.download_file") as mock_download:
+    with patch("portolan_cli.sync.download.download_file") as mock_download:
         mock_download.return_value = MagicMock(success=False, files_downloaded=0)
         result = iceberg_backend.pull(
             remote_url="gs://test-bucket/catalog",

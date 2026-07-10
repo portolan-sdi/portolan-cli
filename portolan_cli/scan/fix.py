@@ -31,7 +31,7 @@ from portolan_cli.collection_id import CollectionIdError, normalize_collection_i
 from portolan_cli.constants import WINDOWS_RESERVED_NAMES
 
 if TYPE_CHECKING:
-    from portolan_cli.scan import ScanIssue
+    from portolan_cli.scan.core import ScanIssue
 
 # Pattern for invalid filename characters
 # Matches: spaces, parentheses, brackets, braces, control chars (0x00-0x1F, 0x7F), and non-ASCII

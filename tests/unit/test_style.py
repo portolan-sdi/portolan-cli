@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from portolan_cli.style import LegendInfo, StyleInfo
+    from portolan_cli.viz.style import LegendInfo, StyleInfo
 
 # =============================================================================
 # Phase 1: VectorStyleConfig Tests
@@ -24,7 +24,7 @@ class TestVectorStyleConfig:
     @pytest.mark.unit
     def test_default_values(self) -> None:
         """VectorStyleConfig has sensible defaults per geometry type."""
-        from portolan_cli.style import VectorStyleConfig
+        from portolan_cli.viz.style import VectorStyleConfig
 
         config = VectorStyleConfig()
         assert config.point_color == "#3388ff"
@@ -40,7 +40,7 @@ class TestVectorStyleConfig:
     @pytest.mark.unit
     def test_custom_values(self) -> None:
         """VectorStyleConfig accepts custom values."""
-        from portolan_cli.style import VectorStyleConfig
+        from portolan_cli.viz.style import VectorStyleConfig
 
         config = VectorStyleConfig(
             point_color="#ff0000",
@@ -54,7 +54,7 @@ class TestVectorStyleConfig:
     @pytest.mark.unit
     def test_frozen_dataclass(self) -> None:
         """VectorStyleConfig is immutable (frozen)."""
-        from portolan_cli.style import VectorStyleConfig
+        from portolan_cli.viz.style import VectorStyleConfig
 
         config = VectorStyleConfig()
         with pytest.raises(AttributeError):
@@ -77,7 +77,7 @@ class TestBuildRasterStyle:
     @pytest.mark.unit
     def test_default_colormap(self) -> None:
         """Default colormap is viridis."""
-        from portolan_cli.style import RasterStyleConfig, build_raster_style
+        from portolan_cli.viz.style import RasterStyleConfig, build_raster_style
 
         config = RasterStyleConfig()
         style = build_raster_style(config)
@@ -87,7 +87,7 @@ class TestBuildRasterStyle:
     @pytest.mark.unit
     def test_auto_rescale(self) -> None:
         """Auto rescale uses None (viewer determines)."""
-        from portolan_cli.style import RasterStyleConfig, build_raster_style
+        from portolan_cli.viz.style import RasterStyleConfig, build_raster_style
 
         config = RasterStyleConfig()
         style = build_raster_style(config)
@@ -97,7 +97,7 @@ class TestBuildRasterStyle:
     @pytest.mark.unit
     def test_explicit_rescale(self) -> None:
         """Explicit rescale is included in style."""
-        from portolan_cli.style import RasterStyleConfig, build_raster_style
+        from portolan_cli.viz.style import RasterStyleConfig, build_raster_style
 
         config = RasterStyleConfig(rescale_min=0, rescale_max=255)
         style = build_raster_style(config)
@@ -107,7 +107,7 @@ class TestBuildRasterStyle:
     @pytest.mark.unit
     def test_custom_colormap(self) -> None:
         """Custom colormap is applied."""
-        from portolan_cli.style import RasterStyleConfig, build_raster_style
+        from portolan_cli.viz.style import RasterStyleConfig, build_raster_style
 
         config = RasterStyleConfig(colormap="terrain")
         style = build_raster_style(config)
@@ -126,7 +126,7 @@ class TestGetStyleConfig:
     @pytest.mark.unit
     def test_returns_defaults_when_no_config(self, tmp_path: Path) -> None:
         """Returns default config when no styles section exists."""
-        from portolan_cli.style import VectorStyleConfig, get_vector_style_config
+        from portolan_cli.viz.style import VectorStyleConfig, get_vector_style_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -139,7 +139,7 @@ class TestGetStyleConfig:
     @pytest.mark.unit
     def test_loads_custom_vector_config(self, tmp_path: Path) -> None:
         """Loads custom vector style config from YAML."""
-        from portolan_cli.style import get_vector_style_config
+        from portolan_cli.viz.style import get_vector_style_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -164,7 +164,7 @@ styles:
     @pytest.mark.unit
     def test_loads_raster_config(self, tmp_path: Path) -> None:
         """Loads raster style config from YAML."""
-        from portolan_cli.style import get_raster_style_config
+        from portolan_cli.viz.style import get_raster_style_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -200,7 +200,7 @@ class TestDiscoverStyles:
         """Creates 2 style files and verifies both found with correct keys."""
         import json
 
-        from portolan_cli.style import discover_styles
+        from portolan_cli.viz.style import discover_styles
 
         styles_dir = tmp_path / "styles"
         styles_dir.mkdir()
@@ -220,7 +220,7 @@ class TestDiscoverStyles:
         """Style with 'name' field returns that as title."""
         import json
 
-        from portolan_cli.style import discover_styles
+        from portolan_cli.viz.style import discover_styles
 
         styles_dir = tmp_path / "styles"
         styles_dir.mkdir()
@@ -237,7 +237,7 @@ class TestDiscoverStyles:
     @pytest.mark.unit
     def test_returns_empty_when_no_styles_dir(self, tmp_path: Path) -> None:
         """No styles/ directory returns empty list."""
-        from portolan_cli.style import discover_styles
+        from portolan_cli.viz.style import discover_styles
 
         styles = discover_styles(tmp_path)
 
@@ -248,7 +248,7 @@ class TestDiscoverStyles:
         """Non-JSON files in styles/ directory are ignored."""
         import json
 
-        from portolan_cli.style import discover_styles
+        from portolan_cli.viz.style import discover_styles
 
         styles_dir = tmp_path / "styles"
         styles_dir.mkdir()
@@ -267,7 +267,7 @@ class TestDiscoverStyles:
         """Malformed JSON is skipped, valid files still returned."""
         import json
 
-        from portolan_cli.style import discover_styles
+        from portolan_cli.viz.style import discover_styles
 
         styles_dir = tmp_path / "styles"
         styles_dir.mkdir()
@@ -289,7 +289,7 @@ class TestDiscoverStyles:
         """JSON files that parse to non-dict values are skipped."""
         import json
 
-        from portolan_cli.style import discover_styles
+        from portolan_cli.viz.style import discover_styles
 
         styles_dir = tmp_path / "styles"
         styles_dir.mkdir()
@@ -308,7 +308,7 @@ class TestDiscoverStyles:
         """Style without 'name' field uses filename stem as title."""
         import json
 
-        from portolan_cli.style import discover_styles
+        from portolan_cli.viz.style import discover_styles
 
         styles_dir = tmp_path / "styles"
         styles_dir.mkdir()
@@ -327,14 +327,14 @@ class TestBuildStylesManifest:
 
     @staticmethod
     def _style_info(key: str) -> StyleInfo:
-        from portolan_cli.style import StyleInfo
+        from portolan_cli.viz.style import StyleInfo
 
         return StyleInfo(key=key, href="", title="", description="", path=Path())
 
     @pytest.mark.unit
     def test_default_first(self) -> None:
         """Default style always first regardless of input order."""
-        from portolan_cli.style import build_styles_manifest
+        from portolan_cli.viz.style import build_styles_manifest
 
         styles = [
             self._style_info("styles/zebra"),
@@ -350,7 +350,7 @@ class TestBuildStylesManifest:
     @pytest.mark.unit
     def test_alphabetical_after_default(self) -> None:
         """Non-default styles sorted alphabetically."""
-        from portolan_cli.style import build_styles_manifest
+        from portolan_cli.viz.style import build_styles_manifest
 
         styles = [
             self._style_info("styles/zebra"),
@@ -366,7 +366,7 @@ class TestBuildStylesManifest:
     @pytest.mark.unit
     def test_no_default(self) -> None:
         """Works without a style named 'default'."""
-        from portolan_cli.style import build_styles_manifest
+        from portolan_cli.viz.style import build_styles_manifest
 
         styles = [
             self._style_info("styles/zebra"),
@@ -380,7 +380,7 @@ class TestBuildStylesManifest:
     @pytest.mark.unit
     def test_empty_list(self) -> None:
         """Empty input returns empty output."""
-        from portolan_cli.style import build_styles_manifest
+        from portolan_cli.viz.style import build_styles_manifest
 
         manifest = build_styles_manifest([])
 
@@ -389,7 +389,7 @@ class TestBuildStylesManifest:
     @pytest.mark.unit
     def test_single_style(self) -> None:
         """Single style returns single-element list."""
-        from portolan_cli.style import build_styles_manifest
+        from portolan_cli.viz.style import build_styles_manifest
 
         styles = [self._style_info("styles/custom")]
 
@@ -532,7 +532,7 @@ class TestBuildFullStyle:
     @pytest.mark.unit
     def test_polygon_full_style(self) -> None:
         """Builds complete Mapbox GL style for Polygon geometry."""
-        from portolan_cli.style import VectorStyleConfig, build_full_style
+        from portolan_cli.viz.style import VectorStyleConfig, build_full_style
 
         config = VectorStyleConfig()
         style = build_full_style(
@@ -567,7 +567,7 @@ class TestBuildFullStyle:
     @pytest.mark.unit
     def test_linestring_full_style(self) -> None:
         """Builds complete Mapbox GL style for LineString geometry."""
-        from portolan_cli.style import VectorStyleConfig, build_full_style
+        from portolan_cli.viz.style import VectorStyleConfig, build_full_style
 
         config = VectorStyleConfig()
         style = build_full_style(
@@ -586,7 +586,7 @@ class TestBuildFullStyle:
     @pytest.mark.unit
     def test_point_full_style(self) -> None:
         """Builds complete Mapbox GL style for Point geometry."""
-        from portolan_cli.style import VectorStyleConfig, build_full_style
+        from portolan_cli.viz.style import VectorStyleConfig, build_full_style
 
         config = VectorStyleConfig()
         style = build_full_style(
@@ -605,7 +605,7 @@ class TestBuildFullStyle:
     @pytest.mark.unit
     def test_custom_config_applied(self) -> None:
         """Custom VectorStyleConfig values appear in paint properties."""
-        from portolan_cli.style import VectorStyleConfig, build_full_style
+        from portolan_cli.viz.style import VectorStyleConfig, build_full_style
 
         config = VectorStyleConfig(
             polygon_fill_color="#ff0000",
@@ -630,7 +630,7 @@ class TestBuildFullStyle:
         """Full style dict is JSON-serializable."""
         import json
 
-        from portolan_cli.style import VectorStyleConfig, build_full_style
+        from portolan_cli.viz.style import VectorStyleConfig, build_full_style
 
         config = VectorStyleConfig()
         style = build_full_style(
@@ -658,7 +658,7 @@ class TestWriteStyleFile:
     @pytest.mark.unit
     def test_writes_style_to_disk(self, tmp_path: Path) -> None:
         """Writes style dict to disk as JSON."""
-        from portolan_cli.style import write_style_file
+        from portolan_cli.viz.style import write_style_file
 
         style_dir = tmp_path / "styles"
         style_dict = {
@@ -682,7 +682,7 @@ class TestWriteStyleFile:
     @pytest.mark.unit
     def test_creates_styles_directory(self, tmp_path: Path) -> None:
         """Creates styles directory if it doesn't exist."""
-        from portolan_cli.style import write_style_file
+        from portolan_cli.viz.style import write_style_file
 
         style_dir = tmp_path / "styles"
         assert not style_dir.exists()
@@ -696,7 +696,7 @@ class TestWriteStyleFile:
     @pytest.mark.unit
     def test_overwrites_existing_file(self, tmp_path: Path) -> None:
         """Overwrites existing style file."""
-        from portolan_cli.style import write_style_file
+        from portolan_cli.viz.style import write_style_file
 
         style_dir = tmp_path / "styles"
         style_dir.mkdir()
@@ -718,7 +718,7 @@ class TestWriteStyleFile:
     @pytest.mark.unit
     def test_rejects_path_traversal_slash(self, tmp_path: Path) -> None:
         """Rejects style names containing forward slash."""
-        from portolan_cli.style import write_style_file
+        from portolan_cli.viz.style import write_style_file
 
         with pytest.raises(ValueError, match="path separators"):
             write_style_file(tmp_path / "styles", "../evil", {"version": 8})
@@ -726,7 +726,7 @@ class TestWriteStyleFile:
     @pytest.mark.unit
     def test_rejects_path_traversal_backslash(self, tmp_path: Path) -> None:
         """Rejects style names containing backslash."""
-        from portolan_cli.style import write_style_file
+        from portolan_cli.viz.style import write_style_file
 
         with pytest.raises(ValueError, match="path separators"):
             write_style_file(tmp_path / "styles", "..\\evil", {"version": 8})
@@ -734,7 +734,7 @@ class TestWriteStyleFile:
     @pytest.mark.unit
     def test_rejects_path_traversal_dotdot(self, tmp_path: Path) -> None:
         """Rejects style names containing '..'."""
-        from portolan_cli.style import write_style_file
+        from portolan_cli.viz.style import write_style_file
 
         with pytest.raises(ValueError, match="path separators"):
             write_style_file(tmp_path / "styles", "..", {"version": 8})
@@ -751,7 +751,7 @@ class TestWriteDefaultStyle:
     @pytest.mark.unit
     def test_writes_default_style_file(self, tmp_path: Path) -> None:
         """Creates styles/default.json with correct content."""
-        from portolan_cli.style import VectorStyleConfig, write_default_style
+        from portolan_cli.viz.style import VectorStyleConfig, write_default_style
 
         config = VectorStyleConfig()
         result_path = write_default_style(
@@ -780,7 +780,7 @@ class TestWriteDefaultStyle:
     @pytest.mark.unit
     def test_uses_custom_config(self, tmp_path: Path) -> None:
         """Custom VectorStyleConfig affects output."""
-        from portolan_cli.style import VectorStyleConfig, write_default_style
+        from portolan_cli.viz.style import VectorStyleConfig, write_default_style
 
         config = VectorStyleConfig(
             polygon_fill_color="#ff0000",
@@ -804,7 +804,7 @@ class TestWriteDefaultStyle:
     @pytest.mark.unit
     def test_does_not_overwrite_existing(self, tmp_path: Path) -> None:
         """Returns None if default.json already exists, doesn't overwrite."""
-        from portolan_cli.style import write_default_style
+        from portolan_cli.viz.style import write_default_style
 
         # Create existing default.json
         styles_dir = tmp_path / "styles"
@@ -845,7 +845,7 @@ class TestRegisterStyleAssets:
         """Discovered styles are added as assets in collection.json."""
         import json
 
-        from portolan_cli.style import discover_styles, register_style_assets
+        from portolan_cli.viz.style import discover_styles, register_style_assets
 
         collection_data = {
             "type": "Collection",
@@ -889,7 +889,7 @@ class TestRegisterStyleAssets:
         """No portolan:styles property when no styles exist."""
         import json
 
-        from portolan_cli.style import register_style_assets
+        from portolan_cli.viz.style import register_style_assets
 
         collection_data = {"type": "Collection", "id": "test", "assets": {}}
         (tmp_path / "collection.json").write_text(json.dumps(collection_data))
@@ -902,7 +902,7 @@ class TestRegisterStyleAssets:
     @pytest.mark.unit
     def test_no_op_without_collection_json(self, tmp_path: Path) -> None:
         """Does nothing when collection.json doesn't exist."""
-        from portolan_cli.style import StyleInfo, register_style_assets
+        from portolan_cli.viz.style import StyleInfo, register_style_assets
 
         styles = [
             StyleInfo(
@@ -922,7 +922,7 @@ class TestRegisterStyleAssets:
         """Removes style assets that no longer have files on disk."""
         import json
 
-        from portolan_cli.style import register_style_assets
+        from portolan_cli.viz.style import register_style_assets
 
         collection_data = {
             "type": "Collection",
@@ -943,7 +943,7 @@ class TestRegisterStyleAssets:
         }
         (tmp_path / "collection.json").write_text(json.dumps(collection_data))
 
-        from portolan_cli.style import StyleInfo
+        from portolan_cli.viz.style import StyleInfo
 
         current_styles = [
             StyleInfo(
@@ -972,7 +972,7 @@ class TestLegendInfo:
     @pytest.mark.unit
     def test_legend_info_creation(self) -> None:
         """LegendInfo can be created with all fields."""
-        from portolan_cli.style import LegendInfo
+        from portolan_cli.viz.style import LegendInfo
 
         legend = LegendInfo(
             key="legends/source",
@@ -995,7 +995,7 @@ class TestDiscoverLegends:
     @pytest.mark.unit
     def test_discovers_legend_files(self, tmp_path: Path) -> None:
         """Creates 2 legend files and verifies both found with correct keys."""
-        from portolan_cli.style import discover_legends
+        from portolan_cli.viz.style import discover_legends
 
         legends_dir = tmp_path / "legends"
         legends_dir.mkdir()
@@ -1014,7 +1014,7 @@ class TestDiscoverLegends:
     @pytest.mark.unit
     def test_returns_empty_when_no_legends_dir(self, tmp_path: Path) -> None:
         """No legends/ directory returns empty list."""
-        from portolan_cli.style import discover_legends
+        from portolan_cli.viz.style import discover_legends
 
         legends = discover_legends(tmp_path)
 
@@ -1023,7 +1023,7 @@ class TestDiscoverLegends:
     @pytest.mark.unit
     def test_skips_non_png_files(self, tmp_path: Path) -> None:
         """Non-PNG files in legends/ directory are ignored."""
-        from portolan_cli.style import discover_legends
+        from portolan_cli.viz.style import discover_legends
 
         legends_dir = tmp_path / "legends"
         legends_dir.mkdir()
@@ -1042,7 +1042,7 @@ class TestDiscoverLegends:
     @pytest.mark.unit
     def test_legend_title_from_filename(self, tmp_path: Path) -> None:
         """Legend title is derived from filename."""
-        from portolan_cli.style import discover_legends
+        from portolan_cli.viz.style import discover_legends
 
         legends_dir = tmp_path / "legends"
         legends_dir.mkdir()
@@ -1058,7 +1058,7 @@ class TestDiscoverLegends:
     @pytest.mark.unit
     def test_legend_media_type_is_png(self, tmp_path: Path) -> None:
         """Legend media type is always image/png."""
-        from portolan_cli.style import discover_legends
+        from portolan_cli.viz.style import discover_legends
 
         legends_dir = tmp_path / "legends"
         legends_dir.mkdir()
@@ -1077,14 +1077,14 @@ class TestBuildLegendsManifest:
 
     @staticmethod
     def _legend_info(key: str) -> LegendInfo:
-        from portolan_cli.style import LegendInfo
+        from portolan_cli.viz.style import LegendInfo
 
         return LegendInfo(key=key, href="", title="", media_type="image/png", path=Path())
 
     @pytest.mark.unit
     def test_source_first(self) -> None:
         """Source legend always first regardless of input order."""
-        from portolan_cli.style import build_legends_manifest
+        from portolan_cli.viz.style import build_legends_manifest
 
         legends = [
             self._legend_info("legends/zebra"),
@@ -1100,7 +1100,7 @@ class TestBuildLegendsManifest:
     @pytest.mark.unit
     def test_alphabetical_after_source(self) -> None:
         """Non-source legends sorted alphabetically."""
-        from portolan_cli.style import build_legends_manifest
+        from portolan_cli.viz.style import build_legends_manifest
 
         legends = [
             self._legend_info("legends/zebra"),
@@ -1116,7 +1116,7 @@ class TestBuildLegendsManifest:
     @pytest.mark.unit
     def test_no_source(self) -> None:
         """Works without a legend named 'source'."""
-        from portolan_cli.style import build_legends_manifest
+        from portolan_cli.viz.style import build_legends_manifest
 
         legends = [
             self._legend_info("legends/zebra"),
@@ -1130,7 +1130,7 @@ class TestBuildLegendsManifest:
     @pytest.mark.unit
     def test_empty_list(self) -> None:
         """Empty input returns empty output."""
-        from portolan_cli.style import build_legends_manifest
+        from portolan_cli.viz.style import build_legends_manifest
 
         manifest = build_legends_manifest([])
 
@@ -1145,7 +1145,7 @@ class TestRegisterLegendAssets:
         """Discovered legends are added as assets in collection.json."""
         import json
 
-        from portolan_cli.style import discover_legends, register_legend_assets
+        from portolan_cli.viz.style import discover_legends, register_legend_assets
 
         collection_data = {
             "type": "Collection",
@@ -1183,7 +1183,7 @@ class TestRegisterLegendAssets:
         """No portolan:legends property when no legends exist."""
         import json
 
-        from portolan_cli.style import register_legend_assets
+        from portolan_cli.viz.style import register_legend_assets
 
         collection_data = {"type": "Collection", "id": "test", "assets": {}}
         (tmp_path / "collection.json").write_text(json.dumps(collection_data))
@@ -1196,7 +1196,7 @@ class TestRegisterLegendAssets:
     @pytest.mark.unit
     def test_no_op_without_collection_json(self, tmp_path: Path) -> None:
         """Does nothing when collection.json doesn't exist."""
-        from portolan_cli.style import LegendInfo, register_legend_assets
+        from portolan_cli.viz.style import LegendInfo, register_legend_assets
 
         legends = [
             LegendInfo(
@@ -1216,7 +1216,7 @@ class TestRegisterLegendAssets:
         """Removes legend assets that no longer have files on disk."""
         import json
 
-        from portolan_cli.style import LegendInfo, register_legend_assets
+        from portolan_cli.viz.style import LegendInfo, register_legend_assets
 
         collection_data = {
             "type": "Collection",

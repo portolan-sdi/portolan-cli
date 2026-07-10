@@ -281,7 +281,7 @@ class TestPushGlobTransformation:
         assert result.exit_code == 0
 
         # Verify transformation function works correctly
-        from portolan_cli.push import _transform_collection_glob_assets
+        from portolan_cli.sync.push import _transform_collection_glob_assets
 
         collection_path = large_geoparquet.parent / "collection.json"
         content = collection_path.read_bytes()

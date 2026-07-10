@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from portolan_cli.push import (
+from portolan_cli.sync.push import (
     PushResult,
     push_all_collections,
 )
@@ -96,8 +96,8 @@ def _create_collection(catalog_root: Path, name: str, with_readme: bool = False)
 class TestPushAllCollectionsRootFiles:
     """Tests for root-level file uploads in push_all_collections (Issue #357)."""
 
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_uploads_all_root_files_after_collections(
         self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
     ) -> None:
@@ -140,8 +140,8 @@ class TestPushAllCollectionsRootFiles:
             f"Root versions.json should be uploaded, got: {uploaded_keys}"
         )
 
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_versions_json_uploaded_last(
         self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
     ) -> None:
@@ -180,8 +180,8 @@ class TestPushAllCollectionsRootFiles:
             f"versions.json should be uploaded after catalog.json. Order: {uploaded_keys}"
         )
 
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_skips_optional_files_when_not_present(
         self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
     ) -> None:
@@ -218,8 +218,8 @@ class TestPushAllCollectionsRootFiles:
         assert not any(k.endswith("/README.md") or k == "README.md" for k in uploaded_keys)
         assert not any(k.endswith("/versions.json") or k == "versions.json" for k in uploaded_keys)
 
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_skips_root_files_when_collection_fails(
         self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
     ) -> None:
@@ -251,8 +251,8 @@ class TestPushAllCollectionsRootFiles:
         # No root files should be uploaded when collections fail
         mock_obs_put.assert_not_called()
 
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_skips_root_files_when_zero_successful(
         self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
     ) -> None:
@@ -280,8 +280,8 @@ class TestPushAllCollectionsRootFiles:
         assert result.total_files_uploaded == 0
         mock_obs_put.assert_not_called()
 
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_dry_run_shows_all_root_files(
         self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
     ) -> None:
@@ -314,8 +314,8 @@ class TestPushAllCollectionsRootFiles:
         # In dry_run, obs.put should NOT be called
         mock_obs_put.assert_not_called()
 
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_counts_all_root_files_in_total(
         self, mock_push: MagicMock, mock_obs_put: MagicMock, tmp_path: Path
     ) -> None:
@@ -346,8 +346,8 @@ class TestPushAllCollectionsRootFiles:
         # 5 from collection + 3 root files (README.md + catalog.json + versions.json)
         assert result.total_files_uploaded == 8
 
-    @patch("portolan_cli.push.setup_store")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.setup_store")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_handles_upload_error(
         self, mock_push: MagicMock, mock_setup_store: MagicMock, tmp_path: Path
     ) -> None:
@@ -380,9 +380,9 @@ class TestPushAllCollectionsRootFiles:
         assert result.success is False
         assert "root_files" in result.collection_errors
 
-    @patch("portolan_cli.push.obs.put")
-    @patch("portolan_cli.push.setup_store")
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")
+    @patch("portolan_cli.sync.push.setup_store")
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_handles_partial_upload_failure(
         self,
         mock_push: MagicMock,

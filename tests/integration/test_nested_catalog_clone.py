@@ -37,7 +37,7 @@ class TestNestedCatalogCloneIntegration:
 
         Expected: clone should find 'climate/hittekaart' and pull it correctly.
         """
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         # Root catalog pointing to subcatalog
         root_catalog = {
@@ -87,8 +87,10 @@ class TestNestedCatalogCloneIntegration:
         target_dir = tmp_path / "cloned"
 
         with (
-            patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch_catalog),
-            patch("portolan_cli.sync.init_catalog"),
+            patch(
+                "portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch_catalog
+            ),
+            patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.pull", side_effect=mock_pull),
         ):
             result = clone(
@@ -118,7 +120,7 @@ class TestNestedCatalogCloneIntegration:
                     └── amsterdam/
                         └── demographics/collection.json
         """
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         root_catalog = {
             "type": "Catalog",
@@ -159,8 +161,8 @@ class TestNestedCatalogCloneIntegration:
             return MagicMock(success=True, files_downloaded=1, remote_version="1.0.0")
 
         with (
-            patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch),
-            patch("portolan_cli.sync.init_catalog"),
+            patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch),
+            patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.pull", side_effect=mock_pull),
         ):
             result = clone(
@@ -184,7 +186,7 @@ class TestNestedCatalogCloneIntegration:
                 └── catalog.json (subcatalog)
                     └── nested-data/collection.json
         """
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         root_catalog = {
             "type": "Catalog",
@@ -214,8 +216,8 @@ class TestNestedCatalogCloneIntegration:
             return MagicMock(success=True, files_downloaded=1, remote_version="1.0.0")
 
         with (
-            patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch),
-            patch("portolan_cli.sync.init_catalog"),
+            patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch),
+            patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.pull", side_effect=mock_pull),
         ):
             result = clone(

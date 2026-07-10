@@ -37,7 +37,7 @@ class TestVectorThumbnailWorkflow:
         self, sample_geoparquet: Path, tmp_path: Path
     ) -> None:
         """Thumbnail is generated after vector conversion."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_vector_thumbnail
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
 
         config = ThumbnailConfig(basemap_provider="none")  # No network calls
 
@@ -57,7 +57,7 @@ class TestVectorThumbnailWorkflow:
     @pytest.mark.integration
     def test_thumbnail_disabled_via_config(self, sample_geoparquet: Path, tmp_path: Path) -> None:
         """Thumbnail not generated when disabled in config."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_vector_thumbnail
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
 
         config = ThumbnailConfig(enabled=False)
 
@@ -72,7 +72,7 @@ class TestVectorThumbnailWorkflow:
     @pytest.mark.integration
     def test_thumbnail_config_from_yaml(self, tmp_path: Path) -> None:
         """Thumbnail config loads from catalog config.yaml."""
-        from portolan_cli.thumbnail import get_thumbnail_config
+        from portolan_cli.viz.thumbnail import get_thumbnail_config
 
         # Create catalog structure with config
         portolan_dir = tmp_path / ".portolan"
@@ -107,7 +107,7 @@ class TestStyleInStacAssets:
     @pytest.mark.integration
     def test_build_full_style_creates_valid_mapbox_gl_spec(self) -> None:
         """build_full_style produces a complete Mapbox GL v8 style spec."""
-        from portolan_cli.style import VectorStyleConfig, build_full_style
+        from portolan_cli.viz.style import VectorStyleConfig, build_full_style
 
         config = VectorStyleConfig()
         style = build_full_style(
@@ -146,7 +146,7 @@ class TestStyleInStacAssets:
     @pytest.mark.integration
     def test_style_config_from_yaml(self, tmp_path: Path) -> None:
         """Style config loads from catalog config.yaml."""
-        from portolan_cli.style import get_vector_style_config
+        from portolan_cli.viz.style import get_vector_style_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -166,7 +166,7 @@ styles:
     @pytest.mark.integration
     def test_style_registered_as_stac_asset(self, tmp_path: Path) -> None:
         """Style files are registered as STAC assets with portolan:styles manifest."""
-        from portolan_cli.style import (
+        from portolan_cli.viz.style import (
             VectorStyleConfig,
             discover_styles,
             register_style_assets,
@@ -228,7 +228,7 @@ class TestRasterStyleWorkflow:
     @pytest.mark.integration
     def test_raster_style_config_from_yaml(self, tmp_path: Path) -> None:
         """Raster style config loads from catalog config.yaml."""
-        from portolan_cli.style import get_raster_style_config
+        from portolan_cli.viz.style import get_raster_style_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -248,7 +248,7 @@ styles:
     @pytest.mark.integration
     def test_raster_style_generates_render_props(self) -> None:
         """Raster style generates render extension properties."""
-        from portolan_cli.style import RasterStyleConfig, build_raster_style
+        from portolan_cli.viz.style import RasterStyleConfig, build_raster_style
 
         config = RasterStyleConfig(
             colormap="terrain",
@@ -273,8 +273,8 @@ class TestConfigHierarchy:
     @pytest.mark.integration
     def test_defaults_when_no_config(self, tmp_path: Path) -> None:
         """Returns defaults when no config.yaml exists."""
-        from portolan_cli.style import VectorStyleConfig, get_vector_style_config
-        from portolan_cli.thumbnail import ThumbnailConfig, get_thumbnail_config
+        from portolan_cli.viz.style import VectorStyleConfig, get_vector_style_config
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, get_thumbnail_config
 
         # No .portolan directory
         vector_config = get_vector_style_config(tmp_path)
@@ -286,7 +286,7 @@ class TestConfigHierarchy:
     @pytest.mark.integration
     def test_partial_config_uses_defaults(self, tmp_path: Path) -> None:
         """Partial config fills missing values with defaults."""
-        from portolan_cli.style import get_vector_style_config
+        from portolan_cli.viz.style import get_vector_style_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -317,7 +317,7 @@ class TestPmtilesCoordinateTransformation:
     @pytest.mark.integration
     def test_tile_bounds_calculation(self) -> None:
         """Tile bounds are calculated correctly from z/x/y."""
-        from portolan_cli.thumbnail import _tile_bounds
+        from portolan_cli.viz.thumbnail import _tile_bounds
 
         # z=0 x=0 y=0 should cover the whole world
         bounds = _tile_bounds(0, 0, 0)
@@ -330,7 +330,7 @@ class TestPmtilesCoordinateTransformation:
     @pytest.mark.integration
     def test_tile_bounds_at_zoom_1(self) -> None:
         """Tile bounds at zoom 1 divide world into quadrants."""
-        from portolan_cli.thumbnail import _tile_bounds
+        from portolan_cli.viz.thumbnail import _tile_bounds
 
         # z=1 x=0 y=0 is NW quadrant
         nw = _tile_bounds(1, 0, 0)
@@ -347,7 +347,7 @@ class TestPmtilesCoordinateTransformation:
     @pytest.mark.integration
     def test_coord_transformation(self) -> None:
         """MVT coordinates transform to geographic correctly."""
-        from portolan_cli.thumbnail import _tile_bounds, _transform_coord
+        from portolan_cli.viz.thumbnail import _tile_bounds, _transform_coord
 
         # Tile z=0 x=0 y=0 covers whole world
         bounds = _tile_bounds(0, 0, 0)
@@ -370,7 +370,7 @@ class TestPmtilesCoordinateTransformation:
     @pytest.mark.integration
     def test_transform_coords_recursive(self) -> None:
         """Coordinate arrays transform recursively for all geometry types."""
-        from portolan_cli.thumbnail import _tile_bounds, _transform_coords
+        from portolan_cli.viz.thumbnail import _tile_bounds, _transform_coords
 
         bounds = _tile_bounds(0, 0, 0)
 
@@ -400,7 +400,7 @@ class TestPmtilesCoordinateTransformation:
         pytest.importorskip("pmtiles")
         pytest.importorskip("mapbox_vector_tile")
 
-        from portolan_cli.thumbnail import _read_pmtiles_geometries
+        from portolan_cli.viz.thumbnail import _read_pmtiles_geometries
 
         pmtiles_path = fixtures_dir / "cloud_native" / "sample.pmtiles"
         if not pmtiles_path.exists():

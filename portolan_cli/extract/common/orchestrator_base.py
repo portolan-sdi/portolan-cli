@@ -120,7 +120,7 @@ def register_collection_styles(
         report: The extraction report.
         include_legends: Also discover and register legend sidecars (WFS/WMS).
     """
-    from portolan_cli.style import (
+    from portolan_cli.viz.style import (
         discover_legends,
         discover_styles,
         register_legend_assets,

@@ -38,7 +38,7 @@ class TestResolveCatalogRootForCheck:
 
     @pytest.mark.unit
     def test_finds_catalog_json_in_parent(self, tmp_path: Path) -> None:
-        from portolan_cli.check import resolve_catalog_root_for_check
+        from portolan_cli.scan.check import resolve_catalog_root_for_check
 
         _init_catalog(tmp_path)
         subdir = tmp_path / "collection" / "nested"
@@ -48,7 +48,7 @@ class TestResolveCatalogRootForCheck:
 
     @pytest.mark.unit
     def test_returns_none_without_catalog_json(self, tmp_path: Path) -> None:
-        from portolan_cli.check import resolve_catalog_root_for_check
+        from portolan_cli.scan.check import resolve_catalog_root_for_check
 
         # No catalog.json anywhere under a private temp dir.
         loose = tmp_path / "loose"
@@ -63,7 +63,7 @@ class TestBuildCheckRules:
     @pytest.mark.unit
     def test_matches_underlying_build_rules(self, tmp_path: Path) -> None:
         """Without config, build_check_rules matches validation.runner._build_rules."""
-        from portolan_cli.check import build_check_rules
+        from portolan_cli.scan.check import build_check_rules
         from portolan_cli.validation.runner import _build_rules
 
         _init_catalog(tmp_path)
@@ -75,7 +75,7 @@ class TestBuildCheckRules:
     @pytest.mark.unit
     def test_returns_rules_without_portolan_dir(self, tmp_path: Path) -> None:
         """A path with no .portolan/config.yaml still yields the default rules."""
-        from portolan_cli.check import build_check_rules
+        from portolan_cli.scan.check import build_check_rules
         from portolan_cli.validation.runner import _build_rules
 
         got = build_check_rules(tmp_path, strict=True)
@@ -90,7 +90,7 @@ class TestRunFixWorkflow:
     @pytest.mark.unit
     def test_metadata_only_without_catalog_sets_fatal_error(self, tmp_path: Path) -> None:
         """Metadata-only fix with no catalog.json returns a fatal_error message."""
-        from portolan_cli.check import run_fix_workflow
+        from portolan_cli.scan.check import run_fix_workflow
 
         loose = tmp_path / "loose"
         loose.mkdir()
@@ -110,13 +110,13 @@ class TestRunFixWorkflow:
     @pytest.mark.unit
     def test_mixed_mode_without_catalog_skips_metadata(self, tmp_path: Path) -> None:
         """Mixed mode with no catalog skips metadata (no fatal) and still runs geo fix."""
-        from portolan_cli.check import CheckReport, run_fix_workflow
+        from portolan_cli.scan.check import CheckReport, run_fix_workflow
 
         loose = tmp_path / "loose"
         loose.mkdir()
 
         sentinel = CheckReport(root=loose, files=[], conversion_report=None)
-        with patch("portolan_cli.check.check_directory", return_value=sentinel) as mock_check:
+        with patch("portolan_cli.scan.check.check_directory", return_value=sentinel) as mock_check:
             outcome = run_fix_workflow(
                 path=loose,
                 run_metadata=True,
@@ -133,11 +133,11 @@ class TestRunFixWorkflow:
     @pytest.mark.unit
     def test_geo_only_threads_force_and_workers(self, tmp_path: Path) -> None:
         """Geo-only fix forwards force/workers to check_directory."""
-        from portolan_cli.check import CheckReport, run_fix_workflow
+        from portolan_cli.scan.check import CheckReport, run_fix_workflow
 
         _init_catalog(tmp_path)
         sentinel = CheckReport(root=tmp_path, files=[], conversion_report=None)
-        with patch("portolan_cli.check.check_directory", return_value=sentinel) as mock_check:
+        with patch("portolan_cli.scan.check.check_directory", return_value=sentinel) as mock_check:
             outcome = run_fix_workflow(
                 path=tmp_path,
                 run_metadata=False,
@@ -156,13 +156,13 @@ class TestRunFixWorkflow:
     @pytest.mark.unit
     def test_metadata_fix_reports_failures(self, tmp_path: Path) -> None:
         """A metadata fix with failures sets has_failures on the outcome."""
-        from portolan_cli.check import run_fix_workflow
         from portolan_cli.metadata.fix import FixAction, FixReport, FixResult
         from portolan_cli.metadata.models import (
             MetadataCheckResult,
             MetadataReport,
             MetadataStatus,
         )
+        from portolan_cli.scan.check import run_fix_workflow
 
         _init_catalog(tmp_path)
 

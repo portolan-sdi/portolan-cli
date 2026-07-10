@@ -23,7 +23,6 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from portolan_cli.checksums import compute_checksum
 from portolan_cli.metadata.detection import (
     check_file_metadata,
     detect_changes,
@@ -36,6 +35,7 @@ from portolan_cli.metadata.models import (
     MetadataReport,
     MetadataStatus,
 )
+from portolan_cli.sync.checksums import compute_checksum
 
 _DATA_EXTENSIONS = frozenset(
     {

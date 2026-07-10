@@ -14,7 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.push import PushAllResult, PushResult
+from portolan_cli.sync.push import PushAllResult, PushResult
 
 # Remote URL for tests - set via env var (Issue #356: sensitive settings)
 TEST_REMOTE = "s3://test/catalog"
@@ -46,7 +46,7 @@ class TestPushWorkersFlag:
         return CliRunner()
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_workers_flag_exists(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -70,7 +70,7 @@ class TestPushWorkersFlag:
             assert result.exit_code == 0, f"Failed: {result.output}"
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_workers_flag_shorthand(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -93,7 +93,7 @@ class TestPushWorkersFlag:
             assert result.exit_code == 0, f"Failed: {result.output}"
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_workers_value_passed_to_push_all(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -120,7 +120,7 @@ class TestPushWorkersFlag:
             assert call_kwargs["workers"] == 8
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_workers_default_is_none(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -147,7 +147,7 @@ class TestPushWorkersFlag:
             assert call_kwargs["workers"] is None
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_concurrency_passed_for_single_collection(
         self, mock_push: AsyncMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -196,7 +196,7 @@ class TestPushWorkersFlag:
             assert result.exit_code != 0
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_workers_1_for_sequential(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:

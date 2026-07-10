@@ -16,8 +16,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan import IssueType, ScanIssue, Severity
-from portolan_cli.scan_fix import (
+from portolan_cli.scan.core import IssueType, ScanIssue, Severity
+from portolan_cli.scan.fix import (
     FixCategory,
     ProposedFix,
     _compute_short_hash,

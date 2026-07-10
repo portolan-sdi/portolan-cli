@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from portolan_cli.checksums import compute_checksum
+from portolan_cli.sync.checksums import compute_checksum
 from portolan_cli.versions import VersionsFile, read_versions
 
 
@@ -295,7 +295,7 @@ def _fetch_remote_version(remote_url: str, collection: str) -> str | None:
         Remote version string, or None if fetch fails.
     """
     # Import here to avoid circular dependency
-    from portolan_cli.pull import PullError, _fetch_remote_versions
+    from portolan_cli.sync.pull import PullError, _fetch_remote_versions
 
     try:
         # Reuse existing remote fetch logic

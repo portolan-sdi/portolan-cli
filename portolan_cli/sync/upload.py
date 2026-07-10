@@ -13,7 +13,7 @@ Credential discovery follows the obstore/cloud provider conventions:
 - Azure: AZURE_STORAGE_ACCOUNT_KEY, SAS token, or Azure CLI
 
 Basic Usage:
-    from portolan_cli.upload import upload_file, upload_directory, check_credentials
+    from portolan_cli.sync.upload import upload_file, upload_directory, check_credentials
 
     # Check credentials before upload
     valid, hint = check_credentials("s3://mybucket/path")

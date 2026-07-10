@@ -64,7 +64,7 @@ def mock_check_report(tmp_path: Path):
     Returns:
         CheckReport with empty files list.
     """
-    from portolan_cli.check import CheckReport
+    from portolan_cli.scan.check import CheckReport
 
     return CheckReport(root=tmp_path, files=[], conversion_report=None)
 
@@ -845,14 +845,14 @@ class TestCheckMetadataFixFlag:
         # --fix without scope flags should run both metadata and geo-asset fixes
         with (
             patch("portolan_cli.cli.validate_catalog") as mock_validate,
-            patch("portolan_cli.check.check_directory") as mock_check,
+            patch("portolan_cli.scan.check.check_directory") as mock_check,
             patch("portolan_cli.metadata.scan.scan_catalog_metadata") as mock_md_check,
             patch("portolan_cli.metadata.fix_metadata") as mock_fix,
         ):
             from portolan_cli.validation.results import ValidationReport
 
             mock_validate.return_value = ValidationReport(results=[])
-            from portolan_cli.check import CheckReport
+            from portolan_cli.scan.check import CheckReport
 
             mock_check.return_value = CheckReport(
                 root=valid_catalog_with_parquet, files=[], conversion_report=None
@@ -919,9 +919,9 @@ class TestCheckForceWorkers:
         self, runner: CliRunner, catalog: Path
     ) -> None:
         """--fix --force --workers N reaches check_directory with those values."""
-        from portolan_cli.check import CheckReport
+        from portolan_cli.scan.check import CheckReport
 
-        with patch("portolan_cli.check.check_directory") as mock_check:
+        with patch("portolan_cli.scan.check.check_directory") as mock_check:
             mock_check.return_value = CheckReport(root=catalog, files=[], conversion_report=None)
             result = runner.invoke(
                 cli,
@@ -949,9 +949,9 @@ class TestCheckForceWorkers:
         """Without --workers, the CLI resolves a concrete worker count (parallel by default)."""
         import os
 
-        from portolan_cli.check import CheckReport
+        from portolan_cli.scan.check import CheckReport
 
-        with patch("portolan_cli.check.check_directory") as mock_check:
+        with patch("portolan_cli.scan.check.check_directory") as mock_check:
             mock_check.return_value = CheckReport(root=catalog, files=[], conversion_report=None)
             result = runner.invoke(
                 cli,

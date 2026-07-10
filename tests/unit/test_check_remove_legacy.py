@@ -16,12 +16,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from portolan_cli.check import (
+from portolan_cli.convert import ConversionReport, ConversionResult, ConversionStatus
+from portolan_cli.scan.check import (
     check_directory,
     get_legacy_files_to_remove,
     remove_legacy_files,
 )
-from portolan_cli.convert import ConversionReport, ConversionResult, ConversionStatus
 
 if TYPE_CHECKING:
     pass
@@ -457,7 +457,7 @@ class TestCheckDirectoryRemoveLegacy:
         geojson.write_text('{"type": "FeatureCollection", "features": []}')
 
         # Mock conversion to avoid actual file operations
-        with patch("portolan_cli.check.convert_directory") as mock_convert:
+        with patch("portolan_cli.scan.check.convert_directory") as mock_convert:
             mock_convert.return_value = ConversionReport(results=[])
 
             check_directory(data_dir, fix=True, dry_run=True, remove_legacy=True)
@@ -465,8 +465,8 @@ class TestCheckDirectoryRemoveLegacy:
         # File should still exist (dry run)
         assert geojson.exists()
 
-    @patch("portolan_cli.check.remove_legacy_files")
-    @patch("portolan_cli.check.convert_directory")
+    @patch("portolan_cli.scan.check.remove_legacy_files")
+    @patch("portolan_cli.scan.check.convert_directory")
     def test_remove_legacy_called_after_conversion(
         self,
         mock_convert: MagicMock,

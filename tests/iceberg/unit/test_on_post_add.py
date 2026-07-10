@@ -149,7 +149,7 @@ def test_on_post_add_uploads_stac_metadata_when_remote_set(
 
     context = _make_context(catalog_root, item_dir, collection, remote="gs://test-bucket/catalog")
 
-    with patch("portolan_cli.upload.upload_file") as mock_upload:
+    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
         mock_upload.return_value = MagicMock(success=True)
         iceberg_backend.on_post_add(context)
 
@@ -175,7 +175,7 @@ def test_on_post_add_no_upload_when_remote_is_none(
 
     context = _make_context(catalog_root, item_dir, collection, remote=None)
 
-    with patch("portolan_cli.upload.upload_file") as mock_upload:
+    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
         iceberg_backend.on_post_add(context)
 
     mock_upload.assert_not_called()
@@ -196,7 +196,7 @@ def test_on_post_add_uploads_correct_remote_paths(iceberg_backend, parquet_file,
 
     context = _make_context(catalog_root, item_dir, collection, remote="gs://test-bucket/catalog")
 
-    with patch("portolan_cli.upload.upload_file") as mock_upload:
+    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
         mock_upload.return_value = MagicMock(success=True)
         iceberg_backend.on_post_add(context)
 
@@ -223,7 +223,7 @@ def test_on_post_add_strips_trailing_slash(iceberg_backend, parquet_file, catalo
 
     context = _make_context(catalog_root, item_dir, collection, remote="gs://test-bucket/catalog/")
 
-    with patch("portolan_cli.upload.upload_file") as mock_upload:
+    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
         mock_upload.return_value = MagicMock(success=True)
         iceberg_backend.on_post_add(context)
 
@@ -246,7 +246,7 @@ def test_on_post_add_no_data_files_uploaded(iceberg_backend, parquet_file, catal
 
     context = _make_context(catalog_root, item_dir, collection, remote="gs://test-bucket/catalog")
 
-    with patch("portolan_cli.upload.upload_file") as mock_upload:
+    with patch("portolan_cli.sync.upload.upload_file") as mock_upload:
         mock_upload.return_value = MagicMock(success=True)
         iceberg_backend.on_post_add(context)
 

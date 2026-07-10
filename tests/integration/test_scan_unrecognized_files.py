@@ -256,7 +256,7 @@ class TestScanUnrecognizedFilesOutput:
         assert len(skipped_files) > 0
 
         # Find unknown files using explicit enum value check
-        from portolan_cli.scan_classify import SkipReasonType
+        from portolan_cli.scan.classify import SkipReasonType
 
         unknown_files = [
             f for f in skipped_files if f.get("reason_type") == SkipReasonType.UNKNOWN_FORMAT.value
@@ -438,7 +438,7 @@ class TestScanUnrecognizedFilesOutput:
 
         import json
 
-        from portolan_cli.scan_classify import FileCategory, SkipReasonType
+        from portolan_cli.scan.classify import FileCategory, SkipReasonType
 
         output_json = json.loads(result.output)
         skipped_files = output_json.get("data", {}).get("skipped", [])

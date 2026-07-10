@@ -25,7 +25,6 @@ from pathlib import Path
 import click
 import pystac
 
-from portolan_cli.checksums import compute_checksum
 from portolan_cli.collection import (
     _compute_union_bbox,
     _get_metadata_yaml_bbox,
@@ -151,7 +150,8 @@ from portolan_cli.stac import (
     create_collection,
     update_collection_file_statistics,
 )
-from portolan_cli.style import enrich_cog_assets
+from portolan_cli.sync.checksums import compute_checksum
+from portolan_cli.viz.style import enrich_cog_assets
 
 logger = logging.getLogger(__name__)
 
@@ -629,7 +629,7 @@ def _update_versions(
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Note: GEOSPATIAL_EXTENSIONS imported from portolan_cli.constants
-# Note: is_filegdb is imported from portolan_cli.scan_detect (canonical implementation).
+# Note: is_filegdb is imported from portolan_cli.scan.detect (canonical implementation).
 # scan_detect.is_filegdb accepts either .gdbtable files OR a 'gdb' marker file, which
 # matches the full FileGDB spec. Do not reimplement here.
 

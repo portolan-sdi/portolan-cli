@@ -15,7 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.scan import (
+from portolan_cli.scan.classify import FileCategory, SkippedFile, SkipReasonType
+from portolan_cli.scan.core import (
     FormatType,
     IssueType,
     ScanIssue,
@@ -23,8 +24,7 @@ from portolan_cli.scan import (
     ScanResult,
     Severity,
 )
-from portolan_cli.scan_classify import FileCategory, SkippedFile, SkipReasonType
-from portolan_cli.scan_infer import CollectionSuggestion
+from portolan_cli.scan.infer import CollectionSuggestion
 
 # =============================================================================
 # Test Data Factories
@@ -103,26 +103,26 @@ class TestFixabilityLabels:
 
     def test_get_fixability_auto_fix(self) -> None:
         """Issues like missing catalog.json are auto-fix (generated on import)."""
-        from portolan_cli.scan_output import Fixability, get_fixability
+        from portolan_cli.scan.output import Fixability, get_fixability
 
         # Missing catalog.json is auto-generated on import
         assert get_fixability(IssueType.EXISTING_CATALOG) == Fixability.AUTO_FIX
 
     def test_get_fixability_fix_flag(self) -> None:
         """Issues like invalid_characters are fixable with --fix."""
-        from portolan_cli.scan_output import Fixability, get_fixability
+        from portolan_cli.scan.output import Fixability, get_fixability
 
         assert get_fixability(IssueType.INVALID_CHARACTERS) == Fixability.FIX_FLAG
 
     def test_get_fixability_manual(self) -> None:
         """Issues like multiple_primaries require manual resolution."""
-        from portolan_cli.scan_output import Fixability, get_fixability
+        from portolan_cli.scan.output import Fixability, get_fixability
 
         assert get_fixability(IssueType.MULTIPLE_PRIMARIES) == Fixability.MANUAL
 
     def test_fixability_label_text(self) -> None:
         """Fixability enum provides correct label text."""
-        from portolan_cli.scan_output import Fixability
+        from portolan_cli.scan.output import Fixability
 
         assert Fixability.AUTO_FIX.label == "[auto-fix]"
         assert Fixability.FIX_FLAG.label == "[--fix]"
@@ -140,7 +140,7 @@ class TestStructureChecklist:
 
     def test_generate_checklist_items(self, tmp_path: Path) -> None:
         """generate_structure_checklist returns expected items."""
-        from portolan_cli.scan_output import generate_structure_checklist
+        from portolan_cli.scan.output import generate_structure_checklist
 
         result = ScanResult(
             root=tmp_path,
@@ -160,7 +160,7 @@ class TestStructureChecklist:
 
     def test_checklist_item_passed(self, tmp_path: Path) -> None:
         """Checklist item shows passed when condition met."""
-        from portolan_cli.scan_output import generate_structure_checklist
+        from portolan_cli.scan.output import generate_structure_checklist
 
         # Create a result with a valid geo-asset at proper location
         result = ScanResult(
@@ -178,7 +178,7 @@ class TestStructureChecklist:
 
     def test_checklist_item_failed(self, tmp_path: Path) -> None:
         """Checklist item shows failed when condition not met."""
-        from portolan_cli.scan_output import generate_structure_checklist
+        from portolan_cli.scan.output import generate_structure_checklist
 
         # Result with geo-asset at root (violates structure rule)
         result = ScanResult(
@@ -214,7 +214,7 @@ class TestSkipReasonDisplay:
 
     def test_group_skipped_by_category(self, tmp_path: Path) -> None:
         """group_skipped_files groups by category."""
-        from portolan_cli.scan_output import group_skipped_files
+        from portolan_cli.scan.output import group_skipped_files
 
         skipped = [
             make_skipped_file(
@@ -248,7 +248,7 @@ class TestSkipReasonDisplay:
 
     def test_category_display_name(self) -> None:
         """FileCategory has human-readable display names."""
-        from portolan_cli.scan_output import get_category_display_name
+        from portolan_cli.scan.output import get_category_display_name
 
         assert get_category_display_name(FileCategory.KNOWN_SIDECAR) == "sidecar"
         assert get_category_display_name(FileCategory.TABULAR_DATA) == "tabular"
@@ -270,7 +270,7 @@ class TestCollectionInferenceOutput:
 
     def test_format_collection_suggestion(self, tmp_path: Path) -> None:
         """format_collection_suggestion formats suggestion nicely."""
-        from portolan_cli.scan_output import format_collection_suggestion
+        from portolan_cli.scan.output import format_collection_suggestion
 
         suggestion = CollectionSuggestion(
             suggested_name="flood-depth",
@@ -293,7 +293,7 @@ class TestCollectionInferenceOutput:
 
     def test_format_collection_suggestion_truncates_files(self, tmp_path: Path) -> None:
         """format_collection_suggestion truncates long file lists."""
-        from portolan_cli.scan_output import format_collection_suggestion
+        from portolan_cli.scan.output import format_collection_suggestion
 
         # Create suggestion with many files
         files = tuple(tmp_path / f"file_{i}.tif" for i in range(20))
@@ -322,7 +322,7 @@ class TestNextStepsSummary:
 
     def test_generate_next_steps_with_fixable(self, tmp_path: Path) -> None:
         """generate_next_steps includes --fix suggestion when fixable issues exist."""
-        from portolan_cli.scan_output import generate_next_steps
+        from portolan_cli.scan.output import generate_next_steps
 
         result = ScanResult(
             root=tmp_path,
@@ -345,7 +345,7 @@ class TestNextStepsSummary:
 
     def test_generate_next_steps_with_manual(self, tmp_path: Path) -> None:
         """generate_next_steps includes manual resolution guidance."""
-        from portolan_cli.scan_output import generate_next_steps
+        from portolan_cli.scan.output import generate_next_steps
 
         result = ScanResult(
             root=tmp_path,
@@ -372,7 +372,7 @@ class TestNextStepsSummary:
 
     def test_generate_next_steps_ready_for_import(self, tmp_path: Path) -> None:
         """generate_next_steps shows ready state when no issues."""
-        from portolan_cli.scan_output import generate_next_steps
+        from portolan_cli.scan.output import generate_next_steps
 
         result = ScanResult(
             root=tmp_path,
@@ -389,7 +389,7 @@ class TestNextStepsSummary:
 
     def test_generate_next_steps_no_files(self, tmp_path: Path) -> None:
         """generate_next_steps handles empty scan result."""
-        from portolan_cli.scan_output import generate_next_steps
+        from portolan_cli.scan.output import generate_next_steps
 
         result = ScanResult(
             root=tmp_path,
@@ -416,7 +416,7 @@ class TestTreeViewOutput:
 
     def test_build_tree_structure(self, tmp_path: Path) -> None:
         """build_tree_structure creates nested dict from paths."""
-        from portolan_cli.scan_output import build_tree_structure
+        from portolan_cli.scan.output import build_tree_structure
 
         result = ScanResult(
             root=tmp_path,
@@ -443,7 +443,7 @@ class TestTreeViewOutput:
 
     def test_render_tree_view(self, tmp_path: Path) -> None:
         """render_tree_view produces expected tree characters."""
-        from portolan_cli.scan_output import render_tree_view
+        from portolan_cli.scan.output import render_tree_view
 
         result = ScanResult(
             root=tmp_path,
@@ -462,7 +462,7 @@ class TestTreeViewOutput:
 
     def test_render_tree_view_with_status_markers(self, tmp_path: Path) -> None:
         """render_tree_view shows status markers for each file."""
-        from portolan_cli.scan_output import render_tree_view
+        from portolan_cli.scan.output import render_tree_view
 
         result = ScanResult(
             root=tmp_path,
@@ -491,7 +491,7 @@ class TestTreeViewOutput:
 
     def test_tree_view_missing_files_marker(self, tmp_path: Path) -> None:
         """render_tree_view marks missing expected files."""
-        from portolan_cli.scan_output import render_tree_view
+        from portolan_cli.scan.output import render_tree_view
 
         # Result missing catalog.json
         result = ScanResult(
@@ -520,13 +520,13 @@ class TestFormatSize:
 
     def test_format_size_none(self) -> None:
         """_format_size returns empty string for None."""
-        from portolan_cli.scan_output import _format_size
+        from portolan_cli.scan.output import _format_size
 
         assert _format_size(None) == ""
 
     def test_format_size_bytes(self) -> None:
         """_format_size returns bytes format for small sizes."""
-        from portolan_cli.scan_output import _format_size
+        from portolan_cli.scan.output import _format_size
 
         assert _format_size(500) == "500 B"
         assert _format_size(0) == "0 B"
@@ -534,7 +534,7 @@ class TestFormatSize:
 
     def test_format_size_kilobytes(self) -> None:
         """_format_size returns KB format for kilobyte range."""
-        from portolan_cli.scan_output import _format_size
+        from portolan_cli.scan.output import _format_size
 
         # 1024 bytes = 1 KB
         assert _format_size(1024) == "1.0 KB"
@@ -545,7 +545,7 @@ class TestFormatSize:
 
     def test_format_size_megabytes(self) -> None:
         """_format_size returns MB format for megabyte range."""
-        from portolan_cli.scan_output import _format_size
+        from portolan_cli.scan.output import _format_size
 
         # 1 MB
         assert _format_size(1024 * 1024) == "1.0 MB"
@@ -556,7 +556,7 @@ class TestFormatSize:
 
     def test_format_size_gigabytes(self) -> None:
         """_format_size returns GB format for gigabyte range."""
-        from portolan_cli.scan_output import _format_size
+        from portolan_cli.scan.output import _format_size
 
         # 1 GB
         assert _format_size(1024 * 1024 * 1024) == "1.0 GB"
@@ -575,7 +575,7 @@ class TestEmptySectionFormatting:
 
     def test_format_header_no_geo_assets(self, tmp_path: Path) -> None:
         """_format_header shows 'No geo-assets found' when none exist."""
-        from portolan_cli.scan_output import _format_header
+        from portolan_cli.scan.output import _format_header
 
         result = ScanResult(
             root=tmp_path,
@@ -593,7 +593,7 @@ class TestEmptySectionFormatting:
 
     def test_format_breakdown_empty(self, tmp_path: Path) -> None:
         """_format_breakdown returns empty list when no ready files."""
-        from portolan_cli.scan_output import _format_breakdown
+        from portolan_cli.scan.output import _format_breakdown
 
         result = ScanResult(
             root=tmp_path,
@@ -608,7 +608,7 @@ class TestEmptySectionFormatting:
 
     def test_format_issues_empty(self, tmp_path: Path) -> None:
         """_format_issues returns empty list when no issues."""
-        from portolan_cli.scan_output import _format_issues
+        from portolan_cli.scan.output import _format_issues
 
         result = ScanResult(
             root=tmp_path,
@@ -623,7 +623,7 @@ class TestEmptySectionFormatting:
 
     def test_format_skipped_empty(self, tmp_path: Path) -> None:
         """_format_skipped returns empty list when no skipped files."""
-        from portolan_cli.scan_output import _format_skipped
+        from portolan_cli.scan.output import _format_skipped
 
         result = ScanResult(
             root=tmp_path,
@@ -638,7 +638,7 @@ class TestEmptySectionFormatting:
 
     def test_format_skipped_with_empty_grouped(self, tmp_path: Path) -> None:
         """_format_skipped handles legacy Path objects in skipped list."""
-        from portolan_cli.scan_output import _format_skipped
+        from portolan_cli.scan.output import _format_skipped
 
         # Only legacy Path objects (no SkippedFile instances) will result in
         # group_skipped_files returning an empty dict
@@ -661,7 +661,7 @@ class TestIssuesFormattingTruncation:
 
     def test_format_issues_truncates_at_10(self, tmp_path: Path) -> None:
         """_format_issues truncates each severity group at 10."""
-        from portolan_cli.scan_output import _format_issues
+        from portolan_cli.scan.output import _format_issues
 
         # Create 15 warnings
         issues = [
@@ -695,7 +695,7 @@ class TestTreeBuildingEdgeCases:
 
     def test_tree_with_path_outside_root(self, tmp_path: Path) -> None:
         """build_tree_structure handles paths not relative to root gracefully."""
-        from portolan_cli.scan_output import build_tree_structure
+        from portolan_cli.scan.output import build_tree_structure
 
         # Create a result where issue path is outside the root (edge case)
         external_path = Path("/completely/different/path/file.geojson")
@@ -722,7 +722,7 @@ class TestTreeBuildingEdgeCases:
 
     def test_tree_with_skipped_legacy_path(self, tmp_path: Path) -> None:
         """build_tree_structure handles legacy Path in skipped list."""
-        from portolan_cli.scan_output import build_tree_structure
+        from portolan_cli.scan.output import build_tree_structure
 
         result = ScanResult(
             root=tmp_path,
@@ -743,7 +743,7 @@ class TestFormatScanOutputWithCollections:
 
     def test_format_scan_output_with_collection_suggestions(self, tmp_path: Path) -> None:
         """format_scan_output includes collection suggestions section."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -772,7 +772,7 @@ class TestFormatScanOutputWithCollections:
 
     def test_format_scan_output_with_tree(self, tmp_path: Path) -> None:
         """format_scan_output includes tree view when show_tree=True."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -799,7 +799,7 @@ class TestFullScanOutputFormat:
 
     def test_format_scan_output_sections(self, tmp_path: Path) -> None:
         """format_scan_output includes all expected sections."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -841,7 +841,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_shows_tree_structure(self, tmp_path: Path) -> None:
         """manual_only=True shows issues in tree structure."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -868,7 +868,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_groups_by_directory(self, tmp_path: Path) -> None:
         """manual_only=True groups multiple issues under same directory."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -903,7 +903,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_hides_ready_files(self, tmp_path: Path) -> None:
         """manual_only=True hides the 'ready to import' section."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -931,7 +931,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_hides_fixable_issues(self, tmp_path: Path) -> None:
         """manual_only=True hides issues fixable with --fix."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -963,7 +963,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_shows_count_header(self, tmp_path: Path) -> None:
         """manual_only=True shows count of manual resolution items in header."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -992,7 +992,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_shows_short_descriptions(self, tmp_path: Path) -> None:
         """manual_only=True shows short inline descriptions, not full sentences."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -1018,7 +1018,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_no_errors_message(self, tmp_path: Path) -> None:
         """manual_only=True with no manual issues shows success message."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -1045,7 +1045,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_completely_clean(self, tmp_path: Path) -> None:
         """manual_only=True with no issues at all shows success message."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -1062,7 +1062,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_uses_severity_markers(self, tmp_path: Path) -> None:
         """manual_only=True uses ✗ for errors and ⚠ for warnings."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -1093,7 +1093,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_handles_root_directory_issues(self, tmp_path: Path) -> None:
         """manual_only=True handles issues on the root directory itself."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -1121,7 +1121,7 @@ class TestManualOnlyOutput:
 
     def test_manual_only_singular_grammar(self, tmp_path: Path) -> None:
         """manual_only=True uses correct grammar for singular case."""
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         result = ScanResult(
             root=tmp_path,
@@ -1155,7 +1155,7 @@ class TestNestedCollectionIdDisplay:
 
     def test_format_file_with_nested_collection_id(self, tmp_path: Path) -> None:
         """format_file_entry shows nested collection ID when present."""
-        from portolan_cli.scan_output import format_file_entry
+        from portolan_cli.scan.output import format_file_entry
 
         file = ScannedFile(
             path=tmp_path / "climate" / "hittekaart" / "data.parquet",
@@ -1179,7 +1179,7 @@ class TestNestedCollectionIdDisplay:
 
     def test_format_file_with_simple_collection_id(self, tmp_path: Path) -> None:
         """format_file_entry shows simple collection ID for flat structures."""
-        from portolan_cli.scan_output import format_file_entry
+        from portolan_cli.scan.output import format_file_entry
 
         file = ScannedFile(
             path=tmp_path / "census" / "data.parquet",
@@ -1200,7 +1200,7 @@ class TestNestedCollectionIdDisplay:
 
     def test_format_file_without_collection_id(self, tmp_path: Path) -> None:
         """format_file_entry handles files without inferred_collection_id."""
-        from portolan_cli.scan_output import format_file_entry
+        from portolan_cli.scan.output import format_file_entry
 
         # Legacy ScannedFile without metadata
         file = make_scanned_file(tmp_path / "data.geojson")
@@ -1217,7 +1217,7 @@ class TestFormatStatusDisplay:
 
     def test_format_status_cloud_native(self, tmp_path: Path) -> None:
         """Cloud-native formats show positive status."""
-        from portolan_cli.scan_output import format_file_entry
+        from portolan_cli.scan.output import format_file_entry
 
         file = ScannedFile(
             path=tmp_path / "data.parquet",
@@ -1237,7 +1237,7 @@ class TestFormatStatusDisplay:
 
     def test_format_status_parquet_no_geometry(self, tmp_path: Path) -> None:
         """Parquet without geometry shows different status."""
-        from portolan_cli.scan_output import format_file_entry
+        from portolan_cli.scan.output import format_file_entry
 
         file = ScannedFile(
             path=tmp_path / "lookup.parquet",
@@ -1257,7 +1257,7 @@ class TestFormatStatusDisplay:
 
     def test_format_status_convertible(self, tmp_path: Path) -> None:
         """Convertible formats show target format."""
-        from portolan_cli.scan_output import format_file_entry
+        from portolan_cli.scan.output import format_file_entry
 
         file = ScannedFile(
             path=tmp_path / "data.geojson",
@@ -1284,7 +1284,7 @@ class TestGroupFilesByCollection:
 
     def test_group_files_by_collection(self, tmp_path: Path) -> None:
         """group_files_by_collection groups files correctly."""
-        from portolan_cli.scan_output import group_files_by_collection
+        from portolan_cli.scan.output import group_files_by_collection
 
         files = [
             ScannedFile(
@@ -1322,7 +1322,7 @@ class TestGroupFilesByCollection:
 
     def test_group_files_without_collection_id(self, tmp_path: Path) -> None:
         """Files without collection_id go to 'uncategorized' group."""
-        from portolan_cli.scan_output import group_files_by_collection
+        from portolan_cli.scan.output import group_files_by_collection
 
         files = [
             make_scanned_file(tmp_path / "data.geojson"),  # No metadata
@@ -1340,7 +1340,7 @@ class TestStructureRecommendations:
 
     def test_detect_vector_collection_pattern(self, tmp_path: Path) -> None:
         """detect_structure_pattern identifies vector collection."""
-        from portolan_cli.scan_output import detect_structure_pattern
+        from portolan_cli.scan.output import detect_structure_pattern
 
         result = ScanResult(
             root=tmp_path,
@@ -1365,7 +1365,7 @@ class TestStructureRecommendations:
 
     def test_detect_raster_items_pattern(self, tmp_path: Path) -> None:
         """detect_structure_pattern identifies raster items."""
-        from portolan_cli.scan_output import detect_structure_pattern
+        from portolan_cli.scan.output import detect_structure_pattern
 
         result = ScanResult(
             root=tmp_path,
@@ -1398,7 +1398,7 @@ class TestStructureRecommendations:
 
     def test_generate_structure_recommendation(self, tmp_path: Path) -> None:
         """generate_structure_recommendation produces actionable output."""
-        from portolan_cli.scan_output import generate_structure_recommendation
+        from portolan_cli.scan.output import generate_structure_recommendation
 
         result = ScanResult(
             root=tmp_path,
@@ -1425,7 +1425,7 @@ class TestStructureRecommendations:
 
     def test_generate_ascii_tree_recommendation(self, tmp_path: Path) -> None:
         """generate_ascii_tree_recommendation shows suggested structure."""
-        from portolan_cli.scan_output import generate_ascii_tree_recommendation
+        from portolan_cli.scan.output import generate_ascii_tree_recommendation
 
         collections = ["climate/hittekaart", "census"]
 
@@ -1444,7 +1444,7 @@ class TestEnhancedVerboseOutput:
 
     def test_format_issue_verbose(self, tmp_path: Path) -> None:
         """format_issue_verbose includes extra details."""
-        from portolan_cli.scan_output import format_issue_verbose
+        from portolan_cli.scan.output import format_issue_verbose
 
         issue = make_scan_issue(
             tmp_path / "collection",
@@ -1463,7 +1463,7 @@ class TestEnhancedVerboseOutput:
 
     def test_format_issue_basic(self, tmp_path: Path) -> None:
         """format_issue_basic shows minimal info."""
-        from portolan_cli.scan_output import format_issue_basic
+        from portolan_cli.scan.output import format_issue_basic
 
         issue = make_scan_issue(
             tmp_path / "collection",
@@ -1484,7 +1484,7 @@ class TestEnhancedJsonOutput:
 
     def test_format_ready_file_json(self, tmp_path: Path) -> None:
         """format_ready_file_json includes new fields."""
-        from portolan_cli.scan_output import format_ready_file_json
+        from portolan_cli.scan.output import format_ready_file_json
 
         file = ScannedFile(
             path=tmp_path / "climate" / "hittekaart" / "data.parquet",
@@ -1507,7 +1507,7 @@ class TestEnhancedJsonOutput:
 
     def test_format_recommended_structure_json(self, tmp_path: Path) -> None:
         """format_recommended_structure_json includes pattern and commands."""
-        from portolan_cli.scan_output import format_recommended_structure_json
+        from portolan_cli.scan.output import format_recommended_structure_json
 
         result = ScanResult(
             root=tmp_path,
@@ -1534,7 +1534,7 @@ class TestEnhancedJsonOutput:
 
     def test_format_fix_commands_json(self, tmp_path: Path) -> None:
         """format_fix_commands_json returns structured commands."""
-        from portolan_cli.scan_output import format_fix_commands_json
+        from portolan_cli.scan.output import format_fix_commands_json
 
         result = ScanResult(
             root=tmp_path,
@@ -1569,7 +1569,7 @@ class TestFormatEnhancedSummary:
 
     def test_format_enhanced_summary_with_nested_collections(self, tmp_path: Path) -> None:
         """format_enhanced_summary shows nested collection grouping."""
-        from portolan_cli.scan_output import format_enhanced_summary
+        from portolan_cli.scan.output import format_enhanced_summary
 
         result = ScanResult(
             root=tmp_path,
@@ -1612,7 +1612,7 @@ class TestFormatEnhancedSummary:
 
     def test_format_enhanced_summary_verbose(self, tmp_path: Path) -> None:
         """format_enhanced_summary includes extra info in verbose mode."""
-        from portolan_cli.scan_output import format_enhanced_summary
+        from portolan_cli.scan.output import format_enhanced_summary
 
         result = ScanResult(
             root=tmp_path,
@@ -1676,8 +1676,8 @@ class TestScanOutputIntegration:
         This verifies _get_collection_id reads from inferred_collection_id field,
         not metadata dict.
         """
-        from portolan_cli.scan import ScanOptions, scan_directory
-        from portolan_cli.scan_output import group_files_by_collection
+        from portolan_cli.scan.core import ScanOptions, scan_directory
+        from portolan_cli.scan.output import group_files_by_collection
 
         result = scan_directory(fixtures_dir / "nested", ScanOptions())
 
@@ -1698,8 +1698,8 @@ class TestScanOutputIntegration:
         This verifies the fix_commands generation uses collection IDs from the
         inferred_collection_id field, not metadata.
         """
-        from portolan_cli.scan import ScanOptions, scan_directory
-        from portolan_cli.scan_output import detect_structure_pattern, format_fix_commands_json
+        from portolan_cli.scan.core import ScanOptions, scan_directory
+        from portolan_cli.scan.output import detect_structure_pattern, format_fix_commands_json
 
         result = scan_directory(fixtures_dir / "nested", ScanOptions())
 
@@ -1722,8 +1722,8 @@ class TestScanOutputIntegration:
         This verifies the enhanced summary shows proper collection grouping
         from the inferred_collection_id field.
         """
-        from portolan_cli.scan import ScanOptions, scan_directory
-        from portolan_cli.scan_output import format_enhanced_summary
+        from portolan_cli.scan.core import ScanOptions, scan_directory
+        from portolan_cli.scan.output import format_enhanced_summary
 
         result = scan_directory(fixtures_dir / "nested", ScanOptions())
 
@@ -1740,7 +1740,7 @@ class TestScanOutputIntegration:
 
         This verifies the JSON output includes the new fields from the PR.
         """
-        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "nested", ScanOptions())
         data = result.to_dict()
@@ -1770,8 +1770,8 @@ class TestPartitionOutputFormatting:
         self, tmp_path: Path
     ) -> None:
         """_format_special_formats displays Hive partitions with rich metadata from details."""
-        from portolan_cli.scan_detect import SpecialFormat
-        from portolan_cli.scan_output import _format_special_formats
+        from portolan_cli.scan.detect import SpecialFormat
+        from portolan_cli.scan.output import _format_special_formats
 
         data_dir = tmp_path / "data"
         data_dir.mkdir()
@@ -1809,8 +1809,8 @@ class TestPartitionOutputFormatting:
     @pytest.mark.unit
     def test_format_special_formats_fallback_without_rich_metadata(self) -> None:
         """_format_special_formats falls back to basic info from partition_keys."""
-        from portolan_cli.scan_detect import SpecialFormat
-        from portolan_cli.scan_output import _format_special_formats
+        from portolan_cli.scan.detect import SpecialFormat
+        from portolan_cli.scan.output import _format_special_formats
 
         # Provide minimal details with just partition_keys (fallback format)
         sf = SpecialFormat(
@@ -1838,7 +1838,7 @@ class TestPartitionOutputFormatting:
     @pytest.mark.unit
     def test_format_special_formats_empty_returns_empty(self) -> None:
         """_format_special_formats returns empty list when no special formats."""
-        from portolan_cli.scan_output import _format_special_formats
+        from portolan_cli.scan.output import _format_special_formats
 
         result = ScanResult(
             root=Path("/tmp"),

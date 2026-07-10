@@ -25,7 +25,6 @@ from typing import Any
 import pystac
 
 from portolan_cli import extension_registry as _reg
-from portolan_cli.checksums import compute_checksum, compute_dir_checksum, compute_dir_size
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.config import get_setting, load_merged_metadata
 from portolan_cli.crs import transform_bbox_to_wgs84
@@ -49,14 +48,15 @@ from portolan_cli.metadata_yaml import (
     apply_temporal_defaults,
     validate_metadata,
 )
-from portolan_cli.scan_detect import is_filegdb
+from portolan_cli.scan.detect import is_filegdb
 from portolan_cli.stac import (
     add_projection_extension,
     add_raster_extension,
     add_vector_extension,
     create_item,
 )
-from portolan_cli.style import enrich_cog_assets
+from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum, compute_dir_size
+from portolan_cli.viz.style import enrich_cog_assets
 
 logger = logging.getLogger(__name__)
 
@@ -443,7 +443,7 @@ def _derive_item_id_and_asset_level(
         collection-level assets; other formats derive unique IDs from the
         partition values.
     """
-    from portolan_cli.scan_detect import is_hive_partition_dir
+    from portolan_cli.scan.detect import is_hive_partition_dir
 
     # If item_id is explicitly provided, treat as item-level (not collection-level)
     # This ensures --item-id creates a subdirectory structure

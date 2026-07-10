@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.pull import pull_all_collections
+from portolan_cli.sync.pull import pull_all_collections
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration

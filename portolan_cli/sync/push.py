@@ -38,8 +38,8 @@ from portolan_cli.async_utils import (
 )
 from portolan_cli.catalog import intermediate_catalog_ids
 from portolan_cli.output import detail, error, info, output_section, success, warn
-from portolan_cli.upload import ObjectStore, setup_store
-from portolan_cli.upload_progress import UploadProgressReporter
+from portolan_cli.sync.upload import ObjectStore, setup_store
+from portolan_cli.sync.upload_progress import UploadProgressReporter
 
 __all__ = [
     "get_default_workers",
