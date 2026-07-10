@@ -225,7 +225,7 @@ class TestOrchestrationSequence:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=track_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=track_pull),
             patch("portolan_cli.sync.core.init_catalog", side_effect=track_init),
             patch("portolan_cli.sync.core.scan_directory", side_effect=track_scan),
             patch("portolan_cli.sync.core.check_directory", side_effect=track_check),
@@ -277,7 +277,7 @@ class TestEarlyExit:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=failing_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=failing_pull),
             patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -315,7 +315,7 @@ class TestEarlyExit:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=up_to_date_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=up_to_date_pull),
             patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -368,7 +368,7 @@ class TestInitSkip:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
             patch("portolan_cli.sync.core.init_catalog") as mock_init,
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -417,7 +417,7 @@ class TestInitSkip:
             return path / "catalog.json", []
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
             patch(
                 "portolan_cli.sync.core.init_catalog", side_effect=mock_init_catalog
             ) as mock_init,
@@ -463,7 +463,7 @@ class TestDryRunMode:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
             patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -491,7 +491,7 @@ class TestDryRunMode:
         from portolan_cli.sync.core import sync
 
         with (
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
             patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -535,7 +535,7 @@ class TestForceMode:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
             patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -563,7 +563,7 @@ class TestForceMode:
         from portolan_cli.sync.core import sync
 
         with (
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
             patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -607,7 +607,7 @@ class TestFixMode:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
             patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -644,7 +644,7 @@ class TestProfilePassthrough:
         from portolan_cli.sync.core import sync
 
         with (
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
             patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -685,7 +685,7 @@ class TestErrorHandling:
         from portolan_cli.sync.core import sync
         from portolan_cli.sync.pull import PullError
 
-        with patch("portolan_cli.sync.pull") as mock_pull:
+        with patch("portolan_cli.sync.core.pull") as mock_pull:
             mock_pull.side_effect = PullError("Network timeout")
 
             result = sync(
@@ -711,7 +711,7 @@ class TestErrorHandling:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
             patch("portolan_cli.sync.core.init_catalog"),
             patch("portolan_cli.sync.core.scan_directory") as mock_scan,
             patch("portolan_cli.sync.core.check_directory") as mock_check,
@@ -817,7 +817,7 @@ class TestCloneFunction:
 
         with (
             patch("portolan_cli.sync.core.init_catalog") as mock_init,
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             # Mock successful operations
             mock_init.return_value = None
@@ -845,7 +845,7 @@ class TestCloneFunction:
 
         with (
             patch("portolan_cli.sync.core.init_catalog") as mock_init,
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,
@@ -872,7 +872,7 @@ class TestCloneFunction:
 
         with (
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,
@@ -905,7 +905,7 @@ class TestCloneFunction:
 
         with (
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=False,
@@ -930,7 +930,7 @@ class TestCloneFunction:
 
         with (
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=False,
@@ -956,7 +956,7 @@ class TestCloneFunction:
 
         with (
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull_result = MagicMock(
                 success=True,
@@ -1476,7 +1476,7 @@ class TestCloneNestedCatalogs:
         with (
             patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch),
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,

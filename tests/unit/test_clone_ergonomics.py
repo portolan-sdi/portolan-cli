@@ -300,7 +300,7 @@ class TestCloneAllCollections:
         with (
             patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_list.return_value = ["collection-a", "collection-b"]
             mock_pull.return_value = MagicMock(
@@ -332,7 +332,7 @@ class TestCloneAllCollections:
         with (
             patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,
@@ -385,7 +385,7 @@ class TestCloneAllCollections:
         with (
             patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_list.return_value = ["good-collection", "bad-collection", "another-good"]
 
@@ -419,7 +419,7 @@ class TestCloneToCurrentDirectory:
 
         with (
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,

@@ -91,7 +91,7 @@ class TestNestedCatalogCloneIntegration:
                 "portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch_catalog
             ),
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull", side_effect=mock_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=mock_pull),
         ):
             result = clone(
                 remote_url="s3://bucket/den-haag",
@@ -163,7 +163,7 @@ class TestNestedCatalogCloneIntegration:
         with (
             patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch),
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull", side_effect=mock_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=mock_pull),
         ):
             result = clone(
                 remote_url="s3://bucket/catalog",
@@ -218,7 +218,7 @@ class TestNestedCatalogCloneIntegration:
         with (
             patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch),
             patch("portolan_cli.sync.core.init_catalog"),
-            patch("portolan_cli.sync.pull", side_effect=mock_pull),
+            patch("portolan_cli.sync.core.pull", side_effect=mock_pull),
         ):
             result = clone(
                 remote_url="s3://bucket/catalog",
