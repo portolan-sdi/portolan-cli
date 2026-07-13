@@ -24,8 +24,8 @@ from portolan_cli.add import (
     get_item_info,
     list_items,
 )
-from portolan_cli.checksums import compute_dir_size
 from portolan_cli.formats import FormatType
+from portolan_cli.sync.checksums import compute_dir_size
 from portolan_cli.versions import read_versions
 
 if TYPE_CHECKING:

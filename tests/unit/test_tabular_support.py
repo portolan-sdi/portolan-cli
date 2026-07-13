@@ -21,7 +21,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from portolan_cli.scan_classify import (
+from portolan_cli.scan.classify import (
     FileCategory,
     classify_file,
 )
@@ -159,7 +159,7 @@ class TestConstantsUnification:
     def test_scan_classify_tabular_matches_constants(self) -> None:
         """scan_classify.py TABULAR_EXTENSIONS should exactly match constants.py."""
         from portolan_cli.constants import TABULAR_EXTENSIONS as CONST_TABULAR
-        from portolan_cli.scan_classify import TABULAR_EXTENSIONS as SCAN_TABULAR
+        from portolan_cli.scan.classify import TABULAR_EXTENSIONS as SCAN_TABULAR
 
         # Exact equality required — any drift (in either direction) should fail
         # This prevents constants.py and scan_classify.py from diverging silently
@@ -167,7 +167,7 @@ class TestConstantsUnification:
 
     def test_parquet_not_in_geo_asset_extensions(self) -> None:
         """Parquet should NOT be in GEO_ASSET_EXTENSIONS (peeking required)."""
-        from portolan_cli.scan_classify import GEO_ASSET_EXTENSIONS
+        from portolan_cli.scan.classify import GEO_ASSET_EXTENSIONS
 
         # .parquet requires metadata peeking, so it shouldn't be in the simple
         # extension-based GEO_ASSET list
@@ -180,7 +180,7 @@ class TestIsGeoParquet:
 
     def test_is_geoparquet_with_geo_metadata(self, tmp_path: Path) -> None:
         """Files with geo metadata should return True."""
-        from portolan_cli.scan_classify import is_geoparquet
+        from portolan_cli.scan.classify import is_geoparquet
 
         parquet_file = tmp_path / "geo.parquet"
         table = pa.table({"id": [1], "geometry": [b"wkb"]})
@@ -198,7 +198,7 @@ class TestIsGeoParquet:
 
     def test_is_geoparquet_without_geo_metadata(self, tmp_path: Path) -> None:
         """Files without geo metadata should return False."""
-        from portolan_cli.scan_classify import is_geoparquet
+        from portolan_cli.scan.classify import is_geoparquet
 
         parquet_file = tmp_path / "plain.parquet"
         table = pa.table({"id": [1], "value": [100]})
@@ -208,7 +208,7 @@ class TestIsGeoParquet:
 
     def test_is_geoparquet_handles_read_error(self, tmp_path: Path) -> None:
         """Should return False on read errors (not crash)."""
-        from portolan_cli.scan_classify import is_geoparquet
+        from portolan_cli.scan.classify import is_geoparquet
 
         bad_file = tmp_path / "not_parquet.parquet"
         bad_file.write_text("this is not a parquet file")
@@ -218,7 +218,7 @@ class TestIsGeoParquet:
 
     def test_is_geoparquet_nonexistent_file(self, tmp_path: Path) -> None:
         """Should return False for nonexistent files."""
-        from portolan_cli.scan_classify import is_geoparquet
+        from portolan_cli.scan.classify import is_geoparquet
 
         missing = tmp_path / "missing.parquet"
 
@@ -1038,7 +1038,7 @@ class TestMalformedInputHandling:
 
     def test_invalid_parquet_returns_false_for_is_geoparquet(self, tmp_path: Path) -> None:
         """Invalid Parquet file should return False for is_geoparquet, not crash."""
-        from portolan_cli.scan_classify import is_geoparquet
+        from portolan_cli.scan.classify import is_geoparquet
 
         # Create a file that's not valid Parquet
         bad_parquet = tmp_path / "bad.parquet"

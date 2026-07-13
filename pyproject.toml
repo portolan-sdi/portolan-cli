@@ -335,10 +335,10 @@ forbidden_modules = [
 # dependency, so they move with `reis` or vendor trivially at extraction time.
 # Documented per the second checkbox on #563 (which listed only scan_classify;
 # metadata.scan and bbox are the same kind of coupling, added since).
-#   portolan_cli.validation -> portolan_cli.scan_classify
+#   portolan_cli.validation -> portolan_cli.scan.classify
 #   portolan_cli.validation -> portolan_cli.metadata.scan
 #   portolan_cli.validation -> portolan_cli.bbox
-#   portolan_cli.validation -> portolan_cli.pmtiles_links
+#   portolan_cli.validation -> portolan_cli.viz.pmtiles_links
 # (pmtiles_links is a stdlib-only leaf holding the PMTiles asset/link classifiers;
 #  it exists precisely so validation never imports pmtiles.py, issue #586/#592.)
 
@@ -363,6 +363,39 @@ modules = [
     "portolan_cli.constants",
     "portolan_cli.json_output",
 ]
+
+# ---------- feature-package boundaries (#625) ----------
+# The scan/, sync/, and viz/ subpackages group the modules that used to sit
+# flat in the root. Their real dependency DAG is: sync (top orchestration) may
+# reach down into scan (its `sync` orchestrator drives check/scan); scan and viz
+# are independent peers, and neither reaches back up into sync. These two
+# contracts lock that shape so the grouping can't silently erode.
+
+[[tool.importlinter.contracts]]
+id = "viz-is-a-leaf"
+name = "viz must not import the scan or sync layers"
+type = "forbidden"
+# viz/ only produces/classifies visual + tiling artifacts (thumbnails, Mapbox GL
+# styles, PMTiles). It is a leaf: it depends on neither scanning nor sync.
+source_modules = ["portolan_cli.viz"]
+forbidden_modules = ["portolan_cli.scan", "portolan_cli.sync"]
+
+[[tool.importlinter.contracts]]
+id = "scan-below-sync"
+name = "scan must not directly import the sync or viz layers"
+type = "forbidden"
+# scan/ (directory scanning, classification, inference, check) sits below sync
+# and is independent of viz. sync may import scan, never the reverse.
+#
+# Direct-only: `scan.check` is a command-level orchestrator that legitimately
+# fans out through shared root modules (catalog, metadata, convert), which in
+# turn depend on sync.checksums and viz.*. Those transitive chains are the
+# existing architecture, not a scan->sync/viz coupling. What we lock here is
+# the boundary that actually matters: no scan module may *directly* import the
+# sync or viz packages. (viz-is-a-leaf stays transitive because viz truly is.)
+source_modules = ["portolan_cli.scan"]
+forbidden_modules = ["portolan_cli.sync", "portolan_cli.viz"]
+allow_indirect_imports = true
 
 # ---------- dependency checking ----------
 # deptry detects unused, missing, and transitive dependencies

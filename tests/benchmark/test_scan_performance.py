@@ -21,7 +21,7 @@ import pytest
 import rasterio
 from rasterio.transform import from_bounds
 
-from portolan_cli.scan import ScanOptions, scan_directory
+from portolan_cli.scan.core import ScanOptions, scan_directory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -465,7 +465,7 @@ class TestScanManyDirectoriesPerformance:
         benchmark_dir_many_dirs: Path,
     ) -> None:
         """EuroSAT structure (files only at leaf) should have no mixed structure issues."""
-        from portolan_cli.scan import IssueType
+        from portolan_cli.scan.core import IssueType
 
         result = scan_directory(benchmark_dir_many_dirs)
 

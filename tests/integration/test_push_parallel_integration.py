@@ -23,7 +23,7 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.push import (
+from portolan_cli.sync.push import (
     PushAllResult,
     PushResult,
     get_default_workers,
@@ -102,8 +102,8 @@ class TestParallelPushIntegration:
     """Integration tests for parallel push_all_collections."""
 
     @pytest.mark.integration
-    @patch("portolan_cli.push.obs.put")  # For catalog.json upload
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")  # For catalog.json upload
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_parallel_execution_observes_worker_count(
         self,
         mock_push_async: AsyncMock,
@@ -138,8 +138,8 @@ class TestParallelPushIntegration:
         assert mock_push_async.call_count == 4
 
     @pytest.mark.integration
-    @patch("portolan_cli.push.obs.put")  # For catalog.json upload
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")  # For catalog.json upload
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_sequential_execution_with_workers_1(
         self,
         mock_push_async: AsyncMock,
@@ -168,8 +168,8 @@ class TestParallelPushIntegration:
         assert call_order == ["collection_a", "collection_b", "collection_c", "collection_d"]
 
     @pytest.mark.integration
-    @patch("portolan_cli.push.obs.put")  # For catalog.json upload (skipped on failure)
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.obs.put")  # For catalog.json upload (skipped on failure)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_parallel_continues_on_individual_failure(
         self, mock_push_async: AsyncMock, _mock_obs_put: MagicMock, multi_collection_catalog: Path
     ) -> None:
@@ -219,7 +219,7 @@ class TestCLIParallelPushIntegration:
         return CliRunner()
 
     @pytest.mark.integration
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_cli_workers_flag_integration(
         self, mock_push_all: MagicMock, runner: CliRunner, multi_collection_catalog: Path
     ) -> None:
@@ -244,7 +244,7 @@ class TestCLIParallelPushIntegration:
         assert mock_push_all.call_args.kwargs["workers"] == 2
 
     @pytest.mark.integration
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_cli_default_workers_integration(
         self, mock_push_all: MagicMock, runner: CliRunner, multi_collection_catalog: Path
     ) -> None:

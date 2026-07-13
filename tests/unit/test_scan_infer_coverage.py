@@ -15,7 +15,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan_infer import (
+from portolan_cli.scan.infer import (
     CollectionSuggestion,
     find_common_prefix,
 )

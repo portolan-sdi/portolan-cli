@@ -730,7 +730,7 @@ def _render_geometries(
     # extracted paint (#518).
     categorical_style = None
     if style_path:
-        from portolan_cli.thumbnail_style import load_thumbnail_style
+        from portolan_cli.viz.thumbnail_style import load_thumbnail_style
 
         loaded = load_thumbnail_style(style_path)
         if loaded and loaded.color_map and loaded.color_field:
@@ -753,7 +753,7 @@ def _render_geometries(
 
         # Categorical fill from the style (with a punchy fallback), else preset.
         if categorical_style is not None:
-            from portolan_cli.thumbnail_style import resolve_color_for_properties
+            from portolan_cli.viz.thumbnail_style import resolve_color_for_properties
 
             fill_color = resolve_color_for_properties(
                 props, categorical_style, fallback=THUMB_FILL_COLOR
@@ -1004,7 +1004,7 @@ def _render_geoparquet(
         fill_color: str | Any = THUMB_FILL_COLOR  # Any allows pd.Series
 
         if style_path:
-            from portolan_cli.thumbnail_style import (
+            from portolan_cli.viz.thumbnail_style import (
                 load_thumbnail_style,
                 resolve_colors_for_gdf,
             )

@@ -828,7 +828,7 @@ class TestPMTilesLinkRule:
                 }
             )
 
-        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
+        from portolan_cli.viz.pmtiles import WEB_MAP_LINKS_EXTENSION
 
         collection_json = {
             "type": "Collection",
@@ -910,8 +910,8 @@ class TestPMTilesLinkRule:
         """
         import json
 
-        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
         from portolan_cli.validation.rules import PMTilesLinkRule
+        from portolan_cli.viz.pmtiles import WEB_MAP_LINKS_EXTENSION
 
         (tmp_path / ".portolan").mkdir()
         collection_dir = tmp_path / "test-collection"
@@ -2205,7 +2205,7 @@ class TestRepairPMTilesLinks:
         import json
 
         from portolan_cli.metadata.fix import repair_pmtiles_links
-        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
+        from portolan_cli.viz.pmtiles import WEB_MAP_LINKS_EXTENSION
 
         coll = _make_collection(
             tmp_path,
@@ -2257,7 +2257,7 @@ class TestRepairPMTilesLinks:
     @pytest.mark.unit
     def test_noop_when_link_present(self, tmp_path: Path) -> None:
         from portolan_cli.metadata.fix import repair_pmtiles_links
-        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
+        from portolan_cli.viz.pmtiles import WEB_MAP_LINKS_EXTENSION
 
         _make_collection(
             tmp_path,
@@ -2296,7 +2296,7 @@ class TestRepairPMTilesLinks:
         import json
 
         from portolan_cli.metadata.fix import repair_pmtiles_links
-        from portolan_cli.pmtiles import WEB_MAP_LINKS_EXTENSION
+        from portolan_cli.viz.pmtiles import WEB_MAP_LINKS_EXTENSION
 
         coll = _make_collection(
             tmp_path,

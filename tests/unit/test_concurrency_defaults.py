@@ -109,7 +109,7 @@ class TestUploadModuleDefaults:
         """upload_file should default to 4 chunk concurrency."""
         import inspect
 
-        from portolan_cli.upload import upload_file
+        from portolan_cli.sync.upload import upload_file
 
         sig = inspect.signature(upload_file)
         chunk_param = sig.parameters.get("chunk_concurrency")
@@ -122,7 +122,7 @@ class TestUploadModuleDefaults:
         """upload_directory should default to 4 chunk concurrency."""
         import inspect
 
-        from portolan_cli.upload import upload_directory
+        from portolan_cli.sync.upload import upload_directory
 
         sig = inspect.signature(upload_directory)
         chunk_param = sig.parameters.get("chunk_concurrency")
@@ -137,7 +137,7 @@ class TestUploadModuleDefaults:
         # to _setup_store_and_kwargs. The default should be 4.
         import inspect
 
-        from portolan_cli.upload import _setup_store_and_kwargs
+        from portolan_cli.sync.upload import _setup_store_and_kwargs
 
         sig = inspect.signature(_setup_store_and_kwargs)
         chunk_param = sig.parameters.get("chunk_concurrency")
@@ -160,7 +160,7 @@ class TestPushModuleDefaults:
         """push_async should default to 8 file concurrency."""
         import inspect
 
-        from portolan_cli.push import push_async
+        from portolan_cli.sync.push import push_async
 
         sig = inspect.signature(push_async)
         conc_param = sig.parameters.get("concurrency")
@@ -174,7 +174,7 @@ class TestPushModuleDefaults:
         """push_async should accept chunk_concurrency parameter."""
         import inspect
 
-        from portolan_cli.push import push_async
+        from portolan_cli.sync.push import push_async
 
         sig = inspect.signature(push_async)
         chunk_param = sig.parameters.get("chunk_concurrency")
@@ -186,7 +186,7 @@ class TestPushModuleDefaults:
         """push_all_collections should accept chunk_concurrency parameter."""
         import inspect
 
-        from portolan_cli.push import push_all_collections
+        from portolan_cli.sync.push import push_all_collections
 
         sig = inspect.signature(push_all_collections)
         chunk_param = sig.parameters.get("chunk_concurrency")

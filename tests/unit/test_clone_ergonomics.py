@@ -31,7 +31,7 @@ class TestInferLocalPathFromUrl:
     @pytest.mark.unit
     def test_infer_from_s3_url(self) -> None:
         """Should extract catalog name from S3 URL."""
-        from portolan_cli.sync import infer_local_path_from_url
+        from portolan_cli.sync.core import infer_local_path_from_url
 
         result = infer_local_path_from_url("s3://mybucket/my-catalog")
         assert result == Path("my-catalog")
@@ -39,7 +39,7 @@ class TestInferLocalPathFromUrl:
     @pytest.mark.unit
     def test_infer_from_s3_url_trailing_slash(self) -> None:
         """Should handle trailing slashes."""
-        from portolan_cli.sync import infer_local_path_from_url
+        from portolan_cli.sync.core import infer_local_path_from_url
 
         result = infer_local_path_from_url("s3://mybucket/my-catalog/")
         assert result == Path("my-catalog")
@@ -47,7 +47,7 @@ class TestInferLocalPathFromUrl:
     @pytest.mark.unit
     def test_infer_from_nested_path(self) -> None:
         """Should extract last component from nested path."""
-        from portolan_cli.sync import infer_local_path_from_url
+        from portolan_cli.sync.core import infer_local_path_from_url
 
         result = infer_local_path_from_url("s3://mybucket/path/to/my-catalog")
         assert result == Path("my-catalog")
@@ -55,7 +55,7 @@ class TestInferLocalPathFromUrl:
     @pytest.mark.unit
     def test_infer_from_gcs_url(self) -> None:
         """Should work with GCS URLs."""
-        from portolan_cli.sync import infer_local_path_from_url
+        from portolan_cli.sync.core import infer_local_path_from_url
 
         result = infer_local_path_from_url("gs://mybucket/catalog-name")
         assert result == Path("catalog-name")
@@ -63,7 +63,7 @@ class TestInferLocalPathFromUrl:
     @pytest.mark.unit
     def test_infer_from_azure_url(self) -> None:
         """Should work with Azure URLs."""
-        from portolan_cli.sync import infer_local_path_from_url
+        from portolan_cli.sync.core import infer_local_path_from_url
 
         result = infer_local_path_from_url("az://container/my-data")
         assert result == Path("my-data")
@@ -71,7 +71,7 @@ class TestInferLocalPathFromUrl:
     @pytest.mark.unit
     def test_infer_handles_multiple_trailing_slashes(self) -> None:
         """Should handle multiple trailing slashes."""
-        from portolan_cli.sync import infer_local_path_from_url
+        from portolan_cli.sync.core import infer_local_path_from_url
 
         result = infer_local_path_from_url("s3://bucket/catalog///")
         assert result == Path("catalog")
@@ -79,7 +79,7 @@ class TestInferLocalPathFromUrl:
     @pytest.mark.unit
     def test_infer_raises_on_bucket_only_url(self) -> None:
         """Should raise error for bucket-only URLs (no catalog name)."""
-        from portolan_cli.sync import infer_local_path_from_url
+        from portolan_cli.sync.core import infer_local_path_from_url
 
         with pytest.raises(ValueError, match="Cannot infer"):
             infer_local_path_from_url("s3://mybucket")
@@ -87,7 +87,7 @@ class TestInferLocalPathFromUrl:
     @pytest.mark.unit
     def test_infer_raises_on_bucket_only_url_with_slash(self) -> None:
         """Should raise error for bucket-only URLs with trailing slash."""
-        from portolan_cli.sync import infer_local_path_from_url
+        from portolan_cli.sync.core import infer_local_path_from_url
 
         with pytest.raises(ValueError, match="Cannot infer"):
             infer_local_path_from_url("s3://mybucket/")
@@ -109,7 +109,7 @@ class TestInferLocalPathFromUrlHypothesis:
     @settings(max_examples=50)
     def test_infer_extracts_catalog_name(self, catalog_name: str) -> None:
         """Property: inferred path should match catalog name from URL."""
-        from portolan_cli.sync import infer_local_path_from_url
+        from portolan_cli.sync.core import infer_local_path_from_url
 
         url = f"s3://somebucket/{catalog_name}"
         result = infer_local_path_from_url(url)
@@ -135,7 +135,7 @@ class TestInferLocalPathFromUrlHypothesis:
     @settings(max_examples=30)
     def test_infer_extracts_last_component(self, prefix: str, catalog_name: str) -> None:
         """Property: should extract last path component regardless of prefix."""
-        from portolan_cli.sync import infer_local_path_from_url
+        from portolan_cli.sync.core import infer_local_path_from_url
 
         # Clean up prefix - remove leading/trailing slashes
         prefix_clean = prefix.strip("/")
@@ -159,7 +159,7 @@ class TestListRemoteCollections:
     @pytest.mark.unit
     def test_list_collections_parses_stac_links(self, tmp_path: Path) -> None:
         """Should parse child links from STAC catalog.json."""
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         # Mock catalog.json content
         catalog_json = {
@@ -174,7 +174,7 @@ class TestListRemoteCollections:
             ],
         }
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json") as mock_fetch:
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json") as mock_fetch:
             mock_fetch.return_value = catalog_json
 
             result = list_remote_collections("s3://bucket/catalog")
@@ -184,7 +184,7 @@ class TestListRemoteCollections:
     @pytest.mark.unit
     def test_list_collections_returns_empty_for_no_children(self) -> None:
         """Should return empty list if catalog has no child collections."""
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         catalog_json = {
             "type": "Catalog",
@@ -196,7 +196,7 @@ class TestListRemoteCollections:
             ],
         }
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json") as mock_fetch:
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json") as mock_fetch:
             mock_fetch.return_value = catalog_json
 
             result = list_remote_collections("s3://bucket/catalog")
@@ -206,7 +206,7 @@ class TestListRemoteCollections:
     @pytest.mark.unit
     def test_list_collections_handles_absolute_hrefs(self) -> None:
         """Should handle absolute href paths in child links."""
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         catalog_json = {
             "type": "Catalog",
@@ -217,7 +217,7 @@ class TestListRemoteCollections:
             ],
         }
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json") as mock_fetch:
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json") as mock_fetch:
             mock_fetch.return_value = catalog_json
 
             result = list_remote_collections("s3://bucket/catalog")
@@ -228,9 +228,9 @@ class TestListRemoteCollections:
     @pytest.mark.unit
     def test_list_collections_propagates_profile(self) -> None:
         """Should pass AWS profile to fetch function."""
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json") as mock_fetch:
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json") as mock_fetch:
             mock_fetch.return_value = {"type": "Catalog", "links": []}
 
             list_remote_collections("s3://bucket/catalog", profile="my-profile")
@@ -244,14 +244,14 @@ class TestFetchRemoteCatalogJson:
     @pytest.mark.unit
     def test_fetch_downloads_and_parses_json(self, tmp_path: Path) -> None:
         """Should download catalog.json and parse it."""
-        from portolan_cli.sync import _fetch_remote_catalog_json
+        from portolan_cli.sync.core import _fetch_remote_catalog_json
 
         catalog_content = {"type": "Catalog", "id": "test"}
 
         with (
-            patch("portolan_cli.sync.download_file") as mock_download,
+            patch("portolan_cli.sync.core.download_file") as mock_download,
             patch("builtins.open", MagicMock()),
-            patch("portolan_cli.sync.json.load") as mock_json_load,
+            patch("portolan_cli.sync.core.json.load") as mock_json_load,
             patch("pathlib.Path.unlink"),
             patch("pathlib.Path.exists", return_value=True),
         ):
@@ -269,9 +269,9 @@ class TestFetchRemoteCatalogJson:
     @pytest.mark.unit
     def test_fetch_raises_on_download_failure(self) -> None:
         """Should raise error if download fails."""
-        from portolan_cli.sync import CloneError, _fetch_remote_catalog_json
+        from portolan_cli.sync.core import CloneError, _fetch_remote_catalog_json
 
-        with patch("portolan_cli.sync.download_file") as mock_download:
+        with patch("portolan_cli.sync.core.download_file") as mock_download:
             # errors is list[tuple[Path, Exception]] per DownloadResult
             mock_download.return_value = MagicMock(
                 success=False,
@@ -293,14 +293,14 @@ class TestCloneAllCollections:
     @pytest.mark.unit
     def test_clone_all_collections_when_none_specified(self, tmp_path: Path) -> None:
         """Should clone all collections when collection=None."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.list_remote_collections") as mock_list,
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_list.return_value = ["collection-a", "collection-b"]
             mock_pull.return_value = MagicMock(
@@ -325,14 +325,14 @@ class TestCloneAllCollections:
     @pytest.mark.unit
     def test_clone_single_collection_still_works(self, tmp_path: Path) -> None:
         """Should still support explicit collection specification."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.list_remote_collections") as mock_list,
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,
@@ -356,13 +356,13 @@ class TestCloneAllCollections:
     @pytest.mark.unit
     def test_clone_fails_gracefully_when_no_collections(self, tmp_path: Path) -> None:
         """Should fail with helpful message when remote has no collections."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.list_remote_collections") as mock_list,
-            patch("portolan_cli.sync.init_catalog"),
+            patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
+            patch("portolan_cli.sync.core.init_catalog"),
         ):
             mock_list.return_value = []  # No collections
 
@@ -378,14 +378,14 @@ class TestCloneAllCollections:
     @pytest.mark.unit
     def test_clone_partial_failure_reports_all_errors(self, tmp_path: Path) -> None:
         """Should report errors for each failed collection in multi-clone."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.list_remote_collections") as mock_list,
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_list.return_value = ["good-collection", "bad-collection", "another-good"]
 
@@ -413,13 +413,13 @@ class TestCloneToCurrentDirectory:
     @pytest.mark.unit
     def test_clone_to_dot_with_empty_directory(self, tmp_path: Path) -> None:
         """Should allow cloning to '.' if directory is empty."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         # tmp_path is empty
 
         with (
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,
@@ -439,7 +439,7 @@ class TestCloneToCurrentDirectory:
     @pytest.mark.unit
     def test_clone_to_dot_fails_if_not_empty(self, tmp_path: Path) -> None:
         """Should fail if '.' is not empty."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         # Create a file to make directory non-empty
         (tmp_path / "existing.txt").write_text("content")
@@ -465,7 +465,7 @@ class TestCloneResultMultiCollection:
     @pytest.mark.unit
     def test_clone_result_stores_multiple_pull_results(self, tmp_path: Path) -> None:
         """CloneResult should store results for multiple collections."""
-        from portolan_cli.sync import CloneResult
+        from portolan_cli.sync.core import CloneResult
 
         # When cloning multiple collections, pull_results should be a list
         # or we store aggregate stats
@@ -503,7 +503,7 @@ class TestCloneCLIErgonomics:
         from portolan_cli.cli import clone
 
         with (
-            patch("portolan_cli.sync.clone") as mock_clone,
+            patch("portolan_cli.sync.core.clone") as mock_clone,
         ):
             mock_clone.return_value = MagicMock(
                 success=True,
@@ -532,7 +532,7 @@ class TestCloneCLIErgonomics:
         from portolan_cli.cli import clone
 
         with (
-            patch("portolan_cli.sync.clone") as mock_clone,
+            patch("portolan_cli.sync.core.clone") as mock_clone,
         ):
             mock_clone.return_value = MagicMock(
                 success=True,
@@ -561,7 +561,7 @@ class TestCloneCLIErgonomics:
         from portolan_cli.cli import clone
 
         with (
-            patch("portolan_cli.sync.clone") as mock_clone,
+            patch("portolan_cli.sync.core.clone") as mock_clone,
         ):
             mock_clone.return_value = MagicMock(
                 success=True,

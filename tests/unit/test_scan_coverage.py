@@ -12,7 +12,7 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan import (
+from portolan_cli.scan.core import (
     FormatType,
     IssueType,
     ScanIssue,
@@ -30,7 +30,7 @@ from portolan_cli.scan import (
     is_windows_reserved_name,
     scan_directory,
 )
-from portolan_cli.scan_detect import (
+from portolan_cli.scan.detect import (
     DualFormatPair,
     SpecialFormat,
     detect_hive_partitions,
@@ -569,7 +569,7 @@ class TestGetDirSizeErrorPaths:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """OSError during scandir should be caught and return 0."""
-        from portolan_cli import scan as scan_module
+        from portolan_cli.scan import core as scan_module
 
         # Create a FileGDB structure
         gdb_dir = tmp_path / "test.gdb"
@@ -592,7 +592,7 @@ class TestGetDirSizeErrorPaths:
         """OSError during stat should be caught and file skipped."""
         import os
 
-        from portolan_cli import scan as scan_module
+        from portolan_cli.scan import core as scan_module
 
         # Create a FileGDB structure
         gdb_dir = tmp_path / "test.gdb"

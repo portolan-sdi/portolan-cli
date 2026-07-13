@@ -6,7 +6,7 @@ This module provides:
 3. Suppression of progress in JSON mode (agent/batch usage)
 
 Example:
-    >>> from portolan_cli.scan_progress import count_directories, ScanProgressReporter
+    >>> from portolan_cli.scan.progress import count_directories, ScanProgressReporter
     >>> total = count_directories(Path("/data"))
     >>> with ScanProgressReporter(total, json_mode=False) as reporter:
     ...     for directory in scan_directories():

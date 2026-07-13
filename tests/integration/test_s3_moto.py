@@ -284,7 +284,7 @@ class TestPushS3Integration:
         """Push should upload files to the S3 bucket."""
         bucket_name, endpoint_url = s3_bucket
 
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         result = push(
             catalog_root=catalog_with_data,
@@ -320,7 +320,7 @@ class TestPushS3Integration:
         """Issue #329: Push should only upload new/changed files."""
         bucket_name, endpoint_url = s3_bucket
 
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         # First push - should upload everything (fresh bucket)
         result1 = push(
@@ -396,7 +396,7 @@ class TestPushS3Integration:
         """
         bucket_name, endpoint_url = s3_bucket
 
-        from portolan_cli.push import push_all_collections
+        from portolan_cli.sync.push import push_all_collections
 
         result = push_all_collections(
             catalog_root=nested_catalog_with_data,
@@ -442,7 +442,7 @@ class TestPushS3Integration:
         """
         bucket_name, endpoint_url = s3_bucket
 
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         result = push(
             catalog_root=nested_catalog_with_data,
@@ -485,7 +485,7 @@ class TestPushS3Integration:
         """
         bucket_name, endpoint_url = s3_bucket
 
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         collection = "tst/latest/adm0"
         destination = f"s3://{bucket_name}/catalog"
@@ -564,8 +564,8 @@ class TestPullS3Integration:
         """Pull should download files from S3."""
         bucket_name, endpoint_url = s3_bucket
 
-        from portolan_cli.pull import pull
-        from portolan_cli.push import push
+        from portolan_cli.sync.pull import pull
+        from portolan_cli.sync.push import push
 
         # First push to populate S3
         push_result = push(
@@ -619,8 +619,8 @@ class TestRestoreS3Integration:
         """Issue #325: --restore should re-download missing local files."""
         bucket_name, endpoint_url = s3_bucket
 
-        from portolan_cli.pull import pull
-        from portolan_cli.push import push
+        from portolan_cli.sync.pull import pull
+        from portolan_cli.sync.push import push
 
         # Push to S3
         push_result = push(

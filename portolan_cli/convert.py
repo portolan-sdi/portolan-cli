@@ -39,7 +39,7 @@ from portolan_cli.formats import (
     detect_format,
     get_cloud_native_status,
 )
-from portolan_cli.thumbnail import (
+from portolan_cli.viz.thumbnail import (
     ThumbnailConfig,
     generate_vector_thumbnail,
     get_thumbnail_config,

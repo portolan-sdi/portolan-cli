@@ -17,7 +17,7 @@ import pytest
 from click.testing import CliRunner
 
 from portolan_cli.cli import cli
-from portolan_cli.push import PushAllResult
+from portolan_cli.sync.push import PushAllResult
 
 # Remote URL for tests - set via env var (Issue #356: sensitive settings)
 TEST_REMOTE = "s3://test/catalog"
@@ -47,7 +47,7 @@ class TestPushMaxConnectionsFlag:
         return CliRunner()
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_max_connections_flag_exists(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -70,7 +70,7 @@ class TestPushMaxConnectionsFlag:
             assert result.exit_code == 0, f"Failed: {result.output}"
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_max_connections_value_passed_to_push_all(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:
@@ -186,7 +186,7 @@ class TestMaxConnectionsWithWorkers:
         return CliRunner()
 
     @pytest.mark.unit
-    @patch("portolan_cli.push.push_all_collections")
+    @patch("portolan_cli.sync.push.push_all_collections")
     def test_max_connections_considers_workers(
         self, mock_push_all: MagicMock, runner: CliRunner, tmp_path: Path
     ) -> None:

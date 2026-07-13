@@ -104,7 +104,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_s3_url_simple(self) -> None:
         """S3 URL with bucket only."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket")
         assert bucket_url == "s3://mybucket"
@@ -113,7 +113,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_s3_url_with_prefix(self) -> None:
         """S3 URL with bucket and prefix."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket/data/output")
         assert bucket_url == "s3://mybucket"
@@ -122,7 +122,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_gs_url_simple(self) -> None:
         """GCS URL with bucket only."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("gs://mybucket")
         assert bucket_url == "gs://mybucket"
@@ -131,7 +131,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_gs_url_with_prefix(self) -> None:
         """GCS URL with bucket and prefix."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("gs://mybucket/path/to/data")
         assert bucket_url == "gs://mybucket"
@@ -140,7 +140,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_az_url_with_container(self) -> None:
         """Azure URL with account and container."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("az://myaccount/mycontainer")
         assert bucket_url == "az://myaccount/mycontainer"
@@ -149,7 +149,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_az_url_with_path(self) -> None:
         """Azure URL with account, container, and path."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("az://myaccount/mycontainer/data/path")
         assert bucket_url == "az://myaccount/mycontainer"
@@ -158,7 +158,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_az_url_missing_container_raises(self) -> None:
         """Azure URL with only account (no container) should raise ValueError."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         with pytest.raises(ValueError, match="Invalid Azure URL"):
             parse_object_store_url("az://myaccount")
@@ -166,7 +166,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_unsupported_scheme_raises(self) -> None:
         """Unsupported URL scheme should raise ValueError."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         with pytest.raises(ValueError, match="Unsupported URL scheme"):
             parse_object_store_url("ftp://server/path")
@@ -183,7 +183,7 @@ class TestParseObjectStoreUrl:
         The full URL is returned as the bucket_url for obstore HTTPStore,
         and no prefix manipulation is performed.
         """
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("http://example.com/data/file.parquet")
         assert bucket_url == "http://example.com/data/file.parquet"
@@ -192,7 +192,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_https_url_returned_unchanged(self) -> None:
         """HTTPS URLs are returned unchanged with empty prefix."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("https://example.com/path/to/data/")
         assert bucket_url == "https://example.com/path/to/data/"
@@ -206,7 +206,7 @@ class TestParseObjectStoreUrl:
         through without modification. This is intentional: HTTP URLs may point
         to specific resources where the trailing slash is meaningful.
         """
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         # Trailing slash preserved (not normalized)
         bucket_url, prefix = parse_object_store_url("https://api.example.com/v1/")
@@ -224,7 +224,7 @@ class TestParseObjectStoreUrl:
         Regression test for issue #144: trailing slash in destination URL
         causes double-slash in path construction, leading to parse errors.
         """
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket/prefix/")
         assert bucket_url == "s3://mybucket"
@@ -233,7 +233,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_s3_url_multiple_trailing_slashes_normalized(self) -> None:
         """S3 URL with multiple trailing slashes should have all stripped."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket/prefix///")
         assert bucket_url == "s3://mybucket"
@@ -242,7 +242,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_gs_url_trailing_slash_normalized(self) -> None:
         """GCS URL with trailing slash should have it stripped from prefix."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("gs://mybucket/path/to/data/")
         assert bucket_url == "gs://mybucket"
@@ -251,7 +251,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_az_url_trailing_slash_normalized(self) -> None:
         """Azure URL with trailing slash should have it stripped from prefix."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("az://myaccount/mycontainer/data/")
         assert bucket_url == "az://myaccount/mycontainer"
@@ -263,7 +263,7 @@ class TestParseObjectStoreUrl:
 
         s3://bucket/ should result in empty prefix, not "/".
         """
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket/")
         assert bucket_url == "s3://mybucket"
@@ -280,7 +280,7 @@ class TestParseObjectStoreUrl:
         Note: While unusual, some object storage systems may interpret double
         slashes differently. Portolan preserves user intent.
         """
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket/a//b/")
         assert bucket_url == "s3://mybucket"
@@ -289,7 +289,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_gs_internal_double_slashes_preserved(self) -> None:
         """GCS internal double slashes preserved."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("gs://mybucket/path//to//data/")
         assert bucket_url == "gs://mybucket"
@@ -298,7 +298,7 @@ class TestParseObjectStoreUrl:
     @pytest.mark.unit
     def test_az_internal_double_slashes_preserved(self) -> None:
         """Azure internal double slashes preserved."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("az://account/container/a//b/")
         assert bucket_url == "az://account/container"
@@ -343,7 +343,7 @@ class TestParseObjectStoreUrl:
 
         This is the core invariant that issue #144 violated.
         """
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         # Build URL with optional trailing slashes
         # Azure requires account/container structure, so add a container for Azure
@@ -403,7 +403,7 @@ class TestParseObjectStoreUrl:
         Simulates the path construction in push.py:
         key = f"{prefix}/{collection}/versions.json"
         """
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         # Build URL - Azure requires account/container structure
         if scheme == "az":
@@ -436,7 +436,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_s3_with_env_vars(self) -> None:
         """S3 credentials should be found from environment variables."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         with patch.dict(
             os.environ,
@@ -449,10 +449,10 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_s3_missing_credentials_gives_hint(self) -> None:
         """Missing S3 credentials should return helpful hints."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         with patch.dict(os.environ, {}, clear=True):
-            with patch("portolan_cli.upload._load_aws_credentials_from_profile") as mock_load:
+            with patch("portolan_cli.sync.upload._load_aws_credentials_from_profile") as mock_load:
                 mock_load.return_value = (None, None, None, None)
                 valid, hint = check_credentials("s3://mybucket/path")
 
@@ -463,7 +463,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_s3_with_profile(self, mock_aws_credentials: Path) -> None:
         """S3 credentials should be loaded from AWS profile."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         # Fixture patches Path.home() - assert it exists to mark as used
         assert mock_aws_credentials.exists()
@@ -475,7 +475,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_s3_with_missing_profile(self, mock_aws_credentials: Path) -> None:
         """Missing AWS profile should return error with hints."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         # Fixture patches Path.home() - assert it exists to mark as used
         assert mock_aws_credentials.exists()
@@ -487,7 +487,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_gcs_with_credentials_file(self, tmp_path: Path) -> None:
         """GCS credentials should be found from GOOGLE_APPLICATION_CREDENTIALS."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         creds_file = tmp_path / "service_account.json"
         creds_file.write_text("{}")  # Minimal valid JSON
@@ -502,7 +502,7 @@ class TestCheckCredentials:
         """Missing GCS credentials should return helpful hints."""
         from pathlib import Path
 
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         # Mock ADC file check - don't clear env vars completely as it breaks
         # Path.home() on Windows (needs HOME or USERPROFILE)
@@ -525,7 +525,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_gcs_with_service_account_key_env(self) -> None:
         """GCS credentials should be found from inline GOOGLE_SERVICE_ACCOUNT_KEY."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         with patch.dict(os.environ, {"GOOGLE_SERVICE_ACCOUNT_KEY": '{"type": "service_account"}'}):
             valid, hint = check_credentials("gs://mybucket/path")
@@ -535,7 +535,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_gcs_with_adc_file(self, tmp_path: Path) -> None:
         """GCS credentials should be found from ADC file in default location."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         # Mock Path.home() to use tmp_path and create ADC file
         adc_dir = tmp_path / ".config" / "gcloud"
@@ -554,7 +554,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_azure_with_access_key_alias(self) -> None:
         """Azure credentials should be found from AZURE_STORAGE_ACCESS_KEY alias."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         with patch.dict(os.environ, {"AZURE_STORAGE_ACCESS_KEY": "testkey"}):
             valid, hint = check_credentials("az://myaccount/container")
@@ -564,7 +564,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_azure_with_account_key(self) -> None:
         """Azure credentials should be found from account key env var."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         with patch.dict(os.environ, {"AZURE_STORAGE_ACCOUNT_KEY": "testkey"}):
             valid, hint = check_credentials("az://myaccount/container")
@@ -574,7 +574,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_azure_with_sas_token(self) -> None:
         """Azure credentials should be found from SAS token env var."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         with patch.dict(os.environ, {"AZURE_STORAGE_SAS_TOKEN": "sastoken"}):
             valid, hint = check_credentials("az://myaccount/container")
@@ -584,7 +584,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_azure_missing_credentials(self) -> None:
         """Missing Azure credentials should return helpful hints."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         with patch.dict(os.environ, {}, clear=True):
             valid, hint = check_credentials("az://myaccount/container")
@@ -594,7 +594,7 @@ class TestCheckCredentials:
     @pytest.mark.unit
     def test_http_url_always_valid(self) -> None:
         """HTTP URLs should always return valid (no auth needed)."""
-        from portolan_cli.upload import check_credentials
+        from portolan_cli.sync.upload import check_credentials
 
         valid, hint = check_credentials("https://example.com/data.parquet")
         assert valid is True
@@ -612,7 +612,7 @@ class TestUploadResult:
     @pytest.mark.unit
     def test_upload_result_success(self) -> None:
         """UploadResult should capture successful upload stats."""
-        from portolan_cli.upload import UploadResult
+        from portolan_cli.sync.upload import UploadResult
 
         result = UploadResult(
             success=True,
@@ -631,7 +631,7 @@ class TestUploadResult:
     @pytest.mark.unit
     def test_upload_result_partial_failure(self) -> None:
         """UploadResult should capture partial failures."""
-        from portolan_cli.upload import UploadResult
+        from portolan_cli.sync.upload import UploadResult
 
         fake_error = Exception("Upload failed")
         result = UploadResult(
@@ -659,10 +659,10 @@ class TestUploadFile:
     @pytest.mark.unit
     def test_upload_file_success(self, temp_file: Path) -> None:
         """Single file upload should succeed and return result."""
-        from portolan_cli.upload import upload_file
+        from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.upload.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.obs") as mock_obs:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
@@ -683,9 +683,9 @@ class TestUploadFile:
     @pytest.mark.unit
     def test_upload_file_dry_run(self, temp_file: Path) -> None:
         """Dry-run should not perform actual upload."""
-        from portolan_cli.upload import upload_file
+        from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.upload.obs") as mock_obs:
+        with patch("portolan_cli.sync.upload.obs") as mock_obs:
             result = upload_file(
                 source=temp_file,
                 destination="s3://mybucket/data.parquet",
@@ -699,7 +699,7 @@ class TestUploadFile:
     @pytest.mark.unit
     def test_upload_file_nonexistent_raises(self, tmp_path: Path) -> None:
         """Uploading nonexistent file should raise FileNotFoundError."""
-        from portolan_cli.upload import upload_file
+        from portolan_cli.sync.upload import upload_file
 
         with pytest.raises(FileNotFoundError):
             upload_file(
@@ -710,10 +710,10 @@ class TestUploadFile:
     @pytest.mark.unit
     def test_upload_file_with_custom_endpoint(self, temp_file: Path) -> None:
         """Custom S3 endpoint (MinIO) should be passed to store."""
-        from portolan_cli.upload import upload_file
+        from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.upload.obs"):
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.obs"):
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
@@ -736,10 +736,10 @@ class TestUploadFile:
     @pytest.mark.unit
     def test_upload_file_strips_existing_scheme_from_endpoint(self, temp_file: Path) -> None:
         """S3 endpoint with existing scheme should not double-prepend protocol."""
-        from portolan_cli.upload import upload_file
+        from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.upload.obs"):
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.obs"):
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
@@ -764,10 +764,10 @@ class TestUploadFile:
     @pytest.mark.unit
     def test_upload_file_preserves_target_key(self, temp_file: Path) -> None:
         """Upload should use exact destination key when not ending with /."""
-        from portolan_cli.upload import upload_file
+        from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.upload.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.obs") as mock_obs:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
@@ -788,10 +788,10 @@ class TestUploadFile:
     @pytest.mark.unit
     def test_upload_file_appends_filename_to_dir(self, temp_file: Path) -> None:
         """Upload to directory (ending with /) should append filename."""
-        from portolan_cli.upload import upload_file
+        from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.upload.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.obs") as mock_obs:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
@@ -820,10 +820,10 @@ class TestUploadDirectory:
     @pytest.mark.unit
     def test_upload_directory_all_files(self, temp_dir_with_files: Path) -> None:
         """Directory upload should upload all files."""
-        from portolan_cli.upload import upload_directory
+        from portolan_cli.sync.upload import upload_directory
 
-        with patch("portolan_cli.upload.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.obs") as mock_obs:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
@@ -843,10 +843,10 @@ class TestUploadDirectory:
     @pytest.mark.unit
     def test_upload_directory_with_pattern(self, temp_dir_with_files: Path) -> None:
         """Directory upload with pattern should filter files."""
-        from portolan_cli.upload import upload_directory
+        from portolan_cli.sync.upload import upload_directory
 
-        with patch("portolan_cli.upload.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.obs") as mock_obs:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
 
@@ -867,9 +867,9 @@ class TestUploadDirectory:
     @pytest.mark.unit
     def test_upload_directory_dry_run(self, temp_dir_with_files: Path) -> None:
         """Dry-run should not perform actual uploads."""
-        from portolan_cli.upload import upload_directory
+        from portolan_cli.sync.upload import upload_directory
 
-        with patch("portolan_cli.upload.obs") as mock_obs:
+        with patch("portolan_cli.sync.upload.obs") as mock_obs:
             result = upload_directory(
                 source=temp_dir_with_files,
                 destination="s3://mybucket/data/",
@@ -883,7 +883,7 @@ class TestUploadDirectory:
     @pytest.mark.unit
     def test_upload_directory_empty(self, tmp_path: Path) -> None:
         """Empty directory should return appropriate result."""
-        from portolan_cli.upload import upload_directory
+        from portolan_cli.sync.upload import upload_directory
 
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
@@ -900,7 +900,7 @@ class TestUploadDirectory:
     @pytest.mark.unit
     def test_upload_directory_fail_fast_true(self, temp_dir_with_files: Path) -> None:
         """fail_fast=True should stop on first error and report failure."""
-        from portolan_cli.upload import upload_directory
+        from portolan_cli.sync.upload import upload_directory
 
         def mock_put_fails_first(*args: object, **kwargs: object) -> None:
             # Always fail to ensure we catch the fail_fast behavior
@@ -908,8 +908,8 @@ class TestUploadDirectory:
             _ = (args, kwargs)
             raise OSError("Upload failed")
 
-        with patch("portolan_cli.upload.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.obs") as mock_obs:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
                 mock_obs.put.side_effect = mock_put_fails_first
@@ -935,15 +935,15 @@ class TestUploadDirectory:
     @pytest.mark.unit
     def test_upload_directory_fail_fast_false(self, temp_dir_with_files: Path) -> None:
         """fail_fast=False should continue and collect all errors."""
-        from portolan_cli.upload import upload_directory
+        from portolan_cli.sync.upload import upload_directory
 
         def mock_put_fails_all(*args: object, **kwargs: object) -> None:
             # Mark args/kwargs as used (vulture) - they're passed by obstore.put()
             _ = (args, kwargs)
             raise OSError("Upload failed")
 
-        with patch("portolan_cli.upload.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.obs") as mock_obs:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
                 mock_obs.put.side_effect = mock_put_fails_all
@@ -965,15 +965,15 @@ class TestUploadDirectory:
     @pytest.mark.unit
     def test_upload_directory_preserves_structure(self, temp_dir_with_files: Path) -> None:
         """Directory upload should preserve relative path structure."""
-        from portolan_cli.upload import upload_directory
+        from portolan_cli.sync.upload import upload_directory
 
         target_keys: list[str] = []
 
         def capture_target_key(store: object, key: str, source: object, **kwargs: object) -> None:
             target_keys.append(key)
 
-        with patch("portolan_cli.upload.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.obs") as mock_obs:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
                 mock_store = MagicMock()
                 mock_s3_store.return_value = mock_store
                 mock_obs.put.side_effect = capture_target_key
@@ -1004,7 +1004,7 @@ class TestLoadAwsCredentials:
     @pytest.mark.unit
     def test_load_default_profile(self, mock_aws_credentials: Path) -> None:
         """Should load credentials from default profile."""
-        from portolan_cli.upload import _load_aws_credentials_from_profile
+        from portolan_cli.sync.upload import _load_aws_credentials_from_profile
 
         # Fixture patches Path.home() - assert it exists to mark as used
         assert mock_aws_credentials.exists()
@@ -1020,7 +1020,7 @@ class TestLoadAwsCredentials:
     @pytest.mark.unit
     def test_load_named_profile(self, mock_aws_credentials: Path) -> None:
         """Should load credentials from named profile."""
-        from portolan_cli.upload import _load_aws_credentials_from_profile
+        from portolan_cli.sync.upload import _load_aws_credentials_from_profile
 
         # Fixture patches Path.home() - assert it exists to mark as used
         assert mock_aws_credentials.exists()
@@ -1038,7 +1038,7 @@ class TestLoadAwsCredentials:
         self, mock_aws_credentials: Path
     ) -> None:
         """Should load the session token for temporary (STS) credentials."""
-        from portolan_cli.upload import _load_aws_credentials_from_profile
+        from portolan_cli.sync.upload import _load_aws_credentials_from_profile
 
         assert mock_aws_credentials.exists()
         access_key, secret_key, session_token, _region = _load_aws_credentials_from_profile(
@@ -1052,7 +1052,7 @@ class TestLoadAwsCredentials:
     @pytest.mark.unit
     def test_load_missing_profile(self, mock_aws_credentials: Path) -> None:
         """Missing profile should return None values."""
-        from portolan_cli.upload import _load_aws_credentials_from_profile
+        from portolan_cli.sync.upload import _load_aws_credentials_from_profile
 
         # Fixture patches Path.home() - assert it exists to mark as used
         assert mock_aws_credentials.exists()
@@ -1072,10 +1072,10 @@ class TestSetupStoreSessionToken:
     @pytest.mark.unit
     def test_session_token_forwarded_to_s3store(self, mock_aws_credentials: Path) -> None:
         """A profile with aws_session_token must pass it through to S3Store."""
-        from portolan_cli.upload import _setup_store_and_kwargs
+        from portolan_cli.sync.upload import _setup_store_and_kwargs
 
         assert mock_aws_credentials.exists()
-        with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
             _setup_store_and_kwargs(
                 "s3://us-west-2.opendata.source.coop",
                 profile="temp-sts",
@@ -1090,10 +1090,10 @@ class TestSetupStoreSessionToken:
     @pytest.mark.unit
     def test_no_session_token_for_long_term_credentials(self, mock_aws_credentials: Path) -> None:
         """Long-term credentials (no token) must not set aws_session_token."""
-        from portolan_cli.upload import _setup_store_and_kwargs
+        from portolan_cli.sync.upload import _setup_store_and_kwargs
 
         assert mock_aws_credentials.exists()
-        with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
             _setup_store_and_kwargs(
                 "s3://us-west-2.opendata.source.coop",
                 profile="myprofile",
@@ -1106,12 +1106,12 @@ class TestSetupStoreSessionToken:
     @pytest.mark.unit
     def test_session_token_from_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """AWS_SESSION_TOKEN env var is forwarded when no profile is given."""
-        from portolan_cli.upload import _setup_store_and_kwargs
+        from portolan_cli.sync.upload import _setup_store_and_kwargs
 
         monkeypatch.setenv("AWS_ACCESS_KEY_ID", "ASIAENVKEY")
         monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "envsecret")
         monkeypatch.setenv("AWS_SESSION_TOKEN", "env-session-token")
-        with patch("portolan_cli.upload.S3Store") as mock_s3_store:
+        with patch("portolan_cli.sync.upload.S3Store") as mock_s3_store:
             _setup_store_and_kwargs(
                 "s3://us-west-2.opendata.source.coop",
                 profile=None,
@@ -1133,7 +1133,7 @@ class TestRegionInference:
     @pytest.mark.unit
     def test_infer_us_west_2(self) -> None:
         """Should infer us-west-2 from bucket name."""
-        from portolan_cli.upload import _try_infer_region_from_bucket
+        from portolan_cli.sync.upload import _try_infer_region_from_bucket
 
         region = _try_infer_region_from_bucket("us-west-2.opendata.source.coop")
         assert region == "us-west-2"
@@ -1141,7 +1141,7 @@ class TestRegionInference:
     @pytest.mark.unit
     def test_infer_eu_central_1(self) -> None:
         """Should infer eu-central-1 from bucket name."""
-        from portolan_cli.upload import _try_infer_region_from_bucket
+        from portolan_cli.sync.upload import _try_infer_region_from_bucket
 
         region = _try_infer_region_from_bucket("eu-central-1.example.com")
         assert region == "eu-central-1"
@@ -1149,7 +1149,7 @@ class TestRegionInference:
     @pytest.mark.unit
     def test_infer_ap_northeast_1(self) -> None:
         """Should infer ap-northeast-1 from bucket name."""
-        from portolan_cli.upload import _try_infer_region_from_bucket
+        from portolan_cli.sync.upload import _try_infer_region_from_bucket
 
         region = _try_infer_region_from_bucket("ap-northeast-1.data.example.com")
         assert region == "ap-northeast-1"
@@ -1157,7 +1157,7 @@ class TestRegionInference:
     @pytest.mark.unit
     def test_no_region_in_bucket(self) -> None:
         """Should return None for bucket without region pattern."""
-        from portolan_cli.upload import _try_infer_region_from_bucket
+        from portolan_cli.sync.upload import _try_infer_region_from_bucket
 
         region = _try_infer_region_from_bucket("mybucket")
         assert region is None
@@ -1165,7 +1165,7 @@ class TestRegionInference:
     @pytest.mark.unit
     def test_partial_region_pattern(self) -> None:
         """Should return None for partial region pattern."""
-        from portolan_cli.upload import _try_infer_region_from_bucket
+        from portolan_cli.sync.upload import _try_infer_region_from_bucket
 
         region = _try_infer_region_from_bucket("us-west.example.com")
         assert region is None
@@ -1182,7 +1182,7 @@ class TestBuildTargetKey:
     @pytest.mark.unit
     def test_build_key_with_prefix(self, tmp_path: Path) -> None:
         """Should build target key with prefix."""
-        from portolan_cli.upload import _build_target_key
+        from portolan_cli.sync.upload import _build_target_key
 
         source_dir = tmp_path / "data"
         source_dir.mkdir()
@@ -1195,7 +1195,7 @@ class TestBuildTargetKey:
     @pytest.mark.unit
     def test_build_key_nested_file(self, tmp_path: Path) -> None:
         """Should preserve nested directory structure in key."""
-        from portolan_cli.upload import _build_target_key
+        from portolan_cli.sync.upload import _build_target_key
 
         source_dir = tmp_path / "data"
         nested_dir = source_dir / "subdir"
@@ -1209,7 +1209,7 @@ class TestBuildTargetKey:
     @pytest.mark.unit
     def test_build_key_no_prefix(self, tmp_path: Path) -> None:
         """Should work without prefix."""
-        from portolan_cli.upload import _build_target_key
+        from portolan_cli.sync.upload import _build_target_key
 
         source_dir = tmp_path / "data"
         source_dir.mkdir()
@@ -1222,7 +1222,7 @@ class TestBuildTargetKey:
     @pytest.mark.unit
     def test_build_key_strips_trailing_slash(self, tmp_path: Path) -> None:
         """Should strip trailing slash from prefix."""
-        from portolan_cli.upload import _build_target_key
+        from portolan_cli.sync.upload import _build_target_key
 
         source_dir = tmp_path / "data"
         source_dir.mkdir()
@@ -1245,10 +1245,10 @@ class TestOutputIntegration:
     @pytest.mark.unit
     def test_upload_file_uses_output_functions(self, temp_file: Path, capsys: object) -> None:
         """Upload should use portolan_cli.output for logging."""
-        from portolan_cli.upload import upload_file
+        from portolan_cli.sync.upload import upload_file
 
-        with patch("portolan_cli.upload.obs"):
-            with patch("portolan_cli.upload.S3Store"):
+        with patch("portolan_cli.sync.upload.obs"):
+            with patch("portolan_cli.sync.upload.S3Store"):
                 with patch.dict(
                     os.environ,
                     {"AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test"},

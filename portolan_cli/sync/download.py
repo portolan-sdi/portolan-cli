@@ -13,8 +13,8 @@ Credential discovery follows the obstore/cloud provider conventions:
 - Azure: AZURE_STORAGE_ACCOUNT_KEY, SAS token, or Azure CLI
 
 Basic Usage:
-    from portolan_cli.download import download_file, download_directory
-    from portolan_cli.upload import check_credentials
+    from portolan_cli.sync.download import download_file, download_directory
+    from portolan_cli.sync.upload import check_credentials
 
     # Check credentials before download
     valid, hint = check_credentials("s3://mybucket/path")
@@ -71,7 +71,7 @@ from obstore.store import (
 )
 
 from portolan_cli.output import detail, error, info, success, warn
-from portolan_cli.upload import (
+from portolan_cli.sync.upload import (
     _setup_store_and_kwargs,
     parse_object_store_url,
 )

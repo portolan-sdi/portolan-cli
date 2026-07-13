@@ -457,7 +457,7 @@ class TestPushAsyncConcurrency:
     @pytest.mark.asyncio
     async def test_push_async_uploads_concurrently(self, async_catalog: Path) -> None:
         """Verify push_async() uses concurrent uploads."""
-        from portolan_cli.push import push_async
+        from portolan_cli.sync.push import push_async
 
         # Track upload timing to verify concurrency
         upload_times: list[float] = []
@@ -471,10 +471,10 @@ class TestPushAsyncConcurrency:
             async with upload_lock:
                 upload_times.append(time.perf_counter() - start)
 
-        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put):
-            with patch("portolan_cli.push.obs.get_async", return_value=None):
+        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put):
+            with patch("portolan_cli.sync.push.obs.get_async", return_value=None):
                 with patch(
-                    "portolan_cli.push._fetch_remote_versions_async", return_value=(None, None)
+                    "portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)
                 ):
                     result = await push_async(
                         catalog_root=async_catalog,
@@ -493,7 +493,7 @@ class TestPushAsyncConcurrency:
     @pytest.mark.asyncio
     async def test_push_async_respects_concurrency_limit(self, many_files_catalog: Path) -> None:
         """Verify push_async() respects the concurrency parameter."""
-        from portolan_cli.push import push_async
+        from portolan_cli.sync.push import push_async
 
         max_concurrent = 0
         current_concurrent = 0
@@ -510,8 +510,10 @@ class TestPushAsyncConcurrency:
 
         concurrency_limit = 10
 
-        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put):
-            with patch("portolan_cli.push._fetch_remote_versions_async", return_value=(None, None)):
+        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put):
+            with patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)
+            ):
                 await push_async(
                     catalog_root=many_files_catalog,
                     collection="test",
@@ -526,7 +528,7 @@ class TestPushAsyncConcurrency:
     @pytest.mark.asyncio
     async def test_push_async_handles_rate_limit(self, async_catalog: Path) -> None:
         """Verify push_async() handles rate limit errors gracefully."""
-        from portolan_cli.push import push_async
+        from portolan_cli.sync.push import push_async
 
         call_count = 0
 
@@ -539,8 +541,10 @@ class TestPushAsyncConcurrency:
                 raise Exception("SlowDown: Rate limit exceeded")
             await asyncio.sleep(0.001)
 
-        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_with_rate_limit):
-            with patch("portolan_cli.push._fetch_remote_versions_async", return_value=(None, None)):
+        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_with_rate_limit):
+            with patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)
+            ):
                 result = await push_async(
                     catalog_root=async_catalog,
                     collection="test",
@@ -555,13 +559,15 @@ class TestPushAsyncConcurrency:
     @pytest.mark.asyncio
     async def test_push_async_circuit_breaker_on_failures(self, async_catalog: Path) -> None:
         """Verify push_async() circuit breaker trips on cascading failures."""
-        from portolan_cli.push import push_async
+        from portolan_cli.sync.push import push_async
 
         async def mock_put_always_fails(store: Any, key: str, content: Any, **kwargs: Any) -> None:
             raise ConnectionError("Network unavailable")
 
-        with patch("portolan_cli.push.obs.put_async", side_effect=mock_put_always_fails):
-            with patch("portolan_cli.push._fetch_remote_versions_async", return_value=(None, None)):
+        with patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_always_fails):
+            with patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async", return_value=(None, None)
+            ):
                 result = await push_async(
                     catalog_root=async_catalog,
                     collection="test",
@@ -651,7 +657,7 @@ class TestPushVersionDiffRename:
 
     def test_push_version_diff_exists(self) -> None:
         """Verify PushVersionDiff class exists."""
-        from portolan_cli.push import PushVersionDiff
+        from portolan_cli.sync.push import PushVersionDiff
 
         diff = PushVersionDiff(
             local_only=["1.0.0"],
@@ -663,7 +669,7 @@ class TestPushVersionDiffRename:
 
     def test_push_version_diff_has_conflict_property(self) -> None:
         """Verify PushVersionDiff.has_conflict works correctly."""
-        from portolan_cli.push import PushVersionDiff
+        from portolan_cli.sync.push import PushVersionDiff
 
         # No conflict
         diff_no_conflict = PushVersionDiff(

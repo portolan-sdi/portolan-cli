@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from portolan_cli.backends.protocol import VersioningBackend
     from portolan_cli.extract.arcgis.report import ExtractionReport
     from portolan_cli.extract.arcgis.url_parser import ParsedArcGISURL
-    from portolan_cli.pull import PullResult
+    from portolan_cli.sync.pull import PullResult
 
 import click
 
@@ -31,7 +31,6 @@ from portolan_cli.catalog_list import (
     CatalogListResult,
     list_catalog_contents,
 )
-from portolan_cli.check import check_directory
 from portolan_cli.collection_id import resolve_collection_id
 from portolan_cli.constants import PORTOLAN_SPEC_VERSION
 from portolan_cli.convert import ConversionResult
@@ -43,19 +42,20 @@ from portolan_cli.output import detail, error, success, warn
 from portolan_cli.output import info as info_output
 from portolan_cli.query import ItemInfo
 from portolan_cli.remove import remove_files
-from portolan_cli.scan import (
+from portolan_cli.scan.check import check_directory
+from portolan_cli.scan.core import (
     IssueType,
     ScanIssue,
     ScanOptions,
     ScanResult,
     scan_directory,
 )
-from portolan_cli.scan import (
+from portolan_cli.scan.core import (
     Severity as ScanSeverity,
 )
-from portolan_cli.scan_fix import ProposedFix, apply_safe_fixes
-from portolan_cli.scan_infer import infer_collections
-from portolan_cli.scan_output import (
+from portolan_cli.scan.fix import ProposedFix, apply_safe_fixes
+from portolan_cli.scan.infer import infer_collections
+from portolan_cli.scan.output import (
     format_collection_suggestion,
     format_fix_commands_json,
     generate_next_steps,
@@ -64,7 +64,7 @@ from portolan_cli.scan_output import (
     group_skipped_files,
     render_tree_view,
 )
-from portolan_cli.scan_progress import ScanProgressReporter, count_directories
+from portolan_cli.scan.progress import ScanProgressReporter, count_directories
 from portolan_cli.stac import MergeStrategy
 from portolan_cli.status import CollectionStatus, get_collection_status
 from portolan_cli.temporal import FLEXIBLE_DATETIME
@@ -789,7 +789,7 @@ def status_cmd(
         remote_url = resolve_remote(None, catalog_path, collection)
 
     # Discover collections
-    from portolan_cli.push import discover_collections
+    from portolan_cli.sync.push import discover_collections
 
     if collection:
         collections = [collection]
@@ -1400,7 +1400,7 @@ def _execute_check_workflow(
     - Without --fix: run validation and report issues
     - With --fix: run validation AND apply fixes for the selected scope
     """
-    from portolan_cli.check import build_check_rules
+    from portolan_cli.scan.check import build_check_rules
 
     # Build rules (respects config severity overrides + strict flag)
     rules = build_check_rules(path, strict=strict)
@@ -1465,7 +1465,7 @@ def _run_fix_workflow(
         force: Re-optimize already-valid COGs (raster-scoped, issue #530).
         workers: Parallel worker processes for conversion.
     """
-    from portolan_cli.check import run_fix_workflow
+    from portolan_cli.scan.check import run_fix_workflow
 
     # Progress callback for conversion (skip for JSON mode, per ADR-0040: per-file only in verbose)
     def show_conversion_progress(result: ConversionResult) -> None:
@@ -1962,7 +1962,7 @@ def _output_scan_results(
     if use_json:
         _output_scan_json(result, strict=strict, has_strict_failure=has_strict_failure)
     elif manual_only:
-        from portolan_cli.scan_output import format_scan_output
+        from portolan_cli.scan.output import format_scan_output
 
         output = format_scan_output(result, manual_only=True)
         click.echo(output)
@@ -2272,7 +2272,7 @@ def _print_skipped_by_category(result: ScanResult, *, show_all: bool = False) ->
         return
 
     # Check if any files are truly unknown
-    from portolan_cli.scan_classify import FileCategory
+    from portolan_cli.scan.classify import FileCategory
 
     unknown_files = grouped.get(FileCategory.UNKNOWN, [])
     unknown_count = len(unknown_files)
@@ -2951,7 +2951,7 @@ def add_cmd(
     )
 
     # Handle PMTiles generation BEFORE output (so JSON reflects final state)
-    from portolan_cli.pmtiles import generate_or_suggest_pmtiles
+    from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
 
     generate_or_suggest_pmtiles(
         catalog_root,
@@ -3469,7 +3469,7 @@ def push(
     """
     import asyncio
 
-    from portolan_cli.push import PushConflictError, push_all_collections, push_async
+    from portolan_cli.sync.push import PushConflictError, push_all_collections, push_async
 
     use_json = should_output_json(ctx, json_output)
 
@@ -3801,8 +3801,8 @@ def pull_command(
         portolan pull s3://mybucket/catalog
         portolan pull s3://mybucket/catalog --workers 4
     """
-    from portolan_cli.pull import pull as pull_fn
-    from portolan_cli.pull import pull_all_collections
+    from portolan_cli.sync.pull import pull as pull_fn
+    from portolan_cli.sync.pull import pull_all_collections
 
     use_json = should_output_json(ctx, json_output)
 
@@ -3993,7 +3993,7 @@ def sync(
         portolan sync s3://mybucket/catalog -c data --profile prod
         portolan sync --collection demographics  # Uses configured remote
     """
-    from portolan_cli.sync import sync as sync_fn
+    from portolan_cli.sync.core import sync as sync_fn
 
     use_json = should_output_json(ctx, json_output)
 
@@ -4142,8 +4142,8 @@ def clone(
         # Clone specific collection with profile
         portolan clone s3://mybucket/catalog ./data -c imagery --profile prod
     """
-    from portolan_cli.sync import clone as clone_fn
-    from portolan_cli.sync import infer_local_path_from_url
+    from portolan_cli.sync.core import clone as clone_fn
+    from portolan_cli.sync.core import infer_local_path_from_url
 
     use_json = should_output_json(ctx, json_output)
 

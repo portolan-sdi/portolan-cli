@@ -259,10 +259,10 @@ class TestChunkConcurrencyEnforcement:
             put_async_calls.append({"key": key, "size": len(data)})
 
         with (
-            patch("portolan_cli.push.obs.put", side_effect=mock_put),
-            patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async),
+            patch("portolan_cli.sync.push.obs.put", side_effect=mock_put),
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
         ):
-            from portolan_cli.push import _upload_assets_async
+            from portolan_cli.sync.push import _upload_assets_async
 
             mock_store = MagicMock()
             await _upload_assets_async(
@@ -299,10 +299,10 @@ class TestChunkConcurrencyEnforcement:
             put_async_calls.append({"key": key, "size": len(data)})
 
         with (
-            patch("portolan_cli.push.obs.put", side_effect=mock_put),
-            patch("portolan_cli.push.obs.put_async", side_effect=mock_put_async),
+            patch("portolan_cli.sync.push.obs.put", side_effect=mock_put),
+            patch("portolan_cli.sync.push.obs.put_async", side_effect=mock_put_async),
         ):
-            from portolan_cli.push import _upload_assets_async
+            from portolan_cli.sync.push import _upload_assets_async
 
             mock_store = MagicMock()
             await _upload_assets_async(
@@ -340,8 +340,8 @@ class TestCLIIntegration:
             Path("col1").mkdir()
             Path("col1/versions.json").write_text('{"versions": []}')
 
-            with patch("portolan_cli.push.push_all_collections") as mock_push:
-                from portolan_cli.push import PushAllResult
+            with patch("portolan_cli.sync.push.push_all_collections") as mock_push:
+                from portolan_cli.sync.push import PushAllResult
 
                 mock_push.return_value = PushAllResult(
                     success=True,

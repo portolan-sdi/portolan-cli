@@ -13,7 +13,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan_classify import FileCategory, SkipReasonType, classify_file
+from portolan_cli.scan.classify import FileCategory, SkipReasonType, classify_file
 
 # Strategy for generating unknown file extensions
 # Use ASCII alphanumeric only - cross-platform safe for filenames
@@ -40,7 +40,7 @@ class TestUnrecognizedFileClassification:
         # Skip common extensions that might be generated
         # These are either known formats or known non-data files
         # Import GEO_ASSET_EXTENSIONS to ensure we skip all valid geo formats
-        from portolan_cli.scan_classify import GEO_ASSET_EXTENSIONS
+        from portolan_cli.scan.classify import GEO_ASSET_EXTENSIONS
 
         skip_exts = {
             ".md",

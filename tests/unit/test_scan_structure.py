@@ -46,7 +46,7 @@ class TestValidNestedStructure:
         Uses nested/ fixture: census/2020/boundaries.geojson, census/2022/boundaries.geojson
         This represents intentional year-based organization.
         """
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "nested")
 
@@ -62,7 +62,7 @@ class TestValidNestedStructure:
 
         Uses three_level_nested/ fixture: organized by country code at leaf level.
         """
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "three_level_nested")
 
@@ -90,7 +90,7 @@ class TestMixedFlatMultiitem:
         This is the classic MIXED_FLAT_MULTIITEM case: unclear whether the
         directory represents a single collection (flat) or multiple items (nested).
         """
-        from portolan_cli.scan import IssueType, Severity, scan_directory
+        from portolan_cli.scan.core import IssueType, Severity, scan_directory
 
         # Create file at root level
         root_file = tmp_path / "root_data.geojson"
@@ -110,7 +110,7 @@ class TestMixedFlatMultiitem:
 
     def test_mixed_structure_suggests_reorganization(self, tmp_path: Path) -> None:
         """MIXED_FLAT_MULTIITEM issues include a suggestion to reorganize."""
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         # Create mixed structure
         (tmp_path / "root.geojson").write_text('{"type": "FeatureCollection", "features": []}')
@@ -142,7 +142,7 @@ class TestMixedFlatMultiitem:
 
         Should flag root (has files AND descendant with files), not level3.
         """
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         # Create file at root
         (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
@@ -177,7 +177,7 @@ class TestMixedFlatMultiitem:
         Should flag mid (has files + descendant deep has files)
         Should NOT flag deep (no descendants with files)
         """
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         # Level 0: root
         (tmp_path / "data.geojson").write_text('{"type": "FeatureCollection", "features": []}')
@@ -230,7 +230,7 @@ class TestGeoparquetWithCompanions:
         - data.parquet: GeoParquet (has geo metadata, geometry column)
         - lookup.parquet: Plain Parquet (no geo metadata)
         """
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "geoparquet_with_companions")
 
@@ -247,7 +247,7 @@ class TestGeoparquetWithCompanions:
         is specifically for multiple GeoParquet files in the same directory.
         One geo + companions should not trigger this.
         """
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "geoparquet_with_companions")
 
@@ -259,7 +259,7 @@ class TestGeoparquetWithCompanions:
 
     def test_geoparquet_identified_as_ready(self, fixtures_dir: Path) -> None:
         """The GeoParquet file in the companion fixture is identified as ready."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         result = scan_directory(fixtures_dir / "geoparquet_with_companions")
 
@@ -293,7 +293,7 @@ class TestMultipleGeoparquet:
 
         Both are primary geo-assets, so this is ambiguous for catalog structure.
         """
-        from portolan_cli.scan import IssueType, Severity, scan_directory
+        from portolan_cli.scan.core import IssueType, Severity, scan_directory
 
         result = scan_directory(fixtures_dir / "multiple_geoparquet")
 
@@ -312,7 +312,7 @@ class TestMultipleGeoparquet:
         - MULTIPLE_PRIMARIES: Generic warning for any multiple primaries
         - MULTIPLE_GEO_PRIMARIES: Specific to GeoParquet, enables targeted guidance
         """
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "multiple_geoparquet")
 
@@ -323,7 +323,7 @@ class TestMultipleGeoparquet:
 
     def test_multiple_geoparquet_message_references_geoparquet(self, fixtures_dir: Path) -> None:
         """MULTIPLE_GEO_PRIMARIES message should reference GeoParquet specifically."""
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "multiple_geoparquet")
 
@@ -357,7 +357,7 @@ class TestDeepNesting:
 
         Intermediate directories (level1, level2, level3, level4) have no data.
         """
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "deep_nested")
 
@@ -367,7 +367,7 @@ class TestDeepNesting:
 
     def test_deep_nesting_finds_all_leaf_files(self, fixtures_dir: Path) -> None:
         """Deeply nested scan finds all files at different nesting depths."""
-        from portolan_cli.scan import scan_directory
+        from portolan_cli.scan.core import scan_directory
 
         result = scan_directory(fixtures_dir / "deep_nested")
 
@@ -388,7 +388,7 @@ class TestDeepNesting:
 
         Different depths are fine as long as no intermediate has data.
         """
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "mixed_depths")
 
@@ -412,7 +412,7 @@ class TestStructureValidationEdgeCases:
         Uses flat_collection/ fixture: 3 parquet files, no subdirectories.
         This is a valid "collection-level assets" pattern per ADR-0031.
         """
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         result = scan_directory(fixtures_dir / "flat_collection")
 
@@ -422,7 +422,7 @@ class TestStructureValidationEdgeCases:
 
     def test_empty_intermediate_directories_not_flagged(self, tmp_path: Path) -> None:
         """Empty intermediate directories don't trigger structure warnings."""
-        from portolan_cli.scan import IssueType, scan_directory
+        from portolan_cli.scan.core import IssueType, scan_directory
 
         # Create nested structure with empty intermediate
         leaf = tmp_path / "empty_parent" / "empty_middle" / "leaf"
@@ -441,8 +441,8 @@ class TestCorruptedParquetScan:
     @pytest.mark.unit
     def test_corrupted_parquet_skipped_with_error(self, tmp_path: Path) -> None:
         """Corrupted .parquet file is skipped with INVALID_FORMAT reason."""
-        from portolan_cli.scan import ScanOptions, scan_directory
-        from portolan_cli.scan_classify import FileCategory, SkipReasonType
+        from portolan_cli.scan.classify import FileCategory, SkipReasonType
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         # Create a fake parquet file
         data_dir = tmp_path / "collection"
@@ -465,8 +465,8 @@ class TestCorruptedParquetScan:
     @pytest.mark.unit
     def test_valid_non_geo_parquet_is_tabular(self, tmp_path: Path, fixtures_dir: Path) -> None:
         """Valid Parquet without geo metadata is skipped as TABULAR_DATA."""
-        from portolan_cli.scan import ScanOptions, scan_directory
-        from portolan_cli.scan_classify import FileCategory, SkipReasonType
+        from portolan_cli.scan.classify import FileCategory, SkipReasonType
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         # Use one of our companion fixtures (plain Parquet)
         src = fixtures_dir / "scan" / "geoparquet_with_companions" / "lookup.parquet"

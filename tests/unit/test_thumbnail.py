@@ -26,7 +26,7 @@ class TestThumbnailConfig:
     @pytest.mark.unit
     def test_default_values(self) -> None:
         """ThumbnailConfig has sensible defaults."""
-        from portolan_cli.thumbnail import ThumbnailConfig
+        from portolan_cli.viz.thumbnail import ThumbnailConfig
 
         config = ThumbnailConfig()
         assert config.enabled is True
@@ -39,7 +39,7 @@ class TestThumbnailConfig:
     @pytest.mark.unit
     def test_custom_values(self) -> None:
         """ThumbnailConfig accepts custom values."""
-        from portolan_cli.thumbnail import ThumbnailConfig
+        from portolan_cli.viz.thumbnail import ThumbnailConfig
 
         config = ThumbnailConfig(
             enabled=False,
@@ -59,7 +59,7 @@ class TestThumbnailConfig:
     @pytest.mark.unit
     def test_basemap_none_disables(self) -> None:
         """Setting basemap_provider to 'none' disables basemap."""
-        from portolan_cli.thumbnail import ThumbnailConfig
+        from portolan_cli.viz.thumbnail import ThumbnailConfig
 
         config = ThumbnailConfig(basemap_provider="none")
         assert config.basemap_provider == "none"
@@ -67,7 +67,7 @@ class TestThumbnailConfig:
     @pytest.mark.unit
     def test_frozen_dataclass(self) -> None:
         """ThumbnailConfig is immutable (frozen)."""
-        from portolan_cli.thumbnail import ThumbnailConfig
+        from portolan_cli.viz.thumbnail import ThumbnailConfig
 
         config = ThumbnailConfig()
         with pytest.raises(AttributeError):
@@ -85,15 +85,15 @@ class TestGenerateThumbnailFromPmtiles:
     @pytest.mark.unit
     def test_returns_path_on_success(self, tmp_path: Path) -> None:
         """Returns Path to generated thumbnail on success."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_pmtiles
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_pmtiles
 
         pmtiles_path = tmp_path / "data.pmtiles"
         pmtiles_path.touch()
 
         # Mock the PMTiles reading to return fake geometries and bounds
         with (
-            patch("portolan_cli.thumbnail._read_pmtiles_geometries") as mock_read,
-            patch("portolan_cli.thumbnail._render_geometries") as mock_render,
+            patch("portolan_cli.viz.thumbnail._read_pmtiles_geometries") as mock_read,
+            patch("portolan_cli.viz.thumbnail._render_geometries") as mock_render,
         ):
             mock_read.return_value = (
                 [{"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}],
@@ -111,12 +111,12 @@ class TestGenerateThumbnailFromPmtiles:
     @pytest.mark.unit
     def test_returns_none_when_no_geometries(self, tmp_path: Path) -> None:
         """Returns None when PMTiles has no extractable geometries."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_pmtiles
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_pmtiles
 
         pmtiles_path = tmp_path / "empty.pmtiles"
         pmtiles_path.touch()
 
-        with patch("portolan_cli.thumbnail._read_pmtiles_geometries") as mock_read:
+        with patch("portolan_cli.viz.thumbnail._read_pmtiles_geometries") as mock_read:
             mock_read.return_value = ([], None)  # empty geometries, no bounds
 
             config = ThumbnailConfig()
@@ -127,12 +127,12 @@ class TestGenerateThumbnailFromPmtiles:
     @pytest.mark.unit
     def test_returns_none_on_read_error(self, tmp_path: Path) -> None:
         """Returns None when PMTiles file cannot be read."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_pmtiles
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_pmtiles
 
         pmtiles_path = tmp_path / "corrupt.pmtiles"
         pmtiles_path.touch()
 
-        with patch("portolan_cli.thumbnail._read_pmtiles_geometries") as mock_read:
+        with patch("portolan_cli.viz.thumbnail._read_pmtiles_geometries") as mock_read:
             mock_read.side_effect = Exception("Corrupt file")
 
             config = ThumbnailConfig()
@@ -143,14 +143,14 @@ class TestGenerateThumbnailFromPmtiles:
     @pytest.mark.unit
     def test_output_path_convention(self, tmp_path: Path) -> None:
         """Output uses .thumb.jpg naming convention to avoid clobbering user files."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_pmtiles
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_pmtiles
 
         pmtiles_path = tmp_path / "my-data.pmtiles"
         pmtiles_path.touch()
 
         with (
-            patch("portolan_cli.thumbnail._read_pmtiles_geometries") as mock_read,
-            patch("portolan_cli.thumbnail._render_geometries") as mock_render,
+            patch("portolan_cli.viz.thumbnail._read_pmtiles_geometries") as mock_read,
+            patch("portolan_cli.viz.thumbnail._render_geometries") as mock_render,
         ):
             mock_read.return_value = (
                 [{"type": "Point", "coordinates": [0, 0]}],
@@ -189,7 +189,7 @@ class TestBasemapOrdering:
         """
         pytest.importorskip("matplotlib")
 
-        from portolan_cli.thumbnail import ThumbnailConfig, _render_geometries
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geometries
 
         output_path = tmp_path / "test.jpg"
         bounds = (-122.5, 37.5, -122.0, 38.0)  # San Francisco area
@@ -215,7 +215,7 @@ class TestBasemapOrdering:
             captured_xlim = ax.get_xlim()
             captured_ylim = ax.get_ylim()
 
-        with patch("portolan_cli.thumbnail.add_basemap", side_effect=capture_axis_state):
+        with patch("portolan_cli.viz.thumbnail.add_basemap", side_effect=capture_axis_state):
             _render_geometries(geometries, output_path, config, bounds=bounds)
 
         # Verify axis limits were set BEFORE add_basemap was called
@@ -235,13 +235,13 @@ class TestBasemapOrdering:
         """_render_geometries skips basemap when bounds is None."""
         pytest.importorskip("matplotlib")
 
-        from portolan_cli.thumbnail import ThumbnailConfig, _render_geometries
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geometries
 
         output_path = tmp_path / "test.jpg"
         geometries = [{"type": "Point", "coordinates": [0, 0]}]
         config = ThumbnailConfig(basemap_provider="CartoDB.Positron")
 
-        with patch("portolan_cli.thumbnail.add_basemap") as mock_basemap:
+        with patch("portolan_cli.viz.thumbnail.add_basemap") as mock_basemap:
             _render_geometries(geometries, output_path, config, bounds=None)
 
             # add_basemap should NOT be called when bounds is None
@@ -259,14 +259,14 @@ class TestGenerateThumbnailFromGeoparquet:
     @pytest.mark.unit
     def test_returns_path_on_success(self, tmp_path: Path) -> None:
         """Returns Path to generated thumbnail on success."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         gpq_path = tmp_path / "data.parquet"
         gpq_path.touch()
 
         with (
-            patch("portolan_cli.thumbnail._read_geoparquet_bounds") as mock_read,
-            patch("portolan_cli.thumbnail._render_geoparquet") as mock_render,
+            patch("portolan_cli.viz.thumbnail._read_geoparquet_bounds") as mock_read,
+            patch("portolan_cli.viz.thumbnail._render_geoparquet") as mock_render,
         ):
             mock_read.return_value = (0.0, 0.0, 1.0, 1.0)  # minx, miny, maxx, maxy
             mock_render.return_value = True
@@ -280,12 +280,12 @@ class TestGenerateThumbnailFromGeoparquet:
     @pytest.mark.unit
     def test_returns_none_when_empty(self, tmp_path: Path) -> None:
         """Returns None when GeoParquet has no geometries."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         gpq_path = tmp_path / "empty.parquet"
         gpq_path.touch()
 
-        with patch("portolan_cli.thumbnail._read_geoparquet_bounds") as mock_read:
+        with patch("portolan_cli.viz.thumbnail._read_geoparquet_bounds") as mock_read:
             mock_read.return_value = None
 
             config = ThumbnailConfig()
@@ -296,14 +296,14 @@ class TestGenerateThumbnailFromGeoparquet:
     @pytest.mark.unit
     def test_output_path_convention(self, tmp_path: Path) -> None:
         """Output uses .thumb.jpg naming convention."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         gpq_path = tmp_path / "census.parquet"
         gpq_path.touch()
 
         with (
-            patch("portolan_cli.thumbnail._read_geoparquet_bounds") as mock_read,
-            patch("portolan_cli.thumbnail._render_geoparquet") as mock_render,
+            patch("portolan_cli.viz.thumbnail._read_geoparquet_bounds") as mock_read,
+            patch("portolan_cli.viz.thumbnail._render_geoparquet") as mock_render,
         ):
             mock_read.return_value = (0.0, 0.0, 1.0, 1.0)
             mock_render.return_value = True
@@ -325,7 +325,7 @@ class TestGenerateVectorThumbnail:
     @pytest.mark.unit
     def test_prefers_pmtiles_when_available(self, tmp_path: Path) -> None:
         """Prefers PMTiles over GeoParquet when both available."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_vector_thumbnail
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
 
         pmtiles_path = tmp_path / "data.pmtiles"
         gpq_path = tmp_path / "data.parquet"
@@ -333,8 +333,8 @@ class TestGenerateVectorThumbnail:
         gpq_path.touch()
 
         with (
-            patch("portolan_cli.thumbnail.generate_thumbnail_from_pmtiles") as mock_pmtiles,
-            patch("portolan_cli.thumbnail.generate_thumbnail_from_geoparquet") as mock_gpq,
+            patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_pmtiles") as mock_pmtiles,
+            patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_geoparquet") as mock_gpq,
         ):
             mock_pmtiles.return_value = tmp_path / "data.thumb.jpg"
 
@@ -352,7 +352,7 @@ class TestGenerateVectorThumbnail:
     @pytest.mark.unit
     def test_falls_back_to_geoparquet(self, tmp_path: Path) -> None:
         """Falls back to GeoParquet when PMTiles fails."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_vector_thumbnail
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
 
         pmtiles_path = tmp_path / "data.pmtiles"
         gpq_path = tmp_path / "data.parquet"
@@ -360,8 +360,8 @@ class TestGenerateVectorThumbnail:
         gpq_path.touch()
 
         with (
-            patch("portolan_cli.thumbnail.generate_thumbnail_from_pmtiles") as mock_pmtiles,
-            patch("portolan_cli.thumbnail.generate_thumbnail_from_geoparquet") as mock_gpq,
+            patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_pmtiles") as mock_pmtiles,
+            patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_geoparquet") as mock_gpq,
         ):
             mock_pmtiles.return_value = None  # PMTiles failed
             mock_gpq.return_value = tmp_path / "data.thumb.jpg"
@@ -380,12 +380,12 @@ class TestGenerateVectorThumbnail:
     @pytest.mark.unit
     def test_geoparquet_only(self, tmp_path: Path) -> None:
         """Works with GeoParquet only (no PMTiles)."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_vector_thumbnail
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
 
         gpq_path = tmp_path / "data.parquet"
         gpq_path.touch()
 
-        with patch("portolan_cli.thumbnail.generate_thumbnail_from_geoparquet") as mock_gpq:
+        with patch("portolan_cli.viz.thumbnail.generate_thumbnail_from_geoparquet") as mock_gpq:
             mock_gpq.return_value = tmp_path / "data.thumb.jpg"
 
             config = ThumbnailConfig()
@@ -401,7 +401,7 @@ class TestGenerateVectorThumbnail:
     @pytest.mark.unit
     def test_returns_none_when_disabled(self, tmp_path: Path) -> None:
         """Returns None when thumbnails are disabled in config."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_vector_thumbnail
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
 
         gpq_path = tmp_path / "data.parquet"
         gpq_path.touch()
@@ -418,7 +418,7 @@ class TestGenerateVectorThumbnail:
     @pytest.mark.unit
     def test_returns_none_when_no_sources(self) -> None:
         """Returns None when neither PMTiles nor GeoParquet provided."""
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_vector_thumbnail
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_vector_thumbnail
 
         config = ThumbnailConfig()
         result = generate_vector_thumbnail(
@@ -441,13 +441,13 @@ class TestAddBasemap:
     @pytest.mark.unit
     def test_calls_contextily_with_provider(self) -> None:
         """Calls contextily.add_basemap with correct provider."""
-        from portolan_cli.thumbnail import add_basemap
+        from portolan_cli.viz.thumbnail import add_basemap
 
         mock_ax = MagicMock()
         bounds = (-122.5, 37.5, -122.0, 38.0)  # SF Bay area
 
         mock_ctx = MagicMock()
-        with patch("portolan_cli.thumbnail._ensure_contextily", return_value=mock_ctx):
+        with patch("portolan_cli.viz.thumbnail._ensure_contextily", return_value=mock_ctx):
             add_basemap(mock_ax, bounds, "CartoDB.Positron", opacity=1.0, zoom_adjust=0)
 
             mock_ctx.add_basemap.assert_called_once()
@@ -457,13 +457,13 @@ class TestAddBasemap:
     @pytest.mark.unit
     def test_skips_when_provider_none(self) -> None:
         """Does nothing when provider is 'none'."""
-        from portolan_cli.thumbnail import add_basemap
+        from portolan_cli.viz.thumbnail import add_basemap
 
         mock_ax = MagicMock()
         bounds = (-122.5, 37.5, -122.0, 38.0)
 
         mock_ctx = MagicMock()
-        with patch("portolan_cli.thumbnail._ensure_contextily", return_value=mock_ctx):
+        with patch("portolan_cli.viz.thumbnail._ensure_contextily", return_value=mock_ctx):
             add_basemap(mock_ax, bounds, "none", opacity=1.0, zoom_adjust=0)
 
             mock_ctx.add_basemap.assert_not_called()
@@ -471,12 +471,12 @@ class TestAddBasemap:
     @pytest.mark.unit
     def test_handles_import_error(self) -> None:
         """Gracefully handles missing contextily."""
-        from portolan_cli.thumbnail import add_basemap
+        from portolan_cli.viz.thumbnail import add_basemap
 
         mock_ax = MagicMock()
         bounds = (-122.5, 37.5, -122.0, 38.0)
 
-        with patch("portolan_cli.thumbnail._ensure_contextily", return_value=None):
+        with patch("portolan_cli.viz.thumbnail._ensure_contextily", return_value=None):
             # Should not raise, just skip basemap
             add_basemap(mock_ax, bounds, "CartoDB.Positron", opacity=1.0, zoom_adjust=0)
 
@@ -503,7 +503,7 @@ class TestPmtilesThumbnailIntegration:
         # Copy fixture to tmp_path so we can write output there
         import shutil
 
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_pmtiles
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_pmtiles
 
         test_pmtiles = tmp_path / "sample.pmtiles"
         shutil.copy(pmtiles_path, test_pmtiles)
@@ -529,7 +529,7 @@ class TestGetThumbnailConfig:
     @pytest.mark.unit
     def test_returns_defaults_when_no_config(self, tmp_path: Path) -> None:
         """Returns default config when no thumbnails section exists."""
-        from portolan_cli.thumbnail import ThumbnailConfig, get_thumbnail_config
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, get_thumbnail_config
 
         # Create minimal catalog structure
         portolan_dir = tmp_path / ".portolan"
@@ -543,7 +543,7 @@ class TestGetThumbnailConfig:
     @pytest.mark.unit
     def test_loads_custom_config(self, tmp_path: Path) -> None:
         """Loads custom thumbnail config from YAML."""
-        from portolan_cli.thumbnail import get_thumbnail_config
+        from portolan_cli.viz.thumbnail import get_thumbnail_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -570,7 +570,7 @@ thumbnails:
     @pytest.mark.unit
     def test_disabled_config(self, tmp_path: Path) -> None:
         """Respects enabled: false."""
-        from portolan_cli.thumbnail import get_thumbnail_config
+        from portolan_cli.viz.thumbnail import get_thumbnail_config
 
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
@@ -599,7 +599,7 @@ class TestPmtilesBoundsExtraction:
         Bug: At z=0, tile (0,0) covers the entire world (-180 to 180, -85 to 85).
         Using tile bounds causes basemap to render globally while data is invisible.
         """
-        from portolan_cli.thumbnail import _process_tile_data, _tile_bounds
+        from portolan_cli.viz.thumbnail import _process_tile_data, _tile_bounds
 
         mock_mvt_data = {
             "layer1": {
@@ -654,7 +654,7 @@ class TestGeoparquetMetadataBounds:
         import json
         from unittest.mock import MagicMock, patch
 
-        from portolan_cli.thumbnail import _read_geoparquet_bounds
+        from portolan_cli.viz.thumbnail import _read_geoparquet_bounds
 
         gpq_path = tmp_path / "test.parquet"
 
@@ -674,7 +674,7 @@ class TestGeoparquetMetadataBounds:
         import json
         from unittest.mock import MagicMock, patch
 
-        from portolan_cli.thumbnail import _read_geoparquet_bounds
+        from portolan_cli.viz.thumbnail import _read_geoparquet_bounds
 
         gpq_path = tmp_path / "test.parquet"
 
@@ -711,7 +711,7 @@ class TestGeoparquetFullReading:
         import json
         from unittest.mock import MagicMock, patch
 
-        from portolan_cli.thumbnail import _read_geoparquet_for_thumbnail
+        from portolan_cli.viz.thumbnail import _read_geoparquet_for_thumbnail
 
         gpq_path = tmp_path / "large.parquet"
 
@@ -757,7 +757,7 @@ class TestGeoparquetCrsHandling:
 
         from unittest.mock import MagicMock, patch
 
-        from portolan_cli.thumbnail import ThumbnailConfig, _render_geoparquet
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geoparquet
 
         gpq_path = tmp_path / "test.parquet"
         output_path = tmp_path / "test.thumb.jpg"
@@ -771,13 +771,13 @@ class TestGeoparquetCrsHandling:
 
         with (
             patch(
-                "portolan_cli.thumbnail._read_geoparquet_for_thumbnail",
+                "portolan_cli.viz.thumbnail._read_geoparquet_for_thumbnail",
                 return_value=(mock_gdf, full_bbox, "EPSG:4326"),
             ),
             patch("matplotlib.pyplot.subplots") as mock_subplots,
             patch("matplotlib.pyplot.savefig"),
             patch("matplotlib.pyplot.close"),
-            patch("portolan_cli.thumbnail.add_basemap"),
+            patch("portolan_cli.viz.thumbnail.add_basemap"),
         ):
             mock_ax = MagicMock()
             mock_subplots.return_value = (MagicMock(), mock_ax)
@@ -802,7 +802,7 @@ class TestGeoparquetCrsHandling:
 
         from unittest.mock import MagicMock, patch
 
-        from portolan_cli.thumbnail import ThumbnailConfig, _render_geoparquet
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geoparquet
 
         gpq_path = tmp_path / "test.parquet"
         output_path = tmp_path / "test.thumb.jpg"
@@ -816,13 +816,13 @@ class TestGeoparquetCrsHandling:
 
         with (
             patch(
-                "portolan_cli.thumbnail._read_geoparquet_for_thumbnail",
+                "portolan_cli.viz.thumbnail._read_geoparquet_for_thumbnail",
                 return_value=(mock_gdf, full_bbox, "EPSG:4326"),
             ),
             patch("matplotlib.pyplot.subplots") as mock_subplots,
             patch("matplotlib.pyplot.savefig"),
             patch("matplotlib.pyplot.close"),
-            patch("portolan_cli.thumbnail.add_basemap") as mock_add_basemap,
+            patch("portolan_cli.viz.thumbnail.add_basemap") as mock_add_basemap,
         ):
             mock_ax = MagicMock()
             mock_subplots.return_value = (MagicMock(), mock_ax)
@@ -842,7 +842,7 @@ class TestGeoparquetCrsHandling:
 
         from unittest.mock import MagicMock, patch
 
-        from portolan_cli.thumbnail import ThumbnailConfig, _render_geoparquet
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geoparquet
 
         gpq_path = tmp_path / "test.parquet"
         output_path = tmp_path / "test.thumb.jpg"
@@ -857,7 +857,7 @@ class TestGeoparquetCrsHandling:
 
         with (
             patch(
-                "portolan_cli.thumbnail._read_geoparquet_for_thumbnail",
+                "portolan_cli.viz.thumbnail._read_geoparquet_for_thumbnail",
                 return_value=(mock_gdf, full_bbox, "EPSG:4326"),
             ),
             patch("matplotlib.pyplot.subplots") as mock_subplots,
@@ -874,7 +874,7 @@ class TestGeoparquetCrsHandling:
             # the aspect-cap + margin helper (#518). Values stay in native
             # degrees (~ -61), nowhere near EPSG:3857 metres, confirming the
             # data was not reprojected.
-            from portolan_cli.thumbnail import _frame_bounds
+            from portolan_cli.viz.thumbnail import _frame_bounds
 
             framed = _frame_bounds(full_bbox)
             mock_ax.set_xlim.assert_called_once_with(framed[0], framed[2])
@@ -894,7 +894,7 @@ class TestGeoparquetThumbnailIntegration:
 
         import shutil
 
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         # Use simple.parquet which is in OGC:CRS84 (equivalent to EPSG:4326)
         src_path = fixtures_dir / "simple.parquet"
@@ -923,7 +923,7 @@ class TestFrameBounds:
     @pytest.mark.unit
     def test_square_bounds_only_get_margin(self) -> None:
         """A square extent is not aspect-adjusted; only the margin expands it."""
-        from portolan_cli.thumbnail import _frame_bounds
+        from portolan_cli.viz.thumbnail import _frame_bounds
 
         framed = _frame_bounds((0.0, 0.0, 10.0, 10.0), max_aspect=2.5, margin=0.05)
         # 5% of a 10-unit span = 0.5 on each side, no aspect change.
@@ -935,7 +935,7 @@ class TestFrameBounds:
     @pytest.mark.unit
     def test_tall_sliver_capped_by_widening(self) -> None:
         """A 1:100 (w:h) sliver is widened so aspect is capped at max_aspect."""
-        from portolan_cli.thumbnail import _frame_bounds
+        from portolan_cli.viz.thumbnail import _frame_bounds
 
         framed = _frame_bounds((0.0, 0.0, 1.0, 100.0), max_aspect=2.5, margin=0.0)
         width = framed[2] - framed[0]
@@ -949,7 +949,7 @@ class TestFrameBounds:
     @pytest.mark.unit
     def test_wide_sliver_capped_by_heightening(self) -> None:
         """A 100:1 (w:h) sliver is heightened so aspect is capped at max_aspect."""
-        from portolan_cli.thumbnail import _frame_bounds
+        from portolan_cli.viz.thumbnail import _frame_bounds
 
         framed = _frame_bounds((0.0, 0.0, 100.0, 1.0), max_aspect=2.5, margin=0.0)
         width = framed[2] - framed[0]
@@ -961,7 +961,7 @@ class TestFrameBounds:
     @pytest.mark.unit
     def test_degenerate_point_gets_finite_box(self) -> None:
         """A zero-area extent (single point) is expanded to a finite box."""
-        from portolan_cli.thumbnail import _frame_bounds
+        from portolan_cli.viz.thumbnail import _frame_bounds
 
         framed = _frame_bounds((5.0, 5.0, 5.0, 5.0))
         assert framed[2] > framed[0]
@@ -974,7 +974,7 @@ class TestComputeRenderParams:
     @pytest.mark.unit
     def test_sparse_points_larger_than_dense(self) -> None:
         """Few points render with larger markers than a dense point cloud."""
-        from portolan_cli.thumbnail import _compute_render_params
+        from portolan_cli.viz.thumbnail import _compute_render_params
 
         sparse = _compute_render_params("point", 5)
         dense = _compute_render_params("point", 50_000)
@@ -983,7 +983,7 @@ class TestComputeRenderParams:
     @pytest.mark.unit
     def test_dense_polygons_more_transparent(self) -> None:
         """Dense polygon layers get lower fill opacity so they don't blob solid."""
-        from portolan_cli.thumbnail import _compute_render_params
+        from portolan_cli.viz.thumbnail import _compute_render_params
 
         sparse = _compute_render_params("polygon", 5)
         dense = _compute_render_params("polygon", 50_000)
@@ -996,7 +996,7 @@ class TestComputeRenderParams:
         This is the anti-washout guarantee: the pale WFS default (0.2) must
         never reach the canvas via these params.
         """
-        from portolan_cli.thumbnail import _compute_render_params
+        from portolan_cli.viz.thumbnail import _compute_render_params
 
         for geom in ("point", "line", "polygon"):
             for count in (1, 100, 1_000, 100_000):
@@ -1005,7 +1005,7 @@ class TestComputeRenderParams:
     @pytest.mark.unit
     def test_polygon_has_visible_edge(self) -> None:
         """Polygons always get a non-hairline stroke width."""
-        from portolan_cli.thumbnail import _compute_render_params
+        from portolan_cli.viz.thumbnail import _compute_render_params
 
         assert _compute_render_params("polygon", 100).stroke_width > 0
 
@@ -1019,7 +1019,7 @@ class TestComputeRenderParams:
         off-axis dimension were zero (points need marker_size, lines/edges need
         stroke_width). Regression for that: every type must keep both positive.
         """
-        from portolan_cli.thumbnail import _compute_render_params
+        from portolan_cli.viz.thumbnail import _compute_render_params
 
         params = _compute_render_params(geom, 100)
         assert params.marker_size > 0, f"{geom}: points would be invisible"
@@ -1060,7 +1060,7 @@ class TestThumbnailIgnoresPaleStylePaint:
         """_render_geoparquet ignores style opacity/edge, uses thumbnail preset."""
         pytest.importorskip("matplotlib")
 
-        from portolan_cli.thumbnail import (
+        from portolan_cli.viz.thumbnail import (
             THUMB_EDGE_COLOR,
             ThumbnailConfig,
             _render_geoparquet,
@@ -1078,7 +1078,7 @@ class TestThumbnailIgnoresPaleStylePaint:
 
         with (
             patch(
-                "portolan_cli.thumbnail._read_geoparquet_for_thumbnail",
+                "portolan_cli.viz.thumbnail._read_geoparquet_for_thumbnail",
                 return_value=(mock_gdf, full_bbox, "EPSG:4326"),
             ),
             patch("matplotlib.pyplot.subplots") as mock_subplots,
@@ -1109,7 +1109,7 @@ class TestThumbnailIgnoresPaleStylePaint:
         np = pytest.importorskip("numpy")
         pil = pytest.importorskip("PIL.Image")
 
-        from portolan_cli.thumbnail import ThumbnailConfig, _render_geometries
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, _render_geometries
 
         style_path = self._pale_style_file(tmp_path)
         output_path = tmp_path / "pmtiles.thumb.jpg"
@@ -1162,7 +1162,7 @@ class TestThumbnailRendersVisibleGeometry:
         pil = pytest.importorskip("PIL.Image")
         from shapely.geometry import LineString, Point, Polygon
 
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         if kind == "sparse_points":
             geoms = [Point(x, x) for x in range(-50, 50, 5)]
@@ -1203,7 +1203,7 @@ class TestThumbnailRendersVisibleGeometry:
         pil = pytest.importorskip("PIL.Image")
         from shapely.geometry import Point, Polygon
 
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         # 50 polygons (dominant) bottom-left, 16 points top-right (minority).
         polys = [
@@ -1237,7 +1237,7 @@ class TestThumbnailRendersVisibleGeometry:
         pytest.importorskip("matplotlib")
         from shapely.geometry import Polygon
 
-        from portolan_cli.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
+        from portolan_cli.viz.thumbnail import ThumbnailConfig, generate_thumbnail_from_geoparquet
 
         # CRS84 (geographic) declared, but coordinates are ~1.6e6 (projected).
         geoms = [

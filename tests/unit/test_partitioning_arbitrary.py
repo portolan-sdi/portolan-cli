@@ -366,7 +366,7 @@ class TestGlobTransformArbitraryColumns:
         """_transform_collection_glob_assets handles arbitrary column names in href."""
         import json
 
-        from portolan_cli.push import _transform_collection_glob_assets
+        from portolan_cli.sync.push import _transform_collection_glob_assets
 
         collection_json = {
             "type": "Collection",
@@ -394,7 +394,7 @@ class TestGlobTransformArbitraryColumns:
         """_transform_collection_glob_assets handles multi-level partition paths."""
         import json
 
-        from portolan_cli.push import _transform_collection_glob_assets
+        from portolan_cli.sync.push import _transform_collection_glob_assets
 
         collection_json = {
             "type": "Collection",

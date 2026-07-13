@@ -8,7 +8,7 @@ The scan command follows the ruff model: separate scanning/validation from
 import (like ruff check vs ruff format). See ADR-0016 for rationale.
 
 Example:
-    >>> from portolan_cli.scan import scan_directory, ScanOptions
+    >>> from portolan_cli.scan.core import scan_directory, ScanOptions
     >>> result = scan_directory(Path("/data/geospatial"))
     >>> print(f"Found {len(result.ready)} files ready to import")
     >>> if result.has_errors:
@@ -55,22 +55,22 @@ from portolan_cli.formats import (
     is_geoparquet,
     is_valid_parquet,
 )
-from portolan_cli.scan_classify import (
+from portolan_cli.scan.classify import (
     STAC_FILENAMES,
     FileCategory,
     SkippedFile,
     SkipReasonType,
     classify_file,
 )
-from portolan_cli.scan_detect import (
+from portolan_cli.scan.detect import (
     FILEGDB_LOCK_PATTERNS,
     DualFormatPair,
     SpecialFormat,
     is_filegdb,
     is_hive_partition_dir,
 )
-from portolan_cli.scan_fix import ProposedFix
-from portolan_cli.scan_infer import CollectionSuggestion
+from portolan_cli.scan.fix import ProposedFix
+from portolan_cli.scan.infer import CollectionSuggestion
 
 # =============================================================================
 # Constants
@@ -1387,7 +1387,7 @@ def scan_directory(
         NotADirectoryError: If path is not a directory.
 
     Example:
-        >>> from portolan_cli.scan import scan_directory, ScanOptions
+        >>> from portolan_cli.scan.core import scan_directory, ScanOptions
         >>> result = scan_directory(Path("/data/geospatial"))
         >>> print(f"Found {len(result.ready)} files ready to import")
         >>> if result.has_errors:

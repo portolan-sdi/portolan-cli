@@ -18,7 +18,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan_fix import _compute_safe_rename, _sanitize_filename
+from portolan_cli.scan.fix import _compute_safe_rename, _sanitize_filename
 
 
 @pytest.mark.unit

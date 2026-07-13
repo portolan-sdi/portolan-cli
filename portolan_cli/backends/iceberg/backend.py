@@ -411,7 +411,7 @@ class IcebergBackend:
         Only uploads STAC metadata (item JSON, collection JSON, catalog.json).
         Data files are NOT uploaded — they live in the Iceberg warehouse.
         """
-        from portolan_cli.upload import upload_file
+        from portolan_cli.sync.upload import upload_file
 
         remote = remote.rstrip("/")
 
@@ -444,9 +444,9 @@ class IcebergBackend:
         Queries get_current_version() for asset info, then downloads each
         asset from {remote_url}/{href} to {local_root}/{href}.
         """
-        from portolan_cli.download import download_file
         from portolan_cli.output import detail, error, info, success
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.download import download_file
+        from portolan_cli.sync.pull import PullResult
 
         remote_url = remote_url.rstrip("/")
 

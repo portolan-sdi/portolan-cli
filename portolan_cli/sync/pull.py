@@ -39,10 +39,10 @@ from portolan_cli.async_utils import (
     CircuitBreakerError,
     get_default_concurrency,
 )
-from portolan_cli.checksums import compute_checksum
-from portolan_cli.download import download_file, get_remote_file_size_async
 from portolan_cli.output import detail, error, info, output_section, success, warn
-from portolan_cli.upload import _setup_store_and_kwargs, parse_object_store_url
+from portolan_cli.sync.checksums import compute_checksum
+from portolan_cli.sync.download import download_file, get_remote_file_size_async
+from portolan_cli.sync.upload import _setup_store_and_kwargs, parse_object_store_url
 from portolan_cli.versions import (
     VersionsFile,
     _parse_versions_file,
@@ -1313,7 +1313,7 @@ async def pull_all_collections_async(
         ValueError: If local_root is not a valid catalog.
     """
     # Import here to avoid circular dependency
-    from portolan_cli.push import discover_collections
+    from portolan_cli.sync.push import discover_collections
 
     # Validate URL and create shared store (connection pooling)
     try:

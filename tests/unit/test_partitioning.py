@@ -243,7 +243,7 @@ class TestGlobTransformation:
         """_transform_collection_glob_assets adds portolan:glob to glob-pattern assets."""
         import json
 
-        from portolan_cli.push import _transform_collection_glob_assets
+        from portolan_cli.sync.push import _transform_collection_glob_assets
 
         collection_json = {
             "type": "Collection",
@@ -282,7 +282,7 @@ class TestGlobTransformation:
         """_transform_collection_glob_assets overwrites existing globs to keep in sync."""
         import json
 
-        from portolan_cli.push import _transform_collection_glob_assets
+        from portolan_cli.sync.push import _transform_collection_glob_assets
 
         collection_json = {
             "type": "Collection",
@@ -311,7 +311,7 @@ class TestGlobTransformation:
         """_transform_collection_glob_assets returns unchanged content when no globs."""
         import json
 
-        from portolan_cli.push import _transform_collection_glob_assets
+        from portolan_cli.sync.push import _transform_collection_glob_assets
 
         collection_json = {
             "type": "Collection",
@@ -334,7 +334,7 @@ class TestGlobTransformation:
     @pytest.mark.unit
     def test_transform_handles_invalid_json(self) -> None:
         """_transform_collection_glob_assets returns unchanged for invalid JSON."""
-        from portolan_cli.push import _transform_collection_glob_assets
+        from portolan_cli.sync.push import _transform_collection_glob_assets
 
         content = b"not valid json {"
         result = _transform_collection_glob_assets(content, "s3://bucket/catalog", "buildings")
@@ -674,7 +674,7 @@ class TestGlobTransformationPartitionExtension:
         """_transform_collection_glob_assets adds both partition:glob and portolan:glob."""
         import json
 
-        from portolan_cli.push import _transform_collection_glob_assets
+        from portolan_cli.sync.push import _transform_collection_glob_assets
 
         collection_json = {
             "type": "Collection",
@@ -703,7 +703,7 @@ class TestGlobTransformationPartitionExtension:
         """_transform_collection_glob_assets syncs both partition:glob and portolan:glob."""
         import json
 
-        from portolan_cli.push import _transform_collection_glob_assets
+        from portolan_cli.sync.push import _transform_collection_glob_assets
 
         collection_json = {
             "type": "Collection",

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from portolan_cli.push import (
+from portolan_cli.sync.push import (
     PushResult,
     discover_collections,
     push_all_collections,
@@ -108,7 +108,7 @@ class TestDiscoverCollections:
 class TestPushAllCollections:
     """Tests for push_all_collections() function."""
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_pushes_single_collection(self, mock_push: MagicMock, tmp_path: Path) -> None:
         """push_all_collections pushes a single collection successfully."""
         _setup_valid_catalog(tmp_path)
@@ -152,7 +152,7 @@ class TestPushAllCollections:
             call_kwargs["include_catalog"] is False
         )  # push_all_collections uploads catalog.json once at end
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_pushes_multiple_collections_sequentially(
         self, mock_push: MagicMock, tmp_path: Path
     ) -> None:
@@ -188,7 +188,7 @@ class TestPushAllCollections:
 
         assert mock_push.call_count == 3
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_continues_on_individual_collection_failure(
         self, mock_push: MagicMock, tmp_path: Path
     ) -> None:
@@ -237,7 +237,7 @@ class TestPushAllCollections:
 
         assert mock_push.call_count == 3
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_reports_all_errors_at_end(self, mock_push: MagicMock, tmp_path: Path) -> None:
         """push_all_collections collects and reports all errors."""
         _setup_valid_catalog(tmp_path)
@@ -279,7 +279,7 @@ class TestPushAllCollections:
         assert "col1" in result.collection_errors
         assert "col2" in result.collection_errors
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_handles_empty_catalog(self, mock_push: MagicMock, tmp_path: Path) -> None:
         """push_all_collections handles empty catalog with warning."""
         _setup_valid_catalog(tmp_path)
@@ -300,7 +300,7 @@ class TestPushAllCollections:
 
         mock_push.assert_not_called()
 
-    @patch("portolan_cli.push.push_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock)
     def test_dry_run_mode(self, mock_push: MagicMock, tmp_path: Path) -> None:
         """push_all_collections passes dry_run flag to individual pushes."""
         _setup_valid_catalog(tmp_path)

@@ -53,7 +53,7 @@ class TestProfileDefaultBehavior:
         """portolan push should use 'default' profile when --profile not specified."""
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
+        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = MagicMock(
                 success=True,
                 files_uploaded=0,
@@ -87,7 +87,7 @@ class TestProfileDefaultBehavior:
         """portolan push should use explicit --profile when provided."""
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
+        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = MagicMock(
                 success=True,
                 files_uploaded=0,
@@ -118,11 +118,11 @@ class TestProfileDefaultBehavior:
     @pytest.mark.unit
     def test_pull_defaults_to_default_profile(self, mock_catalog: Path) -> None:
         """portolan pull should use 'default' profile when --profile not specified."""
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             mock_pull.return_value = PullResult(
                 success=True,
                 files_downloaded=0,
@@ -153,7 +153,7 @@ class TestProfileDefaultBehavior:
         """portolan sync should use 'default' profile when --profile not specified."""
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = MagicMock(
                 success=True,
                 files_pulled=0,
@@ -178,7 +178,7 @@ class TestProfileDefaultBehavior:
         runner = CliRunner()
         clone_target = tmp_path / "cloned-catalog"
 
-        with patch("portolan_cli.sync.clone") as mock_clone:
+        with patch("portolan_cli.sync.core.clone") as mock_clone:
             mock_clone.return_value = MagicMock(
                 success=True,
                 local_path=clone_target,
@@ -238,7 +238,7 @@ class TestProfileConfigResolution:
         """portolan push should use PORTOLAN_AWS_PROFILE env var when --profile not specified."""
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
+        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = MagicMock(
                 success=True,
                 files_uploaded=0,
@@ -266,7 +266,7 @@ class TestProfileConfigResolution:
         """CLI --profile should override PORTOLAN_AWS_PROFILE env var."""
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
+        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = MagicMock(
                 success=True,
                 files_uploaded=0,
@@ -300,11 +300,11 @@ class TestProfileConfigResolution:
     @pytest.mark.unit
     def test_pull_uses_aws_profile_from_env(self, basic_catalog: Path) -> None:
         """portolan pull should use PORTOLAN_AWS_PROFILE env var when --profile not specified."""
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             mock_pull.return_value = PullResult(
                 success=True,
                 files_downloaded=0,
@@ -336,7 +336,7 @@ class TestProfileConfigResolution:
         """portolan sync should use PORTOLAN_AWS_PROFILE env var when --profile not specified."""
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = MagicMock(
                 success=True,
                 files_pulled=0,
@@ -364,7 +364,7 @@ class TestProfileConfigResolution:
         runner = CliRunner()
         clone_target = tmp_path / "cloned-catalog"
 
-        with patch("portolan_cli.sync.clone") as mock_clone:
+        with patch("portolan_cli.sync.core.clone") as mock_clone:
             mock_clone.return_value = MagicMock(
                 success=True,
                 local_path=clone_target,
@@ -410,7 +410,7 @@ class TestProfileConfigResolution:
 
         runner = CliRunner()
 
-        with patch("portolan_cli.push.push_async", new_callable=AsyncMock) as mock_push:
+        with patch("portolan_cli.sync.push.push_async", new_callable=AsyncMock) as mock_push:
             mock_push.return_value = MagicMock(
                 success=True,
                 files_uploaded=0,

@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from pathlib import Path, PurePath
 from typing import Any
 
-from portolan_cli.scan_classify import (
+from portolan_cli.scan.classify import (
     GEO_ASSET_EXTENSIONS,
     TABULAR_EXTENSIONS,
     is_geoparquet,
@@ -622,7 +622,7 @@ class PMTilesLinkRule(ValidationRule):
         # Import from the framework-free leaf, not pmtiles.py: the latter pulls
         # in output/thumbnail/style (and click/rich/config), which would break
         # the reis extraction seam (issue #563).
-        from portolan_cli.pmtiles_links import (
+        from portolan_cli.viz.pmtiles_links import (
             WEB_MAP_LINKS_EXTENSION,
             pmtiles_asset_hrefs,
             pmtiles_link_hrefs,

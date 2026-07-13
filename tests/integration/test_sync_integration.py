@@ -160,13 +160,13 @@ class TestSyncFlagPassthrough:
     def test_sync_dry_run_flag(self, managed_catalog: Path) -> None:
         """Sync --dry-run should pass dry_run=True to sync function."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
-        from portolan_cli.push import PushResult
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
+        from portolan_cli.sync.pull import PullResult
+        from portolan_cli.sync.push import PushResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=True,
                 pull_result=PullResult(
@@ -211,13 +211,13 @@ class TestSyncFlagPassthrough:
     def test_sync_force_flag(self, managed_catalog: Path) -> None:
         """Sync --force should pass force=True to sync function."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
-        from portolan_cli.push import PushResult
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
+        from portolan_cli.sync.pull import PullResult
+        from portolan_cli.sync.push import PushResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=True,
                 pull_result=PullResult(
@@ -259,13 +259,13 @@ class TestSyncFlagPassthrough:
     def test_sync_fix_flag(self, managed_catalog: Path) -> None:
         """Sync --fix should pass fix=True to sync function."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
-        from portolan_cli.push import PushResult
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
+        from portolan_cli.sync.pull import PullResult
+        from portolan_cli.sync.push import PushResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=True,
                 pull_result=PullResult(
@@ -307,13 +307,13 @@ class TestSyncFlagPassthrough:
     def test_sync_profile_flag(self, managed_catalog: Path) -> None:
         """Sync --profile should pass AWS profile to sync function."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
-        from portolan_cli.push import PushResult
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
+        from portolan_cli.sync.pull import PullResult
+        from portolan_cli.sync.push import PushResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=True,
                 pull_result=PullResult(
@@ -362,13 +362,13 @@ class TestSyncFlagPassthrough:
         from unittest.mock import patch as mock_patch
 
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
-        from portolan_cli.push import PushResult
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
+        from portolan_cli.sync.pull import PullResult
+        from portolan_cli.sync.push import PushResult
 
         runner = CliRunner()
 
-        with mock_patch("portolan_cli.sync.sync") as mock_sync:
+        with mock_patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=True,
                 pull_result=PullResult(
@@ -426,11 +426,11 @@ class TestSyncErrorHandling:
     def test_sync_failure_returns_nonzero(self, managed_catalog: Path) -> None:
         """Sync failure should return non-zero exit code."""
         from portolan_cli.cli import cli
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=False,
                 pull_result=None,
@@ -459,12 +459,12 @@ class TestSyncErrorHandling:
     def test_sync_missing_catalog_returns_error(self, tmp_path: Path) -> None:
         """Sync with non-existent catalog should fail."""
         from portolan_cli.cli import cli
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
 
         runner = CliRunner()
         non_existent = tmp_path / "does_not_exist"
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=False,
                 pull_result=None,
@@ -502,13 +502,13 @@ class TestSyncJSONOutput:
     def test_sync_json_output_success(self, managed_catalog: Path) -> None:
         """Sync with --format=json should output valid JSON envelope."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
-        from portolan_cli.push import PushResult
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
+        from portolan_cli.sync.pull import PullResult
+        from portolan_cli.sync.push import PushResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=True,
                 pull_result=PullResult(
@@ -560,11 +560,11 @@ class TestSyncJSONOutput:
     def test_sync_json_output_failure(self, managed_catalog: Path) -> None:
         """Sync failure with --format=json should include errors array."""
         from portolan_cli.cli import cli
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=False,
                 pull_result=None,
@@ -612,13 +612,13 @@ class TestSyncCombinedFlags:
     def test_sync_all_flags_together(self, managed_catalog: Path) -> None:
         """Sync should handle all flags simultaneously."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
-        from portolan_cli.push import PushResult
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
+        from portolan_cli.sync.pull import PullResult
+        from portolan_cli.sync.push import PushResult
 
         runner = CliRunner()
 
-        with patch("portolan_cli.sync.sync") as mock_sync:
+        with patch("portolan_cli.sync.core.sync") as mock_sync:
             mock_sync.return_value = SyncResult(
                 success=True,
                 pull_result=PullResult(

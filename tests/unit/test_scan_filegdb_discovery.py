@@ -12,8 +12,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from portolan_cli.scan import ScanOptions, scan_directory
-from portolan_cli.scan_detect import is_filegdb
+from portolan_cli.scan.core import ScanOptions, scan_directory
+from portolan_cli.scan.detect import is_filegdb
 
 
 @pytest.mark.unit

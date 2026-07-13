@@ -38,7 +38,7 @@ class TestDirectoryStructurePreservation:
     @pytest.mark.integration
     def test_build_local_path_preserves_nested_structure(self, download_test_dir: Path) -> None:
         """Local paths should preserve relative directory structure."""
-        from portolan_cli.download import _build_local_path
+        from portolan_cli.sync.download import _build_local_path
 
         local_path = _build_local_path(
             remote_key="data/subdir/file.parquet",
@@ -52,7 +52,7 @@ class TestDirectoryStructurePreservation:
     @pytest.mark.integration
     def test_build_local_path_with_deep_nesting(self, download_test_dir: Path) -> None:
         """Local paths should work with deeply nested structures."""
-        from portolan_cli.download import _build_local_path
+        from portolan_cli.sync.download import _build_local_path
 
         local_path = _build_local_path(
             remote_key="prefix/a/b/c/d/file.parquet",
@@ -65,7 +65,7 @@ class TestDirectoryStructurePreservation:
     @pytest.mark.integration
     def test_build_local_path_no_prefix(self, download_test_dir: Path) -> None:
         """Local paths should work without prefix (filename only)."""
-        from portolan_cli.download import _build_local_path
+        from portolan_cli.sync.download import _build_local_path
 
         local_path = _build_local_path(
             remote_key="just-a-file.parquet",
@@ -78,7 +78,7 @@ class TestDirectoryStructurePreservation:
     @pytest.mark.integration
     def test_build_local_path_prefix_mismatch(self, download_test_dir: Path) -> None:
         """When prefix doesn't match, should extract filename."""
-        from portolan_cli.download import _build_local_path
+        from portolan_cli.sync.download import _build_local_path
 
         local_path = _build_local_path(
             remote_key="different/path/file.parquet",
@@ -101,7 +101,7 @@ class TestSingleFilePath:
     @pytest.mark.integration
     def test_get_local_path_to_directory(self, download_test_dir: Path) -> None:
         """When destination is directory, should append filename."""
-        from portolan_cli.download import _get_local_path_for_file
+        from portolan_cli.sync.download import _get_local_path_for_file
 
         local_path = _get_local_path_for_file(
             source_prefix="data/file.parquet",
@@ -114,7 +114,7 @@ class TestSingleFilePath:
     @pytest.mark.integration
     def test_get_local_path_to_file(self, download_test_dir: Path) -> None:
         """When destination is exact file, should use that path."""
-        from portolan_cli.download import _get_local_path_for_file
+        from portolan_cli.sync.download import _get_local_path_for_file
 
         dest_file = download_test_dir / "renamed.parquet"
 
@@ -129,7 +129,7 @@ class TestSingleFilePath:
     @pytest.mark.integration
     def test_get_local_path_existing_directory(self, download_test_dir: Path) -> None:
         """When destination is existing directory, should append filename."""
-        from portolan_cli.download import _get_local_path_for_file
+        from portolan_cli.sync.download import _get_local_path_for_file
 
         # download_test_dir exists as a directory
         local_path = _get_local_path_for_file(
@@ -196,7 +196,7 @@ class TestDryRun:
     @pytest.mark.integration
     def test_download_file_dry_run_no_file_created(self, download_test_dir: Path) -> None:
         """Dry-run should not create any files."""
-        from portolan_cli.download import download_file
+        from portolan_cli.sync.download import download_file
 
         dest_file = download_test_dir / "should_not_exist.parquet"
 
@@ -215,12 +215,12 @@ class TestDryRun:
         """Dry-run directory download should not create any files."""
         from unittest.mock import patch
 
-        from portolan_cli.download import download_directory
+        from portolan_cli.sync.download import download_directory
 
         nested_dir = download_test_dir / "nested"
 
-        with patch("portolan_cli.download.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store"):
+        with patch("portolan_cli.sync.download.obs") as mock_obs:
+            with patch("portolan_cli.sync.upload.S3Store"):
                 # Mock list to return files
                 mock_obs.list.return_value = [
                     [
@@ -251,7 +251,7 @@ class TestErrorHandling:
     @pytest.mark.integration
     def test_download_result_captures_errors(self) -> None:
         """DownloadResult should properly capture error information."""
-        from portolan_cli.download import DownloadResult
+        from portolan_cli.sync.download import DownloadResult
 
         error1 = OSError("Network error")
         error2 = ValueError("Invalid data")
@@ -275,10 +275,10 @@ class TestErrorHandling:
         """Empty remote directory should return success with zero files."""
         from unittest.mock import patch
 
-        from portolan_cli.download import download_directory
+        from portolan_cli.sync.download import download_directory
 
-        with patch("portolan_cli.download.obs") as mock_obs:
-            with patch("portolan_cli.upload.S3Store"):
+        with patch("portolan_cli.sync.download.obs") as mock_obs:
+            with patch("portolan_cli.sync.upload.S3Store"):
                 # Mock list to return empty
                 mock_obs.list.return_value = [[]]
 
@@ -303,7 +303,7 @@ class TestUrlParsing:
     @pytest.mark.integration
     def test_parse_s3_url(self) -> None:
         """Should correctly parse S3 URLs."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket/data/file.parquet")
 
@@ -313,7 +313,7 @@ class TestUrlParsing:
     @pytest.mark.integration
     def test_parse_gcs_url(self) -> None:
         """Should correctly parse GCS URLs."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("gs://mybucket/path/to/data")
 
@@ -323,7 +323,7 @@ class TestUrlParsing:
     @pytest.mark.integration
     def test_parse_azure_url(self) -> None:
         """Should correctly parse Azure URLs."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("az://myaccount/mycontainer/data/file.parquet")
 
@@ -333,7 +333,7 @@ class TestUrlParsing:
     @pytest.mark.integration
     def test_parse_url_bucket_only(self) -> None:
         """Should handle URL with bucket only."""
-        from portolan_cli.upload import parse_object_store_url
+        from portolan_cli.sync.upload import parse_object_store_url
 
         bucket_url, prefix = parse_object_store_url("s3://mybucket")
 

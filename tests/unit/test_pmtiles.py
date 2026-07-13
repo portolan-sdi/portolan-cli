@@ -21,7 +21,7 @@ class TestPMTilesErrors:
     @pytest.mark.unit
     def test_pmtiles_not_available_error_message(self) -> None:
         """Error message includes installation instructions."""
-        from portolan_cli.pmtiles import PMTilesNotAvailableError
+        from portolan_cli.viz.pmtiles import PMTilesNotAvailableError
 
         error = PMTilesNotAvailableError()
         assert "gpio-pmtiles" in str(error)
@@ -30,7 +30,7 @@ class TestPMTilesErrors:
     @pytest.mark.unit
     def test_tippecanoe_not_found_error_message(self) -> None:
         """Error message includes installation instructions."""
-        from portolan_cli.pmtiles import TippecanoeNotFoundError
+        from portolan_cli.viz.pmtiles import TippecanoeNotFoundError
 
         error = TippecanoeNotFoundError()
         assert "tippecanoe" in str(error)
@@ -39,7 +39,7 @@ class TestPMTilesErrors:
     @pytest.mark.unit
     def test_pmtiles_generation_error_includes_source(self) -> None:
         """Error includes source path and original error."""
-        from portolan_cli.pmtiles import PMTilesGenerationError
+        from portolan_cli.viz.pmtiles import PMTilesGenerationError
 
         original = ValueError("test error")
         error = PMTilesGenerationError("/path/to/file.parquet", original)
@@ -54,7 +54,7 @@ class TestPMTilesResult:
     @pytest.mark.unit
     def test_total_counts_all_results(self) -> None:
         """Total property counts generated, skipped, and failed."""
-        from portolan_cli.pmtiles import PMTilesResult
+        from portolan_cli.viz.pmtiles import PMTilesResult
 
         result = PMTilesResult(
             generated=[Path("a.pmtiles"), Path("b.pmtiles")],
@@ -67,7 +67,7 @@ class TestPMTilesResult:
     @pytest.mark.unit
     def test_success_true_when_no_failures(self) -> None:
         """Success is True when failed list is empty."""
-        from portolan_cli.pmtiles import PMTilesResult
+        from portolan_cli.viz.pmtiles import PMTilesResult
 
         result = PMTilesResult(
             generated=[Path("a.pmtiles")],
@@ -80,7 +80,7 @@ class TestPMTilesResult:
     @pytest.mark.unit
     def test_success_false_when_failures_exist(self) -> None:
         """Success is False when failed list has items."""
-        from portolan_cli.pmtiles import PMTilesResult
+        from portolan_cli.viz.pmtiles import PMTilesResult
 
         result = PMTilesResult(
             generated=[],
@@ -97,13 +97,13 @@ class TestCheckPMTilesAvailable:
     @pytest.mark.unit
     def test_raises_when_gpio_pmtiles_not_installed(self) -> None:
         """Raises PMTilesNotAvailableError when gpio-pmtiles missing."""
-        from portolan_cli.pmtiles import (
+        from portolan_cli.viz.pmtiles import (
             PMTilesNotAvailableError,
             check_pmtiles_available,
         )
 
         with patch.dict("sys.modules", {"gpio_pmtiles": None}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 # Mock the import to raise ImportError
                 with patch(
                     "builtins.__import__",
@@ -115,7 +115,7 @@ class TestCheckPMTilesAvailable:
     @pytest.mark.unit
     def test_raises_when_tippecanoe_not_in_path(self) -> None:
         """Raises TippecanoeNotFoundError when tippecanoe not in PATH."""
-        from portolan_cli.pmtiles import (
+        from portolan_cli.viz.pmtiles import (
             TippecanoeNotFoundError,
             check_pmtiles_available,
         )
@@ -123,7 +123,7 @@ class TestCheckPMTilesAvailable:
         # Mock gpio_pmtiles as available but tippecanoe missing
         mock_module = MagicMock()
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value=None):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value=None):
                 with pytest.raises(TippecanoeNotFoundError):
                     check_pmtiles_available()
 
@@ -134,7 +134,7 @@ class TestFindGeoparquetAssets:
     @pytest.mark.unit
     def test_finds_parquet_assets_by_media_type(self, tmp_path: Path) -> None:
         """Finds assets with application/vnd.apache.parquet type."""
-        from portolan_cli.pmtiles import _find_geoparquet_assets
+        from portolan_cli.viz.pmtiles import _find_geoparquet_assets
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -161,7 +161,7 @@ class TestFindGeoparquetAssets:
     @pytest.mark.unit
     def test_ignores_stac_items_parquet(self, tmp_path: Path) -> None:
         """Ignores parquet files with stac-items role."""
-        from portolan_cli.pmtiles import _find_geoparquet_assets
+        from portolan_cli.viz.pmtiles import _find_geoparquet_assets
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -186,7 +186,7 @@ class TestFindGeoparquetAssets:
     @pytest.mark.unit
     def test_returns_empty_for_missing_collection_json(self, tmp_path: Path) -> None:
         """Returns empty list when collection.json doesn't exist."""
-        from portolan_cli.pmtiles import _find_geoparquet_assets
+        from portolan_cli.viz.pmtiles import _find_geoparquet_assets
 
         assets = _find_geoparquet_assets(tmp_path)
 
@@ -199,7 +199,7 @@ class TestShouldGenerate:
     @pytest.mark.unit
     def test_returns_true_when_force(self, tmp_path: Path) -> None:
         """Returns True when force=True regardless of file state."""
-        from portolan_cli.pmtiles import _should_generate
+        from portolan_cli.viz.pmtiles import _should_generate
 
         parquet = tmp_path / "data.parquet"
         pmtiles = tmp_path / "data.pmtiles"
@@ -211,7 +211,7 @@ class TestShouldGenerate:
     @pytest.mark.unit
     def test_returns_true_when_pmtiles_missing(self, tmp_path: Path) -> None:
         """Returns True when PMTiles file doesn't exist."""
-        from portolan_cli.pmtiles import _should_generate
+        from portolan_cli.viz.pmtiles import _should_generate
 
         parquet = tmp_path / "data.parquet"
         pmtiles = tmp_path / "data.pmtiles"
@@ -224,7 +224,7 @@ class TestShouldGenerate:
         """Returns False when PMTiles is newer than parquet."""
         import time
 
-        from portolan_cli.pmtiles import _should_generate
+        from portolan_cli.viz.pmtiles import _should_generate
 
         parquet = tmp_path / "data.parquet"
         pmtiles = tmp_path / "data.pmtiles"
@@ -242,7 +242,7 @@ class TestAddPMTilesAssetToCollection:
     @pytest.mark.unit
     def test_adds_pmtiles_asset_with_correct_role(self, tmp_path: Path) -> None:
         """Adds PMTiles asset with role=['overview']."""
-        from portolan_cli.pmtiles import add_pmtiles_asset_to_collection
+        from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -270,7 +270,7 @@ class TestAddPMTilesAssetToCollection:
     @pytest.mark.unit
     def test_idempotent_does_not_duplicate(self, tmp_path: Path) -> None:
         """Calling twice doesn't create duplicate assets."""
-        from portolan_cli.pmtiles import add_pmtiles_asset_to_collection
+        from portolan_cli.viz.pmtiles import add_pmtiles_asset_to_collection
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -310,7 +310,7 @@ class TestAddPMTilesLinkToCollection:
     @pytest.mark.unit
     def test_adds_web_map_links_link_and_extension(self, tmp_path: Path) -> None:
         """Adds rel='pmtiles' link with media type, layers, and extension."""
-        from portolan_cli.pmtiles import (
+        from portolan_cli.viz.pmtiles import (
             WEB_MAP_LINKS_EXTENSION,
             add_pmtiles_link_to_collection,
         )
@@ -330,7 +330,7 @@ class TestAddPMTilesLinkToCollection:
     @pytest.mark.unit
     def test_idempotent_does_not_duplicate_link_or_extension(self, tmp_path: Path) -> None:
         """Calling twice keeps exactly one link and one extension entry."""
-        from portolan_cli.pmtiles import (
+        from portolan_cli.viz.pmtiles import (
             WEB_MAP_LINKS_EXTENSION,
             add_pmtiles_link_to_collection,
         )
@@ -348,7 +348,7 @@ class TestAddPMTilesLinkToCollection:
     @pytest.mark.unit
     def test_realigns_stale_layers(self, tmp_path: Path) -> None:
         """A pre-existing link with stale pmtiles:layers is updated in place."""
-        from portolan_cli.pmtiles import add_pmtiles_link_to_collection
+        from portolan_cli.viz.pmtiles import add_pmtiles_link_to_collection
 
         collection_dir = self._collection(tmp_path)
         add_pmtiles_link_to_collection(collection_dir, "./data.pmtiles", layers=["old"])
@@ -396,8 +396,8 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_asset_tracked_with_checksum_size_mtime(self, tmp_path: Path) -> None:
         """A generated thumbnail is added to versions.json as a full asset."""
-        from portolan_cli.pmtiles import _track_generated_assets_in_versions
         from portolan_cli.versions import read_versions
+        from portolan_cli.viz.pmtiles import _track_generated_assets_in_versions
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -430,8 +430,8 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_pmtiles_and_thumbnail_share_one_version(self, tmp_path: Path) -> None:
         """PMTiles + thumbnail tracked together land in a SINGLE version (Issue #519)."""
-        from portolan_cli.pmtiles import _track_generated_assets_in_versions
         from portolan_cli.versions import read_versions
+        from portolan_cli.viz.pmtiles import _track_generated_assets_in_versions
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -457,8 +457,8 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_only_if_missing_skips_already_tracked(self, tmp_path: Path) -> None:
         """only_if_missing creates no version when every asset is already tracked."""
-        from portolan_cli.pmtiles import _track_generated_assets_in_versions
         from portolan_cli.versions import read_versions
+        from portolan_cli.viz.pmtiles import _track_generated_assets_in_versions
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -479,8 +479,8 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_creates_versions_file_when_missing(self, tmp_path: Path) -> None:
         """First-ever version is created at 1.0.0 if versions.json is absent."""
-        from portolan_cli.pmtiles import _track_generated_assets_in_versions
         from portolan_cli.versions import read_versions
+        from portolan_cli.viz.pmtiles import _track_generated_assets_in_versions
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -499,7 +499,7 @@ class TestTrackGeneratedAssetsInVersions:
     @pytest.mark.unit
     def test_raises_when_asset_missing(self, tmp_path: Path) -> None:
         """A missing asset file is a hard error (no phantom asset)."""
-        from portolan_cli.pmtiles import _track_generated_assets_in_versions
+        from portolan_cli.viz.pmtiles import _track_generated_assets_in_versions
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -517,7 +517,7 @@ class TestGeneratePMTiles:
     @pytest.mark.unit
     def test_passes_all_parameters_to_gpio_pmtiles(self, tmp_path: Path) -> None:
         """All parameters are passed through to create_pmtiles_from_geoparquet."""
-        from portolan_cli.pmtiles import generate_pmtiles
+        from portolan_cli.viz.pmtiles import generate_pmtiles
 
         parquet = tmp_path / "data.parquet"
         pmtiles = tmp_path / "data.pmtiles"
@@ -528,7 +528,7 @@ class TestGeneratePMTiles:
         mock_module.create_pmtiles_from_geoparquet = mock_create
 
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 generate_pmtiles(
                     parquet,
                     pmtiles,
@@ -560,7 +560,7 @@ class TestGeneratePMTiles:
     @pytest.mark.unit
     def test_default_precision_is_six(self, tmp_path: Path) -> None:
         """Default precision value is 6."""
-        from portolan_cli.pmtiles import generate_pmtiles
+        from portolan_cli.viz.pmtiles import generate_pmtiles
 
         parquet = tmp_path / "data.parquet"
         pmtiles = tmp_path / "data.pmtiles"
@@ -571,7 +571,7 @@ class TestGeneratePMTiles:
         mock_module.create_pmtiles_from_geoparquet = mock_create
 
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 generate_pmtiles(parquet, pmtiles)
 
         call_kwargs = mock_create.call_args[1]
@@ -584,7 +584,7 @@ class TestGeneratePMTilesForCollection:
     @pytest.mark.unit
     def test_returns_empty_result_for_no_geoparquet(self, tmp_path: Path) -> None:
         """Returns empty result when collection has no GeoParquet assets."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -595,7 +595,7 @@ class TestGeneratePMTilesForCollection:
         # Mock dependencies as available
         mock_module = MagicMock()
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 result = generate_pmtiles_for_collection(collection_dir, tmp_path)
 
         assert result.total == 0
@@ -604,7 +604,7 @@ class TestGeneratePMTilesForCollection:
     @pytest.mark.unit
     def test_passes_all_parameters_to_generate_pmtiles(self, tmp_path: Path) -> None:
         """All parameters are forwarded to generate_pmtiles."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -642,8 +642,8 @@ class TestGeneratePMTilesForCollection:
         mock_module = MagicMock()
 
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
-                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate):
                     generate_pmtiles_for_collection(
                         collection_dir,
                         tmp_path,
@@ -679,7 +679,7 @@ class TestGeneratePMTilesForCollection:
         partial output file. This test verifies that such files are cleaned
         up to prevent phantom assets in versions.json on subsequent add runs.
         """
-        from portolan_cli.pmtiles import (
+        from portolan_cli.viz.pmtiles import (
             PMTilesGenerationError,
             generate_pmtiles_for_collection,
         )
@@ -710,8 +710,8 @@ class TestGeneratePMTilesForCollection:
 
         mock_module = MagicMock()
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
-                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate_raises):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_raises):
                     result = generate_pmtiles_for_collection(collection_dir, tmp_path)
 
         # Verify failure was recorded
@@ -727,7 +727,7 @@ class TestGeneratePMTilesForCollection:
     @pytest.mark.unit
     def test_cleans_up_partial_file_on_unexpected_error(self, tmp_path: Path) -> None:
         """Partial PMTiles file is deleted on unexpected errors too (Issue #385)."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -753,8 +753,8 @@ class TestGeneratePMTilesForCollection:
 
         mock_module = MagicMock()
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
-                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate_unexpected):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_unexpected):
                     result = generate_pmtiles_for_collection(collection_dir, tmp_path)
 
         assert len(result.failed) == 1
@@ -767,7 +767,7 @@ class TestGeneratePMTilesForCollection:
         KeyboardInterrupt inherits from BaseException, not Exception.
         The finally block ensures cleanup even when user hits Ctrl+C.
         """
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = tmp_path / "collection"
         collection_dir.mkdir()
@@ -792,8 +792,8 @@ class TestGeneratePMTilesForCollection:
 
         mock_module = MagicMock()
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
-                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate_interrupted):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate_interrupted):
                     with pytest.raises(KeyboardInterrupt):
                         generate_pmtiles_for_collection(collection_dir, tmp_path)
 
@@ -813,8 +813,8 @@ class TestGeneratePMTilesForCollection:
         PMTiles and thumbnail each bump their own version (two snapshots for one
         side-step); they must now share a single version snapshot.
         """
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
         from portolan_cli.versions import read_versions
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -858,10 +858,10 @@ class TestGeneratePMTilesForCollection:
 
         mock_module = MagicMock()
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
-                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate):
                     with patch(
-                        "portolan_cli.pmtiles.generate_vector_thumbnail",
+                        "portolan_cli.viz.pmtiles.generate_vector_thumbnail",
                         mock_thumbnail,
                     ):
                         result = generate_pmtiles_for_collection(collection_dir, tmp_path)
@@ -887,7 +887,7 @@ class TestGeneratePMTilesForCollection:
     @pytest.mark.unit
     def test_generate_emits_pmtiles_link(self, tmp_path: Path) -> None:
         """The generate path emits the rel='pmtiles' web-map-links link (#569)."""
-        from portolan_cli.pmtiles import (
+        from portolan_cli.viz.pmtiles import (
             WEB_MAP_LINKS_EXTENSION,
             generate_pmtiles_for_collection,
         )
@@ -915,8 +915,8 @@ class TestGeneratePMTilesForCollection:
 
         mock_module = MagicMock()
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
-                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate):
                     generate_pmtiles_for_collection(collection_dir, tmp_path)
 
         updated = json.loads((collection_dir / "collection.json").read_text())
@@ -936,8 +936,8 @@ class TestGeneratePMTilesForCollection:
         from versions.json) must be backfilled — without forcing regeneration —
         and in exactly one version bump.
         """
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
         from portolan_cli.versions import read_versions
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = tmp_path / "demographics"
         collection_dir.mkdir()
@@ -983,7 +983,7 @@ class TestGeneratePMTilesForCollection:
 
         mock_module = MagicMock()
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 result = generate_pmtiles_for_collection(collection_dir, tmp_path)
 
         assert pmtiles in result.skipped, "Up-to-date PMTiles should be skipped, not regenerated"
@@ -1005,7 +1005,7 @@ class TestGeneratePMTilesForCollection:
 
         # Idempotent: a second run with everything tracked creates NO new version.
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
                 generate_pmtiles_for_collection(collection_dir, tmp_path)
         versions_after = read_versions(collection_dir / "versions.json")
         assert len(versions_after.versions) == 2, (
@@ -1054,9 +1054,9 @@ class TestGeneratePMTilesForCollection:
         """When thumbnails are disabled, only the PMTiles is tracked (one version)."""
         from unittest.mock import patch as _patch
 
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
-        from portolan_cli.thumbnail import ThumbnailConfig
         from portolan_cli.versions import read_versions
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
+        from portolan_cli.viz.thumbnail import ThumbnailConfig
 
         collection_dir = self._fresh_collection(tmp_path / "demographics")
         pmtiles_path = collection_dir / "data.pmtiles"
@@ -1066,10 +1066,10 @@ class TestGeneratePMTilesForCollection:
 
         mock_module = MagicMock()
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
-                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate):
                     with _patch(
-                        "portolan_cli.pmtiles.get_thumbnail_config",
+                        "portolan_cli.viz.pmtiles.get_thumbnail_config",
                         return_value=ThumbnailConfig(enabled=False),
                     ):
                         result = generate_pmtiles_for_collection(collection_dir, tmp_path)
@@ -1086,8 +1086,8 @@ class TestGeneratePMTilesForCollection:
     @pytest.mark.unit
     def test_thumbnail_render_failure_tracks_only_pmtiles(self, tmp_path: Path) -> None:
         """A failed thumbnail render must not block PMTiles tracking (Issue #13)."""
-        from portolan_cli.pmtiles import generate_pmtiles_for_collection
         from portolan_cli.versions import read_versions
+        from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
         collection_dir = self._fresh_collection(tmp_path / "demographics")
         pmtiles_path = collection_dir / "data.pmtiles"
@@ -1100,9 +1100,9 @@ class TestGeneratePMTilesForCollection:
 
         mock_module = MagicMock()
         with patch.dict("sys.modules", {"gpio_pmtiles": mock_module}):
-            with patch("portolan_cli.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
-                with patch("portolan_cli.pmtiles.generate_pmtiles", mock_generate):
-                    with patch("portolan_cli.pmtiles.generate_vector_thumbnail", boom):
+            with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
+                with patch("portolan_cli.viz.pmtiles.generate_pmtiles", mock_generate):
+                    with patch("portolan_cli.viz.pmtiles.generate_vector_thumbnail", boom):
                         result = generate_pmtiles_for_collection(collection_dir, tmp_path)
 
         assert pmtiles_path in result.generated, "PMTiles must succeed despite thumbnail failure"
@@ -1151,7 +1151,7 @@ class TestGetPMTilesSettings:
 
     @pytest.mark.unit
     def test_defaults_when_no_config(self, tmp_path: Path) -> None:
-        from portolan_cli.pmtiles import get_pmtiles_settings
+        from portolan_cli.viz.pmtiles import get_pmtiles_settings
 
         coll_path = _make_collection(tmp_path, "roads")
         settings = get_pmtiles_settings(tmp_path, "roads", coll_path)
@@ -1163,7 +1163,7 @@ class TestGetPMTilesSettings:
 
     @pytest.mark.unit
     def test_reads_config_values(self, tmp_path: Path) -> None:
-        from portolan_cli.pmtiles import get_pmtiles_settings
+        from portolan_cli.viz.pmtiles import get_pmtiles_settings
 
         config = (
             "pmtiles:\n"
@@ -1188,10 +1188,10 @@ class TestGenerateOrSuggestPMTiles:
 
     @pytest.mark.unit
     def test_skips_when_disabled_and_not_flagged(self, tmp_path: Path) -> None:
-        from portolan_cli.pmtiles import generate_or_suggest_pmtiles
+        from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
 
         _make_collection(tmp_path, "roads")
-        with patch("portolan_cli.pmtiles.generate_pmtiles_for_collection") as mock_gen:
+        with patch("portolan_cli.viz.pmtiles.generate_pmtiles_for_collection") as mock_gen:
             generate_or_suggest_pmtiles(
                 tmp_path,
                 {"roads"},
@@ -1203,11 +1203,11 @@ class TestGenerateOrSuggestPMTiles:
 
     @pytest.mark.unit
     def test_generates_when_flagged(self, tmp_path: Path) -> None:
-        from portolan_cli.pmtiles import PMTilesResult, generate_or_suggest_pmtiles
+        from portolan_cli.viz.pmtiles import PMTilesResult, generate_or_suggest_pmtiles
 
         coll_path = _make_collection(tmp_path, "roads")
         with patch(
-            "portolan_cli.pmtiles.generate_pmtiles_for_collection",
+            "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
             return_value=PMTilesResult(),
         ) as mock_gen:
             generate_or_suggest_pmtiles(
@@ -1222,14 +1222,14 @@ class TestGenerateOrSuggestPMTiles:
 
     @pytest.mark.unit
     def test_explicit_flag_unavailable_exits(self, tmp_path: Path) -> None:
-        from portolan_cli.pmtiles import (
+        from portolan_cli.viz.pmtiles import (
             PMTilesNotAvailableError,
             generate_or_suggest_pmtiles,
         )
 
         _make_collection(tmp_path, "roads")
         with patch(
-            "portolan_cli.pmtiles.generate_pmtiles_for_collection",
+            "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
             side_effect=PMTilesNotAvailableError(),
         ):
             with pytest.raises(SystemExit):
@@ -1244,14 +1244,14 @@ class TestGenerateOrSuggestPMTiles:
     @pytest.mark.unit
     def test_auto_unavailable_does_not_exit(self, tmp_path: Path) -> None:
         """pmtiles.enabled but package missing warns instead of exiting (auto path)."""
-        from portolan_cli.pmtiles import (
+        from portolan_cli.viz.pmtiles import (
             PMTilesNotAvailableError,
             generate_or_suggest_pmtiles,
         )
 
         _make_collection(tmp_path, "roads", "pmtiles:\n  enabled: true\n")
         with patch(
-            "portolan_cli.pmtiles.generate_pmtiles_for_collection",
+            "portolan_cli.viz.pmtiles.generate_pmtiles_for_collection",
             side_effect=PMTilesNotAvailableError(),
         ):
             # Must not raise SystemExit on the auto path.
@@ -1265,10 +1265,10 @@ class TestGenerateOrSuggestPMTiles:
 
     @pytest.mark.unit
     def test_missing_collection_json_skipped(self, tmp_path: Path) -> None:
-        from portolan_cli.pmtiles import generate_or_suggest_pmtiles
+        from portolan_cli.viz.pmtiles import generate_or_suggest_pmtiles
 
         (tmp_path / "catalog.json").write_text("{}")
-        with patch("portolan_cli.pmtiles.generate_pmtiles_for_collection") as mock_gen:
+        with patch("portolan_cli.viz.pmtiles.generate_pmtiles_for_collection") as mock_gen:
             generate_or_suggest_pmtiles(
                 tmp_path,
                 {"ghost"},

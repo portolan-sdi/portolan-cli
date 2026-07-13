@@ -104,7 +104,7 @@ class TestSyncResult:
     @pytest.mark.unit
     def test_sync_result_success(self) -> None:
         """SyncResult should capture successful sync stats."""
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
 
         result = SyncResult(
             success=True,
@@ -122,7 +122,7 @@ class TestSyncResult:
     @pytest.mark.unit
     def test_sync_result_with_errors(self) -> None:
         """SyncResult should capture errors from any step."""
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
 
         result = SyncResult(
             success=False,
@@ -140,9 +140,9 @@ class TestSyncResult:
     @pytest.mark.unit
     def test_sync_result_with_all_steps(self) -> None:
         """SyncResult should aggregate results from all steps."""
-        from portolan_cli.pull import PullResult
-        from portolan_cli.push import PushResult
-        from portolan_cli.sync import SyncResult
+        from portolan_cli.sync.core import SyncResult
+        from portolan_cli.sync.pull import PullResult
+        from portolan_cli.sync.push import PushResult
 
         pull_result = PullResult(
             success=True,
@@ -186,7 +186,7 @@ class TestOrchestrationSequence:
     @pytest.mark.unit
     def test_sync_calls_all_steps_in_order(self, managed_catalog: Path) -> None:
         """Sync should call pull, init, scan, check, push in that order."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         call_order: list[str] = []
 
@@ -225,11 +225,13 @@ class TestOrchestrationSequence:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=track_pull),
-            patch("portolan_cli.sync.init_catalog", side_effect=track_init),
-            patch("portolan_cli.sync.scan_directory", side_effect=track_scan),
-            patch("portolan_cli.sync.check_directory", side_effect=track_check),
-            patch("portolan_cli.sync.push_async", new_callable=AsyncMock, side_effect=track_push),
+            patch("portolan_cli.sync.core.pull", side_effect=track_pull),
+            patch("portolan_cli.sync.core.init_catalog", side_effect=track_init),
+            patch("portolan_cli.sync.core.scan_directory", side_effect=track_scan),
+            patch("portolan_cli.sync.core.check_directory", side_effect=track_check),
+            patch(
+                "portolan_cli.sync.core.push_async", new_callable=AsyncMock, side_effect=track_push
+            ),
         ):
             sync(
                 catalog_root=managed_catalog,
@@ -266,7 +268,7 @@ class TestEarlyExit:
     @pytest.mark.unit
     def test_sync_exits_early_on_pull_failure(self, managed_catalog: Path) -> None:
         """Sync should exit early if pull fails."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         def failing_pull(*args: Any, **kwargs: Any) -> MagicMock:
             result = MagicMock()
@@ -275,11 +277,11 @@ class TestEarlyExit:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=failing_pull),
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
+            patch("portolan_cli.sync.core.pull", side_effect=failing_pull),
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
         ):
             result = sync(
                 catalog_root=managed_catalog,
@@ -296,7 +298,7 @@ class TestEarlyExit:
     @pytest.mark.unit
     def test_sync_continues_when_pull_up_to_date(self, managed_catalog: Path) -> None:
         """Sync should continue when pull indicates already up to date."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         def up_to_date_pull(*args: Any, **kwargs: Any) -> MagicMock:
             result = MagicMock()
@@ -313,12 +315,14 @@ class TestEarlyExit:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=up_to_date_pull),
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.pull", side_effect=up_to_date_pull),
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
             patch(
-                "portolan_cli.sync.push_async", new_callable=AsyncMock, side_effect=successful_push
+                "portolan_cli.sync.core.push_async",
+                new_callable=AsyncMock,
+                side_effect=successful_push,
             ),
         ):
             # Set up mock returns
@@ -348,7 +352,7 @@ class TestInitSkip:
     @pytest.mark.unit
     def test_sync_skips_init_if_managed(self, managed_catalog: Path) -> None:
         """Sync should skip init if catalog is already in MANAGED state."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
             result = MagicMock()
@@ -364,12 +368,14 @@ class TestInitSkip:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.init_catalog") as mock_init,
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.init_catalog") as mock_init,
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
             patch(
-                "portolan_cli.sync.push_async", new_callable=AsyncMock, side_effect=successful_push
+                "portolan_cli.sync.core.push_async",
+                new_callable=AsyncMock,
+                side_effect=successful_push,
             ),
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
@@ -388,7 +394,7 @@ class TestInitSkip:
     @pytest.mark.unit
     def test_sync_calls_init_if_fresh(self, fresh_directory: Path) -> None:
         """Sync should call init if directory is in FRESH state."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
             result = MagicMock()
@@ -411,12 +417,16 @@ class TestInitSkip:
             return path / "catalog.json", []
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.init_catalog", side_effect=mock_init_catalog) as mock_init,
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
             patch(
-                "portolan_cli.sync.push_async", new_callable=AsyncMock, side_effect=successful_push
+                "portolan_cli.sync.core.init_catalog", side_effect=mock_init_catalog
+            ) as mock_init,
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
+            patch(
+                "portolan_cli.sync.core.push_async",
+                new_callable=AsyncMock,
+                side_effect=successful_push,
             ),
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
@@ -444,7 +454,7 @@ class TestDryRunMode:
     @pytest.mark.unit
     def test_sync_dry_run_passes_to_push(self, managed_catalog: Path) -> None:
         """Sync --dry-run should pass dry_run=True to push."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
             result = MagicMock()
@@ -453,11 +463,11 @@ class TestDryRunMode:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -478,14 +488,14 @@ class TestDryRunMode:
     @pytest.mark.unit
     def test_sync_dry_run_passes_to_pull(self, managed_catalog: Path) -> None:
         """Sync --dry-run should pass dry_run=True to pull."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         with (
-            patch("portolan_cli.sync.pull") as mock_pull,
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_pull.return_value = MagicMock(success=True, up_to_date=True)
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
@@ -516,7 +526,7 @@ class TestForceMode:
     @pytest.mark.unit
     def test_sync_force_passes_to_push(self, managed_catalog: Path) -> None:
         """Sync --force should pass force=True to push."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
             result = MagicMock()
@@ -525,11 +535,11 @@ class TestForceMode:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -550,14 +560,14 @@ class TestForceMode:
     @pytest.mark.unit
     def test_sync_force_passes_to_pull(self, managed_catalog: Path) -> None:
         """Sync --force should pass force=True to pull."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         with (
-            patch("portolan_cli.sync.pull") as mock_pull,
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_pull.return_value = MagicMock(success=True, up_to_date=True)
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
@@ -588,7 +598,7 @@ class TestFixMode:
     @pytest.mark.unit
     def test_sync_fix_passes_to_check(self, managed_catalog: Path) -> None:
         """Sync --fix should pass fix=True to check_directory."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
             result = MagicMock()
@@ -597,11 +607,11 @@ class TestFixMode:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -631,14 +641,14 @@ class TestProfilePassthrough:
     @pytest.mark.unit
     def test_sync_profile_passes_to_pull_and_push(self, managed_catalog: Path) -> None:
         """Sync --profile should pass profile to both pull and push."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         with (
-            patch("portolan_cli.sync.pull") as mock_pull,
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_pull.return_value = MagicMock(success=True, up_to_date=True)
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
@@ -672,10 +682,10 @@ class TestErrorHandling:
     @pytest.mark.unit
     def test_sync_handles_pull_error_gracefully(self, managed_catalog: Path) -> None:
         """Sync should handle pull errors and not crash."""
-        from portolan_cli.pull import PullError
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
+        from portolan_cli.sync.pull import PullError
 
-        with patch("portolan_cli.sync.pull") as mock_pull:
+        with patch("portolan_cli.sync.core.pull") as mock_pull:
             mock_pull.side_effect = PullError("Network timeout")
 
             result = sync(
@@ -691,8 +701,8 @@ class TestErrorHandling:
     @pytest.mark.unit
     def test_sync_handles_push_error_gracefully(self, managed_catalog: Path) -> None:
         """Sync should handle push errors and not crash."""
-        from portolan_cli.push import PushConflictError
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
+        from portolan_cli.sync.push import PushConflictError
 
         def successful_pull(*args: Any, **kwargs: Any) -> MagicMock:
             result = MagicMock()
@@ -701,11 +711,11 @@ class TestErrorHandling:
             return result
 
         with (
-            patch("portolan_cli.sync.pull", side_effect=successful_pull),
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
-            patch("portolan_cli.sync.push_async", new_callable=AsyncMock) as mock_push,
+            patch("portolan_cli.sync.core.pull", side_effect=successful_pull),
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
+            patch("portolan_cli.sync.core.push_async", new_callable=AsyncMock) as mock_push,
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -724,7 +734,7 @@ class TestErrorHandling:
     @pytest.mark.unit
     def test_sync_handles_missing_catalog_root(self, tmp_path: Path) -> None:
         """Sync should handle missing catalog root directory."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         non_existent = tmp_path / "does_not_exist"
 
@@ -749,7 +759,7 @@ class TestCloneResult:
     @pytest.mark.unit
     def test_clone_result_stores_success(self, tmp_path: Path) -> None:
         """CloneResult should store success status."""
-        from portolan_cli.sync import CloneResult
+        from portolan_cli.sync.core import CloneResult
 
         result = CloneResult(
             success=True,
@@ -763,7 +773,7 @@ class TestCloneResult:
     @pytest.mark.unit
     def test_clone_result_stores_errors(self, tmp_path: Path) -> None:
         """CloneResult should store error messages."""
-        from portolan_cli.sync import CloneResult
+        from portolan_cli.sync.core import CloneResult
 
         result = CloneResult(
             success=False,
@@ -782,7 +792,7 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_fails_on_non_empty_directory(self, tmp_path: Path) -> None:
         """Clone should fail if target directory is not empty."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         # Create non-empty directory
         target = tmp_path / "target"
@@ -801,13 +811,13 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_creates_target_directory(self, tmp_path: Path) -> None:
         """Clone should create target directory if it doesn't exist."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.init_catalog") as mock_init,
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.init_catalog") as mock_init,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             # Mock successful operations
             mock_init.return_value = None
@@ -829,13 +839,13 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_calls_init_catalog(self, tmp_path: Path) -> None:
         """Clone should initialize the catalog."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.init_catalog") as mock_init,
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.init_catalog") as mock_init,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,
@@ -856,13 +866,13 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_calls_pull_with_correct_args(self, tmp_path: Path) -> None:
         """Clone should call pull with the correct arguments."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,
@@ -889,13 +899,13 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_fails_when_pull_fails(self, tmp_path: Path) -> None:
         """Clone should fail if pull fails."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=False,
@@ -914,13 +924,13 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_fails_when_remote_not_found(self, tmp_path: Path) -> None:
         """Clone should fail with helpful message when remote doesn't exist."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=False,
@@ -940,13 +950,13 @@ class TestCloneFunction:
     @pytest.mark.unit
     def test_clone_returns_pull_result(self, tmp_path: Path) -> None:
         """Clone should return the pull result."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         target = tmp_path / "new_catalog"
 
         with (
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull_result = MagicMock(
                 success=True,
@@ -1041,15 +1051,15 @@ class TestDryRunNetworkIsolation:
         Regression test for bug #137: pull() called _fetch_remote_versions
         unconditionally even when dry_run=True.
         """
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         with (
-            patch("portolan_cli.pull._fetch_remote_versions") as mock_pull_fetch,
-            patch("portolan_cli.push.setup_store") as mock_push_setup,
-            patch("portolan_cli.push._fetch_remote_versions") as mock_push_fetch,
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
+            patch("portolan_cli.sync.pull._fetch_remote_versions") as mock_pull_fetch,
+            patch("portolan_cli.sync.push.setup_store") as mock_push_setup,
+            patch("portolan_cli.sync.push._fetch_remote_versions") as mock_push_fetch,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -1072,15 +1082,15 @@ class TestDryRunNetworkIsolation:
         self, catalog_with_versions: Path
     ) -> None:
         """sync(dry_run=True) must not make network calls in the push step."""
-        from portolan_cli.sync import sync
+        from portolan_cli.sync.core import sync
 
         with (
-            patch("portolan_cli.pull._fetch_remote_versions") as mock_pull_fetch,
-            patch("portolan_cli.push.setup_store") as mock_setup,
-            patch("portolan_cli.push._fetch_remote_versions") as mock_push_fetch,
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.scan_directory") as mock_scan,
-            patch("portolan_cli.sync.check_directory") as mock_check,
+            patch("portolan_cli.sync.pull._fetch_remote_versions") as mock_pull_fetch,
+            patch("portolan_cli.sync.push.setup_store") as mock_setup,
+            patch("portolan_cli.sync.push._fetch_remote_versions") as mock_push_fetch,
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.scan_directory") as mock_scan,
+            patch("portolan_cli.sync.core.check_directory") as mock_check,
         ):
             mock_scan.return_value = MagicMock(ready=[], has_errors=False)
             mock_check.return_value = MagicMock(convertible_count=0, unsupported_count=0)
@@ -1114,7 +1124,7 @@ class TestListRemoteCollectionsNestedCatalogs:
     @pytest.mark.unit
     def test_list_remote_collections_simple_flat_structure(self, tmp_path: Path) -> None:
         """list_remote_collections should work with flat catalog structure."""
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         # Mock catalog with direct child collections (no nesting)
         catalog_data = {
@@ -1126,7 +1136,7 @@ class TestListRemoteCollectionsNestedCatalogs:
             ],
         }
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json") as mock_fetch:
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json") as mock_fetch:
             mock_fetch.return_value = catalog_data
 
             collections = list_remote_collections("s3://bucket/catalog")
@@ -1144,7 +1154,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                     └── hittekaart/
                         └── collection.json (actual collection)
         """
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         # Root catalog points to subcatalog (NOT a collection)
         root_catalog = {
@@ -1171,7 +1181,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return climate_catalog
             raise ValueError(f"Unexpected URL: {remote_url}")
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Full path includes the subcatalog directory for proper clone/pull
@@ -1187,7 +1197,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                 └── netherlands/catalog.json
                     └── amsterdam/collection.json
         """
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         root_catalog = {
             "type": "Catalog",
@@ -1218,7 +1228,7 @@ class TestListRemoteCollectionsNestedCatalogs:
             else:
                 return root_catalog
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Full path includes all subcatalog directories
@@ -1235,7 +1245,7 @@ class TestListRemoteCollectionsNestedCatalogs:
             └── organized/catalog.json (subcatalog)
                 └── nested-data/collection.json
         """
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         root_catalog = {
             "type": "Catalog",
@@ -1257,7 +1267,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return organized_catalog
             return root_catalog
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Full paths: direct collection keeps path, nested gets subcatalog prefix
@@ -1269,7 +1279,7 @@ class TestListRemoteCollectionsNestedCatalogs:
 
         Even without circular references, deeply nested structures should be bounded.
         """
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         # Create a deeply nested structure (more than reasonable depth)
         def make_catalog(level: int, max_level: int = 20) -> dict[str, Any]:
@@ -1299,7 +1309,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                     return make_catalog(level)
             return make_catalog(0)
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
             # Should not raise, should stop at max depth
             _ = list_remote_collections("s3://bucket/catalog")
 
@@ -1317,7 +1327,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                     └── s3://bucket/catalog/a/catalog.json (circular - absolute URL)
                     └── ./real-data/collection.json
         """
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         root_catalog = {
             "type": "Catalog",
@@ -1357,7 +1367,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return a_catalog
             return root_catalog
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Should find the collection without infinite loop (full path includes subcatalogs)
@@ -1368,7 +1378,7 @@ class TestListRemoteCollectionsNestedCatalogs:
     @pytest.mark.unit
     def test_list_remote_collections_absolute_urls(self) -> None:
         """list_remote_collections should handle absolute URLs in child links."""
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         root_catalog = {
             "type": "Catalog",
@@ -1397,7 +1407,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return region_catalog
             return root_catalog
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Full path includes subcatalog directory
@@ -1410,7 +1420,7 @@ class TestListRemoteCollectionsNestedCatalogs:
         When cloning nested catalogs, we need the full path to pull correctly:
         e.g., 'climate/hittekaart' not just 'hittekaart'
         """
-        from portolan_cli.sync import list_remote_collections
+        from portolan_cli.sync.core import list_remote_collections
 
         root_catalog = {
             "type": "Catalog",
@@ -1429,7 +1439,7 @@ class TestListRemoteCollectionsNestedCatalogs:
                 return climate_catalog
             return root_catalog
 
-        with patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch):
+        with patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch):
             collections = list_remote_collections("s3://bucket/catalog")
 
         # Full path is required for clone/pull to work correctly
@@ -1442,7 +1452,7 @@ class TestCloneNestedCatalogs:
     @pytest.mark.unit
     def test_clone_discovers_nested_collections(self, tmp_path: Path) -> None:
         """clone() without collection arg should discover nested collections."""
-        from portolan_cli.sync import clone
+        from portolan_cli.sync.core import clone
 
         root_catalog = {
             "type": "Catalog",
@@ -1464,9 +1474,9 @@ class TestCloneNestedCatalogs:
         target = tmp_path / "cloned"
 
         with (
-            patch("portolan_cli.sync._fetch_remote_catalog_json", side_effect=mock_fetch),
-            patch("portolan_cli.sync.init_catalog"),
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core._fetch_remote_catalog_json", side_effect=mock_fetch),
+            patch("portolan_cli.sync.core.init_catalog"),
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_pull.return_value = MagicMock(
                 success=True,

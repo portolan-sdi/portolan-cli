@@ -24,12 +24,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from portolan_cli.catalog import CatalogState, detect_state, init_catalog
-from portolan_cli.check import CheckReport, check_directory
-from portolan_cli.download import download_file
 from portolan_cli.output import detail, error, info, success, warn
-from portolan_cli.pull import PullError, PullResult, pull
-from portolan_cli.push import PushConflictError, PushResult, push_async
-from portolan_cli.scan import ScanResult, scan_directory
+from portolan_cli.scan.check import CheckReport, check_directory
+from portolan_cli.scan.core import ScanResult, scan_directory
+from portolan_cli.sync.download import download_file
+from portolan_cli.sync.pull import PullError, PullResult, pull
+from portolan_cli.sync.push import PushConflictError, PushResult, push_async
 
 if TYPE_CHECKING:
     pass

@@ -197,7 +197,7 @@ class TestRegisterCollectionStyles:
     ) -> None:
         report = _report([_layer(0, "a", output_path="a/a.parquet")])
 
-        import portolan_cli.style as style_mod
+        import portolan_cli.viz.style as style_mod
 
         style_calls: list[Path] = []
         legend_calls: list[Path] = []
@@ -222,7 +222,7 @@ class TestRegisterCollectionStyles:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         report = _report([_layer(0, "a", status="failed")])
-        import portolan_cli.style as style_mod
+        import portolan_cli.viz.style as style_mod
 
         called = {"discover": False}
 

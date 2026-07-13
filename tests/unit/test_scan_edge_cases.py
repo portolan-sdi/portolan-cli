@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.scan_detect import detect_stac_catalogs
+from portolan_cli.scan.detect import detect_stac_catalogs
 
 pytestmark = pytest.mark.unit
 

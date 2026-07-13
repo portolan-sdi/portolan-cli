@@ -154,8 +154,8 @@ class TestPullCommand:
         """portolan pull should invoke pull function with correct args."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
-            from portolan_cli.pull import PullResult
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
+            from portolan_cli.sync.pull import PullResult
 
             mock_pull.return_value = PullResult(
                 success=True,
@@ -185,8 +185,8 @@ class TestPullCommand:
         """portolan pull --dry-run should pass dry_run=True."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
-            from portolan_cli.pull import PullResult
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
+            from portolan_cli.sync.pull import PullResult
 
             mock_pull.return_value = PullResult(
                 success=True,
@@ -219,8 +219,8 @@ class TestPullCommand:
         """portolan pull --force should pass force=True."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
-            from portolan_cli.pull import PullResult
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
+            from portolan_cli.sync.pull import PullResult
 
             mock_pull.return_value = PullResult(
                 success=True,
@@ -252,8 +252,8 @@ class TestPullCommand:
         """portolan pull --profile should pass profile to pull function."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
-            from portolan_cli.pull import PullResult
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
+            from portolan_cli.sync.pull import PullResult
 
             mock_pull.return_value = PullResult(
                 success=True,
@@ -288,8 +288,8 @@ class TestPullCommand:
         """portolan pull should exit 1 when uncommitted changes block pull."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
-            from portolan_cli.pull import PullResult
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
+            from portolan_cli.sync.pull import PullResult
 
             mock_pull.return_value = PullResult(
                 success=False,
@@ -319,8 +319,8 @@ class TestPullCommand:
         """portolan pull should show message when already up to date."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
-            from portolan_cli.pull import PullResult
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
+            from portolan_cli.sync.pull import PullResult
 
             mock_pull.return_value = PullResult(
                 success=True,
@@ -351,8 +351,8 @@ class TestPullCommand:
         """portolan pull --json should output JSON envelope."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
-            from portolan_cli.pull import PullResult
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
+            from portolan_cli.sync.pull import PullResult
 
             mock_pull.return_value = PullResult(
                 success=True,
@@ -441,8 +441,8 @@ class TestPullCommandErrors:
         """portolan pull --json should output error envelope on failure."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
-            from portolan_cli.pull import PullResult
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
+            from portolan_cli.sync.pull import PullResult
 
             mock_pull.return_value = PullResult(
                 success=False,
@@ -489,9 +489,9 @@ class TestPullMalformedDataErrors:
     ) -> None:
         """portolan pull should fail gracefully with malformed remote data."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullError
+        from portolan_cli.sync.pull import PullError
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             # Simulate that pull raises an error due to malformed data
             mock_pull.side_effect = PullError(
                 "Invalid remote versions.json: missing field 'current_version'"
@@ -518,9 +518,9 @@ class TestPullMalformedDataErrors:
     ) -> None:
         """portolan pull should handle malformed local catalog gracefully."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             # The malformed local catalog may cause pull to fail or succeed
             # depending on how the code handles malformed local data
             mock_pull.return_value = PullResult(
@@ -561,7 +561,7 @@ class TestPullMalformedDataErrors:
         # Verify the fixture has the expected malformed structure
         assert "current_version" not in malformed_remote_versions_data
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             # Simulate parsing error from malformed remote data
             mock_pull.side_effect = KeyError("current_version")
 
@@ -585,7 +585,7 @@ class TestPullMalformedDataErrors:
         """portolan pull should reject invalid URL schemes."""
         from portolan_cli.cli import cli
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             mock_pull.side_effect = ValueError("Unsupported URL scheme: ftp")
 
             result = cli_runner.invoke(
@@ -618,9 +618,9 @@ class TestPullCLIErrorBranches:
     ) -> None:
         """Pull CLI should output generic error in JSON when no uncommitted changes."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             mock_pull.return_value = PullResult(
                 success=False,
                 files_downloaded=0,
@@ -657,9 +657,9 @@ class TestPullCLIErrorBranches:
     ) -> None:
         """Pull CLI should show dry-run message in human output."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             mock_pull.return_value = PullResult(
                 success=True,
                 files_downloaded=3,
@@ -690,9 +690,9 @@ class TestPullCLIErrorBranches:
     ) -> None:
         """Pull CLI should show generic error message when failure without uncommitted."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             mock_pull.return_value = PullResult(
                 success=False,
                 files_downloaded=0,
@@ -723,9 +723,9 @@ class TestPullCLIErrorBranches:
     ) -> None:
         """Pull CLI should list uncommitted files in human output."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             mock_pull.return_value = PullResult(
                 success=False,
                 files_downloaded=0,
@@ -757,9 +757,9 @@ class TestPullCLIErrorBranches:
     ) -> None:
         """Pull CLI success should show version transition in human output."""
         from portolan_cli.cli import cli
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
-        with patch("portolan_cli.pull.pull") as mock_pull:
+        with patch("portolan_cli.sync.pull.pull") as mock_pull:
             mock_pull.return_value = PullResult(
                 success=True,
                 files_downloaded=2,

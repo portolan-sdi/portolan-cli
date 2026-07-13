@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from portolan_cli.pull import (
+from portolan_cli.sync.pull import (
     PullResult,
     pull_all_collections,
 )
@@ -44,7 +44,7 @@ def _create_collection(catalog_root: Path, name: str) -> None:
 class TestPullAllCollectionsParallel:
     """Tests for parallel execution in pull_all_collections()."""
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_accepts_workers_parameter(self, mock_pull: MagicMock, tmp_path: Path) -> None:
         """pull_all_collections accepts workers parameter."""
         _setup_valid_catalog(tmp_path)
@@ -67,7 +67,7 @@ class TestPullAllCollectionsParallel:
 
         assert result.success is True
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_workers_1_is_sequential(self, mock_pull: MagicMock, tmp_path: Path) -> None:
         """workers=1 executes sequentially."""
         _setup_valid_catalog(tmp_path)
@@ -98,7 +98,7 @@ class TestPullAllCollectionsParallel:
         # Sequential execution should maintain sorted order
         assert call_order == ["col1", "col2", "col3"]
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_workers_greater_than_1_executes_concurrently(
         self, mock_pull: MagicMock, tmp_path: Path
     ) -> None:
@@ -140,7 +140,7 @@ class TestPullAllCollectionsParallel:
         )
         assert mock_pull.call_count == 4
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_workers_none_uses_default(self, mock_pull: MagicMock, tmp_path: Path) -> None:
         """workers=None uses get_default_workers() for auto-detection."""
         _setup_valid_catalog(tmp_path)
@@ -164,7 +164,7 @@ class TestPullAllCollectionsParallel:
         assert result.success is True
         mock_pull.assert_called_once()
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_parallel_aggregates_results_correctly(
         self, mock_pull: MagicMock, tmp_path: Path
     ) -> None:
@@ -197,7 +197,7 @@ class TestPullAllCollectionsParallel:
         assert result.successful_collections == 3
         assert result.total_files_downloaded == 10  # 2 + 3 + 5
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_parallel_handles_individual_failures(
         self, mock_pull: MagicMock, tmp_path: Path
     ) -> None:
@@ -238,7 +238,7 @@ class TestPullAllCollectionsParallel:
         assert result.failed_collections == 1
         assert "col2" in result.collection_errors
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_parallel_handles_exceptions(self, mock_pull: MagicMock, tmp_path: Path) -> None:
         """Parallel execution catches and reports exceptions from workers."""
         _setup_valid_catalog(tmp_path)
@@ -269,7 +269,7 @@ class TestPullAllCollectionsParallel:
         assert result.failed_collections == 1
         assert "col2" in result.collection_errors
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_workers_capped_at_collection_count(self, mock_pull: MagicMock, tmp_path: Path) -> None:
         """Workers are capped at the number of collections (no wasted threads)."""
         _setup_valid_catalog(tmp_path)
@@ -295,7 +295,7 @@ class TestPullAllCollectionsParallel:
         assert result.success is True
         assert mock_pull.call_count == 2
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_dry_run_with_parallel(self, mock_pull: MagicMock, tmp_path: Path) -> None:
         """Dry run works correctly with parallel execution."""
         _setup_valid_catalog(tmp_path)
@@ -323,7 +323,7 @@ class TestPullAllCollectionsParallel:
         for call in mock_pull.call_args_list:
             assert call.kwargs["dry_run"] is True
 
-    @patch("portolan_cli.pull.pull_async", new_callable=AsyncMock)
+    @patch("portolan_cli.sync.pull.pull_async", new_callable=AsyncMock)
     def test_parallel_handles_unexpected_exception_types(
         self, mock_pull: MagicMock, tmp_path: Path
     ) -> None:

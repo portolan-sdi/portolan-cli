@@ -19,7 +19,7 @@ import unicodedata
 from pathlib import Path
 
 from portolan_cli.formats import FormatType, detect_format
-from portolan_cli.scan_detect import is_filegdb
+from portolan_cli.scan.detect import is_filegdb
 
 # Pattern for valid collection IDs (supports path syntax per ADR-0032):
 # - Start with lowercase letter or number (year-based organization like 2020/)
@@ -253,7 +253,7 @@ def infer_nested_collection_id(path: Path, catalog_root: Path) -> str:
         ValueError: If path is not inside catalog root, at root level, or
             if raster data lacks required item subdirectory structure.
     """
-    from portolan_cli.scan_detect import is_hive_partition_dir
+    from portolan_cli.scan.detect import is_hive_partition_dir
 
     # Get path relative to catalog root
     try:

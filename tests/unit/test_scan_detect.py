@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.scan_detect import (
+from portolan_cli.scan.detect import (
     detect_dual_formats,
     detect_filegdb,
     detect_hive_partitions,
@@ -210,7 +210,7 @@ class TestDualFormat:
 
     def test_detect_dual_formats_finds_same_basename(self, tmp_path: Path) -> None:
         """detect_dual_formats finds files with same basename, different extensions."""
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         files = [
             ScannedFile(
@@ -237,7 +237,7 @@ class TestDualFormat:
 
     def test_detect_dual_formats_ignores_different_basenames(self, tmp_path: Path) -> None:
         """detect_dual_formats ignores files with different basenames."""
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         files = [
             ScannedFile(
@@ -261,7 +261,7 @@ class TestDualFormat:
 
     def test_detect_dual_formats_ignores_cross_type_pairs(self, tmp_path: Path) -> None:
         """detect_dual_formats ignores vector/raster pairs (intentional pairing)."""
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         files = [
             ScannedFile(

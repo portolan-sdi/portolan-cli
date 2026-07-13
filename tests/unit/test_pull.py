@@ -223,7 +223,7 @@ class TestPullResult:
     @pytest.mark.unit
     def test_pull_result_success(self) -> None:
         """PullResult should track successful pulls."""
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
         result = PullResult(
             success=True,
@@ -244,7 +244,7 @@ class TestPullResult:
     @pytest.mark.unit
     def test_pull_result_with_uncommitted_changes(self) -> None:
         """PullResult should track uncommitted changes that blocked pull."""
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
         result = PullResult(
             success=False,
@@ -261,7 +261,7 @@ class TestPullResult:
     @pytest.mark.unit
     def test_pull_result_already_up_to_date(self) -> None:
         """PullResult should indicate when already up to date."""
-        from portolan_cli.pull import PullResult
+        from portolan_cli.sync.pull import PullResult
 
         result = PullResult(
             success=True,
@@ -288,7 +288,7 @@ class TestUncommittedChangeDetection:
     @pytest.mark.unit
     def test_detect_modified_file(self, catalog_with_versions: Path) -> None:
         """Should detect when local file differs from versions.json checksum."""
-        from portolan_cli.pull import detect_uncommitted_changes
+        from portolan_cli.sync.pull import detect_uncommitted_changes
 
         # Modify the local file (different content = different checksum)
         data_file = catalog_with_versions / "test-collection" / "data.parquet"
@@ -304,11 +304,11 @@ class TestUncommittedChangeDetection:
     @pytest.mark.unit
     def test_no_changes_when_file_matches(self, catalog_with_versions: Path) -> None:
         """Should return empty list when files match versions.json."""
-        from portolan_cli.pull import detect_uncommitted_changes
+        from portolan_cli.sync.pull import detect_uncommitted_changes
 
         # The fixture creates matching file, but we need correct checksum
         # For this test, mock the checksum comparison
-        with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+        with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
             mock_checksum.return_value = "abc123"  # Matches versions.json
 
             changes = detect_uncommitted_changes(
@@ -321,7 +321,7 @@ class TestUncommittedChangeDetection:
     @pytest.mark.unit
     def test_mtime_fast_path_skips_checksum(self, tmp_path: Path) -> None:
         """Should skip checksum when mtime and size match (ADR-0017 fast path)."""
-        from portolan_cli.pull import detect_uncommitted_changes
+        from portolan_cli.sync.pull import detect_uncommitted_changes
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -361,7 +361,7 @@ class TestUncommittedChangeDetection:
         }
         (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
-        with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+        with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
             changes = detect_uncommitted_changes(
                 catalog_root=catalog_root,
                 collection="test",
@@ -374,7 +374,7 @@ class TestUncommittedChangeDetection:
     @pytest.mark.unit
     def test_mtime_mismatch_triggers_checksum(self, tmp_path: Path) -> None:
         """Should compute checksum when mtime differs from recorded value."""
-        from portolan_cli.pull import detect_uncommitted_changes
+        from portolan_cli.sync.pull import detect_uncommitted_changes
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -413,7 +413,7 @@ class TestUncommittedChangeDetection:
         }
         (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
-        with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+        with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
             mock_checksum.return_value = "abc123"  # Same checksum
 
             changes = detect_uncommitted_changes(
@@ -428,7 +428,7 @@ class TestUncommittedChangeDetection:
     @pytest.mark.unit
     def test_size_mismatch_triggers_checksum(self, tmp_path: Path) -> None:
         """Should compute checksum when size differs from recorded value."""
-        from portolan_cli.pull import detect_uncommitted_changes
+        from portolan_cli.sync.pull import detect_uncommitted_changes
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -468,7 +468,7 @@ class TestUncommittedChangeDetection:
         }
         (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
-        with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+        with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
             mock_checksum.return_value = "different_checksum"
 
             changes = detect_uncommitted_changes(
@@ -483,7 +483,7 @@ class TestUncommittedChangeDetection:
     @pytest.mark.unit
     def test_no_mtime_recorded_falls_to_checksum(self, tmp_path: Path) -> None:
         """Should compute checksum when mtime is not recorded in versions.json."""
-        from portolan_cli.pull import detect_uncommitted_changes
+        from portolan_cli.sync.pull import detect_uncommitted_changes
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -522,7 +522,7 @@ class TestUncommittedChangeDetection:
         }
         (portolan_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
 
-        with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+        with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
             mock_checksum.return_value = "abc123"  # Matches
 
             changes = detect_uncommitted_changes(
@@ -537,7 +537,7 @@ class TestUncommittedChangeDetection:
     @pytest.mark.unit
     def test_returns_empty_for_no_versions_file(self, tmp_path: Path) -> None:
         """Should return empty list when versions.json doesn't exist."""
-        from portolan_cli.pull import detect_uncommitted_changes
+        from portolan_cli.sync.pull import detect_uncommitted_changes
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -554,7 +554,7 @@ class TestUncommittedChangeDetection:
     @pytest.mark.unit
     def test_returns_empty_for_empty_versions(self, tmp_path: Path) -> None:
         """Should return empty list when versions.json has no versions."""
-        from portolan_cli.pull import detect_uncommitted_changes
+        from portolan_cli.sync.pull import detect_uncommitted_changes
 
         catalog_root = tmp_path / "catalog"
         catalog_root.mkdir()
@@ -580,7 +580,7 @@ class TestUncommittedChangeDetection:
     @pytest.mark.unit
     def test_detect_missing_file(self, catalog_with_versions: Path) -> None:
         """Should detect when expected file is missing."""
-        from portolan_cli.pull import detect_uncommitted_changes
+        from portolan_cli.sync.pull import detect_uncommitted_changes
 
         # Delete the data file
         data_file = catalog_with_versions / "test-collection" / "data.parquet"
@@ -596,14 +596,14 @@ class TestUncommittedChangeDetection:
     @pytest.mark.unit
     def test_detect_new_untracked_file(self, catalog_with_versions: Path) -> None:
         """Should detect new files not in versions.json (like git status)."""
-        from portolan_cli.pull import detect_uncommitted_changes
+        from portolan_cli.sync.pull import detect_uncommitted_changes
 
         # Create a new file not tracked in versions.json
         new_file = catalog_with_versions / "new_data.parquet"
         new_file.write_bytes(b"new content")
 
         # Mock checksum for existing file to match
-        with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+        with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
             mock_checksum.return_value = "abc123"
 
             changes = detect_uncommitted_changes(
@@ -627,7 +627,7 @@ class TestVersionDiffing:
     @pytest.mark.unit
     def test_diff_versions_newer_remote(self) -> None:
         """Should identify files changed between local and remote versions."""
-        from portolan_cli.pull import diff_versions
+        from portolan_cli.sync.pull import diff_versions
         from portolan_cli.versions import Asset, Version, VersionsFile
 
         local_versions = VersionsFile(
@@ -681,7 +681,7 @@ class TestVersionDiffing:
     @pytest.mark.unit
     def test_diff_versions_up_to_date(self) -> None:
         """Should indicate no changes when versions match."""
-        from portolan_cli.pull import diff_versions
+        from portolan_cli.sync.pull import diff_versions
         from portolan_cli.versions import Asset, Version, VersionsFile
 
         versions = VersionsFile(
@@ -708,7 +708,7 @@ class TestVersionDiffing:
     @pytest.mark.unit
     def test_diff_versions_no_local_versions(self) -> None:
         """Should download all files when local has no versions."""
-        from portolan_cli.pull import diff_versions
+        from portolan_cli.sync.pull import diff_versions
         from portolan_cli.versions import Asset, Version, VersionsFile
 
         local_versions = VersionsFile(
@@ -757,13 +757,13 @@ class TestPullOperation:
         self, catalog_with_versions: Path, remote_versions_data: dict
     ) -> None:
         """Pull should refuse when local has uncommitted changes."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
         # Modify local file to create uncommitted change
         data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.write_bytes(b"modified content - uncommitted")
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             from portolan_cli.versions import _parse_versions_file
 
             mock_fetch.return_value = _parse_versions_file(remote_versions_data)
@@ -783,14 +783,14 @@ class TestPullOperation:
         self, catalog_with_versions: Path, remote_versions_data: dict
     ) -> None:
         """Pull --force should overwrite uncommitted changes."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
         # Modify local file
         data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.write_bytes(b"modified content - will be overwritten")
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.pull._download_assets_async") as mock_download:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
+            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
                 from portolan_cli.versions import _parse_versions_file
 
                 mock_fetch.return_value = _parse_versions_file(remote_versions_data)
@@ -816,10 +816,10 @@ class TestPullOperation:
         _fetch_remote_versions. This test verifies neither the remote fetch
         nor the download step is invoked.
         """
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.pull._download_assets_async") as mock_download:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
+            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
                 result = pull(
                     remote_url="s3://bucket/catalog",
                     local_root=catalog_with_versions,
@@ -836,7 +836,7 @@ class TestPullOperation:
     @pytest.mark.unit
     def test_pull_already_up_to_date(self, catalog_with_versions: Path) -> None:
         """Pull should indicate when already up to date."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
         # Use same version as local (href is relative to catalog_root)
         same_versions_data = {
@@ -860,8 +860,8 @@ class TestPullOperation:
             ],
         }
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
+            with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
                 from portolan_cli.versions import _parse_versions_file
 
                 mock_fetch.return_value = _parse_versions_file(same_versions_data)
@@ -882,11 +882,11 @@ class TestPullOperation:
         self, catalog_with_versions: Path, remote_versions_data: dict
     ) -> None:
         """Pull should update local versions.json after successful download."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.pull._download_assets_async") as mock_download:
-                with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
+            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
+                with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
                     from portolan_cli.versions import _parse_versions_file
 
                     mock_fetch.return_value = _parse_versions_file(remote_versions_data)
@@ -918,7 +918,7 @@ class TestRemoteFetch:
     @pytest.mark.unit
     def test_fetch_remote_versions_s3(self) -> None:
         """Should fetch versions.json from S3."""
-        from portolan_cli.pull import _fetch_remote_versions
+        from portolan_cli.sync.pull import _fetch_remote_versions
 
         remote_data = {
             "spec_version": "1.0.0",
@@ -926,7 +926,7 @@ class TestRemoteFetch:
             "versions": [],
         }
 
-        with patch("portolan_cli.pull.download_file") as mock_download:
+        with patch("portolan_cli.sync.pull.download_file") as mock_download:
             # Simulate download writing the file
             def write_versions(source: str, destination: Path, **kwargs) -> MagicMock:
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -948,9 +948,9 @@ class TestRemoteFetch:
     @pytest.mark.unit
     def test_fetch_remote_versions_not_found(self) -> None:
         """Should raise error when remote versions.json doesn't exist."""
-        from portolan_cli.pull import PullError, _fetch_remote_versions
+        from portolan_cli.sync.pull import PullError, _fetch_remote_versions
 
-        with patch("portolan_cli.pull.download_file") as mock_download:
+        with patch("portolan_cli.sync.pull.download_file") as mock_download:
             mock_result = MagicMock()
             mock_result.success = False
             mock_result.errors = [(Path("versions.json"), FileNotFoundError("Not found"))]
@@ -976,11 +976,11 @@ class TestErrorHandling:
         self, catalog_with_versions: Path, remote_versions_data: dict
     ) -> None:
         """Pull should handle download failures gracefully."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.pull._download_assets_async") as mock_download:
-                with patch("portolan_cli.pull.compute_checksum") as mock_checksum:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
+            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
+                with patch("portolan_cli.sync.pull.compute_checksum") as mock_checksum:
                     from portolan_cli.versions import _parse_versions_file
 
                     mock_fetch.return_value = _parse_versions_file(remote_versions_data)
@@ -998,7 +998,7 @@ class TestErrorHandling:
     @pytest.mark.unit
     def test_pull_invalid_remote_url(self, catalog_with_versions: Path) -> None:
         """Pull should reject invalid remote URLs."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
         with pytest.raises(ValueError, match="URL"):
             pull(
@@ -1010,14 +1010,14 @@ class TestErrorHandling:
     @pytest.mark.unit
     def test_pull_missing_local_catalog(self, tmp_path: Path) -> None:
         """Pull should handle missing local catalog gracefully."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
         # Empty directory - no .portolan
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.pull._download_assets_async") as mock_download:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
+            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
                 from portolan_cli.versions import VersionsFile
 
                 mock_fetch.return_value = VersionsFile(
@@ -1048,7 +1048,7 @@ class TestPathTraversalProtection:
     @pytest.mark.unit
     def test_download_assets_rejects_path_traversal(self, tmp_path: Path) -> None:
         """Should reject hrefs containing path traversal sequences."""
-        from portolan_cli.pull import _download_assets
+        from portolan_cli.sync.pull import _download_assets
 
         local_root = tmp_path / "catalog"
         local_root.mkdir()
@@ -1073,7 +1073,7 @@ class TestPathTraversalProtection:
     @pytest.mark.unit
     def test_download_assets_rejects_absolute_paths(self, tmp_path: Path) -> None:
         """Should reject absolute hrefs that could write outside catalog."""
-        from portolan_cli.pull import _download_assets
+        from portolan_cli.sync.pull import _download_assets
 
         local_root = tmp_path / "catalog"
         local_root.mkdir()
@@ -1098,7 +1098,7 @@ class TestPathTraversalProtection:
     @pytest.mark.unit
     def test_download_assets_accepts_safe_relative_paths(self, tmp_path: Path) -> None:
         """Should accept valid relative paths within catalog."""
-        from portolan_cli.pull import _download_assets
+        from portolan_cli.sync.pull import _download_assets
 
         local_root = tmp_path / "catalog"
         local_root.mkdir()
@@ -1111,7 +1111,7 @@ class TestPathTraversalProtection:
             }
         }
 
-        with patch("portolan_cli.pull.download_file") as mock_download:
+        with patch("portolan_cli.sync.pull.download_file") as mock_download:
             mock_result = MagicMock()
             mock_result.success = True
             mock_download.return_value = mock_result
@@ -1138,7 +1138,7 @@ class TestLocalAheadDetection:
     @pytest.mark.unit
     def test_diff_versions_detects_local_ahead(self) -> None:
         """Should detect when local has versions not in remote."""
-        from portolan_cli.pull import diff_versions
+        from portolan_cli.sync.pull import diff_versions
         from portolan_cli.versions import Asset, Version, VersionsFile
 
         # Local has v1.0.0 and v1.1.0
@@ -1193,7 +1193,7 @@ class TestLocalAheadDetection:
     @pytest.mark.unit
     def test_diff_versions_detects_diverged(self) -> None:
         """Should detect when local and remote have diverged."""
-        from portolan_cli.pull import diff_versions
+        from portolan_cli.sync.pull import diff_versions
         from portolan_cli.versions import Asset, Version, VersionsFile
 
         # Local has v1.0.0 and v1.1.0-local
@@ -1269,7 +1269,7 @@ class TestProgressReporting:
     @pytest.mark.unit
     def test_download_assets_shows_progress(self, tmp_path: Path, capsys) -> None:
         """_download_assets should show (1/N) style progress."""
-        from portolan_cli.pull import _download_assets
+        from portolan_cli.sync.pull import _download_assets
 
         local_root = tmp_path / "catalog"
         local_root.mkdir()
@@ -1287,7 +1287,7 @@ class TestProgressReporting:
             },
         }
 
-        with patch("portolan_cli.pull.download_file") as mock_download:
+        with patch("portolan_cli.sync.pull.download_file") as mock_download:
             mock_result = MagicMock()
             mock_result.success = True
             mock_download.return_value = mock_result
@@ -1306,7 +1306,7 @@ class TestProgressReporting:
     @pytest.mark.unit
     def test_download_assets_dry_run_shows_progress(self, tmp_path: Path, capsys) -> None:
         """Dry-run should also show progress indicators."""
-        from portolan_cli.pull import _download_assets
+        from portolan_cli.sync.pull import _download_assets
 
         local_root = tmp_path / "catalog"
         local_root.mkdir()
@@ -1348,7 +1348,7 @@ class TestSyncStateConflicts:
     @pytest.mark.unit
     def test_check_sync_state_returns_none_when_force(self) -> None:
         """_check_sync_state_conflicts should return None when force=True."""
-        from portolan_cli.pull import VersionDiff, _check_sync_state_conflicts
+        from portolan_cli.sync.pull import VersionDiff, _check_sync_state_conflicts
 
         diff = VersionDiff(
             local_version="1.1.0",
@@ -1366,7 +1366,7 @@ class TestSyncStateConflicts:
     @pytest.mark.unit
     def test_check_sync_state_fails_when_local_ahead(self) -> None:
         """_check_sync_state_conflicts should fail when local is ahead of remote."""
-        from portolan_cli.pull import VersionDiff, _check_sync_state_conflicts
+        from portolan_cli.sync.pull import VersionDiff, _check_sync_state_conflicts
 
         diff = VersionDiff(
             local_version="1.1.0",
@@ -1386,7 +1386,7 @@ class TestSyncStateConflicts:
     @pytest.mark.unit
     def test_check_sync_state_fails_when_diverged(self) -> None:
         """_check_sync_state_conflicts should fail when local and remote diverged."""
-        from portolan_cli.pull import VersionDiff, _check_sync_state_conflicts
+        from portolan_cli.sync.pull import VersionDiff, _check_sync_state_conflicts
 
         diff = VersionDiff(
             local_version="1.1.0",
@@ -1406,7 +1406,7 @@ class TestSyncStateConflicts:
     @pytest.mark.unit
     def test_check_sync_state_returns_none_when_ok(self) -> None:
         """_check_sync_state_conflicts should return None when no conflicts."""
-        from portolan_cli.pull import VersionDiff, _check_sync_state_conflicts
+        from portolan_cli.sync.pull import VersionDiff, _check_sync_state_conflicts
 
         diff = VersionDiff(
             local_version="1.0.0",
@@ -1433,7 +1433,7 @@ class TestUncommittedConflicts:
     @pytest.mark.unit
     def test_check_uncommitted_returns_none_when_force(self, catalog_with_versions: Path) -> None:
         """_check_uncommitted_conflicts should return None when force=True."""
-        from portolan_cli.pull import VersionDiff, _check_uncommitted_conflicts
+        from portolan_cli.sync.pull import VersionDiff, _check_uncommitted_conflicts
 
         diff = VersionDiff(
             local_version="1.0.0",
@@ -1455,7 +1455,7 @@ class TestUncommittedConflicts:
     @pytest.mark.unit
     def test_check_uncommitted_fails_when_conflicts(self, catalog_with_versions: Path) -> None:
         """_check_uncommitted_conflicts should fail when files would be overwritten."""
-        from portolan_cli.pull import VersionDiff, _check_uncommitted_conflicts
+        from portolan_cli.sync.pull import VersionDiff, _check_uncommitted_conflicts
 
         diff = VersionDiff(
             local_version="1.0.0",
@@ -1479,7 +1479,7 @@ class TestUncommittedConflicts:
     @pytest.mark.unit
     def test_check_uncommitted_succeeds_when_no_overlap(self, catalog_with_versions: Path) -> None:
         """_check_uncommitted_conflicts should succeed when modified files won't be downloaded."""
-        from portolan_cli.pull import VersionDiff, _check_uncommitted_conflicts
+        from portolan_cli.sync.pull import VersionDiff, _check_uncommitted_conflicts
 
         diff = VersionDiff(
             local_version="1.0.0",
@@ -1492,7 +1492,7 @@ class TestUncommittedConflicts:
         data_file = catalog_with_versions / "test-collection" / "data.parquet"
         data_file.write_bytes(b"modified content")
 
-        with patch("portolan_cli.pull.detect_uncommitted_changes") as mock_detect:
+        with patch("portolan_cli.sync.pull.detect_uncommitted_changes") as mock_detect:
             mock_detect.return_value = ["data.parquet"]
 
             result = _check_uncommitted_conflicts(
@@ -1514,7 +1514,7 @@ class TestDownloadAssetsErrorHandling:
     @pytest.mark.unit
     def test_download_assets_skips_missing_asset_metadata(self, tmp_path: Path) -> None:
         """_download_assets should skip files without asset metadata."""
-        from portolan_cli.pull import _download_assets
+        from portolan_cli.sync.pull import _download_assets
 
         local_root = tmp_path / "catalog"
         local_root.mkdir()
@@ -1528,7 +1528,7 @@ class TestDownloadAssetsErrorHandling:
             # "missing.parquet" is not in remote_assets
         }
 
-        with patch("portolan_cli.pull.download_file") as mock_download:
+        with patch("portolan_cli.sync.pull.download_file") as mock_download:
             mock_result = MagicMock()
             mock_result.success = True
             mock_download.return_value = mock_result
@@ -1548,7 +1548,7 @@ class TestDownloadAssetsErrorHandling:
     @pytest.mark.unit
     def test_download_assets_counts_failures(self, tmp_path: Path) -> None:
         """_download_assets should count failed downloads."""
-        from portolan_cli.pull import _download_assets
+        from portolan_cli.sync.pull import _download_assets
 
         local_root = tmp_path / "catalog"
         local_root.mkdir()
@@ -1561,7 +1561,7 @@ class TestDownloadAssetsErrorHandling:
             }
         }
 
-        with patch("portolan_cli.pull.download_file") as mock_download:
+        with patch("portolan_cli.sync.pull.download_file") as mock_download:
             mock_result = MagicMock()
             mock_result.success = False
             mock_download.return_value = mock_result
@@ -1588,7 +1588,7 @@ class TestValidateSafePathEdgeCases:
     @pytest.mark.unit
     def test_validate_safe_path_windows_absolute_drive(self, tmp_path: Path) -> None:
         """_validate_safe_path should reject Windows absolute paths."""
-        from portolan_cli.pull import _validate_safe_path
+        from portolan_cli.sync.pull import _validate_safe_path
 
         with pytest.raises(ValueError, match="[Aa]bsolute|escapes"):
             _validate_safe_path(tmp_path, "C:\\Windows\\System32")
@@ -1596,7 +1596,7 @@ class TestValidateSafePathEdgeCases:
     @pytest.mark.unit
     def test_validate_safe_path_normalized_traversal(self, tmp_path: Path) -> None:
         """_validate_safe_path should reject normalized traversal attempts."""
-        from portolan_cli.pull import _validate_safe_path
+        from portolan_cli.sync.pull import _validate_safe_path
 
         # Try to escape using multiple traversal sequences
         with pytest.raises(ValueError, match="path traversal|escapes"):
@@ -1614,9 +1614,9 @@ class TestFetchRemoteVersionsErrors:
     @pytest.mark.unit
     def test_fetch_remote_versions_download_error(self) -> None:
         """_fetch_remote_versions should raise PullError on download failure."""
-        from portolan_cli.pull import PullError, _fetch_remote_versions
+        from portolan_cli.sync.pull import PullError, _fetch_remote_versions
 
-        with patch("portolan_cli.pull.download_file") as mock_download:
+        with patch("portolan_cli.sync.pull.download_file") as mock_download:
             mock_result = MagicMock()
             mock_result.success = False
             mock_result.errors = [("file", Exception("Network error"))]
@@ -1640,9 +1640,9 @@ class TestPullFunctionErrors:
     @pytest.mark.unit
     def test_pull_returns_failure_on_fetch_error(self, catalog_with_versions: Path) -> None:
         """Pull should return failure result when remote fetch fails."""
-        from portolan_cli.pull import PullError, pull
+        from portolan_cli.sync.pull import PullError, pull
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             mock_fetch.side_effect = PullError("Network timeout")
 
             result = pull(
@@ -1683,10 +1683,10 @@ class TestMalformedDataHandling:
         self, catalog_with_versions_malformed: Path
     ) -> None:
         """Pull should handle catalog with malformed local versions.json."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
         from portolan_cli.versions import VersionsFile
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             # Remote is valid
             mock_fetch.return_value = VersionsFile(
                 spec_version="1.0.0",
@@ -1714,10 +1714,10 @@ class TestMalformedDataHandling:
         self, catalog_with_non_string_current_version: Path
     ) -> None:
         """Pull should handle catalog with wrong type for current_version."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
         from portolan_cli.versions import VersionsFile
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             mock_fetch.return_value = VersionsFile(
                 spec_version="1.0.0",
                 current_version="1.0.0",
@@ -1741,11 +1741,11 @@ class TestMalformedDataHandling:
     @pytest.mark.unit
     def test_fetch_remote_malformed_response(self, tmp_path: Path) -> None:
         """_fetch_remote_versions should raise when remote returns malformed data."""
-        from portolan_cli.pull import PullError, _fetch_remote_versions
+        from portolan_cli.sync.pull import PullError, _fetch_remote_versions
 
         malformed_json = '{"spec_version": "1.0.0"}'  # Missing current_version and versions
 
-        with patch("portolan_cli.pull.download_file") as mock_download:
+        with patch("portolan_cli.sync.pull.download_file") as mock_download:
 
             def write_malformed(source: str, destination: Path, **kwargs) -> MagicMock:
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1786,9 +1786,9 @@ class TestDryRunNetworkIsolation:
         called _fetch_remote_versions unconditionally, which triggered a real
         network connection even when the user passed --dry-run.
         """
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             result = pull(
                 remote_url="s3://bucket/catalog",
                 local_root=catalog_with_versions,
@@ -1803,9 +1803,9 @@ class TestDryRunNetworkIsolation:
     @pytest.mark.unit
     def test_pull_dry_run_returns_simulated_result(self, catalog_with_versions: Path) -> None:
         """pull(dry_run=True) should return a valid PullResult showing 'would pull'."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             result = pull(
                 remote_url="s3://bucket/catalog",
                 local_root=catalog_with_versions,
@@ -1823,12 +1823,12 @@ class TestDryRunNetworkIsolation:
     @pytest.mark.unit
     def test_pull_dry_run_does_not_write_versions_json(self, catalog_with_versions: Path) -> None:
         """pull(dry_run=True) must not modify local versions.json."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
         versions_path = catalog_with_versions / "test-collection" / "versions.json"
         original_mtime = versions_path.stat().st_mtime
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async"):
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async"):
             pull(
                 remote_url="s3://bucket/catalog",
                 local_root=catalog_with_versions,
@@ -1844,11 +1844,11 @@ class TestDryRunNetworkIsolation:
         self, catalog_with_versions: Path, remote_versions_data: dict
     ) -> None:
         """Non-dry-run pull must still call _fetch_remote_versions (sanity check)."""
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
         from portolan_cli.versions import _parse_versions_file
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
-            with patch("portolan_cli.pull._download_assets_async") as mock_download:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
+            with patch("portolan_cli.sync.pull._download_assets_async") as mock_download:
                 mock_fetch.return_value = _parse_versions_file(remote_versions_data)
                 mock_download.return_value = (1, 0)
 
@@ -1871,9 +1871,9 @@ class TestDryRunNetworkIsolation:
         This tests the edge case where a user runs `portolan pull --dry-run`
         on a catalog that has never been versioned before (no versions.json).
         """
-        from portolan_cli.pull import pull
+        from portolan_cli.sync.pull import pull
 
-        with patch("portolan_cli.pull._fetch_remote_versions_async") as mock_fetch:
+        with patch("portolan_cli.sync.pull._fetch_remote_versions_async") as mock_fetch:
             result = pull(
                 remote_url="s3://bucket/catalog",
                 local_root=fresh_catalog_no_versions,
@@ -1901,7 +1901,7 @@ class TestPopulateMissingFileSizes:
         import asyncio
         import json
 
-        from portolan_cli.pull import _populate_missing_file_sizes
+        from portolan_cli.sync.pull import _populate_missing_file_sizes
 
         # Create collection.json with assets missing file:size
         collection_dir = tmp_path / "test-collection"
@@ -1928,7 +1928,7 @@ class TestPopulateMissingFileSizes:
                 return 12345
             return None
 
-        with patch("portolan_cli.pull.get_remote_file_size_async", mock_get_size):
+        with patch("portolan_cli.sync.pull.get_remote_file_size_async", mock_get_size):
             count = asyncio.run(
                 _populate_missing_file_sizes(
                     local_root=tmp_path,
@@ -1950,7 +1950,7 @@ class TestPopulateMissingFileSizes:
         import asyncio
         import json
 
-        from portolan_cli.pull import _populate_missing_file_sizes
+        from portolan_cli.sync.pull import _populate_missing_file_sizes
 
         # Create collection with an item
         collection_dir = tmp_path / "test-collection"
@@ -1978,7 +1978,7 @@ class TestPopulateMissingFileSizes:
                 return 9999
             return None
 
-        with patch("portolan_cli.pull.get_remote_file_size_async", mock_get_size):
+        with patch("portolan_cli.sync.pull.get_remote_file_size_async", mock_get_size):
             count = asyncio.run(
                 _populate_missing_file_sizes(
                     local_root=tmp_path,
@@ -1998,7 +1998,7 @@ class TestPopulateMissingFileSizes:
         """_populate_missing_file_sizes returns 0 when collection.json missing."""
         import asyncio
 
-        from portolan_cli.pull import _populate_missing_file_sizes
+        from portolan_cli.sync.pull import _populate_missing_file_sizes
 
         count = asyncio.run(
             _populate_missing_file_sizes(
@@ -2017,7 +2017,7 @@ class TestResolveAssetUrl:
     @pytest.mark.unit
     def test_absolute_url_returned_unchanged(self) -> None:
         """Absolute URLs are returned as-is."""
-        from portolan_cli.pull import _resolve_asset_url
+        from portolan_cli.sync.pull import _resolve_asset_url
 
         assert (
             _resolve_asset_url("https://example.com/file.parquet", "https://host/cat", "coll")
@@ -2027,7 +2027,7 @@ class TestResolveAssetUrl:
     @pytest.mark.unit
     def test_relative_dot_slash_with_rel_path(self) -> None:
         """./href is resolved relative to base_url/rel_path."""
-        from portolan_cli.pull import _resolve_asset_url
+        from portolan_cli.sync.pull import _resolve_asset_url
 
         assert (
             _resolve_asset_url("./data.parquet", "https://host/cat", "coll")
@@ -2037,7 +2037,7 @@ class TestResolveAssetUrl:
     @pytest.mark.unit
     def test_relative_dot_slash_empty_rel_path(self) -> None:
         """./href with empty rel_path resolves to base_url/href."""
-        from portolan_cli.pull import _resolve_asset_url
+        from portolan_cli.sync.pull import _resolve_asset_url
 
         assert (
             _resolve_asset_url("./data.parquet", "https://host/cat", "")
@@ -2047,7 +2047,7 @@ class TestResolveAssetUrl:
     @pytest.mark.unit
     def test_parent_path_with_nested_rel_path(self) -> None:
         """../href navigates up one level from rel_path."""
-        from portolan_cli.pull import _resolve_asset_url
+        from portolan_cli.sync.pull import _resolve_asset_url
 
         assert (
             _resolve_asset_url("../shared/data.parquet", "https://host/cat", "coll/item")
@@ -2057,7 +2057,7 @@ class TestResolveAssetUrl:
     @pytest.mark.unit
     def test_parent_path_with_single_segment_rel_path(self) -> None:
         """../href with single-segment rel_path resolves to base_url."""
-        from portolan_cli.pull import _resolve_asset_url
+        from portolan_cli.sync.pull import _resolve_asset_url
 
         assert (
             _resolve_asset_url("../data.parquet", "https://host/cat", "coll")
@@ -2067,7 +2067,7 @@ class TestResolveAssetUrl:
     @pytest.mark.unit
     def test_parent_path_empty_rel_path(self) -> None:
         """../href with empty rel_path still resolves (edge case)."""
-        from portolan_cli.pull import _resolve_asset_url
+        from portolan_cli.sync.pull import _resolve_asset_url
 
         assert (
             _resolve_asset_url("../data.parquet", "https://host/cat", "")
@@ -2077,7 +2077,7 @@ class TestResolveAssetUrl:
     @pytest.mark.unit
     def test_bare_filename_with_rel_path(self) -> None:
         """Bare filename is resolved relative to base_url/rel_path."""
-        from portolan_cli.pull import _resolve_asset_url
+        from portolan_cli.sync.pull import _resolve_asset_url
 
         assert (
             _resolve_asset_url("data.parquet", "https://host/cat", "coll")
@@ -2087,7 +2087,7 @@ class TestResolveAssetUrl:
     @pytest.mark.unit
     def test_bare_filename_empty_rel_path(self) -> None:
         """Bare filename with empty rel_path resolves to base_url/filename."""
-        from portolan_cli.pull import _resolve_asset_url
+        from portolan_cli.sync.pull import _resolve_asset_url
 
         assert (
             _resolve_asset_url("data.parquet", "https://host/cat", "")

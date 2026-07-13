@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from portolan_cli.scan_infer import (
+from portolan_cli.scan.infer import (
     CollectionSuggestion,
     detect_pattern_marker,
     extract_numeric_groups,
@@ -202,7 +202,7 @@ class TestInferCollections:
 
     def test_infers_from_numeric_pattern(self, tmp_path: Path) -> None:
         """infer_collections suggests groups from numeric patterns."""
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         files = [
             ScannedFile(
@@ -235,7 +235,7 @@ class TestInferCollections:
 
     def test_no_suggestions_for_unrelated(self, tmp_path: Path) -> None:
         """infer_collections returns empty for unrelated files."""
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         files = [
             ScannedFile(
@@ -260,7 +260,7 @@ class TestInferCollections:
 
     def test_confidence_filtering(self, tmp_path: Path) -> None:
         """infer_collections respects min_confidence threshold."""
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         files = [
             ScannedFile(
@@ -288,7 +288,7 @@ class TestInferCollections:
 
     def test_sorted_by_confidence(self, tmp_path: Path) -> None:
         """infer_collections returns results sorted by confidence descending."""
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         files = [
             ScannedFile(
@@ -328,7 +328,7 @@ class TestInferCollections:
         filename appeared in different directories (e.g., 2020/rivers.geojson
         and 2021/rivers.geojson). Now uses multimap to track all paths.
         """
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         # Create directory structure with duplicate filenames
         dir_2020 = tmp_path / "2020"
@@ -388,7 +388,7 @@ class TestInferCollections:
         (e.g., ["rivers.geojson", "rivers.geojson"] from different dirs),
         paths_by_name[n] returns ALL paths for that name, causing duplicates.
         """
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         # Create directory structure with duplicate filenames
         dir_2020 = tmp_path / "2020"

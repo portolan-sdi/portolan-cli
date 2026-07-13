@@ -15,7 +15,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from portolan_cli.push import UploadMetrics, _upload_assets_async, format_file_size, format_speed
+from portolan_cli.sync.push import (
+    UploadMetrics,
+    _upload_assets_async,
+    format_file_size,
+    format_speed,
+)
 
 if TYPE_CHECKING:
     pass
@@ -167,7 +172,7 @@ class TestUploadAssetsVerboseMode:
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock):
+        with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock):
             await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,
@@ -198,7 +203,7 @@ class TestUploadAssetsVerboseMode:
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock):
+        with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock):
             files_uploaded, errors, uploaded_keys, metrics = await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,
@@ -228,7 +233,7 @@ class TestUploadAssetsVerboseMode:
         mock_store = MagicMock()
 
         with patch(
-            "portolan_cli.push.obs.put_async",
+            "portolan_cli.sync.push.obs.put_async",
             new_callable=AsyncMock,
             side_effect=Exception("Network error"),
         ):
@@ -257,7 +262,7 @@ class TestUploadAssetsVerboseMode:
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock):
+        with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock):
             files_uploaded, errors, uploaded_keys, metrics = await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,
@@ -283,7 +288,7 @@ class TestUploadAssetsVerboseMode:
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock):
+        with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock):
             _files_uploaded, _errors, _uploaded_keys, metrics = await _upload_assets_async(
                 store=mock_store,
                 catalog_root=mock_catalog,

@@ -241,7 +241,7 @@ class TestModulesUseRegistry:
         assert constants.SIDECAR_PATTERNS == {k: list(v) for k, v in reg.SIDECAR_OF.items()}
 
     def test_scan_classify_module(self) -> None:
-        from portolan_cli import scan_classify
+        from portolan_cli.scan import classify as scan_classify
 
         assert scan_classify.GEO_ASSET_EXTENSIONS == reg.extensions_where(scan_category="geo_asset")
         assert scan_classify.SIDECAR_EXTENSIONS == reg.extensions_where(

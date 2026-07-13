@@ -26,7 +26,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from portolan_cli.push import UploadMetrics
+from portolan_cli.sync.push import UploadMetrics
 
 if TYPE_CHECKING:
     pass
@@ -282,7 +282,7 @@ class TestPushResult:
     @pytest.mark.unit
     def test_push_result_success(self) -> None:
         """PushResult should capture successful push stats."""
-        from portolan_cli.push import PushResult
+        from portolan_cli.sync.push import PushResult
 
         result = PushResult(
             success=True,
@@ -301,7 +301,7 @@ class TestPushResult:
     @pytest.mark.unit
     def test_push_result_with_conflicts(self) -> None:
         """PushResult should capture conflicts when detected."""
-        from portolan_cli.push import PushResult
+        from portolan_cli.sync.push import PushResult
 
         result = PushResult(
             success=False,
@@ -317,7 +317,7 @@ class TestPushResult:
     @pytest.mark.unit
     def test_push_result_with_errors(self) -> None:
         """PushResult should capture upload errors."""
-        from portolan_cli.push import PushResult
+        from portolan_cli.sync.push import PushResult
 
         result = PushResult(
             success=False,
@@ -342,7 +342,7 @@ class TestDiffVersionLists:
     @pytest.mark.unit
     def test_diff_local_only_changes(self) -> None:
         """Diff should detect versions that exist only locally."""
-        from portolan_cli.push import diff_version_lists
+        from portolan_cli.sync.push import diff_version_lists
 
         local_versions = ["1.0.0", "1.1.0"]
         remote_versions = ["1.0.0"]
@@ -356,7 +356,7 @@ class TestDiffVersionLists:
     @pytest.mark.unit
     def test_diff_remote_only_changes(self) -> None:
         """Diff should detect versions that exist only remotely (conflict)."""
-        from portolan_cli.push import diff_version_lists
+        from portolan_cli.sync.push import diff_version_lists
 
         local_versions = ["1.0.0"]
         remote_versions = ["1.0.0", "1.0.1"]
@@ -370,7 +370,7 @@ class TestDiffVersionLists:
     @pytest.mark.unit
     def test_diff_both_diverged(self) -> None:
         """Diff should detect when both local and remote have unique versions."""
-        from portolan_cli.push import diff_version_lists
+        from portolan_cli.sync.push import diff_version_lists
 
         local_versions = ["1.0.0", "1.1.0"]
         remote_versions = ["1.0.0", "1.0.1"]
@@ -384,7 +384,7 @@ class TestDiffVersionLists:
     @pytest.mark.unit
     def test_diff_empty_remote(self) -> None:
         """Diff should handle empty remote (first push)."""
-        from portolan_cli.push import diff_version_lists
+        from portolan_cli.sync.push import diff_version_lists
 
         local_versions = ["1.0.0", "1.1.0"]
         remote_versions: list[str] = []
@@ -398,7 +398,7 @@ class TestDiffVersionLists:
     @pytest.mark.unit
     def test_diff_identical(self) -> None:
         """Diff should detect when local and remote are identical."""
-        from portolan_cli.push import diff_version_lists
+        from portolan_cli.sync.push import diff_version_lists
 
         local_versions = ["1.0.0", "1.1.0"]
         remote_versions = ["1.0.0", "1.1.0"]
@@ -421,7 +421,7 @@ class TestConflictDetection:
     @pytest.mark.unit
     def test_has_conflict_when_remote_diverged(self) -> None:
         """Should detect conflict when remote has versions not in local."""
-        from portolan_cli.push import VersionDiff
+        from portolan_cli.sync.push import VersionDiff
 
         diff = VersionDiff(
             local_only=["1.1.0"],
@@ -434,7 +434,7 @@ class TestConflictDetection:
     @pytest.mark.unit
     def test_no_conflict_when_only_local_changes(self) -> None:
         """No conflict when only local has new versions."""
-        from portolan_cli.push import VersionDiff
+        from portolan_cli.sync.push import VersionDiff
 
         diff = VersionDiff(
             local_only=["1.1.0"],
@@ -447,7 +447,7 @@ class TestConflictDetection:
     @pytest.mark.unit
     def test_no_conflict_when_identical(self) -> None:
         """No conflict when local and remote are identical."""
-        from portolan_cli.push import VersionDiff
+        from portolan_cli.sync.push import VersionDiff
 
         diff = VersionDiff(
             local_only=[],
@@ -469,7 +469,7 @@ class TestPush:
     @pytest.mark.unit
     def test_push_dry_run_no_upload(self, local_catalog: Path) -> None:
         """Dry-run should not perform actual upload."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         # Dry-run returns early without any network calls (Bug #137)
         # No need to patch - the function returns before upload
@@ -486,10 +486,10 @@ class TestPush:
     @pytest.mark.unit
     def test_push_detects_conflict_without_force(self, local_catalog: Path) -> None:
         """Push should fail when remote diverged and --force not specified."""
-        from portolan_cli.push import PushConflictError, push
+        from portolan_cli.sync.push import PushConflictError, push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             # Remote has a version we don't have locally
             mock_fetch.return_value = (
@@ -517,10 +517,10 @@ class TestPush:
     @pytest.mark.unit
     def test_push_with_force_ignores_conflict(self, local_catalog: Path) -> None:
         """Push with --force should overwrite despite remote changes."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (
                 {
@@ -535,17 +535,17 @@ class TestPush:
             )
 
             with patch(
-                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
             ) as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch(
-                    "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
                 ) as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ) as mock_upload_versions:
                         mock_upload_versions.return_value = None
 
@@ -561,25 +561,25 @@ class TestPush:
     @pytest.mark.unit
     def test_push_first_time_no_remote(self, local_catalog: Path) -> None:
         """First push (no remote versions.json) should succeed."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (None, None)  # No remote versions.json
 
             with patch(
-                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
             ) as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch(
-                    "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
                 ) as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ) as mock_upload_versions:
                         mock_upload_versions.return_value = None
 
@@ -595,14 +595,14 @@ class TestPush:
     @pytest.mark.unit
     def test_push_nothing_to_push(self, local_catalog: Path) -> None:
         """Push when local == remote should report nothing to push."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         # Read local versions to create matching remote
         versions_path = local_catalog / "test" / "versions.json"
         local_data = json.loads(versions_path.read_text())
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (local_data, "etag-123")
 
@@ -628,10 +628,10 @@ class TestEtagOptimisticLocking:
     @pytest.mark.unit
     def test_push_uses_etag_for_conditional_put(self, local_catalog: Path) -> None:
         """Push should use etag for conditional put (optimistic locking)."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (
                 {
@@ -643,17 +643,17 @@ class TestEtagOptimisticLocking:
             )
 
             with patch(
-                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
             ) as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch(
-                    "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
                 ) as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ) as mock_upload_versions:
                         mock_upload_versions.return_value = None
 
@@ -672,10 +672,10 @@ class TestEtagOptimisticLocking:
     @pytest.mark.unit
     def test_push_raises_on_etag_mismatch(self, local_catalog: Path) -> None:
         """Push should raise when etag mismatch (remote changed during push)."""
-        from portolan_cli.push import PushConflictError, push
+        from portolan_cli.sync.push import PushConflictError, push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (
                 {
@@ -687,24 +687,24 @@ class TestEtagOptimisticLocking:
             )
 
             with patch(
-                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
             ) as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch(
-                    "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
                 ) as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ) as mock_upload_versions:
                         # Simulate PushConflictError from etag mismatch
                         mock_upload_versions.side_effect = PushConflictError(
                             "Remote changed during push, re-run push to try again"
                         )
 
-                        with patch("portolan_cli.push._cleanup_uploaded_assets"):
+                        with patch("portolan_cli.sync.push._cleanup_uploaded_assets"):
                             with pytest.raises(PushConflictError) as exc_info:
                                 push(
                                     catalog_root=local_catalog,
@@ -726,7 +726,7 @@ class TestManifestLastOrdering:
     @pytest.mark.unit
     def test_assets_uploaded_before_versions(self, local_catalog: Path) -> None:
         """Assets should be uploaded before STAC files before versions.json (manifest-last)."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         call_order: list[str] = []
 
@@ -743,22 +743,22 @@ class TestManifestLastOrdering:
             return None
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (None, None)
 
             with patch(
-                "portolan_cli.push._upload_assets_async",
+                "portolan_cli.sync.push._upload_assets_async",
                 new_callable=AsyncMock,
                 side_effect=track_assets,
             ):
                 with patch(
-                    "portolan_cli.push._upload_stac_files_async",
+                    "portolan_cli.sync.push._upload_stac_files_async",
                     new_callable=AsyncMock,
                     side_effect=track_stac,
                 ):
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async",
+                        "portolan_cli.sync.push._upload_versions_json_async",
                         new_callable=AsyncMock,
                         side_effect=track_versions,
                     ):
@@ -775,15 +775,15 @@ class TestManifestLastOrdering:
     @pytest.mark.unit
     def test_versions_not_uploaded_if_assets_fail(self, local_catalog: Path) -> None:
         """versions.json should not be uploaded if asset upload fails."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (None, None)
 
             with patch(
-                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
             ) as mock_upload_assets:
                 mock_upload_assets.return_value = (
                     0,
@@ -793,9 +793,9 @@ class TestManifestLastOrdering:
                 )
 
                 with patch(
-                    "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                 ) as mock_upload_versions:
-                    with patch("portolan_cli.push._cleanup_uploaded_assets"):
+                    with patch("portolan_cli.sync.push._cleanup_uploaded_assets"):
                         result = push(
                             catalog_root=local_catalog,
                             collection="test",
@@ -819,24 +819,24 @@ class TestStoreSetup:
     @pytest.mark.unit
     def test_push_with_profile(self, local_catalog: Path) -> None:
         """Push should pass profile to store setup."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (None, None)
 
-            with patch("portolan_cli.push.setup_store") as mock_setup:
+            with patch("portolan_cli.sync.push.setup_store") as mock_setup:
                 mock_store = MagicMock()
                 mock_setup.return_value = (mock_store, "prefix")
 
                 with patch(
-                    "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
                 ) as mock_upload:
                     mock_upload.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ):
                         push(
                             catalog_root=local_catalog,
@@ -861,7 +861,7 @@ class TestMissingAssetDetection:
     @pytest.mark.unit
     def test_get_assets_to_upload_raises_on_missing_file(self, local_catalog: Path) -> None:
         """Should raise FileNotFoundError when referenced asset doesn't exist."""
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         versions_data = {
             "versions": [
@@ -903,10 +903,10 @@ class TestForceFlag:
         Scenario: Remote has v1.0.0 and v1.0.1, local has v1.0.0 and v1.1.0.
         With --force, push should proceed (local has changes to push).
         """
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             # Remote has v1.0.1 that local doesn't have
             mock_fetch.return_value = (
@@ -922,17 +922,17 @@ class TestForceFlag:
             )
 
             with patch(
-                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
             ) as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch(
-                    "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
                 ) as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ) as mock_upload_versions:
                         mock_upload_versions.return_value = None
 
@@ -958,7 +958,7 @@ class TestForceFlag:
 
         This tests the fix for the --force early return bug.
         """
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         # Create local catalog with ONLY v1.0.0
         catalog_dir = tmp_path / "catalog"
@@ -1009,7 +1009,7 @@ class TestForceFlag:
         (item_dir / "data.parquet").write_bytes(b"x" * 1024)
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             # Remote has v1.0.0 AND v1.0.1 - local is missing v1.0.1
             mock_fetch.return_value = (
@@ -1025,7 +1025,7 @@ class TestForceFlag:
             )
 
             with patch(
-                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
             ) as mock_upload_assets:
                 mock_upload_assets.return_value = (
                     0,
@@ -1035,12 +1035,12 @@ class TestForceFlag:
                 )  # No assets to upload
 
                 with patch(
-                    "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
                 ) as mock_upload_stac:
                     mock_upload_stac.return_value = (1, [], ["stac/collection.json"])
 
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ) as mock_upload_versions:
                         mock_upload_versions.return_value = None
 
@@ -1115,12 +1115,12 @@ class TestForceFlag:
         Before the fix, the "Nothing to push" gate returned early even with
         --force, so the STAC upload phase never ran.
         """
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         catalog_dir = self._build_identical_version_catalog(tmp_path)
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             # Remote has the EXACT same single version as local.
             mock_fetch.return_value = (
@@ -1132,15 +1132,15 @@ class TestForceFlag:
                 "etag-123",
             )
             with patch(
-                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
             ) as mock_upload_assets:
                 mock_upload_assets.return_value = (0, [], [], UploadMetrics())
                 with patch(
-                    "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
                 ) as mock_upload_stac:
                     mock_upload_stac.return_value = (1, [], ["stac/collection.json"])
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ) as mock_upload_versions:
                         mock_upload_versions.return_value = None
 
@@ -1162,12 +1162,12 @@ class TestForceFlag:
         This pins the other side of the Issue #496 gate: the "Nothing to push"
         short-circuit must remain intact when force is not set.
         """
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         catalog_dir = self._build_identical_version_catalog(tmp_path)
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (
                 {
@@ -1178,7 +1178,7 @@ class TestForceFlag:
                 "etag-123",
             )
             with patch(
-                "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
             ) as mock_upload_stac:
                 result = push(
                     catalog_root=catalog_dir,
@@ -1205,13 +1205,13 @@ class TestOrphanCleanup:
     @pytest.mark.asyncio
     async def test_upload_assets_returns_uploaded_keys(self, local_catalog: Path) -> None:
         """_upload_assets_async should return list of uploaded object keys."""
-        from portolan_cli.push import _upload_assets_async
+        from portolan_cli.sync.push import _upload_assets_async
 
         # Create the test file (needed for size calculation)
         test_file = local_catalog / "data.parquet"
         test_file.write_bytes(b"test data")
 
-        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock) as mock_put:
+        with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock) as mock_put:
             mock_put.return_value = None
 
             mock_store = MagicMock()
@@ -1232,9 +1232,9 @@ class TestOrphanCleanup:
     @pytest.mark.unit
     def test_cleanup_deletes_uploaded_assets(self) -> None:
         """_cleanup_uploaded_assets should delete all uploaded keys."""
-        from portolan_cli.push import _cleanup_uploaded_assets
+        from portolan_cli.sync.push import _cleanup_uploaded_assets
 
-        with patch("portolan_cli.push.obs.delete") as mock_delete:
+        with patch("portolan_cli.sync.push.obs.delete") as mock_delete:
             mock_store = MagicMock()
             uploaded_keys = ["catalog/file1.parquet", "catalog/file2.parquet"]
 
@@ -1247,9 +1247,9 @@ class TestOrphanCleanup:
     @pytest.mark.unit
     def test_cleanup_handles_empty_list(self) -> None:
         """_cleanup_uploaded_assets should handle empty key list gracefully."""
-        from portolan_cli.push import _cleanup_uploaded_assets
+        from portolan_cli.sync.push import _cleanup_uploaded_assets
 
-        with patch("portolan_cli.push.obs.delete") as mock_delete:
+        with patch("portolan_cli.sync.push.obs.delete") as mock_delete:
             mock_store = MagicMock()
             _cleanup_uploaded_assets(mock_store, [])
 
@@ -1258,9 +1258,9 @@ class TestOrphanCleanup:
     @pytest.mark.unit
     def test_cleanup_continues_on_delete_failure(self) -> None:
         """_cleanup_uploaded_assets should continue if individual deletes fail."""
-        from portolan_cli.push import _cleanup_uploaded_assets
+        from portolan_cli.sync.push import _cleanup_uploaded_assets
 
-        with patch("portolan_cli.push.obs.delete") as mock_delete:
+        with patch("portolan_cli.sync.push.obs.delete") as mock_delete:
             # First delete fails, second succeeds
             mock_delete.side_effect = [Exception("Network error"), None]
 
@@ -1275,29 +1275,31 @@ class TestOrphanCleanup:
     @pytest.mark.unit
     def test_push_cleans_up_on_versions_json_failure(self, local_catalog: Path) -> None:
         """Push should clean up uploaded assets if versions.json upload fails."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (None, None)
 
             with patch(
-                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
             ) as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch(
-                    "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
                 ) as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ) as mock_upload_versions:
                         mock_upload_versions.side_effect = Exception("Network timeout")
 
-                        with patch("portolan_cli.push._cleanup_uploaded_assets") as mock_cleanup:
+                        with patch(
+                            "portolan_cli.sync.push._cleanup_uploaded_assets"
+                        ) as mock_cleanup:
                             result = push(
                                 catalog_root=local_catalog,
                                 collection="test",
@@ -1313,10 +1315,10 @@ class TestOrphanCleanup:
     @pytest.mark.unit
     def test_push_cleans_up_on_etag_conflict(self, local_catalog: Path) -> None:
         """Push should clean up uploaded assets on etag mismatch."""
-        from portolan_cli.push import PushConflictError, push
+        from portolan_cli.sync.push import PushConflictError, push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (
                 {
@@ -1328,21 +1330,23 @@ class TestOrphanCleanup:
             )
 
             with patch(
-                "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
             ) as mock_upload_assets:
                 mock_upload_assets.return_value = (1, [], ["catalog/data.parquet"], UploadMetrics())
 
                 with patch(
-                    "portolan_cli.push._upload_stac_files_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_stac_files_async", new_callable=AsyncMock
                 ) as mock_upload_stac:
                     mock_upload_stac.return_value = (2, [], ["stac/collection.json"])
 
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ) as mock_upload_versions:
                         mock_upload_versions.side_effect = PushConflictError("Etag mismatch")
 
-                        with patch("portolan_cli.push._cleanup_uploaded_assets") as mock_cleanup:
+                        with patch(
+                            "portolan_cli.sync.push._cleanup_uploaded_assets"
+                        ) as mock_cleanup:
                             with pytest.raises(PushConflictError):
                                 push(
                                     catalog_root=local_catalog,
@@ -1369,13 +1373,13 @@ class TestProgressReporting:
         Note: With json_mode=False, a Rich progress bar handles the display.
         With suppress_progress=False and json_mode=True, text progress is shown.
         """
-        from portolan_cli.push import _upload_assets_async
+        from portolan_cli.sync.push import _upload_assets_async
 
         # Create the test file (needed for size calculation)
         test_file = local_catalog / "data.parquet"
         test_file.write_bytes(b"test data")
 
-        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock) as mock_put:
+        with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock) as mock_put:
             mock_put.return_value = None
 
             mock_store = MagicMock()
@@ -1398,7 +1402,7 @@ class TestProgressReporting:
     @pytest.mark.unit
     def test_push_dry_run_shows_progress(self, local_catalog: Path, capsys) -> None:
         """Dry-run at push level should show what would be uploaded."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         # dry_run is handled at push() level, not in _upload_assets_async
         result = push(
@@ -1424,12 +1428,12 @@ class TestMultiCloudStoreSetup:
     @pytest.mark.unit
     def test_setup_store_s3_with_profile(self) -> None:
         """setup_store should load credentials from AWS profile."""
-        from portolan_cli.upload import setup_store
+        from portolan_cli.sync.upload import setup_store
 
-        with patch("portolan_cli.upload._load_aws_credentials_from_profile") as mock_load:
+        with patch("portolan_cli.sync.upload._load_aws_credentials_from_profile") as mock_load:
             mock_load.return_value = ("access_key", "secret_key", None, "us-east-1")
 
-            with patch("portolan_cli.upload.S3Store") as mock_s3:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
 
                 store, prefix = setup_store("s3://mybucket/catalog", profile="myprofile")
@@ -1446,7 +1450,7 @@ class TestMultiCloudStoreSetup:
     @pytest.mark.unit
     def test_setup_store_s3_from_environment(self) -> None:
         """setup_store should use AWS credentials from environment."""
-        from portolan_cli.upload import setup_store
+        from portolan_cli.sync.upload import setup_store
 
         with patch.dict(
             "os.environ",
@@ -1457,7 +1461,7 @@ class TestMultiCloudStoreSetup:
             },
             clear=True,
         ):
-            with patch("portolan_cli.upload.S3Store") as mock_s3:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
 
                 store, prefix = setup_store("s3://mybucket/prefix")
@@ -1472,7 +1476,7 @@ class TestMultiCloudStoreSetup:
     @pytest.mark.unit
     def test_setup_store_s3_uses_default_region_env(self) -> None:
         """setup_store should fallback to AWS_DEFAULT_REGION if AWS_REGION not set."""
-        from portolan_cli.upload import setup_store
+        from portolan_cli.sync.upload import setup_store
 
         with patch.dict(
             "os.environ",
@@ -1483,7 +1487,7 @@ class TestMultiCloudStoreSetup:
             },
             clear=True,
         ):
-            with patch("portolan_cli.upload.S3Store") as mock_s3:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
 
                 setup_store("s3://mybucket/prefix")
@@ -1494,7 +1498,7 @@ class TestMultiCloudStoreSetup:
     @pytest.mark.unit
     def test_setup_store_s3_no_region(self) -> None:
         """setup_store should work without region (uses AWS SDK defaults)."""
-        from portolan_cli.upload import setup_store
+        from portolan_cli.sync.upload import setup_store
 
         with patch.dict(
             "os.environ",
@@ -1504,7 +1508,7 @@ class TestMultiCloudStoreSetup:
             },
             clear=True,
         ):
-            with patch("portolan_cli.upload.S3Store") as mock_s3:
+            with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
 
                 setup_store("s3://mybucket/data")
@@ -1519,9 +1523,9 @@ class TestMultiCloudStoreSetup:
         Note: GCS credential handling is delegated to obstore library.
         We just verify the URL is parsed correctly and from_url is called.
         """
-        from portolan_cli.upload import setup_store
+        from portolan_cli.sync.upload import setup_store
 
-        with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+        with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
             store, prefix = setup_store("gs://mybucket/catalog")
@@ -1536,9 +1540,9 @@ class TestMultiCloudStoreSetup:
         Note: GCS credential handling is delegated to obstore library.
         We just verify the URL is parsed correctly and from_url is called.
         """
-        from portolan_cli.upload import setup_store
+        from portolan_cli.sync.upload import setup_store
 
-        with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+        with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
             store, prefix = setup_store("gs://mybucket/prefix")
@@ -1553,9 +1557,9 @@ class TestMultiCloudStoreSetup:
         Note: Azure credential handling is delegated to obstore library.
         We just verify the URL is parsed correctly and from_url is called.
         """
-        from portolan_cli.upload import setup_store
+        from portolan_cli.sync.upload import setup_store
 
-        with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+        with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
             store, prefix = setup_store("az://account/mycontainer/catalog")
@@ -1570,9 +1574,9 @@ class TestMultiCloudStoreSetup:
         Note: Azure credential handling (SAS tokens) is delegated to obstore library.
         We just verify the URL is parsed correctly and from_url is called.
         """
-        from portolan_cli.upload import setup_store
+        from portolan_cli.sync.upload import setup_store
 
-        with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+        with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
             store, prefix = setup_store("az://account/mycontainer/data")
@@ -1587,9 +1591,9 @@ class TestMultiCloudStoreSetup:
         Azure URLs have format: az://account/container/path
         Note: Azure credential precedence is delegated to obstore library.
         """
-        from portolan_cli.upload import setup_store
+        from portolan_cli.sync.upload import setup_store
 
-        with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+        with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
             mock_from_url.return_value = MagicMock()
 
             # Azure format: az://account/container/prefix
@@ -1607,13 +1611,13 @@ class TestMultiCloudStoreSetup:
         validates the scheme first and raises ValueError for unsupported schemes,
         we need to mock it to allow the unknown scheme through.
         """
-        from portolan_cli.upload import setup_store
+        from portolan_cli.sync.upload import setup_store
 
-        with patch("portolan_cli.upload.parse_object_store_url") as mock_parse:
+        with patch("portolan_cli.sync.upload.parse_object_store_url") as mock_parse:
             # Return a fake bucket URL with unsupported scheme
             mock_parse.return_value = ("custom://bucket", "catalog")
 
-            with patch("portolan_cli.upload.obs.store.from_url") as mock_from_url:
+            with patch("portolan_cli.sync.upload.obs.store.from_url") as mock_from_url:
                 mock_from_url.return_value = MagicMock()
 
                 store, prefix = setup_store("custom://bucket/catalog")
@@ -1633,14 +1637,14 @@ class TestFetchRemoteVersions:
     @pytest.mark.unit
     def test_fetch_remote_versions_success(self) -> None:
         """_fetch_remote_versions should return parsed data and etag."""
-        from portolan_cli.push import _fetch_remote_versions
+        from portolan_cli.sync.push import _fetch_remote_versions
 
         mock_store = MagicMock()
         mock_result = MagicMock()
         mock_result.bytes.return_value = b'{"spec_version": "1.0.0", "versions": []}'
         mock_result.meta = {"e_tag": "etag-123"}
 
-        with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.sync.push.obs.get") as mock_get:
             mock_get.return_value = mock_result
 
             data, etag = _fetch_remote_versions(mock_store, "catalog", "test-collection")
@@ -1652,11 +1656,11 @@ class TestFetchRemoteVersions:
     @pytest.mark.unit
     def test_fetch_remote_versions_file_not_found(self) -> None:
         """_fetch_remote_versions should return None for missing file."""
-        from portolan_cli.push import _fetch_remote_versions
+        from portolan_cli.sync.push import _fetch_remote_versions
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.sync.push.obs.get") as mock_get:
             mock_get.side_effect = FileNotFoundError("Not found")
 
             data, etag = _fetch_remote_versions(mock_store, "catalog", "test-collection")
@@ -1667,11 +1671,11 @@ class TestFetchRemoteVersions:
     @pytest.mark.unit
     def test_fetch_remote_versions_not_found_string_error(self) -> None:
         """_fetch_remote_versions should handle 'not found' string errors."""
-        from portolan_cli.push import _fetch_remote_versions
+        from portolan_cli.sync.push import _fetch_remote_versions
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.sync.push.obs.get") as mock_get:
             mock_get.side_effect = Exception("Object does not exist in bucket")
 
             data, etag = _fetch_remote_versions(mock_store, "catalog", "test-collection")
@@ -1682,11 +1686,11 @@ class TestFetchRemoteVersions:
     @pytest.mark.unit
     def test_fetch_remote_versions_404_error(self) -> None:
         """_fetch_remote_versions should handle 404 errors."""
-        from portolan_cli.push import _fetch_remote_versions
+        from portolan_cli.sync.push import _fetch_remote_versions
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.sync.push.obs.get") as mock_get:
             mock_get.side_effect = Exception("404 Not Found")
 
             data, etag = _fetch_remote_versions(mock_store, "catalog", "test-collection")
@@ -1697,11 +1701,11 @@ class TestFetchRemoteVersions:
     @pytest.mark.unit
     def test_fetch_remote_versions_no_such_key_error(self) -> None:
         """_fetch_remote_versions should handle NoSuchKey errors."""
-        from portolan_cli.push import _fetch_remote_versions
+        from portolan_cli.sync.push import _fetch_remote_versions
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.sync.push.obs.get") as mock_get:
             mock_get.side_effect = Exception("NoSuchKey: The specified key does not exist")
 
             data, etag = _fetch_remote_versions(mock_store, "catalog", "test-collection")
@@ -1712,11 +1716,11 @@ class TestFetchRemoteVersions:
     @pytest.mark.unit
     def test_fetch_remote_versions_other_error_raises(self) -> None:
         """_fetch_remote_versions should re-raise non-not-found errors."""
-        from portolan_cli.push import _fetch_remote_versions
+        from portolan_cli.sync.push import _fetch_remote_versions
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.get") as mock_get:
+        with patch("portolan_cli.sync.push.obs.get") as mock_get:
             mock_get.side_effect = Exception("Access denied: permission error")
 
             with pytest.raises(Exception, match="Access denied"):
@@ -1735,7 +1739,7 @@ class TestUploadAssetsErrorHandling:
     @pytest.mark.asyncio
     async def test_upload_assets_handles_exception(self, local_catalog: Path) -> None:
         """_upload_assets_async should catch and report upload exceptions."""
-        from portolan_cli.push import _upload_assets_async
+        from portolan_cli.sync.push import _upload_assets_async
 
         # Create the test file (needed for size calculation)
         test_file = local_catalog / "data.parquet"
@@ -1743,7 +1747,7 @@ class TestUploadAssetsErrorHandling:
 
         mock_store = MagicMock()
 
-        with patch("portolan_cli.push.obs.put_async", new_callable=AsyncMock) as mock_put:
+        with patch("portolan_cli.sync.push.obs.put_async", new_callable=AsyncMock) as mock_put:
             mock_put.side_effect = Exception("Network timeout")
 
             files_uploaded, errors, uploaded_keys, _metrics = await _upload_assets_async(
@@ -1770,12 +1774,12 @@ class TestUploadVersionsJsonErrorHandling:
     @pytest.mark.unit
     def test_upload_versions_json_precondition_error(self) -> None:
         """_upload_versions_json should raise PushConflictError on precondition failure."""
-        from portolan_cli.push import PushConflictError, _upload_versions_json
+        from portolan_cli.sync.push import PushConflictError, _upload_versions_json
 
         mock_store = MagicMock()
         versions_data = {"spec_version": "1.0.0", "versions": []}
 
-        with patch("portolan_cli.push.obs.put") as mock_put:
+        with patch("portolan_cli.sync.push.obs.put") as mock_put:
             mock_put.side_effect = Exception("PreconditionFailed: etag mismatch")
 
             with pytest.raises(PushConflictError, match="Remote changed during push"):
@@ -1790,12 +1794,12 @@ class TestUploadVersionsJsonErrorHandling:
     @pytest.mark.unit
     def test_upload_versions_json_with_force(self) -> None:
         """_upload_versions_json with force=True should not use etag."""
-        from portolan_cli.push import _upload_versions_json
+        from portolan_cli.sync.push import _upload_versions_json
 
         mock_store = MagicMock()
         versions_data = {"spec_version": "1.0.0", "versions": []}
 
-        with patch("portolan_cli.push.obs.put") as mock_put:
+        with patch("portolan_cli.sync.push.obs.put") as mock_put:
             mock_put.return_value = None
 
             _upload_versions_json(
@@ -1816,12 +1820,12 @@ class TestUploadVersionsJsonErrorHandling:
     @pytest.mark.unit
     def test_upload_versions_json_first_push_no_etag(self) -> None:
         """_upload_versions_json with etag=None should use overwrite mode."""
-        from portolan_cli.push import _upload_versions_json
+        from portolan_cli.sync.push import _upload_versions_json
 
         mock_store = MagicMock()
         versions_data = {"spec_version": "1.0.0", "versions": []}
 
-        with patch("portolan_cli.push.obs.put") as mock_put:
+        with patch("portolan_cli.sync.push.obs.put") as mock_put:
             mock_put.return_value = None
 
             _upload_versions_json(
@@ -1838,12 +1842,12 @@ class TestUploadVersionsJsonErrorHandling:
     @pytest.mark.unit
     def test_upload_versions_json_other_error_reraises(self) -> None:
         """_upload_versions_json should re-raise non-precondition errors."""
-        from portolan_cli.push import _upload_versions_json
+        from portolan_cli.sync.push import _upload_versions_json
 
         mock_store = MagicMock()
         versions_data = {"spec_version": "1.0.0", "versions": []}
 
-        with patch("portolan_cli.push.obs.put") as mock_put:
+        with patch("portolan_cli.sync.push.obs.put") as mock_put:
             mock_put.side_effect = Exception("Network timeout")
 
             with pytest.raises(Exception, match="Network timeout"):
@@ -1867,7 +1871,7 @@ class TestMalformedDataHandling:
     @pytest.mark.unit
     def test_read_local_versions_invalid_json(self, local_catalog_invalid_json: Path) -> None:
         """_read_local_versions should raise ValueError on invalid JSON."""
-        from portolan_cli.push import _read_local_versions
+        from portolan_cli.sync.push import _read_local_versions
 
         with pytest.raises(ValueError, match="Invalid JSON"):
             _read_local_versions(
@@ -1878,7 +1882,7 @@ class TestMalformedDataHandling:
     @pytest.mark.unit
     def test_read_local_versions_missing_keys(self, local_catalog_malformed: Path) -> None:
         """_read_local_versions should return data but push should fail on missing keys."""
-        from portolan_cli.push import _read_local_versions
+        from portolan_cli.sync.push import _read_local_versions
 
         # _read_local_versions just parses JSON, it doesn't validate schema
         # The schema validation happens later in the push process
@@ -1903,7 +1907,7 @@ class TestMalformedDataHandling:
         and current_version. When push tries to read and process this, it should
         fail with a KeyError when accessing these missing fields.
         """
-        from portolan_cli.push import _read_local_versions
+        from portolan_cli.sync.push import _read_local_versions
 
         # Read the malformed versions.json
         data = _read_local_versions(
@@ -1932,7 +1936,7 @@ class TestMalformedDataHandling:
         When diff_version_lists tries to extract versions, it should handle
         this gracefully or raise an appropriate error.
         """
-        from portolan_cli.push import diff_version_lists
+        from portolan_cli.sync.push import diff_version_lists
 
         # The malformed data has versions but is missing spec_version
         # Attempting to extract version strings should still work
@@ -1998,7 +2002,7 @@ class TestPushResultInvariants:
         errors: list[str],
     ) -> None:
         """PushResult should accept any valid combination of inputs."""
-        from portolan_cli.push import PushResult
+        from portolan_cli.sync.push import PushResult
 
         result = PushResult(
             success=success,
@@ -2026,11 +2030,11 @@ class TestPushResultInvariants:
         2. Incremental push (remote has some versions)
         3. Nothing to push (remote matches local)
         """
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         # Scenario 1: First push (remote has no versions)
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (None, None)
 
@@ -2048,7 +2052,7 @@ class TestPushResultInvariants:
 
         # Scenario 2: Incremental push (remote has v1.0.0, local has v1.0.0 + v1.1.0)
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (
                 {
@@ -2083,7 +2087,7 @@ class TestPushResultInvariants:
         # Scenario 3: Nothing to push (remote matches local exactly)
         local_versions = json.loads((local_catalog / "test" / "versions.json").read_text())
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
             mock_fetch.return_value = (local_versions, "etag-456")
 
@@ -2116,7 +2120,7 @@ class TestVersionDiffInvariants:
         Property: local_only ∪ remote_only ∪ common = local ∪ remote
         Property: local_only ∩ remote_only = ∅
         """
-        from portolan_cli.push import diff_version_lists
+        from portolan_cli.sync.push import diff_version_lists
 
         diff = diff_version_lists(local_versions, remote_versions)
 
@@ -2137,7 +2141,7 @@ class TestVersionDiffInvariants:
 
         This is the "nothing to push" case - the invariant our fix addresses.
         """
-        from portolan_cli.push import diff_version_lists
+        from portolan_cli.sync.push import diff_version_lists
 
         diff = diff_version_lists(versions, versions)
 
@@ -2153,7 +2157,7 @@ class TestVersionDiffInvariants:
     )
     def test_empty_remote_means_local_only(self, local_versions: list[str]) -> None:
         """When remote is empty, all local versions should be in local_only."""
-        from portolan_cli.push import diff_version_lists
+        from portolan_cli.sync.push import diff_version_lists
 
         diff = diff_version_lists(local_versions, [])
 
@@ -2183,12 +2187,12 @@ class TestDryRunNetworkIsolation:
         always called _setup_store then _fetch_remote_versions regardless of
         dry_run, making real S3/GCS/Azure connections.
         """
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
-            with patch("portolan_cli.push.setup_store") as mock_setup:
+            with patch("portolan_cli.sync.push.setup_store") as mock_setup:
                 mock_setup.return_value = (MagicMock(), "prefix")
 
                 result = push(
@@ -2205,9 +2209,9 @@ class TestDryRunNetworkIsolation:
     @pytest.mark.unit
     def test_push_dry_run_never_calls_setup_store(self, local_catalog: Path) -> None:
         """push(dry_run=True) must not call _setup_store (which creates cloud connections)."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
-        with patch("portolan_cli.push.setup_store") as mock_setup:
+        with patch("portolan_cli.sync.push.setup_store") as mock_setup:
             result = push(
                 catalog_root=local_catalog,
                 collection="test",
@@ -2221,10 +2225,12 @@ class TestDryRunNetworkIsolation:
     @pytest.mark.unit
     def test_push_dry_run_shows_would_push_message(self, local_catalog: Path) -> None:
         """push(dry_run=True) should report files that would be uploaded."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
-        with patch("portolan_cli.push.setup_store"):
-            with patch("portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock):
+        with patch("portolan_cli.sync.push.setup_store"):
+            with patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
+            ):
                 result = push(
                     catalog_root=local_catalog,
                     collection="test",
@@ -2240,12 +2246,14 @@ class TestDryRunNetworkIsolation:
     @pytest.mark.unit
     def test_push_dry_run_does_not_call_upload_assets(self, local_catalog: Path) -> None:
         """push(dry_run=True) must not call _upload_assets."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
-        with patch("portolan_cli.push.setup_store"):
-            with patch("portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock):
+        with patch("portolan_cli.sync.push.setup_store"):
+            with patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
+            ):
                 with patch(
-                    "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
                 ) as mock_upload:
                     push(
                         catalog_root=local_catalog,
@@ -2259,21 +2267,21 @@ class TestDryRunNetworkIsolation:
     @pytest.mark.unit
     def test_push_non_dry_run_still_calls_fetch_remote_versions(self, local_catalog: Path) -> None:
         """Non-dry-run push must still call _fetch_remote_versions (sanity check)."""
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         with patch(
-            "portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock
+            "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
         ) as mock_fetch:
-            with patch("portolan_cli.push.setup_store") as mock_setup:
+            with patch("portolan_cli.sync.push.setup_store") as mock_setup:
                 mock_fetch.return_value = (None, None)
                 mock_setup.return_value = (MagicMock(), "prefix")
 
                 with patch(
-                    "portolan_cli.push._upload_assets_async", new_callable=AsyncMock
+                    "portolan_cli.sync.push._upload_assets_async", new_callable=AsyncMock
                 ) as mock_upload:
                     mock_upload.return_value = (1, [], ["key"], UploadMetrics())
                     with patch(
-                        "portolan_cli.push._upload_versions_json_async", new_callable=AsyncMock
+                        "portolan_cli.sync.push._upload_versions_json_async", new_callable=AsyncMock
                     ):
                         push(
                             catalog_root=local_catalog,
@@ -2296,7 +2304,7 @@ class TestDryRunNetworkIsolation:
         """
         import json
 
-        from portolan_cli.push import push
+        from portolan_cli.sync.push import push
 
         # Create catalog with versions.json referencing a missing file
         catalog_dir = tmp_path / "catalog_missing_asset"
@@ -2327,8 +2335,10 @@ class TestDryRunNetworkIsolation:
         (collection_dir / "versions.json").write_text(json.dumps(versions_data, indent=2))
         # NOTE: We deliberately do NOT create the asset file
 
-        with patch("portolan_cli.push.setup_store"):
-            with patch("portolan_cli.push._fetch_remote_versions_async", new_callable=AsyncMock):
+        with patch("portolan_cli.sync.push.setup_store"):
+            with patch(
+                "portolan_cli.sync.push._fetch_remote_versions_async", new_callable=AsyncMock
+            ):
                 # Should NOT raise - dry-run is forgiving
                 result = push(
                     catalog_root=catalog_dir,
@@ -2355,7 +2365,7 @@ class TestDiscoverStacFilesReadmes:
     @pytest.mark.unit
     def test_discovers_collection_readme(self, tmp_path: Path) -> None:
         """_discover_stac_files should find collection-level README.md."""
-        from portolan_cli.push import _discover_stac_files
+        from portolan_cli.sync.push import _discover_stac_files
 
         # Setup catalog with collection.json and README
         catalog_dir = tmp_path / "catalog"
@@ -2374,7 +2384,7 @@ class TestDiscoverStacFilesReadmes:
     @pytest.mark.unit
     def test_discovers_catalog_readme_when_include_catalog(self, tmp_path: Path) -> None:
         """_discover_stac_files should find root README.md when include_catalog=True."""
-        from portolan_cli.push import _discover_stac_files
+        from portolan_cli.sync.push import _discover_stac_files
 
         # Setup catalog with root README and collection
         catalog_dir = tmp_path / "catalog"
@@ -2397,7 +2407,7 @@ class TestDiscoverStacFilesReadmes:
     @pytest.mark.unit
     def test_no_readme_when_missing(self, tmp_path: Path) -> None:
         """_discover_stac_files should handle missing README.md gracefully."""
-        from portolan_cli.push import _discover_stac_files
+        from portolan_cli.sync.push import _discover_stac_files
 
         # Setup catalog without README
         catalog_dir = tmp_path / "catalog"
@@ -2432,7 +2442,7 @@ class TestAssetDiffing:
         has 1 of those assets with same sha256. Only the new asset should
         be uploaded.
         """
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -2495,7 +2505,7 @@ class TestAssetDiffing:
 
         Scenario: Same file path, different content (different sha256).
         """
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -2555,7 +2565,7 @@ class TestAssetDiffing:
 
         Scenario: data.parquet renamed to renamed.parquet (same content).
         """
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -2611,7 +2621,7 @@ class TestAssetDiffing:
 
         This is the first push case.
         """
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -2658,7 +2668,7 @@ class TestAssetDiffing:
         Local version 2.0.0 has an asset that matches 1.0.0's sha256.
         It should be skipped even though it's not in 1.1.0.
         """
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -2716,7 +2726,7 @@ class TestAssetDiffing:
     @pytest.mark.unit
     def test_handles_empty_remote_versions_list(self, tmp_path: Path) -> None:
         """Remote with empty versions list should upload all assets."""
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -2755,7 +2765,7 @@ class TestAssetDiffing:
 
         This is the exact scenario described in the issue.
         """
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -2819,7 +2829,7 @@ class TestAssetDiffing:
 
         Edge case: malformed remote versions.json.
         """
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -2871,7 +2881,7 @@ class TestAssetDiffing:
 
         Edge case: malformed local versions.json.
         """
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -2939,7 +2949,7 @@ class TestRealSHA256Diffing:
         """
         import hashlib
 
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -3003,7 +3013,7 @@ class TestRealSHA256Diffing:
         """
         import hashlib
 
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()
@@ -3075,7 +3085,7 @@ class TestRealSHA256Diffing:
         """
         import hashlib
 
-        from portolan_cli.push import _get_assets_to_upload
+        from portolan_cli.sync.push import _get_assets_to_upload
 
         catalog_dir = tmp_path / "catalog"
         catalog_dir.mkdir()

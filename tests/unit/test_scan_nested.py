@@ -53,7 +53,7 @@ class TestNestedCollectionIdInference:
         Fixture: flat_collection/
         Expected: Files in flat_collection/ have inferred_collection_id = "flat_collection"
         """
-        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "flat_collection", ScanOptions())
 
@@ -82,7 +82,7 @@ class TestNestedCollectionIdInference:
         When scanning nested/, files in census/2020/ should have
         inferred_collection_id = "census/2020"
         """
-        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "nested", ScanOptions())
 
@@ -111,7 +111,7 @@ class TestNestedCollectionIdInference:
 
         Files should have inferred_collection_id = "GAUL_L2/by_country/AFG" etc.
         """
-        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "three_level_nested", ScanOptions())
 
@@ -131,7 +131,7 @@ class TestNestedCollectionIdInference:
 
         Different depths should each get appropriate collection IDs.
         """
-        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "mixed_depths", ScanOptions())
 
@@ -161,7 +161,7 @@ class TestNestedCollectionIdInference:
 
         Tests that arbitrarily deep nesting doesn't break collection ID inference.
         """
-        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "deep_nested", ScanOptions())
 
@@ -195,7 +195,7 @@ class TestCollectionIdEdgeCases:
 
         This ensures portable, consistent IDs across Windows/Unix.
         """
-        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "nested", ScanOptions())
 
@@ -208,7 +208,7 @@ class TestCollectionIdEdgeCases:
 
     def test_collection_id_no_trailing_slash(self, fixtures_dir: Path) -> None:
         """Collection IDs do not have trailing slashes."""
-        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "nested", ScanOptions())
 
@@ -221,7 +221,7 @@ class TestCollectionIdEdgeCases:
 
     def test_collection_id_no_leading_slash(self, fixtures_dir: Path) -> None:
         """Collection IDs do not have leading slashes (they're relative)."""
-        from portolan_cli.scan import ScanOptions, scan_directory
+        from portolan_cli.scan.core import ScanOptions, scan_directory
 
         result = scan_directory(fixtures_dir / "nested", ScanOptions())
 
@@ -262,7 +262,7 @@ class TestCollectionIdInvariantsHypothesis:
     )
     def test_collection_id_invariants_parametrized(self, relative_path: str) -> None:
         """Collection IDs satisfy invariants for various path patterns."""
-        from portolan_cli.scan import _infer_collection_id_from_relative_path
+        from portolan_cli.scan.core import _infer_collection_id_from_relative_path
 
         collection_id = _infer_collection_id_from_relative_path(relative_path)
 
@@ -277,14 +277,14 @@ class TestCollectionIdInvariantsHypothesis:
 
     def test_collection_id_from_root_file_is_empty(self) -> None:
         """Files at root level have empty collection ID."""
-        from portolan_cli.scan import _infer_collection_id_from_relative_path
+        from portolan_cli.scan.core import _infer_collection_id_from_relative_path
 
         assert _infer_collection_id_from_relative_path("data.parquet") == ""
         assert _infer_collection_id_from_relative_path("file.geojson") == ""
 
     def test_collection_id_strips_filename_correctly(self) -> None:
         """Collection ID is parent path without filename."""
-        from portolan_cli.scan import _infer_collection_id_from_relative_path
+        from portolan_cli.scan.core import _infer_collection_id_from_relative_path
 
         # Single level
         assert _infer_collection_id_from_relative_path("foo/data.parquet") == "foo"
@@ -323,7 +323,7 @@ try:
         @settings(max_examples=100)
         def test_collection_id_invariants_hypothesis(self, path_segments: list[str]) -> None:
             """Property: Collection IDs never have backslashes or leading/trailing slashes."""
-            from portolan_cli.scan import _infer_collection_id_from_relative_path
+            from portolan_cli.scan.core import _infer_collection_id_from_relative_path
 
             # Filter out empty segments
             segments = [s for s in path_segments if s]
@@ -350,7 +350,7 @@ try:
         @settings(max_examples=50)
         def test_deep_nesting_preserves_structure(self, depth: int, segment_name: str) -> None:
             """Property: Deep nesting produces correct collection ID length."""
-            from portolan_cli.scan import _infer_collection_id_from_relative_path
+            from portolan_cli.scan.core import _infer_collection_id_from_relative_path
 
             if not segment_name:
                 return
@@ -377,7 +377,7 @@ class TestInferredCollectionIdField:
 
     def test_scanned_file_has_inferred_collection_id_attribute(self, tmp_path: Path) -> None:
         """ScannedFile dataclass has inferred_collection_id field."""
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         # TDD: This will fail until the field is added to ScannedFile
         sf = ScannedFile(
@@ -392,7 +392,7 @@ class TestInferredCollectionIdField:
 
     def test_inferred_collection_id_defaults_to_empty_string(self, tmp_path: Path) -> None:
         """ScannedFile.inferred_collection_id defaults to empty string for root files."""
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         # TDD: The default value should be empty string
         sf = ScannedFile(
@@ -407,7 +407,7 @@ class TestInferredCollectionIdField:
 
     def test_inferred_collection_id_is_derived_from_relative_path(self, tmp_path: Path) -> None:
         """Collection ID is the directory portion of relative_path."""
-        from portolan_cli.scan import FormatType, ScannedFile
+        from portolan_cli.scan.core import FormatType, ScannedFile
 
         sf = ScannedFile(
             path=tmp_path / "theme" / "subtheme" / "data.parquet",

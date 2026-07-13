@@ -10,7 +10,7 @@ from portolan_cli.constants import (
     GEOSPATIAL_EXTENSIONS,
     SIDECAR_PATTERNS,
 )
-from portolan_cli.scan_detect import is_filegdb
+from portolan_cli.scan.detect import is_filegdb
 
 logger = logging.getLogger(__name__)
 

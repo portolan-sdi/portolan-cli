@@ -204,7 +204,7 @@ class TestCheckDirectoryForce:
         self, tmp_path: Path, valid_points_parquet: Path
     ) -> None:
         """--fix --force re-encodes valid COGs but leaves valid GeoParquet alone."""
-        from portolan_cli.check import check_directory
+        from portolan_cli.scan.check import check_directory
 
         cog = _make_cog_without_overviews(tmp_path / "tile.tif")
         gpq = tmp_path / "vector.parquet"
@@ -224,7 +224,7 @@ class TestCheckDirectoryForce:
     @pytest.mark.integration
     def test_force_requires_fix(self, tmp_path: Path) -> None:
         """force without fix is a programmer error (mirrors remove_legacy guard)."""
-        from portolan_cli.check import check_directory
+        from portolan_cli.scan.check import check_directory
 
         with pytest.raises(ValueError):
             check_directory(tmp_path, fix=False, force=True)
@@ -232,7 +232,7 @@ class TestCheckDirectoryForce:
     @pytest.mark.integration
     def test_force_dry_run_previews_cog_reoptimization(self, tmp_path: Path) -> None:
         """--fix --force --dry-run lists the valid COG as a would-re-optimize COG."""
-        from portolan_cli.check import check_directory
+        from portolan_cli.scan.check import check_directory
 
         cog = _make_cog_without_overviews(tmp_path / "tile.tif")
 

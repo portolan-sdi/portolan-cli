@@ -10,7 +10,7 @@ Requires:
 - tippecanoe binary installed and in PATH
 
 Usage:
-    from portolan_cli.pmtiles import generate_pmtiles_for_collection
+    from portolan_cli.viz.pmtiles import generate_pmtiles_for_collection
 
     result = generate_pmtiles_for_collection(
         collection_path=Path("municipalities"),
@@ -38,8 +38,8 @@ from portolan_cli.output import error, info, success, warn
 # importing this module (which pulls in output/thumbnail/style). Re-imported
 # here — both constants are used below — so pmtiles.py's public API is unchanged
 # for existing callers/tests (see pmtiles_links.py, issue #563).
-from portolan_cli.pmtiles_links import PMTILES_MEDIA_TYPE, WEB_MAP_LINKS_EXTENSION
-from portolan_cli.thumbnail import (
+from portolan_cli.viz.pmtiles_links import PMTILES_MEDIA_TYPE, WEB_MAP_LINKS_EXTENSION
+from portolan_cli.viz.thumbnail import (
     generate_vector_thumbnail,
     get_thumbnail_config,
     thumbnail_path_for,
@@ -325,7 +325,7 @@ def _write_default_style_for_geoparquet(
 
     try:
         from portolan_cli.metadata.geoparquet import extract_geoparquet_metadata
-        from portolan_cli.style import (
+        from portolan_cli.viz.style import (
             VectorStyleConfig,
             get_vector_style_config,
             write_default_style,
@@ -906,7 +906,7 @@ def generate_pmtiles_for_collection(
             _track_side_step_assets(collection_path, pmtiles_path, thumb_path, catalog_root)
 
     # Discover and register style assets (ADR-0045)
-    from portolan_cli.style import discover_styles, register_style_assets
+    from portolan_cli.viz.style import discover_styles, register_style_assets
 
     styles = discover_styles(collection_path)
     register_style_assets(collection_path, styles)

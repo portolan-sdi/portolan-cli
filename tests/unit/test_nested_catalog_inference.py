@@ -150,7 +150,7 @@ class TestInferNestedCollectionId:
         - Manually created .gdb folders
         """
         from portolan_cli.add import infer_nested_collection_id
-        from portolan_cli.scan_detect import is_filegdb
+        from portolan_cli.scan.detect import is_filegdb
 
         catalog_root = tmp_path
         gdb_path = tmp_path / "ocha" / "incomplete.gdb"

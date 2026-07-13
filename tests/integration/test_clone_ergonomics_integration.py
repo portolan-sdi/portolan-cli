@@ -42,9 +42,9 @@ class TestCloneCLIIntegration:
 
         try:
             with (
-                patch("portolan_cli.sync.list_remote_collections") as mock_list,
-                patch("portolan_cli.sync.init_catalog") as mock_init,
-                patch("portolan_cli.sync.pull") as mock_pull,
+                patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
+                patch("portolan_cli.sync.core.init_catalog") as mock_init,
+                patch("portolan_cli.sync.core.pull") as mock_pull,
             ):
                 mock_list.return_value = ["collection-a"]
                 mock_init.return_value = None
@@ -80,9 +80,9 @@ class TestCloneCLIIntegration:
         target = tmp_path / "catalog"
 
         with (
-            patch("portolan_cli.sync.list_remote_collections") as mock_list,
-            patch("portolan_cli.sync.init_catalog") as mock_init,
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
+            patch("portolan_cli.sync.core.init_catalog") as mock_init,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_list.return_value = ["demographics", "imagery", "boundaries"]
             mock_init.return_value = None
@@ -117,9 +117,9 @@ class TestCloneCLIIntegration:
         target = tmp_path / "catalog"
 
         with (
-            patch("portolan_cli.sync.list_remote_collections") as mock_list,
-            patch("portolan_cli.sync.init_catalog") as mock_init,
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
+            patch("portolan_cli.sync.core.init_catalog") as mock_init,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_init.return_value = None
             mock_pull.return_value = MagicMock(
@@ -160,8 +160,8 @@ class TestCloneCLIIntegration:
 
         try:
             with (
-                patch("portolan_cli.sync.init_catalog") as mock_init,
-                patch("portolan_cli.sync.pull") as mock_pull,
+                patch("portolan_cli.sync.core.init_catalog") as mock_init,
+                patch("portolan_cli.sync.core.pull") as mock_pull,
             ):
                 mock_init.return_value = None
                 mock_pull.return_value = MagicMock(
@@ -207,9 +207,9 @@ class TestCloneCLIIntegration:
         target = tmp_path / "catalog"
 
         with (
-            patch("portolan_cli.sync.list_remote_collections") as mock_list,
-            patch("portolan_cli.sync.init_catalog") as mock_init,
-            patch("portolan_cli.sync.pull") as mock_pull,
+            patch("portolan_cli.sync.core.list_remote_collections") as mock_list,
+            patch("portolan_cli.sync.core.init_catalog") as mock_init,
+            patch("portolan_cli.sync.core.pull") as mock_pull,
         ):
             mock_list.return_value = ["good", "bad", "also-good"]
             mock_init.return_value = None

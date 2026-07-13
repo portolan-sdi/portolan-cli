@@ -8,13 +8,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from portolan_cli.checksums import compute_checksum, compute_dir_checksum
 from portolan_cli.constants import (
     MTIME_TOLERANCE_SECONDS,
 )
 from portolan_cli.formats import (
     FormatType,
 )
+from portolan_cli.sync.checksums import compute_checksum, compute_dir_checksum
 from portolan_cli.versions import (
     read_versions,
 )

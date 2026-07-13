@@ -6,7 +6,7 @@ This module provides:
 3. Suppression of progress in JSON mode (agent/batch usage)
 
 Example:
-    >>> from portolan_cli.upload_progress import UploadProgressReporter
+    >>> from portolan_cli.sync.upload_progress import UploadProgressReporter
     >>> with UploadProgressReporter(total_files=100, total_bytes=1_000_000) as reporter:
     ...     for file in files:
     ...         upload(file)

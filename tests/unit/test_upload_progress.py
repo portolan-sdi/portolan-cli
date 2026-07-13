@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-from portolan_cli.upload_progress import UploadProgressReporter
+from portolan_cli.sync.upload_progress import UploadProgressReporter
 
 
 class TestUploadProgressReporter:

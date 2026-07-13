@@ -37,7 +37,7 @@ from portolan_cli.formats import (
     get_effective_status,
     is_geoparquet,
 )
-from portolan_cli.scan_detect import is_filegdb
+from portolan_cli.scan.detect import is_filegdb
 
 if TYPE_CHECKING:
     from portolan_cli.metadata.fix import FixReport

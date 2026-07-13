@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from portolan_cli.scan import _infer_collection_id_from_relative_path
-from portolan_cli.scan_detect import is_hive_partition_dir
+from portolan_cli.scan.core import _infer_collection_id_from_relative_path
+from portolan_cli.scan.detect import is_hive_partition_dir
 
 
 class TestIsHivePartitionDir:
