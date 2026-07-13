@@ -20,6 +20,7 @@
       "flows": {
         "tokenExchange": {
           "tokenUrl": "https://broker.example-sdi.org/oauth/token",
+          "subjectTokenScheme": "publisher_oidc",
           "scopes": {
             "read:city-buildings": "Read this collection's data assets"
           }

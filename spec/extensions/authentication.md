@@ -2,7 +2,11 @@
 
 - **Extension:** [STAC Authentication](https://github.com/stac-extensions/authentication) (`auth:`) — an existing STAC extension, adopted; Portolan defines **no authentication namespace of its own**.
 - **Depends on:** the `tokenExchange` OAuth2 flow, proposed upstream in [stac-extensions/authentication#44](https://github.com/stac-extensions/authentication/pull/44) (mirroring [OAI/OpenAPI-Specification#5428](https://github.com/OAI/OpenAPI-Specification/pull/5428)).
-- **Status:** draft until the upstream flow is released (a beta tag is anticipated); the example pins the `v1.1.0` schema, against which it already validates (unknown flow keys pass as generic flow objects; strict `tokenUrl` enforcement arrives with #44).
+- **Status:** draft until the upstream flow is released — the extension maintainer has proposed
+  releasing it as a **new minor version** of the Authentication extension, decoupled from the
+  OpenAPI timeline. The example pins the `v1.1.0` schema, against which it already validates
+  (unknown flow keys pass as generic flow objects; strict `tokenUrl` enforcement arrives with
+  the new version).
 
 ## Summary
 
@@ -41,8 +45,8 @@ outside Portolan: this is discovery metadata only.
 
 1. Read `collection.json`. An asset carrying `auth:refs` is gated; resolve the referenced
    scheme.
-2. If that scheme has a `tokenExchange` flow, obtain a subject token first: sign in via an
-   identity scheme declared in the same `auth:schemes` object (see *Chaining*, below).
+2. If that scheme has a `tokenExchange` flow, obtain a subject token first: satisfy the scheme
+   named by the flow's `subjectTokenScheme` field (see *Chaining*, below).
 3. `POST` the identity token to the flow's `tokenUrl` per RFC 8693
    (`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `subject_token`,
    `subject_token_type`, optionally `resource`). Receive `access_token` +
@@ -50,13 +54,23 @@ outside Portolan: this is discovery metadata only.
 4. Read the asset `href` directly from storage with the returned credentials (range reads
    work; the credential covers the asset's prefix).
 
-### Chaining (convention, pending upstream discussion)
+### Chaining (`subjectTokenScheme`)
 
-The `subject_token` SHOULD be obtained via an identity scheme (e.g. `openIdConnect`) declared
-in the same `auth:schemes` object. In practice there is one candidate scheme; where several
-identity schemes are declared, any issuer the vending endpoint trusts is acceptable (the
-endpoint validates the issuer regardless). Whether a machine-readable linkage field is needed
-is deliberately left to the upstream extension (raised in stac-extensions/authentication#44).
+The `tokenExchange` flow's **`subjectTokenScheme`** field (added to
+stac-extensions/authentication#44 after maintainer review) names the `auth:schemes` entry whose
+token the client presents as the `subject_token`. It makes the two-step order fully
+machine-discoverable as a dependency graph the client simply resolves — no hardcoded order:
+
+```text
+asset ──auth:refs──▶ exchange scheme ──subjectTokenScheme──▶ identity scheme
+```
+
+In this profile: publishers of gated catalogs **SHOULD** provide `subjectTokenScheme`
+(`portolan check` requires it — see Validation); clients **MUST** use it when present. When
+absent, the fallback is type-based inference: obtain the subject token via an identity-yielding
+scheme (e.g. `openIdConnect`) declared in the same `auth:schemes` object — where several are
+declared, any issuer the vending endpoint trusts is acceptable (the endpoint validates the
+issuer regardless).
 
 ## Validation (`portolan check`)
 
@@ -66,6 +80,9 @@ For any Collection/Catalog carrying `auth:schemes`, and any asset carrying `auth
 - an `openIdConnect` scheme MUST carry `openIdConnectUrl`;
 - an `oauth2` scheme MUST carry `flows`, and a `tokenExchange` flow MUST carry `tokenUrl`
   (schema-enforced upstream once #44 is released);
+- a `tokenExchange` flow MUST carry `subjectTokenScheme`, and its value MUST resolve to a key
+  of the same `auth:schemes` object (cross-reference resolution is not expressible in the
+  upstream JSON Schema, so this profile enforces it);
 - private (non-anonymously-readable) data assets SHOULD carry `auth:refs`.
 
 ## Security considerations
