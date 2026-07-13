@@ -34,6 +34,10 @@ def valid_catalog(tmp_path: Path) -> Path:
         )
     )
 
+    # AGENTS.md is mandatory (ADR-0052, RULE-0080): catalog.json must carry a
+    # rel="agents" link to an existing AGENTS.md file, or the check fails.
+    (tmp_path / "AGENTS.md").write_text("# AGENTS.md — Benchmark Catalog\n")
+
     # v2 structure: catalog.json at ROOT level
     catalog_file = tmp_path / "catalog.json"
     catalog_file.write_text(
@@ -44,7 +48,19 @@ def valid_catalog(tmp_path: Path) -> Path:
                 "id": "benchmark-catalog",
                 "title": "Benchmark Catalog",
                 "description": "A catalog for benchmarking",
-                "links": [],
+                "links": [
+                    {
+                        "rel": "self",
+                        "href": "./catalog.json",
+                        "type": "application/json",
+                    },
+                    {
+                        "rel": "agents",
+                        "href": "./AGENTS.md",
+                        "type": "text/markdown",
+                        "title": "AGENTS.md",
+                    },
+                ],
             }
         )
     )

@@ -533,6 +533,30 @@ def convert_file(
         )
 
 
+#: Total attempts for a single vector conversion when it fails with a transient
+#: DuckDB interrupt (1 initial try + retries). Small on purpose: a genuine
+#: interrupt clears once raised, so one extra attempt almost always suffices.
+_CONVERT_MAX_ATTEMPTS = 3
+
+
+def _is_transient_conversion_error(exc: BaseException) -> bool:
+    """Return True for a transient DuckDB interrupt that is safe to retry.
+
+    ``geoparquet-io`` runs conversions through DuckDB, whose Python client raises
+    ``duckdb.InterruptException('Query interrupted')`` when a pending process
+    signal trips its per-query signal check. This is non-deterministic and
+    environment-driven (observed ~1 in 1000 files during bulk nightly ``add``
+    runs, on a different file each time) and the interrupt flag clears once the
+    exception is raised, so re-running the same conversion reliably succeeds.
+
+    We match by exception type name plus message rather than importing ``duckdb``
+    directly: it is a transitive dependency (via ``geoparquet-io``) that we do
+    not declare, and importing it here would break the deptry transitive-import
+    contract. Matching the name keeps the coupling at the string level.
+    """
+    return type(exc).__name__ == "InterruptException" or "query interrupted" in str(exc).lower()
+
+
 def _convert_vector(
     source: Path,
     output_dir: Path,
@@ -542,6 +566,11 @@ def _convert_vector(
 
     Uses geoparquet-io's fluent Table API to apply spatial index columns,
     sorting, and bbox based on VectorSettings configuration.
+
+    A transient DuckDB "Query interrupted" failure (see
+    :func:`_is_transient_conversion_error`) is retried up to
+    ``_CONVERT_MAX_ATTEMPTS`` times so a single interrupted query does not fail a
+    whole bulk ``add``; any other error propagates on the first occurrence.
 
     Args:
         source: Source vector file.
@@ -555,25 +584,44 @@ def _convert_vector(
 
     if settings is None:
         settings = VectorSettings()
+    resolved = settings
 
     output_path = output_dir / f"{source.stem}.parquet"
 
-    # Convert source to gpio Table
-    table = gpio.convert(str(source))
+    def _run() -> Path:
+        # Convert source to gpio Table
+        table = gpio.convert(str(source))
 
-    # Apply spatial optimizations based on settings
-    table = _apply_vector_settings(table, settings)
+        # Apply spatial optimizations based on settings
+        table = _apply_vector_settings(table, resolved)
 
-    # Write output (partitioned or single file)
-    if settings.partition and settings.spatial_index != "none":
-        # Partitioned output to directory
-        partition_dir = output_dir / source.stem
-        _write_partitioned(table, partition_dir, settings)
-        return partition_dir
-    else:
+        # Write output (partitioned or single file)
+        if resolved.partition and resolved.spatial_index != "none":
+            # Partitioned output to directory
+            partition_dir = output_dir / source.stem
+            _write_partitioned(table, partition_dir, resolved)
+            return partition_dir
         # Single file output
         table.write(str(output_path))
         return output_path
+
+    for attempt in range(1, _CONVERT_MAX_ATTEMPTS + 1):
+        try:
+            return _run()
+        except Exception as exc:
+            is_last_attempt = attempt == _CONVERT_MAX_ATTEMPTS
+            if is_last_attempt or not _is_transient_conversion_error(exc):
+                raise
+            logger.warning(
+                "Transient interrupt converting %s (attempt %d/%d), retrying: %s",
+                source.name,
+                attempt,
+                _CONVERT_MAX_ATTEMPTS,
+                exc,
+            )
+    # Unreachable: the final attempt always returns or re-raises above. Present
+    # only so the type checker sees every path terminates.
+    raise AssertionError("vector conversion retry loop exited without returning")
 
 
 def _apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
