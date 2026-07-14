@@ -1802,3 +1802,121 @@ class TestVectorSettingsIntegration:
         # Validation should succeed on directory with valid parquet files
         error = _validate_geoparquet(partition_dir)
         assert error is None
+
+
+# =============================================================================
+# Transient DuckDB "Query interrupted" retry (nightly stress-test flake)
+# =============================================================================
+
+
+class TestVectorConversionRetriesTransientInterrupt:
+    """`_convert_vector` retries a transient DuckDB "Query interrupted".
+
+    geoparquet-io runs conversions through DuckDB, which non-deterministically
+    raises ``InterruptException('Query interrupted')`` (~1/1000 files) during
+    bulk ``add`` when a pending signal trips its per-query check. The interrupt
+    clears once raised, so a bounded retry keeps one interrupted query from
+    failing a whole 1000-file add. Any other error must still fail fast.
+    """
+
+    @pytest.mark.unit
+    def test_detects_transient_by_exception_name(self) -> None:
+        """Any exception class named ``InterruptException`` is transient."""
+        from portolan_cli.convert import _is_transient_conversion_error
+
+        class InterruptException(Exception):
+            pass
+
+        # Message deliberately lacks "query interrupted" — name alone must match.
+        assert _is_transient_conversion_error(InterruptException("boom")) is True
+
+    @pytest.mark.unit
+    def test_detects_transient_by_message(self) -> None:
+        """A "Query interrupted" message is transient regardless of class."""
+        from portolan_cli.convert import _is_transient_conversion_error
+
+        assert _is_transient_conversion_error(RuntimeError("FATAL: Query interrupted")) is True
+
+    @pytest.mark.unit
+    def test_rejects_non_transient_error(self) -> None:
+        """Ordinary conversion errors are not treated as transient."""
+        from portolan_cli.convert import _is_transient_conversion_error
+
+        assert _is_transient_conversion_error(ValueError("No CRS found")) is False
+
+    @pytest.mark.unit
+    def test_retries_then_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A single transient interrupt is retried and the conversion succeeds."""
+        import geoparquet_io as gpio
+
+        from portolan_cli.convert import _convert_vector
+
+        class InterruptException(Exception):
+            pass
+
+        class _FakeTable:
+            def write(self, path: str) -> None:
+                Path(path).write_text("parquet-bytes")
+
+        calls = {"n": 0}
+
+        def fake_convert(src: str) -> _FakeTable:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise InterruptException("Query interrupted")
+            return _FakeTable()
+
+        monkeypatch.setattr(gpio, "convert", fake_convert)
+
+        out = _convert_vector(tmp_path / "in.geojson", tmp_path)
+
+        assert calls["n"] == 2, "should retry exactly once after the transient interrupt"
+        assert out == tmp_path / "in.parquet"
+        assert out.exists()
+
+    @pytest.mark.unit
+    def test_gives_up_after_max_attempts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A persistent interrupt eventually propagates after the attempt cap."""
+        import geoparquet_io as gpio
+
+        from portolan_cli.convert import _CONVERT_MAX_ATTEMPTS, _convert_vector
+
+        class InterruptException(Exception):
+            pass
+
+        calls = {"n": 0}
+
+        def fake_convert(src: str) -> None:
+            calls["n"] += 1
+            raise InterruptException("Query interrupted")
+
+        monkeypatch.setattr(gpio, "convert", fake_convert)
+
+        with pytest.raises(InterruptException):
+            _convert_vector(tmp_path / "in.geojson", tmp_path)
+
+        assert calls["n"] == _CONVERT_MAX_ATTEMPTS
+
+    @pytest.mark.unit
+    def test_does_not_retry_non_transient(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Non-transient errors fail on the first attempt (no wasted retries)."""
+        import geoparquet_io as gpio
+
+        from portolan_cli.convert import _convert_vector
+
+        calls = {"n": 0}
+
+        def fake_convert(src: str) -> None:
+            calls["n"] += 1
+            raise ValueError("No CRS found")
+
+        monkeypatch.setattr(gpio, "convert", fake_convert)
+
+        with pytest.raises(ValueError, match="No CRS found"):
+            _convert_vector(tmp_path / "in.geojson", tmp_path)
+
+        assert calls["n"] == 1
