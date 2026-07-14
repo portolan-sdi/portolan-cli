@@ -1,7 +1,7 @@
 # Gated catalogs: STAC Authentication (`auth:`) in the Portolan profile
 
 - **Extension:** [STAC Authentication](https://github.com/stac-extensions/authentication) (`auth:`) — an existing STAC extension, adopted; Portolan defines **no authentication namespace of its own**.
-- **Depends on:** the `tokenExchange` OAuth2 flow, proposed upstream in [stac-extensions/authentication#44](https://github.com/stac-extensions/authentication/pull/44) (mirroring [OAI/OpenAPI-Specification#5428](https://github.com/OAI/OpenAPI-Specification/pull/5428)).
+- **Depends on:** the `tokenExchange` OAuth2 flow, proposed upstream in [stac-extensions/authentication#44](https://github.com/stac-extensions/authentication/pull/44) (which extends the pattern proposed for OpenAPI in [OAI/OpenAPI-Specification#5428](https://github.com/OAI/OpenAPI-Specification/pull/5428)).
 - **Status:** draft until the upstream flow is released — the extension maintainer has proposed
   releasing it as a **new minor version** of the Authentication extension, decoupled from the
   OpenAPI timeline. The example pins the `v1.1.0` schema, against which it already validates
@@ -72,9 +72,54 @@ scheme (e.g. `openIdConnect`) declared in the same `auth:schemes` object — whe
 declared, any issuer the vending endpoint trusts is acceptable (the endpoint validates the
 issuer regardless).
 
+## Private sub-catalogs, collections, and items
+
+The two-step flow above covers gated **assets** under public metadata. Metadata documents
+themselves can also be private, and the extension expresses that with the same mechanism:
+**`auth:refs` applies to links too**, so a gated document is declared by gating the *link that
+leads to it* — always in the last publicly-readable document, composing recursively. Three
+levels:
+
+1. **Metadata public, data gated** (the common case, and this profile's default): no
+   `auth:refs` on any link; only assets carry it.
+2. **Document gated, existence listed**: the parent lists the child, and the child *link*
+   carries `auth:refs`. The referenced scheme tells the client what kind of gate it is:
+   - an **identity scheme** (`openIdConnect`) — the document is served by an authenticated
+     endpoint that validates identity tokens (e.g. a token-filtered catalog listing);
+   - the **exchange scheme** — the document lives in access-controlled storage and is fetched
+     with the same exchanged credentials as the data (one credential covers the sub-tree).
+
+   ```jsonc
+   // in the PUBLIC parent catalog.json
+   "links": [
+     { "rel": "child", "href": "https://catalog.example.com/private/confidential",
+       "type": "application/json", "title": "Confidential datasets (sign-in required)",
+       "auth:refs": ["oidc"] }
+   ]
+   ```
+
+3. **Existence hidden**: no metadata can say "there is a secret entry here" — the public root
+   advertises only a **gated entry point** (one link to the authenticated listing, carrying
+   `auth:refs` to the identity scheme). What that endpoint returns after authentication is
+   ordinary STAC whose assets carry the exchange-scheme refs.
+
+Two conventions make this fully machine-actionable:
+
+- schemes referenced by a link's `auth:refs` MUST be declared in the document **carrying the
+  link** (the public side of the gate) — otherwise the client cannot resolve the gate it is
+  standing in front of;
+- an `openIdConnect`-gated link is requested with the identity token presented as
+  `Authorization: Bearer <token>` (the extension defines how tokens are *obtained*; this
+  profile pins the default for how they are *presented*).
+
+The client algorithm is unchanged — resolve each resource's `auth:refs`, follow
+`subjectTokenScheme` edges where a `tokenExchange` flow requires input — so a client walking
+`root → gated child link → collection → gated asset` needs no order knowledge at any depth.
+
 ## Validation (`portolan check`)
 
-For any Collection/Catalog carrying `auth:schemes`, and any asset carrying `auth:refs`:
+For any Collection/Catalog carrying `auth:schemes`, and any asset **or link** carrying
+`auth:refs`:
 
 - every `auth:refs` entry MUST resolve to a key of an `auth:schemes` object in scope;
 - an `openIdConnect` scheme MUST carry `openIdConnectUrl`;
@@ -83,6 +128,9 @@ For any Collection/Catalog carrying `auth:schemes`, and any asset carrying `auth
 - a `tokenExchange` flow MUST carry `subjectTokenScheme`, and its value MUST resolve to a key
   of the same `auth:schemes` object (cross-reference resolution is not expressible in the
   upstream JSON Schema, so this profile enforces it);
+- `subjectTokenScheme` on a flow other than `tokenExchange` SHOULD produce a **warning** (it is
+  meaningless there; the upstream schema deliberately leaves field applicability unenforced,
+  consistent with its existing fields);
 - private (non-anonymously-readable) data assets SHOULD carry `auth:refs`.
 
 ## Security considerations
