@@ -4,7 +4,7 @@
 # Philosophy: Starting from zero, all quality gates are STRICT.
 # Nothing passes with warnings - fix issues or they block the PR.
 #
-# Supply-chain hardening (see sync-spec.yml for the canonical pattern):
+# Supply-chain hardening:
 # - Least-privilege GITHUB_TOKEN: read-only at the top level, widened per job.
 # - Third-party actions are SHA-pinned with a trailing version comment
 #   (Dependabot maintains the pins). actionlint + zizmor (prek.toml) guard this.
