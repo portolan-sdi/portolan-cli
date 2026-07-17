@@ -1339,6 +1339,29 @@ class TestEdgeCases:
             backend.get_current_version(".")
 
     @pytest.mark.unit
+    def test_nested_collection_id_preserves_path(self, tmp_path: Path) -> None:
+        """Nested collection ids must map to a nested versions.json path.
+
+        Regression for issue #650 (defect 1): _versions_path collapsed a nested
+        id to its last segment via Path(collection).name, so "group/mytable"
+        resolved to catalog_root/mytable/versions.json instead of
+        catalog_root/group/mytable/versions.json.
+        """
+        from portolan_cli.backends.json_file import JsonFileBackend
+
+        backend = JsonFileBackend(catalog_root=tmp_path)
+
+        assert (
+            backend._versions_path("group/mytable")
+            == tmp_path / "group" / "mytable" / "versions.json"
+        )
+
+        # Traversal must still be rejected in every segment.
+        for bad in ("..", ".", "a/../b", "a/./b", "group/", "/group", "a\\b"):
+            with pytest.raises(ValueError, match="[Ii]nvalid"):
+                backend._versions_path(bad)
+
+    @pytest.mark.unit
     def test_first_publish_with_breaking_true(self) -> None:
         """First version can be marked as breaking (unusual but valid)."""
         vf = VersionsFile(spec_version="1.0.0", current_version=None, versions=[])

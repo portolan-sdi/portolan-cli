@@ -617,11 +617,37 @@ def _update_versions(
     else:
         raise ValueError("Either asset_files or (output_path, checksum) must be provided")
 
-    publish_version(
+    published = publish_version(
         collection_id,
         assets=assets,
         catalog_root=catalog_root,
     )
+
+    # Mirror the collection's new state into the catalog-level versions.json
+    # index (ADR-0005), matching what finalize_items does for item-level and
+    # geo collection-level assets. The deferred tabular / companion path reaches
+    # versions.json only through here, so without this the collection is missing
+    # from the catalog-level index (issue #650). update_catalog_versions no-ops
+    # when there is no catalog-level versions.json (non-file backends).
+    from portolan_cli.catalog import update_catalog_versions
+
+    try:
+        update_catalog_versions(
+            catalog_root=catalog_root,
+            collection_id=collection_id,
+            current_version=published.version,
+            asset_count=len(published.assets),
+            total_size_bytes=sum(a.size_bytes for a in published.assets.values()),
+        )
+    except Exception:
+        # The collection-level version was published successfully; a catalog-level
+        # sync failure should not fail the add (mirrors _finalize_with_file_backend).
+        logger.warning(
+            "Failed to update catalog-level versions.json for collection '%s'. "
+            "Collection version was published but catalog-level view may be stale.",
+            collection_id,
+            exc_info=True,
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

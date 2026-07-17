@@ -335,6 +335,91 @@ class TestTabularEnabledCheck:
         assert "assets" in collection_data, "collection.json should have assets"
         assert len(collection_data["assets"]) > 0, "Should have at least one asset"
 
+    def test_nested_tabular_collection_sidecar_placed_next_to_collection_json(
+        self, tmp_path: Path
+    ) -> None:
+        """Nested tabular collection id must write versions.json beside collection.json.
+
+        Regression for issue #650 (defect 1): a collection id containing a '/'
+        (e.g. "group/mytable") wrote its own versions.json to the catalog root
+        under the bare last segment ("mytable/") instead of next to its
+        collection.json. Item-level and geo collection-level assets were fine;
+        only the deferred tabular path hit the backend's _versions_path bug.
+        """
+        from portolan_cli.add import add_files
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+
+        # Nested collection id "group/mytable"
+        collection_dir = catalog_root / "group" / "mytable"
+        collection_dir.mkdir(parents=True)
+
+        parquet_file = collection_dir / "mytable.parquet"
+        pq.write_table(pa.table({"geo": ["DE", "FR"], "price": [1.0, 2.0]}), parquet_file)
+
+        config_file = catalog_root / ".portolan" / "config.yaml"
+        config_file.write_text("tabular:\n  enabled: true\n")
+
+        _added, _skipped, failures = add_files(paths=[parquet_file], catalog_root=catalog_root)
+
+        assert failures == []
+        # Sidecar must sit next to collection.json, NOT at the catalog root.
+        assert (collection_dir / "versions.json").exists(), (
+            "versions.json must be written next to the nested collection.json"
+        )
+        assert not (catalog_root / "mytable" / "versions.json").exists(), (
+            "versions.json must not be misplaced at catalog_root/<last-segment>/"
+        )
+
+    def test_tabular_collection_recorded_in_catalog_level_versions(
+        self, tmp_path: Path
+    ) -> None:
+        """Tabular collection-level assets must be indexed in catalog versions.json.
+
+        Regression for issue #650 (defect 2): the deferred tabular path published
+        the collection-level versions.json but never mirrored the collection into
+        the catalog-level versions.json 'collections' map, leaving it empty.
+        """
+        from portolan_cli.add import add_files
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+        # A file-backend catalog has a catalog-level versions.json (init writes it).
+        (catalog_root / "versions.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0.0",
+                    "catalog_id": "test-catalog",
+                    "created": "2026-01-01T00:00:00+00:00",
+                    "collections": {},
+                },
+                indent=2,
+            )
+        )
+
+        collection_dir = catalog_root / "demographics"
+        collection_dir.mkdir()
+        parquet_file = collection_dir / "census.parquet"
+        pq.write_table(pa.table({"tract_id": ["001", "002"], "population": [5000, 7500]}), parquet_file)
+
+        config_file = catalog_root / ".portolan" / "config.yaml"
+        config_file.write_text("tabular:\n  enabled: true\n")
+
+        _added, _skipped, failures = add_files(paths=[parquet_file], catalog_root=catalog_root)
+
+        assert failures == []
+        catalog_versions = json.loads((catalog_root / "versions.json").read_text())
+        collections = catalog_versions["collections"]
+        assert "demographics" in collections, (
+            "collection must be recorded in catalog-level versions.json"
+        )
+        entry = collections["demographics"]
+        assert entry["current_version"] == "1.0.0"
+        assert entry["asset_count"] == 1
+
     def test_tabular_companion_asset_works_regardless_of_config(self, tmp_path: Path) -> None:
         """Tabular files WITH a companion geo file work regardless of tabular.enabled.
 
