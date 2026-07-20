@@ -976,6 +976,108 @@ def _output_catalog_info(result: Any, *, use_json: bool) -> None:
             info_output(line)
 
 
+# =============================================================================
+# Thumbnail command (top-level)
+# =============================================================================
+
+
+@cli.command("thumbnail")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--catalog",
+    "catalog_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Catalog root to read thumbnail config from (default, engine defaults).",
+)
+@click.option("--max-size", type=int, default=None, help="Longest-edge pixels (default 512).")
+@click.option("--quality", type=int, default=None, help="JPEG quality 1-100 (default 75).")
+@click.option(
+    "--basemap",
+    "basemap_provider",
+    type=str,
+    default=None,
+    help="Contextily basemap provider, or 'none' to disable.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def thumbnail_cmd(
+    ctx: click.Context,
+    path: Path,
+    catalog_path: Path | None,
+    max_size: int | None,
+    quality: int | None,
+    basemap_provider: str | None,
+    json_output: bool,
+) -> None:
+    """Generate a JPEG thumbnail next to a data file.
+
+    Writes stem.thumb.jpg beside PATH. A .parquet or .pmtiles input renders a
+    vector thumbnail and needs the [thumbnails] extra. A .tif or .tiff input
+    renders a raster thumbnail and needs rasterio.
+    """
+    from portolan_cli.convert import generate_cog_thumbnail
+    from portolan_cli.viz.thumbnail import (
+        ThumbnailConfig,
+        generate_vector_thumbnail,
+        get_thumbnail_config,
+    )
+
+    use_json = should_output_json(ctx, json_output)
+    suffix = path.suffix.lower()
+
+    try:
+        if suffix in {".parquet", ".pmtiles"}:
+            base_config = get_thumbnail_config(catalog_path) if catalog_path else ThumbnailConfig()
+            config = ThumbnailConfig(
+                enabled=base_config.enabled,
+                max_size=max_size if max_size is not None else base_config.max_size,
+                quality=quality if quality is not None else base_config.quality,
+                basemap_provider=(
+                    basemap_provider
+                    if basemap_provider is not None
+                    else base_config.basemap_provider
+                ),
+                basemap_opacity=base_config.basemap_opacity,
+                basemap_zoom_adjust=base_config.basemap_zoom_adjust,
+            )
+            out = generate_vector_thumbnail(
+                pmtiles_path=path if suffix == ".pmtiles" else None,
+                geoparquet_path=path if suffix == ".parquet" else None,
+                config=config,
+            )
+        elif suffix in {".tif", ".tiff"}:
+            out = generate_cog_thumbnail(
+                path,
+                max_size=max_size if max_size is not None else 512,
+                quality=quality if quality is not None else 75,
+            )
+        else:
+            emit_error(
+                "thumbnail",
+                "UsageError",
+                f"unsupported file type '{suffix}', expected .parquet, .pmtiles, .tif, or .tiff",
+                use_json=use_json,
+            )
+            raise SystemExit(1)
+    except (ValueError, OSError) as err:
+        emit_error("thumbnail", type(err).__name__, str(err), use_json=use_json)
+        raise SystemExit(1) from err
+
+    if out is None:
+        emit_error(
+            "thumbnail",
+            "ThumbnailError",
+            "thumbnail generation produced nothing. For vector data install the extra "
+            "with pip install 'portolan-cli[thumbnails]'.",
+            use_json=use_json,
+        )
+        raise SystemExit(1)
+
+    if not emit_success("thumbnail", {"thumbnail": str(out)}, use_json=use_json):
+        success(f"Wrote {out}")
+
+
 def _output_check_json(report: Any, *, mode: str = "all") -> None:
     """Output check results as JSON envelope.
 
