@@ -589,7 +589,7 @@ Generate `items.parquet` for collections with many items, enabling efficient spa
 ```yaml
 # .portolan/config.yaml
 parquet.enabled: true     # Auto-generate during add (default: false)
-parquet.threshold: 100    # Hint when items exceed threshold (default: 100)
+parquet.threshold: 100    # Min items to generate items.parquet (default: 100)
 ```
 
 !!! note "Flat key syntax"
@@ -617,7 +617,7 @@ portolan add imagery/ --stac-geoparquet
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `parquet.enabled` | `false` | Auto-generate during `add` command |
-| `parquet.threshold` | `100` | Show hint when items exceed threshold |
+| `parquet.threshold` | `100` | Minimum item count for generation. A bulk `stac-geoparquet` run (no `-c`) skips collections at or below this count, and `add` auto-generation and hints use it too. An explicit `stac-geoparquet -c <collection>` generates regardless. |
 
 ### When to Use
 
