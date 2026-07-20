@@ -7560,7 +7560,8 @@ def _process_collection_for_parquet(
 
     Returns:
         _ParquetResult on success/dry-run, None on skip (empty collection in bulk mode),
-        or _ParquetResult with error field set on failure.
+        _ParquetResult with skipped=True (and skip_reason set) for below-threshold
+        collections in bulk mode, or _ParquetResult with error field set on failure.
     """
     from portolan_cli.config import coerce_int, get_setting
     from portolan_cli.stac_parquet import (
