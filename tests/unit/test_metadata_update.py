@@ -9,6 +9,7 @@ Tests for Phase 2c: Update Functions
 
 from __future__ import annotations
 
+import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -189,6 +190,95 @@ class TestUpdateItemMetadata:
         # Verify file was updated on disk
         updated_from_disk = read_item_json(item_path)
         assert updated_from_disk.bbox is not None
+
+    @pytest.mark.unit
+    def test_update_item_metadata_preserves_thumbnail_asset(self, tmp_path: Path) -> None:
+        """Non-data assets (e.g. the thumbnail from #657) survive the refresh (#659)."""
+        collection_dir = tmp_path / "my-collection"
+        collection_dir.mkdir()
+
+        source_file = REALDATA_FIXTURES / "open-buildings.parquet"
+        if not source_file.exists():
+            pytest.skip("Test fixture not available")
+
+        data_file = collection_dir / "data.parquet"
+        shutil.copy(source_file, data_file)
+
+        item = create_item(item_id="data", data_path=data_file, collection_id="my-collection")
+        item_path = write_item_json(item, collection_dir)
+
+        # Inject a thumbnail asset alongside the data asset, as `add` does for COGs.
+        item_json = json.loads(item_path.read_text())
+        item_json["assets"]["thumbnail"] = {
+            "href": "./data.thumb.jpg",
+            "type": "image/jpeg",
+            "roles": ["thumbnail"],
+        }
+        item_path.write_text(json.dumps(item_json, indent=2))
+
+        update_item_metadata(item_path, data_file)
+
+        # Read the raw JSON, the ItemModel round-trip is itself lossy for these.
+        result = json.loads(item_path.read_text())
+        assert "thumbnail" in result["assets"], "thumbnail asset was destroyed by the refresh"
+        assert result["assets"]["thumbnail"]["href"] == "./data.thumb.jpg"
+        assert result["assets"]["thumbnail"]["roles"] == ["thumbnail"]
+        assert "data" in result["assets"]
+
+    @pytest.mark.unit
+    def test_update_item_metadata_preserves_stac_extensions(self, tmp_path: Path) -> None:
+        """stac_extensions (projection, raster, ...) survive the refresh (#659)."""
+        collection_dir = tmp_path / "my-collection"
+        collection_dir.mkdir()
+
+        source_file = REALDATA_FIXTURES / "open-buildings.parquet"
+        if not source_file.exists():
+            pytest.skip("Test fixture not available")
+
+        data_file = collection_dir / "data.parquet"
+        shutil.copy(source_file, data_file)
+
+        item = create_item(item_id="data", data_path=data_file, collection_id="my-collection")
+        item_path = write_item_json(item, collection_dir)
+
+        extensions = [
+            "https://stac-extensions.github.io/projection/v1.1.0/schema.json",
+            "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
+        ]
+        item_json = json.loads(item_path.read_text())
+        item_json["stac_extensions"] = extensions
+        item_path.write_text(json.dumps(item_json, indent=2))
+
+        update_item_metadata(item_path, data_file)
+
+        result = json.loads(item_path.read_text())
+        assert result.get("stac_extensions") == extensions
+
+    @pytest.mark.unit
+    def test_update_item_metadata_preserves_data_asset_bands(self, tmp_path: Path) -> None:
+        """The data asset's bands / statistics survive the refresh (#659)."""
+        collection_dir = tmp_path / "my-collection"
+        collection_dir.mkdir()
+
+        source_file = REALDATA_FIXTURES / "open-buildings.parquet"
+        if not source_file.exists():
+            pytest.skip("Test fixture not available")
+
+        data_file = collection_dir / "data.parquet"
+        shutil.copy(source_file, data_file)
+
+        item = create_item(item_id="data", data_path=data_file, collection_id="my-collection")
+        item_path = write_item_json(item, collection_dir)
+
+        bands = [{"name": "b1", "statistics": {"minimum": 0.0, "maximum": 255.0}}]
+        item_json = json.loads(item_path.read_text())
+        item_json["assets"]["data"]["bands"] = bands
+        item_path.write_text(json.dumps(item_json, indent=2))
+
+        update_item_metadata(item_path, data_file)
+
+        result = json.loads(item_path.read_text())
+        assert result["assets"]["data"].get("bands") == bands
 
 
 class TestCreateMissingItem:
