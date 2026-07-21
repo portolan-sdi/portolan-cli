@@ -252,9 +252,13 @@ def _add_schema_section(sections: list[str], stac: dict[str, Any]) -> None:
 
 
 def _add_bands_section(sections: list[str], stac: dict[str, Any]) -> None:
-    """Add bands from eo:bands or raster:bands."""
+    """Add bands from eo:bands, the unified bands array, or legacy raster:bands."""
     summaries = stac.get("summaries", {})
-    bands = summaries.get("eo:bands", []) or summaries.get("raster:bands", [])
+    bands = (
+        summaries.get("eo:bands", [])
+        or summaries.get("bands", [])
+        or summaries.get("raster:bands", [])
+    )
 
     if not bands:
         return

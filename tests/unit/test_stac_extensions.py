@@ -989,6 +989,19 @@ class TestRasterExtension:
     """
 
     @pytest.mark.unit
+    def test_raster_extension_pinned_to_v2(self) -> None:
+        """The raster extension URL matches the band model we emit (v2.0.0).
+
+        v2.0.0 is the release that drops `raster:bands` for the unified top-level
+        `bands`, which is exactly what Portolan writes.
+        """
+        from portolan_cli.stac import EXTENSION_URLS
+
+        assert EXTENSION_URLS["raster"] == (
+            "https://stac-extensions.github.io/raster/v2.0.0/schema.json"
+        )
+
+    @pytest.mark.unit
     def test_build_stac_extensions_detects_bands_key(self) -> None:
         """build_stac_extensions includes raster extension when 'bands' key present.
 

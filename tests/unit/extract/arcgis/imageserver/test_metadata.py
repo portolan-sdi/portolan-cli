@@ -205,6 +205,25 @@ class TestCreateCollectionMetadata:
         result = create_collection_metadata(multiband_metadata, "https://example.com")
         assert "summaries" in result
 
+    def test_summaries_use_unified_bands(
+        self, multiband_metadata: ImageServerMetadata
+    ) -> None:
+        """Summaries carry unified `bands` (v2.0.0), never legacy `raster:bands`."""
+        result = create_collection_metadata(multiband_metadata, "https://example.com")
+        summaries = result["summaries"]
+        assert "raster:bands" not in summaries
+        assert len(summaries["bands"]) == multiband_metadata.band_count
+
+    def test_collection_declares_raster_v2(
+        self, multiband_metadata: ImageServerMetadata
+    ) -> None:
+        """Collection declares the raster extension at v2.0.0."""
+        result = create_collection_metadata(multiband_metadata, "https://example.com")
+        assert (
+            "https://stac-extensions.github.io/raster/v2.0.0/schema.json"
+            in result["stac_extensions"]
+        )
+
     def test_links_include_source(self, sample_metadata: ImageServerMetadata) -> None:
         """Links include source URL to ImageServer."""
         url = "https://example.com/arcgis/rest/services/Test/ImageServer"
@@ -369,3 +388,25 @@ class TestCreateItemMetadata:
         extensions = result.get("stac_extensions", [])
         raster_ext = [ext for ext in extensions if "raster" in ext]
         assert len(raster_ext) >= 1
+
+    def test_declares_raster_v2(
+        self, sample_tile: TileSpec, sample_metadata: ImageServerMetadata
+    ) -> None:
+        """Item declares the raster extension at v2.0.0, matching the band model."""
+        result = create_item_metadata(sample_tile, sample_metadata, "data.tif")
+        assert (
+            "https://stac-extensions.github.io/raster/v2.0.0/schema.json"
+            in result["stac_extensions"]
+        )
+
+    def test_asset_bands_uses_unified_key(
+        self, sample_tile: TileSpec, sample_metadata: ImageServerMetadata
+    ) -> None:
+        """Data asset carries unified `bands` (v2.0.0), never legacy `raster:bands`."""
+        result = create_item_metadata(sample_tile, sample_metadata, "data.tif")
+        data_asset = result["assets"]["data"]
+        assert "raster:bands" not in data_asset
+        bands = data_asset["bands"]
+        assert isinstance(bands, list) and len(bands) == sample_metadata.band_count
+        assert bands[0]["name"] == "band_1"
+        assert bands[0]["data_type"] == "float32"
