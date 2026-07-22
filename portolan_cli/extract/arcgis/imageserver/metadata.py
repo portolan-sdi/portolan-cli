@@ -98,7 +98,7 @@ def create_collection_metadata(
         "type": "Collection",
         "stac_version": get_stac_version(),
         "stac_extensions": [
-            "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
+            "https://stac-extensions.github.io/raster/v2.0.0/schema.json",
         ],
         "id": collection_id,
         "title": service_metadata.name,
@@ -172,7 +172,7 @@ def create_item_metadata(
         "type": "Feature",
         "stac_version": get_stac_version(),
         "stac_extensions": [
-            "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
+            "https://stac-extensions.github.io/raster/v2.0.0/schema.json",
         ],
         "id": item_id,
         "geometry": geometry,
@@ -206,7 +206,7 @@ def create_item_metadata(
                 "type": COG_MEDIA_TYPE,
                 "title": "Cloud-Optimized GeoTIFF",
                 "roles": ["data"],
-                "raster:bands": _build_raster_bands(service_metadata),
+                "bands": _build_bands(service_metadata),
             },
         },
     }
@@ -273,10 +273,10 @@ def _build_summaries(metadata: ImageServerMetadata) -> dict[str, Any]:
     """
     summaries: dict[str, Any] = {}
 
-    # Band information using raster extension
-    raster_bands = _build_raster_bands(metadata)
-    if raster_bands:
-        summaries["raster:bands"] = raster_bands
+    # Band information using the raster extension's unified `bands` model (v2.0.0)
+    bands = _build_bands(metadata)
+    if bands:
+        summaries["bands"] = bands
 
     # Add basic band count info
     summaries["eo:bands"] = [{"name": f"band_{i + 1}"} for i in range(metadata.band_count)]
@@ -284,14 +284,17 @@ def _build_summaries(metadata: ImageServerMetadata) -> dict[str, Any]:
     return summaries
 
 
-def _build_raster_bands(metadata: ImageServerMetadata) -> list[dict[str, Any]]:
-    """Build raster:bands array for STAC raster extension.
+def _build_bands(metadata: ImageServerMetadata) -> list[dict[str, Any]]:
+    """Build the unified ``bands`` array for the STAC raster extension (v2.0.0).
+
+    Raster v2.0.0 drops ``raster:bands`` in favor of the STAC 1.1 common-metadata
+    ``bands`` array, which is what the COG pipeline also emits.
 
     Args:
         metadata: ImageServer metadata.
 
     Returns:
-        List of band objects with data_type.
+        List of band objects with name and data_type.
     """
     # Map ArcGIS pixel types to STAC data types
     pixel_type_map = {

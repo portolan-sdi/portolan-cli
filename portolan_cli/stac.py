@@ -731,13 +731,15 @@ def update_collection_temporal_extent(
     collection.extent.temporal = pystac.TemporalExtent(intervals=[[new_start, new_end]])
 
 
-# STAC Extension schema URLs (v1.1.0 compatible)
+# STAC Extension schema URLs
 # Note: "file" extension is reserved for future use (checksums, sizes)
-# Currently only table, projection, and raster are actively used
+# Currently only table, projection, and raster are actively used.
+# Raster is v2.0.0, the release that drops `raster:bands` for the STAC 1.1
+# unified top-level `bands` array we emit (see ADR-0057).
 EXTENSION_URLS = {
     "table": "https://stac-extensions.github.io/table/v1.2.0/schema.json",
     "projection": "https://stac-extensions.github.io/projection/v2.0.0/schema.json",
-    "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
+    "raster": "https://stac-extensions.github.io/raster/v2.0.0/schema.json",
     "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",  # Reserved for future
     "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",  # Proposal maturity
     "partition": "https://portolan-sdi.github.io/stac-partition-extension/v1.0.0/schema.json",
