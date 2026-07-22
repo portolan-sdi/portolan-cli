@@ -27,6 +27,7 @@ import pystac
 from portolan_cli import extension_registry as _reg
 from portolan_cli.collection_id import normalize_collection_id, validate_collection_id
 from portolan_cli.config import get_setting, load_merged_metadata
+from portolan_cli.convert import run_with_transient_convert_retry
 from portolan_cli.crs import transform_bbox_to_wgs84
 from portolan_cli.errors import NoGeometryError
 from portolan_cli.formats import FormatType, detect_format, is_cloud_optimized_geotiff
@@ -1117,8 +1118,13 @@ def convert_vector(source: Path, dest_dir: Path) -> Path:
         shutil.copy2(source, output_path)
         return output_path
 
-    # Convert using geoparquet-io fluent API
-    gpio.convert(str(source)).write(str(output_path))
+    # Convert using geoparquet-io fluent API. Wrapped in the shared retry so a
+    # transient DuckDB "Query interrupted" does not fail a bulk add (Issue #339
+    # nightly test_add_1000_files_* flake); this is the code path add uses.
+    run_with_transient_convert_retry(
+        lambda: gpio.convert(str(source)).write(str(output_path)),
+        source_name=source.name,
+    )
 
     return output_path
 
@@ -1153,11 +1159,15 @@ def convert_tabular(source: Path, dest_dir: Path) -> Path:
     # Convert CSV/TSV/XLSX using geoparquet-io
     # gpio.convert() auto-detects format and handles non-geo files correctly
     # (logs "Reading as plain table" and returns Table with geometry_column=None)
-    table = gpio.convert(str(source))
+    # Write with standard Parquet settings (compression, row groups); gpio v1.2.0+
+    # handles geometry_column=None correctly in all write strategies. Wrapped in
+    # the shared retry so a transient DuckDB "Query interrupted" does not fail a
+    # bulk add on the tabular path (Issue #339).
+    def _run() -> None:
+        table = gpio.convert(str(source))
+        table.write(str(output_path))
 
-    # Write with standard Parquet settings (compression, row groups)
-    # gpio v1.2.0+ handles geometry_column=None correctly in all write strategies
-    table.write(str(output_path))
+    run_with_transient_convert_retry(_run, source_name=source.name)
 
     return output_path
 
