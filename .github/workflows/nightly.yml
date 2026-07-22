@@ -221,10 +221,45 @@ jobs:
         # Keep the workflow green; the tracking-issue step below is the signal.
         continue-on-error: true
         run: |
+          # -rfE prints a short "FAILED/ERROR" summary at the tail; tee keeps a
+          # copy so the run-summary + tracking-issue steps below can name the
+          # tests that failed. Default bash pipefail preserves pytest's exit
+          # code through the pipe, so the step outcome is unchanged.
           uv run pytest tests/ \
             -m network \
             --timeout=120 \
-            -v
+            -v -rfE \
+            2>&1 | tee network-test-output.txt
+
+      - name: Surface network-test failure in run summary
+        # continue-on-error above keeps the job badge green even though the
+        # step's real outcome was 'failure' — which has misled triage. Make the
+        # failure legible in the run summary and capture the failing test names
+        # for the tracking issue body. Pass/fail semantics are untouched: this
+        # only runs on the failure path and only adds information.
+        if: steps.nettests.outcome == 'failure'
+        run: |
+          {
+            echo "## ⚠️ Live network tests FAILED (non-blocking)"
+            echo ""
+            echo "The \`nettests\` step outcome was **failure**, but the job badge"
+            echo "stays green by design (live third-party services). See the"
+            echo "tracking issue for history."
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          if grep -E '^(FAILED|ERROR)' network-test-output.txt \
+               > network-test-failures.txt; then
+            {
+              echo "Failing tests:"
+              echo ""
+              echo '```'
+              cat network-test-failures.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "_No individual FAILED/ERROR lines were captured (the step may" \
+                 "have crashed before pytest reported)._" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Track live-network status as a single issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -234,11 +269,23 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         with:
           script: |
+            const fs = require('fs');
             const {owner, repo} = context.repo;
             const outcome = process.env.TESTS_OUTCOME;
             const runUrl = process.env.RUN_URL;
             const label = 'nightly-network-failure';
             const title = 'Nightly live-network tests are failing';
+
+            // Failing-test names captured by the "Surface network-test failure"
+            // step (pytest -rfE short summary). Best-effort: absent if the step
+            // crashed before pytest reported.
+            let failures = '';
+            try {
+              failures = fs.readFileSync('network-test-failures.txt', 'utf8').trim();
+            } catch {}
+            const failuresBlock = failures
+              ? ['**Failing tests:**', '', '```', failures, '```']
+              : ['_Failing test names were not captured — see the run log._'];
 
             // Ensure the tracking label exists (idempotent).
             try {
@@ -260,6 +307,8 @@ jobs:
                 'The nightly **live-network** test job failed against third-party',
                 'services. This job is non-blocking (live servers can be flaky), but a',
                 'persistent failure may indicate a real regression in an extractor.',
+                '',
+                ...failuresBlock,
                 '',
                 `Latest failing run: ${runUrl}`,
                 '',
