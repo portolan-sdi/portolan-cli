@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -100,6 +101,101 @@ def catalog_with_collection(tmp_path: Path) -> Path:
         ],
     }
     (collection_dir / "collection.json").write_text(json.dumps(collection_json, indent=2))
+
+    return catalog_root
+
+
+@pytest.fixture
+def catalog_with_small_collection(tmp_path: Path) -> Path:
+    """Create a catalog with a single-item collection and a versions.json at 1.0.0.
+
+    Used to reproduce issue #653: a below-threshold collection must not have
+    items.parquet generated (nor its version bumped) during a BULK sweep.
+    """
+    catalog_root = tmp_path / "catalog"
+    catalog_root.mkdir()
+
+    portolan_dir = catalog_root / ".portolan"
+    portolan_dir.mkdir()
+    (portolan_dir / "config.yaml").write_text("")
+
+    catalog_json = {
+        "type": "Catalog",
+        "stac_version": "1.0.0",
+        "id": "test-catalog",
+        "description": "Test catalog",
+        "links": [
+            {"rel": "root", "href": "./catalog.json"},
+            {"rel": "child", "href": "./tiny/collection.json"},
+        ],
+    }
+    (catalog_root / "catalog.json").write_text(json.dumps(catalog_json, indent=2))
+
+    collection_dir = catalog_root / "tiny"
+    collection_dir.mkdir()
+
+    item_id = "scene-000"
+    item_dir = collection_dir / item_id
+    item_dir.mkdir()
+    item_json = {
+        "type": "Feature",
+        "stac_version": "1.0.0",
+        "id": item_id,
+        "geometry": {"type": "Point", "coordinates": [-122.0, 37.5]},
+        "bbox": [-122.0, 37.5, -122.0, 37.5],
+        "properties": {"datetime": "2024-01-01T00:00:00Z"},
+        "assets": {
+            "data": {
+                "href": f"./{item_id}.tif",
+                "type": "image/tiff; application=geotiff",
+                "roles": ["data"],
+            }
+        },
+        "links": [],
+        "collection": "tiny",
+    }
+    (item_dir / f"{item_id}.json").write_text(json.dumps(item_json, indent=2))
+
+    collection_json = {
+        "type": "Collection",
+        "stac_version": "1.0.0",
+        "id": "tiny",
+        "description": "Tiny collection",
+        "license": "CC-BY-4.0",
+        "extent": {
+            "spatial": {"bbox": [[-122.0, 37.5, -122.0, 37.5]]},
+            "temporal": {"interval": [["2024-01-01T00:00:00Z", None]]},
+        },
+        "links": [
+            {"rel": "root", "href": "../catalog.json"},
+            {"rel": "self", "href": "./collection.json"},
+            {"rel": "item", "href": f"./{item_id}/{item_id}.json"},
+        ],
+    }
+    (collection_dir / "collection.json").write_text(json.dumps(collection_json, indent=2))
+
+    # Pre-existing versions.json pinned at 1.0.0 (no items.parquet asset yet).
+    versions_json = {
+        "spec_version": "1.0.0",
+        "current_version": "1.0.0",
+        "versions": [
+            {
+                "version": "1.0.0",
+                "created": "2024-01-01T00:00:00Z",
+                "breaking": False,
+                "assets": {
+                    "scene-000/scene-000.tif": {
+                        "sha256": "0" * 64,
+                        "size_bytes": 1,
+                        "href": "tiny/scene-000/scene-000.tif",
+                    }
+                },
+                "changes": [],
+                "message": "initial",
+            }
+        ],
+    }
+    (collection_dir / "versions.json").write_text(json.dumps(versions_json, indent=2))
 
     return catalog_root
 
@@ -225,7 +321,14 @@ class TestStacGeoparquetCatalogLevel:
     def test_generate_all_collections(
         self, runner: CliRunner, catalog_with_collection: Path
     ) -> None:
-        """Test that omitting --collection generates for all collections."""
+        """Test that omitting --collection generates for above-threshold collections.
+
+        The fixture has 3 items (below the default 100 threshold), so lower the
+        threshold via config to keep exercising the bulk-iteration path.
+        """
+        (catalog_with_collection / ".portolan" / "config.yaml").write_text(
+            "parquet:\n  threshold: 0\n"
+        )
         result = runner.invoke(
             cli,
             [
@@ -244,6 +347,9 @@ class TestStacGeoparquetCatalogLevel:
         self, runner: CliRunner, catalog_with_collection: Path
     ) -> None:
         """Test JSON output for catalog-level generation."""
+        (catalog_with_collection / ".portolan" / "config.yaml").write_text(
+            "parquet:\n  threshold: 0\n"
+        )
         result = runner.invoke(
             cli,
             [
@@ -258,6 +364,138 @@ class TestStacGeoparquetCatalogLevel:
         data = json.loads(result.output)
         assert data["success"] is True
         assert data["data"]["collections_processed"] >= 1
+
+
+# =============================================================================
+# Test: Bulk Threshold Gate (issue #653)
+# =============================================================================
+
+
+class TestStacGeoparquetBulkThreshold:
+    """Bulk generation must respect the item-count threshold (issue #653)."""
+
+    @pytest.mark.unit
+    def test_bulk_skips_below_threshold_collection(
+        self, runner: CliRunner, catalog_with_small_collection: Path
+    ) -> None:
+        """BULK: a 1-item collection (<= threshold 100) is skipped, not generated.
+
+        Regression for #653: no items.parquet on disk, versions.json stays at
+        1.0.0 with no items.parquet asset, and the collection is reported skipped.
+        """
+        collection_dir = catalog_with_small_collection / "tiny"
+
+        result = runner.invoke(
+            cli,
+            [
+                "stac-geoparquet",
+                "--catalog",
+                str(catalog_with_small_collection),
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0
+
+        # No derived parquet file was created.
+        assert not (collection_dir / "items.parquet").exists()
+
+        # versions.json was not bumped and has no items.parquet asset.
+        versions = json.loads((collection_dir / "versions.json").read_text())
+        assert versions["current_version"] == "1.0.0"
+        assert len(versions["versions"]) == 1
+        for version in versions["versions"]:
+            assert "items.parquet" not in version["assets"]
+
+        # The skip is surfaced in the JSON envelope (no silent drop).
+        data = json.loads(result.output)
+        assert data["success"] is True
+        skipped_ids = [entry["collection"] for entry in data["data"].get("skipped", [])]
+        assert "tiny" in skipped_ids
+
+    @pytest.mark.unit
+    def test_bulk_generates_above_threshold_collection(
+        self, runner: CliRunner, catalog_with_small_collection: Path
+    ) -> None:
+        """BULK: a collection with > 100 items still generates (no over-correction).
+
+        Item generation is mocked so we do not have to create 100+ real items.
+        """
+        collection_dir = catalog_with_small_collection / "tiny"
+        collection_json = json.loads((collection_dir / "collection.json").read_text())
+        # Inflate to 101 item links so count_items() > default threshold (100).
+        base_links = [link for link in collection_json["links"] if link.get("rel") != "item"]
+        item_links = [
+            {"rel": "item", "href": f"./scene-{i:03d}/scene-{i:03d}.json"} for i in range(101)
+        ]
+        collection_json["links"] = base_links + item_links
+        (collection_dir / "collection.json").write_text(json.dumps(collection_json, indent=2))
+
+        with (
+            patch("portolan_cli.stac_parquet.generate_items_parquet") as gen,
+            patch("portolan_cli.stac_parquet.add_parquet_link_to_collection"),
+            patch("portolan_cli.stac_parquet.track_parquet_in_versions"),
+        ):
+            gen.return_value = collection_dir / "items.parquet"
+            result = runner.invoke(
+                cli,
+                [
+                    "stac-geoparquet",
+                    "--catalog",
+                    str(catalog_with_small_collection),
+                    "--json",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert gen.called
+        assert gen.call_args.args[0] == collection_dir
+
+    @pytest.mark.unit
+    def test_explicit_small_collection_still_generates(
+        self, runner: CliRunner, catalog_with_small_collection: Path
+    ) -> None:
+        """EXPLICIT --collection: a 1-item collection still generates (explicit intent)."""
+        collection_dir = catalog_with_small_collection / "tiny"
+
+        result = runner.invoke(
+            cli,
+            [
+                "stac-geoparquet",
+                "--collection",
+                "tiny",
+                "--catalog",
+                str(catalog_with_small_collection),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert (collection_dir / "items.parquet").exists()
+
+    @pytest.mark.unit
+    def test_bulk_respects_threshold_override(
+        self, runner: CliRunner, catalog_with_small_collection: Path
+    ) -> None:
+        """BULK: a configured threshold of 0 makes a 1-item collection generate.
+
+        Guards against a hardcoded 100, the threshold must come from config.
+        """
+        (catalog_with_small_collection / ".portolan" / "config.yaml").write_text(
+            "parquet:\n  threshold: 0\n"
+        )
+        collection_dir = catalog_with_small_collection / "tiny"
+
+        result = runner.invoke(
+            cli,
+            [
+                "stac-geoparquet",
+                "--catalog",
+                str(catalog_with_small_collection),
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert (collection_dir / "items.parquet").exists()
 
 
 # =============================================================================

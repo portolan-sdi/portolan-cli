@@ -272,6 +272,70 @@ class TestAddIntegration:
         assert (collection_dir / "collection.json").exists()
 
     @pytest.mark.integration
+    def test_add_raster_registers_thumbnail_asset(
+        self, initialized_catalog: Path, valid_rgb_cog: Path
+    ) -> None:
+        """add generates a COG thumbnail sidecar and registers it as an asset (Issue #657).
+
+        The add path converts via convert_raster(), which historically did not
+        generate a thumbnail, so COG items had only a "data" asset. This asserts
+        the thumbnail is both written to disk and registered with role
+        "thumbnail" in the item.json.
+        """
+        # Per ADR-0022: Copy file INTO catalog first
+        collection_dir = initialized_catalog / "imagery"
+        item_dir = collection_dir / valid_rgb_cog.stem
+        item_dir.mkdir(parents=True)
+        in_catalog_path = item_dir / valid_rgb_cog.name
+        shutil.copy(valid_rgb_cog, in_catalog_path)
+
+        add(
+            path=in_catalog_path,
+            catalog_root=initialized_catalog,
+            collection_id="imagery",
+        )
+
+        # The .thumb.jpg sidecar is written next to the COG.
+        thumb_path = item_dir / f"{valid_rgb_cog.stem}.thumb.jpg"
+        assert thumb_path.exists(), "add did not generate the COG thumbnail sidecar"
+
+        # And it is registered as a thumbnail-role asset in the item.json.
+        item_json = item_dir / f"{valid_rgb_cog.stem}.json"
+        assets = json.loads(item_json.read_text())["assets"]
+        thumbnail_assets = [
+            asset for asset in assets.values() if "thumbnail" in asset.get("roles", [])
+        ]
+        assert len(thumbnail_assets) == 1, f"expected one thumbnail asset, got {assets}"
+        assert thumbnail_assets[0]["href"] == f"./{valid_rgb_cog.stem}.thumb.jpg"
+        assert thumbnail_assets[0]["type"] == "image/jpeg"
+
+    @pytest.mark.integration
+    def test_add_raster_thumbnail_disabled_via_config(
+        self, initialized_catalog: Path, valid_rgb_cog: Path
+    ) -> None:
+        """generate_thumbnail=false suppresses the COG thumbnail sidecar (Issue #657)."""
+        (initialized_catalog / ".portolan" / "config.yaml").write_text(
+            "version: 1\nconversion:\n  cog:\n    generate_thumbnail: false\n"
+        )
+        collection_dir = initialized_catalog / "imagery"
+        item_dir = collection_dir / valid_rgb_cog.stem
+        item_dir.mkdir(parents=True)
+        in_catalog_path = item_dir / valid_rgb_cog.name
+        shutil.copy(valid_rgb_cog, in_catalog_path)
+
+        add(
+            path=in_catalog_path,
+            catalog_root=initialized_catalog,
+            collection_id="imagery",
+        )
+
+        assert not (item_dir / f"{valid_rgb_cog.stem}.thumb.jpg").exists()
+        item_json = item_dir / f"{valid_rgb_cog.stem}.json"
+        assets = json.loads(item_json.read_text())["assets"]
+        thumbnail_assets = [a for a in assets.values() if "thumbnail" in a.get("roles", [])]
+        assert thumbnail_assets == []
+
+    @pytest.mark.integration
     def test_add_multiple_items_same_collection(
         self, initialized_catalog: Path, valid_points_geojson: Path, valid_polygons_geojson: Path
     ) -> None:

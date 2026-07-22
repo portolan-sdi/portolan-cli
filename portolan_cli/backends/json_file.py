@@ -77,13 +77,16 @@ class JsonFileBackend:
         """
         if not collection or not collection.strip():
             raise ValueError("Collection name cannot be empty")
-        # Normalize path to prevent directory traversal (MAJOR #8)
-        safe_collection = Path(collection).name
-        # Explicitly reject traversal attempts that survive Path.name
-        if safe_collection in ("", ".", ".."):
+        # Preserve nested collection ids (ADR-0032, e.g. "climate/hittekaart")
+        # while still rejecting directory traversal (MAJOR #8). Splitting on "/"
+        # and validating each segment replaces the old Path(collection).name,
+        # which collapsed a nested id to its last segment and misplaced the
+        # sidecar at the catalog root (issue #650).
+        parts = collection.split("/")
+        if "\\" in collection or any(part in ("", ".", "..") for part in parts):
             raise ValueError(f"Invalid collection name: {collection!r}")
         # versions.json at collection root (per ADR-0023)
-        return self._catalog_root / safe_collection / "versions.json"
+        return self._catalog_root / Path(*parts) / "versions.json"
 
     def get_current_version(self, collection: str) -> Version:
         """Get the current (latest) version of a collection.
