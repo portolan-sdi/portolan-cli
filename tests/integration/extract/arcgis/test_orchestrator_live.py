@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 
+from portolan_cli.extract.arcgis.discovery import ArcGISDiscoveryError
 from portolan_cli.extract.arcgis.orchestrator import (
     ExtractionOptions,
+    ServicesRootDiscoveryResult,
     extract_arcgis_catalog,
     list_services,
 )
@@ -150,10 +153,45 @@ SA_ROOT = "https://nspdr.dlrrd.gov.za/server/rest/services"
 JRC_ROOT = "https://arcgis-maps.jrc.ec.europa.eu/federated_server/rest/services"
 
 
+def _list_services_or_skip(root: str, *, timeout: float = 60.0) -> ServicesRootDiscoveryResult:
+    """Call ``list_services``, skipping only on a genuine connectivity outage.
+
+    The folder-traversal tests below point at third-party government / EU ArcGIS
+    servers that periodically go offline. A live external-dependency outage must
+    not hard-fail the suite, but a *real* failure a live-up server can surface
+    (an HTTP error, invalid JSON, or an embedded ArcGIS error payload) must still
+    fail loudly so regressions are caught.
+
+    ``ArcGISDiscoveryError`` is a flat type with no connectivity/HTTP subclass or
+    error-code attribute, so we discriminate via the cause chain: ``_fetch_json``
+    wraps transport failures as ``... from <httpx.RequestError>`` (connection
+    refused, DNS failure, timeout), whereas HTTP-status (>=400, incl. 499),
+    invalid-JSON, and embedded-error cases carry no ``httpx.RequestError`` cause.
+    Only the transport case is treated as an unreachable endpoint and skipped;
+    everything else is re-raised.
+    """
+    try:
+        return list_services(root, timeout=timeout)
+    except ArcGISDiscoveryError as exc:
+        if isinstance(exc.__cause__, httpx.RequestError):
+            pytest.skip(f"live ArcGIS endpoint unreachable: {exc}")
+        raise
+
+
 @pytest.mark.network
 @pytest.mark.slow
 def test_sa_root_traverses_folders() -> None:
-    result = list_services(SA_ROOT, timeout=60.0)
+    result = _list_services_or_skip(SA_ROOT, timeout=60.0)
+    # This test asserts the NationalDatasets folder's services are surfaced, so
+    # it can only run if that folder was actually traversed. Folder-level fetch
+    # errors are recorded (never raised) in coverage.folders_skipped; when the
+    # live server leaves NationalDatasets un-traversed the run is an outage, not
+    # a recursion regression, so skip before asserting. A healthy server
+    # traverses it and the assertions run.
+    if result.coverage is not None and "NationalDatasets" in {
+        folder for folder, _reason in result.coverage.folders_skipped
+    }:
+        pytest.skip("NationalDatasets folder unreachable on live SA endpoint")
     names = [s.name for s in result.services]
     # NationalDatasets services live in a folder; recursion must surface them
     assert any(n.startswith("NationalDatasets/") for n in names)
@@ -165,6 +203,13 @@ def test_sa_root_traverses_folders() -> None:
 @pytest.mark.slow
 def test_jrc_root_has_only_folder_services() -> None:
     # JRC root has ZERO top-level services; everything is in folders.
-    result = list_services(JRC_ROOT, timeout=60.0)
+    result = _list_services_or_skip(JRC_ROOT, timeout=60.0)
+    # A total outage can leave the root reachable but every folder un-traversed,
+    # yielding zero services (an outage, not a regression). Gate on "nothing
+    # surfaced": routinely secured system folders (e.g. Utilities, which returns
+    # 499 Token Required on healthy servers too) land in folders_skipped and must
+    # NOT skip this test, so a non-empty folders_skipped alone is not enough.
+    if not result.services and result.coverage is not None and result.coverage.folders_skipped:
+        pytest.skip("live JRC endpoint degraded; no services surfaced")
     assert len(result.services) > 0
     assert all("/" in s.name for s in result.services)
