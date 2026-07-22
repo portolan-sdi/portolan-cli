@@ -7538,6 +7538,8 @@ class _ParquetResult:
     parquet_path: str
     dry_run: bool = False
     error: ErrorDetail | None = None
+    skipped: bool = False
+    skip_reason: str | None = None
 
 
 def _process_collection_for_parquet(
@@ -7560,6 +7562,7 @@ def _process_collection_for_parquet(
         _ParquetResult on success/dry-run, None on skip (empty collection in bulk mode),
         or _ParquetResult with error field set on failure.
     """
+    from portolan_cli.config import coerce_int, get_setting
     from portolan_cli.stac_parquet import (
         add_parquet_link_to_collection,
         count_items,
@@ -7599,6 +7602,30 @@ def _process_collection_for_parquet(
             error(f"No items found in collection '{coll_id}'")
         return _ParquetResult(coll_id, 0, "", error=err)
 
+    # Threshold gate for BULK mode only (issue #653, ADR-0049).
+    # items.parquet is a derived, regenerable index; the STAC-GeoParquet profile
+    # only recommends it above a threshold (default 100). In a catalog-wide sweep
+    # (no explicit --collection), skip below-threshold collections so we do not
+    # record a phantom derived asset or bump the version. An EXPLICIT single
+    # --collection invocation is honored regardless of threshold (explicit intent
+    # must not silently no-op). Read the threshold hierarchically (ADR-0039), the
+    # same way the add-time path does in generate_or_suggest_parquet.
+    if is_bulk:
+        threshold = coerce_int(
+            get_setting(
+                "parquet.threshold",
+                catalog_path=catalog_path,
+                collection=coll_id,
+                collection_path=collection_path,
+            ),
+            default=100,
+        )
+        if item_count <= threshold:
+            reason = f"{item_count} items (<= threshold {threshold})"
+            if not use_json:
+                detail(f"Skipping '{coll_id}': {reason}")
+            return _ParquetResult(coll_id, item_count, "", skipped=True, skip_reason=reason)
+
     parquet_path = collection_path / "items.parquet"
 
     if dry_run:
@@ -7628,6 +7655,7 @@ def _process_collection_for_parquet(
 def _output_parquet_results(
     results: list[dict[str, Any]],
     errors_list: list[ErrorDetail],
+    skipped_list: list[dict[str, Any]],
     total_items: int,
     is_bulk: bool,
     dry_run: bool,
@@ -7651,6 +7679,12 @@ def _output_parquet_results(
         if errors_list:
             warn(f"  {len(errors_list)} collection(s) failed")
 
+    # Surface below-threshold skips (no silent drop). Bulk-only sentinel.
+    if not use_json and skipped_list:
+        skipped_names = ", ".join(entry["collection"] for entry in skipped_list)
+        info_output(f"Skipped {len(skipped_list)} below-threshold collection(s): {skipped_names}")
+        detail("    Use 'stac-geoparquet -c <collection>' to force generation.")
+
     # JSON output
     if use_json:
         if had_errors and not results:
@@ -7661,6 +7695,7 @@ def _output_parquet_results(
                 {
                     "collections_processed": len(results),
                     "results": results,
+                    "skipped": skipped_list,
                     "errors": [{"type": e.type, "message": e.message} for e in errors_list],
                 },
             )
@@ -7676,7 +7711,10 @@ def _output_parquet_results(
     "-c",
     required=False,
     default=None,
-    help="Collection ID to generate parquet for. If omitted, generates for all collections.",
+    help=(
+        "Collection ID to generate parquet for. If omitted, sweeps every collection "
+        "in the catalog, skipping those at or below parquet.threshold (default 100)."
+    ),
 )
 @click.option(
     "--catalog",
@@ -7704,17 +7742,21 @@ def stac_geoparquet(
     Creates a GeoParquet file containing all items in a collection,
     enabling fast spatial/temporal queries without N HTTP requests.
 
-    This is optional but recommended for collections with >100 items.
-    The parquet file is added as a link in collection.json.
+    This is optional but recommended for collections with >100 items
+    (items.parquet is a derived, regenerable index, per ADR-0049). The parquet
+    file is added as a link in collection.json.
 
-    If --collection is omitted, generates for ALL collections in the catalog.
+    If --collection is omitted, sweeps every collection in the catalog but skips
+    those at or below parquet.threshold (default 100), since a small collection
+    gains nothing from an index. Naming a collection with -c always generates it,
+    regardless of item count.
 
     \b
     Examples:
-        portolan stac-geoparquet                    # Generate for ALL collections
+        portolan stac-geoparquet                    # Sweep, skipping small collections
         portolan stac-geoparquet -c landsat         # Generate for landsat collection
         portolan stac-geoparquet -c imagery --dry-run  # Preview without creating
-        portolan stac-geoparquet --json             # JSON output for all collections
+        portolan stac-geoparquet --json             # JSON output for the sweep
     """
     use_json = should_output_json(ctx, json_output)
 
@@ -7756,6 +7798,7 @@ def stac_geoparquet(
     # Process each collection
     results: list[dict[str, Any]] = []
     errors_list: list[ErrorDetail] = []
+    skipped_list: list[dict[str, Any]] = []
     total_items = 0
     is_bulk = collection is None  # Catalog-level operation
 
@@ -7765,6 +7808,14 @@ def stac_geoparquet(
             continue  # Skipped (empty collection in bulk mode)
         if result.error:
             errors_list.append(result.error)
+        elif result.skipped:
+            skipped_list.append(
+                {
+                    "collection": result.collection,
+                    "item_count": result.item_count,
+                    "reason": result.skip_reason,
+                }
+            )
         else:
             results.append(
                 {
@@ -7776,7 +7827,9 @@ def stac_geoparquet(
             )
             total_items += result.item_count
 
-    _output_parquet_results(results, errors_list, total_items, is_bulk, dry_run, use_json)
+    _output_parquet_results(
+        results, errors_list, skipped_list, total_items, is_bulk, dry_run, use_json
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
