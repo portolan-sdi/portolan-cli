@@ -12,8 +12,10 @@ from pathlib import Path
 
 import pytest
 
+from portolan_cli.extract.arcgis.discovery import ArcGISDiscoveryError
 from portolan_cli.extract.arcgis.orchestrator import (
     ExtractionOptions,
+    ServicesRootDiscoveryResult,
     extract_arcgis_catalog,
     list_services,
 )
@@ -150,10 +152,32 @@ SA_ROOT = "https://nspdr.dlrrd.gov.za/server/rest/services"
 JRC_ROOT = "https://arcgis-maps.jrc.ec.europa.eu/federated_server/rest/services"
 
 
+def _list_services_or_skip(root: str, *, timeout: float = 60.0) -> ServicesRootDiscoveryResult:
+    """Call ``list_services`` but skip the test when the live endpoint is unreachable.
+
+    The folder-traversal tests below point at third-party government / EU ArcGIS
+    servers that periodically go offline (connection refused, timeout, or a
+    ``499 Token Required`` gateway response). A live external-dependency outage
+    must not hard-fail the suite, so a connectivity error is translated into a
+    skip. When the server is reachable the call returns normally and the caller's
+    assertions still run, so a genuine recursion regression continues to surface.
+    """
+    try:
+        return list_services(root, timeout=timeout)
+    except ArcGISDiscoveryError as exc:
+        pytest.skip(f"live ArcGIS endpoint unreachable: {exc}")
+
+
 @pytest.mark.network
 @pytest.mark.slow
 def test_sa_root_traverses_folders() -> None:
-    result = list_services(SA_ROOT, timeout=60.0)
+    result = _list_services_or_skip(SA_ROOT, timeout=60.0)
+    # If the root is reachable but the target folder itself errored (secured or
+    # transient outage), that is a connectivity problem, not a recursion bug.
+    if result.coverage is not None and any(
+        folder == "NationalDatasets" for folder, _reason in result.coverage.folders_skipped
+    ):
+        pytest.skip("NationalDatasets folder unreachable on live SA endpoint")
     names = [s.name for s in result.services]
     # NationalDatasets services live in a folder; recursion must surface them
     assert any(n.startswith("NationalDatasets/") for n in names)
@@ -165,6 +189,6 @@ def test_sa_root_traverses_folders() -> None:
 @pytest.mark.slow
 def test_jrc_root_has_only_folder_services() -> None:
     # JRC root has ZERO top-level services; everything is in folders.
-    result = list_services(JRC_ROOT, timeout=60.0)
+    result = _list_services_or_skip(JRC_ROOT, timeout=60.0)
     assert len(result.services) > 0
     assert all("/" in s.name for s in result.services)
