@@ -12,13 +12,44 @@ try:
 except ModuleNotFoundError:
     pass  # Iceberg tests don't need matplotlib
 
+import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest import mock
 
 import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+# =============================================================================
+# Environment Isolation
+# =============================================================================
+
+# mutmut instruments every mutated function with a trampoline that reads
+# os.environ["MUTANT_UNDER_TEST"] on each call into portolan_cli. A bare
+# patch.dict(os.environ, {}, clear=True) wipes that var, so any cleared-env test
+# that then calls into portolan_cli fails the mutation baseline with
+# KeyError: 'MUTANT_UNDER_TEST' (portolan-sdi/portolan-cli#612). Preserve just
+# that one bookkeeping var. Outside mutmut it is absent, so this is identical to
+# a full clear.
+_MUTMUT_ENV_KEY = "MUTANT_UNDER_TEST"
+
+
+@contextmanager
+def cleared_environ(**overrides: str) -> Iterator[None]:
+    """Clear os.environ for the block, preserving mutmut's bookkeeping var.
+
+    Drop-in replacement for ``mock.patch.dict(os.environ, {}, clear=True)`` that
+    keeps the environment sandbox-stable under mutation testing. Pass keyword
+    ``overrides`` to seed specific variables into the otherwise-empty environment.
+    """
+    preserved = {k: v for k, v in os.environ.items() if k == _MUTMUT_ENV_KEY}
+    preserved.update(overrides)
+    with mock.patch.dict(os.environ, preserved, clear=True):
+        yield
 
 
 # =============================================================================

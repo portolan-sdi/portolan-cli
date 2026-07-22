@@ -25,6 +25,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from tests.conftest import cleared_environ
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -451,7 +453,7 @@ class TestCheckCredentials:
         """Missing S3 credentials should return helpful hints."""
         from portolan_cli.sync.upload import check_credentials
 
-        with patch.dict(os.environ, {}, clear=True):
+        with cleared_environ():
             with patch("portolan_cli.sync.upload._load_aws_credentials_from_profile") as mock_load:
                 mock_load.return_value = (None, None, None, None)
                 valid, hint = check_credentials("s3://mybucket/path")
@@ -467,7 +469,7 @@ class TestCheckCredentials:
 
         # Fixture patches Path.home() - assert it exists to mark as used
         assert mock_aws_credentials.exists()
-        with patch.dict(os.environ, {}, clear=True):
+        with cleared_environ():
             valid, hint = check_credentials("s3://mybucket/path", profile="myprofile")
             assert valid is True
             assert hint == ""
@@ -479,7 +481,7 @@ class TestCheckCredentials:
 
         # Fixture patches Path.home() - assert it exists to mark as used
         assert mock_aws_credentials.exists()
-        with patch.dict(os.environ, {}, clear=True):
+        with cleared_environ():
             valid, hint = check_credentials("s3://mybucket/path", profile="nonexistent")
             assert valid is False
             assert "nonexistent" in hint
@@ -544,7 +546,7 @@ class TestCheckCredentials:
         adc_file.write_text('{"type": "authorized_user"}')
 
         with (
-            patch.dict(os.environ, {}, clear=True),
+            cleared_environ(),
             patch("pathlib.Path.home", return_value=tmp_path),
         ):
             valid, hint = check_credentials("gs://mybucket/path")
@@ -586,7 +588,7 @@ class TestCheckCredentials:
         """Missing Azure credentials should return helpful hints."""
         from portolan_cli.sync.upload import check_credentials
 
-        with patch.dict(os.environ, {}, clear=True):
+        with cleared_environ():
             valid, hint = check_credentials("az://myaccount/container")
             assert valid is False
             assert "AZURE_STORAGE_ACCOUNT_KEY" in hint

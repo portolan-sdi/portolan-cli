@@ -1029,11 +1029,38 @@ def convert_directory(
         return ConversionReport(results=results)
 
     # Serial path
-    results = []
-    for file_path in files:
-        # Determine output directory for this file
-        file_output_dir = output_dir if output_dir else file_path.parent
+    results = _convert_files_serial(
+        files,
+        output_dir=output_dir,
+        catalog_path=catalog_path,
+        cog_settings=cog_settings,
+        vector_settings=vector_settings,
+        force=force,
+        on_progress=on_progress,
+    )
+    return ConversionReport(results=results)
 
+
+def _convert_files_serial(
+    files: list[Path],
+    *,
+    output_dir: Path | None,
+    catalog_path: Path | None,
+    cog_settings: CogSettings | None,
+    vector_settings: VectorSettings | None,
+    force: bool,
+    on_progress: Callable[[ConversionResult], None] | None,
+) -> list[ConversionResult]:
+    """Convert files one at a time in the current process.
+
+    The default path for every existing caller (``workers <= 1`` or a single
+    file), and the fallback used by :func:`_convert_files_parallel` when a
+    process pool cannot start. Outputs land side-by-side with each source unless
+    ``output_dir`` overrides it, matching the parallel path exactly.
+    """
+    results: list[ConversionResult] = []
+    for file_path in files:
+        file_output_dir = output_dir if output_dir else file_path.parent
         result = convert_file(
             file_path,
             output_dir=file_output_dir,
@@ -1043,12 +1070,9 @@ def convert_directory(
             force=force,
         )
         results.append(result)
-
-        # Invoke callback if provided
         if on_progress is not None:
             on_progress(result)
-
-    return ConversionReport(results=results)
+    return results
 
 
 def _convert_files_parallel(
@@ -1069,49 +1093,89 @@ def _convert_files_parallel(
     each future completes (it is never pickled into a worker), preserving the
     streaming-progress contract (ADR-0040). A worker that dies or raises is
     captured into a FAILED result so one bad file does not abort the batch.
+
+    If the pool itself cannot run (``BrokenProcessPool`` -- e.g. a restricted
+    container with no ``/dev/shm``, a seccomp-filtered ``clone``, or a nested
+    multiprocessing context such as mutmut's mutation runner), the remaining
+    files are converted serially in this process instead of all being reported
+    FAILED.
     """
     import multiprocessing
     from concurrent.futures import ProcessPoolExecutor, as_completed
+    from concurrent.futures.process import BrokenProcessPool
 
     # Use a "spawn" context, not fork. GDAL/rasterio run worker threads, and
     # fork()-ing a multi-threaded process can deadlock the child (and aborts on
     # macOS). Spawn re-imports this module cleanly in each worker.
     mp_context = multiprocessing.get_context("spawn")
 
-    results: list[ConversionResult] = []
-    with ProcessPoolExecutor(max_workers=workers, mp_context=mp_context) as executor:
-        future_to_file = {
-            executor.submit(
-                convert_file,
-                file_path,
-                output_dir=output_dir if output_dir else file_path.parent,
-                catalog_path=catalog_path,
-                cog_settings=cog_settings,
-                vector_settings=vector_settings,
-                force=force,
-            ): file_path
-            for file_path in files
-        }
-        for future in as_completed(future_to_file):
-            file_path = future_to_file[future]
-            try:
-                result = future.result()
-            except Exception as e:  # pragma: no cover - defensive (process crash/pickle)
-                logger.exception("Parallel conversion worker failed for %s", file_path)
-                result = ConversionResult(
-                    source=file_path,
-                    output=None,
-                    format_from=file_path.suffix.lstrip(".").upper(),
-                    format_to=None,
-                    status=ConversionStatus.FAILED,
-                    error=str(e),
-                    duration_ms=0,
-                )
-            results.append(result)
-            if on_progress is not None:
-                on_progress(result)
+    # Keyed by source path so a mid-run pool failure can convert only the files
+    # that have not completed yet, without re-firing on_progress for the rest.
+    completed: dict[Path, ConversionResult] = {}
 
-    return results
+    def _record(file_path: Path, result: ConversionResult) -> None:
+        completed[file_path] = result
+        if on_progress is not None:
+            on_progress(result)
+
+    try:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=mp_context) as executor:
+            future_to_file = {
+                executor.submit(
+                    convert_file,
+                    file_path,
+                    output_dir=output_dir if output_dir else file_path.parent,
+                    catalog_path=catalog_path,
+                    cog_settings=cog_settings,
+                    vector_settings=vector_settings,
+                    force=force,
+                ): file_path
+                for file_path in files
+            }
+            for future in as_completed(future_to_file):
+                file_path = future_to_file[future]
+                try:
+                    result = future.result()
+                except BrokenProcessPool:
+                    # The pool itself died; let the outer handler fall back to
+                    # serial rather than marking this file FAILED.
+                    raise
+                except Exception as e:  # pragma: no cover - defensive (worker crash/pickle)
+                    logger.exception("Parallel conversion worker failed for %s", file_path)
+                    result = ConversionResult(
+                        source=file_path,
+                        output=None,
+                        format_from=file_path.suffix.lstrip(".").upper(),
+                        format_to=None,
+                        status=ConversionStatus.FAILED,
+                        error=str(e),
+                        duration_ms=0,
+                    )
+                _record(file_path, result)
+    except BrokenProcessPool:
+        # A ProcessPoolExecutor can fail to start or keep workers in restricted
+        # environments (no /dev/shm, seccomp-filtered clone, or a nested
+        # multiprocessing context such as mutmut's mutation runner). Rather than
+        # report every file FAILED, finish the batch serially in this process.
+        remaining = [file_path for file_path in files if file_path not in completed]
+        logger.warning(
+            "Process pool unavailable; converting %d remaining file(s) serially",
+            len(remaining),
+        )
+        serial_results = _convert_files_serial(
+            remaining,
+            output_dir=output_dir,
+            catalog_path=catalog_path,
+            cog_settings=cog_settings,
+            vector_settings=vector_settings,
+            force=force,
+            on_progress=on_progress,
+        )
+        for file_path, result in zip(remaining, serial_results, strict=True):
+            completed[file_path] = result
+
+    # Preserve the caller's input order regardless of completion order.
+    return [completed[file_path] for file_path in files]
 
 
 # ---------------------------------------------------------------------------

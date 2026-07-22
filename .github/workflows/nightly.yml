@@ -38,80 +38,57 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Run mutation testing
+      - name: Select nightly shard
+        id: shard
         run: |
-          # mutmut 3.x auto-detects paths (config in pyproject.toml [tool.mutmut])
-          uv run mutmut run
-
-      - name: Check mutation score
-        run: |
-          # mutmut 3.x: export structured JSON for CI parsing
-          uv run mutmut export-cicd-stats
-
-          # Parse JSON stats (mutmut 3.x outputs to mutants/mutmut-cicd-stats.json)
-          STATS_FILE="mutants/mutmut-cicd-stats.json"
-          if [ ! -f "$STATS_FILE" ]; then
-            echo "::error::No mutation stats file found at $STATS_FILE"
-            exit 1
-          fi
-
-          KILLED=$(jq -r '.killed' "$STATS_FILE")
-          SURVIVED=$(jq -r '.survived' "$STATS_FILE")
-          NO_TESTS=$(jq -r '.no_tests' "$STATS_FILE")
-          TIMEOUT=$(jq -r '.timeout' "$STATS_FILE")
-          SUSPICIOUS=$(jq -r '.suspicious' "$STATS_FILE")
-
-          # Total testable mutants (exclude "no tests" from calculation)
-          TESTABLE=$((KILLED + SURVIVED))
-
-          echo "Mutation results:"
-          echo "  Killed: $KILLED"
-          echo "  Survived: $SURVIVED"
-          echo "  No tests: $NO_TESTS"
-          echo "  Timeout: $TIMEOUT"
-          echo "  Suspicious: $SUSPICIOUS"
-          echo "  Total testable: $TESTABLE"
-
-          # Zero testable mutants means mutmut generated/parsed nothing — that
-          # is mutation testing being SILENTLY BROKEN, not a pass. This exact
-          # no-op shipped before (the old code `exit 0`d here), so treat it as a
-          # hard failure that demands investigation.
-          if [ "$TESTABLE" -eq 0 ]; then
-            echo "::error::No testable mutants were generated/parsed — mutation testing is silently broken. See portolan-sdi/portolan-cli#612 (sandbox baseline + scalability)."
-            exit 1
-          fi
-
-          # Calculate kill rate (higher is better)
-          KILL_RATE=$(echo "scale=2; $KILLED * 100 / $TESTABLE" | bc)
-          echo "Mutation kill rate: $KILL_RATE% ($KILLED killed, $SURVIVED survived)"
-
-          # Floor comes from .mutation-baseline (first non-comment, non-blank
-          # line) so it can be ratcheted in a reviewable, single-line diff.
-          MIN_KILL_RATE=$(grep -vE '^\s*#' .mutation-baseline | grep -vE '^\s*$' | head -1)
-          if ! [[ "$MIN_KILL_RATE" =~ ^[0-9]+$ ]]; then
-            echo "::error::.mutation-baseline floor is not an integer: '$MIN_KILL_RATE'"
-            exit 1
-          fi
-
+          # Mutating all ~45k mutants can't finish in one nightly window, so each
+          # night mutates a deterministic 1/NUM_SHARDS slice of the source files,
+          # round-robin over the sorted file list keyed by day-of-year. The whole
+          # tree is covered every NUM_SHARDS nights. Lower NUM_SHARDS to cover more
+          # per night — but only if a run still finishes within timeout-minutes.
+          # (PR-scoped mutation of changed files is the fast, per-change gate; this
+          # sweep is the slow, whole-codebase trend. See #612.)
+          NUM_SHARDS=25
+          mapfile -t FILES < <(find portolan_cli -name '*.py' -type f | sort)
+          DAY=$(( 10#$(date -u +%j) ))
+          SHARD=$(( DAY % NUM_SHARDS ))
+          GLOBS=()
+          for i in "${!FILES[@]}"; do
+            if (( i % NUM_SHARDS == SHARD )); then
+              # Trailing * so mutmut fnmatches this file's mutant names
+              # (e.g. portolan_cli/foo.py:func__mutmut_1).
+              GLOBS+=("${FILES[$i]}*")
+            fi
+          done
+          echo "Shard ${SHARD} of ${NUM_SHARDS}: ${#GLOBS[@]} file(s)"
+          printf '  %s\n' "${GLOBS[@]}"
           {
-            echo "## Mutation Testing"
-            echo ""
-            echo "| Metric | Value |"
-            echo "| --- | --- |"
-            echo "| Kill rate | ${KILL_RATE}% |"
-            echo "| Floor | ${MIN_KILL_RATE}% |"
-            echo "| Killed | $KILLED |"
-            echo "| Survived | $SURVIVED |"
-            echo "| Total testable | $TESTABLE |"
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo 'globs<<GLOBS_EOF'
+            printf '%s\n' "${GLOBS[@]}"
+            echo 'GLOBS_EOF'
+          } >> "$GITHUB_OUTPUT"
 
-          below_floor=$(echo "$KILL_RATE < $MIN_KILL_RATE" | bc)
-          if [ "$below_floor" -eq 1 ]; then
-            echo "::error::Mutation kill rate ($KILL_RATE%) is below the ${MIN_KILL_RATE}% floor from .mutation-baseline"
-            echo "Tests are not catching enough bugs. Review survived mutants:"
-            uv run mutmut results --all true | grep -E ': survived$' | head -20
-            exit 1
-          fi
+      - name: Run mutation testing (rotating shard)
+        env:
+          GLOBS_RAW: ${{ steps.shard.outputs.globs }}
+        run: |
+          # mutmut still generates every mutant (~1 min) then tests only the
+          # shard's. Surviving mutants make mutmut exit non-zero; the floor check
+          # is authoritative, so the job does not fail on mutmut's own exit code.
+          mapfile -t GLOBS <<< "$GLOBS_RAW"
+          uv run mutmut run "${GLOBS[@]}" || true
+
+      - name: Enforce mutation floor
+        run: |
+          # Export aggregates and enforce the .mutation-baseline floor. No
+          # --allow-empty here: on the full sweep, zero testable mutants means
+          # mutation testing is broken (the #612 silent-green guard), not a pass.
+          uv run mutmut export-cicd-stats
+          uv run python scripts/mutation_score.py \
+            --stats mutants/mutmut-cicd-stats.json \
+            --baseline .mutation-baseline \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --label "nightly shard"
 
       - name: Generate mutation report
         if: always()

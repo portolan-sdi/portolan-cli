@@ -15,6 +15,8 @@ from unittest import mock
 
 import pytest
 
+from tests.conftest import cleared_environ
+
 if TYPE_CHECKING:
     pass
 
@@ -950,7 +952,7 @@ class TestDotenvLoading:
         env_file = tmp_path / ".env"
         env_file.write_text("PORTOLAN_REMOTE=s3://from-dotenv/\n")
 
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with cleared_environ():
             load_dotenv_from_catalog(tmp_path)
             result = get_setting("remote", catalog_path=tmp_path)
 

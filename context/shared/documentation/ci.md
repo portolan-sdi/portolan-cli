@@ -116,27 +116,47 @@ Runs at 4 AM UTC daily. Can be triggered manually.
 
 ### Jobs
 
-#### `mutation` — Mutation Testing
+#### Mutation Testing (two scopes)
 
-Uses `mutmut` to verify tests actually catch bugs.
+Uses `mutmut` to verify tests actually catch bugs. The full codebase generates
+~45k mutants — far more than any single run can test in a nightly window — so
+mutation testing runs at two scopes that share one scorer:
 
-**Threshold:** the floor lives in `.mutation-baseline` (a single integer, currently
-60). The job reads it rather than hardcoding the number, so it can be ratcheted up
-in a one-line, reviewable diff as the suite matures. **Lowering it requires a
-justification in the PR that does so.**
+- **PR-scoped** (`mutation-pr` in `ci.yml`, PR-only, advisory): mutates only the
+  `portolan_cli` files the PR changed, so feedback lands on new code when the
+  author can act on it. Skipped when a PR touches no source. A PR that changes
+  only comments/docstrings produces no mutants and passes (`--allow-empty`).
+  Advisory today — not in the `ci-success` gate — until the floor is validated
+  against a real full run; promote it to required by adding it to `ci-success`
+  needs.
+- **Nightly sweep** (`mutation` in `nightly.yml`, hard gate): mutates a
+  deterministic `1/NUM_SHARDS` slice of the source files, round-robin by
+  day-of-year, so the whole tree is covered every `NUM_SHARDS` nights (currently
+  25). Lower `NUM_SHARDS` to cover more per night, but only if a run still
+  finishes within `timeout-minutes`.
 
-**Fails loud, never silent.** If mutmut generates zero testable mutants — i.e.
-mutation testing is broken, not passing — the job hard-fails (it used to `exit 0`
-and report a green nightly, hiding a broken setup). `[tool.mutmut]` in
-`pyproject.toml` copies the `scripts/` package + data files into the mutants
-sandbox and scopes the stats run to the fast, offline suite with `--no-cov`.
+**Threshold:** the floor lives in `.mutation-baseline` (a single integer). Both
+scopes read it via `scripts/mutation_score.py` rather than hardcoding it, so it
+ratchets up in a one-line, reviewable diff. The score counts `killed + timeout +
+suspicious` as killed over `killed_total + survived` testable (`no_tests`
+excluded). **Lowering the floor requires a justification in the PR that does so.**
 
-> **Status:** mutation testing is being repaired — the sandbox baseline still fails
-> on a test that passes normally, and the ~45k generated mutants exceed the nightly
-> window. Tracked in [#612](https://github.com/portolan-sdi/portolan-cli/issues/612).
-> Until it is resolved the nightly `mutation` job **correctly fails** rather than
-> silently passing. (The geoparquet-io #565 CWD guard was evaluated and is **not**
-> needed: `isolated_filesystem`/`chdir` tests do not crash the stats phase.)
+**Fails loud, never silent.** On the nightly sweep, zero testable mutants means
+mutation testing is broken, not passing — the scorer hard-fails (it used to
+`exit 0` and report a green nightly, hiding a broken setup). `[tool.mutmut]` in
+`pyproject.toml` copies the `scripts/` package, `spec/` schemas, and data files
+into the mutants sandbox and scopes the stats run to the fast, offline suite with
+`--no-cov`.
+
+**Sandbox stability.** mutmut runs the suite from a copied `mutants/` sandbox and
+instruments code with a trampoline that reads `os.environ["MUTANT_UNDER_TEST"]`.
+Two consequences the tests must respect: a cleared environment must preserve that
+var (use `cleared_environ()` from `tests/conftest.py`, not
+`patch.dict(..., clear=True)`), and files read by repo-root path (e.g.
+`spec/schema/`) must be listed in `[tool.mutmut] also_copy`. Parallel conversion
+falls back to serial when a process pool can't start in the sandbox
+(`convert.py`). (The geoparquet-io #565 CWD guard was evaluated and is **not**
+needed: `isolated_filesystem`/`chdir` tests do not crash the stats phase.)
 
 Why this matters: AI-generated tests can be tautological — they may pass but not actually verify behavior. Mutation testing injects bugs and checks if tests catch them.
 
@@ -293,9 +313,16 @@ Your tests aren't catching enough injected bugs. Review the mutation report arti
 
 ### "No testable mutants were generated"
 
-Mutation testing is broken, not passing — the job hard-fails on this. Usually the
-mutmut sandbox baseline failed (a test that passes normally but not in `mutants/`)
-or the `[tool.mutmut]` sandbox is missing a file. See [#612](https://github.com/portolan-sdi/portolan-cli/issues/612).
+On the nightly sweep this is broken, not passing — the scorer hard-fails. Usual
+causes: the mutmut sandbox baseline failed (a test that passes normally but not in
+`mutants/`), or the `[tool.mutmut] also_copy` sandbox is missing a repo-root file
+the suite reads. Reproduce locally with `uv run mutmut run` and read the
+"Running stats" output for the first failing test. See
+[#612](https://github.com/portolan-sdi/portolan-cli/issues/612).
+
+The PR-scoped job treats "no mutants" as a pass (`--allow-empty`), since a PR may
+change only non-mutable lines. If the PR job reports it while the nightly is green,
+that is expected, not a failure.
 
 ### "Complexity exceeds threshold"
 

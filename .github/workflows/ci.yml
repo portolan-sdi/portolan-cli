@@ -34,6 +34,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       iceberg: ${{ steps.filter.outputs.iceberg }}
+      python: ${{ steps.filter.outputs.python }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -47,6 +48,8 @@ jobs:
               - 'portolan_cli/backends/iceberg/**'
               - 'tests/iceberg/**'
               - 'pyproject.toml'
+            python:
+              - 'portolan_cli/**/*.py'
 
   quality:
     name: Quality Gates (prek — single rule source)
@@ -361,6 +364,101 @@ jobs:
       - name: Check package contents
         run: |
           uv run python -c "import tarfile; t = tarfile.open(list(__import__('pathlib').Path('dist').glob('*.tar.gz'))[0]); print('\n'.join(t.getnames()))"
+
+  mutation-pr:
+    name: Mutation Testing (changed files)
+    needs: changes
+    # PR-only: mutate just the portolan_cli files this PR changed, so mutation
+    # feedback lands on new code when the author can act on it. The nightly sweep
+    # (nightly.yml) covers the whole tree over time. Advisory for now — NOT in
+    # ci-success below — because the .mutation-baseline floor is not yet validated
+    # against a real full run; promote it to a required gate (add to ci-success
+    # needs) once the floor is trustworthy. See #612.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          # Full history so the PR base commit is available to diff against.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          version: "0.6.14"
+
+      - name: Set up Python
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 5
+          max_attempts: 3
+          retry_wait_seconds: 10
+          command: uv python install 3.11
+
+      - name: Install dependencies
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 15
+          max_attempts: 3
+          retry_wait_seconds: 15
+          command: uv sync --all-extras
+
+      - name: Determine changed source files
+        id: changed
+        env:
+          # Trusted github context, passed via env not spliced into the script
+          # body (zizmor template-injection guard).
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # Files this PR added/modified under portolan_cli (deletions excluded —
+          # a deleted file has no mutants). Trailing * so mutmut fnmatches each
+          # file's mutant names (portolan_cli/foo.py:func__mutmut_1).
+          GLOBS=()
+          while IFS= read -r f; do
+            [ -n "$f" ] && GLOBS+=("${f}*")
+          done < <(git diff --name-only --diff-filter=d "$BASE_SHA" HEAD -- 'portolan_cli/**/*.py')
+          echo "Changed source files: ${#GLOBS[@]}"
+          printf '  %s\n' "${GLOBS[@]}"
+          {
+            echo 'globs<<GLOBS_EOF'
+            printf '%s\n' "${GLOBS[@]}"
+            echo 'GLOBS_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run mutation testing on changed files
+        env:
+          GLOBS_RAW: ${{ steps.changed.outputs.globs }}
+        run: |
+          mapfile -t RAW <<< "$GLOBS_RAW"
+          GLOBS=()
+          for g in "${RAW[@]}"; do [ -n "$g" ] && GLOBS+=("$g"); done
+          if [ "${#GLOBS[@]}" -eq 0 ]; then
+            echo "No mutable source changes (only deletions?); nothing to run."
+            exit 0
+          fi
+          # Surviving mutants make mutmut exit non-zero; the floor check is
+          # authoritative, so don't fail on mutmut's own exit code.
+          uv run mutmut run "${GLOBS[@]}" || true
+
+      - name: Enforce mutation floor (changed files)
+        run: |
+          # A PR touching only comments/docstrings yields no mutants, so mutmut
+          # writes no stats — a legitimate pass here (unlike the nightly sweep),
+          # encoded by --allow-empty. The nightly full run stays the authoritative
+          # broken-baseline gate.
+          uv run mutmut export-cicd-stats || true
+          if [ ! -f mutants/mutmut-cicd-stats.json ]; then
+            echo "No mutants in changed files; nothing to score."
+            exit 0
+          fi
+          uv run python scripts/mutation_score.py \
+            --stats mutants/mutmut-cicd-stats.json \
+            --baseline .mutation-baseline \
+            --summary "$GITHUB_STEP_SUMMARY" \
+            --label "changed files" \
+            --allow-empty
 
   ci-success:
     name: CI Success
