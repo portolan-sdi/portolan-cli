@@ -75,7 +75,16 @@ jobs:
           # mutmut still generates every mutant (~1 min) then tests only the
           # shard's. Surviving mutants make mutmut exit non-zero; the floor check
           # is authoritative, so the job does not fail on mutmut's own exit code.
-          mapfile -t GLOBS <<< "$GLOBS_RAW"
+          mapfile -t RAW <<< "$GLOBS_RAW"
+          GLOBS=()
+          for g in "${RAW[@]}"; do [ -n "$g" ] && GLOBS+=("$g"); done
+          if [ "${#GLOBS[@]}" -eq 0 ]; then
+            # An empty shard means no source files — the floor check below (no
+            # --allow-empty) is the authoritative #612 silent-green guard, so let
+            # it fail on zero mutants rather than running mutmut with an empty glob.
+            echo "No files in this shard; nothing to run."
+            exit 0
+          fi
           uv run mutmut run "${GLOBS[@]}" || true
 
       - name: Enforce mutation floor
