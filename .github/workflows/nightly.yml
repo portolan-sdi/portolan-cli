@@ -223,8 +223,10 @@ jobs:
         run: |
           # -rfE prints a short "FAILED/ERROR" summary at the tail; tee keeps a
           # copy so the run-summary + tracking-issue steps below can name the
-          # tests that failed. Default bash pipefail preserves pytest's exit
-          # code through the pipe, so the step outcome is unchanged.
+          # tests that failed. pipefail (on by default for GitHub's bash steps,
+          # set explicitly here as insurance) makes the pipeline exit with
+          # pytest's status, so a failure still marks this step failed.
+          set -o pipefail
           uv run pytest tests/ \
             -m network \
             --timeout=120 \
