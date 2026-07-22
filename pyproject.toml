@@ -263,7 +263,11 @@ pytest_add_cli_args_test_selection = ["tests/"]
 # guard).
 # scripts/ (imported by a few tests) and the data files those tests read must
 # be present in the sandbox, or collection/execution dies there.
-also_copy = ["scripts/", ".pip-audit-ignores", ".mutation-baseline"]
+# spec/ holds the shipped STAC schemas + extensions.md that the spec_compliance
+# suite reads by repo-root path (tests/spec_compliance/conftest.py resolves
+# spec/schema/, test_extensions_doc_parity.py reads spec/extensions.md). Without
+# it the baseline errors with FileNotFoundError on mutants/spec/... (172 KiB).
+also_copy = ["scripts/", ".pip-audit-ignores", ".mutation-baseline", "spec/"]
 # The stats/baseline run must mirror the fast CI test job, not the whole suite:
 # - --no-cov: pyproject's addopts inject --cov, whose instrumentation conflicts
 #   with mutmut's; without this the stats phase is unreliable.

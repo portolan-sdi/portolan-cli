@@ -829,6 +829,145 @@ class TestConvertDirectoryBasic:
             convert_directory(valid_points_geojson)
 
 
+class TestConvertDirectoryPoolFallback:
+    """Parallel conversion falls back to serial when the process pool can't start.
+
+    A ``ProcessPoolExecutor`` can fail to spawn workers in restricted
+    environments: locked-down containers with no ``/dev/shm``, seccomp filters
+    that block ``clone``, or a nested multiprocessing context such as mutmut's
+    mutation runner (which re-sets the start method during worker bootstrap and
+    surfaces as ``BrokenProcessPool`` in the parent). Without a fallback every
+    file is reported FAILED even though the inputs are valid. Conversion must
+    still complete by dropping to the serial path. Regression guard for the
+    mutation-testing baseline (issue #612).
+    """
+
+    @pytest.mark.unit
+    def test_falls_back_to_serial_when_pool_broken(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        valid_points_geojson: Path,
+        valid_polygons_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A pool that can't start still yields both converted files, none FAILED."""
+        import concurrent.futures
+        import shutil
+        from concurrent.futures.process import BrokenProcessPool
+
+        from portolan_cli.convert import convert_directory
+
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        shutil.copy(valid_points_geojson, input_dir / "points.geojson")
+        shutil.copy(valid_polygons_geojson, input_dir / "polygons.geojson")
+
+        class _BrokenPool:
+            """Stand-in ProcessPoolExecutor whose workers never start."""
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            def __enter__(self) -> _BrokenPool:
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+            def submit(self, *args: object, **kwargs: object) -> object:
+                raise BrokenProcessPool("simulated worker startup failure")
+
+        monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _BrokenPool)
+
+        # workers=4 + 2 files selects the parallel path; the broken pool must not
+        # sink the batch.
+        report = convert_directory(input_dir, workers=4)
+
+        assert report.succeeded == 2
+        assert report.failed == 0
+        assert (input_dir / "points.parquet").exists()
+        assert (input_dir / "polygons.parquet").exists()
+
+    @pytest.mark.unit
+    def test_pool_dies_midrun_keeps_completed_and_fires_progress_once(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        valid_points_geojson: Path,
+        valid_polygons_geojson: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A mid-run pool death converts only the remainder; no file is dropped or doubled."""
+        import concurrent.futures
+        import shutil
+        from concurrent.futures.process import BrokenProcessPool
+
+        from portolan_cli.convert import ConversionResult, ConversionStatus, convert_directory
+
+        input_dir = tmp_path / "input"
+        input_dir.mkdir()
+        # Sorted order: a_points.geojson before b_polygons.geojson.
+        shutil.copy(valid_points_geojson, input_dir / "a_points.geojson")
+        shutil.copy(valid_polygons_geojson, input_dir / "b_polygons.geojson")
+
+        class _Future:
+            def __init__(self, source: Path, ok: bool) -> None:
+                self._source = source
+                self._ok = ok
+
+            def result(self) -> ConversionResult:
+                if not self._ok:
+                    raise BrokenProcessPool("pool died after first file")
+                # A sentinel status the serial path never produces, so we can
+                # prove this result came from the pool and was NOT re-converted.
+                return ConversionResult(
+                    source=self._source,
+                    output=self._source.with_suffix(".parquet"),
+                    format_from="GEOJSON",
+                    format_to="GEOPARQUET",
+                    status=ConversionStatus.SKIPPED,
+                    error=None,
+                    duration_ms=0,
+                )
+
+        class _PartialPool:
+            """First submitted file succeeds; the pool then dies."""
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self._n = 0
+
+            def __enter__(self) -> _PartialPool:
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+            def submit(self, _fn: object, source: Path, **_kw: object) -> _Future:
+                self._n += 1
+                fut = _Future(source, ok=self._n == 1)
+                return fut
+
+        monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _PartialPool)
+        # as_completed must yield the futures; identity keeps submission order.
+        monkeypatch.setattr(concurrent.futures, "as_completed", lambda fs: list(fs))
+
+        progressed: list[Path] = []
+        report = convert_directory(
+            input_dir, workers=4, on_progress=lambda r: progressed.append(r.source)
+        )
+
+        by_name = {r.source.name: r for r in report.results}
+        # First file kept its pool result (SKIPPED), never re-run serially.
+        assert by_name["a_points.geojson"].status == ConversionStatus.SKIPPED
+        # Second file was converted by the serial fallback.
+        assert by_name["b_polygons.geojson"].status == ConversionStatus.SUCCESS
+        assert (input_dir / "b_polygons.parquet").exists()
+        # Every file reported exactly once — no drops, no double-fires.
+        assert sorted(p.name for p in progressed) == [
+            "a_points.geojson",
+            "b_polygons.geojson",
+        ]
+
+
 class TestConvertDirectoryCallback:
     """Tests for convert_directory() callback functionality."""
 

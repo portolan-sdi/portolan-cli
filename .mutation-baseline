@@ -1,6 +1,10 @@
-# Minimum mutation kill rate (%) enforced by the nightly `mutation` job.
-# Rate = killed / (killed + survived) from mutmut's cicd-stats.
+# Minimum mutation kill rate (%). Enforced by scripts/mutation_score.py for both
+# the PR-scoped job (ci.yml, changed files) and the nightly sweep (nightly.yml,
+# rotating shard). Rate = (killed + timeout + suspicious) / testable, where
+# testable excludes no_tests mutants.
 #
-# Ratchet this UP as the test suite matures; LOWERING it requires an explicit
-# justification in the PR that does so. First non-comment, non-blank line wins.
+# PROVISIONAL: 60 predates any complete mutmut run (the baseline was broken until
+# #612). Re-measure from a real nightly-sweep kill rate and set this from it.
+# Ratchet UP as the suite matures; LOWERING it requires an explicit justification
+# in the PR that does so. First non-comment, non-blank line wins.
 60

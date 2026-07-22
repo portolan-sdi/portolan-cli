@@ -157,3 +157,170 @@ See [this guide](docs/contributing.md) for details.
 
         assert len(result.errors) == 2
         assert len(result.warnings) == 1
+
+
+class TestMutationScore:
+    """Tests for mutation_score.py (shared mutmut floor enforcement)."""
+
+    @pytest.mark.unit
+    def test_read_floor_skips_comments_and_blanks(self) -> None:
+        """First non-comment, non-blank line is parsed as the integer floor."""
+        from mutation_score import read_floor
+
+        text = "# a comment\n\n   # indented comment\n60\n70\n"
+        assert read_floor(text) == 60
+
+    @pytest.mark.unit
+    def test_read_floor_rejects_non_integer(self) -> None:
+        """A non-integer floor is a hard error, not a silent default."""
+        from mutation_score import read_floor
+
+        with pytest.raises(ValueError):
+            read_floor("# header\nninety\n")
+
+    @pytest.mark.unit
+    def test_evaluate_zero_testable_is_broken(self) -> None:
+        """Zero testable mutants means mutmut produced nothing — never a pass."""
+        from mutation_score import evaluate
+
+        score = evaluate(
+            {"killed": 0, "survived": 0, "no_tests": 5, "timeout": 0, "suspicious": 0},
+            floor=60,
+        )
+        assert score.testable == 0
+        assert score.ok is False
+        assert score.kill_rate is None
+
+    @pytest.mark.unit
+    def test_evaluate_below_floor_fails(self) -> None:
+        """Kill rate under the floor fails the run."""
+        from mutation_score import evaluate
+
+        score = evaluate(
+            {"killed": 1, "survived": 9, "no_tests": 0, "timeout": 0, "suspicious": 0},
+            floor=60,
+        )
+        assert score.testable == 10
+        assert score.kill_rate == 10.0
+        assert score.ok is False
+
+    @pytest.mark.unit
+    def test_evaluate_at_floor_passes(self) -> None:
+        """Kill rate exactly at the floor passes (>=, not >)."""
+        from mutation_score import evaluate
+
+        score = evaluate(
+            {"killed": 6, "survived": 4, "no_tests": 0, "timeout": 0, "suspicious": 0},
+            floor=60,
+        )
+        assert score.kill_rate == 60.0
+        assert score.ok is True
+
+    @pytest.mark.unit
+    def test_evaluate_counts_timeout_and_suspicious_as_killed(self) -> None:
+        """Timeout and suspicious mutants are killed (the test suite reacted)."""
+        from mutation_score import evaluate
+
+        # 5 clean-killed + 3 timeout + 2 suspicious = 10 killed, 0 survived.
+        score = evaluate(
+            {"killed": 5, "survived": 0, "no_tests": 0, "timeout": 3, "suspicious": 2},
+            floor=60,
+        )
+        assert score.killed_total == 10
+        assert score.testable == 10
+        assert score.kill_rate == 100.0
+        assert score.ok is True
+
+    @pytest.mark.unit
+    def test_main_exits_nonzero_below_floor(self, tmp_path: Path) -> None:
+        """End-to-end: main() reads files and returns exit 1 below the floor."""
+        import json
+
+        from mutation_score import main
+
+        stats = tmp_path / "stats.json"
+        stats.write_text(
+            json.dumps(
+                {
+                    "killed": 1,
+                    "survived": 9,
+                    "no_tests": 0,
+                    "timeout": 0,
+                    "suspicious": 0,
+                }
+            )
+        )
+        baseline = tmp_path / ".mutation-baseline"
+        baseline.write_text("# floor\n60\n")
+
+        code = main(["--stats", str(stats), "--baseline", str(baseline)])
+        assert code == 1
+
+    @pytest.mark.unit
+    def test_main_zero_testable_fails_by_default(self, tmp_path: Path) -> None:
+        """Nightly semantics: zero testable mutants is a broken run (exit 1)."""
+        import json
+
+        from mutation_score import main
+
+        stats = tmp_path / "stats.json"
+        stats.write_text(json.dumps({"killed": 0, "survived": 0, "no_tests": 3}))
+        baseline = tmp_path / ".mutation-baseline"
+        baseline.write_text("60\n")
+
+        assert main(["--stats", str(stats), "--baseline", str(baseline)]) == 1
+
+    @pytest.mark.unit
+    def test_main_zero_testable_allowed_with_flag(self, tmp_path: Path) -> None:
+        """PR semantics: --allow-empty treats no mutants in scope as a pass (exit 0)."""
+        import json
+
+        from mutation_score import main
+
+        stats = tmp_path / "stats.json"
+        stats.write_text(json.dumps({"killed": 0, "survived": 0, "no_tests": 3}))
+        baseline = tmp_path / ".mutation-baseline"
+        baseline.write_text("60\n")
+
+        code = main(["--stats", str(stats), "--baseline", str(baseline), "--allow-empty"])
+        assert code == 0
+
+    @pytest.mark.unit
+    def test_main_exits_zero_at_or_above_floor(self, tmp_path: Path) -> None:
+        """End-to-end: a passing run returns exit 0 and writes a summary table."""
+        import json
+
+        from mutation_score import main
+
+        stats = tmp_path / "stats.json"
+        stats.write_text(
+            json.dumps(
+                {
+                    "killed": 8,
+                    "survived": 2,
+                    "no_tests": 1,
+                    "timeout": 0,
+                    "suspicious": 0,
+                }
+            )
+        )
+        baseline = tmp_path / ".mutation-baseline"
+        baseline.write_text("60\n")
+        summary = tmp_path / "summary.md"
+
+        code = main(
+            [
+                "--stats",
+                str(stats),
+                "--baseline",
+                str(baseline),
+                "--summary",
+                str(summary),
+                "--label",
+                "changed files",
+            ]
+        )
+        assert code == 0
+        written = summary.read_text()
+        assert "changed files" in written
+        assert "80" in written  # kill rate
