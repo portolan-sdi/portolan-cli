@@ -1213,8 +1213,16 @@ class TestScaleAt1000Files:
 
         return catalog_root, collection_dir
 
+    # Per-test timeout override for the 1000-file scale tests. The nightly Slow
+    # Tests job runs with a global --timeout=300, but converting 1000 files is
+    # legitimately O(n): the add alone measured ~291s on a dev machine (fixture
+    # generation is extra, and CI runners are slower), so 300s false-times-out.
+    # This is a headroom bump, not masking a regression — the work is linear
+    # per-file conversion. The job-level `timeout-minutes: 30` still catches a
+    # genuine hang.
     @pytest.mark.integration
     @pytest.mark.slow
+    @pytest.mark.timeout(900)
     def test_add_1000_files_populates_versions(
         self, catalog_with_1000_files: tuple[Path, Path], runner: CliRunner
     ) -> None:
@@ -1239,6 +1247,7 @@ class TestScaleAt1000Files:
 
     @pytest.mark.integration
     @pytest.mark.slow
+    @pytest.mark.timeout(900)  # See note above: 1000-file add is O(n) (~291s), 300s is too tight.
     def test_add_1000_files_updates_catalog_versions(
         self, catalog_with_1000_files: tuple[Path, Path], runner: CliRunner
     ) -> None:

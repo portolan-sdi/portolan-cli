@@ -313,3 +313,88 @@ class TestExtractBboxWgs84:
             result = _extract_bbox_wgs84(meta)
         assert result == [-1.0, -1.0, 2.0, 2.0]
         transform.assert_called_once_with(meta.bbox, "EPSG:3857")
+
+
+class TestConvertVectorRetriesTransientInterrupt:
+    """The add pipeline's ``convert_vector`` retries a transient DuckDB interrupt.
+
+    Regression guard for the Issue #339 nightly ``test_add_1000_files_*`` flake:
+    ``add`` converts single-layer vectors via ``preparation.convert_vector`` (not
+    ``convert.convert_file``/``_convert_vector``), so the bounded transient-interrupt
+    retry must protect *this* code path too. A single ``InterruptException`` on the
+    first ``gpio.convert`` must be retried and succeed; a non-transient error must
+    still fail fast.
+    """
+
+    def test_convert_vector_retries_then_succeeds(self, tmp_path: Path) -> None:
+        import geoparquet_io as gpio
+
+        from portolan_cli.preparation import convert_vector
+
+        class InterruptException(Exception):
+            pass
+
+        class _FakeTable:
+            def write(self, path: str) -> None:
+                Path(path).write_text("parquet-bytes")
+
+        calls = {"n": 0}
+
+        def fake_convert(src: str) -> _FakeTable:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise InterruptException("Query interrupted")
+            return _FakeTable()
+
+        with patch.object(gpio, "convert", fake_convert):
+            out = convert_vector(tmp_path / "in.geojson", tmp_path)
+
+        assert calls["n"] == 2, "should retry exactly once after the transient interrupt"
+        assert out == tmp_path / "in.parquet"
+        assert out.exists()
+
+    def test_convert_vector_does_not_retry_non_transient(self, tmp_path: Path) -> None:
+        import geoparquet_io as gpio
+
+        from portolan_cli.preparation import convert_vector
+
+        calls = {"n": 0}
+
+        def fake_convert(src: str) -> None:
+            calls["n"] += 1
+            raise ValueError("No CRS found")
+
+        with patch.object(gpio, "convert", fake_convert):
+            with pytest.raises(ValueError, match="No CRS found"):
+                convert_vector(tmp_path / "in.geojson", tmp_path)
+
+        assert calls["n"] == 1
+
+    def test_convert_tabular_retries_then_succeeds(self, tmp_path: Path) -> None:
+        import geoparquet_io as gpio
+
+        from portolan_cli.preparation import convert_tabular
+
+        class InterruptException(Exception):
+            pass
+
+        class _FakeTable:
+            geometry_column = None
+
+            def write(self, path: str) -> None:
+                Path(path).write_text("parquet-bytes")
+
+        calls = {"n": 0}
+
+        def fake_convert(src: str) -> _FakeTable:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise InterruptException("Query interrupted")
+            return _FakeTable()
+
+        with patch.object(gpio, "convert", fake_convert):
+            out = convert_tabular(tmp_path / "in.csv", tmp_path)
+
+        assert calls["n"] == 2, "should retry exactly once after the transient interrupt"
+        assert out == tmp_path / "in.parquet"
+        assert out.exists()

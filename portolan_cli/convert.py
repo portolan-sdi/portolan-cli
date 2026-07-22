@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeVar, cast
 
 from portolan_cli.constants import GEOSPATIAL_EXTENSIONS
 from portolan_cli.conversion_config import (
@@ -557,6 +557,56 @@ def _is_transient_conversion_error(exc: BaseException) -> bool:
     return type(exc).__name__ == "InterruptException" or "query interrupted" in str(exc).lower()
 
 
+_ConvertT = TypeVar("_ConvertT")
+
+
+def run_with_transient_convert_retry(
+    operation: Callable[[], _ConvertT],
+    *,
+    source_name: str,
+) -> _ConvertT:
+    """Run a DuckDB-backed conversion, retrying transient interrupts.
+
+    ``geoparquet-io`` runs conversions through DuckDB, which can raise a
+    transient ``InterruptException('Query interrupted')`` (see
+    :func:`_is_transient_conversion_error`). ``operation`` is retried up to
+    ``_CONVERT_MAX_ATTEMPTS`` times so a single interrupted query does not fail a
+    whole bulk ``add`` (the interrupt flag clears once raised, and each attempt
+    opens a fresh ``gpio.convert()`` connection); any other error propagates on
+    the first occurrence.
+
+    Shared by every conversion entry point the ``add`` pipeline uses
+    (:func:`_convert_vector`, :func:`_convert_vector_layer`, and
+    ``preparation.convert_vector`` / ``preparation.convert_tabular``) so the
+    retry is applied uniformly rather than on a single code path (Issue #339
+    nightly ``test_add_1000_files_*`` flake).
+
+    Args:
+        operation: Zero-argument callable performing the conversion.
+        source_name: Human-readable source name for retry log messages.
+
+    Returns:
+        Whatever ``operation`` returns.
+    """
+    for attempt in range(1, _CONVERT_MAX_ATTEMPTS + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            is_last_attempt = attempt == _CONVERT_MAX_ATTEMPTS
+            if is_last_attempt or not _is_transient_conversion_error(exc):
+                raise
+            logger.warning(
+                "Transient interrupt converting %s (attempt %d/%d), retrying: %s",
+                source_name,
+                attempt,
+                _CONVERT_MAX_ATTEMPTS,
+                exc,
+            )
+    # Unreachable: the final attempt always returns or re-raises above. Present
+    # only so the type checker sees every path terminates.
+    raise AssertionError("vector conversion retry loop exited without returning")
+
+
 def _convert_vector(
     source: Path,
     output_dir: Path,
@@ -605,23 +655,7 @@ def _convert_vector(
         table.write(str(output_path))
         return output_path
 
-    for attempt in range(1, _CONVERT_MAX_ATTEMPTS + 1):
-        try:
-            return _run()
-        except Exception as exc:
-            is_last_attempt = attempt == _CONVERT_MAX_ATTEMPTS
-            if is_last_attempt or not _is_transient_conversion_error(exc):
-                raise
-            logger.warning(
-                "Transient interrupt converting %s (attempt %d/%d), retrying: %s",
-                source.name,
-                attempt,
-                _CONVERT_MAX_ATTEMPTS,
-                exc,
-            )
-    # Unreachable: the final attempt always returns or re-raises above. Present
-    # only so the type checker sees every path terminates.
-    raise AssertionError("vector conversion retry loop exited without returning")
+    return run_with_transient_convert_retry(_run, source_name=source.name)
 
 
 def _apply_vector_settings(table: Any, settings: VectorSettings) -> Any:
@@ -1215,6 +1249,11 @@ def _convert_vector_layer(
     if settings is None:
         settings = VectorSettings()
 
-    table = gpio.convert(source, layer=layer)
-    table = _apply_vector_settings(table, settings)
-    table.write(output)
+    resolved = settings
+
+    def _run() -> None:
+        table = gpio.convert(source, layer=layer)
+        table = _apply_vector_settings(table, resolved)
+        table.write(output)
+
+    run_with_transient_convert_retry(_run, source_name=f"{source.name}:{layer}")
