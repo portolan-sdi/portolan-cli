@@ -378,7 +378,7 @@ def extract_esri_style(
     # Convert to Mapbox GL
     try:
         style, warnings = convert_esri_renderer(renderer, source_layer, return_warnings=True)
-    except ESRIConverterError as e:
+    except Exception as e:
         logger.warning("Could not convert ESRI renderer: %s", e)
         return None
 

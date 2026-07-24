@@ -21,28 +21,35 @@ ColorValue = str | Expression
 NumericValue = int | float | Expression
 
 
-def esri_color_to_hex(color: list[int]) -> str:
+def esri_color_to_hex(color: list[int] | None) -> str:
     """Convert ESRI [r, g, b, a] array to #rrggbb hex string.
 
     Args:
-        color: ESRI color array [red, green, blue, alpha] with 0-255 values.
+        color: ESRI color array [red, green, blue, alpha] with 0-255 values,
+            or None (e.g. when the ESRI API returns ``"color": null`` for
+            Arcade expression-based renderers). Returns a grey fallback for None.
 
     Returns:
         Hex color string like "#ff0000".
     """
+    if color is None:
+        return "#888888"
     r, g, b = color[0], color[1], color[2]
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def esri_color_to_opacity(color: list[int]) -> float:
+def esri_color_to_opacity(color: list[int] | None) -> float:
     """Extract opacity from ESRI [r, g, b, a] array.
 
     Args:
-        color: ESRI color array [red, green, blue, alpha] with 0-255 values.
+        color: ESRI color array [red, green, blue, alpha] with 0-255 values,
+            or None. Returns fully opaque (1.0) for None.
 
     Returns:
         Opacity as float 0.0-1.0.
     """
+    if color is None:
+        return 1.0
     if len(color) < 4:
         return 1.0
     return color[3] / 255.0

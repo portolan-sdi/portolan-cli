@@ -51,6 +51,16 @@ class TestColorConversion:
         assert hex_to_rgba("ff0000", 1.0) == "rgba(255, 0, 0, 1.0)"
         assert hex_to_rgba("#ff0000", 1.0) == "rgba(255, 0, 0, 1.0)"
 
+    def test_esri_color_to_hex_none_returns_grey(self) -> None:
+        """None color (ESRI API returns "color": null) returns grey fallback."""
+        assert esri_color_to_hex(None) == "#888888"
+
+    def test_esri_color_to_opacity_none_returns_fully_opaque(self) -> None:
+        """None color returns fully opaque (1.0) fallback."""
+        from portolan_cli.extract.common.converters.base import esri_color_to_opacity
+
+        assert esri_color_to_opacity(None) == 1.0
+
 
 class TestMatchExpression:
     """Tests for Mapbox GL match expression builder."""
