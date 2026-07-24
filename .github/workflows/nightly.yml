@@ -320,7 +320,12 @@ jobs:
   slow-tests:
     name: Slow Tests (Stress/Scale)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The stress/scale suite runs right at the wall: it passed in 28m on
+    # 2026-07-23 and was cancelled at the 30m limit on 2026-07-24. Individual
+    # tests are already capped by --timeout=300, so a cancellation here is the
+    # aggregate suite exceeding the job budget, not a hung test. Give headroom
+    # above the observed ~30m runtime (Live Network uses 45, Mutation 60).
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -345,6 +350,7 @@ jobs:
           uv run pytest tests/ \
             -m slow \
             --timeout=300 \
+            --durations=15 \
             -v
 
   dependency-check:
