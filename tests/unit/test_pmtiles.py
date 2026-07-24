@@ -102,15 +102,15 @@ class TestCheckPMTilesAvailable:
             check_pmtiles_available,
         )
 
+        # Setting sys.modules[name] = None makes `import name` raise ImportError,
+        # scoped to gpio_pmtiles only. Do NOT patch builtins.__import__ globally
+        # here: mutmut's trampoline runs `import os` at call time, so a global
+        # __import__ side_effect raises from the trampoline before the function
+        # body's try/except runs, failing the baseline stats phase (#612).
         with patch.dict("sys.modules", {"gpio_pmtiles": None}):
             with patch("portolan_cli.viz.pmtiles.shutil.which", return_value="/usr/bin/tippecanoe"):
-                # Mock the import to raise ImportError
-                with patch(
-                    "builtins.__import__",
-                    side_effect=ImportError("No module named 'gpio_pmtiles'"),
-                ):
-                    with pytest.raises(PMTilesNotAvailableError):
-                        check_pmtiles_available()
+                with pytest.raises(PMTilesNotAvailableError):
+                    check_pmtiles_available()
 
     @pytest.mark.unit
     def test_raises_when_tippecanoe_not_in_path(self) -> None:
