@@ -27,6 +27,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from portolan_cli.sync.push import UploadMetrics
+from tests.conftest import cleared_environ
 
 if TYPE_CHECKING:
     pass
@@ -1452,14 +1453,10 @@ class TestMultiCloudStoreSetup:
         """setup_store should use AWS credentials from environment."""
         from portolan_cli.sync.upload import setup_store
 
-        with patch.dict(
-            "os.environ",
-            {
-                "AWS_ACCESS_KEY_ID": "env_access_key",
-                "AWS_SECRET_ACCESS_KEY": "env_secret_key",
-                "AWS_REGION": "eu-west-1",
-            },
-            clear=True,
+        with cleared_environ(
+            AWS_ACCESS_KEY_ID="env_access_key",
+            AWS_SECRET_ACCESS_KEY="env_secret_key",
+            AWS_REGION="eu-west-1",
         ):
             with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
@@ -1478,14 +1475,10 @@ class TestMultiCloudStoreSetup:
         """setup_store should fallback to AWS_DEFAULT_REGION if AWS_REGION not set."""
         from portolan_cli.sync.upload import setup_store
 
-        with patch.dict(
-            "os.environ",
-            {
-                "AWS_ACCESS_KEY_ID": "key",
-                "AWS_SECRET_ACCESS_KEY": "secret",
-                "AWS_DEFAULT_REGION": "ap-southeast-1",
-            },
-            clear=True,
+        with cleared_environ(
+            AWS_ACCESS_KEY_ID="key",
+            AWS_SECRET_ACCESS_KEY="secret",
+            AWS_DEFAULT_REGION="ap-southeast-1",
         ):
             with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
@@ -1500,13 +1493,9 @@ class TestMultiCloudStoreSetup:
         """setup_store should work without region (uses AWS SDK defaults)."""
         from portolan_cli.sync.upload import setup_store
 
-        with patch.dict(
-            "os.environ",
-            {
-                "AWS_ACCESS_KEY_ID": "key",
-                "AWS_SECRET_ACCESS_KEY": "secret",
-            },
-            clear=True,
+        with cleared_environ(
+            AWS_ACCESS_KEY_ID="key",
+            AWS_SECRET_ACCESS_KEY="secret",
         ):
             with patch("portolan_cli.sync.upload.S3Store") as mock_s3:
                 mock_s3.return_value = MagicMock()
