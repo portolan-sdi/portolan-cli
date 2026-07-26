@@ -52,14 +52,15 @@ jobs:
           mapfile -t FILES < <(find portolan_cli -name '*.py' -type f | sort)
           DAY=$(( 10#$(date -u +%j) ))
           SHARD=$(( DAY % NUM_SHARDS ))
-          GLOBS=()
+          SHARD_FILES=()
           for i in "${!FILES[@]}"; do
             if (( i % NUM_SHARDS == SHARD )); then
-              # Trailing * so mutmut fnmatches this file's mutant names
-              # (e.g. portolan_cli/foo.py:func__mutmut_1).
-              GLOBS+=("${FILES[$i]}*")
+              SHARD_FILES+=("${FILES[$i]}")
             fi
           done
+          # mutmut filters on mutant names (portolan_cli.foo.x_bar__mutmut_1),
+          # not file paths, so translate. See scripts/mutant_globs.py and #612.
+          mapfile -t GLOBS < <(uv run python scripts/mutant_globs.py "${SHARD_FILES[@]}")
           echo "Shard ${SHARD} of ${NUM_SHARDS}: ${#GLOBS[@]} file(s)"
           printf '  %s\n' "${GLOBS[@]}"
           {
@@ -85,7 +86,12 @@ jobs:
             echo "No files in this shard; nothing to run."
             exit 0
           fi
-          uv run mutmut run "${GLOBS[@]}" || true
+          uv run mutmut run "${GLOBS[@]}" 2>&1 | tee mutmut-run.log || true
+          if grep -q "Filtered for specific mutants, but nothing matches" mutmut-run.log; then
+            echo "::error::mutmut matched no mutants for this shard's globs — the" \
+                 "glob format is wrong, not the code. See portolan-sdi/portolan-cli#612."
+            exit 1
+          fi
 
       - name: Enforce mutation floor
         run: |

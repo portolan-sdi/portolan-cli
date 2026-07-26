@@ -159,6 +159,110 @@ See [this guide](docs/contributing.md) for details.
         assert len(result.warnings) == 1
 
 
+class TestMutantGlobs:
+    """Tests for mutant_globs.py (source path -> mutmut mutant-name pattern)."""
+
+    @pytest.mark.unit
+    def test_module_path_becomes_dotted_prefix(self) -> None:
+        """A source path maps to its dotted module name plus the mangle prefix."""
+        from mutant_globs import mutant_glob
+
+        assert (
+            mutant_glob("portolan_cli/backends/iceberg/backend.py")
+            == "portolan_cli.backends.iceberg.backend.x*"
+        )
+
+    @pytest.mark.unit
+    def test_package_init_collapses_into_package(self) -> None:
+        """mutmut strips ``.__init__.`` from mutant names, so the glob must too."""
+        from mutant_globs import mutant_glob
+
+        assert mutant_glob("portolan_cli/extract/__init__.py") == "portolan_cli.extract.x*"
+
+    @pytest.mark.unit
+    def test_top_level_init_collapses_to_bare_package(self) -> None:
+        """The root ``__init__.py`` mutates under the bare package name."""
+        from mutant_globs import mutant_glob
+
+        assert mutant_glob("portolan_cli/__init__.py") == "portolan_cli.x*"
+
+    @pytest.mark.unit
+    def test_src_prefix_is_stripped(self) -> None:
+        """mutmut strips a ``src.`` layout prefix from module names."""
+        from mutant_globs import mutant_glob
+
+        assert mutant_glob("src/portolan_cli/readme.py") == "portolan_cli.readme.x*"
+
+    @pytest.mark.unit
+    def test_non_python_path_is_rejected(self) -> None:
+        """Only ``.py`` sources have mutants; anything else is a caller bug."""
+        from mutant_globs import mutant_glob
+
+        with pytest.raises(ValueError):
+            mutant_glob("portolan_cli/data.json")
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "portolan_cli/readme.py",
+            "portolan_cli/extract/__init__.py",
+            "portolan_cli/__init__.py",
+            "portolan_cli/backends/iceberg/backend.py",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "mangled",
+        ["x_convert__mutmut_1", "xǁBackendǁpush__mutmut_12"],
+    )
+    def test_glob_matches_real_mutmut_names(self, path: str, mangled: str) -> None:
+        """Contract test against mutmut itself: the glob matches names it emits.
+
+        This is the assertion that would have caught #612's shard bug — the
+        workflows globbed file paths (``portolan_cli/readme.py*``) while mutmut
+        names mutants by dotted module (``portolan_cli.readme.x_...``), so the
+        filter matched nothing and the run tested zero mutants.
+        """
+        import fnmatch
+
+        from mutant_globs import mutant_glob
+        from mutmut.__main__ import get_mutant_name
+
+        name = get_mutant_name(Path(path), mangled)
+        assert fnmatch.fnmatch(name, mutant_glob(path))
+
+    @pytest.mark.unit
+    def test_glob_excludes_sibling_modules_of_a_package(self) -> None:
+        """A package glob must not swallow its submodules' mutants."""
+        import fnmatch
+
+        from mutant_globs import mutant_glob
+        from mutmut.__main__ import get_mutant_name
+
+        package = mutant_glob("portolan_cli/extract/__init__.py")
+        submodule = get_mutant_name(
+            Path("portolan_cli/extract/common/converters/base.py"), "x_run__mutmut_1"
+        )
+        assert not fnmatch.fnmatch(submodule, package)
+
+    @pytest.mark.unit
+    def test_main_prints_one_glob_per_path(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """The CLI shim emits one glob per argument for the workflow to consume."""
+        from mutant_globs import main
+
+        code = main(["portolan_cli/readme.py", "portolan_cli/extract/__init__.py"])
+        assert code == 0
+        assert capsys.readouterr().out == "portolan_cli.readme.x*\nportolan_cli.extract.x*\n"
+
+    @pytest.mark.unit
+    def test_main_rejects_empty_input(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """No paths means no globs, which would silently mutate nothing."""
+        from mutant_globs import main
+
+        assert main([]) == 1
+        assert "no source paths" in capsys.readouterr().err
+
+
 class TestMutationScore:
     """Tests for mutation_score.py (shared mutmut floor enforcement)."""
 

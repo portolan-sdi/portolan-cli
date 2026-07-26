@@ -413,12 +413,17 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           # Files this PR added/modified under portolan_cli (deletions excluded —
-          # a deleted file has no mutants). Trailing * so mutmut fnmatches each
-          # file's mutant names (portolan_cli/foo.py:func__mutmut_1).
-          GLOBS=()
+          # a deleted file has no mutants).
+          FILES=()
           while IFS= read -r f; do
-            [ -n "$f" ] && GLOBS+=("${f}*")
+            [ -n "$f" ] && FILES+=("$f")
           done < <(git diff --name-only --diff-filter=d "$BASE_SHA" HEAD -- 'portolan_cli/**/*.py')
+          GLOBS=()
+          if [ "${#FILES[@]}" -gt 0 ]; then
+            # mutmut filters on mutant names (portolan_cli.foo.x_bar__mutmut_1),
+            # not file paths, so translate. See scripts/mutant_globs.py and #612.
+            mapfile -t GLOBS < <(uv run python scripts/mutant_globs.py "${FILES[@]}")
+          fi
           echo "Changed source files: ${#GLOBS[@]}"
           printf '  %s\n' "${GLOBS[@]}"
           {
@@ -440,7 +445,15 @@ jobs:
           fi
           # Surviving mutants make mutmut exit non-zero; the floor check is
           # authoritative, so don't fail on mutmut's own exit code.
-          uv run mutmut run "${GLOBS[@]}" || true
+          uv run mutmut run "${GLOBS[@]}" 2>&1 | tee mutmut-run.log || true
+          # A filter that matches nothing writes no stats, which --allow-empty
+          # below would read as a pass — the #612 silent-green failure mode.
+          # Catch it here, where it is unambiguously a broken glob.
+          if grep -q "Filtered for specific mutants, but nothing matches" mutmut-run.log; then
+            echo "::error::mutmut matched no mutants for the changed files — the" \
+                 "glob format is wrong, not the code. See portolan-sdi/portolan-cli#612."
+            exit 1
+          fi
 
       - name: Enforce mutation floor (changed files)
         run: |
