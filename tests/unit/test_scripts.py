@@ -16,6 +16,15 @@ from pathlib import Path
 
 import pytest
 
+# mutmut refuses to import on Windows — ``mutmut/__main__.py`` prints "please use
+# the WSL" and calls ``sys.exit(1)`` at module scope. The contract tests below
+# import it to compare against its real mutant names, so they can only run where
+# mutation testing itself runs. See boxed/mutmut#397.
+requires_mutmut_import = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="mutmut exits at import on Windows (boxed/mutmut#397)",
+)
+
 
 # Add scripts directory to path for imports
 @pytest.fixture(autouse=True)
@@ -202,6 +211,7 @@ class TestMutantGlobs:
             mutant_glob("portolan_cli/data.json")
 
     @pytest.mark.unit
+    @requires_mutmut_import
     @pytest.mark.parametrize(
         "path",
         [
@@ -232,6 +242,7 @@ class TestMutantGlobs:
         assert fnmatch.fnmatch(name, mutant_glob(path))
 
     @pytest.mark.unit
+    @requires_mutmut_import
     def test_glob_excludes_sibling_modules_of_a_package(self) -> None:
         """A package glob must not swallow its submodules' mutants."""
         import fnmatch
