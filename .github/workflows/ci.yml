@@ -422,7 +422,15 @@ jobs:
           if [ "${#FILES[@]}" -gt 0 ]; then
             # mutmut filters on mutant names (portolan_cli.foo.x_bar__mutmut_1),
             # not file paths, so translate. See scripts/mutant_globs.py and #612.
-            mapfile -t GLOBS < <(uv run python scripts/mutant_globs.py "${FILES[@]}")
+            # Via a file, not process substitution: the latter discards the
+            # translator's exit status, so a crash would leave GLOBS empty and
+            # the next step would read that as "nothing to mutate" — green.
+            if ! uv run python scripts/mutant_globs.py "${FILES[@]}" > globs.txt; then
+              echo "::error::scripts/mutant_globs.py failed to translate the" \
+                   "changed files; refusing to report an untested PR as passing."
+              exit 1
+            fi
+            mapfile -t GLOBS < globs.txt
           fi
           echo "Changed source files: ${#GLOBS[@]}"
           printf '  %s\n' "${GLOBS[@]}"
@@ -443,16 +451,28 @@ jobs:
             echo "No mutable source changes (only deletions?); nothing to run."
             exit 0
           fi
-          # Surviving mutants make mutmut exit non-zero; the floor check is
-          # authoritative, so don't fail on mutmut's own exit code.
-          uv run mutmut run "${GLOBS[@]}" 2>&1 | tee mutmut-run.log || true
+          # Surviving mutants do NOT fail mutmut — `_run` returns normally after
+          # printing results, so exit 0 covers both "all killed" and "some
+          # survived", and the floor check below is what grades the score. Any
+          # non-zero status is therefore a real failure (broken filter, clean-test
+          # failure, crash) and must fail the step. pipefail keeps `tee` from
+          # reporting success on mutmut's behalf; `|| STATUS=$?` keeps `set -e`
+          # from killing the step before the diagnostics below can run.
+          set -o pipefail
+          STATUS=0
+          uv run mutmut run "${GLOBS[@]}" 2>&1 | tee mutmut-run.log || STATUS=$?
           # A filter that matches nothing writes no stats, which --allow-empty
           # below would read as a pass — the #612 silent-green failure mode.
-          # Catch it here, where it is unambiguously a broken glob.
+          # Name it explicitly, since the generic status is unhelpful here.
           if grep -q "Filtered for specific mutants, but nothing matches" mutmut-run.log; then
             echo "::error::mutmut matched no mutants for the changed files — the" \
                  "glob format is wrong, not the code. See portolan-sdi/portolan-cli#612."
             exit 1
+          fi
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::mutmut run failed with status ${STATUS}; the mutation" \
+                 "gate cannot pass on an incomplete run. See portolan-sdi/portolan-cli#612."
+            exit "$STATUS"
           fi
 
       - name: Enforce mutation floor (changed files)
@@ -461,8 +481,12 @@ jobs:
           # writes no stats — a legitimate pass here (unlike the nightly sweep),
           # encoded by --allow-empty. The nightly full run stays the authoritative
           # broken-baseline gate.
-          uv run mutmut export-cicd-stats || true
+          # No `|| true`: a stats export that errors leaves no file, and the
+          # branch below would then wave the PR through untested (#612).
+          uv run mutmut export-cicd-stats
           if [ ! -f mutants/mutmut-cicd-stats.json ]; then
+            # Reachable only after a successful run, so the filter did match —
+            # these files genuinely contain no mutable code (constants, imports).
             echo "No mutants in changed files; nothing to score."
             exit 0
           fi

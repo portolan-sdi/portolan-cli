@@ -60,7 +60,15 @@ jobs:
           done
           # mutmut filters on mutant names (portolan_cli.foo.x_bar__mutmut_1),
           # not file paths, so translate. See scripts/mutant_globs.py and #612.
-          mapfile -t GLOBS < <(uv run python scripts/mutant_globs.py "${SHARD_FILES[@]}")
+          # Via a file, not process substitution: the latter discards the
+          # translator's exit status, so a crash would leave GLOBS empty and the
+          # next step would skip the shard as "no files" — a silent green sweep.
+          if ! uv run python scripts/mutant_globs.py "${SHARD_FILES[@]}" > globs.txt; then
+            echo "::error::scripts/mutant_globs.py failed to translate this" \
+                 "shard's files; refusing to report an unmutated sweep as passing."
+            exit 1
+          fi
+          mapfile -t GLOBS < globs.txt
           echo "Shard ${SHARD} of ${NUM_SHARDS}: ${#GLOBS[@]} file(s)"
           printf '  %s\n' "${GLOBS[@]}"
           {
@@ -74,8 +82,9 @@ jobs:
           GLOBS_RAW: ${{ steps.shard.outputs.globs }}
         run: |
           # mutmut still generates every mutant (~1 min) then tests only the
-          # shard's. Surviving mutants make mutmut exit non-zero; the floor check
-          # is authoritative, so the job does not fail on mutmut's own exit code.
+          # shard's. Surviving mutants do NOT fail mutmut — it exits 0 and the
+          # floor check grades the score — so any non-zero status is a real
+          # failure and fails the sweep.
           mapfile -t RAW <<< "$GLOBS_RAW"
           GLOBS=()
           for g in "${RAW[@]}"; do [ -n "$g" ] && GLOBS+=("$g"); done
@@ -86,11 +95,21 @@ jobs:
             echo "No files in this shard; nothing to run."
             exit 0
           fi
-          uv run mutmut run "${GLOBS[@]}" 2>&1 | tee mutmut-run.log || true
+          # pipefail keeps `tee` from reporting success on mutmut's behalf;
+          # `|| STATUS=$?` keeps `set -e` from killing the step before the
+          # diagnostics below can run.
+          set -o pipefail
+          STATUS=0
+          uv run mutmut run "${GLOBS[@]}" 2>&1 | tee mutmut-run.log || STATUS=$?
           if grep -q "Filtered for specific mutants, but nothing matches" mutmut-run.log; then
             echo "::error::mutmut matched no mutants for this shard's globs — the" \
                  "glob format is wrong, not the code. See portolan-sdi/portolan-cli#612."
             exit 1
+          fi
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::mutmut run failed with status ${STATUS}; the sweep is" \
+                 "incomplete. See portolan-sdi/portolan-cli#612."
+            exit "$STATUS"
           fi
 
       - name: Enforce mutation floor
