@@ -366,6 +366,10 @@ modules = [
     "portolan_cli.errors",
     "portolan_cli.constants",
     "portolan_cli.json_output",
+    # ADR-0030 input sanitization. A stdlib-only leaf (re, pathlib, urllib):
+    # it hardens agent-supplied arguments, which is not catalog validation, so
+    # it sits at the top level rather than inside validation/.
+    "portolan_cli.input_hardening",
 ]
 
 # ---------- feature-package boundaries (#625) ----------

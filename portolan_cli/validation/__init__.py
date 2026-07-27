@@ -8,7 +8,10 @@ This module provides the public API for validating catalogs:
 Per ADR-0011, this is an MVP that validates catalog structure only.
 Collection-specific and remote validation comes in later versions.
 
-Input Hardening:
+Input hardening (ADR-0030) lives in the top-level
+:mod:`portolan_cli.input_hardening` leaf, not here: sanitizing agent-supplied
+arguments is not catalog validation. These names are re-exported for the
+existing ``from portolan_cli.validation import ...`` call sites:
 - InputValidationError: Exception for input validation failures
 - validate_safe_path(): Protect against path traversal attacks
 - validate_collection_id(): Validate STAC collection IDs
@@ -18,7 +21,7 @@ Input Hardening:
 - validate_config_value(): Validate config values
 """
 
-from portolan_cli.validation.input_hardening import (
+from portolan_cli.input_hardening import (
     InputValidationError,
     validate_collection_id,
     validate_config_key,

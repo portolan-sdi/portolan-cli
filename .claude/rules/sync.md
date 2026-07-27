@@ -130,7 +130,7 @@ The dry-run summary counts must match the files it lists, no "Would push N" then
   **all three** providers, or you get `prefix//collection/versions.json`.
 - Reject absolute paths and path traversal on remote keys and agent-supplied
   inputs (`pull.py` already rejects absolute paths). Validate through
-  `validation/input_hardening.py`.
+  `input_hardening.py`.
 - When comparing a filesystem path to a STAC href, normalize to POSIX
   (`PurePath(...).as_posix()`), never raw `str()` of a relative path, backslashes
   on Windows break href matching.
