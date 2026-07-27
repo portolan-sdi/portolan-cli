@@ -1,10 +1,20 @@
-# Minimum mutation kill rate (%). Enforced by scripts/mutation_score.py for both
-# the PR-scoped job (ci.yml, changed files) and the nightly sweep (nightly.yml,
-# rotating shard). Rate = (killed + timeout + suspicious) / testable, where
-# testable excludes no_tests mutants.
+# Repo-wide minimum mutation kill rate (%). Enforced by scripts/mutation_score.py
+# for both the PR-scoped job (ci.yml, changed files) and the nightly sweep
+# (nightly.yml, rotating shard). Rate = (killed + timeout + suspicious) /
+# testable, where testable excludes no_tests mutants.
 #
-# PROVISIONAL: 60 predates any complete mutmut run (the baseline was broken until
-# #612). Re-measure from a real nightly-sweep kill rate and set this from it.
-# Ratchet UP as the suite matures; LOWERING it requires an explicit justification
-# in the PR that does so. First non-comment, non-blank line wins.
-60
+# This is the catastrophe floor: any run under it means the suite stopped
+# reacting to whole modules. Regression detection at shard granularity lives in
+# .mutation-shards.json, because a single 1/25 shard's rate depends on which
+# modules land in it (measured: 14% for sync.upload_progress, 95% for
+# backends.iceberg.config), so no single repo-wide number both catches
+# regressions and stays green.
+#
+# 30 is set from the first complete sweep (shard 8, 2026-07-27, run
+# 30244241948): 44.63% overall, with the weakest module cluster at 14%. It
+# replaces a provisional 60 that predated any complete run — the baseline was
+# broken until #612, so 60 had never been measured against anything.
+#
+# Ratchet UP as the suite matures; LOWERING it requires an explicit
+# justification in the PR that does so. First non-comment, non-blank line wins.
+30

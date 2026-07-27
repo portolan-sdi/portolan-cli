@@ -18,7 +18,10 @@ jobs:
   mutation:
     name: Mutation Testing
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Hash-assigned shards hold 2-12 files rather than a uniform 6, so the
+    # largest night runs roughly twice the mutants of the 6-file shard that took
+    # 20 minutes. 90 leaves headroom without letting a hung run burn an hour.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -43,21 +46,35 @@ jobs:
         run: |
           # Mutating all ~45k mutants can't finish in one nightly window, so each
           # night mutates a deterministic 1/NUM_SHARDS slice of the source files,
-          # round-robin over the sorted file list keyed by day-of-year. The whole
-          # tree is covered every NUM_SHARDS nights. Lower NUM_SHARDS to cover more
-          # per night — but only if a run still finishes within timeout-minutes.
+          # keyed by day-of-year. The whole tree is covered every NUM_SHARDS
+          # nights. Lower NUM_SHARDS to cover more per night — but only if a run
+          # still finishes within timeout-minutes, and re-measure the per-shard
+          # rates in .mutation-shards.json, which a new count invalidates.
           # (PR-scoped mutation of changed files is the fast, per-change gate; this
           # sweep is the slow, whole-codebase trend. See #612.)
           NUM_SHARDS=25
-          mapfile -t FILES < <(find portolan_cli -name '*.py' -type f | sort)
           DAY=$(( 10#$(date -u +%j) ))
           SHARD=$(( DAY % NUM_SHARDS ))
-          SHARD_FILES=()
-          for i in "${!FILES[@]}"; do
-            if (( i % NUM_SHARDS == SHARD )); then
-              SHARD_FILES+=("${FILES[$i]}")
-            fi
-          done
+          # Membership is a hash of each file's path, not its index in the sorted
+          # list: index assignment reshuffles every file's shard whenever one file
+          # is added, which would invalidate all recorded per-shard rates on any
+          # commit that adds a module. See scripts/shard_select.py.
+          if ! uv run python scripts/shard_select.py \
+                 --root portolan_cli --num-shards "$NUM_SHARDS" --shard "$SHARD" \
+                 > shard_files.txt; then
+            echo "::error::scripts/shard_select.py failed to select this shard;" \
+                 "refusing to report an unmutated sweep as passing."
+            exit 1
+          fi
+          mapfile -t SHARD_FILES < shard_files.txt
+          if [ "${#SHARD_FILES[@]}" -eq 0 ]; then
+            # ~300 files over 25 shards: an empty one means the selection broke,
+            # not that the tree thinned out. Fail rather than sweep nothing (#612).
+            echo "::error::Shard ${SHARD} of ${NUM_SHARDS} selected no files."
+            exit 1
+          fi
+          echo "shard=${SHARD}" >> "$GITHUB_OUTPUT"
+          echo "num_shards=${NUM_SHARDS}" >> "$GITHUB_OUTPUT"
           # mutmut filters on mutant names (portolan_cli.foo.x_bar__mutmut_1),
           # not file paths, so translate. See scripts/mutant_globs.py and #612.
           # Via a file, not process substitution: the latter discards the
@@ -113,16 +130,25 @@ jobs:
           fi
 
       - name: Enforce mutation floor
+        env:
+          SHARD: ${{ steps.shard.outputs.shard }}
+          NUM_SHARDS: ${{ steps.shard.outputs.num_shards }}
         run: |
-          # Export aggregates and enforce the .mutation-baseline floor. No
-          # --allow-empty here: on the full sweep, zero testable mutants means
+          # Export aggregates and enforce two floors: the repo-wide catastrophe
+          # floor in .mutation-baseline, and this shard's own recorded rate from
+          # .mutation-shards.json (a shard's rate depends on which modules land
+          # in it, so the repo-wide number alone either flaps or gates nothing).
+          # No --allow-empty here: on the full sweep, zero testable mutants means
           # mutation testing is broken (the #612 silent-green guard), not a pass.
           uv run mutmut export-cicd-stats
           uv run python scripts/mutation_score.py \
             --stats mutants/mutmut-cicd-stats.json \
             --baseline .mutation-baseline \
+            --shards .mutation-shards.json \
+            --shard "$SHARD" \
+            --num-shards "$NUM_SHARDS" \
             --summary "$GITHUB_STEP_SUMMARY" \
-            --label "nightly shard"
+            --label "nightly shard ${SHARD}"
 
       - name: Generate mutation report
         if: always()

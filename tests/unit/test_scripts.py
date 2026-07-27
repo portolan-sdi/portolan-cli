@@ -10,6 +10,7 @@ These tests verify that the scripts in scripts/ work correctly:
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,12 +19,37 @@ import pytest
 
 # mutmut refuses to import on Windows — ``mutmut/__main__.py`` prints "please use
 # the WSL" and calls ``sys.exit(1)`` at module scope. The contract tests below
-# import it to compare against its real mutant names, so they can only run where
-# mutation testing itself runs. See boxed/mutmut#397.
+# compare against its real mutant names, so they can only run where mutation
+# testing itself runs. See boxed/mutmut#397.
 requires_mutmut_import = pytest.mark.skipif(
     sys.platform == "win32",
     reason="mutmut exits at import on Windows (boxed/mutmut#397)",
 )
+
+
+def real_mutant_name(path: str, mangled: str) -> str:
+    """Return ``mutmut``'s own mutant name for ``path`` and ``mangled``.
+
+    Computed in a subprocess because importing ``mutmut.__main__`` calls
+    ``multiprocessing.set_start_method('fork')`` at module scope, which raises
+    ``RuntimeError: context has already been set`` if any earlier test in the
+    session started a process pool (``test_convert.py`` does). In-process the
+    contract tests below therefore passed or failed on file ordering alone —
+    green under xdist's distribution, red in a single-process run. A fresh
+    interpreter has no start method set, so the answer is order-independent.
+    """
+    source = (
+        "from pathlib import Path;"
+        "from mutmut.__main__ import get_mutant_name;"
+        f"print(get_mutant_name(Path({path!r}), {mangled!r}))"
+    )
+    result = subprocess.run(  # noqa: S603 - fixed argv, no shell, no user input
+        [sys.executable, "-c", source],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
 
 
 # Add scripts directory to path for imports
@@ -236,9 +262,8 @@ class TestMutantGlobs:
         import fnmatch
 
         from mutant_globs import mutant_glob
-        from mutmut.__main__ import get_mutant_name
 
-        name = get_mutant_name(Path(path), mangled)
+        name = real_mutant_name(path, mangled)
         assert fnmatch.fnmatch(name, mutant_glob(path))
 
     @pytest.mark.unit
@@ -248,11 +273,10 @@ class TestMutantGlobs:
         import fnmatch
 
         from mutant_globs import mutant_glob
-        from mutmut.__main__ import get_mutant_name
 
         package = mutant_glob("portolan_cli/extract/__init__.py")
-        submodule = get_mutant_name(
-            Path("portolan_cli/extract/common/converters/base.py"), "x_run__mutmut_1"
+        submodule = real_mutant_name(
+            "portolan_cli/extract/common/converters/base.py", "x_run__mutmut_1"
         )
         assert not fnmatch.fnmatch(submodule, package)
 
@@ -439,3 +463,289 @@ class TestMutationScore:
         written = summary.read_text()
         assert "changed files" in written
         assert "80" in written  # kill rate
+
+
+class TestShardSelect:
+    """Tests for shard_select.py (which files the nightly sweep mutates)."""
+
+    @pytest.mark.unit
+    def test_assignment_is_stable_across_calls(self) -> None:
+        """The same path always lands in the same shard — no per-process salt."""
+        from shard_select import shard_of
+
+        first = shard_of("portolan_cli/sync/upload_progress.py", 25)
+        assert first == shard_of("portolan_cli/sync/upload_progress.py", 25)
+
+    @pytest.mark.unit
+    def test_windows_and_posix_paths_agree(self) -> None:
+        """Separator style must not change a file's shard."""
+        from shard_select import shard_of
+
+        assert shard_of("portolan_cli\\sync\\upload.py", 25) == shard_of(
+            "portolan_cli/sync/upload.py", 25
+        )
+
+    @pytest.mark.unit
+    def test_shard_is_within_range(self) -> None:
+        """Every path lands in 0..num_shards-1."""
+        from shard_select import shard_of
+
+        paths = [f"portolan_cli/mod_{i}.py" for i in range(200)]
+        assert all(0 <= shard_of(p, 25) < 25 for p in paths)
+
+    @pytest.mark.unit
+    def test_adding_a_file_leaves_other_assignments_alone(self) -> None:
+        """The regression that per-shard baselines depend on.
+
+        Index-based round-robin reshuffled every file's shard whenever a file was
+        added, so a recorded per-shard kill rate went stale on any commit adding
+        a module. Hash assignment moves only the new file.
+        """
+        from shard_select import select
+
+        before = [f"portolan_cli/mod_{i}.py" for i in range(50)]
+        after = sorted([*before, "portolan_cli/aaa_new_module.py"])
+
+        for shard in range(25):
+            was = set(select(before, 25, shard))
+            now = set(select(after, 25, shard))
+            assert was <= now
+            assert now - was <= {"portolan_cli/aaa_new_module.py"}
+
+    @pytest.mark.unit
+    def test_shards_partition_the_file_list(self) -> None:
+        """Every file lands in exactly one shard: no gaps, no double-mutating."""
+        from shard_select import select
+
+        paths = [f"portolan_cli/mod_{i}.py" for i in range(200)]
+        selected = [p for shard in range(25) for p in select(paths, 25, shard)]
+        assert sorted(selected) == sorted(paths)
+        assert len(selected) == len(set(selected))
+
+    @pytest.mark.unit
+    def test_select_rejects_out_of_range_shard(self) -> None:
+        """A shard index outside the count is a caller bug, not an empty result."""
+        from shard_select import select
+
+        with pytest.raises(ValueError):
+            select(["portolan_cli/a.py"], 25, 25)
+
+    @pytest.mark.unit
+    def test_rejects_non_positive_shard_count(self) -> None:
+        """Zero shards would divide by zero; reject it at the edge."""
+        from shard_select import shard_of
+
+        with pytest.raises(ValueError):
+            shard_of("portolan_cli/a.py", 0)
+
+    @pytest.mark.integration  # Walks a tmp_path tree
+    def test_main_emits_only_the_requested_shard(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """End-to-end: main() prints the shard's files, one per line."""
+        from shard_select import main, shard_of
+
+        root = tmp_path / "pkg"
+        root.mkdir()
+        for i in range(30):
+            (root / f"mod_{i}.py").write_text("x = 1\n")
+
+        assert main(["--root", str(root), "--num-shards", "5", "--shard", "2"]) == 0
+        printed = [line for line in capsys.readouterr().out.splitlines() if line]
+        assert printed  # 30 files over 5 shards leaves none empty in practice
+        assert all(shard_of(p, 5) == 2 for p in printed)
+
+    @pytest.mark.integration  # Walks a tmp_path tree
+    def test_main_fails_when_root_has_no_sources(self, tmp_path: Path) -> None:
+        """An empty package means a broken checkout, never a covered sweep (#612)."""
+        from shard_select import main
+
+        empty = tmp_path / "pkg"
+        empty.mkdir()
+
+        assert main(["--root", str(empty), "--num-shards", "5", "--shard", "0"]) == 1
+
+
+class TestShardBaselines:
+    """Tests for the per-shard floors in .mutation-shards.json."""
+
+    @staticmethod
+    def _shards_doc(rates: dict[str, float], *, num_shards: int = 25) -> str:
+        import json
+
+        return json.dumps(
+            {
+                "num_shards": num_shards,
+                "tolerance": 3.0,
+                "shards": {k: {"kill_rate": v} for k, v in rates.items()},
+            }
+        )
+
+    @pytest.mark.unit
+    def test_recorded_rate_raises_the_floor(self) -> None:
+        """A shard is gated on its own measurement, not the repo-wide floor."""
+        from mutation_score import read_shard_baselines
+
+        baselines = read_shard_baselines(self._shards_doc({"8": 44.63}))
+        floor, source = baselines.floor_for(8, repo_floor=30)
+
+        assert floor == 41.63  # 44.63 less the 3pp tolerance
+        assert "44.63" in source
+
+    @pytest.mark.unit
+    def test_unrecorded_shard_falls_back_to_repo_floor(self) -> None:
+        """Shards not yet measured are still gated, just more loosely."""
+        from mutation_score import read_shard_baselines
+
+        baselines = read_shard_baselines(self._shards_doc({}))
+        floor, source = baselines.floor_for(3, repo_floor=30)
+
+        assert floor == 30
+        assert "no recorded rate" in source
+
+    @pytest.mark.unit
+    def test_repo_floor_wins_when_recorded_rate_is_lower(self) -> None:
+        """A stale low record must not weaken the repo-wide floor."""
+        from mutation_score import read_shard_baselines
+
+        baselines = read_shard_baselines(self._shards_doc({"4": 20.0}))
+        floor, _ = baselines.floor_for(4, repo_floor=30)
+
+        assert floor == 30
+
+    @pytest.mark.unit
+    def test_malformed_documents_are_rejected(self) -> None:
+        """Bad baselines fail loudly rather than defaulting to no gate."""
+        import json
+
+        from mutation_score import read_shard_baselines
+
+        with pytest.raises(ValueError):
+            read_shard_baselines("{not json")
+        with pytest.raises(ValueError):
+            read_shard_baselines(json.dumps({"num_shards": 25}))
+        with pytest.raises(ValueError):
+            read_shard_baselines(
+                json.dumps({"num_shards": 25, "tolerance": 3.0, "shards": {"8": 44.63}})
+            )
+
+    @pytest.mark.unit
+    def test_repo_baseline_file_parses(self) -> None:
+        """The committed .mutation-shards.json is valid and matches nightly.yml."""
+        from mutation_score import read_shard_baselines
+
+        repo_root = Path(__file__).parent.parent.parent
+        baselines = read_shard_baselines((repo_root / ".mutation-shards.json").read_text())
+
+        assert baselines.num_shards == 25  # keep in step with NUM_SHARDS in nightly.yml
+        assert baselines.tolerance > 0
+
+    @pytest.mark.unit
+    def test_main_fails_below_shard_floor(self, tmp_path: Path) -> None:
+        """A shard regressing under its recorded rate fails the sweep."""
+        import json
+
+        from mutation_score import main
+
+        stats = tmp_path / "stats.json"
+        stats.write_text(json.dumps({"killed": 35, "survived": 65}))  # 35%
+        baseline = tmp_path / ".mutation-baseline"
+        baseline.write_text("30\n")
+        shards = tmp_path / ".mutation-shards.json"
+        shards.write_text(self._shards_doc({"8": 44.63}))
+
+        code = main(
+            [
+                "--stats",
+                str(stats),
+                "--baseline",
+                str(baseline),
+                "--shards",
+                str(shards),
+                "--shard",
+                "8",
+                "--num-shards",
+                "25",
+            ]
+        )
+        assert code == 1  # 35% clears the repo floor but not the shard's 41.63%
+
+    @pytest.mark.unit
+    def test_main_rejects_stale_shard_count(self, tmp_path: Path) -> None:
+        """Changing NUM_SHARDS re-partitions the tree; recorded rates no longer apply."""
+        import json
+
+        from mutation_score import main
+
+        stats = tmp_path / "stats.json"
+        stats.write_text(json.dumps({"killed": 90, "survived": 10}))
+        baseline = tmp_path / ".mutation-baseline"
+        baseline.write_text("30\n")
+        shards = tmp_path / ".mutation-shards.json"
+        shards.write_text(self._shards_doc({"8": 44.63}, num_shards=25))
+
+        code = main(
+            [
+                "--stats",
+                str(stats),
+                "--baseline",
+                str(baseline),
+                "--shards",
+                str(shards),
+                "--shard",
+                "8",
+                "--num-shards",
+                "10",
+            ]
+        )
+        assert code == 1
+
+    @pytest.mark.unit
+    def test_main_requires_shards_file_with_shard(self, tmp_path: Path) -> None:
+        """--shard without its baselines file is a wiring bug, not a silent pass."""
+        import json
+
+        from mutation_score import main
+
+        stats = tmp_path / "stats.json"
+        stats.write_text(json.dumps({"killed": 90, "survived": 10}))
+        baseline = tmp_path / ".mutation-baseline"
+        baseline.write_text("30\n")
+
+        code = main(["--stats", str(stats), "--baseline", str(baseline), "--shard", "8"])
+        assert code == 1
+
+    @pytest.mark.unit
+    def test_main_prompts_to_record_an_unmeasured_shard(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A passing unmeasured shard prints the line that gates it next time."""
+        import json
+
+        from mutation_score import main
+
+        stats = tmp_path / "stats.json"
+        stats.write_text(json.dumps({"killed": 60, "survived": 40}))
+        baseline = tmp_path / ".mutation-baseline"
+        baseline.write_text("30\n")
+        shards = tmp_path / ".mutation-shards.json"
+        shards.write_text(self._shards_doc({}))
+
+        code = main(
+            [
+                "--stats",
+                str(stats),
+                "--baseline",
+                str(baseline),
+                "--shards",
+                str(shards),
+                "--shard",
+                "7",
+                "--num-shards",
+                "25",
+            ]
+        )
+        out = capsys.readouterr().out
+        assert code == 0
+        assert "::notice::" in out
+        assert "60.0" in out  # the measured rate, ready to paste
