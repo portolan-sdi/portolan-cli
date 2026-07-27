@@ -325,3 +325,9 @@ class TestNullColorHandling:
         }
         style = convert_esri_renderer(renderer, source_layer="data")
         assert style["version"] == 8
+
+    def test_symbol_to_layer_type_none_returns_fill(self) -> None:
+        """_symbol_to_layer_type(None) returns 'fill' as the default."""
+        from portolan_cli.extract.common.converters.esri import _symbol_to_layer_type
+
+        assert _symbol_to_layer_type(None) == "fill"
