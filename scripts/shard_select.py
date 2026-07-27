@@ -26,9 +26,9 @@ absolute path would dot the filesystem prefix into a glob matching no mutant.
 Usage:
     python scripts/shard_select.py --root portolan_cli --num-shards 25 --shard 8
 
-Exit codes: 0 = selected paths written to stdout, one per line (possibly none);
-1 = the root holds no Python files at all, which means a broken checkout rather
-than an empty shard.
+Exit codes: 0 = selected paths written to stdout, one per line; 1 = nothing to
+mutate, whether the root holds no Python files (a broken checkout) or none of
+them hashed into this shard. Neither is a covered sweep, so neither exits 0.
 """
 
 from __future__ import annotations
@@ -113,6 +113,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         selected = select(keys, args.num_shards, args.shard)
     except ValueError as exc:
         print(f"::error::{exc}", file=sys.stderr)
+        return 1
+
+    if not selected:
+        # The tree has files but none hashed here. Printing nothing and exiting 0
+        # would hand the sweep an empty glob list and read as a covered night.
+        print(
+            f"::error::Shard {args.shard} of {args.num_shards} selected none of "
+            f"the {len(keys)} files under {args.root}. Mutating nothing is not a "
+            "passing sweep; lower --num-shards. See portolan-sdi/portolan-cli#612.",
+            file=sys.stderr,
+        )
         return 1
 
     for key in selected:

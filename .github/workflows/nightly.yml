@@ -68,8 +68,9 @@ jobs:
           fi
           mapfile -t SHARD_FILES < shard_files.txt
           if [ "${#SHARD_FILES[@]}" -eq 0 ]; then
-            # ~300 files over 25 shards: an empty one means the selection broke,
-            # not that the tree thinned out. Fail rather than sweep nothing (#612).
+            # Backstop: shard_select.py already exits non-zero on an empty shard,
+            # so this only fires if the selector is swapped for one that doesn't.
+            # Either way, a night that mutates nothing is not a passing sweep (#612).
             echo "::error::Shard ${SHARD} of ${NUM_SHARDS} selected no files."
             exit 1
           fi

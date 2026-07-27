@@ -37,6 +37,10 @@ def real_mutant_name(path: str, mangled: str) -> str:
     contract tests below therefore passed or failed on file ordering alone —
     green under xdist's distribution, red in a single-process run. A fresh
     interpreter has no start method set, so the answer is order-independent.
+
+    Callers are integration tests, not unit tests: each call spawns an
+    interpreter and imports mutmut, which costs about half a second against the
+    100ms unit budget.
     """
     source = (
         "from pathlib import Path;"
@@ -48,6 +52,9 @@ def real_mutant_name(path: str, mangled: str) -> str:
         capture_output=True,
         text=True,
         check=True,
+        # mutmut's import runs module-scope setup; a wedged one would otherwise
+        # hang the job until the whole workflow times out.
+        timeout=120,
     )
     return result.stdout.strip()
 
@@ -236,7 +243,7 @@ class TestMutantGlobs:
         with pytest.raises(ValueError):
             mutant_glob("portolan_cli/data.json")
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Spawns an interpreter per call to import mutmut
     @requires_mutmut_import
     @pytest.mark.parametrize(
         "path",
@@ -266,7 +273,7 @@ class TestMutantGlobs:
         name = real_mutant_name(path, mangled)
         assert fnmatch.fnmatch(name, mutant_glob(path))
 
-    @pytest.mark.unit
+    @pytest.mark.integration  # Spawns an interpreter to import mutmut
     @requires_mutmut_import
     def test_glob_excludes_sibling_modules_of_a_package(self) -> None:
         """A package glob must not swallow its submodules' mutants."""
@@ -591,6 +598,32 @@ class TestShardSelect:
         empty.mkdir()
 
         assert main(["--root", str(empty), "--num-shards", "5", "--shard", "0"]) == 1
+
+    @pytest.mark.integration  # Walks a tmp_path tree
+    def test_main_fails_when_a_shard_draws_no_files(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A populated tree can still leave a shard empty; that is not a sweep.
+
+        Exiting 0 with no output would hand the workflow an empty glob list, and
+        a night that mutates nothing must not read as a night that found nothing
+        wrong (#612).
+        """
+        from shard_select import main, shard_of
+
+        root = tmp_path / "pkg"
+        root.mkdir()
+        names = [f"mod_{i}.py" for i in range(3)]
+        for name in names:
+            (root / name).write_text("x = 1\n")
+
+        occupied = {shard_of(f"pkg/{name}", 8) for name in names}
+        starved = next(s for s in range(8) if s not in occupied)
+
+        assert main(["--root", str(root), "--num-shards", "8", "--shard", str(starved)]) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""  # nothing for the workflow to mistake for work
+        assert "selected none of the 3 files" in captured.err
 
 
 class TestShardBaselines:
