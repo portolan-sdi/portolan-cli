@@ -21,7 +21,7 @@ Two floors:
     ``.mutation-baseline`` holds one repo-wide floor, the catastrophe guard every
     run must clear. The nightly sweep scores a rotating ``1/NUM_SHARDS`` slice
     whose kill rate depends on which modules land in it — measured shard rates
-    span 14% to 95% — so one repo-wide number either flaps or gates nothing.
+    span 18% to 95% — so one repo-wide number either flaps or gates nothing.
     ``--shard`` adds the per-shard floor recorded in ``.mutation-shards.json``:
     a shard must hold its own recorded rate (minus a tolerance for timeout
     jitter), which catches a regression the repo-wide floor would sleep through.

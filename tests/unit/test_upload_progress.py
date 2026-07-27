@@ -27,7 +27,7 @@ def tty_progress() -> Iterator[MagicMock]:
     ``__enter__`` builds the progress bar only when stdout is a TTY and JSON mode
     is off, which no test reached before — the whole Rich branch (bar columns,
     task setup, advance calls) went unverified, and mutation testing scored the
-    module at 14%. Yielding the patched class lets a test assert how the bar was
+    module at 18%. Yielding the patched class lets a test assert how the bar was
     configured, not merely that nothing raised.
     """
     with (

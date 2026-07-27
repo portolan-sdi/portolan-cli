@@ -146,7 +146,7 @@ catastrophe floor every run must clear. `.mutation-shards.json` holds each
 shard's own measured kill rate, and the nightly sweep requires the shard to hold
 that rate minus a small tolerance for timeout jitter. Both are needed because a
 shard's rate depends on which modules land in it — the first complete sweep
-(shard 8, 2026-07-27) measured 44.63% overall, spanning 14% for
+(shard 8, 2026-07-27) measured 44.63% overall, spanning 18% for
 `sync.upload_progress` to 95% for `backends.iceberg.config`. One repo-wide
 number set high enough to catch a regression in the strong modules would red the
 nightly every time a weak shard came up; set low enough to stay green, it would
