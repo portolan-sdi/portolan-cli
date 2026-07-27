@@ -12,7 +12,7 @@ helpers below), and ``spec/extensions.md`` is tied to it by a parity test
 (``tests/spec_compliance/test_extensions_doc_parity.py``). See ADR-0055.
 
 It is deliberately a stdlib-only leaf that imports nothing from ``portolan_cli``
-so it can be lifted wholesale into ``reis`` (the validator being extracted, see
+so it can be lifted wholesale into ``rashid`` (the validator being extracted, see
 issue #563) without dragging the app layers along.
 """
 

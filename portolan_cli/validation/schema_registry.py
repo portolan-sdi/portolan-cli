@@ -24,7 +24,7 @@ design and the href/IRI policy is unresolved (discussion #573), so enforcing
 decision. Validation is structural only.
 
 This module is part of the ``portolan_cli.validation`` extraction seam (the
-future ``reis`` package, issue #563): it imports no CLI, output, or config
+future ``rashid`` package, issue #563): it imports no CLI, output, or config
 layer, and no application framework.
 """
 

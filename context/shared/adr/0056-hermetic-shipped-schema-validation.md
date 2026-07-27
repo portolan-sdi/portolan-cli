@@ -19,7 +19,7 @@ The shipped schemas extend upstream STAC v1.1.0 via `allOf` + absolute-URL
 `$ref` (`https://schemas.stacspec.org/v1.1.0/...`). Those references cannot be
 resolved offline, which is why the stubs existed. Validating against the real
 schemas therefore requires resolving the STAC closure without network access,
-because the test suite is hermetic and this logic is the seed of `reis`, the
+because the test suite is hermetic and this logic is the seed of `rashid`, the
 validator being extracted from this repo (issue #563).
 
 Two forces complicate a naive "just load the schema":
@@ -36,7 +36,7 @@ Two forces complicate a naive "just load the schema":
 1. **Vendor the STAC v1.1.0 `$ref` closure** (11 files) as package data under
    `portolan_cli/validation/_vendored/stac/1.1.0/`, fetched by
    `scripts/refresh_stac_schemas.py`. Files stay byte-identical to upstream.
-2. **Add `portolan_cli/validation/schema_registry.py`** (in the reis extraction
+2. **Add `portolan_cli/validation/schema_registry.py`** (in the rashid extraction
    seam): builds a `referencing.Registry` from the vendored closure and exposes
    `validate_document(instance, schema)`. It keys each resource by its canonical
    retrieval URL and normalizes `$id` at load time, side-stepping the malformed
@@ -75,6 +75,6 @@ Two forces complicate a naive "just load the schema":
   filter** (mirroring `stac_rules.py`). Rejected for now: it re-introduces href
   special-casing and pre-judges #573. `format`-off is simpler and neutral.
 - **Fetch STAC schemas over the network at test time.** Rejected: non-hermetic,
-  flaky, and unusable for the offline `reis` extraction.
+  flaky, and unusable for the offline `rashid` extraction.
 - **Depend on a package that ships STAC schemas.** None does cleanly; `pystac`
   ships no JSON Schemas. Vendoring the closure is explicit and auditable.

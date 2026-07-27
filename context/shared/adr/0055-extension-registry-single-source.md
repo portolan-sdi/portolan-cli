@@ -22,7 +22,7 @@ as `application/octet-stream` / role `data`; `.svg`, `.qix`, `.tfw`, `.gdb`,
 `.tsv`, `.zarr`, `.copc.laz` were each recognized in some surfaces and absent
 from others. Nothing failed a test when the surfaces disagreed.
 
-The vocabulary is also the natural core of `reis`, the validator being extracted
+The vocabulary is also the natural core of `rashid`, the validator being extracted
 from this repo (issue #563), so it is worth single-sourcing now.
 
 ## Decision
@@ -39,14 +39,14 @@ not shipped in the wheel (the same reason `constants.PORTOLAN_SPEC_VERSION`
 mirrors `spec/schema/spec-version.json`). It is a stdlib-only leaf that imports
 nothing from `portolan_cli`, so — like `scan_classify`, `bbox`, and
 `metadata.scan` (see the validation-seam contract in `pyproject.toml`) — it
-moves cleanly into `reis` at extraction time.
+moves cleanly into `rashid` at extraction time.
 
 `spec/extensions.md` remains the human doc and is tied to the registry by
 `tests/spec_compliance/test_extensions_doc_parity.py`, which parses the markdown
 tables and fails on any disagreement.
 
 We chose a typed Python module over a shipped data file (YAML/JSON) because
-`reis` is Python: the module extracts by moving, gives `mypy --strict` coverage
+`rashid` is Python: the module extracts by moving, gives `mypy --strict` coverage
 of every row, and needs no runtime parsing or `importlib.resources`.
 
 ## Consequences
@@ -68,9 +68,9 @@ of every row, and needs no runtime parsing or `importlib.resources`.
 
 - **Reconcile values in place + a drift test, no registry.** Lighter, and the
   issue offered it as an option, but leaves the tables hand-written in four
-  places and does not give `reis` a format module. Rejected in favor of a real
+  places and does not give `rashid` a format module. Rejected in favor of a real
   single source.
 - **Canonical machine-readable data file (YAML/JSON) in `spec/schema/`.** Matches
   the `rules.yaml` / `spec-version.json` precedent and is language-neutral, but
-  `spec/` is not shipped at runtime and `reis` is Python, so the file would need
+  `spec/` is not shipped at runtime and `rashid` is Python, so the file would need
   a packaged copy or codegen. A typed module avoids both.
