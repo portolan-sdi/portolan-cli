@@ -17,6 +17,7 @@ Test organization mirrors README structure:
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -164,9 +165,15 @@ class TestReadmeCommonCommands:
         assert result.exit_code == 0, f"add failed: {result.output}"
 
         # Run check with --fix
-        result = runner.invoke(cli, ["check", str(catalog_with_minimal_data), "--fix"])
-        # Should succeed (may convert or report already cloud-native)
-        assert result.exit_code == 0, f"check --fix failed: {result.output}"
+        result = runner.invoke(cli, ["check", str(catalog_with_minimal_data), "--fix", "--json"])
+
+        # --fix now re-validates, and a generated catalog still carries the
+        # known generation gaps the conformance gate tracks (no providers, no
+        # thumbnail, license 'other' without a license link), so the run exits
+        # 1. What this test owns is the fix half: it ran and converted cleanly.
+        payload = json.loads(result.output)["data"]
+        conversion = payload["fix"]["conversion"]
+        assert conversion["summary"]["unsupported"] == 0, f"check --fix failed: {conversion}"
 
     @pytest.mark.integration
     def test_rm_keep_untracks_file(
