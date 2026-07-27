@@ -75,7 +75,7 @@ flowchart TD
     AI --> AJ[output results]
 ```
 
-## Asset keys vs hrefs are NOT the same shape (RULE-0010 / RULE-0011)
+## Asset keys vs hrefs are NOT the same shape
 
 This asymmetry is the single most repeated bug. Get it exactly right.
 
@@ -95,7 +95,7 @@ Before inserting an asset, scan **all** existing assets for one whose resolved
 href already matches and reuse that key, so you preserve human-authored keys
 instead of generating a duplicate. (See `add_asset_to_collection` in `stac.py`.)
 
-## Single-file vector data is a COLLECTION-level asset, not an item (ADR-0031, RULE-0042)
+## Single-file vector data is a COLLECTION-level asset, not an item (ADR-0031, rashid PTL-COL-001)
 
 - A single GeoParquet / Shapefile / GeoPackage file sitting directly in a
   collection dir becomes an entry in `collection.json["assets"]`. Do **not**
@@ -138,7 +138,7 @@ or double-count machine metadata. This caused repeated data-loss bugs.
 ## pystac leaks absolute paths and mis-detects dirs (known-issues/pystac-absolute-paths.md, ADR-0051)
 
 The catalog type is SELF_CONTAINED, all `root`/`self`/`parent`/`child` links MUST
-be relative, no leading `/`, no `file://`, no `C:\`, no URI scheme (RULE-0040).
+be relative, no leading `/`, no `file://`, no `C:\`, no URI scheme (rashid PTL-LNK-004).
 pystac fights this in two ways.
 
 - **Absolute-path leak.** `to_dict()`/`save()` can emit absolute local paths.
@@ -166,7 +166,7 @@ pystac fights this in two ways.
 - Parquet media type is `application/vnd.apache.parquet` (RULE), never
   `application/x-parquet`. PMTiles is `application/vnd.pmtiles`.
 - Tabular (non-geo) status is **derived**, never flagged: a `.parquet` with no
-  `geo` schema-metadata key is NOT GeoParquet (RULE-0030), route it to the
+  `geo` schema-metadata key is NOT GeoParquet, route it to the
   tabular pipeline. Do not reintroduce `portolan:geospatial` (issue #654,
   ADR-0047 as amended) — the spec defines no `portolan:` namespace.
 - Every `catalog.json` and `collection.json` declares the versioned Portolan
