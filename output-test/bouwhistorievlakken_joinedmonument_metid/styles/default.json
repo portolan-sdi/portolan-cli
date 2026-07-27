@@ -1,0 +1,34 @@
+{
+  "version": 8,
+  "name": "Categorical Style",
+  "sources": {
+    "data": {
+      "type": "vector"
+    }
+  },
+  "layers": [
+    {
+      "id": "categorical-fill",
+      "type": "fill",
+      "source": "data",
+      "source-layer": "bouwhistorievlakken_joinedmonument_metid",
+      "paint": {
+        "fill-color": [
+          "match",
+          [
+            "get",
+            "Layer"
+          ],
+          "Hoge waarden",
+          "#ed5151",
+          "Indifferent",
+          "#808080",
+          "Vermoedelijke bouwhistorische waarde",
+          "#ffff00",
+          "#cccccc"
+        ],
+        "fill-opacity": 1.0
+      }
+    }
+  ]
+}

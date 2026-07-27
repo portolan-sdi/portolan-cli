@@ -432,6 +432,7 @@ dev = [
     "numpy>=2.2.6",
     "pylint>=4.0.5",
     "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
     "types-jsonschema>=4.18.0",
     "types-pyyaml>=6.0.12.20250915",

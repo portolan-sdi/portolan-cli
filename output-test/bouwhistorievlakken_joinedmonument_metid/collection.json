@@ -1,0 +1,143 @@
+{
+  "type": "Collection",
+  "id": "bouwhistorievlakken_joinedmonument_metid",
+  "stac_version": "1.1.0",
+  "description": "Bouwhistorievlakken Joinedmonument Metid",
+  "links": [
+    {
+      "rel": "root",
+      "href": "..\\catalog.json",
+      "type": "application/json",
+      "title": "Bouwhistorievlakken Joinedmonument Metid"
+    },
+    {
+      "rel": "parent",
+      "href": "..\\catalog.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "agents",
+      "href": "./AGENTS.md",
+      "type": "text/markdown",
+      "title": "Agent/LLM usage guide"
+    },
+    {
+      "rel": "via",
+      "href": "https://services-eu1.arcgis.com/SMnoOtmU2UWf0vRp/ArcGIS/rest/services/erfgoed_bouwhistorie/FeatureServer/0",
+      "type": "text/html",
+      "title": "Source ArcGIS layer: BouwhistorieVlakken_joinedMonument_metID"
+    }
+  ],
+  "stac_extensions": [
+    "https://stac-extensions.github.io/table/v1.2.0/schema.json",
+    "https://stac-extensions.github.io/file/v2.1.0/schema.json"
+  ],
+  "geoparquet:geometry_type": "MultiPolygon",
+  "geoparquet:feature_count": 5379,
+  "table:row_count": 5379,
+  "table:primary_geometry": "geometry",
+  "table:columns": [
+    {
+      "name": "OBJECTID",
+      "type": "int64"
+    },
+    {
+      "name": "Layer",
+      "type": "string"
+    },
+    {
+      "name": "Text",
+      "type": "string"
+    },
+    {
+      "name": "STRAAT",
+      "type": "string"
+    },
+    {
+      "name": "HUISNUMMER",
+      "type": "int32"
+    },
+    {
+      "name": "KICH_URL",
+      "type": "string"
+    },
+    {
+      "name": "STATUS",
+      "type": "string"
+    },
+    {
+      "name": "Adres",
+      "type": "string"
+    },
+    {
+      "name": "Monument_o",
+      "type": "string"
+    },
+    {
+      "name": "Meer_infor",
+      "type": "string"
+    },
+    {
+      "name": "ID",
+      "type": "int32"
+    },
+    {
+      "name": "Shape__Area",
+      "type": "double"
+    },
+    {
+      "name": "Shape__Length",
+      "type": "double"
+    },
+    {
+      "name": "geometry",
+      "type": "binary"
+    }
+  ],
+  "portolan:total_size_bytes": 868189,
+  "portolan:asset_count": 1,
+  "title": "Bouwhistorievlakken Joinedmonument Metid",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          5.11093384438894,
+          52.0802790557548,
+          5.12957674619749,
+          52.0976507500044
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "license": "other",
+  "assets": {
+    "bouwhistorievlakken_joinedmonument_metid": {
+      "href": "./bouwhistorievlakken_joinedmonument_metid.parquet",
+      "type": "application/vnd.apache.parquet",
+      "file:size": 868189,
+      "file:checksum": "sha256:42fbdb53c3502335009f78e46f0b036764e56f0420cc6097cfe31fcfa3bb6ed7",
+      "roles": [
+        "data"
+      ]
+    },
+    "styles/default": {
+      "href": "./styles/default.json",
+      "type": "application/vnd.mapbox.style+json",
+      "title": "Categorical Style",
+      "roles": [
+        "style"
+      ]
+    }
+  },
+  "portolan:styles": [
+    "styles/default"
+  ]
+}
