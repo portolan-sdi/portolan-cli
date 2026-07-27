@@ -11,11 +11,17 @@ is added or removed, which makes a recorded per-shard kill rate
 (``.mutation-shards.json``) meaningless the moment the tree changes. Hashing
 moves only the added or removed file. See portolan-sdi/portolan-cli#612.
 
-Assignment is BLAKE2b of the POSIX path modulo the shard count: stable across
-runs, machines, and Python versions (unlike ``hash()``, which is salted per
-process). A cryptographic digest rather than CRC-32 because these paths share
-long prefixes — ``portolan_cli/extract/...`` — and CRC-32's weak avalanche
-clustered them, leaving one shard with 17 files and another with 1.
+Assignment is BLAKE2b of the path under the package directory, modulo the shard
+count: stable across runs, machines, and Python versions (unlike ``hash()``,
+which is salted per process). A cryptographic digest rather than CRC-32 because
+these paths share long prefixes — ``portolan_cli/extract/...`` — and CRC-32's
+weak avalanche clustered them, leaving one shard with 17 files and another with
+1. The key drops everything above the package, so where the checkout lives
+cannot change which shard a file belongs to.
+
+Paths are printed relative to the package for the same reason: they feed
+``scripts/mutant_globs.py``, which dots a path into a module name, and an
+absolute path would dot the filesystem prefix into a glob matching no mutant.
 
 Usage:
     python scripts/shard_select.py --root portolan_cli --num-shards 25 --shard 8
@@ -51,6 +57,19 @@ def shard_of(path: str | PurePosixPath, num_shards: int) -> int:
     return int.from_bytes(digest, "big") % num_shards
 
 
+def shard_key(root: Path, path: Path) -> str:
+    """Return the hashed key for ``path``: its location under ``root``'s name.
+
+    The key must not vary with how the caller spelled ``--root``. Hashing the
+    path as walked made assignment depend on the working directory, so an
+    absolute root (a tmp dir, a differently-checked-out CI runner) shuffled every
+    file into a different shard and voided the recorded per-shard baselines.
+    ``portolan_cli/sync/upload.py`` is the key whether the sweep ran from the
+    repo root or anywhere else.
+    """
+    return f"{root.name}/{path.relative_to(root).as_posix()}"
+
+
 def select(paths: Sequence[str], num_shards: int, shard: int) -> list[str]:
     """Return the subset of ``paths`` belonging to ``shard``, sorted.
 
@@ -77,8 +96,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point. Returns the process exit code."""
     args = _parse_args(argv)
 
-    paths = [p.as_posix() for p in sorted(args.root.rglob("*.py"))]
-    if not paths:
+    # Emit the root-relative key, not the path as walked. The caller feeds these
+    # to mutant_globs.py, which turns a path into a dotted module name; an
+    # absolute path would dot the whole filesystem prefix into the glob and match
+    # no mutant at all.
+    keys = [shard_key(args.root, p) for p in sorted(args.root.rglob("*.py"))]
+    if not keys:
         print(
             f"::error::No Python files under {args.root} — refusing to report an "
             "empty sweep as a covered shard. See portolan-sdi/portolan-cli#612.",
@@ -87,13 +110,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     try:
-        selected = select(paths, args.num_shards, args.shard)
+        selected = select(keys, args.num_shards, args.shard)
     except ValueError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
 
-    for path in selected:
-        print(path)
+    for key in selected:
+        print(key)
     return 0
 
 

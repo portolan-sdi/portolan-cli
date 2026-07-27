@@ -542,18 +542,45 @@ class TestShardSelect:
     def test_main_emits_only_the_requested_shard(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """End-to-end: main() prints the shard's files, one per line."""
+        """End-to-end: the shards partition the tree, printed root-relative."""
         from shard_select import main, shard_of
 
         root = tmp_path / "pkg"
         root.mkdir()
-        for i in range(30):
-            (root / f"mod_{i}.py").write_text("x = 1\n")
+        expected = sorted(f"pkg/mod_{i}.py" for i in range(30))
+        for name in expected:
+            (root / Path(name).name).write_text("x = 1\n")
 
-        assert main(["--root", str(root), "--num-shards", "5", "--shard", "2"]) == 0
-        printed = [line for line in capsys.readouterr().out.splitlines() if line]
-        assert printed  # 30 files over 5 shards leaves none empty in practice
-        assert all(shard_of(p, 5) == 2 for p in printed)
+        emitted: list[str] = []
+        for shard in range(5):
+            assert main(["--root", str(root), "--num-shards", "5", "--shard", str(shard)]) == 0
+            printed = [line for line in capsys.readouterr().out.splitlines() if line]
+            # Paths come out relative to the package, never carrying the tmp_path
+            # prefix: mutant_globs.py dots them into module names.
+            assert all(shard_of(p, 5) == shard for p in printed)
+            emitted.extend(printed)
+
+        assert sorted(emitted) == expected  # no file skipped, none mutated twice
+
+    @pytest.mark.integration  # Walks a tmp_path tree
+    def test_assignment_ignores_where_the_package_lives(self, tmp_path: Path) -> None:
+        """The regression macOS CI caught: an absolute root reshuffled the shards.
+
+        Hashing the path as walked made membership depend on the working
+        directory, so the same file landed in a different shard when the sweep
+        ran from a tmp dir — voiding every recorded per-shard baseline.
+        """
+        from shard_select import shard_key
+
+        root = tmp_path / "portolan_cli"
+        (root / "sync").mkdir(parents=True)
+        absolute = root / "sync" / "upload.py"
+        absolute.write_text("x = 1\n")
+
+        assert shard_key(root, absolute) == "portolan_cli/sync/upload.py"
+        assert shard_key(Path("portolan_cli"), Path("portolan_cli/sync/upload.py")) == (
+            "portolan_cli/sync/upload.py"
+        )
 
     @pytest.mark.integration  # Walks a tmp_path tree
     def test_main_fails_when_root_has_no_sources(self, tmp_path: Path) -> None:
