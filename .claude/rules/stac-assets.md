@@ -163,10 +163,20 @@ pystac fights this in two ways.
   tests still compare like-for-like.
 - Parquet media type is `application/vnd.apache.parquet` (RULE), never
   `application/x-parquet`. PMTiles is `application/vnd.pmtiles`.
-- Tabular (non-geo) collections MUST set `portolan:geospatial: false`
-  (RULE-0090, ADR-0047). Absent or true means full spatial requirements apply.
-  A `.parquet` with no `geo` schema-metadata key is NOT GeoParquet (RULE-0030),
-  route it to the tabular pipeline.
+- Tabular (non-geo) status is **derived**, never flagged: a `.parquet` with no
+  `geo` schema-metadata key is NOT GeoParquet (RULE-0030), route it to the
+  tabular pipeline. Do not reintroduce `portolan:geospatial` (issue #654,
+  ADR-0047 as amended) — the spec defines no `portolan:` namespace.
+- Every `catalog.json` and `collection.json` declares the versioned Portolan
+  profile URI (`constants.PORTOLAN_SCHEMA_URI`) in `stac_extensions`, and
+  carries a `README.md` behind a `rel="describedby"` link plus an `AGENTS.md`
+  behind `rel="agents"`. `catalog.ensure_schema_uris` / `readme.ensure_readmes`
+  / `agents_md.ensure_agents_md` are the single writers, shared by `init`,
+  `add`, and `check --fix`.
+- `file:checksum` is a hex **multihash** (`sync.checksums.multihash_sha256`),
+  not a bare or `sha256:`-prefixed digest.
+- The core v1.1.0 `bands` array (including `bands[].statistics`) does NOT imply
+  the raster extension; only `raster:`-prefixed fields do.
 
 ## `add` must be atomic
 

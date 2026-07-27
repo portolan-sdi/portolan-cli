@@ -327,6 +327,45 @@ class TestIsSchemaResolutionError:
         )
         assert _is_schema_resolution_error(msg) is True
 
+    def test_extension_evaluation_error_is_tolerable(self) -> None:
+        """An extension schema that *evaluates* badly is tolerated too (#654).
+
+        stac-validator reports these as ``... [Schema: <uri>]. Error in
+        Extensions.`` rather than a fetch failure, and the Portolan profile
+        schema trips it. The document itself is still well-formed.
+        """
+        from portolan_cli.validation.stac_rules import _is_schema_resolution_error
+
+        msg = (
+            "'list' object has no attribute 'get' "
+            "[Schema: https://schemas.portolan-sdi.org/portolan/v0.1.0/schema.json]. "
+            "Error in Extensions."
+        )
+        assert _is_schema_resolution_error(msg) is True
+
+    def test_core_schema_evaluation_error_is_not_tolerable(self) -> None:
+        from portolan_cli.validation.stac_rules import _is_schema_resolution_error
+
+        msg = (
+            "'list' object has no attribute 'get' "
+            "[Schema: https://schemas.stacspec.org/v1.1.0/collection-spec/"
+            "json-schema/collection.json]. Error in Extensions."
+        )
+        assert _is_schema_resolution_error(msg) is False
+
+    @pytest.mark.parametrize(
+        "msg",
+        [
+            "Unresolvable JSON pointer: 'definitions/link'",
+            "'list' object has no attribute 'get'",
+        ],
+    )
+    def test_upstream_validator_crash_is_tolerable(self, msg: str) -> None:
+        """stac-validator breaking on an extension schema is tolerated (#654)."""
+        from portolan_cli.validation.stac_rules import _is_schema_resolution_error
+
+        assert _is_schema_resolution_error(msg) is True
+
     def test_core_spec_schema_url_is_not_tolerable(self) -> None:
         from portolan_cli.validation.stac_rules import _is_schema_resolution_error
 

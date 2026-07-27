@@ -11,15 +11,24 @@ Key conventions:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from typing import Any
 
 import pystac
 from pystac.summaries import Summarizer, SummaryStrategy
 
+from portolan_cli.constants import PORTOLAN_SCHEMA_URI
 from portolan_cli.humanize import humanize_slug
+
+# Any versioned Portolan profile URI, not just the current one: matching the
+# whole family is what lets a stale claim be rewritten rather than duplicated.
+PORTOLAN_SCHEMA_URI_PATTERN = re.compile(
+    r"^https://schemas\.portolan-sdi\.org/portolan/v\d+\.\d+\.\d+/schema\.json$"
+)
 
 
 class MergeStrategy(Enum):
@@ -501,6 +510,35 @@ def apply_human_titles(collection: pystac.Collection, metadata: object) -> None:
         collection.description = description.strip()
 
 
+def apply_human_license(collection: pystac.Collection, metadata: object) -> None:
+    """Apply the human-authored license from metadata.yaml (issue #654).
+
+    ``license`` is a required metadata.yaml field (ADR-0038); without this the
+    collection kept the ``other`` placeholder even when the human had declared an
+    SPDX identifier. ``license_url``, when present, becomes the ``rel="license"``
+    link that a non-SPDX license needs to be resolvable.
+
+    Args:
+        collection: The collection to update in place.
+        metadata: The merged metadata.yaml mapping (other types are ignored).
+    """
+    if not isinstance(metadata, dict):
+        return
+
+    license_id = metadata.get("license")
+    if isinstance(license_id, str) and license_id.strip():
+        collection.license = license_id.strip()
+
+    license_url = metadata.get("license_url")
+    if not isinstance(license_url, str) or not license_url.strip():
+        return
+    href = license_url.strip()
+    for link in collection.links:
+        if link.rel == "license" and link.href == href:
+            return
+    collection.add_link(pystac.Link(rel="license", target=href, title="License"))
+
+
 def add_partition_metadata_to_collection(
     collection: pystac.Collection,
     partition_metadata: dict[str, object],
@@ -744,6 +782,44 @@ EXTENSION_URLS = {
 }
 
 
+def ensure_portolan_schema_uri(document: dict[str, Any]) -> bool:
+    """Declare the versioned Portolan profile schema URI on a catalog or collection.
+
+    The profile URI is the machine-readable conformance claim: every catalog and
+    collection MUST carry exactly one (issue #654). This appends
+    :data:`~portolan_cli.constants.PORTOLAN_SCHEMA_URI` when absent, and rewrites
+    a URI left over from an older spec version in place, so re-stamping a catalog
+    upgrades it instead of accumulating claims. Other extension declarations keep
+    their relative order.
+
+    Args:
+        document: Parsed ``catalog.json`` or ``collection.json``, mutated in place.
+
+    Returns:
+        True when ``stac_extensions`` changed, False when it already conformed.
+    """
+    existing = document.get("stac_extensions")
+    declared: list[str] = list(existing) if isinstance(existing, list) else []
+
+    kept: list[str] = []
+    stamped = False
+    for uri in declared:
+        if isinstance(uri, str) and PORTOLAN_SCHEMA_URI_PATTERN.match(uri):
+            # Collapse every profile claim (stale or duplicate) onto the first.
+            if not stamped:
+                kept.append(PORTOLAN_SCHEMA_URI)
+                stamped = True
+            continue
+        kept.append(uri)
+    if not stamped:
+        kept.append(PORTOLAN_SCHEMA_URI)
+
+    if kept == declared and isinstance(existing, list):
+        return False
+    document["stac_extensions"] = kept
+    return True
+
+
 def build_stac_extensions(properties: dict[str, object]) -> list[str]:
     """Build stac_extensions array based on which extension fields are populated.
 
@@ -766,9 +842,11 @@ def build_stac_extensions(properties: dict[str, object]) -> list[str]:
     if any(k.startswith("proj:") for k in properties):
         extensions.append(EXTENSION_URLS["projection"])
 
-    # Check for raster extension fields
-    # STAC v1.1.0 uses unified 'bands' array at top level (not raster:bands)
-    if any(k.startswith("raster:") for k in properties) or "bands" in properties:
+    # Check for raster extension fields.
+    # The unified `bands` array (with its `statistics`) is core STAC v1.1.0, so
+    # it does not imply the raster extension — only genuinely `raster:`-prefixed
+    # fields such as raster:spatial_resolution do (issue #654).
+    if any(k.startswith("raster:") for k in properties):
         extensions.append(EXTENSION_URLS["raster"])
 
     # Check for file extension fields

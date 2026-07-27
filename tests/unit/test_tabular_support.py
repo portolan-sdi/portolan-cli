@@ -21,6 +21,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from portolan_cli.constants import PORTOLAN_SCHEMA_URI
 from portolan_cli.scan.classify import (
     FileCategory,
     classify_file,
@@ -1315,15 +1316,15 @@ extent:
 
 
 @pytest.mark.unit
-class TestPortolanGeospatialFlag:
-    """Tests for portolan:geospatial flag on tabular collections (RULE-0090).
+class TestTabularCollectionEmission:
+    """A tabular collection carries no portolan: fields (issue #654, ADR-0047).
 
-    Tabular collections MUST have portolan:geospatial set to false to distinguish
-    intentionally non-spatial from spatial-but-unmeasured collections.
+    Tabular status is derived from asset content, so the collection Portolan
+    writes declares the profile schema URI and nothing from a private namespace.
     """
 
-    def test_tabular_collection_has_geospatial_false(self, tmp_path: Path) -> None:
-        """Tabular collections should have portolan:geospatial: false set."""
+    def test_tabular_collection_omits_the_geospatial_flag(self, tmp_path: Path) -> None:
+        """Tabular collections are no longer flagged portolan:geospatial: false."""
         from portolan_cli.add import add_files
 
         # Create catalog structure
@@ -1359,9 +1360,5 @@ class TestPortolanGeospatialFlag:
         assert collection_json.exists(), "collection.json should be created"
 
         collection_data = json.loads(collection_json.read_text())
-        assert "portolan:geospatial" in collection_data, (
-            "Tabular collection should have portolan:geospatial property (RULE-0090)"
-        )
-        assert collection_data["portolan:geospatial"] is False, (
-            "Tabular collection should have portolan:geospatial: false"
-        )
+        assert "portolan:geospatial" not in collection_data
+        assert PORTOLAN_SCHEMA_URI in collection_data["stac_extensions"]

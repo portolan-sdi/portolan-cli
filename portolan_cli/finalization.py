@@ -47,6 +47,7 @@ from portolan_cli.stac import (
     add_partition_metadata_to_collection,
     add_table_extension,
     aggregate_table_metadata,
+    apply_human_license,
     apply_human_titles,
     create_collection,
     load_catalog,
@@ -965,9 +966,11 @@ def _finalize_collection(
         initial_bbox=first_item.bbox,
     )
 
-    # Issue #502: apply human title/description overrides from
+    # Issue #502/#654: apply human title/description/license overrides from
     # metadata.yaml (highest precedence over the auto-derived defaults).
-    apply_human_titles(collection, load_merged_metadata(collection_dir, catalog_root))
+    merged_metadata = load_merged_metadata(collection_dir, catalog_root)
+    apply_human_titles(collection, merged_metadata)
+    apply_human_license(collection, merged_metadata)
 
     # Add items or collection-level assets to collection (in memory)
     _add_prepared_items_to_collection(collection, items, merge_strategy)
@@ -1051,9 +1054,20 @@ def finalize_items(
     # Issue #502: backfill human-readable titles onto child/item links so STAC
     # Browser renders names without fetching every child. Done once per batch
     # (O(catalog), not per-collection) after all collections are written.
-    from portolan_cli.catalog import ensure_link_titles
+    from portolan_cli.catalog import ensure_link_titles, ensure_schema_uris
 
     ensure_link_titles(catalog_root)
+
+    # ADR-0052 / issue #654: every catalog and collection declares the Portolan
+    # profile schema URI and carries AGENTS.md and README.md behind their links.
+    # Swept once per batch so subcatalogs created along the way (ADR-0032
+    # nesting) and pre-existing objects are covered, not just what was written.
+    from portolan_cli.agents_md import ensure_agents_md_tree
+    from portolan_cli.readme import ensure_readmes
+
+    ensure_schema_uris(catalog_root)
+    ensure_agents_md_tree(catalog_root)
+    ensure_readmes(catalog_root)
 
     # Issue #501: update catalog-level aggregate file statistics
     # Done after all collections are finalized so totals are accurate.

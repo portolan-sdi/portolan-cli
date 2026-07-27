@@ -918,7 +918,7 @@ The `portolan readme` command generates `README.md` by combining:
   `[west, south, east, north]`, reduced from a 3D `[west, south, min_z, east,
   north, max_z]` extent when the STAC bbox has six elements
 - Schema columns (from `table:columns`)
-- Bands (from `eo:bands`, `raster:bands`)
+- Bands (from the core v1.1.0 `bands` array, or legacy `eo:bands`/`raster:bands`)
 - Files with checksums
 - Code examples based on format
 
@@ -951,6 +951,11 @@ portolan readme
 - Aggregated spatial extent (envelope of all collections, invalid coordinates like inf/NaN are filtered)
 - Aggregated temporal extent (earliest to latest)
 - List of collections with links (collapsible when ≥10 collections)
+
+**Automatic scaffolding:** `init`, `add`, and `check --fix` scaffold a `README.md`
+next to every `catalog.json` and `collection.json` that lacks one, and add the
+`rel="describedby"` link the spec requires. An existing README is never
+overwritten — run `portolan readme` to refresh a stale one.
 
 ### Data Defaults
 

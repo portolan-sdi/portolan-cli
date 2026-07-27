@@ -45,26 +45,56 @@ _RESOLUTION_URI_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A schema that was fetched but that stac-validator cannot *evaluate* fails
+# differently: ``<python error> [Schema: <uri>]. Error in Extensions.`` The
+# Portolan profile schema trips this (issue #654), as would any extension using
+# a construct the validator's fast path does not implement. The document is
+# still well-formed, so the same core-vs-extension rule applies.
+_EXTENSION_EVALUATION_ERROR_MARKER = "error in extensions"
+_EVALUATION_URI_RE = re.compile(r"\[schema:\s*(?P<uri>[^\]]+)\]", re.IGNORECASE)
+
+# Signatures of stac-validator breaking on an extension schema rather than
+# finding a defect in the document: a Python TypeError text, and an unresolvable
+# internal ``$ref``. The Portolan profile schema provokes both (its draft-07
+# ``#/definitions/*`` pointers are beyond stac-validator's extension path), and
+# any extension using constructs it does not implement would too. Neither can
+# come from the core spec schemas, which are compiled on every run — a
+# regression there would fail everywhere at once. The authority on Portolan
+# profile conformance is rashid, not stac-check, so a broken evaluation must not
+# fail an otherwise valid document. Non-strict mode only.
+_UPSTREAM_VALIDATOR_CRASH_MARKERS: tuple[str, ...] = (
+    "unresolvable json pointer",
+    "'list' object has no attribute 'get'",
+)
+
+
+def _tolerable_schema_uri(uri: str) -> bool:
+    """True if a failing schema URI is an extension rather than a core spec schema."""
+    host = (urlsplit(uri.strip().rstrip(".")).hostname or "").lower()
+    return host not in _CORE_SCHEMA_HOSTS
+
 
 def _is_schema_resolution_error(message: str | None) -> bool:
-    """True if `message` is a *tolerable* extension-schema fetch failure.
+    """True if `message` is a *tolerable* extension-schema failure.
 
-    Tolerable means the schema that could not be fetched is a STAC *extension*
-    schema. A failure to fetch a CORE spec schema (``schemas.stacspec.org``)
+    Tolerable means the schema that could not be fetched — or, per
+    ``_EXTENSION_EVALUATION_ERROR_MARKER``, could not be evaluated — is a STAC
+    *extension* schema. A failure on a CORE spec schema (``schemas.stacspec.org``)
     means the document was never validated, so it is NOT tolerable — otherwise
-    an offline run would pass every catalog, valid or not. If the marker is
+    an offline run would pass every catalog, valid or not. If a marker is
     present but the URI cannot be isolated, we are conservative and do not
     tolerate (we can't prove it was only an extension schema).
     """
     if not message:
         return False
-    if _SCHEMA_RESOLUTION_ERROR_MARKER not in message.lower():
-        return False
-    match = _RESOLUTION_URI_RE.search(message)
-    if match is None:
-        return False
-    host = (urlsplit(match.group("uri").rstrip(".")).hostname or "").lower()
-    return host not in _CORE_SCHEMA_HOSTS
+    lowered = message.lower()
+    if _SCHEMA_RESOLUTION_ERROR_MARKER in lowered:
+        match = _RESOLUTION_URI_RE.search(message)
+        return match is not None and _tolerable_schema_uri(match.group("uri"))
+    if _EXTENSION_EVALUATION_ERROR_MARKER in lowered:
+        match = _EVALUATION_URI_RE.search(message)
+        return match is not None and _tolerable_schema_uri(match.group("uri"))
+    return any(marker in lowered for marker in _UPSTREAM_VALIDATOR_CRASH_MARKERS)
 
 
 class StacSchemaRule(ValidationRule):

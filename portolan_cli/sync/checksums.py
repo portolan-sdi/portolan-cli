@@ -8,6 +8,36 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Multihash prefix for a 32-byte sha2-256 digest: varint(0x12) + varint(0x20).
+# https://github.com/multiformats/multihash
+_SHA256_MULTIHASH_PREFIX = "1220"
+
+
+def multihash_sha256(digest_hex: str) -> str:
+    """Encode a hex SHA-256 digest as a hex multihash for ``file:checksum``.
+
+    The STAC file extension types ``file:checksum`` as a multihash — the hash
+    function and digest length travel with the digest — so a bare hex digest (or
+    a ``sha256:``-prefixed one) is not a valid value (issue #654).
+
+    Args:
+        digest_hex: Hex-encoded SHA-256 digest, as returned by
+            :func:`compute_checksum`.
+
+    Returns:
+        The digest with the sha2-256 multihash prefix.
+
+    Raises:
+        ValueError: If ``digest_hex`` is not a 64-character hex string.
+    """
+    if len(digest_hex) != 64:
+        raise ValueError(f"Not a 64-character SHA-256 hex digest: {digest_hex!r}")
+    try:
+        bytes.fromhex(digest_hex)
+    except ValueError as exc:
+        raise ValueError(f"Not a 64-character SHA-256 hex digest: {digest_hex!r}") from exc
+    return f"{_SHA256_MULTIHASH_PREFIX}{digest_hex}"
+
 
 def compute_checksum(path: Path) -> str:
     """Compute SHA-256 checksum of a file securely.

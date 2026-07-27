@@ -67,7 +67,7 @@ _GLOB_CHARS = ("*", "?", "[")
 
 _NON_SPATIAL_NOTE = (
     "Non-spatial table (no geometry column); will be extracted as plain Parquet "
-    "into a tabular collection (portolan:geospatial: false, ADR-0047)."
+    "into a tabular collection (ADR-0047)."
 )
 
 

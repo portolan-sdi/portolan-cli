@@ -986,3 +986,90 @@ def generate_catalog_readme(catalog_path: Path) -> str:
     _add_footer_section(sections)
 
     return "\n".join(sections)
+
+
+#: STAC link relation that references the human-readable README.
+README_LINK_REL = "describedby"
+
+#: Media type the README link MUST declare.
+README_MEDIA_TYPE = "text/markdown"
+
+#: Relative href used when README.md sits next to the STAC JSON.
+README_LINK_HREF = "./README.md"
+
+#: Human-readable title for the README link.
+README_LINK_TITLE = "Human-readable documentation"
+
+
+def _build_readme_link() -> dict[str, str]:
+    """Build a well-formed ``rel="describedby"`` link pointing at README.md."""
+    return {
+        "rel": README_LINK_REL,
+        "href": README_LINK_HREF,
+        "type": README_MEDIA_TYPE,
+        "title": README_LINK_TITLE,
+    }
+
+
+def _ensure_readme_link(data: dict[str, Any]) -> bool:
+    """Insert or normalize the ``rel="describedby"`` link. True when changed."""
+    links = data.setdefault("links", [])
+    if not isinstance(links, list):
+        return False
+    expected = _build_readme_link()
+    for link in links:
+        if isinstance(link, dict) and link.get("rel") == README_LINK_REL:
+            if all(link.get(key) == value for key, value in expected.items()):
+                return False
+            link.update(expected)
+            return True
+    links.append(expected)
+    return True
+
+
+def ensure_readmes(catalog_root: Path) -> bool:
+    """Scaffold README.md and its ``describedby`` link across a catalog tree.
+
+    Every catalog and collection directory carries a README.md referenced by a
+    ``rel="describedby"`` markdown link (issue #654). The file is generated from
+    the STAC object and metadata.yaml when absent; an existing README is never
+    overwritten, so a human-authored or hand-edited one survives ``add``.
+    Refreshing a stale README stays the job of ``portolan readme``.
+
+    Idempotent: a tree that already conforms is not rewritten.
+
+    Args:
+        catalog_root: Root directory of the catalog.
+
+    Returns:
+        True if any file was written or modified.
+    """
+    changed_any = False
+    stac_files = sorted(catalog_root.rglob("catalog.json")) + sorted(
+        catalog_root.rglob("collection.json")
+    )
+
+    for stac_file in stac_files:
+        try:
+            data = json.loads(stac_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+
+        directory = stac_file.parent
+        readme_path = directory / "README.md"
+        if not readme_path.exists():
+            content = (
+                generate_readme_for_collection(directory, catalog_root)
+                if stac_file.name == "collection.json"
+                else generate_catalog_readme(directory)
+            )
+            readme_path.write_text(content, encoding="utf-8")
+            changed_any = True
+
+        if _ensure_readme_link(data):
+            stac_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            changed_any = True
+
+    return changed_any
