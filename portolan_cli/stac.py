@@ -21,7 +21,7 @@ from typing import Any
 import pystac
 from pystac.summaries import Summarizer, SummaryStrategy
 
-from portolan_cli.constants import PORTOLAN_SCHEMA_URI
+from portolan_cli.constants import PARTITION_EXTENSION_URI, PORTOLAN_SCHEMA_URI
 from portolan_cli.humanize import humanize_slug
 
 # Any versioned Portolan profile URI, not just the current one: matching the
@@ -778,7 +778,7 @@ EXTENSION_URLS = {
     "raster": "https://stac-extensions.github.io/raster/v1.1.0/schema.json",
     "file": "https://stac-extensions.github.io/file/v2.1.0/schema.json",  # Reserved for future
     "vector": "https://stac-extensions.github.io/vector/v0.1.0/schema.json",  # Proposal maturity
-    "partition": "https://portolan-sdi.github.io/stac-partition-extension/v1.0.0/schema.json",
+    "partition": PARTITION_EXTENSION_URI,
 }
 
 

@@ -245,6 +245,8 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
     # --- Add collection-level asset (per ADR-0031) ---
     # Uses community convention: key="geoparquet-items", roles=["stac-items"]
     # Ref: https://planetarycomputer.microsoft.com/api/stac/v1/collections/naip
+    # The spec-normative role is "collection-mirror" (PORTO-FMT-041, rashid
+    # PTL-MIR-002); it travels alongside the community role so both readers work.
     assets = data.get("assets", {})
     asset_key = "geoparquet-items"
 
@@ -258,7 +260,7 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
             "href": f"./{PARQUET_FILENAME}",
             "type": PARQUET_MEDIA_TYPE,
             "title": "STAC items as GeoParquet",
-            "roles": ["stac-items"],
+            "roles": ["stac-items", "collection-mirror"],
         }
         data["assets"] = assets
         modified = True

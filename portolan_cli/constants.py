@@ -28,6 +28,14 @@ PORTOLAN_SCHEMA_URI: str = (
     f"https://schemas.portolan-sdi.org/portolan/v{PORTOLAN_SPEC_VERSION}/schema.json"
 )
 
+# The partition extension a Hive-partitioned collection declares (ADR-0042).
+# rashid's PTL-PRT-001 recognizes the incubating URI namespace, so generation
+# and `check --fix` both emit this one; the older github.io URL it replaced was
+# never a URI the validator accepted.
+PARTITION_EXTENSION_URI: str = (
+    "https://schemas.portolan-sdi.org/incubating/partition/v1.0.0/schema.json"
+)
+
 # The extension vocabulary below is DERIVED from portolan_cli.extension_registry
 # (the single source, ADR-0055). Edit rows there, not these members.
 
