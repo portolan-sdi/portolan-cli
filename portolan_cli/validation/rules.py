@@ -621,7 +621,7 @@ class PMTilesLinkRule(ValidationRule):
         """
         # Import from the framework-free leaf, not pmtiles.py: the latter pulls
         # in output/thumbnail/style (and click/rich/config), which would break
-        # the reis extraction seam (issue #563).
+        # the rashid extraction seam (issue #563).
         from portolan_cli.viz.pmtiles_links import (
             WEB_MAP_LINKS_EXTENSION,
             pmtiles_asset_hrefs,

@@ -5,8 +5,8 @@ layer can classify PMTiles assets and links **without** importing
 ``pmtiles.py``, which pulls in the ``output``/``thumbnail``/``style`` layers
 (and transitively ``click``/``rich``/``config``).
 
-Keeping them in a stdlib-only leaf preserves the reis extraction seam
-(issue #563; the ``validation-seam-for-reis`` / ``validation-no-framework-leakage``
+Keeping them in a stdlib-only leaf preserves the rashid extraction seam
+(issue #563; the ``validation-seam-for-rashid`` / ``validation-no-framework-leakage``
 import-linter contracts): ``portolan_cli.validation`` must stay free of the
 CLI/output/config framework layers. ``pmtiles.py`` re-imports these names so its
 public API is unchanged.

@@ -321,10 +321,10 @@ source_modules = ["portolan_cli.backends.iceberg"]
 forbidden_modules = ["portolan_cli.cli"]
 
 [[tool.importlinter.contracts]]
-id = "validation-seam-for-reis"
-name = "Validation must not import CLI/output/config layers (reis extraction seam)"
+id = "validation-seam-for-rashid"
+name = "Validation must not import CLI/output/config layers (rashid extraction seam)"
 type = "forbidden"
-# portolan_cli.validation is nearly extraction-ready as the future `reis`
+# portolan_cli.validation is nearly extraction-ready as the future `rashid`
 # package (see issue #563). It stays free of the app-framework layers so the
 # seam is cheap to protect now, ahead of the post-sprint extraction.
 source_modules = ["portolan_cli.validation"]
@@ -336,7 +336,7 @@ forbidden_modules = [
 # Intentional extraction-time couplings: validation reaches into these
 # pure-logic/data modules for classification, bbox checks, and metadata scan.
 # They are leaves (or a self-contained subtree) that carry no CLI/output/config
-# dependency, so they move with `reis` or vendor trivially at extraction time.
+# dependency, so they move with `rashid` or vendor trivially at extraction time.
 # Documented per the second checkbox on #563 (which listed only scan_classify;
 # metadata.scan and bbox are the same kind of coupling, added since).
 #   portolan_cli.validation -> portolan_cli.scan.classify
@@ -348,7 +348,7 @@ forbidden_modules = [
 
 [[tool.importlinter.contracts]]
 id = "validation-no-framework-leakage"
-name = "Validation must not import Click or Rich (reis extraction seam)"
+name = "Validation must not import Click or Rich (rashid extraction seam)"
 type = "forbidden"
 # Framework tripwire: Click/Rich only ever reach validation *through* the
 # cli/output layers forbidden above. Guarding the external packages directly
