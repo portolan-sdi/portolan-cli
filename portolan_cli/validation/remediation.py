@@ -179,7 +179,11 @@ RULE_REMEDIATION: dict[str, Remediation] = {
         "(ADR-0050); run `portolan viz` with the [pmtiles] extra."
     ),
     # fixer `styles` is new in Phase 3; it corrects the style asset media type
-    "PTL-VIZ-005": _auto("styles", "Set the style asset's media type to application/json."),
+    "PTL-VIZ-005": _auto(
+        "styles",
+        "Type the style asset application/vnd.mapbox.style+json; a PMTiles style is a "
+        "MapLibre GL style file.",
+    ),
     # ---- partitions ----
     # fixer `partition` wraps partitioning.py's schema read
     "PTL-PRT-001": _auto(
