@@ -144,7 +144,7 @@ excluded). **Lowering the floor requires a justification in the PR that does so.
 **Fails loud, never silent.** On the nightly sweep, zero testable mutants means
 mutation testing is broken, not passing — the scorer hard-fails (it used to
 `exit 0` and report a green nightly, hiding a broken setup). `[tool.mutmut]` in
-`pyproject.toml` copies the `scripts/` package, `spec/` schemas, and data files
+`pyproject.toml` copies the `scripts/` package and the data files
 into the mutants sandbox and scopes the stats run to the fast, offline suite with
 `--no-cov`.
 
@@ -152,8 +152,8 @@ into the mutants sandbox and scopes the stats run to the fast, offline suite wit
 instruments code with a trampoline that reads `os.environ["MUTANT_UNDER_TEST"]`.
 Two consequences the tests must respect: a cleared environment must preserve that
 var (use `cleared_environ()` from `tests/conftest.py`, not
-`patch.dict(..., clear=True)`), and files read by repo-root path (e.g.
-`spec/schema/`) must be listed in `[tool.mutmut] also_copy`. Parallel conversion
+`patch.dict(..., clear=True)`), and files read by repo-root path must be
+listed in `[tool.mutmut] also_copy`. Parallel conversion
 falls back to serial when a process pool can't start in the sandbox
 (`convert.py`). (The geoparquet-io #565 CWD guard was evaluated and is **not**
 needed: `isolated_filesystem`/`chdir` tests do not crash the stats phase.)

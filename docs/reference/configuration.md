@@ -115,6 +115,47 @@ Settings are resolved in this order (highest to lowest):
 4. **Catalog config** (top-level in config.yaml)
 5. **Built-in default**
 
+## Validation Configuration
+
+`portolan check` validates against the Portolan spec using
+[rashid](https://github.com/portolan-sdi/rashid), which reports `PTL-*` rule ids.
+The `check:` block tunes the rule set per catalog:
+
+```yaml
+check:
+  # Rules to skip entirely. Use for rules a catalog cannot satisfy by policy.
+  disabled:
+    - PTL-VIZ-001   # this catalog ships no thumbnails
+  # Rules to re-rank. Values: error, warning, info.
+  severity:
+    PTL-TMP-001: error   # a temporal extent is mandatory here
+```
+
+Rule ids come from `portolan check` output — every finding names the rule that
+raised it. `portolan check --json` also reports, per finding, whether
+`portolan check --fix` can resolve it (`"remediation": "auto"`) or you have to
+act (`"instruct"`, `"external"`).
+
+### Published catalog URL
+
+```yaml
+publish:
+  public_url: https://data.example.org/my-catalog/
+```
+
+Where the catalog is served. `portolan check --live` probes that host to verify
+it serves assets with HTTP Range support and CORS headers; when the key is set
+and `--live` is not passed, `check` prints a reminder. This is not a credential
+(it is the same URL your README prints), so unlike `remote` it belongs in
+config.yaml. Override per run with `portolan check --live --url <URL>`.
+
+!!! note "Replaces `stac_lint:`"
+
+    The old `stac_lint:` block configured Portolan's retired native validator.
+    Its `RULE-*` names have no equivalent among rashid's `PTL-*` ids, so nothing
+    migrates automatically — `check` warns when it sees the old block and
+    ignores it. Re-express the overrides you still want under `check:`.
+
 ## Conversion Configuration
 
 Control how Portolan handles different file formats during `check` and `convert` operations.

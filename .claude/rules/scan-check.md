@@ -147,6 +147,6 @@ sources of successful conversions whose output exists, plus their sidecars.
 - ADRs 0016 (scan before import), 0017 (mtime heuristics), 0034 (statistics),
   0035 (temporal extent), 0041 (manifest canonical).
 - `metadata/scan.py` module docstring, it spells out the MISSING/ORPHANED split.
-- The validators in `portolan_cli/validation/` and `spec/schema/rules.yaml`.
-  Note: the mapping from a CLI rule class to a `RULE-id` is by convention and
-  description, there is no `implemented_by` field linking them in code.
+- `portolan_cli/validation/`, the adapter in front of rashid (ADR-0057), and
+  rashid itself for the rules. Rule ids are rashid's `PTL-*`, shown verbatim;
+  each cites the `PORTO-*` spec requirements it enforces.
