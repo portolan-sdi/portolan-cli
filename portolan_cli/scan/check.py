@@ -605,11 +605,6 @@ def run_fix_workflow(
     # Fix metadata if in scope
     if run_metadata:
         from portolan_cli.metadata import fix_metadata
-        from portolan_cli.metadata.fix import (
-            repair_agents_md,
-            repair_pmtiles_links,
-            repair_titles_and_links,
-        )
         from portolan_cli.metadata.scan import scan_catalog_metadata
 
         # Resolve to the catalog root before scanning. Without this the scanner
@@ -631,32 +626,13 @@ def run_fix_workflow(
                 )
                 return outcome
         else:
+            # Item freshness only. The title, schema-URI, README, AGENTS.md and
+            # PMTiles-link repairs that used to run here now belong to the fixer
+            # registry (portolan_cli.validation.fixers), which `check --fix`
+            # dispatches from the rashid findings that actually name each defect.
+            # Running them here as well would repeat every repair.
             metadata_check_report = scan_catalog_metadata(catalog_root)
             metadata_fix_report = fix_metadata(catalog_root, metadata_check_report, dry_run=dry_run)
-
-            # Issue #502: populate human-readable titles/descriptions and
-            # backfill child/item link titles as part of the metadata fix.
-            metadata_fix_report.results.extend(
-                repair_titles_and_links(catalog_root, dry_run=dry_run)
-            )
-
-            # Issue #654: stamp the Portolan profile schema URI and scaffold the
-            # README + rel="describedby" link on catalogs and collections that
-            # predate them, matching what `init`/`add` emit.
-            if not dry_run:
-                from portolan_cli.catalog import ensure_schema_uris
-                from portolan_cli.readme import ensure_readmes
-
-                ensure_schema_uris(catalog_root)
-                ensure_readmes(catalog_root)
-
-            # Issue #569: backfill the rel="pmtiles" web-map-links link on
-            # collections with a PMTiles asset but no link (RULE-0061).
-            metadata_fix_report.results.extend(repair_pmtiles_links(catalog_root, dry_run=dry_run))
-
-            # ADR-0052: scaffold AGENTS.md and backfill the rel="agents" link on
-            # catalogs and collections that lack them (RULE-0080/0081).
-            metadata_fix_report.results.extend(repair_agents_md(catalog_root, dry_run=dry_run))
 
             outcome.metadata_fix_report = metadata_fix_report
             if metadata_fix_report.failure_count > 0:
