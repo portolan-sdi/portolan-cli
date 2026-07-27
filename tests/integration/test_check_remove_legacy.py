@@ -341,10 +341,9 @@ class TestRemoveLegacyJsonOutput:
         output = json.loads(result.output)
 
         # Should have legacy_removed in the output data
-        # Structure: output.data.conversion.legacy_removed
+        # Structure: output.data.fix.conversion.legacy_removed
         assert output.get("success") is True
-        data = output.get("data", {})
-        conversion = data.get("conversion", {})
+        conversion = output["data"]["fix"]["conversion"]
         assert "legacy_removed" in conversion
         assert conversion["legacy_removed"]["summary"]["removed_count"] >= 1
 

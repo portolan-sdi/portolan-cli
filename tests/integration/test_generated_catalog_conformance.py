@@ -38,6 +38,12 @@ KNOWN_GAPS = frozenset(
         # `attribution`, neither of which maps onto STAC providers without a
         # design decision about roles and ordering (PTL-PRV-002/003).
         "PTL-PRV-001",
+        # PTL-DAT-007: every row group needs spatial statistics. geoparquet-io
+        # writes a single row group for a file this small and emits neither a
+        # bbox covering column nor native GeospatialStatistics for it, so the
+        # rule cannot see per-row-group extents. Surfaced when rashid 0.1.1
+        # promoted the data pass to default-on.
+        "PTL-DAT-007",
     }
 )
 
@@ -110,8 +116,17 @@ def generated_catalog(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return root
 
 
+def _validate(root: Path, **kwargs: Any) -> Any:
+    """Run every offline pass rashid has: metadata, STAC 1.1.0 structural, data.
+
+    All three ship their schemas (or read local bytes), so the gate stays
+    hermetic — it never touches the network.
+    """
+    return validate(root, structural=True, data=True, **kwargs)
+
+
 def _findings(root: Path, severity: Severity) -> list[dict[str, Any]]:
-    report = validate(root, config=RulesConfig(disabled=KNOWN_GAPS))
+    report = _validate(root, config=RulesConfig(disabled=KNOWN_GAPS))
     return [f.to_dict() for f in report.findings if f.severity is severity]
 
 
@@ -122,7 +137,7 @@ class TestGeneratedCatalogConformance:
 
     def test_known_gaps_are_still_real(self, generated_catalog: Path) -> None:
         """The disabled rules still fire, so the gap list cannot rot silently."""
-        report = validate(generated_catalog)
+        report = _validate(generated_catalog)
         fired = {f.rule_id for f in report.findings if f.severity is Severity.ERROR}
 
         assert fired == KNOWN_GAPS

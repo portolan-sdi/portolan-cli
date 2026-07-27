@@ -49,9 +49,7 @@ dependencies = [
     "requests>=2.33.0",  # CVE-2026-25645 fix (transitive, pinned for security)
     "rich>=13.0.0",  # Terminal progress bars (transitive via geoparquet-io, but we import directly)
     "rio-cogeo>=5.0.0",  # COG creation/validation (includes rasterio)
-    "stac-check>=1.14.0",  # STAC schema validation + linting; 1.14 added Linter(fast=...)
-    "jsonschema>=4.18.0",  # Hermetic spec-schema validation in validation/ seam (registry API needs >=4.18); was transitive via stac-check
-    "referencing>=0.30.0",  # Offline $ref registry for vendored STAC schemas (validation/schema_registry.py)
+    "rashid>=0.1.1,<0.2.0",  # Conformance validator behind `portolan check` (ADR-0057); ships its own STAC + Portolan profile schemas, so validation runs offline
     "typing_extensions>=4.0.0; python_version < '3.11'",
 ]
 
@@ -92,7 +90,6 @@ dev = [
     "radon>=6.0.1",
     "ruff>=0.14.11",
     "types-defusedxml>=0.7.0",  # Type stubs for defusedxml
-    "types-jsonschema>=4.18.0",  # Type stubs for jsonschema (validation/schema_registry.py)
     "types-PyYAML>=6.0",  # Type stubs for PyYAML
     "vulture>=2.14",
     "xenon>=0.9.3",
@@ -263,11 +260,10 @@ pytest_add_cli_args_test_selection = ["tests/"]
 # guard).
 # scripts/ (imported by a few tests) and the data files those tests read must
 # be present in the sandbox, or collection/execution dies there.
-# spec/ holds the shipped STAC schemas + extensions.md that the spec_compliance
-# suite reads by repo-root path (tests/spec_compliance/conftest.py resolves
-# spec/schema/, test_extensions_doc_parity.py reads spec/extensions.md). Without
-# it the baseline errors with FileNotFoundError on mutants/spec/... (172 KiB).
-also_copy = ["scripts/", ".pip-audit-ignores", ".mutation-baseline", "spec/"]
+# (spec/ used to be copied here for the spec_compliance suite; both are gone —
+# the spec moved to portolan-spec and validation to rashid, which ships its own
+# schemas inside its wheel, so nothing reads a schema by repo-root path now.)
+also_copy = ["scripts/", ".pip-audit-ignores", ".mutation-baseline"]
 # The stats/baseline run must mirror the fast CI test job, not the whole suite:
 # - --no-cov: pyproject's addopts inject --cov, whose instrumentation conflicts
 #   with mutmut's; without this the stats phase is unreliable.
@@ -288,11 +284,6 @@ pytest_add_cli_args = [
 
 [tool.importlinter]
 root_packages = ["portolan_cli"]
-# Required so the validation-no-framework-leakage contract can forbid the
-# external `click`/`rich` packages (import-linter needs external nodes in the
-# graph at the top level). Only adds external nodes; internal contracts are
-# unaffected.
-include_external_packages = true
 
 [[tool.importlinter.contracts]]
 id = "cli-no-storage"
@@ -321,41 +312,16 @@ source_modules = ["portolan_cli.backends.iceberg"]
 forbidden_modules = ["portolan_cli.cli"]
 
 [[tool.importlinter.contracts]]
-id = "validation-seam-for-rashid"
-name = "Validation must not import CLI/output/config layers (rashid extraction seam)"
+id = "validation-is-an-adapter"
+name = "Validation is a rashid adapter and must not import the CLI"
 type = "forbidden"
-# portolan_cli.validation is nearly extraction-ready as the future `rashid`
-# package (see issue #563). It stays free of the app-framework layers so the
-# seam is cheap to protect now, ahead of the post-sprint extraction.
+# The extraction seam is gone: rashid ships as a package and
+# portolan_cli.validation is the adapter in front of it (ADR-0057). What
+# remains worth locking is direction. The adapter builds rashid's config,
+# calls it, and returns plain data (validation.report emits dicts, never
+# Click/Rich output), so cli.py depends on validation and never the reverse.
 source_modules = ["portolan_cli.validation"]
-forbidden_modules = [
-    "portolan_cli.cli",
-    "portolan_cli.output",
-    "portolan_cli.config",
-]
-# Intentional extraction-time couplings: validation reaches into these
-# pure-logic/data modules for classification, bbox checks, and metadata scan.
-# They are leaves (or a self-contained subtree) that carry no CLI/output/config
-# dependency, so they move with `rashid` or vendor trivially at extraction time.
-# Documented per the second checkbox on #563 (which listed only scan_classify;
-# metadata.scan and bbox are the same kind of coupling, added since).
-#   portolan_cli.validation -> portolan_cli.scan.classify
-#   portolan_cli.validation -> portolan_cli.metadata.scan
-#   portolan_cli.validation -> portolan_cli.bbox
-#   portolan_cli.validation -> portolan_cli.viz.pmtiles_links
-# (pmtiles_links is a stdlib-only leaf holding the PMTiles asset/link classifiers;
-#  it exists precisely so validation never imports pmtiles.py, issue #586/#592.)
-
-[[tool.importlinter.contracts]]
-id = "validation-no-framework-leakage"
-name = "Validation must not import Click or Rich (rashid extraction seam)"
-type = "forbidden"
-# Framework tripwire: Click/Rich only ever reach validation *through* the
-# cli/output layers forbidden above. Guarding the external packages directly
-# catches a regression even if a new intermediate module were introduced.
-# (External-node analysis is enabled by the top-level include_external_packages.)
-source_modules = ["portolan_cli.validation"]
-forbidden_modules = ["click", "rich"]
+forbidden_modules = ["portolan_cli.cli"]
 
 [[tool.importlinter.contracts]]
 id = "utilities-are-foundational"
@@ -437,22 +403,8 @@ dev = [
     "pylint>=4.0.5",
     "pytest-asyncio>=1.3.0",
     "pytest-xdist>=3.8.0",
-    # Spec validator. Dev-only in Phase 1: the conformance gate
-    # (tests/integration/test_generated_catalog_conformance.py) runs it over a
-    # freshly generated catalog. Phase 2 promotes it to a runtime dependency.
-    "rashid>=0.1.0,<0.2.0",
-    "types-jsonschema>=4.18.0",
     "types-pyyaml>=6.0.12.20250915",
 ]
-
-[tool.uv]
-# stac-check 1.14 pins `stac-valid~=4.2.2`; rashid (the conformance gate's
-# validator, dev-only) asks for `stac-valid>=4.4`. Only stac-check reads the
-# 4.2 surface (`stac_validator.utilities`, dropped in 4.4), and rashid touches
-# `stac_validator` only in its structural pass, through the `StacValidate` API
-# both releases expose. Holding stac-valid at 4.2 therefore satisfies both,
-# where the reverse breaks stac-check's import.
-override-dependencies = ["stac-valid~=4.2.2"]
 
 [tool.uv.sources]
 # Track geoparquet-io git main during fast co-development (Issue #529). The
@@ -460,6 +412,9 @@ override-dependencies = ["stac-valid~=4.2.2"]
 # dev-only source override pulls main so portolan picks up upstream WFS fixes
 # (auto-tile, 100K page_size) before they hit a PyPI release.
 geoparquet-io = { git = "https://github.com/geoparquet/geoparquet-io.git", branch = "main" }
+
+# TEMPORARY until rashid 0.1.1 is on PyPI; delete this source pin at release.
+rashid = { git = "https://github.com/portolan-sdi/rashid", branch = "docs/release-prep" }
 
 [tool.menard]
 mode = "block"

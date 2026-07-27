@@ -448,23 +448,11 @@ def init_catalog(
     except OSError as e:
         raise CatalogInitError(f"Cannot write catalog.json: {e}") from e
 
-    # Step 4: Add self link (STAC best practice)
-    # pystac SELF_CONTAINED doesn't add self link, so we add it manually
-    try:
-        data = json.loads(catalog_file.read_text())
-        # Use setdefault for defensive coding (pystac should always create links)
-        data.setdefault("links", []).append(
-            {
-                "rel": "self",
-                "href": "./catalog.json",
-                "type": "application/json",
-            }
-        )
-        catalog_file.write_text(json.dumps(data, indent=2))
-    except json.JSONDecodeError as e:
-        raise CatalogInitError(f"Cannot parse catalog.json: {e}") from e
-    except OSError as e:
-        raise CatalogInitError(f"Cannot update catalog.json with self link: {e}") from e
+    # No self link: a SELF_CONTAINED catalog omits it (ADR-0051), which is also
+    # what pystac emits and what rashid's PTL-LNK-005 enforces. `init` used to
+    # append one by hand; `add` then stripped it, so only init-only catalogs
+    # carried the violation and the conformance gate (which runs init + add)
+    # never saw it.
 
     # Step 4b: AGENTS.md - scaffold the AI/agent guide and add its rel="agents"
     # link (ADR-0052, RULE-0080). Emitting it here keeps freshly-created catalogs
@@ -630,7 +618,6 @@ def create_intermediate_catalogs(collection_id: str, catalog_root: Path) -> None
             "links": [
                 {"rel": "root", "href": parent_href, "type": "application/json"},
                 {"rel": "parent", "href": parent_href, "type": "application/json"},
-                {"rel": "self", "href": "./catalog.json", "type": "application/json"},
             ],
         }
 

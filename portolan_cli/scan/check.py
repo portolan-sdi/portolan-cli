@@ -550,27 +550,6 @@ def resolve_catalog_root_for_check(path: Path) -> Path | None:
     return None
 
 
-def build_check_rules(path: Path, *, strict: bool) -> tuple[Any, ...]:
-    """Build the validation rule set, honoring config severity overrides.
-
-    Loads ``.portolan/config.yaml`` (when present) for ``stac_lint.severity.*``
-    overrides and always routes through ``_build_rules`` so the ``strict`` flag
-    and config are respected.
-
-    Args:
-        path: Directory being checked (catalog root or a subdirectory).
-        strict: Whether ``--strict`` was passed (escalates warnings to errors).
-
-    Returns:
-        The ordered list of validation rule instances.
-    """
-    from portolan_cli.config import load_config
-    from portolan_cli.validation.runner import _build_rules
-
-    config = load_config(path) if (path / ".portolan" / "config.yaml").exists() else None
-    return _build_rules(strict=strict, config=config)
-
-
 @dataclass
 class FixWorkflowOutcome:
     """Result of running the ``check --fix`` workflow.

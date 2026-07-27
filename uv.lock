@@ -17,9 +17,6 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
-[manifest]
-overrides = [{ name = "stac-valid", specifier = "~=4.2.2" }]
-
 [[package]]
 name = "affine"
 version = "2.4.0"
@@ -1461,15 +1458,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/26/25/58865e36b6e8a9a0d0ff905b5601aa30db97956327c0df42ec4ed6accc21/fastembed-0.8.0.tar.gz", hash = "sha256:75966edfa8b006ee78514c726bd7f6a50721dadc89305279052be9db72fd53e8", size = 75115, upload-time = "2026-03-23T16:34:41.699Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/e8/26b7d78bb8972498c467ca34cb12ee2e60d26ba5eae6d8443189a1af37a5/fastembed-0.8.0-py3-none-any.whl", hash = "sha256:40bee672657574a1009e35ec50030a55f2b426842cb011845379817641bbbbd0", size = 116572, upload-time = "2026-03-23T16:34:40.69Z" },
-]
-
-[[package]]
-name = "fastjsonschema"
-version = "2.21.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/20/b5/23b216d9d985a956623b6bd12d4086b60f0059b27799f23016af04a74ea1/fastjsonschema-2.21.2.tar.gz", hash = "sha256:b1eb43748041c880796cd077f1a07c3d94e93ae84bba5ed36800a33554ae05de", size = 374130, upload-time = "2025-08-14T18:49:36.666Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/a8/20d0723294217e47de6d9e2e40fd4a9d2f7c4b6ef974babd482a59743694/fastjsonschema-2.21.2-py3-none-any.whl", hash = "sha256:1c797122d0a86c5cace2e54bf4e819c36223b552017172f32c5c024a6b77e463", size = 24024, upload-time = "2025-08-14T18:49:34.776Z" },
 ]
 
 [[package]]
@@ -4609,7 +4597,6 @@ dependencies = [
     { name = "defusedxml" },
     { name = "geoparquet-io" },
     { name = "httpx" },
-    { name = "jsonschema" },
     { name = "lxml" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -4624,14 +4611,13 @@ dependencies = [
     { name = "pystac" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "rashid" },
     { name = "rasterio", version = "1.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "rasterio", version = "1.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "referencing" },
     { name = "requests" },
     { name = "rich" },
     { name = "rio-cogeo", version = "6.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "rio-cogeo", version = "7.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "stac-check" },
     { name = "stac-geoparquet" },
     { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
@@ -4655,7 +4641,6 @@ dev = [
     { name = "radon" },
     { name = "ruff" },
     { name = "types-defusedxml" },
-    { name = "types-jsonschema" },
     { name = "types-pyyaml" },
     { name = "vulture" },
     { name = "xenon" },
@@ -4695,8 +4680,6 @@ dev = [
     { name = "pylint" },
     { name = "pytest-asyncio" },
     { name = "pytest-xdist" },
-    { name = "rashid" },
-    { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
 
@@ -4719,7 +4702,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.151.5" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
-    { name = "jsonschema", specifier = ">=4.18.0" },
     { name = "lxml", specifier = ">=6.1.0" },
     { name = "mapbox-vector-tile", marker = "extra == 'thumbnails'", specifier = ">=2.0.0" },
     { name = "matplotlib", marker = "extra == 'thumbnails'", specifier = ">=3.8.0" },
@@ -4749,17 +4731,15 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "radon", marker = "extra == 'dev'", specifier = ">=6.0.1" },
+    { name = "rashid", git = "https://github.com/portolan-sdi/rashid?branch=docs%2Frelease-prep" },
     { name = "rasterio", specifier = ">=1.3.0" },
-    { name = "referencing", specifier = ">=0.30.0" },
     { name = "requests", specifier = ">=2.33.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "rio-cogeo", specifier = ">=5.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14.11" },
     { name = "shapely", marker = "extra == 'iceberg'", specifier = ">=2.0.0" },
-    { name = "stac-check", specifier = ">=1.14.0" },
     { name = "stac-geoparquet", specifier = ">=0.6.0" },
     { name = "types-defusedxml", marker = "extra == 'dev'", specifier = ">=0.7.0" },
-    { name = "types-jsonschema", marker = "extra == 'dev'", specifier = ">=4.18.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4.0.0" },
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.14" },
@@ -4776,8 +4756,6 @@ dev = [
     { name = "pylint", specifier = ">=4.0.5" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
-    { name = "rashid", specifier = ">=0.1.0,<0.2.0" },
-    { name = "types-jsonschema", specifier = ">=4.18.0" },
     { name = "types-pyyaml", specifier = ">=6.0.12.20250915" },
 ]
 
@@ -5983,15 +5961,18 @@ wheels = [
 [[package]]
 name = "rashid"
 version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/portolan-sdi/rashid?branch=docs%2Frelease-prep#38d44a6ed6fc379493de9f586cbf66fb75c78b6d" }
 dependencies = [
     { name = "click" },
     { name = "jsonschema" },
-    { name = "stac-valid" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ec/1d/9be1a64d8b9e40b38e06129e8fc1cf5c3abf404b663388f544f03db5986d/rashid-0.1.0.tar.gz", hash = "sha256:cc084894703293201921fbe99bca8e77cdf005c5031a41e05106cb5c533453af", size = 348850, upload-time = "2026-07-27T17:37:22.082Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/9f/cb8ea72e3265c555cae9d3d9be83544b71af29a29e05aeda753ecd5ce07f/rashid-0.1.0-py3-none-any.whl", hash = "sha256:5b346096a47b4ae9a849aa6b5d333ed017730046a1b4eea7fce86414340b93ea", size = 83289, upload-time = "2026-07-27T17:37:20.704Z" },
+    { name = "pyarrow" },
+    { name = "pyproj", version = "3.7.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pyproj", version = "3.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "rasterio", version = "1.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "rasterio", version = "1.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "referencing" },
+    { name = "rio-cogeo", version = "6.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "rio-cogeo", version = "7.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
 
 [[package]]
@@ -6789,23 +6770,6 @@ wheels = [
 ]
 
 [[package]]
-name = "stac-check"
-version = "1.14.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "jsonschema" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "stac-valid" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/56/aa/5c38e2a4000a5b19cc65f23fdbde04836e4e21c9e78ee431a40a19e888cd/stac_check-1.14.0.tar.gz", hash = "sha256:6f0fe43fa3d4cff79ffc48f874a7ccce1074b4b367813a69ab669322b07135f0", size = 49792, upload-time = "2026-05-02T11:28:07.344Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/13/94b8bc8ebe9be748b42d3c62cc87932c9afb1aced3f789cbf62ea3c22b9b/stac_check-1.14.0-py3-none-any.whl", hash = "sha256:405c5bc717c8bff02dec7bea848de552665d124c68d3108007df83d5d130c7f6", size = 36917, upload-time = "2026-05-02T11:28:06.031Z" },
-]
-
-[[package]]
 name = "stac-geoparquet"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6827,24 +6791,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/cd/52/6f97a1f878b1118ab6a96320b0547fd620c77bc25394c0ccf5f24c003f3d/stac_geoparquet-0.7.0.tar.gz", hash = "sha256:e32ab2f02254cf2b07b1a6e59e97c38ba898ed778953c633fc0816a00323b863", size = 1963184, upload-time = "2025-05-15T01:29:40.322Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/68/f2/698bce267e4b2de03f9abccc416e34b78e1577c1963557ed14bdd745f595/stac_geoparquet-0.7.0-py3-none-any.whl", hash = "sha256:d686209af4a4d5ea06b5db5a8aca8a974b9b1a6b95acc6402d71b71e9ea579d5", size = 32809, upload-time = "2025-05-15T01:29:38.433Z" },
-]
-
-[[package]]
-name = "stac-valid"
-version = "4.2.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "fastjsonschema" },
-    { name = "jsonschema" },
-    { name = "pyyaml" },
-    { name = "referencing" },
-    { name = "requests" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/78/c9/7d17eebb972e0bf3f5ca61433a6f04b41a5099ee2bdd17c13d93ef7f8816/stac_valid-4.2.2.tar.gz", hash = "sha256:155c88423c40a86dcb1b20e6f48f279cc581b7cc43b3e54e3fb2b00003c2c211", size = 80165, upload-time = "2026-04-29T11:42:40.78Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/a6/b7a3774c13236af1099234edc13aae4aa3dc26bfe8f570beee6e1ddb9f7d/stac_valid-4.2.2-py3-none-any.whl", hash = "sha256:0e5d69c65f8e46dc725741cda2113a444f11baed6582919d58ed8a5666868d7f", size = 46772, upload-time = "2026-04-29T11:42:39.575Z" },
 ]
 
 [[package]]
@@ -7143,18 +7089,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/39/af/d324da5ffbf0af40477533a09ee6c902de335c445a8dcc88c58f62af6e5f/types_defusedxml-0.7.0.20260408.tar.gz", hash = "sha256:f35377d59344f98b57f9bf319cff2107aac35f9e4d42f9ed6cfeeafacffadb00", size = 10638, upload-time = "2026-04-08T04:26:12.239Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/68/7570cfb818d6a5b3ff964114527e28e360eccf18329b457f057a18596e64/types_defusedxml-0.7.0.20260408-py3-none-any.whl", hash = "sha256:2d68db82412170b91b3e490b7c118a4f4e5a27756a126e2453f629c8d514b106", size = 13435, upload-time = "2026-04-08T04:26:11.347Z" },
-]
-
-[[package]]
-name = "types-jsonschema"
-version = "4.26.0.20260518"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "referencing" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/dd/46/73b6a5d61a61015c4248030a8cb07e5bdddb4041430fae9e585a68692578/types_jsonschema-4.26.0.20260518.tar.gz", hash = "sha256:e1dd53dc97a64f5eccdd6fa9839666e09bb500a8ebba2db6fdaf1789faea81a6", size = 16638, upload-time = "2026-05-18T06:06:44.106Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/07/d5/134f8a147dcecda10db7f60cfc6af0578a25a5c53c87b3907a64385e0184/types_jsonschema-4.26.0.20260518-py3-none-any.whl", hash = "sha256:30b30a518c7fe335df85c919fcbcc631b69c03d4a4b5b632fa916bea03065307", size = 16072, upload-time = "2026-05-18T06:06:43.264Z" },
 ]
 
 [[package]]

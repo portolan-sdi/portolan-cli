@@ -11,7 +11,6 @@ Tests cover:
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -494,53 +493,3 @@ class TestInitCatalogFilesystemErrors:
             with pytest.raises(CatalogInitError) as exc_info:
                 init_catalog(catalog_dir)
             assert "Cannot write catalog.json" in exc_info.value.message
-
-    @pytest.mark.unit
-    def test_init_catalog_raises_on_self_link_update_failure(self, tmp_path: Path) -> None:
-        """CatalogInitError raised when adding self link fails."""
-        from unittest.mock import patch
-
-        from portolan_cli.catalog import CatalogInitError, init_catalog
-
-        catalog_dir = tmp_path / "test"
-        catalog_dir.mkdir()
-
-        original_write_text = Path.write_text
-
-        def failing_write_text(self: Path, content: str, *args: Any, **kwargs: Any) -> int:
-            # Only fail on the self-link update (when content contains "self" link)
-            if "catalog.json" in str(self):
-                try:
-                    data = json.loads(content)
-                    if any(link.get("rel") == "self" for link in data.get("links", [])):
-                        raise OSError("Cannot update catalog")
-                except json.JSONDecodeError:
-                    pass
-            return original_write_text(self, content, *args, **kwargs)
-
-        with patch.object(Path, "write_text", failing_write_text):
-            with pytest.raises(CatalogInitError) as exc_info:
-                init_catalog(catalog_dir)
-            assert "Cannot update catalog.json with self link" in exc_info.value.message
-
-    @pytest.mark.unit
-    def test_init_catalog_raises_on_catalog_json_decode_error(self, tmp_path: Path) -> None:
-        """CatalogInitError raised when catalog.json is corrupted."""
-        from unittest.mock import patch
-
-        from portolan_cli.catalog import CatalogInitError, init_catalog
-
-        catalog_dir = tmp_path / "test"
-        catalog_dir.mkdir()
-
-        original_read_text = Path.read_text
-
-        def corrupted_read_text(self: Path, *args: Any, **kwargs: Any) -> str:
-            if "catalog.json" in str(self):
-                return "not valid json {"
-            return original_read_text(self, *args, **kwargs)
-
-        with patch.object(Path, "read_text", corrupted_read_text):
-            with pytest.raises(CatalogInitError) as exc_info:
-                init_catalog(catalog_dir)
-            assert "Cannot parse catalog.json" in exc_info.value.message
