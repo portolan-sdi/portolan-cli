@@ -1154,6 +1154,15 @@ class TestItemMirrorCogPredicate:
 
         assert FIXERS["item_mirror"](tmp_path, True) == []
 
+    def test_a_geotiff_without_the_profile_does_not_request_a_mirror(self, tmp_path: Path) -> None:
+        # what item.py writes for a .tif, so it is the value that actually
+        # reaches this predicate on a real catalog
+        self._collection_with_raster_item(tmp_path, "image/tiff; application=geotiff")
+        before = _snapshot(tmp_path)
+
+        assert FIXERS["item_mirror"](tmp_path, False) == []
+        assert _snapshot(tmp_path) == before
+
     def test_a_cog_profile_requests_a_mirror(self, tmp_path: Path) -> None:
         self._collection_with_raster_item(
             tmp_path, "image/tiff; application=geotiff; profile=cloud-optimized"
