@@ -382,7 +382,7 @@ def inspect_collection(collection_path: Path) -> CollectionInfo:
     if not collection_json_path.exists():
         raise FileNotFoundError(f"Collection not found: {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
 
     # Count items from links
     item_links = [link for link in data.get("links", []) if link.get("rel") == "item"]
@@ -438,7 +438,7 @@ def inspect_catalog(catalog_root: Path) -> CatalogInfo:
     if not catalog_json_path.exists():
         raise FileNotFoundError(f"Catalog not found: {catalog_root}")
 
-    data = json.loads(catalog_json_path.read_text())
+    data = json.loads(catalog_json_path.read_text(encoding="utf-8"))
 
     # Count collections from child links
     child_links = [link for link in data.get("links", []) if link.get("rel") == "child"]

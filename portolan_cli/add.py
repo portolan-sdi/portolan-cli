@@ -554,10 +554,13 @@ def _ensure_tabular_collection(
 
     # ADR-0052 / issue #654: the same conformance artifacts finalize_items writes
     # — AGENTS.md, the profile schema URI, README.md and its describedby link.
-    from portolan_cli.agents_md import ensure_agents_md
+    from portolan_cli.agents_md import ensure_agents_md_tree
     from portolan_cli.readme import ensure_readmes
 
-    ensure_agents_md(collection_json_path)
+    # Tree-wide, as `finalize_items` does: repairing only the collection just
+    # written left a pre-existing root or subcatalog without its guide, so the
+    # same catalog came out different depending on which path added to it.
+    ensure_agents_md_tree(catalog_root)
     ensure_schema_uris(catalog_root)
     ensure_readmes(catalog_root)
 
@@ -1449,7 +1452,7 @@ def _update_item_with_asset(
         return
 
     # Load existing item
-    with open(item_json_path) as f:
+    with open(item_json_path, encoding="utf-8") as f:
         item_data = json.load(f)
 
     # Find the primary data file by checking existing assets first (Issue #190).
@@ -1514,7 +1517,7 @@ def _update_item_with_asset(
     }
 
     # Write updated item
-    with open(item_json_path, "w") as f:
+    with open(item_json_path, "w", encoding="utf-8") as f:
         json.dump(item_data, f, indent=2)
 
     # Detect if this is a collection-level asset
@@ -1551,7 +1554,7 @@ def _update_collection_with_asset(
         return
 
     # Load existing collection
-    with open(collection_json_path) as f:
+    with open(collection_json_path, encoding="utf-8") as f:
         collection_data = json.load(f)
 
     # Add asset to collection
@@ -1582,5 +1585,5 @@ def _update_collection_with_asset(
     }
 
     # Write updated collection
-    with open(collection_json_path, "w") as f:
+    with open(collection_json_path, "w", encoding="utf-8") as f:
         json.dump(collection_data, f, indent=2)

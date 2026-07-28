@@ -171,9 +171,21 @@ class TestReadmeCommonCommands:
         # known generation gaps the conformance gate tracks (no providers, no
         # thumbnail, license 'other' without a license link), so the run exits
         # 1. What this test owns is the fix half: it ran and converted cleanly.
+        #
+        # "Cleanly" means the conversions succeeded, not merely that no format
+        # was *unsupported*: a GeoJSON that errored mid-conversion lands in the
+        # nested conversion report's `failed`, which the outer scan summary does
+        # not carry, so asserting only on `unsupported` passed straight over it.
         payload = json.loads(result.output)["data"]
-        conversion = payload["fix"]["conversion"]
-        assert conversion["summary"]["unsupported"] == 0, f"check --fix failed: {conversion}"
+        scan = payload["fix"]["conversion"]
+        assert scan["summary"]["unsupported"] == 0, f"check --fix failed: {scan}"
+
+        conversion = scan["conversion"]["summary"]
+        assert conversion["failed"] == 0, f"check --fix failed: {scan}"
+        assert conversion["invalid"] == 0, f"check --fix failed: {scan}"
+        # The quick start's GeoJSON is the file being converted.
+        assert conversion["succeeded"] == 1, f"check --fix converted nothing: {scan}"
+        assert (demographics / "sample.parquet").exists()
 
     @pytest.mark.integration
     def test_rm_keep_untracks_file(

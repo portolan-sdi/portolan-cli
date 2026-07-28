@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from pathlib import Path
+import posixpath
+from pathlib import Path, PurePath
 from typing import Any
 
 import pystac
@@ -96,6 +96,29 @@ def _deduplicate_collection_item_links(collection: pystac.Collection) -> None:
     collection.links = unique_links
 
 
+def relative_root_href(catalog_root: PurePath, collection_dir: PurePath) -> str:
+    """The href from ``collection_dir`` to the root ``catalog.json``, in POSIX.
+
+    A STAC href is a relative URL reference, so the separator is ``/`` on every
+    platform. ``os.path.relpath`` returns the *native* one, which on Windows
+    shipped ``..\\catalog.json`` — not a Windows spelling of the parent link but
+    a filename containing backslashes, which resolves nowhere (rashid
+    PTL-LNK-006). Normalizing both sides to POSIX first keeps the computation
+    itself platform-independent.
+
+    Args:
+        catalog_root: Directory holding the root ``catalog.json``.
+        collection_dir: Directory the link will live in.
+
+    Returns:
+        A relative POSIX href, e.g. ``../catalog.json``.
+    """
+    return posixpath.relpath(
+        posixpath.join(PurePath(catalog_root).as_posix(), "catalog.json"),
+        PurePath(collection_dir).as_posix(),
+    )
+
+
 def _fix_collection_links(
     collection_json_path: Path,
     catalog_root: Path,
@@ -111,7 +134,7 @@ def _fix_collection_links(
         return
 
     collection_data = json.loads(collection_json_path.read_text(encoding="utf-8"))
-    relative_root = os.path.relpath(catalog_root / "catalog.json", collection_dir)
+    relative_root = relative_root_href(catalog_root, collection_dir)
 
     # Update root link to point to catalog
     for link in collection_data.get("links", []):

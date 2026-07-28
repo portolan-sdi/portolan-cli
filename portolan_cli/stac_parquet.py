@@ -53,7 +53,7 @@ def count_items(collection_path: Path) -> int:
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     links = data.get("links", [])
 
     return sum(1 for link in links if link.get("rel") == "item")
@@ -87,7 +87,7 @@ def has_parquet_link(collection_path: Path) -> bool:
     if not collection_json_path.exists():
         return False
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
 
     # Check link
     links = data.get("links", [])
@@ -120,7 +120,7 @@ def _load_item_dicts(collection_path: Path) -> list[dict[str, Any]]:
         ValueError: If no items found.
     """
     collection_json_path = collection_path / "collection.json"
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     links = data.get("links", [])
 
     item_links = [link for link in links if link.get("rel") == "item"]
@@ -142,7 +142,7 @@ def _load_item_dicts(collection_path: Path) -> list[dict[str, Any]]:
             item_path = collection_path / href
 
         if item_path.exists():
-            item_data = json.loads(item_path.read_text())
+            item_data = json.loads(item_path.read_text(encoding="utf-8"))
             items.append(item_data)
         else:
             missing_hrefs.append(href)
@@ -222,7 +222,7 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     modified = False
 
     # --- Add link (rel="items") ---
@@ -267,7 +267,7 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
 
     # Write back only if changes were made
     if modified:
-        collection_json_path.write_text(json.dumps(data, indent=2))
+        collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def remove_parquet_link_from_collection(collection_path: Path) -> bool:
@@ -285,7 +285,7 @@ def remove_parquet_link_from_collection(collection_path: Path) -> bool:
     if not collection_json_path.exists():
         return False
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     modified = False
 
     # Remove link
@@ -319,7 +319,7 @@ def remove_parquet_link_from_collection(collection_path: Path) -> bool:
                 break
 
     if modified:
-        collection_json_path.write_text(json.dumps(data, indent=2))
+        collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     return modified
 

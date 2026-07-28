@@ -377,7 +377,7 @@ def init(
         )
 
         # Read back catalog ID for display
-        catalog_data = json.loads(catalog_file.read_text())
+        catalog_data = json.loads(catalog_file.read_text(encoding="utf-8"))
         catalog_id = catalog_data.get("id", "unknown")
 
         if not emit_success(
@@ -1456,9 +1456,15 @@ def _execute_check_workflow(
             geo_assets=run_geo_assets and not fix,
             **check_kwargs,
         )
-    payload = build_check_payload(outcome, mode=mode)
+    payload = build_check_payload(outcome, mode=mode, fix_failed=fix_failed)
     if fix_data is not None:
-        annotate_survivors(fix_data, outcome)
+        annotate_survivors(
+            fix_data,
+            outcome,
+            pre_findings=list(pre_outcome.report.findings)
+            if pre_outcome is not None and pre_outcome.report is not None
+            else [],
+        )
         payload["fix"] = fix_data
     failed = fix_failed or _check_failed(payload, strict=strict)
 
@@ -4919,7 +4925,7 @@ def metadata_init(
 
     # Generate and write template
     template = generate_metadata_template()
-    metadata_file.write_text(template)
+    metadata_file.write_text(template, encoding="utf-8")
 
     if use_json:
         relative_path = str(metadata_file.relative_to(catalog_path))
@@ -5117,7 +5123,7 @@ def _generate_readme_content(
             _verbose_readme(
                 f"Reading {stac_file} from {dir_prefix or 'catalog root'}", verbose, use_json
             )
-            stac = json.loads(stac_path.read_text())
+            stac = json.loads(stac_path.read_text(encoding="utf-8"))
             break
 
     # Load merged metadata
@@ -5256,7 +5262,7 @@ def _metadata_init_recursive(
         if metadata_file.exists() and not force:
             return False
         portolan_dir.mkdir(parents=True, exist_ok=True)
-        metadata_file.write_text(generate_metadata_template())
+        metadata_file.write_text(generate_metadata_template(), encoding="utf-8")
         return True
 
     def _process_dir(dirpath: Path, rel_path: str) -> None:
@@ -5451,10 +5457,10 @@ def _process_readme_entry(
         stale: List to append stale paths.
     """
     if check:
-        is_fresh = readme_path.exists() and readme_path.read_text() == content
+        is_fresh = readme_path.exists() and readme_path.read_text(encoding="utf-8") == content
         (generated if is_fresh else stale).append(rel_path)
     else:
-        readme_path.write_text(content)
+        readme_path.write_text(content, encoding="utf-8")
         generated.append(rel_path)
 
 
@@ -5675,7 +5681,9 @@ def readme(
 
     if check:
         # Compare existing README against freshly generated content
-        is_fresh = readme_path.exists() and readme_path.read_text() == readme_content
+        is_fresh = (
+            readme_path.exists() and readme_path.read_text(encoding="utf-8") == readme_content
+        )
 
         if use_json:
             envelope = success_envelope(
@@ -5697,7 +5705,7 @@ def readme(
         click.echo(readme_content)
     else:
         # Write to file
-        readme_path.write_text(readme_content)
+        readme_path.write_text(readme_content, encoding="utf-8")
         if not emit_success(
             "readme",
             {"path": str(readme_path.relative_to(catalog_path)), "generated": True},
@@ -7681,7 +7689,7 @@ def _discover_collections_with_items(catalog_root: Path) -> list[str]:
 
         # Check if collection has any items
         try:
-            data = json.loads(collection_file.read_text())
+            data = json.loads(collection_file.read_text(encoding="utf-8"))
             links = data.get("links", [])
             has_items = any(link.get("rel") == "item" for link in links)
 

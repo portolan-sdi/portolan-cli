@@ -431,7 +431,9 @@ def init_catalog(
             "collections": {},
         }
         try:
-            (path / "versions.json").write_text(json.dumps(versions_data, indent=2) + "\n")
+            (path / "versions.json").write_text(
+                json.dumps(versions_data, indent=2) + "\n", encoding="utf-8"
+            )
         except OSError as e:
             raise CatalogInitError(f"Cannot write versions.json: {e}") from e
 
@@ -485,7 +487,7 @@ def init_catalog(
     if backend != "file":
         config_content = f"# Portolan configuration\nbackend: {backend}\n"
     try:
-        (portolan_dir / "config.yaml").write_text(config_content)
+        (portolan_dir / "config.yaml").write_text(config_content, encoding="utf-8")
     except OSError as e:
         raise CatalogInitError(f"Cannot write config.yaml: {e}") from e
 
@@ -906,7 +908,7 @@ def update_catalog_versions(
         try:
             # Read existing catalog versions.json with error handling
             try:
-                content = json.loads(versions_path.read_text())
+                content = json.loads(versions_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError as e:
                 # Clear error message for corrupted file
                 msg = (

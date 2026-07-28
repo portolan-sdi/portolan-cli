@@ -273,7 +273,7 @@ def save_config(catalog_path: Path, config: dict[str, Any]) -> None:
 
     # Use default_flow_style=False for readable multi-line YAML
     content = yaml.safe_dump(config, default_flow_style=False, sort_keys=False)
-    config_file.write_text(content)
+    config_file.write_text(content, encoding="utf-8")
 
 
 def _get_env_var_name(key: str) -> str:

@@ -80,7 +80,7 @@ def get_stored_metadata(
         return None
 
     try:
-        with open(item_path) as f:
+        with open(item_path, encoding="utf-8") as f:
             item_data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
@@ -102,7 +102,7 @@ def get_stored_metadata(
     versions_path = collection_dir / "versions.json"
     if versions_path.exists():
         try:
-            with open(versions_path) as f:
+            with open(versions_path, encoding="utf-8") as f:
                 versions_data = json.load(f)
 
             # Find asset entry in current version (use current_version field)

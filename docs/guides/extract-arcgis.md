@@ -172,6 +172,12 @@ This will:
 5. Create STAC items for each tile with spatial metadata
 6. Generate an extraction report
 7. Seed `metadata.yaml` with service metadata (source URL, attribution, keywords)
+8. Checkpoint progress to `imageserver-resume.json` as tiles complete, so
+   `--resume` picks up where an interrupted run stopped
+
+The report and the resume checkpoint are written as UTF-8 regardless of the
+host's locale, so a service whose name or attribution carries accents survives
+a Windows extraction unchanged.
 
 ### Limiting Extraction Area
 

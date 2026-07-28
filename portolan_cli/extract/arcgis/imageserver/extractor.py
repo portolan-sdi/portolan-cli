@@ -559,7 +559,7 @@ def _save_resume_state_locked(state: ImageServerResumeState, path: Path) -> None
     temp_path = path.with_suffix(".tmp")
 
     try:
-        with open(temp_path, "w") as f:
+        with open(temp_path, "w", encoding="utf-8") as f:
             # Acquire exclusive lock (cross-platform)
             _lock_file(f)
             try:

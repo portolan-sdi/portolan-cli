@@ -136,6 +136,42 @@ class TestEnsureReadmes:
             "title": "Human-readable documentation",
         } in described
 
+    def test_preserves_a_describedby_link_to_another_directorys_readme(
+        self, tmp_path: Path
+    ) -> None:
+        """``../shared/README.md`` is a different file, basename notwithstanding.
+
+        Regression: the resolved-path comparison was followed by an
+        unconditional basename fallback, so any href ending in ``README.md``
+        matched — and the publisher's pointer to a shared README one directory
+        up was rewritten to ``./README.md`` on every ``add``.
+        """
+        (tmp_path / "shared").mkdir()
+        (tmp_path / "shared" / "README.md").write_text("# Shared\n", encoding="utf-8")
+        foreign = {
+            "rel": "describedby",
+            "href": "./shared/README.md",
+            "type": "text/markdown",
+            "title": "Programme documentation",
+        }
+        catalog = _catalog()
+        catalog["links"] = [dict(foreign)]
+        _write(tmp_path / "catalog.json", catalog)
+
+        assert ensure_readmes(tmp_path) is True
+
+        described = [
+            link for link in _links(tmp_path / "catalog.json") if link["rel"] == "describedby"
+        ]
+        assert len(described) == 2
+        assert foreign in described
+        assert {
+            "rel": "describedby",
+            "href": "./README.md",
+            "type": "text/markdown",
+            "title": "Human-readable documentation",
+        } in described
+
     def test_normalizes_the_readme_link_beside_a_foreign_one(self, tmp_path: Path) -> None:
         catalog = _catalog()
         catalog["links"] = [

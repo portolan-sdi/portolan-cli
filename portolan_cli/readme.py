@@ -684,7 +684,7 @@ def check_readme_freshness(
         return False
 
     expected = generate_readme(stac=stac, metadata=metadata)
-    actual = readme_path.read_text()
+    actual = readme_path.read_text(encoding="utf-8")
 
     return expected == actual
 
@@ -711,7 +711,7 @@ def generate_readme_for_collection(
     stac: dict[str, Any] = {}
     collection_json_path = collection_path / "collection.json"
     if collection_json_path.exists():
-        stac = json.loads(collection_json_path.read_text())
+        stac = json.loads(collection_json_path.read_text(encoding="utf-8"))
 
     # Load merged metadata from hierarchy
     metadata = load_merged_metadata(collection_path, catalog_root)
@@ -790,7 +790,7 @@ def aggregate_catalog_extent(catalog_path: Path) -> dict[str, Any]:
             continue
 
         try:
-            data = json.loads(collection_json.read_text())
+            data = json.loads(collection_json.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
 
@@ -850,7 +850,7 @@ def _add_collections_section(
 
         if coll_json.exists():
             try:
-                stac = json.loads(coll_json.read_text())
+                stac = json.loads(coll_json.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 stac = {"id": coll_id}
 
@@ -941,7 +941,7 @@ def generate_catalog_readme(catalog_path: Path) -> str:
     catalog: dict[str, Any] = {}
     if catalog_json.exists():
         try:
-            catalog = json.loads(catalog_json.read_text())
+            catalog = json.loads(catalog_json.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -1020,9 +1020,12 @@ def _build_readme_link() -> dict[str, str]:
 def _href_targets_readme(directory: Path, href: str) -> bool:
     """True when ``href`` (relative to ``directory``) points at the sibling README.
 
-    Resolved-path comparison is the primary test; the basename fallback catches
-    a link whose target does not exist yet (the resolve still succeeds, but a
-    caller may be repairing a tree mid-scaffold).
+    Path equality is the answer whenever resolution succeeds — including for a
+    README that does not exist yet, since ``resolve()`` is non-strict. The
+    basename check is a fallback for the resolution *failing* (an href the OS
+    cannot express as a path); using it after a successful resolve matched any
+    href merely ending in ``README.md``, so a publisher's link to another
+    directory's README was mistaken for this object's own and overwritten.
     """
     if not href:
         return False
@@ -1030,9 +1033,7 @@ def _href_targets_readme(directory: Path, href: str) -> bool:
         resolved = (directory / href).resolve()
     except (OSError, ValueError):
         return PurePosixPath(href).name == README_FILENAME
-    if resolved == (directory / README_FILENAME).resolve():
-        return True
-    return PurePosixPath(href).name == README_FILENAME
+    return resolved == (directory / README_FILENAME).resolve()
 
 
 def _ensure_readme_link(directory: Path, data: dict[str, Any]) -> bool:

@@ -976,7 +976,7 @@ async def _process_stac_file_sizes(
     import json
 
     try:
-        data = json.loads(stac_file.read_text())
+        data = json.loads(stac_file.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return 0
 
@@ -1005,7 +1005,7 @@ async def _process_stac_file_sizes(
                 detail(f"Fetched file:size for {stac_file.name}:{asset_key}")
 
     if modified:
-        stac_file.write_text(json.dumps(data, indent=2) + "\n")
+        stac_file.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     return populated
 

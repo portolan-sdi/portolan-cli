@@ -98,6 +98,17 @@ class TestEnvelope:
         )
         assert json.loads(json.dumps(payload))["findings"][0]["expected"] == "abc"
 
+    def test_a_failed_fix_pass_flips_passed(self) -> None:
+        """`--fix` failing (a conversion that errored) exits 1; `passed` must agree."""
+        payload = build_check_payload(_outcome([]), mode="all", fix_failed=True)
+        assert payload["passed"] is False
+
+    def test_a_failed_fix_pass_flips_passed_even_with_a_clean_report(self) -> None:
+        payload = build_check_payload(
+            _outcome([_finding("PTL-TTL-002", Severity.WARNING)]), mode="all", fix_failed=True
+        )
+        assert payload["passed"] is False
+
     def test_metadata_skipped_reports_no_metadata_keys(self) -> None:
         outcome = CheckOutcome(report=None, format_report=None, legacy_note=None, live_hint=None)
         payload = build_check_payload(outcome, mode="geo-assets")
@@ -289,8 +300,9 @@ class TestFixPayloadAccounting:
 
 class TestSurvivorIndexing:
     def test_two_findings_of_one_rule_on_one_file_both_survive(self) -> None:
-        payload = _fix_payload(pre_findings=[_finding("PTL-BBX-001"), _finding("PTL-BBX-001")])
-        annotate_survivors(payload, _outcome([_finding("PTL-BBX-001"), _finding("PTL-BBX-001")]))
+        pre = [_finding("PTL-BBX-001"), _finding("PTL-BBX-001")]
+        payload = _fix_payload(pre_findings=pre)
+        annotate_survivors(payload, _outcome(list(pre)), pre_findings=pre)
 
         assert [item["index"] for item in payload["survivors"]] == [0, 1]
         assert len(payload["survivors"]) == 2
@@ -307,6 +319,7 @@ class TestSurvivorIndexing:
                     _finding("PTL-BBX-001"),
                 ]
             ),
+            pre_findings=[],
         )
 
         indexes = {(item["rule_id"], item["index"]) for item in payload["survivors"]}
@@ -322,6 +335,51 @@ class TestSurvivorIndexing:
                     _finding("PTL-BBX-001", json_pointer="/bbox"),
                 ]
             ),
+            pre_findings=[],
         )
 
         assert [item["index"] for item in payload["survivors"]] == [0, 0]
+
+
+class TestFixedCountCountsOnlyRepairedFindings:
+    """``fixed_count`` measures pre-fix defects resolved, not post-fix noise.
+
+    A repair pass can expose a defect that was not reportable before it ran —
+    the links fixer writes a child link, and the title rule then fires on it.
+    Counting every post-fix AUTO finding as a survivor made those newly exposed
+    defects cancel out repairs that really happened, so a pass that fixed
+    something reported ``Fixed automatically (0)``.
+    """
+
+    def test_a_newly_exposed_finding_does_not_cancel_a_repair(self) -> None:
+        pre = [_finding("PTL-BBX-001")]
+        payload = _fix_payload(pre_findings=pre)
+        annotate_survivors(payload, _outcome([_finding("PTL-LNK-006")]), pre_findings=pre)
+
+        assert [item["rule_id"] for item in payload["survivors"]] == ["PTL-LNK-006"]
+        assert payload["fixed_count"] == 1
+
+    def test_only_the_matched_survivors_are_subtracted(self) -> None:
+        pre = [_finding("PTL-BBX-001"), _finding("PTL-BBX-001")]
+        payload = _fix_payload(pre_findings=pre)
+        annotate_survivors(
+            payload,
+            _outcome([_finding("PTL-BBX-001"), _finding("PTL-LNK-006")]),
+            pre_findings=pre,
+        )
+
+        assert len(payload["survivors"]) == 2
+        assert payload["fixed_count"] == 1
+
+    def test_a_survivor_on_a_different_file_is_not_the_same_defect(self) -> None:
+        pre = [_finding("PTL-BBX-001")]
+        payload = _fix_payload(pre_findings=pre)
+        post = Finding(
+            rule_id="PTL-BBX-001",
+            severity=Severity.ERROR,
+            message="PTL-BBX-001 fired",
+            path="roads/collection.json",
+        )
+        annotate_survivors(payload, _outcome([post]), pre_findings=pre)
+
+        assert payload["fixed_count"] == 1

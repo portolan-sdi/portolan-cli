@@ -29,7 +29,9 @@ pass that ran:
 - ``skipped`` — ``{key: [reason, ...]}`` for every selected key that changed
   nothing, so "ran" is never reported as "fixed".
 - ``auto_count`` — AUTO findings the pre-fix check reported.
-- ``fixed_count`` — how many of those are gone: ``auto_count - len(survivors)``.
+- ``fixed_count`` — how many of those are gone: ``auto_count`` less the
+  survivors that were already among them. A finding a repair *exposed* is a
+  survivor but not a repair undone, so it never decrements this.
 - ``survivors`` — ``{rule_id, path, json_pointer, index}`` for every AUTO
   finding still present after the re-check; ``index`` separates repeat
   occurrences of one rule on one file. A non-empty list is the signal to
@@ -64,12 +66,24 @@ def _enrich(finding: Any) -> dict[str, Any]:
     return payload
 
 
-def build_check_payload(outcome: CheckOutcome, *, mode: str) -> dict[str, Any]:
+def build_check_payload(
+    outcome: CheckOutcome, *, mode: str, fix_failed: bool = False
+) -> dict[str, Any]:
     """Render ``outcome`` as the JSON payload.
+
+    ``passed`` is fed by exactly two inputs: rashid's verdict (absent when
+    ``--metadata`` was not run, in which case there is nothing to fail) and
+    whether the ``--fix`` pass itself failed. Those are the same inputs the exit
+    code uses, so ``passed: true`` never accompanies a non-zero exit. The one
+    documented exception is ``--strict``, which escalates warnings and the
+    workflow notice to exit 1 without calling the catalog non-conformant.
 
     Args:
         outcome: What :func:`~portolan_cli.validation.runner.run_check` produced.
         mode: Scope the run covered — ``metadata``, ``geo-assets``, or ``all``.
+        fix_failed: Whether the repair pass reported a failure — a conversion
+            that errored, or a fixer that could not write. Exits 1, so it must
+            not be published as ``passed: true``.
 
     Returns:
         A JSON-serializable dict.
@@ -78,7 +92,7 @@ def build_check_payload(outcome: CheckOutcome, *, mode: str) -> dict[str, Any]:
         "mode": mode,
         "spec_version": PORTOLAN_SPEC_VERSION,
         "validator": {"name": VALIDATOR_NAME, "version": version(VALIDATOR_NAME)},
-        "passed": True,
+        "passed": not fix_failed,
     }
 
     report = outcome.report
@@ -91,7 +105,7 @@ def build_check_payload(outcome: CheckOutcome, *, mode: str) -> dict[str, Any]:
             findings.append(enriched)
 
         payload.update(
-            passed=report.passed,
+            passed=report.passed and not fix_failed,
             files_checked=report.files_checked,
             error_count=len(report.errors),
             warning_count=len(report.warnings),
@@ -164,7 +178,27 @@ def build_fix_payload(
     return payload
 
 
-def annotate_survivors(fix_payload: dict[str, Any], outcome: CheckOutcome) -> None:
+def _auto_occurrences(findings: Iterable[Any]) -> list[tuple[str, str | None, str | None, int]]:
+    """AUTO findings as ``(rule_id, path, json_pointer, occurrence index)`` keys.
+
+    The index disambiguates repeat occurrences of one rule on one file with no
+    pointer, which are distinct defects that would otherwise collapse into one.
+    """
+    seen: dict[tuple[str, str | None, str | None], int] = {}
+    keys: list[tuple[str, str | None, str | None, int]] = []
+    for finding in findings:
+        if remediation_for(finding.rule_id).bucket is not Bucket.AUTO:
+            continue
+        group = (finding.rule_id, finding.path, finding.json_pointer)
+        index = seen.get(group, 0)
+        seen[group] = index + 1
+        keys.append((*group, index))
+    return keys
+
+
+def annotate_survivors(
+    fix_payload: dict[str, Any], outcome: CheckOutcome, *, pre_findings: Iterable[Any]
+) -> None:
     """Record which AUTO findings outlived the fixers, and how many did not.
 
     A survivor is an AUTO finding the re-check still reports. Naming them is what
@@ -177,26 +211,26 @@ def annotate_survivors(fix_payload: dict[str, Any], outcome: CheckOutcome) -> No
     into a single survivor entry — so only one of them got the "the automatic
     fix did not resolve this" annotation.
 
+    ``fixed_count`` subtracts only the survivors that were *there before* the
+    fixers ran, matched on (rule_id, path, json_pointer, occurrence index). A
+    repair can expose a defect nothing could report earlier — the links fixer
+    writes a child link and the title rule then fires on it — and counting that
+    against the pass reported ``Fixed automatically (0)`` for work that really
+    happened. Newly exposed findings are still listed as survivors: they are the
+    reason to stop calling ``--fix``, they are just not repairs undone.
+
     Args:
         fix_payload: The section from :func:`build_fix_payload`; mutated in place.
         outcome: The post-fix check.
+        pre_findings: The findings the fixers were handed, i.e. the same list
+            ``build_fix_payload`` measured ``auto_count`` from.
     """
     findings = outcome.report.findings if outcome.report is not None else []
-    seen: dict[tuple[str, str | None, str | None], int] = {}
-    survivors = []
-    for finding in findings:
-        if remediation_for(finding.rule_id).bucket is not Bucket.AUTO:
-            continue
-        key = (finding.rule_id, finding.path, finding.json_pointer)
-        index = seen.get(key, 0)
-        seen[key] = index + 1
-        survivors.append(
-            {
-                "rule_id": finding.rule_id,
-                "path": finding.path,
-                "json_pointer": finding.json_pointer,
-                "index": index,
-            }
-        )
-    fix_payload["survivors"] = survivors
-    fix_payload["fixed_count"] = max(fix_payload.get("auto_count", 0) - len(survivors), 0)
+    post = _auto_occurrences(findings)
+    fix_payload["survivors"] = [
+        {"rule_id": rule_id, "path": path, "json_pointer": pointer, "index": index}
+        for rule_id, path, pointer, index in post
+    ]
+    before = set(_auto_occurrences(pre_findings))
+    repaired = fix_payload.get("auto_count", 0) - sum(1 for key in post if key in before)
+    fix_payload["fixed_count"] = max(repaired, 0)

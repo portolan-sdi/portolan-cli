@@ -1032,8 +1032,11 @@ dot-directories (`.portolan/`, `.git/`) are skipped: they hold caches, not
 published STAC objects.
 
 Only the `describedby` link that points at the sibling `README.md` is managed.
-Other `describedby` links you author — a data dictionary, a methodology PDF —
-are left exactly as written, and the README link is added alongside them.
+Other `describedby` links you author — a data dictionary, a methodology PDF, or
+another directory's `README.md` such as `./shared/README.md` — are left exactly
+as written, and the README link is added alongside them. The match is on the
+resolved path, not the filename, so a link merely *ending* in `README.md` is
+still yours.
 
 ### Data Defaults
 

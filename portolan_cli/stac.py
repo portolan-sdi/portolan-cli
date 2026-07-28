@@ -1524,7 +1524,7 @@ def update_catalog_file_statistics(catalog_root: Path) -> None:
     for collection_json in catalog_root.rglob("collection.json"):
         # Skip if it's not a direct child pattern (avoid nested catalogs confusion)
         try:
-            data = json.loads(collection_json.read_text())
+            data = json.loads(collection_json.read_text(encoding="utf-8"))
             if data.get("type") != "Collection":
                 continue
             collection_count += 1
@@ -1535,7 +1535,7 @@ def update_catalog_file_statistics(catalog_root: Path) -> None:
 
     # Update catalog.json
     try:
-        catalog_data = json.loads(catalog_path.read_text())
+        catalog_data = json.loads(catalog_path.read_text(encoding="utf-8"))
         catalog_data["portolan:total_size_bytes"] = total_size
         catalog_data["portolan:asset_count"] = asset_count
         catalog_data["portolan:collection_count"] = collection_count

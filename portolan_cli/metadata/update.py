@@ -182,7 +182,7 @@ def update_collection_extent(collection_path: Path) -> CollectionModel:
     bboxes: list[list[float]] = []
     for item_file in item_files:
         try:
-            with open(item_file) as f:
+            with open(item_file, encoding="utf-8") as f:
                 data = json.load(f)
             # Check if this is a valid STAC item (has bbox)
             if "bbox" in data and data.get("type") == "Feature":

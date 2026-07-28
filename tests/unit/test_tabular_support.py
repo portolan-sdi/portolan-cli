@@ -336,6 +336,38 @@ class TestTabularEnabledCheck:
         assert "assets" in collection_data, "collection.json should have assets"
         assert len(collection_data["assets"]) > 0, "Should have at least one asset"
 
+    def test_tabular_add_repairs_agents_md_across_the_tree(self, tmp_path: Path) -> None:
+        """The tabular path owes the same tree-wide AGENTS.md repair as ``finalize_items``.
+
+        A tabular-only add never reaches ``finalize_items``, which calls
+        ``ensure_agents_md_tree``. Repairing only the collection it just wrote
+        left a pre-existing root catalog without its AGENTS.md and
+        ``rel="agents"`` link (ADR-0052, issue #654) — the same catalog a geo
+        add would have fixed.
+        """
+        import json as json_mod
+
+        from portolan_cli.add import add_files
+
+        catalog_root = tmp_path / "catalog"
+        catalog_root.mkdir()
+        _setup_test_catalog(catalog_root)
+
+        collection_dir = catalog_root / "demographics"
+        collection_dir.mkdir()
+        parquet_file = collection_dir / "census.parquet"
+        pq.write_table(
+            pa.table({"tract_id": ["001", "002"], "population": [5000, 7500]}), parquet_file
+        )
+        (catalog_root / ".portolan" / "config.yaml").write_text("tabular:\n  enabled: true\n")
+
+        _, _, failures = add_files(paths=[parquet_file], catalog_root=catalog_root)
+        assert failures == []
+
+        assert (catalog_root / "AGENTS.md").exists()
+        catalog_links = json_mod.loads((catalog_root / "catalog.json").read_text())["links"]
+        assert any(link.get("rel") == "agents" for link in catalog_links)
+
     def test_tabular_companion_asset_works_regardless_of_config(self, tmp_path: Path) -> None:
         """Tabular files WITH a companion geo file work regardless of tabular.enabled.
 

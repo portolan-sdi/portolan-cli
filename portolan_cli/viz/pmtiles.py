@@ -166,7 +166,7 @@ def _find_geoparquet_assets(collection_path: Path) -> list[tuple[str, Path]]:
     if not collection_json_path.exists():
         return []
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
     geoparquet_assets = []
@@ -380,7 +380,7 @@ def add_pmtiles_asset_to_collection(
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
     # Generate asset key from parquet key
@@ -403,7 +403,7 @@ def add_pmtiles_asset_to_collection(
                     needs_update = True
 
         if needs_update:
-            collection_json_path.write_text(json.dumps(data, indent=2))
+            collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         return
 
     asset_dict: dict[str, Any] = {
@@ -420,7 +420,7 @@ def add_pmtiles_asset_to_collection(
     assets[pmtiles_key] = asset_dict
     data["assets"] = assets
 
-    collection_json_path.write_text(json.dumps(data, indent=2))
+    collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def ensure_web_map_links_extension(collection_path: Path) -> bool:
@@ -441,14 +441,14 @@ def ensure_web_map_links_extension(collection_path: Path) -> bool:
     if not collection_json_path.exists():
         return False
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     extensions = data.get("stac_extensions", [])
     if WEB_MAP_LINKS_EXTENSION in extensions:
         return False
 
     extensions.append(WEB_MAP_LINKS_EXTENSION)
     data["stac_extensions"] = extensions
-    collection_json_path.write_text(json.dumps(data, indent=2))
+    collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return True
 
 
@@ -478,7 +478,7 @@ def add_pmtiles_link_to_collection(
     if not collection_json_path.exists():
         raise FileNotFoundError(f"collection.json not found in {collection_path}")
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
 
     changed = False
 
@@ -519,7 +519,7 @@ def add_pmtiles_link_to_collection(
             changed = True
 
     if changed:
-        collection_json_path.write_text(json.dumps(data, indent=2))
+        collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def add_thumbnail_asset_to_collection(
@@ -538,7 +538,7 @@ def add_thumbnail_asset_to_collection(
     if not collection_json_path.exists():
         return
 
-    data = json.loads(collection_json_path.read_text())
+    data = json.loads(collection_json_path.read_text(encoding="utf-8"))
     assets = data.get("assets", {})
 
     thumb_key = f"{pmtiles_key}-thumbnail"
@@ -556,7 +556,7 @@ def add_thumbnail_asset_to_collection(
     }
     data["assets"] = assets
 
-    collection_json_path.write_text(json.dumps(data, indent=2))
+    collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def _compute_sha256(path: Path) -> str:

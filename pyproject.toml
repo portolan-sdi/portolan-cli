@@ -258,7 +258,11 @@ pytest_add_cli_args_test_selection = ["tests/"]
 # (spec/ used to be copied here for the spec_compliance suite; both are gone —
 # the spec moved to portolan-spec and validation to rashid, which ships its own
 # schemas inside its wheel, so nothing reads a schema by repo-root path now.)
-also_copy = ["scripts/", ".pip-audit-ignores", ".mutation-baseline"]
+# `.mutation-shards.json` joins `.mutation-baseline` here because
+# TestShardBaselines::test_repo_baseline_file_parses reads it by repo-root path:
+# inside the copied sandbox that root is `mutants/`, so an uncopied file is a
+# FileNotFoundError that fails the in-mutation pytest run and aborts the gate.
+also_copy = ["scripts/", ".pip-audit-ignores", ".mutation-baseline", ".mutation-shards.json"]
 # The stats/baseline run must mirror the fast CI test job, not the whole suite:
 # - --no-cov: pyproject's addopts inject --cov, whose instrumentation conflicts
 #   with mutmut's; without this the stats phase is unreliable.
