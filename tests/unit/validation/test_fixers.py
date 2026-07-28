@@ -346,6 +346,30 @@ class TestLinksFixer:
         )
         assert root_link["type"] == "application/json"
 
+    def test_title_survives_an_equivalent_href_spelling(self, tmp_path: Path) -> None:
+        """`roads/collection.json` and `./roads/collection.json` are the same link."""
+        _tiny_catalog(tmp_path)
+        data = _read_json(tmp_path / "catalog.json")
+        data["links"] = [
+            {
+                "rel": "child",
+                "href": "roads/collection.json",
+                "type": "application/json",
+                "title": "Hand-written title",
+            }
+        ]
+        _write_json(tmp_path / "catalog.json", data)
+
+        FIXERS["links"](tmp_path, False)
+
+        child = next(
+            link
+            for link in _read_json(tmp_path / "catalog.json")["links"]
+            if link["rel"] == "child"
+        )
+        assert child["title"] == "Hand-written title"
+        assert child["href"] == "./roads/collection.json"
+
     def test_non_structural_links_survive(self, tmp_path: Path) -> None:
         collection = _tiny_catalog(tmp_path)
         data = _read_json(collection / "collection.json")

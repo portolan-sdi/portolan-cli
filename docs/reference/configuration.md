@@ -136,6 +136,37 @@ raised it. `portolan check --json` also reports, per finding, whether
 `portolan check --fix` can resolve it (`"remediation": "auto"`) or you have to
 act (`"instruct"`, `"external"`).
 
+### What `--fix` does, and when to stop calling it
+
+`portolan check --fix` is one pass, not a loop: it checks, applies a fixer for
+every `auto` finding, then re-checks **once**. The output splits into
+"Fixed automatically (N)" and "Action required (M)", where each remaining
+finding carries the imperative sentence describing what conformance demands.
+
+`--fix` never converges by repetition. A finding marked `auto` that is still
+present after the pass is annotated *the automatic fix did not resolve this* —
+running `--fix` again will not change it. In `--json` the same signal is the
+`fix.survivors` list:
+
+```json
+{
+  "fix": {
+    "applied": ["schema_uri", "links", "titles", "checksum"],
+    "auto_count": 7,
+    "fixed_count": 6,
+    "survivors": [
+      {"rule_id": "PTL-DAT-007", "path": "roads/collection.json", "json_pointer": null}
+    ],
+    "dry_run": false
+  }
+}
+```
+
+An empty `survivors` with a non-empty `findings` means everything left needs a
+decision: a license, a provider, a readable title, a thumbnail. Work those by
+hand. `--fix --dry-run` reports what would change, writes nothing, and skips the
+re-check.
+
 ### Published catalog URL
 
 ```yaml

@@ -126,18 +126,25 @@ def _expected_structural_links(node: Node, graph: CatalogGraph) -> list[tuple[st
 
 
 def _reuse_link(
-    existing: list[dict[str, Any]], node: Node, rel: str, href: str
+    existing: list[dict[str, Any]], node: Node, graph: CatalogGraph, rel: str, target: Node
 ) -> dict[str, Any] | None:
-    """An existing link to carry forward, so titles and extras survive the repair."""
+    """An existing link to carry forward, so titles and extras survive the repair.
+
+    Matched by where the href *resolves*, not by its spelling: ``./a/b.json`` and
+    ``a/b.json`` name the same file, and a hand-written title on either should
+    outlive the repair. A ``child``/``item`` link that resolves nowhere has no
+    counterpart to carry forward and is simply replaced.
+    """
     same_rel = [link for link in existing if link.get("rel") == rel]
     if not same_rel:
         return None
-    if rel in ("child", "item"):
-        for link in same_rel:
-            if link.get("href") == href:
-                return link
-        return None
-    return same_rel[0]
+    if rel not in ("child", "item"):
+        return same_rel[0]
+    for link in same_rel:
+        href = link.get("href")
+        if isinstance(href, str) and graph.resolve_link(node, href) is target:
+            return link
+    return None
 
 
 def _rebuild_links(node: Node, graph: CatalogGraph) -> list[dict[str, Any]]:
@@ -146,7 +153,7 @@ def _rebuild_links(node: Node, graph: CatalogGraph) -> list[dict[str, Any]]:
     rebuilt: list[dict[str, Any]] = []
     for rel, target in _expected_structural_links(node, graph):
         href = _relative_href(node, target.path)
-        link = dict(_reuse_link(existing, node, rel, href) or {})
+        link = dict(_reuse_link(existing, node, graph, rel, target) or {})
         link["rel"] = rel
         link["href"] = href
         link["type"] = _GEOJSON_TYPE if rel == "item" else _JSON_TYPE
