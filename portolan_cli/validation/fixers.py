@@ -30,7 +30,6 @@ never guessed at.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import posixpath
 from collections.abc import Callable, Iterable, Sequence
@@ -281,8 +280,13 @@ def _fix_assets(root: Path, dry_run: bool) -> list[FixResult]:
 
 
 def _fix_checksums(root: Path, dry_run: bool) -> list[FixResult]:
-    """Recompute file:size and the file:checksum multihash from the asset bytes."""
-    from portolan_cli.sync.checksums import multihash_sha256
+    """Recompute file:size and the file:checksum multihash from the asset bytes.
+
+    Streams through ``sync.checksums.compute_checksum`` rather than reading each
+    asset whole: a COG is routinely gigabytes, and the whole point of this fixer
+    is that it runs over every asset in the catalog.
+    """
+    from portolan_cli.sync.checksums import compute_checksum, multihash_sha256
 
     results: list[FixResult] = []
     for node in _graph(root).iter("collection", "item"):
@@ -291,10 +295,10 @@ def _fix_checksums(root: Path, dry_run: bool) -> list[FixResult]:
             path = _local_asset_path(node, asset)
             if path is None:
                 continue
-            payload = path.read_bytes()
-            checksum = multihash_sha256(hashlib.sha256(payload).hexdigest())
-            if asset.get("file:size") != len(payload):
-                asset["file:size"] = len(payload)
+            size = path.stat().st_size
+            checksum = multihash_sha256(compute_checksum(path))
+            if asset.get("file:size") != size:
+                asset["file:size"] = size
                 changed = True
             if asset.get("file:checksum") != checksum:
                 asset["file:checksum"] = checksum
