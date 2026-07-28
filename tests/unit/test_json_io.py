@@ -9,11 +9,12 @@ alike.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-from portolan_cli.json_io import write_json_atomic
+from portolan_cli.json_io import write_json_atomic, write_text_atomic
 
 pytestmark = pytest.mark.unit
 
@@ -75,17 +76,55 @@ class TestWriteJsonAtomic:
         """Same-directory temp file is what makes ``os.replace`` atomic."""
         target = tmp_path / "catalog.json"
         seen: list[Path] = []
-        real_dumps = json.dumps
+        real_fdopen = os.fdopen
 
-        def _spy_dumps(obj: object, **kwargs: object) -> str:
+        # Serialization happens before the temp file exists, so probe at
+        # os.fdopen — the moment the freshly created temp file is opened.
+        def _spy_fdopen(fd: int, *args: object, **kwargs: object) -> object:
             seen.extend(_temp_siblings(tmp_path))
-            return real_dumps(obj, **kwargs)  # type: ignore[arg-type]
+            return real_fdopen(fd, *args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr("portolan_cli.json_io.json.dumps", _spy_dumps)
+        monkeypatch.setattr("portolan_cli.json_io.os.fdopen", _spy_fdopen)
         write_json_atomic(target, {"id": "root"})
 
         assert len(seen) == 1, "expected exactly one temp file to exist mid-write"
         assert seen[0].parent == tmp_path
+
+
+class TestWriteTextAtomic:
+    """The text variant behind config.yaml and other non-JSON writes."""
+
+    @pytest.mark.unit
+    def test_writes_content_verbatim_utf8(self, tmp_path: Path) -> None:
+        target = tmp_path / "config.yaml"
+        write_text_atomic(target, "# Configuración\nbackend: file\n")
+
+        raw = target.read_bytes().decode("utf-8")
+        assert raw == "# Configuración\nbackend: file\n"
+
+    @pytest.mark.unit
+    def test_leaves_no_temp_file_behind(self, tmp_path: Path) -> None:
+        target = tmp_path / "config.yaml"
+        write_text_atomic(target, "a: 1\n")
+
+        assert [p.name for p in tmp_path.iterdir()] == ["config.yaml"]
+
+    @pytest.mark.unit
+    def test_prior_content_survives_a_failed_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = tmp_path / "config.yaml"
+        target.write_text("original\n", encoding="utf-8")
+
+        def _boom(src: str, dst: Path) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr("portolan_cli.json_io.os.replace", _boom)
+        with pytest.raises(OSError, match="disk full"):
+            write_text_atomic(target, "replacement\n")
+
+        assert target.read_text(encoding="utf-8") == "original\n"
+        assert [p.name for p in tmp_path.iterdir()] == ["config.yaml"]
 
 
 class TestAdoptedWriteSites:

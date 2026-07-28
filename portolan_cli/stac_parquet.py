@@ -30,6 +30,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from portolan_cli.json_io import write_json_atomic
 from portolan_cli.output import info, warn
 
 # Constants
@@ -250,12 +251,21 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
     assets = data.get("assets", {})
     asset_key = "geoparquet-items"
 
-    # Check if asset already exists (by key or by href)
-    has_asset = asset_key in assets or any(
-        asset.get("href") == f"./{PARQUET_FILENAME}" for asset in assets.values()
-    )
-
-    if not has_asset:
+    # Match by key or by href, then make sure every match carries the
+    # spec-normative role: a catalog written before "collection-mirror" existed
+    # has the asset but only the community role, and PTL-MIR-002 flags it.
+    matching = [
+        asset
+        for key, asset in assets.items()
+        if key == asset_key or asset.get("href") == f"./{PARQUET_FILENAME}"
+    ]
+    if matching:
+        for asset in matching:
+            roles = asset.setdefault("roles", [])
+            if "collection-mirror" not in roles:
+                roles.append("collection-mirror")
+                modified = True
+    else:
         assets[asset_key] = {
             "href": f"./{PARQUET_FILENAME}",
             "type": PARQUET_MEDIA_TYPE,
@@ -267,7 +277,7 @@ def add_parquet_link_to_collection(collection_path: Path) -> None:
 
     # Write back only if changes were made
     if modified:
-        collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        write_json_atomic(collection_json_path, data)
 
 
 def remove_parquet_link_from_collection(collection_path: Path) -> bool:
@@ -319,7 +329,7 @@ def remove_parquet_link_from_collection(collection_path: Path) -> bool:
                 break
 
     if modified:
-        collection_json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        write_json_atomic(collection_json_path, data)
 
     return modified
 

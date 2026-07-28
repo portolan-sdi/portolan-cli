@@ -37,6 +37,23 @@ if TYPE_CHECKING:
 # a full clear.
 _MUTMUT_ENV_KEY = "MUTANT_UNDER_TEST"
 
+# mutmut also re-invokes Hypothesis tests through its own runner, once per
+# mutant in the same process, so class-based property tests see more than one
+# executor instance and trip HealthCheck.differing_executors during the
+# mutation baseline (#612). Register a profile that relaxes exactly that check
+# when running under mutmut; a test's own @settings(suppress_health_check=...)
+# replaces this list, so explicit lists in test files carry the entry
+# themselves. Outside mutmut the default profile stays fully strict.
+if _MUTMUT_ENV_KEY in os.environ:
+    from hypothesis import HealthCheck as _HealthCheck
+    from hypothesis import settings as _hypothesis_settings
+
+    _hypothesis_settings.register_profile(
+        "mutmut",
+        suppress_health_check=[_HealthCheck.differing_executors],
+    )
+    _hypothesis_settings.load_profile("mutmut")
+
 
 @contextmanager
 def cleared_environ(**overrides: str) -> Iterator[None]:

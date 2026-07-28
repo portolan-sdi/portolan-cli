@@ -18,7 +18,7 @@ from typing import Any, Literal, overload
 
 from portolan_cli.agents_md import visible_stac_files
 from portolan_cli.errors import CatalogAlreadyExistsError
-from portolan_cli.json_io import write_json_atomic
+from portolan_cli.json_io import write_json_atomic, write_text_atomic
 from portolan_cli.models.catalog import CatalogModel
 
 if sys.version_info >= (3, 11):
@@ -431,9 +431,7 @@ def init_catalog(
             "collections": {},
         }
         try:
-            (path / "versions.json").write_text(
-                json.dumps(versions_data, indent=2) + "\n", encoding="utf-8"
-            )
+            write_json_atomic(path / "versions.json", versions_data)
         except OSError as e:
             raise CatalogInitError(f"Cannot write versions.json: {e}") from e
 
@@ -487,7 +485,7 @@ def init_catalog(
     if backend != "file":
         config_content = f"# Portolan configuration\nbackend: {backend}\n"
     try:
-        (portolan_dir / "config.yaml").write_text(config_content, encoding="utf-8")
+        write_text_atomic(portolan_dir / "config.yaml", config_content)
     except OSError as e:
         raise CatalogInitError(f"Cannot write config.yaml: {e}") from e
 

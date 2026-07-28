@@ -576,6 +576,36 @@ class TestCollectionLevelAsset:
         assert len(parquet_assets) == 1
 
     @pytest.mark.unit
+    def test_existing_asset_gains_the_collection_mirror_role(
+        self, collection_with_items: Path
+    ) -> None:
+        """An asset written before the role existed is upgraded in place."""
+        from portolan_cli.stac_parquet import (
+            add_parquet_link_to_collection,
+            generate_items_parquet,
+        )
+
+        generate_items_parquet(collection_with_items)
+        add_parquet_link_to_collection(collection_with_items)
+
+        collection_json_path = collection_with_items / "collection.json"
+        data = json.loads(collection_json_path.read_text())
+        # Simulate a catalog written by an older version: community role only,
+        # plus an unrelated asset that must stay untouched.
+        data["assets"]["geoparquet-items"]["roles"] = ["stac-items"]
+        data["assets"]["thumbnail"] = {"href": "./thumb.png", "roles": ["thumbnail"]}
+        collection_json_path.write_text(json.dumps(data, indent=2))
+
+        add_parquet_link_to_collection(collection_with_items)
+
+        data = json.loads(collection_json_path.read_text())
+        roles = data["assets"]["geoparquet-items"]["roles"]
+        assert "collection-mirror" in roles
+        assert "stac-items" in roles
+        assert roles.count("collection-mirror") == 1
+        assert data["assets"]["thumbnail"]["roles"] == ["thumbnail"]
+
+    @pytest.mark.unit
     def test_remove_parquet_also_removes_asset(self, collection_with_items: Path) -> None:
         """Test that remove_parquet_link_from_collection also removes asset."""
         from portolan_cli.stac_parquet import (

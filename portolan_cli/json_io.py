@@ -40,6 +40,17 @@ def write_json_atomic(path: Path, data: Any) -> None:
         TypeError: If ``data`` is not JSON-serializable (nothing is written).
         OSError: If the temporary file cannot be written or renamed.
     """
+    write_text_atomic(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+
+
+def write_text_atomic(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` atomically, UTF-8.
+
+    The temp-file-then-``os.replace`` half of :func:`write_json_atomic`, for
+    the few non-JSON files (``config.yaml``) that need the same guarantee.
+    ``content`` is written verbatim; the caller owns formatting and the
+    trailing newline.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
 
     fd, tmp_path = tempfile.mkstemp(
@@ -49,7 +60,7 @@ def write_json_atomic(path: Path, data: Any) -> None:
     )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+            handle.write(content)
         # Atomic rename (POSIX guarantees atomicity for same-filesystem renames).
         os.replace(tmp_path, path)
     except BaseException:

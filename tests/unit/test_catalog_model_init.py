@@ -437,14 +437,12 @@ class TestInitCatalogFilesystemErrors:
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        original_write_text = Path.write_text
+        # config.yaml is written through the atomic helper, so the failure is
+        # simulated there rather than on Path.write_text.
+        def failing_write_text_atomic(path: Path, content: str) -> None:
+            raise OSError("Disk full")
 
-        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-            if "config.yaml" in str(self):
-                raise OSError("Disk full")
-            return original_write_text(self, *args, **kwargs)
-
-        with patch.object(Path, "write_text", failing_write_text):
+        with patch("portolan_cli.catalog.write_text_atomic", failing_write_text_atomic):
             with pytest.raises(CatalogInitError) as exc_info:
                 init_catalog(catalog_dir)
             assert "Cannot write config.yaml" in exc_info.value.message
@@ -462,14 +460,16 @@ class TestInitCatalogFilesystemErrors:
         catalog_dir = tmp_path / "test"
         catalog_dir.mkdir()
 
-        original_write_text = Path.write_text
+        # versions.json is written through the atomic helper; fail only that
+        # path so the rest of init proceeds normally up to the error.
+        from portolan_cli.json_io import write_json_atomic as real_write
 
-        def failing_write_text(self: Path, *args: Any, **kwargs: Any) -> int:
-            if "versions.json" in str(self):
+        def failing_write_json_atomic(path: Path, data: Any) -> None:
+            if "versions.json" in str(path):
                 raise OSError("Disk full")
-            return original_write_text(self, *args, **kwargs)
+            real_write(path, data)
 
-        with patch.object(Path, "write_text", failing_write_text):
+        with patch("portolan_cli.catalog.write_json_atomic", failing_write_json_atomic):
             with pytest.raises(CatalogInitError) as exc_info:
                 init_catalog(catalog_dir)
             assert "Cannot write versions.json" in exc_info.value.message
